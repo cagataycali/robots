@@ -64,6 +64,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import imageio.v3 as iio
 import numpy as np
 import pytest
 
@@ -188,6 +189,58 @@ def _achieved_intervals(stamps: list[float]) -> np.ndarray:
     return np.diff(np.asarray(stamps)) * 1000.0
 
 
+#: Set once the media stack has been imported with the real clock installed.
+_MEDIA_WARMED = False
+
+
+def _warm_media_stack(tmp_path: Path) -> None:
+    """Import everything the recording path imports lazily, on the real clock.
+
+    ``stop_cameras_recording`` encodes each buffer to an MP4, and that pulls in
+    ``imageio``'s ffmpeg plugin, ``imageio_ffmpeg``, ``subprocess``, ``logging``
+    and ``zipfile`` the first time it runs. A module first imported while a
+    ``time`` double is installed in ``sys.modules`` binds the double for the rest
+    of the session, so the ffmpeg writer would keep reading a stepped clock long
+    after this module's tests finished and a later test writing an MP4 would fail
+    on unreadable metadata. Doing that first import here, before any double is
+    installed, is what keeps the double confined to the loop under test.
+    """
+    global _MEDIA_WARMED
+    if _MEDIA_WARMED:
+        return
+    from strands_robots.rendering.video import encode_clip
+
+    frames = [_gradient() for _ in range(3)]
+    clip = encode_clip(frames, tmp_path / "_warm.mp4", fps=RECORDER_FPS)
+    assert len(list(iio.imiter(clip))) == len(frames)
+    _MEDIA_WARMED = True
+
+
+def _install_time_double(monkeypatch: pytest.MonkeyPatch, clock: _SteppingClock, tmp_path: Path) -> None:
+    """Make ``clock`` the module a fresh ``import time`` resolves to."""
+    _warm_media_stack(tmp_path)
+    monkeypatch.setitem(sys.modules, "time", clock)
+
+
+def _assert_double_did_not_leak(clock: _SteppingClock) -> None:
+    """No module may be left holding the double once the recording is over.
+
+    Guards the confinement ``_warm_media_stack`` buys: if the recording path
+    grows a new lazy import, this fails here rather than as unreadable MP4
+    metadata in whichever unrelated test happens to run next.
+    """
+    leaked = []
+    for name, module in list(sys.modules.items()):
+        if module is None or name == "time":
+            continue
+        try:
+            if getattr(module, "time", None) is clock:
+                leaked.append(name)
+        except Exception:  # noqa: BLE001 - a module whose attribute access raises is not a holder
+            continue
+    assert not leaked, f"the clock double was bound by {sorted(leaked)} and would outlive this test"
+
+
 # --------------------------------------------------------------------------- #
 # 1. MJPEG stream pacer
 # --------------------------------------------------------------------------- #
@@ -310,7 +363,7 @@ def _capture(
     # ``start_cameras_recording`` binds its clock with a function-local
     # ``import time``, so the double is installed in ``sys.modules`` rather than
     # patched onto a module attribute. The recorder thread is the only reader.
-    monkeypatch.setitem(sys.modules, "time", clock)
+    _install_time_double(monkeypatch, clock, tmp_path)
     try:
         started = sim.start_cameras_recording(
             cameras=["cam_a", "cam_b"],
@@ -331,6 +384,7 @@ def _capture(
         sim.cleanup()
     assert stopped["status"] == "success", stopped
     assert len(stamps) >= RECORDER_FRAMES // 2, f"premise: only {len(stamps)} frames captured"
+    _assert_double_did_not_leak(clock)
     return _achieved_intervals(stamps), stopped
 
 
@@ -389,7 +443,7 @@ def _sync_recording(clock: _SteppingClock, tmp_path: Path, monkeypatch: pytest.M
     the pacing: the base is read once at start and subtracted once at stop.
     """
     sim = _sim_with_fake_render(clock, [])
-    monkeypatch.setitem(sys.modules, "time", clock)
+    _install_time_double(monkeypatch, clock, tmp_path)
     started = sim.start_cameras_recording_synchronous(
         cameras=["cam_a"],
         output_dir=str(tmp_path),
@@ -420,6 +474,7 @@ def test_stop_reports_the_duration_that_actually_elapsed(
     finally:
         sim.cleanup()
 
+    _assert_double_did_not_leak(clock)
     assert stopped["status"] == "success", stopped
     assert clock.step_applied_at_read is not None, "premise: the step never reached the recording"
     text = stopped["content"][0]["text"]
@@ -442,6 +497,7 @@ def test_status_reports_the_duration_that_actually_elapsed(
         sim.stop_cameras_recording()
         sim.cleanup()
 
+    _assert_double_did_not_leak(clock)
     assert clock.step_applied_at_read is not None, "premise: the step never reached the recording"
     text = status["content"][0]["text"]
     assert "for 4.0s" in text, (
@@ -463,7 +519,7 @@ def test_both_recorders_name_the_clock_their_duration_base_holds(
     clock = _SteppingClock(0.0, step_after_reads=None)
     stamps: list[float] = []
     sim = _sim_with_fake_render(clock, stamps)
-    monkeypatch.setitem(sys.modules, "time", clock)
+    _install_time_double(monkeypatch, clock, tmp_path)
     try:
         sim.start_cameras_recording_synchronous(
             cameras=["cam_a"], output_dir=str(tmp_path), fps=RECORDER_FPS, width=32, height=24, name="sync"
