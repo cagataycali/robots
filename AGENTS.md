@@ -1330,7 +1330,13 @@ Corrections from code review that apply to all future contributions:
   rendering pacers - the MJPEG stream generator and the multi-camera recorder thread - are
   pinned on the same achieved-interval basis by
   `tests/simulation/test_rendering_pacers_survive_a_clock_step.py`, along with the duration
-  each recording reports.
+  each recording reports. The Isaac backend's own two - the idle gate that decides when
+  `run_pump_forever` refreshes the live preview, and the duration its camera recording
+  reports - are pinned by
+  `tests/simulation/isaac/test_isaac_durations_survive_a_clock_step.py`, which asserts the
+  achieved refresh timeline against the unstepped one rather than a tolerance. A duration
+  base also carries its clock in its name (`started_mono`, `last_idle_render_mono`), so a
+  later reader cannot mistake it for a stamp and subtract `time.time()` from it.
 
 ### Module-Level Side Effects
 - **If you must run code at import time, comment WHY it can't be lazy.** `MUJOCO_GL` is the canonical example: MuJoCo locks the GL backend at first `import mujoco`, so the env var must be set before any downstream import chain triggers it.
