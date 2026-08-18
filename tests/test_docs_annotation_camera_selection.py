@@ -48,10 +48,11 @@ def _vlm_config_camera_field() -> str:
     Parsed rather than imported: importing the annotation package pulls the whole
     pipeline (and its optional deps) for one dataclass field name.
     """
+    __tracebackhide__ = True
     lerobot = pytest.importorskip("lerobot")
     config_py = Path(lerobot.__file__).parent / "annotations" / "steerable_pipeline" / "config.py"
     if not config_py.is_file():
-        pytest.skip(f"lerobot annotation pipeline not present at {config_py}")
+        raise pytest.skip.Exception(f"lerobot annotation pipeline not present at {config_py}")
     tree = ast.parse(config_py.read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == "VlmConfig":
@@ -66,7 +67,7 @@ def _vlm_config_camera_field() -> str:
                 "annotation guide's advice needs rewriting, not just renaming."
             )
             return camera_fields[0]
-    pytest.skip("lerobot's VlmConfig not found in the installed annotation pipeline")
+    raise pytest.skip.Exception("lerobot's VlmConfig not found in the installed annotation pipeline")
 
 
 class TestTheGuideNamesTheStreamSelector:
@@ -147,7 +148,8 @@ class TestTheRecordedOrderFollowsTheCaller:
                 fast_mode=True,
             )
             assert ran["status"] == "success", ran
-            assert sim.stop_recording()["status"] == "success"
+            stopped = sim.stop_recording()
+            assert stopped["status"] == "success", stopped
         finally:
             sim.cleanup()
 
