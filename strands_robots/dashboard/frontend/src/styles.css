@@ -637,3 +637,131 @@ body {
   font-family: ui-monospace, monospace;
 }
 .resume-row input:focus { outline: none; border-color: var(--red); }
+
+/* =====================================================================
+ * ZERO-UI GLASS LAYER (U12) -- design tokens + base primitives
+ *
+ * The concept: the interface is not the subject. Camera frames and
+ * telemetry are the surface; every control sits on a pane of frosted
+ * glass that lets the content behind it show through, and recedes
+ * (lower opacity, no border) until it is hovered, focused or active.
+ *
+ * Rules for anything built on this layer:
+ *  - a glass pane is background + blur + a 1px hairline + a top
+ *    highlight; it never gets a hard drop shadow on a dark field.
+ *  - transparency is layered, not stacked: at most two panes deep, or
+ *    the blur turns to mud and text loses contrast (WCAG AA is the
+ *    floor, so --glass-solid exists for panes that carry small text).
+ *  - reduced motion and no-backdrop-filter browsers both get a solid
+ *    fallback -- glass is decoration, never the only signal.
+ * ===================================================================== */
+:root {
+  /* glass surfaces: rgb triples so alpha can be tuned per use */
+  --glass-rgb: 22 29 41;
+  --glass-tint: 74 158 255;      /* accent used as a cold tint */
+  --glass-1: rgb(var(--glass-rgb) / .34);   /* recedes: chrome at rest */
+  --glass-2: rgb(var(--glass-rgb) / .55);   /* default pane */
+  --glass-3: rgb(var(--glass-rgb) / .74);   /* pane carrying small text */
+  --glass-solid: #131a25;                   /* no-blur fallback */
+  --glass-border: rgb(255 255 255 / .07);
+  --glass-border-hi: rgb(255 255 255 / .16);
+  --glass-sheen: linear-gradient(180deg, rgb(255 255 255 / .07), rgb(255 255 255 / 0) 46%);
+  --glass-blur: 18px;
+  --glass-blur-lg: 30px;
+  --glass-sat: 140%;
+
+  /* ambient field behind the glass (what the blur has to chew on) */
+  --amb-1: rgb(74 158 255 / .13);
+  --amb-2: rgb(0 229 160 / .10);
+  --amb-3: rgb(120 90 255 / .09);
+
+  /* motion: one easing for entrances, one for anything reversible */
+  --ease: cubic-bezier(.32, .72, 0, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+
+  /* focus ring, shared by every interactive primitive */
+  --ring: 0 0 0 2px var(--bg), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* Ambient depth. Fixed, inert, behind everything -- gives the blur
+ * something to smear so the panes read as glass and not as grey boxes. */
+body::before {
+  content: '';
+  position: fixed; inset: -20vmax; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(38vmax 38vmax at 12% -4%, var(--amb-1), transparent 62%),
+    radial-gradient(34vmax 34vmax at 96% 12%, var(--amb-3), transparent 60%),
+    radial-gradient(44vmax 44vmax at 62% 104%, var(--amb-2), transparent 64%);
+}
+
+/* --- the pane primitive ------------------------------------------- */
+.glass {
+  position: relative;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+}
+/* the top highlight: a pane catches light on its upper edge */
+.glass::before {
+  content: '';
+  position: absolute; inset: 0; border-radius: inherit;
+  background: var(--glass-sheen);
+  pointer-events: none;
+}
+.glass > * { position: relative; }
+.glass.quiet { background: var(--glass-1); border-color: transparent; }
+.glass.quiet:hover, .glass.quiet:focus-within { background: var(--glass-2); border-color: var(--glass-border); }
+.glass.dense { background: var(--glass-3); }
+.glass.lifted { backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-sat)); box-shadow: 0 24px 60px rgb(0 0 0 / .38); }
+.glass.flush { border-radius: 0; }
+
+/* --- glass controls ----------------------------------------------- */
+.gbtn {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  min-height: 34px; padding: 0 var(--s4);
+  background: var(--glass-1); color: var(--dim);
+  border: 1px solid var(--glass-border); border-radius: var(--rpill);
+  font: inherit; font-size: var(--fs-small); cursor: pointer;
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.gbtn:hover { color: var(--text); background: var(--glass-2); border-color: var(--glass-border-hi); }
+.gbtn.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--glass-1)); }
+.gbtn:disabled { opacity: .5; cursor: default; }
+
+.ginput {
+  width: 100%; min-width: 0; min-height: 38px;
+  padding: var(--s3) var(--s4);
+  background: var(--glass-1); color: var(--text);
+  border: 1px solid var(--glass-border); border-radius: var(--r3);
+  font: inherit; font-size: var(--fs-body);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.ginput::placeholder { color: var(--dim); opacity: .55; }
+.ginput:hover { border-color: var(--glass-border-hi); }
+.ginput:focus { outline: none; background: var(--glass-2); border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+
+/* one focus ring for everything reachable by keyboard (WCAG 2.4.7) */
+:where(a, button, [role='button'], input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: var(--r2);
+}
+
+/* --- honest fallbacks --------------------------------------------- */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass, .gbtn, .ginput { background: var(--glass-solid); }
+  .glass.quiet { background: var(--panel); }
+  body::before { opacity: .5; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .gbtn, .ginput { background: var(--glass-solid); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .glass::before { background: none; }
+  body::before { display: none; }
+}
