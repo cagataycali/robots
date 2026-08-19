@@ -1023,11 +1023,65 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         return {"status": res.get("status"), "text": (res.get("content") or [{}])[0].get("text", "")}
 
     @app.get("/api/calibration/{name}")
-    async def calibration_view(name: str, device_type: str = "robots") -> dict[str, Any]:
+    async def calibration_view(
+        name: str,
+        device_type: str | None = None,
+        device_model: str | None = None,
+    ) -> dict[str, Any]:
+        """One calibration's per-motor detail.
+
+        This route used to call the tool POSITIONALLY, so ``name`` landed in
+        ``device_type`` and it answered "view action requires: device_type,
+        device_model, and device_id" for every input -- the drawer rendered that
+        sentence as if it were data.
+
+        A name is not an identity: ``leader_arm`` exists under three models on
+        this machine. With no ``device_model`` the route resolves it, and when the
+        name is ambiguous it answers **409 with the candidates** rather than
+        picking one -- showing ``so_follower``'s numbers to someone who meant
+        ``so101_follower`` is worse than a question. Returns structured
+        ``motors`` (the tool has always carried them; the UI was parsing
+        markdown) alongside the original ``text``.
+        """
+        from strands_robots.dashboard import calibration as calib
         from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
 
-        res = await asyncio.to_thread(lerobot_calibrate, "view", name, device_type)
-        return {"status": res.get("status"), "text": (res.get("content") or [{}])[0].get("text", "")}
+        found = await asyncio.to_thread(
+            calib.candidates, name, device_type=device_type, device_model=device_model,
+        )
+        if not found:
+            raise HTTPException(404, {
+                "error": f"no calibration named {name!r}",
+                "hint": "GET /api/calibration lists every calibration on this machine",
+            })
+        if len(found) > 1:
+            raise HTTPException(409, {
+                "error": (
+                    f"{name!r} exists {len(found)} times - say which with "
+                    "?device_type=&device_model="
+                ),
+                "candidates": found,
+            })
+        target = found[0]
+        res = await asyncio.to_thread(
+            lambda: lerobot_calibrate(
+                action="view",
+                device_type=target["device_type"],
+                device_model=target["device_model"],
+                device_id=target["device_id"],
+            )
+        )
+        content = res.get("content") or [{}]
+        info: dict[str, Any] = {}
+        for block in content:
+            if isinstance(block, dict) and isinstance(block.get("json"), dict):
+                info = block["json"].get("calibration_info") or {}
+        out: dict[str, Any] = {
+            "status": res.get("status"),
+            "text": content[0].get("text", "") if content else "",
+        }
+        out.update(calib.payload(info) if info else {k: target[k] for k in target})
+        return out
 
     @app.get("/api/frame/{peer_id}/{cam}")
     async def frame(peer_id: str, cam: str) -> Response:
