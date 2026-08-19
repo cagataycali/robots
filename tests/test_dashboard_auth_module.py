@@ -157,3 +157,49 @@ def test_challenge_pop_semantics():
     cid2 = auth._stash_challenge("reg", b"chal")
     with pytest.raises(HTTPException):
         auth._pop_challenge(cid2, "auth")  # wrong kind
+
+
+# --- Q24: enrollment turns auth ON; the env flag is only an override --------
+
+
+def _enroll_fake_credential(tmp_path):
+    auth.has_credentials()  # create the store
+    path = tmp_path / "auth.json"
+    data = json.loads(path.read_text())
+    data["credentials"] = [{"id": "abc", "public_key": "cGs", "sign_count": 0, "name": "phone"}]
+    path.write_text(json.dumps(data))
+    os.utime(path, (time.time() + 2, time.time() + 2))
+
+
+def test_auth_disabled_with_empty_store_and_no_env():
+    assert not auth.auth_enabled()
+
+
+def test_enrolled_credential_auto_enables_auth(tmp_path):
+    _enroll_fake_credential(tmp_path)
+    assert auth.auth_enabled()
+
+
+def test_env_false_overrides_enrolled_credential(tmp_path, monkeypatch):
+    _enroll_fake_credential(tmp_path)
+    monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "false")
+    assert not auth.auth_enabled()
+
+
+def test_env_true_overrides_empty_store(monkeypatch):
+    monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "true")
+    assert auth.auth_enabled()
+
+
+def test_env_whitespace_is_unset(tmp_path, monkeypatch):
+    monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "  ")
+    assert not auth.auth_enabled()
+    _enroll_fake_credential(tmp_path)
+    assert auth.auth_enabled()
+
+
+def test_status_reports_enabled_after_enrollment(tmp_path):
+    _enroll_fake_credential(tmp_path)
+    s = auth.status(FakeRequest())
+    assert s["enabled"] is True
+    assert s["setup_required"] is False

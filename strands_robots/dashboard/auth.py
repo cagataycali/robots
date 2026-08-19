@@ -23,8 +23,10 @@ the file's mtime changes, so credential edits and re-enrollment need no
 restart.
 
 Env knobs (all optional):
-  STRANDS_DASH_AUTH_ENABLED   "true"/"false" (default false). When false,
-                              require_session still PASSES only loopback
+  STRANDS_DASH_AUTH_ENABLED   OVERRIDE only. Unset (the default): auth is ON
+                              exactly when a passkey exists in the store.
+                              "true"/"false" force it either way. When auth is
+                              off, require_session still PASSES only loopback
                               clients: disabled means local-only, never open.
   STRANDS_DASH_AUTH_STORE     store path (default ~/.strands_dashboard/auth.json)
   STRANDS_DASH_AUTH_RP_ID     force the relying-party id (e.g. robots.cagatay.my)
@@ -72,7 +74,22 @@ def _bool_env(key: str, default: bool) -> bool:
 
 
 def auth_enabled() -> bool:
-    return _bool_env(_ENV + "ENABLED", False)
+    """Whether passkey auth guards the API.
+
+    The STORE is the source of truth: the moment a passkey is enrolled, auth
+    is ON. Anything else is a trap - an operator who enrolls a credential and
+    still needs to remember an env flag has a dashboard that LOOKS guarded
+    (credentials listed in /api/auth/status) while every request rides the
+    open posture.
+
+    STRANDS_DASH_AUTH_ENABLED, when SET, is an explicit override in either
+    direction (force-on before the first enrollment, or force-off for local
+    debugging). Unset means: follow the store.
+    """
+    raw = os.getenv(_ENV + "ENABLED", "").strip().lower()
+    if raw:
+        return raw in ("1", "true", "yes", "on")
+    return has_credentials()
 
 
 def _store_path() -> Path:
