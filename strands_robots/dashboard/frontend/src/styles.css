@@ -400,7 +400,17 @@ body {
   box-sizing: border-box; max-width: 100%;
 }
 .peername:hover { color: var(--accent); }
-.host { color: var(--dim); font-size: 11px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px; }
+.host { color: var(--dim); font-size: 11px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px; flex-shrink: 1; min-width: 0; }
+/* R8 (measured 390px): on the card that carries a role badge the ROBOT NAME
+   collapsed to 39px — `so101…`, indistinguishable from the arm beside it — while
+   an 80px badge and a hostname truncated to `cagatays…` kept their space. On a
+   single-machine desk fleet that hostname is identical on every card, so it was
+   costing identity to say nothing. The name now takes the slack, the badges never
+   shrink, and below 640px the hostname steps out (it is still in the detail head,
+   one tap away, in full). */
+.peername { flex: 1 1 auto; min-width: 6ch; }
+.card-head .typebadge, .card-head .rolebadge, .card-head .originbadge, .card-head .badge { flex-shrink: 0; }
+@media (max-width: 639px) { .card-head .host { display: none; } }
 .stale-note { font-size: var(--fs-tiny); color: var(--warn); font-family: var(--mono); }
 .twinbtn {
   background: none; border: 1px solid var(--border); color: var(--accent);
@@ -700,6 +710,13 @@ body {
   padding: var(--s4) var(--s5); border-bottom: 1px solid var(--border);
 }
 .detail-head h2 { font-size: var(--fs-body); font-family: var(--mono); font-weight: 600; }
+/* R8 corollary: hiding the hostname on phone-sized CARDS is only honest if the
+   detail view really shows it in full. It did not — measured 28px of
+   `cagatays-Mac-mini.local` at 390px. The head wraps instead of shaving the one
+   place the hostname is supposed to be readable. */
+.detail-head { flex-wrap: wrap; }
+.detail-head .host { max-width: none; margin-left: 0; order: 9; flex-basis: 100%; }
+@media (min-width: 640px) { .detail-head .host { flex-basis: auto; order: 0; margin-left: auto; } }
 .detail-head .btn.ghost { margin-left: auto; }
 .detail > .stale-note { padding: var(--s2) var(--s5); }
 .detail-body {
@@ -759,7 +776,15 @@ body {
   background: var(--accent-fill); color: #fff; font-size: 18px; font-weight: 700; cursor: pointer; flex-shrink: 0;
 }
 .dock-send:disabled { background: var(--glass-1); color: var(--dim); backdrop-filter: blur(var(--glass-blur)); }
-.dock-min { background: none; border: none; color: var(--dim); font-size: 14px; cursor: pointer; padding: var(--s2); }
+.dock-min {
+  background: none; border: none; color: var(--dim); font-size: 14px; cursor: pointer; padding: var(--s2);
+  /* R7: measured 23x28 — one pixel short of the floor, on the button that closes
+     the agent dock. min-width, not padding, so the icon stays centred. */
+  min-width: 24px; min-height: 24px;
+}
+/* R7: the help sheet's external links measured 144x16 and 79x16 — the last
+   sub-24px targets in the app. A link is a tap target like any other. */
+.help-sheet a { display: inline-flex; align-items: center; min-height: 24px; }
 
 .dock-panel {
   position: fixed; bottom: 64px; left: 0; right: 0; z-index: 55;
