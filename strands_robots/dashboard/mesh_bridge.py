@@ -116,6 +116,48 @@ def peer_is_known(
     return bool(parent and child) and parent in haystack
 
 
+def peer_origins(
+    peer_ids: Mapping[str, Any] | Iterable[str],
+    managed_ids: Iterable[str] = (),
+) -> dict[str, str]:
+    """Label each peer ``"managed"`` (this dashboard spawned it) or ``"external"``.
+
+    U15's contract is that a robot defined in the user's OWN script --
+    ``Robot("so101", mode="real", ..., mesh=True)`` -- is a first-class citizen:
+    same card, same name, same telemetry, same commands as one the dashboard
+    spawned. That half holds because every card renders from the mesh snapshot,
+    which knows nothing about who started a process.
+
+    But three capabilities genuinely cannot exist for an external peer, because
+    the dashboard has no child process behind it: the log ring buffer, the
+    camera reconfigure (which is a respawn), and despawn. Today those refuse
+    only AFTER the operator clicks, with a 404. This label is the missing
+    premise -- it lets a card say "started elsewhere" up front and explain the
+    three gaps, instead of offering a button that cannot work.
+
+    So it is deliberately the *only* asymmetry the snapshot carries: an origin
+    badge, nothing more (PLAN.md U15). It is a fact about the PROCESS, never
+    about the robot's health -- an external peer is not lesser, just not ours.
+
+    ``managed_ids`` is the live-managed set the snapshot already computes for
+    ageing protection. A ``"<parent>__<robot>"`` child inherits its parent's
+    origin, the same rule :func:`prune_peers` and :func:`peer_is_known` use:
+    a child sim peer lives inside the parent's process, so if we started the
+    parent we started the child.
+    """
+    managed = set(managed_ids)
+
+    def origin(pid: str) -> str:
+        if pid in managed:
+            return "managed"
+        parent, _, child = pid.partition("__")
+        if parent and child and parent in managed:
+            return "managed"
+        return "external"
+
+    return {pid: origin(pid) for pid in peer_ids}
+
+
 def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Route commands aimed at a child sim peer to its parent Simulation peer.
 
@@ -840,6 +882,14 @@ class MeshBridge:
                 # waiting out a rate window against a memory of its former self.
                 with self._coalesce_lock:
                     self._coalescer.forget(pid)
+        # Who STARTED each peer (U15). Applied before the mesh-blind annotations
+        # below and derived from the same live-managed set the pruning already
+        # used, so the origin badge cannot disagree with which peers are held
+        # alive as ours. Every peer gets a label: absent would read as unknown.
+        for pid, origin in peer_origins(peers, protected).items():
+            peer = peers.get(pid)
+            if isinstance(peer, dict):
+                peers[pid] = {**peer, "origin": origin}
         # Facts about a peer that the MESH cannot know (today: the role measured
         # off a local arm's servo bus). Copied onto the peer dict so both the WS
         # snapshot and /api/fleet carry it, and only for peers already present -
