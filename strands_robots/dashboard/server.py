@@ -46,7 +46,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from strands_robots.dashboard import arm_roles, config_api, consent, settings
+from strands_robots.dashboard import arm_roles, config_api, consent, deploy, settings
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
@@ -1304,6 +1304,35 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "path": app.state.devices.profiles.path,
             "autospawn": getattr(app.state, "autospawn_task", None) is not None,
         }
+
+    @app.post("/api/deploy/snippet")
+    async def deploy_snippet(body: dict[str, Any], request: Request) -> dict[str, Any]:
+        """U16: render a spawn payload/profile as a deployable Python script.
+
+        Body: ``{"serial": <profile key>}`` to render a remembered profile, or
+        ``{"payload": {...}}`` for live form state (the U4 form can offer the
+        snippet before the rig was ever spawned). Optional ``hub_host``
+        overrides the address edge devices reach this dashboard's zenoh hub on;
+        it defaults to the host the caller used to reach us, minus the port —
+        loopback is withheld (an edge device's "localhost" is itself).
+        """
+        payload = body.get("payload")
+        serial = body.get("serial")
+        if serial and not payload:
+            payload = app.state.devices.profiles.get(str(serial))
+            if payload is None:
+                raise HTTPException(404, f"no profile remembered for {serial!r}")
+        if not isinstance(payload, dict):
+            raise HTTPException(422, "payload object or serial required")
+        hub_host = body.get("hub_host")
+        if hub_host is None:
+            reached_on = (request.url.hostname or "").strip()
+            if reached_on and reached_on not in ("localhost", "127.0.0.1", "::1"):
+                hub_host = reached_on
+        result = deploy.render_snippet(payload, hub_host=hub_host or None)
+        if "error" in result:
+            raise HTTPException(422, result["error"])
+        return result
 
     @app.post("/api/devices/despawn")
     async def despawn(body: dict[str, Any]) -> dict[str, Any]:
