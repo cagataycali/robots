@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -53,8 +53,23 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
 #: Reachable without a token: liveness (so a client can discover that auth is
-#: required at all) and the static shell (which renders the token prompt).
-PUBLIC_PATHS = {"/api/health"}
+#: required at all), the WebAuthn ceremony endpoints (you cannot log in from
+#: behind a wall that requires being logged in), and the static shell (which
+#: renders the login prompt). /api/auth/register/* gates ITSELF: once a
+#: passkey exists, enrolling another requires a valid session.
+PUBLIC_PATHS = {
+    "/api/health",
+    "/api/auth/status",
+    "/api/auth/register/begin",
+    "/api/auth/register/finish",
+    "/api/auth/login/begin",
+    "/api/auth/login/finish",
+}
+
+try:  # passkey auth is optional at import time (needs webauthn + PyJWT)
+    from strands_robots.dashboard import auth as dash_auth
+except Exception:  # pragma: no cover - deps missing in minimal installs
+    dash_auth = None  # type: ignore[assignment]
 
 
 class TokenAuthMiddleware:
@@ -63,10 +78,28 @@ class TokenAuthMiddleware:
     Raw ASGI rather than ``BaseHTTPMiddleware`` because WebSocket scopes never
     reach an HTTP middleware - and /ws/mesh, /ws/chat and /ws/voice are exactly
     the endpoints that drive motors and spend money.
+
+    Accepted credentials, in order: the static ``security.auth_token``, then a
+    WebAuthn session JWT minted by ``dashboard.auth``. With NEITHER configured
+    the open posture is LOCAL-ONLY: loopback clients pass (the LAN-dev
+    workflow), anything else is refused - an unauthenticated dashboard
+    commands real motors, so "auth disabled" must never mean "open to the
+    network".
     """
 
     def __init__(self, app: Any) -> None:
         self.app = app
+
+    @staticmethod
+    def _client_is_local(scope: dict[str, Any]) -> bool:
+        client = scope.get("client")
+        host = client[0] if client else None
+        if host is None or host == "testclient":
+            # in-process ASGI test clients have no real peer address
+            return True
+        if dash_auth is not None:
+            return dash_auth.client_is_loopback(host)
+        return host in ("127.0.0.1", "::1", "localhost")
 
     @staticmethod
     def _presented(scope: dict[str, Any]) -> str:
@@ -87,13 +120,24 @@ class TokenAuthMiddleware:
             return
         path = scope.get("path", "")
         guarded = path.startswith("/api") or path.startswith("/ws")
+        if not guarded or path in PUBLIC_PATHS or scope.get("method") == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
         token = settings.get("security", "auth_token")
-        if not guarded or not token or path in PUBLIC_PATHS or scope.get("method") == "OPTIONS":
-            await self.app(scope, receive, send)
-            return
-        if hmac.compare_digest(self._presented(scope), str(token)):
-            await self.app(scope, receive, send)
-            return
+        passkeys_on = dash_auth is not None and dash_auth.auth_enabled()
+        if not token and not passkeys_on:
+            # nothing configured: open for loopback only
+            if self._client_is_local(scope):
+                await self.app(scope, receive, send)
+                return
+        else:
+            presented = self._presented(scope)
+            if token and hmac.compare_digest(presented, str(token)):
+                await self.app(scope, receive, send)
+                return
+            if dash_auth is not None and dash_auth.session_is_valid(presented):
+                await self.app(scope, receive, send)
+                return
         if scope["type"] == "websocket":
             await receive()  # consume websocket.connect before rejecting
             await send({"type": "websocket.close", "code": 1008})
@@ -180,6 +224,68 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     @app.get("/api/fleet")
     async def fleet() -> dict[str, Any]:
         return app.state.bridge.snapshot()
+
+    # ------------------------------------------------------------------
+    # WebAuthn passkey auth (see dashboard/auth.py)
+    # ------------------------------------------------------------------
+
+    def _require_auth_module() -> Any:
+        if dash_auth is None:
+            raise HTTPException(503, "passkey auth unavailable - install webauthn + PyJWT")
+        return dash_auth
+
+    def _session_presented(request: Request) -> str:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            return auth_header[7:].strip()
+        return request.query_params.get("token", "").strip()
+
+    @app.get("/api/auth/status")
+    async def auth_status(request: Request) -> dict[str, Any]:
+        mod = _require_auth_module()
+        out = mod.status(request)
+        out["authenticated"] = mod.session_is_valid(_session_presented(request))
+        return out
+
+    @app.post("/api/auth/register/begin")
+    async def auth_register_begin(request: Request) -> dict[str, Any]:
+        mod = _require_auth_module()
+        body = await request.json() if await request.body() else {}
+        if mod.has_credentials() and not mod.session_is_valid(_session_presented(request)):
+            raise HTTPException(401, "enrolling another passkey requires a signed-in session")
+        return mod.begin_registration(
+            request,
+            label=str(body.get("label") or "passkey")[:64],
+            bootstrap=str(body.get("bootstrap") or ""),
+        )
+
+    @app.post("/api/auth/register/finish")
+    async def auth_register_finish(request: Request) -> dict[str, Any]:
+        mod = _require_auth_module()
+        body = await request.json()
+        first_time = not mod.has_credentials()
+        if not first_time and not mod.session_is_valid(_session_presented(request)):
+            raise HTTPException(401, "enrolling another passkey requires a signed-in session")
+        return mod.finish_registration(request, body.get("challenge_id", ""), body.get("credential") or {})
+
+    @app.post("/api/auth/login/begin")
+    async def auth_login_begin(request: Request) -> dict[str, Any]:
+        return _require_auth_module().begin_authentication(request)
+
+    @app.post("/api/auth/login/finish")
+    async def auth_login_finish(request: Request) -> dict[str, Any]:
+        mod = _require_auth_module()
+        body = await request.json()
+        return mod.finish_authentication(request, body.get("challenge_id", ""), body.get("credential") or {})
+
+    @app.get("/api/auth/credentials")
+    async def auth_credentials() -> dict[str, Any]:
+        # reached only with a valid session (guarded path, not in PUBLIC_PATHS)
+        return {"credentials": _require_auth_module().list_credentials()}
+
+    @app.delete("/api/auth/credentials/{cred_id}")
+    async def auth_credential_delete(cred_id: str) -> dict[str, Any]:
+        return _require_auth_module().delete_credential(cred_id)
 
     @app.get("/api/robots/registry")
     async def registry() -> dict[str, Any]:
