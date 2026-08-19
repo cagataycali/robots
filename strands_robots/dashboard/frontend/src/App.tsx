@@ -13,6 +13,7 @@ import DevicePanel from './components/DevicePanel'
 import EstopSheet from './components/EstopSheet'
 import TrainingTab from './components/TrainingTab'
 import RecordPanel from './components/RecordPanel'
+import AuthGate from './components/AuthGate'
 
 type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | null
 
@@ -206,10 +207,13 @@ function TokenPrompt() {
 
 export default function App() {
   // Remount everything when the backend or token changes: sockets, peer maps and
-  // frame buffers all belong to one backend.
+  // frame buffers all belong to one backend. AuthGate sits INSIDE the key so a
+  // freshly minted session token re-runs its open/gate probe too.
   return (
     <ConfigProvider key={backendKey()}>
-      <Dashboard />
+      <AuthGate>
+        <Dashboard />
+      </AuthGate>
     </ConfigProvider>
   )
 }

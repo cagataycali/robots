@@ -1,0 +1,136 @@
+/**
+ * AuthGate - the passkey door in front of the dashboard.
+ *
+ * Decision on mount (and after every backend/token change, because App remounts):
+ *   1. GET /api/auth/status (public) + probe GET /api/fleet (guarded) in parallel.
+ *   2. Fleet answered 200  -> open. Local dev, static token, or a valid session -
+ *      whatever the server accepted, the UI has no business second-guessing it.
+ *   3. Fleet answered 401  -> gate. setup_required decides enroll vs login.
+ *
+ * The session JWT rides the existing token plumbing (setAuthToken -> localStorage
+ * -> Authorization: Bearer on fetches, ?token= on WebSockets), so nothing below
+ * this component knows passkeys exist.
+ */
+import { useEffect, useState } from 'react'
+import { api, setAuthToken, HttpError } from '../lib/endpoints'
+import {
+  fetchAuthStatus, enroll, login, webauthnReady, type AuthStatus,
+} from '../lib/passkey'
+import StrandsMark from './StrandsMark'
+
+type Mode = 'checking' | 'open' | 'enroll' | 'login' | 'unreachable'
+
+export default function AuthGate({ children }: { children: React.ReactNode }) {
+  const [mode, setMode] = useState<Mode>('checking')
+  const [status, setStatus] = useState<AuthStatus | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [label, setLabel] = useState('')
+  const [bootstrap, setBootstrap] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const [st, fleet] = await Promise.allSettled([fetchAuthStatus(), api('/api/fleet')])
+        if (!alive) return
+        if (fleet.status === 'fulfilled') { setMode('open'); return }
+        const denied = fleet.reason instanceof HttpError && (fleet.reason.status === 401 || fleet.reason.status === 403)
+        if (!denied) { setMode('unreachable'); setError(String((fleet.reason as Error)?.message ?? fleet.reason)); return }
+        if (st.status !== 'fulfilled') { setMode('unreachable'); setError('auth status unavailable'); return }
+        setStatus(st.value)
+        setMode(st.value.setup_required ? 'enroll' : 'login')
+      } catch (e) {
+        if (alive) { setMode('unreachable'); setError(String((e as Error).message ?? e)) }
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  async function run(fn: () => Promise<string>) {
+    setBusy(true); setError('')
+    try {
+      const token = await fn()
+      setAuthToken(token) // remounts App via backendKey(); gate re-checks and opens
+    } catch (e) {
+      const msg = e instanceof HttpError ? (e.body?.detail ?? e.message) : (e as Error).message
+      setError(String(msg || 'the passkey ceremony failed'))
+      setBusy(false)
+    }
+  }
+
+  if (mode === 'open') return <>{children}</>
+
+  if (mode === 'checking') {
+    return (
+      <div className="authgate" role="status" aria-live="polite">
+        <div className="authcard"><StrandsMark size={40} /><p className="dim">checking access…</p></div>
+      </div>
+    )
+  }
+
+  const noWebauthn = (mode === 'enroll' || mode === 'login') && !webauthnReady()
+
+  return (
+    <div className="authgate">
+      <div className="authcard" role="dialog" aria-labelledby="authgate-title">
+        <StrandsMark size={40} />
+        <h1 id="authgate-title">
+          {mode === 'unreachable' ? 'backend unreachable'
+            : mode === 'enroll' ? 'create the admin passkey'
+            : 'unlock with your passkey'}
+        </h1>
+
+        {mode === 'unreachable' && (
+          <p className="dim">
+            The dashboard API did not answer. {error && <code>{error}</code>}
+          </p>
+        )}
+
+        {noWebauthn && (
+          <p className="authwarn">
+            Passkeys need a secure context. Open this page over <code>https://</code> or{' '}
+            <code>http://localhost</code> - on a plain LAN address the browser disables WebAuthn.
+          </p>
+        )}
+
+        {mode === 'enroll' && !noWebauthn && (
+          <form onSubmit={e => { e.preventDefault(); void run(() => enroll(label.trim() || 'admin', bootstrap.trim())) }}>
+            <p className="dim">
+              No passkey is enrolled yet. The first one becomes the admin key and seals the
+              dashboard - every later visit signs in with it.
+            </p>
+            <div className="field">
+              <label htmlFor="authgate-label">key label</label>
+              <input id="authgate-label" value={label} placeholder="e.g. cagatay-iphone"
+                     onChange={e => setLabel(e.target.value)} autoComplete="off" />
+            </div>
+            {status?.bootstrap_required && (
+              <div className="field">
+                <label htmlFor="authgate-bootstrap">bootstrap token</label>
+                <input id="authgate-bootstrap" type="password" value={bootstrap}
+                       placeholder="from the machine running the dashboard"
+                       onChange={e => setBootstrap(e.target.value)} autoComplete="off" />
+              </div>
+            )}
+            <button className="btn go" type="submit"
+                    disabled={busy || (status?.bootstrap_required && !bootstrap.trim())}>
+              {busy ? 'waiting for the authenticator…' : 'create passkey'}
+            </button>
+          </form>
+        )}
+
+        {mode === 'login' && !noWebauthn && (
+          <>
+            <p className="dim">This dashboard is sealed with a passkey.</p>
+            <button className="btn go" onClick={() => void run(login)} disabled={busy}>
+              {busy ? 'waiting for the authenticator…' : 'sign in'}
+            </button>
+          </>
+        )}
+
+        {error && mode !== 'unreachable' && <p className="autherror" role="alert">{error}</p>}
+      </div>
+    </div>
+  )
+}

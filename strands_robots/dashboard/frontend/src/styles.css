@@ -938,3 +938,29 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .rec-thumbs { display: flex; gap: 4px; }
 .rec-thumbs img { width: 100%; min-width: 0; border-radius: 6px; aspect-ratio: 4/3; object-fit: cover; }
 .rec-ep-gone { font-size: 11px; color: var(--dim); text-align: center; }
+
+/* --- AuthGate: the passkey door (full-viewport, glass card) ------------- */
+.authgate {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center; padding: var(--s6);
+  background: var(--bg);
+}
+.authcard {
+  display: flex; flex-direction: column; gap: var(--s5); align-items: flex-start;
+  width: min(380px, 100%);
+  background: var(--glass-2); border: 1px solid var(--border);
+  border-radius: var(--r5); padding: var(--s7);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+}
+.authcard h1 { font-size: var(--fs-lg); font-weight: 600; }
+.authcard form { display: flex; flex-direction: column; gap: var(--s4); width: 100%; align-items: stretch; }
+.authcard .btn.go { padding: 10px 14px; font-size: var(--fs-body); }
+.authcard .dim { line-height: 1.5; }
+.authwarn {
+  font-size: var(--fs-small); line-height: 1.5; border-radius: var(--r2); padding: var(--s3) var(--s4);
+  color: #e8c268; background: color-mix(in srgb, #e8c268 12%, transparent);
+}
+.autherror {
+  font-size: var(--fs-small); line-height: 1.4; border-radius: var(--r2); padding: var(--s3) var(--s4);
+  color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
