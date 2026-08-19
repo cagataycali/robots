@@ -32,6 +32,16 @@ _HF_ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}(/[A-Za-z0-9][A-Za-z
 
 _TRUST_ENV = "STRANDS_TRUST_REMOTE_CODE"
 _HF_ENV = "STRANDS_MESH_HF_REPO_ALLOW"
+#: The teleop safety envelope: how far one frame may reach, and how fast a joint
+#: may be commanded to travel. Both are RADIAN-shaped by default (4*pi / 8*pi),
+#: so a degree-reporting arm (every SO-10x) has every frame refused.
+_TELEOP_VALUE_ENV = "STRANDS_MESH_INPUT_VALUE_ABS"
+_TELEOP_SLEW_ENV = "STRANDS_MESH_INPUT_SLEW_ABS"
+#: Degrees plus a percent gripper: 400 covers a multi-turn wrist with headroom
+#: and still refuses a runaway three orders of magnitude out. Not "unlimited" -
+#: the envelope is the point, only its UNIT was wrong.
+_TELEOP_DEGREE_VALUE = "400"
+_TELEOP_DEGREE_SLEW = "800"
 
 _PROVIDER_RE = re.compile(r"provider '([^']{1,120})'")
 #: Read the value WHOLE — up to the closing quote, or to whitespace when bare —
@@ -76,7 +86,7 @@ class ConsentRequest:
 #: approval names one of these and (at most) a subject — never an env var and
 #: never a value, because "which variable does this grant touch" is a decision
 #: this module owns.
-KINDS: tuple[str, ...] = ("trust_remote_code", "hf_repo_allow")
+KINDS: tuple[str, ...] = ("trust_remote_code", "hf_repo_allow", "teleop_degree_units")
 
 
 def build_request(kind: str, subject: object = None, message: str = "") -> ConsentRequest | None:
@@ -112,6 +122,34 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
             grants=("run repository code for every policy load from now on",),
         )
 
+    if kind == "teleop_degree_units":
+        # Subject is the arm that was refused, for the dialog's wording only: the
+        # envelope is a MACHINE-wide setting, so the scope deliberately is not
+        # per-peer. Granting it for "this arm" and quietly applying it to every
+        # spawned child would be a lie about what was approved.
+        shown = name if name and _PROVIDER_NAME_RE.match(name) else "this arm"
+        return ConsentRequest(
+            kind=kind,
+            scope="teleop_degree_units",
+            title="Set the teleop envelope to degrees?",
+            risk=(
+                f"The mesh refuses every teleop frame from {shown} because its safety envelope "
+                f"assumes RADIANS (4·pi ≈ 12.57) and the arm reports DEGREES (a wrist at 170). "
+                f"Approving widens the envelope to {_TELEOP_DEGREE_VALUE} units and the per-joint "
+                f"speed bound to {_TELEOP_DEGREE_SLEW} units/s for every teleop stream on this "
+                "machine — a wider envelope means a single frame may command a longer reach, so a "
+                "faulty leader can ask for a bigger move before the bound stops it. It stays an "
+                "envelope: a runaway three orders of magnitude out is still refused."
+            ),
+            env_var=_TELEOP_VALUE_ENV,
+            subject=name,
+            message=text,
+            grants=(
+                f"{_TELEOP_VALUE_ENV}={_TELEOP_DEGREE_VALUE} (how far one frame may reach)",
+                f"{_TELEOP_SLEW_ENV}={_TELEOP_DEGREE_SLEW} (how fast one joint may be driven)",
+            ),
+        )
+
     if name is not None and not _HF_ENTRY_RE.match(name):
         name = None  # unparseable/hostile: ask, but grant nothing automatically
     shown = name or "the requested model"
@@ -145,6 +183,14 @@ def classify_refusal(text: object) -> ConsentRequest | None:
         m = _PROVIDER_RE.search(message)
         return build_request("trust_remote_code", m.group(1) if m else None, message)
 
+    # The teleop refusal names no env var (it is a per-frame rejection, logged by
+    # the follower), so it is recognised by its own words. Both halves of the
+    # envelope lead to the same grant: they are one unit decision, not two.
+    if "input frame value for" in message and "out of range" in message:
+        return build_request("teleop_degree_units", None, message)
+    if "input frame slew for" in message and "out of range" in message:
+        return build_request("teleop_degree_units", None, message)
+
     if _HF_ENV in message:
         quoted = _REPO_QUOTED_RE.search(message)
         bare = _REPO_BARE_RE.search(message)
@@ -167,6 +213,14 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
         if str(env.get(_TRUST_ENV, "")).strip().lower() in ("1", "true", "yes"):
             return {}
         return {_TRUST_ENV: "1"}
+
+    if request.kind == "teleop_degree_units":
+        patch = {}
+        if str(env.get(_TELEOP_VALUE_ENV, "")).strip() != _TELEOP_DEGREE_VALUE:
+            patch[_TELEOP_VALUE_ENV] = _TELEOP_DEGREE_VALUE
+        if str(env.get(_TELEOP_SLEW_ENV, "")).strip() != _TELEOP_DEGREE_SLEW:
+            patch[_TELEOP_SLEW_ENV] = _TELEOP_DEGREE_SLEW
+        return patch
 
     if request.kind == "hf_repo_allow":
         repo = request.subject
@@ -201,6 +255,16 @@ def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) 
         if str(env.get(_TRUST_ENV, "")).strip().lower() not in ("1", "true", "yes"):
             return {}
         return {_TRUST_ENV: ""}
+
+    if request.kind == "teleop_degree_units":
+        # Back to the SDK defaults by CLEARING both, not by writing 12.566...:
+        # a number frozen here would silently override a future SDK default.
+        patch = {}
+        if str(env.get(_TELEOP_VALUE_ENV, "")).strip():
+            patch[_TELEOP_VALUE_ENV] = ""
+        if str(env.get(_TELEOP_SLEW_ENV, "")).strip():
+            patch[_TELEOP_SLEW_ENV] = ""
+        return patch
 
     if request.kind == "hf_repo_allow":
         repo = request.subject

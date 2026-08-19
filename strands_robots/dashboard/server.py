@@ -47,6 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from strands_robots.dashboard import arm_roles, config_api, consent, settings
+from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
 
@@ -483,7 +484,47 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         keep. Works on hardware AND sim peers (TeleopMixin lift)."""
         require_peer(peer_id)
         result = await app.state.bridge.send_cmd_async(peer_id, {"action": "teleop_status"}, timeout=10.0)
-        return {"peer_id": peer_id, "result": result}
+        # The counters alone lied: a follower refusing EVERY frame reported
+        # running:true, and the reason existed only in its child log. health turns
+        # the counters (+ that log, when the peer is ours) into a sentence, and a
+        # refusal we can continue from arrives with its consent request attached.
+        inner = result.get("result") if isinstance(result, dict) else None
+        log_tail = None
+        managed = app.state.devices.robots.get(peer_id)
+        if managed is not None:
+            log_tail = list(getattr(managed, "logs", []) or [])[-40:]
+        health = teleop_health(inner if inner is not None else result, log_tail)
+        # "Nothing is arriving" is not yet an answer: it could be a leader that
+        # never started, or two peers that are not meeting. Ask the named leader
+        # ONLY in that case - one extra round trip, and only when it decides
+        # which end of the problem the operator should look at.
+        silent = {k: v for k, v in health.get("receivers", {}).items() if v.get("state") == "silent"}
+        if silent:
+            counted: dict[str, int] = {}
+            for key in silent:
+                source, _, device = key.partition("/")
+                if not source or source == peer_id:
+                    continue
+                try:
+                    src = await app.state.bridge.send_cmd_async(
+                        source, {"action": "teleop_status"}, timeout=10.0)
+                except Exception as exc:  # noqa: BLE001 - a quiet leader is data too
+                    logger.debug("could not ask leader %s about its publisher: %r", source, exc)
+                    continue
+                frames = published_frames(
+                    src.get("result") if isinstance(src, dict) else src, device or "leader")
+                if frames is not None:
+                    counted[key] = frames
+            if counted:
+                health = teleop_health(inner if inner is not None else result, log_tail, counted)
+        worst = health.get("worst") or {}
+        if worst.get("state") == "refusing" and log_tail:
+            for line in reversed(log_tail):
+                request = consent.classify_refusal(str(line))
+                if request is not None:
+                    health["needs_consent"] = request.as_dict()
+                    break
+        return {"peer_id": peer_id, "result": result, "health": health}
 
     @app.post("/api/robots/{peer_id}/teleop/publish")
     async def teleop_publish(peer_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
