@@ -10,6 +10,7 @@ import shutil
 import socket
 import subprocess
 import sys
+from pathlib import Path
 
 #: Where an ``lsof`` binary is looked for. ``PATH`` first, then the two absolute
 #: locations it actually ships in, because ``/usr/sbin`` is missing from the
@@ -218,7 +219,14 @@ def main() -> None:
         "--auth-token", default=None, metavar="TOKEN",
         help="Require this bearer token on every /api and /ws request. Without "
              "it the dashboard is open to anyone who can reach the port - and "
-             "it moves real motors.",
+             "it moves real motors. NOTE: a token on the command line is "
+             "readable by every local user via ps; prefer --auth-token-file.",
+    )
+    sec.add_argument(
+        "--auth-token-file", default=None, metavar="PATH",
+        help="Read the bearer token from this file (first line, whitespace "
+             "stripped) instead of the command line, so it never appears in "
+             "ps output or shell history.",
     )
     sec.add_argument(
         "--cors-origin", action="append", default=None, metavar="ORIGIN",
@@ -275,6 +283,19 @@ def main() -> None:
         patch["mesh"]["camera_hz"] = args.camera_hz
     if args.auth_token is not None:
         patch["security"]["auth_token"] = args.auth_token
+    if args.auth_token_file is not None:
+        # JOURNEYS #15: a token in argv is readable by every local user via ps
+        # (this machine's audit literally lifted it that way). The file form
+        # keeps it out of process listings and shell history. Refusing on a
+        # missing/empty file beats silently starting open: the operator asked
+        # for auth and would not get it.
+        try:
+            file_token = Path(args.auth_token_file).read_text().strip().splitlines()[0].strip()
+        except (OSError, IndexError):
+            file_token = ""
+        if not file_token:
+            parser.error(f"--auth-token-file {args.auth_token_file!r} is missing or empty")
+        patch["security"]["auth_token"] = file_token
     if args.cors_origin is not None:
         patch["security"]["cors_origins"] = args.cors_origin
     changed = settings.update({k: v for k, v in patch.items() if v})

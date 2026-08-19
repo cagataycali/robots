@@ -258,8 +258,10 @@ body {
   /* opaque: this button is read on top of drawers and sheets, not just the page */
   background: color-mix(in srgb, var(--danger) 16%, var(--bg));
   box-shadow: var(--shadow2);
-  color: var(--danger); font-weight: 700; font-size: var(--fs-small);
-  padding: 7px 12px; border-radius: var(--r3); cursor: pointer;
+  color: var(--danger); font-weight: 700; font-size: 14px;
+  /* 44px min-height: this is the control a scared human aims at, Apple's
+     touch minimum applies to it more than to anything else on the page. */
+  padding: 11px 14px; min-height: 44px; border-radius: var(--r3); cursor: pointer;
   transition: background var(--dur);
 }
 .estop:hover { background: color-mix(in srgb, var(--danger) 30%, var(--bg)); }

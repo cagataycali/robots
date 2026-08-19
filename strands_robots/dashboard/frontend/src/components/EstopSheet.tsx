@@ -68,6 +68,10 @@ export default function EstopSheet({ open, onClose }: { open: boolean; onClose: 
               operator override code. A peer that is wedged or fully off the mesh still needs
               the hardware e-stop.
             </p>
+            <p className="hint">
+              tip: <kbd>.</kbd> opens this sheet from anywhere — it works even when a drawer
+              or dialog is covering the button.
+            </p>
             <div className="sheet-actions">
               <button className="btn danger big" onClick={fire} disabled={firing}>
                 {firing ? 'stopping…' : 'STOP ALL ROBOTS'}
