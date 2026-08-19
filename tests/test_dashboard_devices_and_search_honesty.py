@@ -89,7 +89,8 @@ def _payload(dm, monkeypatch):
     from strands_robots.dashboard import device_manager as dmod
 
     monkeypatch.setattr(dmod, "scan_serial_ports", lambda: [])
-    monkeypatch.setattr(dmod.DeviceManager, "_cameras", lambda self, refresh=False: [])
+    # _cameras also takes the mesh's frame evidence now (U14: configured != streaming).
+    monkeypatch.setattr(dmod.DeviceManager, "_cameras", lambda self, refresh=False, live_cameras=None: [])
     monkeypatch.setattr(dmod.DeviceManager, "_camera_names", lambda self, refresh=False: [])
     return dmod.DeviceManager.devices(dm)
 

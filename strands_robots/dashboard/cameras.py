@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Sequence
 
 #: Probe verdicts, worst-to-best for the UI's sorting purposes.
-STATES = ("blocked", "absent", "in_use", "unreadable", "ready")
+STATES = ("blocked", "absent", "assigned", "in_use", "unreadable", "ready")
 
 
 def classify_probe_stderr(text: str) -> tuple[str, str, str | None]:
@@ -95,6 +95,7 @@ def merge_cameras(
     roster: Sequence[Mapping[str, Any]] = (),
     remembered: Mapping[int, Mapping[str, Any]] | None = None,
     failures: Mapping[int, str] | None = None,
+    streaming: Iterable[int] | None = None,
     max_index: int = 4,
 ) -> list[dict[str, Any]]:
     """One row per camera this machine could plausibly have, never fewer.
@@ -113,6 +114,9 @@ def merge_cameras(
     """
     remembered = remembered or {}
     failures = failures or {}
+    # None means "nobody told us what is actually streaming" - stay with the
+    # older, kinder reading rather than accusing every owner of silence.
+    streaming_set = None if streaming is None else {int(i) for i in streaming}
     probed_by_index = {int(c["index"]): c for c in probed if c.get("index") is not None}
 
     universe: set[int] = set(probed_by_index) | set(claimed) | set(failures)
@@ -136,10 +140,25 @@ def merge_cameras(
             row["state"] = "ready"
             row["reason"] = "opened and delivered a frame just now"
         elif index in claimed:
-            row["state"] = "in_use"
-            row["claimed_by"] = claimed[index]
-            row["reason"] = f"streaming for {claimed[index]}"
-            row["remedy"] = f"despawn {claimed[index]} to free it"
+            owner = claimed[index]
+            row["claimed_by"] = owner
+            if streaming_set is None or index in streaming_set:
+                row["state"] = "in_use"
+                row["reason"] = f"streaming for {owner}"
+                row["remedy"] = f"despawn {owner} to free it"
+            else:
+                # Measured on this machine: both arm cameras were CONFIGURED and
+                # neither opened (macOS denied the whole process tree), so the
+                # arm dropped them and published nothing. Saying "streaming for
+                # so101-arm-1" there sends the operator to a robot card that
+                # will never show a picture - the config is not the evidence,
+                # the frames are.
+                row["state"] = "assigned"
+                row["reason"] = (
+                    f"assigned to {owner}, but no frames are arriving - that robot could not "
+                    f"open it either"
+                )
+                row["remedy"] = f"check {owner}'s log (devices > logs), then respawn it"
             row.update(_geometry(remembered.get(index)))
             if _geometry(remembered.get(index)):
                 row["geometry_from"] = "remembered"

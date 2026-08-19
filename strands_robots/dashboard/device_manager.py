@@ -25,7 +25,7 @@ import threading
 import uuid
 import time
 from collections import deque
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -849,7 +849,39 @@ class DeviceManager:
                     claimed[int(iop)] = m.peer_id
         return claimed
 
-    def _cameras(self, refresh: bool = False) -> list[dict[str, Any]]:
+    def _streaming_indices(self, live_cameras: Mapping[str, Iterable[str]] | None) -> set[int] | None:
+        """Which claimed indices are provably publishing frames.
+
+        ``live_cameras`` is peer_id -> camera NAMES the mesh has actually seen
+        frames for. Mapping a name back to an index uses the child's own config,
+        which is the only place the pairing exists. None in, None out: absence of
+        evidence must not become evidence of silence.
+        """
+        if live_cameras is None:
+            return None
+        streaming: set[int] = set()
+        for peer_id, names in live_cameras.items():
+            managed = self.robots.get(peer_id)
+            if managed is None:
+                continue
+            wanted = {str(n).split("/")[-1] for n in names}
+            for cam_name, cfg in (managed.cameras or {}).items():
+                if str(cam_name).split("/")[-1] not in wanted:
+                    continue
+                iop = cfg.get("index_or_path") if isinstance(cfg, dict) else None
+                if isinstance(iop, bool):
+                    continue
+                if isinstance(iop, int):
+                    streaming.add(iop)
+                elif isinstance(iop, str) and iop.isdigit():
+                    streaming.add(int(iop))
+        return streaming
+
+    def _cameras(
+        self,
+        refresh: bool = False,
+        live_cameras: Mapping[str, Iterable[str]] | None = None,
+    ) -> list[dict[str, Any]]:
         """Every camera this machine could have, each with its state and WHY.
 
         A camera is never omitted because it could not be opened: dropping the
@@ -874,10 +906,15 @@ class DeviceManager:
             roster=self._camera_names(),
             remembered=self._camera_memory,
             failures={i: t for i, t in (self._camera_failures or {}).items() if i not in claimed},
+            streaming=self._streaming_indices(live_cameras),
         )
 
-    def devices(self, refresh: bool = False) -> dict[str, Any]:
-        cams = self._cameras(refresh=refresh)
+    def devices(
+        self,
+        refresh: bool = False,
+        live_cameras: Mapping[str, Iterable[str]] | None = None,
+    ) -> dict[str, Any]:
+        cams = self._cameras(refresh=refresh, live_cameras=live_cameras)
         return {
             "serial_ports": scan_serial_ports(),
             "cameras": cams,

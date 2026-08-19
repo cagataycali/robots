@@ -1055,7 +1055,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         robots are never re-opened; ``?refresh=1`` forces a
         fresh probe of the unclaimed indices.
         """
-        return await asyncio.to_thread(app.state.devices.devices, refresh)
+        # The mesh's frame bookkeeping is the evidence for "in use": a camera
+        # in a child's config that never delivered a frame is assigned, not
+        # streaming, and the difference is what the operator has to act on.
+        snapshot = app.state.bridge.snapshot()
+        live = {
+            peer_id: list((entry.get("cameras") or {}).keys())
+            for peer_id, entry in (snapshot.get("peers") or {}).items()
+        }
+        return await asyncio.to_thread(app.state.devices.devices, refresh, live)
 
     @app.get("/api/devices/camera/{index}/preview")
     async def camera_preview(index: int) -> Response:

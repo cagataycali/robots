@@ -25,6 +25,7 @@ export interface CameraProblem { kind: string; message: string; remedy?: string;
 const STATE_LABEL: Record<string, string> = {
   ready: 'ready',
   in_use: 'in use',
+  assigned: 'assigned, no frames',
   blocked: 'blocked by macOS',
   unreadable: 'not responding',
   absent: 'nothing here',
@@ -102,7 +103,7 @@ export default function CameraGallery(
                 probably <b>{c.name_hint}</b>{c.name_is_guess ? ' · snap a preview to be sure' : ''}
               </div>
             )}
-            {c.claimed_by ? (
+            {c.claimed_by && c.state !== 'assigned' ? (
               <div className="camcard-body claimed-note">
                 streaming for <b>{c.claimed_by}</b> — watch it on that robot's card
                 {c.remedy ? <div className="hint">{c.remedy}</div> : null}

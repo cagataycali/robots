@@ -162,3 +162,38 @@ def test_no_verdict_without_evidence():
     rows = cam.merge_cameras(probed=[], claimed={}, roster=ROSTER, failures={0: DEAD_STDERR})
     assert cam.blocked_verdict(rows) is None
     assert cam.blocked_verdict([]) is None
+
+
+# ----------------------------------------------------- configured vs streaming
+
+
+def test_a_configured_camera_with_no_frames_is_assigned_not_streaming():
+    """Exactly the live state on this Mac: both arm cameras were configured and
+    neither opened, so the arm dropped them and published nothing."""
+    rows = cam.merge_cameras(
+        probed=[], claimed={1: "so101-arm-1", 2: "so101-arm-1"}, roster=ROSTER,
+        streaming=set(),
+    )
+    states = {r["index"]: r for r in rows if r["index"] in (1, 2)}
+    assert [states[1]["state"], states[2]["state"]] == ["assigned", "assigned"]
+    assert "no frames are arriving" in states[1]["reason"]
+    # The remedy points at the evidence, not at a picture that will never load.
+    assert "log" in states[1]["remedy"] and "so101-arm-1" in states[1]["remedy"]
+
+
+def test_frames_arriving_still_reads_as_in_use():
+    (row,) = [
+        r for r in cam.merge_cameras(
+            probed=[], claimed={1: "arm"}, roster=ROSTER[:2], streaming={1},
+        ) if r["index"] == 1
+    ]
+    assert row["state"] == "in_use" and "streaming for arm" in row["reason"]
+
+
+def test_no_streaming_evidence_keeps_the_kinder_reading():
+    """None means nobody told us - absence of evidence is not evidence."""
+    (row,) = [
+        r for r in cam.merge_cameras(probed=[], claimed={1: "arm"}, roster=ROSTER[:2])
+        if r["index"] == 1
+    ]
+    assert row["state"] == "in_use"

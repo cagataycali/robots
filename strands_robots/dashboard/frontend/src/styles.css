@@ -1236,3 +1236,4 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .cam-why { display: grid; gap: 6px; font-size: 12.5px; line-height: 1.45; }
 .camcard.cam-blocked { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
 .camproblem { margin-bottom: 12px; display: grid; gap: 4px; }
+.campill-assigned { background: color-mix(in srgb, #d9a020 34%, transparent); color: #ffe6b0; border-color: color-mix(in srgb, #d9a020 60%, transparent); }
