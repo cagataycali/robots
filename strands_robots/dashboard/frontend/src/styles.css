@@ -1073,3 +1073,33 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .claimed-note { font-size: 11.5px; color: var(--dim, #8b98a9); padding-bottom: 9px; }
 .camerr { font-size: 11px; color: var(--danger, #ff4d5e); margin-top: 6px; overflow-wrap: anywhere; }
 .camnames { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+
+/* ---- training: story sentence, progress, loss curve ---- */
+.train-story {
+  font-size: 12.5px; line-height: 1.5; color: var(--text, #e8eef6);
+  background: var(--panel2, #161d29); border: 1px solid var(--border, #263042);
+  border-left: 3px solid var(--accent, #4a9eff);
+  border-radius: var(--r1, 6px); padding: 8px 10px; margin: 0 0 10px;
+}
+.train-story.empty { color: var(--dim, #8b98a9); border-left-color: var(--border, #263042); }
+.train-progress {
+  position: relative; height: 16px; border-radius: 8px; overflow: hidden;
+  background: var(--panel3, #1c2432); margin: 6px 0 2px;
+}
+.train-progress-fill {
+  position: absolute; inset: 0 auto 0 0;
+  background: var(--accent-fill, #2a6fd0); transition: width 0.6s ease;
+}
+.train-progress-label {
+  position: relative; display: block; text-align: center;
+  font: 600 10px/16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fff;
+}
+.loss-spark { margin: 4px 0 2px; }
+.loss-spark.empty { font-size: 11px; color: var(--dim, #8b98a9); padding: 4px 0; }
+.loss-spark canvas { display: block; width: 100%; }
+.loss-spark-label {
+  display: flex; justify-content: space-between; font-size: 10.5px;
+  color: var(--text, #e8eef6); margin-top: 2px;
+}
+.loss-spark-label .dim { color: var(--dim, #8b98a9); }

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
+import LossSpark from './LossSpark'
+import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
 
 interface Dataset { root: string; repo_id: string; total_episodes?: number; robot_type?: string; fps?: number }
 interface Job { job_id: string; provider: string; dataset?: string; base_model?: string; output_dir?: string; steps?: number; submitted_at?: number }
@@ -18,6 +20,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({})
+  const [traces, setTraces] = useState<Record<string, LossPoint[]>>({})
   const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora' })
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -44,6 +47,11 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         try {
           const s = await api(`/api/training/status?provider=${job.provider}&job_id=${encodeURIComponent(job.job_id)}`)
           setStatuses(prev => ({ ...prev, [job.job_id]: s }))
+          const m = s?.data?.metrics as Record<string, unknown> | undefined
+          if (m) setTraces(prev => ({
+            ...prev,
+            [job.job_id]: pushLoss(prev[job.job_id] ?? [], m.latest_step, m.latest_loss),
+          }))
         } catch { /* transient */ }
       }
     }, 5000)
@@ -112,6 +120,18 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     setBusy(false)
   }
 
+
+  // The form re-told as one sentence. A grid of fields answers "what can I
+  // set"; the sentence answers the question that actually matters before a
+  // multi-hour job: "what did I just ask for?"
+  const datasetLabel = (() => {
+    const d = datasets.find(x => x.root === form.dataset_root)
+    return d ? `${d.repo_id} (${d.total_episodes ?? '?'} eps)` : null
+  })()
+  const story = form.dataset_root
+    ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? form.dataset_root} for ${fmtStep(Number(form.steps) || 10000)} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.`
+    : 'Pick a dataset to begin — the plan reads back here before anything runs.'
+
   return (
     <div className="train-sheet">
       <div className="train-head">
@@ -120,6 +140,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="train-form">
+        <p className={`train-story${form.dataset_root ? '' : ' empty'}`}>{story}</p>
         <label className="field"><span>provider</span>
           <select value={form.provider} onChange={e => set('provider', e.target.value)} disabled={busy}>
             {trainers.map(t => <option key={t}>{t}</option>)}
@@ -228,9 +249,31 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               <div className="train-job-meta">
                 {job.dataset?.split('/').slice(-2).join('/')} → {job.output_dir} · {job.steps} steps
               </div>
-              {st?.data?.metrics && Object.keys(st.data.metrics).length > 0 && (
-                <div className="train-job-metrics">{JSON.stringify(st.data.metrics).slice(0, 140)}</div>
-              )}
+              {(() => {
+                const m = st?.data?.metrics as Record<string, any> | undefined
+                if (!m || Object.keys(m).length === 0) return null
+                const step = typeof m.latest_step === 'number' ? m.latest_step : null
+                const total = typeof job.steps === 'number' ? job.steps : Number(job.steps) || null
+                return (
+                  <>
+                    {step !== null && total ? (
+                      <div className="train-progress" role="progressbar"
+                           aria-valuemin={0} aria-valuemax={total} aria-valuenow={Math.min(step, total)}>
+                        <div className="train-progress-fill"
+                             style={{ width: `${Math.min(100, (step / total) * 100)}%` }} />
+                        <span className="train-progress-label">{fmtStep(step)} / {fmtStep(total)} steps</span>
+                      </div>
+                    ) : null}
+                    <LossSpark trace={traces[job.job_id] ?? []} />
+                    {m.latest_loss !== undefined && !Number.isFinite(m.latest_loss) && (
+                      <div className="train-msg">⚠ loss is NaN — the run is executing but NOT learning (check LR / data)</div>
+                    )}
+                    {m.liveness_ok === false && state === 'running' && (
+                      <div className="train-msg">⚠ no step lines in the log yet — still warming up, or stalled</div>
+                    )}
+                  </>
+                )
+              })()}
               <div className="train-job-actions">
                 <button className="btn ghost" onClick={() => exportCkpt(job)} disabled={busy}>📦 export checkpoint</button>
               </div>
