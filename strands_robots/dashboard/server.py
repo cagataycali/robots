@@ -140,8 +140,14 @@ class TokenAuthMiddleware:
         netloc = urlsplit(origin).netloc.strip().lower()
         if netloc and netloc == host:
             return False  # same-origin
+        # A WILDCARD IS NOT A WRITE PERMIT. "*" is a reasonable answer to
+        # "who may READ this API", and it is what older installs persisted into
+        # settings.json - but honouring it here would let any tab the operator
+        # happens to have open POST /api/robots/{peer}/task and move the arms
+        # (Q20). Mutations and websockets need an origin named EXPLICITLY.
         allowed = settings.get("security", "cors_origins", []) or []
-        if "*" in allowed or origin.rstrip("/") in {str(a).rstrip("/") for a in allowed}:
+        named = {str(a).rstrip("/") for a in allowed if str(a) != "*"}
+        if origin.rstrip("/") in named:
             return False
         if scope["type"] == "websocket":
             return True
@@ -256,6 +262,12 @@ def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
 def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app = FastAPI(title="strands-robots dashboard")
     origins = settings.get("security", "cors_origins", []) or []
+    if "*" in [str(o) for o in origins]:
+        logger.warning(
+            "security.cors_origins contains '*': any site may READ this API with a "
+            "valid token. Cross-origin writes and websockets stay refused regardless "
+            "(a wildcard is not a write permit) - name the origins you actually use."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,

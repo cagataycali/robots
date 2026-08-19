@@ -296,3 +296,44 @@ def test_same_origin_websocket_passes():
     scope["type"] = "websocket"
     scope.pop("method")
     assert run_scope(scope) == "passed"
+
+
+def _with_cors(monkeypatch, origins):
+    from strands_robots.dashboard import server as srv2
+
+    def fake_get(section, key, default=None):
+        if (section, key) == ("security", "cors_origins"):
+            return origins
+        return None
+
+    monkeypatch.setattr(srv2.settings, "get", fake_get)
+
+
+def test_wildcard_cors_does_not_license_cross_origin_writes(monkeypatch):
+    # The default is [] now, but installs that ran the old default persisted
+    # ["*"] into settings.json - and "*" answers "who may READ", never "who
+    # may move the arms". A wildcard must not turn any open tab into a
+    # motor-control client.
+    _with_cors(monkeypatch, ["*"])
+    assert run_scope(_origin_scope()) == 403
+    assert run_scope(_origin_scope(method="DELETE")) == 403
+
+
+def test_wildcard_cors_still_allows_reads_and_same_origin_writes(monkeypatch):
+    _with_cors(monkeypatch, ["*"])
+    assert run_scope(_origin_scope(method="GET")) == "passed"
+    assert run_scope(_origin_scope(origin="http://localhost:8090")) == "passed"
+
+
+def test_wildcard_cors_does_not_license_cross_origin_websockets(monkeypatch):
+    _with_cors(monkeypatch, ["*"])
+    scope = _origin_scope(path="/ws/chat")
+    scope["type"] = "websocket"
+    scope.pop("method")
+    assert run_scope(scope) == 1008
+
+
+def test_wildcard_beside_a_named_origin_keeps_only_the_named_one(monkeypatch):
+    _with_cors(monkeypatch, ["*", "https://tools.example"])
+    assert run_scope(_origin_scope(origin="https://tools.example")) == "passed"
+    assert run_scope(_origin_scope(origin="https://evil.example")) == 403
