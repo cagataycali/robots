@@ -112,3 +112,21 @@ export function statusSentence(f: StatusFacts): StatusLine {
     text: 'idle and still — safe to approach',
   }
 }
+
+/**
+ * The ribbon renders the word as a coloured chip and the sentence beside it, so
+ * a sentence that OPENS with that same word reads "IDLE idle and still…".
+ * Strips the duplicate lead only when it really is a duplicate — never rewrites
+ * the sentence otherwise, and never returns an empty detail.
+ */
+export function ribbonDetail(line: StatusLine): string {
+  const word = line.word.trim().toLowerCase()
+  const text = line.text
+  if (!word || !text.toLowerCase().startsWith(word)) return text
+  // A WORD BOUNDARY IS REQUIRED: 'idle' must not eat the front of 'idling
+  // along' and leave 'ing along'. Only a whole leading word is a duplicate.
+  const after = text.charAt(word.length)
+  if (after && /[A-Za-z0-9]/.test(after)) return text
+  const rest = text.slice(word.length).replace(/^[\s\u2014:,-]+/, '')
+  return rest.length > 0 ? rest : text
+}

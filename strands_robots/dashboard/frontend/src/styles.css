@@ -424,6 +424,20 @@ body {
 .spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
 .metric { font-size: var(--fs-micro); font-family: var(--mono); color: var(--dim); }
 .metric.moving { color: var(--warn); }
+/* UX_REVIEW #6: promote "what is it doing NOW". The one fact an operator checks
+   before putting a hand near the arm should not be the least visible text on the
+   card — it is a chip with a dot, amber and pulsing while the joints change. */
+.motionchip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--fs-micro); font-family: var(--mono); letter-spacing: .02em;
+  padding: 1px 7px 1px 6px; border-radius: var(--rpill, 999px);
+  border: 1px solid transparent;
+}
+.motiondot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.motionchip.still { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); border-color: color-mix(in srgb, var(--ok) 28%, transparent); }
+.motionchip.moving { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); border-color: color-mix(in srgb, var(--warn) 50%, transparent); font-weight: 700; }
+.motionchip.moving .motiondot { animation: pulse .8s infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .motionchip.moving .motiondot { animation: none; } }
 .metric.warn { color: var(--danger); }
 
 .streamline { font-size: var(--fs-tiny); color: var(--warn); font-family: var(--mono); }
@@ -1181,7 +1195,9 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   padding: 5px 10px; margin: 2px 0 6px;
   border-radius: var(--r1, 6px);
   border: 1px solid var(--border, #263042);
-  color: var(--dim, #8b98a9);
+  /* was --dim, which is this app's DISABLED colour (UX_REVIEW #2): the calm state
+     is the one an operator reads most often and it was the faintest text here. */
+  color: var(--text-2, #c3cedb);
 }
 .status-ribbon .status-word {
   text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em;

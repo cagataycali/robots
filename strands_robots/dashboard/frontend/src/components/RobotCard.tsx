@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Peer } from '../types'
 import { useTask } from '../lib/useTask'
 import { useTelemetry } from '../lib/useTelemetry'
-import { statusSentence } from '../lib/statusSentence'
+import { ribbonDetail, statusSentence } from '../lib/statusSentence'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
@@ -90,7 +90,7 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
       {status && (
         <div className={`status-ribbon ${status.severity}`} role="status">
           <b className="status-word">{status.word}</b>
-          <span>{status.text}</span>
+          <span>{ribbonDetail(status)}</span>
         </div>
       )}
       {offline && !status && (
