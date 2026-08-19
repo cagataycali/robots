@@ -39,6 +39,7 @@ from strands.types.tools import ToolResult, ToolSpec, ToolUse
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
+    boolean_flag_error,
     dds_domain_id_error,
     positive_count_error,
     positive_finite_number_error,
@@ -484,7 +485,9 @@ class Robot(TeleopMixin, AgentTool):
                 ``/<robot>/joint_command`` and forwards inbound messages to
                 ``send_action`` so an external ROS 2 stack can drive the real
                 arm (full duplex). Set False for a read-only telemetry bridge.
-                Ignored unless ``ros2_bridge=True``.
+                Ignored unless ``ros2_bridge=True``. Only a boolean names a
+                posture: the value is checked, not read by truthiness, so
+                ``"false"`` cannot open the surface it asks to close.
             ros2_transport: Which ROS 2 backend the bridge uses:
                 ``"rclpy"`` (default) - full ``sensor_msgs`` fidelity, needs a
                 sourced ROS 2 distro; ``"rtps"`` - pure cyclonedds (a single
@@ -726,7 +729,10 @@ class Robot(TeleopMixin, AgentTool):
                 Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
                 discovery ports from it, and 233 lands past the end of the port space.
             ros2_commands: When True (default), also subscribe to
-                ``joint_command`` and drive the arm; False for read-only.
+                ``joint_command`` and drive the arm; False for read-only. Only a
+                boolean names a posture: the value is checked, not read by
+                truthiness, so ``"false"`` cannot open the surface it asks to
+                close.
             ros2_transport: ``"rclpy"`` or ``"rtps"`` (see above).
             joint_limits: Optional ``{"<motor>.pos": (min, max)}`` clamp ranges
                 threaded into whichever bridge is built (both enforce them on
@@ -738,12 +744,26 @@ class Robot(TeleopMixin, AgentTool):
                 layer, not by a config dict).
 
         Raises:
-            ValueError: If ``ros2_domain`` is outside ``[0, 232]``; if
+            ValueError: If ``ros2_bridge`` or ``ros2_commands`` is not a boolean;
+                if ``ros2_domain`` is outside ``[0, 232]``; if
                 ``ros2_transport`` is not ``"rclpy"`` or ``"rtps"``;
                 if ``joint_limits`` / ``dds_security_config`` are supplied with
                 ``ros2_bridge=False``; or if ``dds_security_config`` is supplied
                 with ``ros2_transport="rclpy"``.
         """
+        # Both flags decide whether this robot exposes an inbound, arm-driving
+        # command surface, so they are checked on the shared boolean domain
+        # rather than read by truthiness. ``"false"``, ``"no"``, ``"off"`` and
+        # ``"0"`` - the spellings a YAML/env deployment config yields - are every
+        # one of them truthy, so reading them would build a bridge for a caller
+        # who asked for none and subscribe to ``joint_command`` for a caller who
+        # asked for read-only. Answered before the first assignment below and
+        # before either bridge is constructed, so a refused flag leaves no
+        # bridge state, no ``ROS_DOMAIN_ID`` write and no DDS participant behind.
+        for flag_name, flag_value in (("ros2_bridge", ros2_bridge), ("ros2_commands", ros2_commands)):
+            if error := boolean_flag_error(flag_value, flag_name, type(self).__name__):
+                raise ValueError(error)
+
         self._ros2_bridge_enabled = bool(ros2_bridge)
         # A domain id outside the RTPS port map cannot be published on by either
         # transport, so refuse it here rather than letting it reach one of them.

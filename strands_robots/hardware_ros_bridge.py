@@ -43,7 +43,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.ros_telemetry import RosTelemetryBridge
-from strands_robots.utils import positive_finite_number_error
+from strands_robots.utils import boolean_flag_error, positive_finite_number_error
 
 if TYPE_CHECKING:
     from strands_robots.hardware_robot import Robot
@@ -76,7 +76,9 @@ class HardwareRosBridge(RosTelemetryBridge):
         qos_depth: Depth of the publishers'/subscription's KEEP_LAST history.
         enable_commands: When True (default) and a ``robot`` is bound, subscribe
             to ``/<robot>/joint_command`` and drive the arm. Set False for a
-            read-only (telemetry-only) bridge.
+            read-only (telemetry-only) bridge. Only a boolean names a posture:
+            the value is checked, not read by truthiness, so ``"false"`` cannot
+            select the surface it asks to close.
         command_robot_name: Topic namespace for the inbound command topic.
             Defaults to the bound robot's name (matching the namespace this
             bridge *publishes* ``joint_states`` under), so a controller can echo
@@ -101,7 +103,8 @@ class HardwareRosBridge(RosTelemetryBridge):
             single out-of-range joint can never drive part of the arm.
 
     Raises:
-        ValueError: If ``domain_id`` is outside ``[0, 232]``, if ``spin_period``
+        ValueError: If ``enable_commands`` is not a boolean, if ``domain_id`` is
+            outside ``[0, 232]``, if ``spin_period``
             is not a positive finite number, or if ``joint_limits`` is not a
             ``{"<motor>.pos": (min, max)}`` mapping of finite numeric pairs with
             ``min <= max``.
@@ -128,6 +131,17 @@ class HardwareRosBridge(RosTelemetryBridge):
         # process-wide ``ROS_DOMAIN_ID`` write the base performs, so a refused
         # period leaves the environment as it found it.
         if error := positive_finite_number_error(spin_period, "spin_period", type(self).__name__):
+            raise ValueError(error)
+
+        # ``enable_commands`` selects whether this bridge exposes an inbound,
+        # arm-driving surface, so it is checked rather than read by truthiness:
+        # every non-empty string is truthy, so ``"false"`` would subscribe to
+        # ``joint_command`` for a caller who asked for a read-only bridge. It is
+        # answered in the same place and for the same reasons as the period
+        # above - ahead of the base constructor, so the refusal reports
+        # identically with and without the [ros2] extra and leaves the
+        # process-wide ``ROS_DOMAIN_ID`` as it found it.
+        if error := boolean_flag_error(enable_commands, "enable_commands", type(self).__name__):
             raise ValueError(error)
 
         super().__init__(domain_id=domain_id, node_name=node_name, qos_depth=qos_depth)

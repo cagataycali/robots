@@ -325,7 +325,10 @@ publishes the same topics over the pip-installable cyclonedds binding and needs
 no distro at all. The
 inbound command path is on by default (`ros2_commands=True`); set
 `ros2_commands=False` for a read-only telemetry bridge that publishes but cannot
-be driven. A daemon thread spins the node so inbound commands are serviced
+be driven. Only a boolean names either posture - `ros2_bridge` and
+`ros2_commands` are checked at construction, so a config that spells the flag
+`"false"` is refused rather than reading as the truthy value it is and opening
+the surface it asks to close. A daemon thread spins the node so inbound commands are serviced
 concurrently with publishing, and it is torn down cleanly on `cleanup()`/`stop()`.
 
 Because the inbound `joint_command` topic drives the physical arm, two guards

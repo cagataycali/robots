@@ -1400,8 +1400,10 @@ Corrections from code review that apply to all future contributions:
   the one they read as, and `None`, `0`, `""` and `[]` take a branch without ever being a
   declared spelling of it. Nothing raises and nothing logs, so the wrong posture is
   indistinguishable from the right one - `actuate_robot`'s `disable_self_collision="no"`
-  disabled every collision in the scene, and `derive_key_light`'s
-  `upper_hemisphere="false"` searched the hemisphere the value asks to skip.
+  disabled every collision in the scene, `derive_key_light`'s
+  `upper_hemisphere="false"` searched the hemisphere the value asks to skip, and
+  `ros2_commands="false"` opened an inbound arm-driving `joint_command` subscription for a
+  caller who had asked for a read-only telemetry bridge.
 - **Do not parse a vocabulary as a fallback.** A flag arrives already typed, unlike an
   environment variable whose only shape is a string, so the honest answer is to check it.
   Parsing only moves which spellings invert: `"on"`, `"enabled"` and `"y"` are absent from
@@ -1411,8 +1413,12 @@ Corrections from code review that apply to all future contributions:
   chooses its wording or its remedy from the flag, a truthy non-boolean makes it describe
   the branch the caller did not ask for - `derive_key_light` reported a region black
   "above the horizon" to a caller who had asked for the full sphere, and advised passing
-  the value they believed they had passed. Checking the flag makes such a branch reachable
-  only where its advice is actionable.
+  the value they believed they had passed. The RTPS bridge's DDS Security gate is the same
+  shape at higher stakes: it branches on `enable_commands`, so a truthy non-boolean made it
+  refuse a *read-only* request as "an enabled command bridge" and advise the insecure
+  opt-out - the one remedy that turns that refusal into a silent open of the surface the
+  caller asked to close. Checking the flag makes such a branch reachable only where its
+  advice is actionable.
 - **A facade that checks a flag does not check it for the method it forwards to.**
   Where one contract is reachable through a convenience surface and a documented
   direct API, both read the same caller input, so a guard on one leaves the other
@@ -1429,8 +1435,9 @@ Corrections from code review that apply to all future contributions:
 - Pinned by `tests/simulation/mujoco/test_actuate_robot_posture_flag_domain.py`,
   `tests/simulation/test_recording_posture_flag_domain.py`,
   `tests/tools/test_lerobot_teleoperate_flag_domain.py`,
-  `tests/mesh/test_iot_provisioning_flag_domain.py` and
-  `tests/rendering/test_key_light_posture_flag_domain.py`, each of which parametrizes over
+  `tests/mesh/test_iot_provisioning_flag_domain.py`,
+  `tests/rendering/test_key_light_posture_flag_domain.py` and
+  `tests/test_ros2_command_surface_flag_domain.py`, each of which parametrizes over
   `boolean_flag_error` itself rather than a copied spelling list, so a spelling added to
   the shared domain is covered without an edit.
 
