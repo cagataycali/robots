@@ -627,6 +627,17 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         repo_id = (body.get("repo_id") or "").strip()
         if not repo_id:
             raise HTTPException(422, "repo_id required")
+        # Values go to the validator UNCOERCED: int("banana") here was a 500
+        # wearing a stack trace, and int() would also quietly turn 5.9 into 5
+        # before anything could refuse it. validate_replay judges the actual
+        # request; a bad one is a 422 naming what to change (Q5).
+        from strands_robots.dashboard.device_manager import validate_replay
+
+        bad = validate_replay(
+            repo_id, body.get("episode", 0), body.get("root"), body.get("speed", 1.0)
+        )
+        if bad:
+            raise HTTPException(422, bad)
         result = await asyncio.to_thread(
             app.state.devices.replay,
             repo_id,

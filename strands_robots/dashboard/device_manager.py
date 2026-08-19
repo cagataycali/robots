@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -911,6 +912,54 @@ def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, st
     return (canonical, mode_s)
 
 
+def validate_replay(
+    repo_id: Any, episode: Any, root: Any = None, speed: Any = 1.0
+) -> dict[str, str] | None:
+    """Refusal reason for a replay request, or None — judged BEFORE any process.
+
+    Q5: a negative episode and a nonexistent dataset both answered 200 + pid,
+    and the truth arrived seconds later as a dead child in the log. Everything
+    knowable without touching the network is judged here:
+
+    * ``episode`` must be a non-negative integer. An episode index is a list
+      position; ``-5`` is not "the fifth from the end" anywhere downstream, it
+      is a KeyError wearing a pid.
+    * ``speed`` must be a finite positive number — 0 is a replay that never
+      advances (a live-looking card forever), and a negative speed is not
+      rewind, it is undefined.
+    * ``repo_id`` must look like a HuggingFace id (``org/name``) or name a
+      local dataset. When ``root`` is given it must EXIST — that is a
+      filesystem stat, not a network call, and a typo'd root is the most
+      common way "dataset not found" happens.
+
+    Hub existence is deliberately NOT probed here: that is a network round-trip
+    in a request path, and an offline dashboard must still replay from cache.
+    The child's log + the fleet card stay the honest surface for that case.
+    """
+    if isinstance(episode, bool) or not isinstance(episode, int):
+        return {"error": f"episode must be an integer, got {type(episode).__name__}"}
+    if episode < 0:
+        return {"error": f"episode must be >= 0 (an episode index is a list position, got {episode})"}
+    try:
+        speed_f = float(speed)
+    except (TypeError, ValueError):
+        return {"error": f"speed must be a number, got {type(speed).__name__}"}
+    if not math.isfinite(speed_f) or speed_f <= 0:
+        return {"error": f"speed must be a finite positive number (got {speed})"}
+    if not isinstance(repo_id, str) or not repo_id.strip():
+        return {"error": "repo_id required"}
+    rid = repo_id.strip()
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+)?$", rid):
+        return {"error": f"repo_id {rid!r} does not look like a dataset id (org/name) or a local dataset name"}
+    if root is not None:
+        if not isinstance(root, str) or not root.strip():
+            return {"error": f"root must be a path string, got {type(root).__name__}"}
+        if not os.path.isdir(os.path.expanduser(root)):
+            return {"error": f"root {root!r} does not exist on this machine - a replay from it can only fail"}
+    return None
+
+
+
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
@@ -1539,6 +1588,13 @@ class DeviceManager:
         a robot-less dashboard can drive it.
         """
         import json as _json
+
+        # Q5: everything knowable without a network call is refused BEFORE a
+        # process exists - a 200 + pid for a replay that cannot start is a lie
+        # with a delay on it.
+        bad = validate_replay(repo_id, episode, root, speed)
+        if bad:
+            return bad
 
         with self._lock:
             # Clicking Run twice is one click too many: a second sim of the same
