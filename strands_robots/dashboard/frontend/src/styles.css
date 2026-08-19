@@ -824,3 +824,21 @@ body::before {
   .glass::before { background: none; }
   body::before { display: none; }
 }
+
+/* ── joint history strips (U6) ─────────────────────── */
+/* The bar says where the joint is; the trace to its right says where it has
+ * been for the last minute, oldest at the left edge. Colours come through CSS
+ * variables so the canvas cannot drift from the rest of the palette. */
+.joint { position: relative; }
+.jhist {
+  flex: 1 1 84px; min-width: 56px; height: 22px; display: flex; align-items: center;
+  --spark-line: var(--accent);
+  --spark-fill: color-mix(in srgb, var(--accent) 26%, transparent);
+  --spark-axis: rgb(255 255 255 / .07);
+}
+.jspark { display: block; width: 100%; height: 22px; }
+/* the live bar keeps priority over the history on narrow cards */
+.joint .jbar { flex: 1 1 60px; }
+@media (max-width: 420px) {
+  .jhist { flex-basis: 60px; min-width: 40px; }
+}

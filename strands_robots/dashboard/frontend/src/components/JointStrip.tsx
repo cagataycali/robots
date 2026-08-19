@@ -1,6 +1,8 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Presence, PeerState } from '../types'
 import { decideStripScale, fillPercent, type ScaleMemo } from '../lib/jointScale'
+import { createHistory, pushFrame, HISTORY_WINDOW_MS } from '../lib/jointHistory'
+import JointSpark from './JointSpark'
 
 /**
  * One scale per strip, learned from the stream.
@@ -19,8 +21,21 @@ function readValue(v: unknown): number {
   return 0
 }
 
-export default function JointStrip({ state, presence }: { state?: PeerState; presence?: Presence }) {
+export default function JointStrip({
+  state, presence, history: showHistory = true,
+}: { state?: PeerState; presence?: Presence; history?: boolean }) {
   const memo = useRef<ScaleMemo | undefined>(undefined)
+  const hist = useRef(createHistory())
+  const [frame, setFrame] = useState(0)
+  const pending = useRef<Array<[string, number]> | null>(null)
+
+  // History is appended in an effect, never during render: React may render the
+  // same state twice and a double-appended frame would be a fabricated sample.
+  useEffect(() => {
+    if (!showHistory || !pending.current) return
+    pushFrame(hist.current, pending.current, Date.now())
+    setFrame((f) => f + 1)
+  }, [state, showHistory])
 
   const joints = state?.joints
   if (!joints || Object.keys(joints).length === 0) {
@@ -37,6 +52,7 @@ export default function JointStrip({ state, presence }: { state?: PeerState; pre
   const samples: Array<[string, number]> = entries.map(([name, v]) => [name, readValue(v)])
   memo.current = decideStripScale(samples, memo.current)
   const { unit, ranges } = memo.current
+  pending.current = samples
 
   return (
     <div className="joints" data-unit={unit}>
@@ -58,6 +74,11 @@ export default function JointStrip({ state, presence }: { state?: PeerState; pre
               <div className="jfill" style={{ width: `${pct}%` }} />
               {vel !== undefined && Math.abs(vel) > 1e-3 && <span className="jvel" />}
             </div>
+            {showHistory && (
+              <div className="jhist" title={`last ${Math.round(HISTORY_WINDOW_MS / 1000)}s of ${name}`}>
+                <JointSpark track={hist.current.get(name)} range={range} frame={frame} />
+              </div>
+            )}
           </div>
         )
       })}
