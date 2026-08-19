@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { validationScope, type ValidatedInput } from '../lib/validationScope'
 import type { PolicyProvider } from '../types'
 import { post } from '../lib/endpoints'
 import CheckpointPicker from './CheckpointPicker'
@@ -59,6 +60,9 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
   const [fields, setFields] = useState<Record<string, string>>({})
   const [validating, setValidating] = useState(false)
   const [validation, setValidation] = useState<ValidateResult | null>(null)
+  // The INPUT a verdict was taken on: a "✓ resolves" that outlives the config it
+  // vouched for is the most dangerous green tick in this form.
+  const [validatedFor, setValidatedFor] = useState<ValidatedInput | null>(null)
   const [staged, setStaged] = useState<DeployIntent | null>(null)
   // A run body held back for confirmation: non-null means the sheet is up and
   // NOTHING has been sent yet.
@@ -154,13 +158,16 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
   const validate = async () => {
     setValidating(true)
     try {
+      const asked: ValidatedInput = { provider: providerName, config: buildConfig() }
       setValidation(await post<ValidateResult>('/api/policies/validate', {
         policy_provider: providerName,
-        policy_config: buildConfig(),
+        policy_config: asked.config,
         peer_id: peerId,
       }))
+      setValidatedFor(asked)
     } catch (e: any) {
       setValidation({ ok: false, stage: 'request', error: e?.message ?? String(e) })
+      setValidatedFor({ provider: providerName, config: buildConfig() })
     } finally {
       setValidating(false)
     }
@@ -196,7 +203,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
       <div className="controls">
         <select
           value={providerName}
-          onChange={e => { setProviderName(e.target.value); setFields({}); setValidation(null) }}
+          onChange={e => { setProviderName(e.target.value); setFields({}); setValidation(null); setValidatedFor(null) }}
           disabled={blocked}
           // The control that decides what drives a physical arm was unlabelled:
           // a screen reader announced only the current value.
@@ -340,12 +347,21 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
         </div>
       )}
 
-      {validation && (
-        <div className={validation.ok ? 'validation ok' : 'validation bad'}>
-          {validation.ok ? `✓ ${providerName} resolves` : `✗ ${validation.stage}: ${validation.error}`}
-          {validation.note && <div className="hint">{validation.note}</div>}
-        </div>
-      )}
+      {validation && (() => {
+        // A verdict describes the input it was taken on. Once a field moves it
+        // stops describing the form, and saying so beats a stale green tick.
+        const scope = validationScope(validatedFor, { provider: providerName, config: buildConfig() })
+        const cls = !scope.applies ? 'validation stale' : validation.ok ? 'validation ok' : 'validation bad'
+        return (
+          <div className={cls}>
+            {!scope.applies
+              ? `${validation.ok ? '✓' : '✗'} (outdated) ${validation.ok ? `${validatedFor?.provider ?? providerName} resolved` : `${validation.stage}: ${validation.error}`}`
+              : validation.ok ? `✓ ${providerName} resolves` : `✗ ${validation.stage}: ${validation.error}`}
+            {!scope.applies && <div className="hint warn">{scope.note}</div>}
+            {validation.note && <div className="hint">{validation.note}</div>}
+          </div>
+        )
+      })()}
     </div>
   )
 }
