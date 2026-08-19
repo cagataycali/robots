@@ -34,6 +34,39 @@ logger = logging.getLogger(__name__)
 
 PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
 
+#: How long a peer may stay quiet before it is dropped from the fleet snapshot
+#: entirely. A finished replay/collect peer stops heartbeating and never comes
+#: back, so without this it lingers as a permanently stale ghost card.
+PEER_TTL_S = float(os.getenv("STRANDS_DASHBOARD_PEER_TTL_S", "300"))
+
+
+def prune_peers(
+    peers: dict[str, dict[str, Any]],
+    now: float,
+    ttl: float = PEER_TTL_S,
+    protected_ids: set[str] | frozenset[str] | None = None,
+    stale_after: float = PEER_STALE_S,
+) -> dict[str, dict[str, Any]]:
+    """Flag quiet peers stale and drop the ones that aged past ``ttl``.
+
+    Protected ids (peers backed by a LIVE managed local process) are always
+    kept: their state stream may hiccup while the process is perfectly fine,
+    and a card vanishing under a running robot is worse than a stale one.
+    A non-positive ``ttl`` disables ageing out.
+    """
+    protected = protected_ids or frozenset()
+    out: dict[str, dict[str, Any]] = {}
+    for pid, entry in peers.items():
+        age = now - entry.get("last_seen", 0)
+        # Child sim peers are named "<parent>__<robot>"; they live and die with
+        # the parent's process, so the parent's protection covers them.
+        parent = pid.partition("__")[0]
+        if ttl > 0 and age > ttl and pid not in protected and parent not in protected:
+            continue
+        out[pid] = {**entry, "stale": age > stale_after}
+    return out
+
+
 #: Transport low-pass filter on ``**/cmd`` (_zenoh_config.DEFAULT_MAX_CMD_BYTES).
 #: Anything larger is dropped pre-deserialise and the sender only ever sees a
 #: timeout, so we check before publishing and return a real error instead.
@@ -183,6 +216,20 @@ class MeshBridge:
 
         # Resolved endpoints of the live session, for /api/mesh/config.
         self._endpoints: dict[str, Any] = {}
+
+        # Set by the server to a callable returning peer ids that must never be
+        # aged out (LIVE managed local processes). Optional by design: the
+        # bridge stays usable standalone.
+        self.protected_peer_ids: Any | None = None
+
+    def _protected_peer_ids(self) -> frozenset[str]:
+        if self.protected_peer_ids is None:
+            return frozenset()
+        try:
+            return frozenset(self.protected_peer_ids())
+        except Exception as exc:  # never let a bad hook break the snapshot
+            logger.warning("[mesh] protected peer lookup failed (%r)", exc)
+            return frozenset()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -622,11 +669,13 @@ class MeshBridge:
 
     def snapshot(self) -> dict[str, Any]:
         now = time.time()
+        protected = self._protected_peer_ids()
         with self._peers_lock:
-            peers = {
-                pid: {**entry, "stale": (now - entry.get("last_seen", 0)) > PEER_STALE_S}
-                for pid, entry in self.peers.items()
-            }
+            peers = prune_peers(self.peers, now, PEER_TTL_S, protected)
+            # Forget the aged-out peers for good: keeping them in self.peers
+            # only feeds the same ghosts back on every later snapshot.
+            for pid in set(self.peers) - set(peers):
+                self.peers.pop(pid, None)
         return {
             "type": "snapshot",
             "dashboard_peer_id": self.peer_id,

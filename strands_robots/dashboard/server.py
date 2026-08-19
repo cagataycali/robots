@@ -119,6 +119,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app.state.bridge = bridge or MeshBridge()
     app.state.mesh_online = False
     app.state.devices = DeviceManager()
+    # A peer with a LIVE managed local process is never aged out of the fleet
+    # snapshot, even if its state stream goes quiet.
+    app.state.bridge.protected_peer_ids = lambda: {
+        pid for pid, m in list(app.state.devices.robots.items()) if m.alive()
+    }
 
     @app.on_event("startup")
     async def _startup() -> None:
