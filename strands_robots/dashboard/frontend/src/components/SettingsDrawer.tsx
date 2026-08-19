@@ -338,7 +338,13 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
             <section>
               <h3>Mesh</h3>
               <dl className="kv">
-                <dt>status</dt><dd>{mesh.online ? `online as ${mesh.peer_id}` : 'offline'}</dd>
+                {/* Same tri-state trap as the motion chip: `online` is optional,
+                    and a ternary reported a MISSING field as a definite "offline". */}
+                <dt>status</dt><dd>{mesh.online === false
+                  ? 'offline'
+                  : mesh.online
+                    ? `online as ${mesh.peer_id}`
+                    : 'not reported yet'}</dd>
                 <dt>peers</dt><dd>{mesh.live_peers ?? 0} live / {mesh.peers ?? 0} known</dd>
                 <dt>wire security</dt>
                 <dd className={mesh.local_dev ? 'bad' : 'ok'}>{mesh.wire_security ?? 'unknown'}</dd>

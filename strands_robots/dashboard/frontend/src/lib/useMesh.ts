@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { frameProvesLiveness } from './liveness'
 import type { ActivityEntry, MeshEvent, MeshInfo, Peer } from '../types'
 import { wsUrl } from './endpoints'
 
@@ -82,7 +83,19 @@ export function useMesh(): MeshStore {
           case 'camera_meta':
             setPeers(p => {
               const peer = p[ev.peer_id] ?? { peer_id: ev.peer_id }
-              return { ...p, [ev.peer_id]: { ...peer, cameras: { ...peer.cameras, [ev.cam]: ev.data }, last_seen: Date.now() / 1000, stale: false } }
+              // A camera frame only vouches for the peer if the PEER captured it
+              // recently. The server replays a camera's last cached frame to
+              // every new subscriber, so mounting a tile used to resurrect a peer
+              // that died hours ago: last_seen refreshed, stale cleared, card
+              // green. The frame's own capture time settles it.
+              const fresh = frameProvesLiveness({ frameT: (ev.data as any)?.t, nowS: Date.now() / 1000 })
+              const cameras = { ...peer.cameras, [ev.cam]: ev.data }
+              return {
+                ...p,
+                [ev.peer_id]: fresh
+                  ? { ...peer, cameras, last_seen: Date.now() / 1000, stale: false }
+                  : { ...peer, cameras },
+              }
             })
             break
           case 'safety':
