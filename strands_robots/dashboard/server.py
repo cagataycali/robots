@@ -248,6 +248,12 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app.state.bridge = bridge or MeshBridge()
     app.state.mesh_online = False
     app.state.devices = DeviceManager()
+    # /api/record - teleop episode recording (record screen). The controller
+    # parks the arms' fleet peers around a session; see record_api.py.
+    from strands_robots.dashboard import record_api
+
+    app.state.record = record_api.RecordController(app.state.devices)
+    app.include_router(record_api.build_router(app.state.record))
     # A peer with a LIVE managed local process is never aged out of the fleet
     # snapshot, even if its state stream goes quiet.
     app.state.bridge.protected_peer_ids = lambda: {

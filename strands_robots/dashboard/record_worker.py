@@ -366,6 +366,22 @@ def hardware_backend(
             self.camera_keys = sorted(
                 k for k, v in obs.items() if getattr(v, "ndim", 0) == 3
             )
+            self._camera_dims = {
+                k: (obs[k].shape[0], obs[k].shape[1]) for k in self.camera_keys
+            }
+            self._robot_type = follower_name
+
+        def recorder_kwargs(self) -> dict[str, Any]:
+            """What DatasetRecorder.create needs beyond repo_id/fps/task -
+            derived from the live robot so the schema cannot drift from
+            what the observations actually contain."""
+            return {
+                "robot_type": self._robot_type,
+                "robot_features": getattr(self._robot, "observation_features", None),
+                "action_features": getattr(self._robot, "action_features", None),
+                "camera_keys": list(self.camera_keys),
+                "camera_dims": dict(self._camera_dims),
+            }
 
         def leader_action(self) -> dict[str, float]:
             return dict(self._leader.get_action())

@@ -398,6 +398,12 @@ class AutoSpawnWatcher:
         self.adopted: dict[str, str] = {}
         self._missing: dict[str, int] = {}
         self._stop = threading.Event()
+        # While True the watcher observes but never spawns/despawns. The
+        # record session controller sets this after it deliberately frees a
+        # board's port to record with it - otherwise the watcher would
+        # respawn the peer within one poll and two processes would drive
+        # one servo bus.
+        self.suspended = False
 
     @staticmethod
     def enabled() -> bool:
@@ -431,6 +437,8 @@ class AutoSpawnWatcher:
         """One appear/disappear pass. Returns what it did, for tests and logs."""
         if not self.enabled():
             return {"skipped": "autospawn disabled"}
+        if self.suspended:
+            return {"skipped": "autospawn suspended (record session owns the ports)"}
         ports = {profile_key(p): p for p in self.list_ports() if profile_key(p)}
         spawned: list[str] = []
         despawned: list[str] = []
