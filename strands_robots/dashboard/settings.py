@@ -67,8 +67,12 @@ _SCHEMA: dict[str, dict[str, tuple[str | None, Any]]] = {
         # When set, every /api and /ws request must present this token
         # (Authorization: Bearer <t>, X-Dashboard-Token, or ?token=).
         "auth_token": ("DASHBOARD_AUTH_TOKEN", None),
-        # Comma-separated origins; ["*"] keeps the permissive LAN-dev posture.
-        "cors_origins": ("DASHBOARD_CORS_ORIGINS", ["*"]),
+        # Comma-separated origins allowed to make BROWSER cross-origin calls.
+        # Default: none - same-origin only. An API that moves motors must not
+        # answer a drive-by fetch from whatever tab the operator has open;
+        # LAN-dev against a separate frontend port opts in explicitly, e.g.
+        # DASHBOARD_CORS_ORIGINS=http://localhost:4319.
+        "cors_origins": ("DASHBOARD_CORS_ORIGINS", []),
     },
 }
 

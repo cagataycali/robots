@@ -38,7 +38,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -120,6 +120,33 @@ class TokenAuthMiddleware:
         query = parse_qs(scope.get("query_string", b"").decode())
         return (query.get("token") or [""])[0].strip()
 
+    @staticmethod
+    def _cross_origin_refused(scope: dict[str, Any]) -> bool:
+        """True when a BROWSER cross-origin request must be refused.
+
+        CORS only protects responses; the SIDE EFFECT of a mutating request
+        fires before the browser hides the reply, and a no-header POST (e.g.
+        an e-stop, which needs no body) is a "simple request" the browser
+        sends without any preflight. So the guard itself refuses writes and
+        websocket handshakes whose Origin disagrees with the request host and
+        is not explicitly allow-listed. Non-browser clients (curl, scripts,
+        the spawn watcher) send no Origin header and are untouched.
+        """
+        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers") or []}
+        origin = headers.get("origin", "").strip()
+        if not origin:
+            return False
+        host = headers.get("host", "").strip().lower()
+        netloc = urlsplit(origin).netloc.strip().lower()
+        if netloc and netloc == host:
+            return False  # same-origin
+        allowed = settings.get("security", "cors_origins", []) or []
+        if "*" in allowed or origin.rstrip("/") in {str(a).rstrip("/") for a in allowed}:
+            return False
+        if scope["type"] == "websocket":
+            return True
+        return scope.get("method", "GET").upper() not in ("GET", "HEAD", "OPTIONS")
+
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
@@ -128,6 +155,17 @@ class TokenAuthMiddleware:
         guarded = path.startswith("/api") or path.startswith("/ws")
         if not guarded or path in PUBLIC_PATHS or scope.get("method") == "OPTIONS":
             await self.app(scope, receive, send)
+            return
+        if self._cross_origin_refused(scope):
+            if scope["type"] == "websocket":
+                await receive()  # consume websocket.connect before rejecting
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            response = JSONResponse(
+                {"detail": "cross-origin request refused - add the origin to security.cors_origins"},
+                status_code=403,
+            )
+            await response(scope, receive, send)
             return
         token = settings.get("security", "auth_token")
         passkeys_on = dash_auth is not None and dash_auth.auth_enabled()
@@ -154,7 +192,7 @@ class TokenAuthMiddleware:
 
 def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app = FastAPI(title="strands-robots dashboard")
-    origins = settings.get("security", "cors_origins", ["*"]) or ["*"]
+    origins = settings.get("security", "cors_origins", []) or []
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,

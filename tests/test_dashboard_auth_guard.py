@@ -229,3 +229,70 @@ def test_register_begin_first_time_open_then_gated(client, tmp_path):
 
 def test_login_begin_without_enrollment_is_400(client):
     assert client.post("/api/auth/login/begin").status_code == 400
+
+
+# --- Q20: browser cross-origin writes are refused by the guard itself ----------
+#
+# CORS only hides the RESPONSE; the side effect of a mutating request fires
+# regardless, and a header-less POST (e-stop needs no body) is a "simple
+# request" browsers send with no preflight. The guard therefore refuses writes
+# and websocket handshakes whose Origin disagrees with the Host and is not in
+# security.cors_origins. Clients without an Origin header (curl, the spawn
+# watcher) are untouched.
+
+
+def _origin_scope(method="POST", origin="https://evil.example", host="localhost:8090", path="/api/agent/reset"):
+    return _http_scope(
+        path, client=("127.0.0.1", 1), method=method,
+        headers={"origin": origin, "host": host},
+    )
+
+
+def test_cross_origin_post_refused_even_from_loopback():
+    assert run_scope(_origin_scope()) == 403
+
+
+def test_cross_origin_delete_and_put_refused():
+    assert run_scope(_origin_scope(method="DELETE")) == 403
+    assert run_scope(_origin_scope(method="PUT")) == 403
+
+
+def test_same_origin_post_passes():
+    assert run_scope(_origin_scope(origin="http://localhost:8090")) == "passed"
+
+
+def test_no_origin_post_passes_loopback():
+    assert run_scope(_http_scope("/api/agent/reset", client=("127.0.0.1", 1), method="POST")) == "passed"
+
+
+def test_cross_origin_get_is_a_read_and_passes_the_origin_check():
+    # reads have no side effect; without an ACAO header the page cannot see
+    # the body anyway. The 401/loopback rules still apply afterwards.
+    assert run_scope(_origin_scope(method="GET")) == "passed"
+
+
+def test_allowlisted_origin_post_passes(monkeypatch):
+    from strands_robots.dashboard import server as srv2
+
+    def fake_get(section, key, default=None):
+        if (section, key) == ("security", "cors_origins"):
+            return ["https://tools.example"]
+        return None
+
+    monkeypatch.setattr(srv2.settings, "get", fake_get)
+    assert run_scope(_origin_scope(origin="https://tools.example")) == "passed"
+    assert run_scope(_origin_scope(origin="https://evil.example")) == 403
+
+
+def test_cross_origin_websocket_refused_with_1008():
+    scope = _origin_scope(path="/ws/chat")
+    scope["type"] = "websocket"
+    scope.pop("method")
+    assert run_scope(scope) == 1008
+
+
+def test_same_origin_websocket_passes():
+    scope = _origin_scope(path="/ws/chat", origin="http://localhost:8090")
+    scope["type"] = "websocket"
+    scope.pop("method")
+    assert run_scope(scope) == "passed"
