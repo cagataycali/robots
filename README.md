@@ -306,6 +306,23 @@ robot.teleoperate(publish=True)              # also stream over the mesh
 Zero-config when action keys match; otherwise pass `map_fn`. Full matrix +
 recipes: [Teleoperation docs](https://strands-labs.github.io/robots/hardware/teleoperation/).
 
+## Fleet dashboard
+
+One command turns the whole mesh into a cockpit - every real arm, every sim
+twin, their cameras and joints, policy runs, recording and training jobs, plus
+an agent you can talk to:
+
+```bash
+python -m strands_robots dashboard --port 8090 --local-dev
+# open http://localhost:8090
+```
+
+The dashboard is a mesh peer, not a hub: a robot you start in your own script
+with `mesh=True` shows up in it unchanged. The UI is a client of a plain HTTP
+API (`/api/fleet`, `/api/devices/spawn`, `/api/collect`, `/api/training/*`, ...),
+so anything it can do, `curl` can do. Full reference:
+[Fleet dashboard docs](docs/dashboard/index.md).
+
 ## Recording & streaming datasets
 
 The physical-AI data loop, end to end: **record** a LeRobotDataset from sim or
