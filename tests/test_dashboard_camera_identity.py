@@ -137,17 +137,55 @@ def test_preview_returns_jpeg_and_releases(monkeypatch):
     assert cap.released is True
 
 
-def test_preview_faults_are_runtime_errors(monkeypatch):
+def test_preview_faults_carry_the_reason_and_the_remedy(monkeypatch):
+    """A failed preview says WHY (U14), and stays a RuntimeError for callers.
+
+    The diagnosis is stubbed on purpose: it re-probes the real device in a child
+    process, and a unit test that asks the host's actual cameras would pass or
+    fail depending on who is holding them.
+    """
+    monkeypatch.setattr(
+        dm, "diagnose_camera_indices",
+        lambda idx, **k: {i: "OpenCV: not authorized to capture video (status 0)" for i in idx},
+    )
     cap = _FakeCap(frames=False)
     mgr = _manager(monkeypatch, cap)
-    with pytest.raises(RuntimeError, match="no frame"):
+    with pytest.raises(RuntimeError, match="not granted camera access"):
         mgr.preview_frame(1)
     assert cap.released is True
 
     cap2 = _FakeCap(opened=False)
     mgr2 = _manager(monkeypatch, cap2)
-    with pytest.raises(RuntimeError, match="would not open"):
+    with pytest.raises(RuntimeError, match="Privacy & Security"):  # the remedy travels too
         mgr2.preview_frame(1)
+
+
+def test_preview_fault_without_a_diagnosis_admits_it(monkeypatch):
+    monkeypatch.setattr(dm, "diagnose_camera_indices", lambda idx, **k: {})
+    with pytest.raises(RuntimeError, match="gave no reason"):
+        _manager(monkeypatch, _FakeCap(frames=False)).preview_frame(1)
+
+
+def test_preview_allows_an_index_its_owner_never_opened(monkeypatch):
+    """Configured is not streaming: refusing here left no way to identify it.
+
+    Measured live - both so101 arm cameras were in the child's config and
+    neither opened, so "watch it on that robot's card" pointed at a card that
+    will never show a picture.
+    """
+    cap = _FakeCap()
+    # _manager stubs the claim probe, so state the claim explicitly; the robot
+    # entry below is what maps the camera NAME back to index 1.
+    mgr = _manager(monkeypatch, cap, claimed={1: "so101-arm-1"})
+    mgr.robots["so101-arm-1"] = SimpleNamespace(
+        peer_id="so101-arm-1", alive=lambda: True,
+        cameras={"wrist": {"type": "opencv", "index_or_path": 1}},
+    )
+    # No frames reported for that peer => nothing to steal => preview proceeds.
+    assert mgr.preview_frame(1, {"so101-arm-1": []})[:2] == b"\xff\xd8"
+    # Frames reported => the refusal stands.
+    with pytest.raises(PermissionError, match="so101-arm-1"):
+        mgr.preview_frame(1, {"so101-arm-1": ["wrist"]})
 
 
 # ---------------------------------------------------------------- HTTP
@@ -178,7 +216,8 @@ def test_preview_http_status_mapping(client, monkeypatch):
 
     monkeypatch.setattr(
         devices, "preview_frame",
-        lambda i: (_ for _ in ()).throw(PermissionError("index 0 is streaming for so101-arm-1")),
+        lambda i, live=None: (_ for _ in ()).throw(
+            PermissionError("index 0 is streaming for so101-arm-1")),
     )
     r = client.get("/api/devices/camera/0/preview")
     assert r.status_code == 409
@@ -186,12 +225,12 @@ def test_preview_http_status_mapping(client, monkeypatch):
 
     monkeypatch.setattr(
         devices, "preview_frame",
-        lambda i: (_ for _ in ()).throw(RuntimeError("camera index 3 would not open")),
+        lambda i, live=None: (_ for _ in ()).throw(RuntimeError("camera index 3 would not open")),
     )
     r = client.get("/api/devices/camera/3/preview")
     assert r.status_code == 503
 
-    monkeypatch.setattr(devices, "preview_frame", lambda i: b"\xff\xd8fakejpeg")
+    monkeypatch.setattr(devices, "preview_frame", lambda i, live=None: b"\xff\xd8fakejpeg")
     r = client.get("/api/devices/camera/1/preview")
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/jpeg"

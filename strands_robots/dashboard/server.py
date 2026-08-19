@@ -1047,6 +1047,19 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         """Recent commands and safety events, newest first."""
         return {"activity": app.state.bridge.activity_log(limit=max(1, min(limit, 300)))}
 
+    def _live_camera_names() -> dict[str, list[str]]:
+        """peer_id -> camera names the mesh has actually seen frames for.
+
+        The evidence for "in use": a camera in a child's config that never
+        delivered a frame is assigned, not streaming, and only the frames can
+        tell the two apart.
+        """
+        snapshot = app.state.bridge.snapshot()
+        return {
+            peer_id: list((entry.get("cameras") or {}).keys())
+            for peer_id, entry in (snapshot.get("peers") or {}).items()
+        }
+
     @app.get("/api/devices")
     async def devices(refresh: bool = False) -> dict[str, Any]:
         """Local USB serial ports (servo buses) + cameras + managed robots.
@@ -1058,12 +1071,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # The mesh's frame bookkeeping is the evidence for "in use": a camera
         # in a child's config that never delivered a frame is assigned, not
         # streaming, and the difference is what the operator has to act on.
-        snapshot = app.state.bridge.snapshot()
-        live = {
-            peer_id: list((entry.get("cameras") or {}).keys())
-            for peer_id, entry in (snapshot.get("peers") or {}).items()
-        }
-        return await asyncio.to_thread(app.state.devices.devices, refresh, live)
+        return await asyncio.to_thread(app.state.devices.devices, refresh, _live_camera_names())
 
     @app.get("/api/devices/camera/{index}/preview")
     async def camera_preview(index: int) -> Response:
@@ -1076,7 +1084,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         will not produce a frame (unplugged, or another app holds it).
         """
         try:
-            jpeg = await asyncio.to_thread(app.state.devices.preview_frame, index)
+            jpeg = await asyncio.to_thread(
+                app.state.devices.preview_frame, index, _live_camera_names(),
+            )
         except PermissionError as e:
             raise HTTPException(409, str(e)) from e
         except Exception as e:  # noqa: BLE001 - camera faults become HTTP, not tracebacks

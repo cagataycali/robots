@@ -29,6 +29,26 @@ from typing import Any, Iterable, Mapping, Sequence
 STATES = ("blocked", "absent", "assigned", "in_use", "unreadable", "ready")
 
 
+class CameraUnavailable(RuntimeError):
+    """A camera fault that knows WHY, and what to do about it.
+
+    Subclasses RuntimeError so every existing caller (and the 503 mapping in
+    server.py) keeps working; ``str()`` carries the reason and the remedy in one
+    sentence, because the one place an operator reliably reads is the error the
+    button gave them.
+    """
+
+    def __init__(self, index: int, state: str, reason: str, remedy: str | None = None) -> None:
+        self.index = index
+        self.state = state
+        self.reason = reason
+        self.remedy = remedy
+        msg = f"camera index {index}: {reason}"
+        if remedy:
+            msg += f" - {remedy}"
+        super().__init__(msg)
+
+
 def classify_probe_stderr(text: str) -> tuple[str, str, str | None]:
     """Turn OpenCV's chatter into (state, reason, remedy).
 

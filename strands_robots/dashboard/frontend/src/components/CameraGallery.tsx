@@ -116,9 +116,14 @@ export default function CameraGallery(
                 <div>{c.reason}</div>
                 {c.remedy ? <div className="hint">→ {c.remedy}</div> : null}
                 <button className="btn ghost campreview-btn" disabled={!!loading[c.index]}
-                        onClick={() => void snap(c.index)}>
-                  {loading[c.index] ? 'trying…' : 'try anyway'}
+                        onClick={() => void snap(c.index)}
+                        title="opens the camera once, right now — the server refuses only if a robot is really streaming it">
+                  {loading[c.index] ? 'trying…' : c.state === 'assigned' ? '📷 identify it anyway' : 'try anyway'}
                 </button>
+                {previews[c.index] && (
+                  <img src={previews[c.index]} alt={`camera index ${c.index} snapshot`}
+                       onClick={() => void snap(c.index)} title="click to re-snap" />
+                )}
                 {errors[c.index] && <div className="camerr">⚠ {errors[c.index]}</div>}
               </div>
             ) : (

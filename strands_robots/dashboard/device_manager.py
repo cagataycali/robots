@@ -950,19 +950,31 @@ class DeviceManager:
             self._camera_names_cache_t = now
         return self._camera_names_cache
 
-    def preview_frame(self, index: int) -> bytes:
-        """One JPEG frame from an UNCLAIMED camera index.
+    def preview_frame(
+        self,
+        index: int,
+        live_cameras: Mapping[str, Iterable[str]] | None = None,
+    ) -> bytes:
+        """One JPEG frame from a camera nobody is streaming.
 
         This is the authoritative "which camera is index N" tool - names are
-        a roster in listing order, but a picture cannot lie. Refuses indices
-        owned by a running robot (opening one steals its frames mid-stream).
+        a roster in listing order, but a picture cannot lie.
+
+        Refuses an index whose owner is ACTUALLY streaming it (opening one
+        steals its frames mid-episode). An index a robot merely has in its
+        config while publishing nothing is NOT refused: on this machine both
+        arm cameras were configured and neither opened, so "watch it on that
+        robot's card instead" pointed at a card that will never show a picture
+        and left the operator no way at all to identify the camera.
 
         Raises:
-            PermissionError: the index is claimed by a managed robot.
-            RuntimeError: the index would not open or produced no frame.
+            PermissionError: the index is streaming for a managed robot.
+            cameras.CameraUnavailable: it would not open - carrying the reason
+                and the remedy, not just "would not open".
         """
         claimed = self._claimed_camera_indices()
-        if index in claimed:
+        streaming = self._streaming_indices(live_cameras)
+        if index in claimed and (streaming is None or index in streaming):
             raise PermissionError(
                 f"camera index {index} is streaming for {claimed[index]} - "
                 f"watch it on that robot's card instead"
@@ -973,7 +985,7 @@ class DeviceManager:
             cap = cv2.VideoCapture(index)
             try:
                 if not cap.isOpened():
-                    raise RuntimeError(f"camera index {index} would not open")
+                    raise self._camera_fault(index)
                 # A couple of warm-up reads: first frames from a cold sensor
                 # are often black or half-exposed.
                 frame = None
@@ -983,13 +995,29 @@ class DeviceManager:
                         frame = None
                         break
                 if frame is None:
-                    raise RuntimeError(f"camera index {index} produced no frame")
+                    raise self._camera_fault(index)
                 ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                 if not ok:
                     raise RuntimeError("JPEG encode failed")
                 return bytes(buf.tobytes())
             finally:
                 cap.release()
+
+    def _camera_fault(self, index: int) -> camera_facts.CameraUnavailable:
+        """Ask OpenCV why, in a child process, and answer in the operator's terms.
+
+        A preview that fails is exactly the moment the diagnosis is worth its
+        ~1s: the operator just pressed a button and is looking at the result.
+        Without this the answer was "camera index 0 would not open" for a
+        missing camera, a busy camera and a macOS privacy denial alike - the
+        same conflation U14 removed from the devices list.
+        """
+        stderr = diagnose_camera_indices([index]).get(index, "")
+        state, reason, remedy = camera_facts.classify_probe_stderr(stderr)
+        if state == "absent":
+            reason = "it would not open, and OpenCV gave no reason"
+            remedy = "check the cable, then rescan"
+        return camera_facts.CameraUnavailable(index, state, reason, remedy)
 
     def logs(self, peer_id: str) -> dict[str, Any]:
         """Full ring buffer for one managed robot."""
