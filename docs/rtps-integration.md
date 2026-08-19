@@ -170,7 +170,11 @@ the following is true:
   `1` / `true` / `yes`) to explicitly accept an unsecured graph.
 
 A telemetry-only bridge (`ros2_commands=False`) is publish-only and is **not**
-gated. `dds_security_config` requires the following keys (each a path or a
+gated. Because this gate branches on the same flag, `enable_commands` /
+`ros2_commands` is checked rather than read by truthiness: a non-boolean is
+refused before any DDS state exists, so a `"false"` from a deployment config
+cannot be reported back as "an enabled command bridge" and answered with the
+insecure opt-out that would open it. `dds_security_config` requires the following keys (each a path or a
 `file:` / `data:` URI per the OMG DDS-Security spec); `permissions_ca` is
 optional:
 

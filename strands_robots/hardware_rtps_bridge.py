@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.ros_telemetry import RosTelemetryBase
 from strands_robots.utils import (
+    boolean_flag_error,
     dds_domain_id_error,
     partial_construction_repr,
     positive_finite_number_error,
@@ -112,7 +113,9 @@ class HardwareRtpsBridge(RosTelemetryBase):
             Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
             discovery ports from it, and 233 lands past the end of the port space.
         enable_commands: When True (default) and a ``robot`` is bound, subscribe
-            to ``/<robot>/joint_command`` and drive the arm.
+            to ``/<robot>/joint_command`` and drive the arm. Only a boolean names
+            a posture: the value is checked, not read by truthiness, so
+            ``"false"`` cannot select the surface it asks to close.
         command_robot_name: Topic namespace for the command topic; defaults to
             the bound robot's name (the namespace we publish ``joint_states``
             under).
@@ -145,10 +148,11 @@ class HardwareRtpsBridge(RosTelemetryBase):
 
     Raises:
         ImportError: If ``cyclonedds`` (the ``[ros2]`` extra) is not installed.
-        ValueError: If ``domain_id`` is outside ``[0, 232]`` or ``poll_period``
-            is not a positive finite number (both checked before the
-            ``cyclonedds`` probe, so the same caller mistake reports
-            identically on an install without the extra), if ``joint_limits`` /
+        ValueError: If ``enable_commands`` is not a boolean, ``domain_id`` is
+            outside ``[0, 232]`` or ``poll_period`` is not a positive finite
+            number (all three checked before the ``cyclonedds`` probe, so the
+            same caller mistake reports identically on an install without the
+            extra), if ``joint_limits`` /
             ``dds_security_config`` is malformed, or if commands are enabled
             with neither a security config nor the explicit insecure opt-out.
     """
@@ -174,6 +178,18 @@ class HardwareRtpsBridge(RosTelemetryBase):
         # the only pacing ``_poll_loop`` has, and a value that cannot pace a
         # loop is not made usable by having a transport to poll.
         if error := positive_finite_number_error(poll_period, "poll_period", type(self).__name__):
+            raise ValueError(error)
+
+        # ``enable_commands`` selects whether this bridge exposes an inbound,
+        # arm-driving surface, so it is checked rather than read by truthiness.
+        # Every non-empty string is truthy, so ``"false"`` would open the very
+        # surface the caller asked to close - and, because the DDS Security gate
+        # below branches on the same flag, it would also refuse a read-only
+        # request with a message about "an enabled command bridge" and advise
+        # the insecure opt-out that opens it. Answered alongside the two guards
+        # above, so the refusal lands before any DDS state exists and reports
+        # identically with and without the [ros2] extra.
+        if error := boolean_flag_error(enable_commands, "enable_commands", type(self).__name__):
             raise ValueError(error)
 
         # cyclonedds is the only dependency - no rclpy, no sourced ROS 2 distro.
