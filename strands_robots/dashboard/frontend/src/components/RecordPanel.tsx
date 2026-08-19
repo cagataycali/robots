@@ -258,6 +258,18 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
         </form>
       )}
 
+      {/*
+        A camera that never opened, said out loud BEFORE the episodes are
+        collected. role=alert (not aria-live=polite) because it changes what
+        the operator should do next: every episode will look successful and the
+        finished dataset will have no image channel to train on.
+      */}
+      {open && s?.camera_notice && (
+        <div className="train-msg warn rec-camera-notice" role="alert">
+          ⚠ {s.camera_notice.message}
+        </div>
+      )}
+
       {open && s && (
         <div className="train-form">
           <div className="rec-counter" aria-live="polite">

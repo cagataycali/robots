@@ -33,6 +33,18 @@ export interface RecordSession {
   /** 'idle' = between episodes, 'recording' = frames being captured */
   phase: 'idle' | 'recording'
   fps: number
+  /**
+   * Present ONLY when a camera the session asked for never opened. The dataset
+   * schema is built from the follower's first observation, so a missing camera
+   * is silently absent from every episode - the operator has to hear about it
+   * before they teleoperate ten of them, not after.
+   */
+  camera_notice?: {
+    requested: string[]
+    present: string[]
+    missing: string[]
+    message: string
+  } | null
 }
 
 export interface RecordApi {
