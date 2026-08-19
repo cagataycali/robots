@@ -12,6 +12,7 @@ import ActivityLog from './components/ActivityLog'
 import DevicePanel from './components/DevicePanel'
 import EstopSheet from './components/EstopSheet'
 import EstopButton from './components/EstopButton'
+import ErrorBoundary from './components/ErrorBoundary'
 import TrainingTab from './components/TrainingTab'
 import RecordPanel from './components/RecordPanel'
 import AuthGate from './components/AuthGate'
@@ -166,32 +167,52 @@ function Dashboard() {
       ) : (
         <main className="grid">
           {list.map(p => (
+            <ErrorBoundary key={p.peer_id} label={`the card for ${p.peer_id}`}>
             <RobotCard
               key={p.peer_id}
               peer={p}
               onOpen={setDetail}
               onBusyChange={(id, running) => setBusyPeers(s => (s[id] === running ? s : { ...s, [id]: running }))}
             />
+            </ErrorBoundary>
           ))}
         </main>
       )}
 
-      {detailPeer && <RobotDetail peer={detailPeer} onClose={() => setDetail(null)} />}
-
-      <SettingsDrawer open={panel === 'settings'} onClose={() => setPanel(null)} mesh={mesh} initialTab={settingsTab} />
-      <ActivityLog open={panel === 'activity'} onClose={() => setPanel(null)} live={activity} />
-      <DevicePanel open={panel === 'devices'} onClose={() => setPanel(null)} />
-      <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)} />
-      {panel === 'training' && <TrainingTab onClose={() => setPanel(null)} />}
-      {panel === 'record' && (
-        <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => setPanel(null)} />
+      {detailPeer && (
+        <ErrorBoundary label="the robot detail view" onDismiss={() => setDetail(null)}>
+          <RobotDetail peer={detailPeer} onClose={() => setDetail(null)} />
+        </ErrorBoundary>
       )}
 
-      <AgentDock
+      <ErrorBoundary label="settings" onDismiss={() => setPanel(null)}>
+        <SettingsDrawer open={panel === 'settings'} onClose={() => setPanel(null)} mesh={mesh} initialTab={settingsTab} />
+      </ErrorBoundary>
+      <ErrorBoundary label="the activity log" onDismiss={() => setPanel(null)}>
+        <ActivityLog open={panel === 'activity'} onClose={() => setPanel(null)} live={activity} />
+      </ErrorBoundary>
+      <ErrorBoundary label="the devices screen" onDismiss={() => setPanel(null)}>
+        <DevicePanel open={panel === 'devices'} onClose={() => setPanel(null)} />
+      </ErrorBoundary>
+      <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)} />
+      {panel === 'training' && (
+        <ErrorBoundary label="the training screen" onDismiss={() => setPanel(null)}>
+          <TrainingTab onClose={() => setPanel(null)} />
+        </ErrorBoundary>
+      )}
+      {panel === 'record' && (
+        <ErrorBoundary label="the record screen" onDismiss={() => setPanel(null)}>
+          <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => setPanel(null)} />
+        </ErrorBoundary>
+      )}
+
+      <ErrorBoundary label="the chat dock">
+        <AgentDock
         onSettings={() => setPanel('settings')}
         startOpen={new URLSearchParams(location.search).get('panel') === 'chat'}
         exampleRobot={list.find(p => !p.stale && p.presence?.robot_type === 'robot')?.peer_id}
-      />
+        />
+      </ErrorBoundary>
     </div>
   )
 }

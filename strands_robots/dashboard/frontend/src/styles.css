@@ -1144,3 +1144,20 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .status-ribbon.warn .status-word { color: #ffcc66; }
 .status-ribbon.danger { border-color: var(--danger, #ff4d5e); color: var(--text, #e8eef6); }
 .status-ribbon.danger .status-word { color: #ff8d99; }
+
+/* A contained crash (components/ErrorBoundary.tsx) — readable, not a white page. */
+.crashcard {
+  position: fixed; z-index: 150; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  max-width: min(560px, calc(100vw - 32px)); padding: 20px 22px;
+  background: var(--surface-2, #16181d); color: var(--text, #e8ecf1);
+  border: 1px solid var(--danger, #ff4d5e); border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
+}
+.crashcard h3 { margin: 0 0 8px; font-size: 15px; }
+.crashcard p { margin: 6px 0; font-size: 13px; line-height: 1.45; }
+.crashcard pre {
+  margin: 10px 0; padding: 9px 11px; overflow: auto; max-height: 30vh;
+  font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  background: rgba(0, 0, 0, .35); border-radius: 8px;
+}
+.crashcard-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }

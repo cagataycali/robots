@@ -97,10 +97,15 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   // While recording, the last episode entry is the take in flight - its frame
   // count ticking is the only proof data is actually being captured. It is
   // not "kept" until stop saves it.
-  const finished = s ? (recording ? s.episodes.slice(0, -1) : s.episodes) : []
-  const kept = finished.filter(e => !e.discarded).length
-  const liveFrames = recording && s!.episodes.length > 0
-    ? s!.episodes[s!.episodes.length - 1].frames
+  // Never dereference the payload's shape: an older/other backend answering
+  // /api/record/session with a session that has no `episodes` used to throw
+  // during render, and a render that throws unmounts the whole app (JOURNEYS
+  // #1). Missing simply means "no episodes yet".
+  const episodes = Array.isArray(s?.episodes) ? s!.episodes : []
+  const finished = recording ? episodes.slice(0, -1) : episodes
+  const kept = finished.filter(e => !e?.discarded).length
+  const liveFrames = recording && episodes.length > 0
+    ? episodes[episodes.length - 1]?.frames ?? null
     : null
 
   return (
@@ -198,11 +203,11 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
 
       {open && s && <FollowerLive peer={peers.find(p => p.peer_id === s.follower)} recording={recording} />}
 
-      {open && s && s.episodes.length > 0 && (
+      {open && s && episodes.length > 0 && (
         <div className="rec-strip" role="list" aria-label="recorded episodes">
           {/* the last entry while recording is the take in flight - the live
               counter on the stop button represents it, not a card */}
-          {(recording ? s.episodes.slice(0, -1) : s.episodes).slice().reverse().map(ep => (
+          {finished.slice().reverse().map(ep => (
             <div key={ep.index} role="listitem" className={`rec-ep${ep.discarded ? ' dead' : ''}`}>
               <div className="rec-ep-head">
                 <b>ep {ep.index}</b>
@@ -248,7 +253,7 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
                 setBusy(false)
               })()
             }}>
-              ✓ finish dataset ({kept} kept{s.episodes.length - kept ? `, ${s.episodes.length - kept} discarded` : ''})
+              ✓ finish dataset ({kept} kept{episodes.length - kept ? `, ${episodes.length - kept} discarded` : ''})
             </button>
           </div>
         </div>
