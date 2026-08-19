@@ -79,3 +79,23 @@ def test_record_session_open_records_activity():
     call = app.state.bridge.record_activity.call_args
     assert call.args == ("record", "session_open")
     assert call.kwargs["target"] == "cagatay/cubes"
+
+
+def test_autospawn_poll_results_are_audited():
+    """The watcher spawns robots with nobody at the keyboard - its actions
+    need the audit trail most, and poll() already reports what it did."""
+    from strands_robots.dashboard.server import _audit_autospawn
+
+    bridge = mock.Mock()
+    _audit_autospawn(bridge, {"spawned": ["so101-auto"], "despawned": ["so101-old"]})
+    calls = bridge.record_activity.call_args_list
+    assert calls[0].args == ("api", "spawn")
+    assert calls[0].kwargs["target"] == "so101-auto"
+    assert "auto-spawn" in calls[0].kwargs["detail"]
+    assert calls[1].args == ("api", "despawn")
+    assert calls[1].kwargs["target"] == "so101-old"
+
+    bridge2 = mock.Mock()
+    _audit_autospawn(bridge2, None)
+    _audit_autospawn(bridge2, {"skipped": "autospawn disabled"})
+    bridge2.record_activity.assert_not_called()

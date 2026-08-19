@@ -231,6 +231,28 @@ def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any
     return (prompt or None), None
 
 
+def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
+    """Land the auto-spawn watcher's poll results in the activity trail.
+
+    The watcher spawns robots with NOBODY at the keyboard - the one actor
+    whose actions most need an audit trail. poll() already reports what it
+    did; without this, a board plugged in while the operator is away becomes
+    a moving arm with no recorded cause.
+    """
+    if not did:
+        return
+    for peer_id in did.get("spawned") or []:
+        bridge.record_activity(
+            "api", "spawn", target=peer_id,
+            detail="USB auto-spawn (board plugged in)", ok=True,
+        )
+    for peer_id in did.get("despawned") or []:
+        bridge.record_activity(
+            "api", "despawn", target=peer_id,
+            detail="USB auto-spawn (board unplugged)", ok=True,
+        )
+
+
 def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app = FastAPI(title="strands-robots dashboard")
     origins = settings.get("security", "cors_origins", []) or []
@@ -287,7 +309,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
         while True:
             try:
-                await asyncio.to_thread(watcher.poll)
+                did = await asyncio.to_thread(watcher.poll)
+                _audit_autospawn(app.state.bridge, did)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
