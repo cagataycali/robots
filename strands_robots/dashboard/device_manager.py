@@ -358,6 +358,50 @@ print(json.dumps(out))
 """
 
 
+#: Resolutions worth asking a USB camera about - the ones lerobot configs
+#: actually use. The camera's answer, not this list, is what gets offered.
+CAMERA_MODE_CANDIDATES: tuple[tuple[int, int], ...] = (
+    (320, 240), (640, 480), (800, 600), (1280, 720), (1920, 1080),
+)
+CAMERA_FPS_CANDIDATES: tuple[int, ...] = (15, 30, 60)
+
+
+def modes_from_readbacks(
+    native: Mapping[str, Any], readbacks: Iterable[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Distill set/read-back probes into the modes a camera really has.
+
+    A mode is kept only when the read-back AGREED with the request (width and
+    height exact, fps within 1 - drivers report 29.97 for 30). Drivers that
+    ignore set() and answer their native mode for everything therefore
+    contribute nothing here, and the native mode itself is always included -
+    a camera with zero verified modes still has the one it wakes up in.
+    Deduped, sorted by area then fps, ready for a <select>.
+    """
+    keep: dict[tuple[int, int, int], dict[str, Any]] = {}
+
+    def _add(w: Any, h: Any, fps: Any) -> None:
+        try:
+            w, h, fps = int(w), int(h), int(round(float(fps)))
+        except (TypeError, ValueError):
+            return
+        if w <= 0 or h <= 0 or fps <= 0:
+            return
+        keep.setdefault((w, h, fps), {"width": w, "height": h, "fps": fps})
+
+    _add(native.get("width"), native.get("height"), native.get("fps"))
+    for rb in readbacks:
+        req, got = rb.get("requested") or {}, rb.get("got") or {}
+        try:
+            if (int(got.get("width", -1)) == int(req.get("width", -2))
+                    and int(got.get("height", -1)) == int(req.get("height", -2))
+                    and abs(float(got.get("fps", -99)) - float(req.get("fps", -1))) <= 1.0):
+                _add(req.get("width"), req.get("height"), req.get("fps"))
+        except (TypeError, ValueError):
+            continue
+    return sorted(keep.values(), key=lambda m: (m["width"] * m["height"], m["fps"]))
+
+
 def scan_camera_names() -> list[dict[str, Any]]:
     """Human names of the attached cameras, best effort per platform.
 
@@ -1286,6 +1330,62 @@ class DeviceManager:
                 return bytes(buf.tobytes())
             finally:
                 cap.release()
+
+    def probe_modes(
+        self,
+        index: int,
+        live_cameras: Mapping[str, Iterable[str]] | None = None,
+    ) -> dict[str, Any]:
+        """Which fps/resolution combos camera ``index`` ACTUALLY delivers (U19).
+
+        The reconfigure sheet's selects must offer real modes, not fantasy:
+        a driver silently accepts any set() and then delivers whatever it
+        wants, so the only truth is the read-back. Each candidate is set and
+        then read back; a mode is reported only if the camera agreed to it
+        (or it is what the camera natively delivered). Same streaming guard
+        as preview_frame - probing steals the device on macOS.
+
+        Raises:
+            PermissionError: the index is streaming for a managed robot.
+            cameras.CameraUnavailable / RuntimeError: it would not open.
+        """
+        claimed = self._claimed_camera_indices()
+        streaming = self._streaming_indices(live_cameras)
+        if index in claimed and (streaming is None or index in streaming):
+            raise PermissionError(
+                f"camera index {index} is streaming for {claimed[index]} - "
+                f"stop that robot before probing its camera's modes"
+            )
+        import cv2
+
+        readbacks: list[dict[str, Any]] = []
+        with self._preview_lock:
+            cap = cv2.VideoCapture(index)
+            try:
+                if not cap.isOpened():
+                    raise self._camera_fault(index)
+                # Native mode first: what the camera does when nobody asks.
+                native = {
+                    "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                    "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                    "fps": float(cap.get(cv2.CAP_PROP_FPS)),
+                }
+                for w, h in CAMERA_MODE_CANDIDATES:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+                    for fps in CAMERA_FPS_CANDIDATES:
+                        cap.set(cv2.CAP_PROP_FPS, fps)
+                        readbacks.append({
+                            "requested": {"width": w, "height": h, "fps": fps},
+                            "got": {
+                                "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                                "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                                "fps": float(cap.get(cv2.CAP_PROP_FPS)),
+                            },
+                        })
+            finally:
+                cap.release()
+        return {"index": index, "native": native, "modes": modes_from_readbacks(native, readbacks)}
 
     def port_owner(self, port: str) -> str | None:
         """peer_id of the LIVE managed child holding this serial port, if any."""

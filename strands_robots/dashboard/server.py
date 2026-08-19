@@ -1174,6 +1174,25 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         return Response(content=jpeg, media_type="image/jpeg",
                         headers={"Cache-Control": "no-store"})
 
+    @app.get("/api/devices/camera/{index}/modes")
+    async def camera_modes(index: int) -> dict[str, Any]:
+        """Verified fps/resolution modes for an unclaimed camera (U19).
+
+        Each candidate mode is set and read back on the real device; only
+        combos the camera AGREED to (plus its native mode) come back, so the
+        reconfigure sheet's selects never offer a fantasy the driver would
+        silently ignore. 409 while the index streams for a running robot,
+        503 when the camera will not open.
+        """
+        try:
+            return await asyncio.to_thread(
+                app.state.devices.probe_modes, index, _live_camera_names(),
+            )
+        except PermissionError as e:
+            raise HTTPException(409, str(e)) from e
+        except Exception as e:  # noqa: BLE001 - camera faults become HTTP, not tracebacks
+            raise HTTPException(503, str(e)) from e
+
     @app.get("/api/devices/arm-role")
     async def arm_role(port: str, model: str = "sts3215") -> dict[str, Any]:
         """Which role an arm actually IS, read off its servo bus (U2).
