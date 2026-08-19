@@ -156,9 +156,10 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--s3); padding: 10px 14px;
   padding-top: calc(10px + env(safe-area-inset-top));
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--border);
+  background: var(--glass-2);
+  backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-sat));
+  border-bottom: 1px solid var(--glass-border);
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .logo { display: flex; align-items: center; }
@@ -215,14 +216,37 @@ body {
 
 /* ── robot card ────────────────────────────────────── */
 .card {
-  background: var(--panel);
-  border: 1px solid var(--border);
+  /* the sheen is layered into the background rather than an ::before, because a
+   * positioned pseudo-element would paint over the card's own content */
+  background: linear-gradient(180deg, rgb(255 255 255 / .06), rgb(255 255 255 / 0) 40%), var(--glass-2);
+  border: 1px solid var(--glass-border);
   border-radius: var(--r4);
   padding: var(--s4);
   display: flex; flex-direction: column; gap: 10px;
-  transition: opacity var(--dur-slow), border-color var(--dur);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  transition: opacity var(--dur-slow), border-color var(--dur) var(--ease-out),
+              background var(--dur) var(--ease-out);
 }
-.card:hover { border-color: var(--border-hi); }
+.card:hover, .card:focus-within { border-color: var(--glass-border-hi); background: linear-gradient(180deg, rgb(255 255 255 / .08), rgb(255 255 255 / 0) 40%), var(--glass-3); }
+
+/* Zero-UI: a card's CONTROLS are not its content. The camera frame and the
+ * joint bars stay at full strength; the chrome around them (the twin toggle,
+ * the camera switcher, the policy row) drops its outline until the pointer or
+ * the keyboard arrives. Text colour is never dimmed by this - only borders and
+ * fills move, so contrast ratios hold at rest. */
+.card .twinbtn, .card .controls select, .card .controls input, .card .camswitch .chip {
+  border-color: transparent;
+  transition: border-color var(--dur) var(--ease-out), background var(--dur) var(--ease-out);
+}
+.card:hover .twinbtn, .card:focus-within .twinbtn,
+.card:hover .controls select, .card:focus-within .controls select,
+.card:hover .controls input, .card:focus-within .controls input,
+.card:hover .camswitch .chip, .card:focus-within .camswitch .chip {
+  border-color: var(--glass-border);
+}
+/* an active choice is content, so it never recedes */
+.card .camswitch .chip.on, .card .controls select:focus, .card .controls input:focus { border-color: var(--accent) !important; }
 .card.stale { opacity: .38; filter: grayscale(.7); }
 .card.running { border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); }
 .card.failed { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
@@ -520,20 +544,28 @@ body {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
   display: flex; gap: var(--s3); align-items: center;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(16px);
-  border-top: 1px solid var(--border);
+  background: var(--glass-2);
+  backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-sat));
+  border-top: 1px solid var(--glass-border);
 }
 .dock-bar input {
   flex: 1; min-width: 0;
-  background: var(--panel2); color: var(--text);
-  border: 1px solid var(--border); border-radius: var(--r5);
-  padding: 11px 16px; font-size: 14px;
+  background: var(--glass-1); color: var(--text);
+  border: 1px solid var(--glass-border); border-radius: var(--rpill);
+  padding: 11px 18px; font-size: 14px;
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
 }
-.dock-bar input:focus { outline: none; border-color: var(--accent); }
+.dock-bar input::placeholder { color: var(--dim); opacity: .55; }
+.dock-bar input:hover { border-color: var(--glass-border-hi); }
+.dock-bar input:focus { outline: none; background: var(--glass-3); border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 .mic {
-  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border);
-  background: var(--panel2); font-size: 18px; cursor: pointer; flex-shrink: 0;
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--glass-border);
+  background: var(--glass-1); font-size: 18px; cursor: pointer; flex-shrink: 0;
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   transition: box-shadow var(--dur), border-color var(--dur);
 }
 .mic.live { border-color: var(--danger); box-shadow: 0 0 14px color-mix(in srgb, var(--danger) 55%, transparent); animation: pulse .8s infinite alternate; }
@@ -542,15 +574,16 @@ body {
   width: 44px; height: 44px; border-radius: 50%; border: none;
   background: var(--accent); color: #fff; font-size: 18px; font-weight: 700; cursor: pointer; flex-shrink: 0;
 }
-.dock-send:disabled { background: var(--panel2); color: var(--dim); }
+.dock-send:disabled { background: var(--glass-1); color: var(--dim); backdrop-filter: blur(var(--glass-blur)); }
 .dock-min { background: none; border: none; color: var(--dim); font-size: 14px; cursor: pointer; padding: var(--s2); }
 
 .dock-panel {
   position: fixed; bottom: 64px; left: 0; right: 0; z-index: 55;
   max-height: 52dvh; display: flex; flex-direction: column;
-  background: color-mix(in srgb, var(--bg) 92%, transparent);
-  backdrop-filter: blur(18px);
-  border-top: 1px solid var(--border);
+  background: var(--glass-3);
+  backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-sat));
+  border-top: 1px solid var(--glass-border);
 }
 .dock-head {
   display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
@@ -567,8 +600,18 @@ body {
 }
 .dock-notice.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); align-self: stretch; text-align: center; border-radius: var(--r2); }
 .bubble { max-width: 86%; border-radius: var(--r4); padding: 9px 13px; font-size: var(--fs-body); line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
-.bubble.user { align-self: flex-end; background: var(--accent); color: #fff; }
-.bubble.agent { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
+.bubble.user {
+  align-self: flex-end; color: #fff;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 92%, #fff), var(--accent));
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.bubble.agent {
+  align-self: flex-start;
+  background: linear-gradient(180deg, rgb(255 255 255 / .05), rgb(255 255 255 / 0) 60%), var(--glass-2);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
 .bubble .reasoning { margin-bottom: var(--s2); }
 .bubble .reasoning summary { cursor: pointer; color: var(--dim); font-size: var(--fs-tiny); }
 .bubble .reasoning pre { white-space: pre-wrap; font-size: var(--fs-tiny); color: var(--dim); margin-top: var(--s1); }
@@ -765,11 +808,19 @@ body::before {
 /* --- honest fallbacks --------------------------------------------- */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass, .gbtn, .ginput { background: var(--glass-solid); }
+  .card, .bubble.agent { background: var(--glass-solid); border-color: var(--border); }
+  .fleetbar, .dock-bar, .dock-panel { background: var(--panel); }
+  .dock-bar input, .mic { background: var(--panel2); border-color: var(--border); }
   .glass.quiet { background: var(--panel); }
   body::before { opacity: .5; }
 }
 @media (prefers-reduced-transparency: reduce) {
   .glass, .gbtn, .ginput { background: var(--glass-solid); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .card, .bubble.agent { background: var(--glass-solid); border-color: var(--border); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .fleetbar, .dock-bar, .dock-panel { background: var(--panel); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .dock-bar input, .mic { background: var(--panel2); border-color: var(--border); backdrop-filter: none; }
+  /* the recede trick hides outlines; without transparency, keep them visible */
+  .card .twinbtn, .card .controls select, .card .controls input, .card .camswitch .chip { border-color: var(--border); }
   .glass::before { background: none; }
   body::before { display: none; }
 }
