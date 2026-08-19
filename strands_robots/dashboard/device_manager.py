@@ -33,6 +33,16 @@ logger = logging.getLogger(__name__)
 
 LOG_TAIL_LINES = 200  # ring buffer per managed robot
 
+#: How long /api/devices/spawn watches a new child before answering. A spawn
+#: that reports success for a process that dies two seconds later is worse than
+#: a slow spawn: the operator walks away believing an arm is live.
+SPAWN_SETTLE_S = float(os.environ.get("STRANDS_DASHBOARD_SPAWN_SETTLE_S", "5") or 5)
+
+#: Lines that name a *consequence*, not the cause. A child that dies while
+#: building its cameras logs the real ValueError first and then a cleanup error
+#: from the half-built object -- reporting the last line blames teardown.
+_CONSEQUENCE_MARKERS = ("cleanup error", "during handling of the above")
+
 # Where USB device profiles live. One JSON object keyed by USB serial number
 # (the only stable identity a board keeps across replug and across port
 # renumbering), value = the spawn payload that worked last time.
@@ -67,6 +77,60 @@ class ManagedRobot:
 
     def alive(self) -> bool:
         return self.process is not None and self.process.poll() is None
+
+
+def crash_reason(lines: Iterable[str]) -> str | None:
+    """The line that explains why a child died, or None if nothing does.
+
+    Reads the FIRST exception-shaped line rather than the last, because a
+    process dying mid-construction logs its cause first and then the fallout of
+    unwinding a half-built object::
+
+        ValueError: Camera 'main' config must be a mapping of option name to value, got int: 3.
+        ERROR:strands_robots.hardware_robot:Cleanup error for so101: 'Robot' object has no attribute 'robot'
+
+    The second line is true and useless -- it blames teardown for a
+    configuration mistake. Timestamps and logger prefixes are stripped so the
+    result can be shown to a person as-is.
+
+    Args:
+        lines: Child output, oldest first (the ring buffer's natural order).
+
+    Returns:
+        A one-line reason, or None when the output blames nothing (a silent
+        exit, or a child killed from outside).
+    """
+    for raw in lines:
+        line = str(raw).strip()
+        if not line:
+            continue
+        low = line.lower()
+        if any(marker in low for marker in _CONSEQUENCE_MARKERS):
+            continue
+        # Strip a leading "HH:MM:SS " stamp added by the drain thread.
+        body = line
+        if len(body) > 9 and body[2] == ":" and body[5] == ":" and body[8] == " ":
+            body = body[9:]
+        # Strip a "LEVEL:logger.name:" prefix so the message leads.
+        for level in ("ERROR:", "CRITICAL:", "WARNING:"):
+            if body.startswith(level):
+                rest = body[len(level):]
+                body = rest.split(":", 1)[1].strip() if ":" in rest else rest.strip()
+                break
+        if _looks_like_a_fault(body):
+            return body[:400]
+    return None
+
+
+def _looks_like_a_fault(text: str) -> bool:
+    """True when a line reads like the reason a process stopped."""
+    if not text:
+        return False
+    head = text.split(":", 1)[0].strip()
+    if head.endswith(("Error", "Exception", "Interrupt")) and " " not in head:
+        return True  # "ValueError: ..." / "ConnectionError: ..."
+    low = text.lower()
+    return low.startswith(("traceback (most recent", "fatal", "error:", "usage:"))
 
 
 def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
@@ -734,6 +798,81 @@ class DeviceManager:
         if remember and mode == "real" and port:
             self.remember_profile(cfg)
         return {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
+
+    def settle(
+        self,
+        peer_id: str,
+        *,
+        timeout: float = SPAWN_SETTLE_S,
+        is_up: Callable[[str], bool] | None = None,
+        poll: float = 0.1,
+        sleep: Callable[[float], None] | None = None,
+        now: Callable[[], float] | None = None,
+    ) -> dict[str, Any]:
+        """Watch a just-spawned peer long enough to answer honestly.
+
+        ``spawn()`` returns as soon as ``Popen`` hands back a pid, which is
+        always -- a robot whose camera config is wrong, whose port is taken, or
+        whose policy is not installed still gets a pid, dies a second later, and
+        the dashboard shows a card for a peer that will never appear. This
+        watches the gap.
+
+        Returns as soon as the answer is known, so a healthy peer costs only the
+        time it needs to announce itself:
+
+        - ``running``: the child is alive and ``is_up`` confirms the mesh has
+          seen it. The only status that means "it works".
+        - ``failed``: the child exited. Carries ``exit_code`` and ``reason``
+          (see :func:`crash_reason`).
+        - ``starting``: still alive at the deadline, not yet announced. Not a
+          failure and not a success -- slow hardware exists, and claiming
+          either would be a guess.
+        - ``gone``: no longer tracked (despawned while we watched).
+
+        Args:
+            peer_id: The peer returned by :meth:`spawn`.
+            timeout: Seconds to watch before answering ``starting``.
+            is_up: Optional presence check -- given the peer id, True when the
+                mesh has heard from it. Without one, an alive child at the
+                deadline is ``starting`` (a pid alone is not evidence).
+            poll: Seconds between checks.
+            sleep: Injected for tests.
+            now: Injected for tests.
+
+        Returns:
+            A dict with ``status`` plus whatever that status carries.
+        """
+        _sleep = sleep or time.sleep
+        _now = now or time.monotonic
+        deadline = _now() + max(0.0, timeout)
+        while True:
+            managed = self.robots.get(peer_id)
+            if managed is None:
+                return {"status": "gone"}
+            if not managed.alive():
+                proc = managed.process
+                code = proc.poll() if proc is not None else None
+                reason = crash_reason(list(managed.logs))
+                out: dict[str, Any] = {"status": "failed", "exit_code": code}
+                # The log tail travels with the failure: a reason the operator
+                # can act on beats "exit code 1", and they should not have to
+                # go find a second endpoint while the card is still on screen.
+                out["reason"] = reason or (
+                    f"the process exited with code {code}" if code is not None
+                    else "the process is gone"
+                )
+                out["log_tail"] = list(managed.logs)[-12:]
+                return out
+            if is_up is not None:
+                try:
+                    if is_up(peer_id):
+                        return {"status": "running"}
+                except Exception:  # noqa: BLE001 - a broken probe must not fail a good spawn
+                    logger.debug("settle: presence probe raised for %s", peer_id, exc_info=True)
+            if _now() >= deadline:
+                # Alive but unannounced. Say exactly that.
+                return {"status": "starting", "waited_s": round(max(0.0, timeout), 2)}
+            _sleep(min(poll, max(0.0, deadline - _now())))
 
     def remember_profile(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         """Save this spawn payload as the profile for the board behind its port.

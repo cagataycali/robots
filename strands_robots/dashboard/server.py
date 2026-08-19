@@ -924,12 +924,33 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             body.get("cameras"),
             body.get("robot_id"),
         )
+        # A pid is not a running robot. Wait out the window in which a
+        # misconfigured child dies (wrong camera config, port held by another
+        # process, policy not installed) so the answer is what happened, not
+        # what was attempted. Returns early the moment the mesh sees the peer.
+        peer_id = result.get("peer_id")
+        if peer_id and "error" not in result:
+            bridge = app.state.bridge
+            outcome = await asyncio.to_thread(
+                app.state.devices.settle,
+                peer_id,
+                is_up=lambda pid: pid in (getattr(bridge, "peers", None) or {}),
+            )
+            result.update(outcome)
+            if outcome.get("status") == "failed":
+                # Surface it in the field every caller already reads, so a
+                # dead spawn cannot be mistaken for a live one by any client.
+                result["error"] = outcome.get("reason") or "the peer did not start"
+
         # Lifecycle lands in the audit trail: "who started this peer" is as
         # unanswerable as "who moved that arm" without it - the auto-spawn
         # watcher and the UI use this same route.
         app.state.bridge.record_activity(
             "api", "spawn", target=result.get("peer_id") or robot_name,
-            detail=f"{robot_name} mode={body.get('mode', 'sim')}",
+            detail=(
+                f"{robot_name} mode={body.get('mode', 'sim')}"
+                + (f" -> {result['error']}" if result.get("error") else "")
+            ),
             ok="error" not in result,
         )
         return result
