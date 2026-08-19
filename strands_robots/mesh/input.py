@@ -339,9 +339,9 @@ class InputPublisher:
 
 
 #: Frame keys are ``"{motor}.pos"``; lerobot's motor table is keyed by the bare
-#: motor name. Kept here (not in security.py) because it touches a hardware
-#: object's shape, while the security module must stay importable without
-#: lerobot installed.
+#: motor name. Kept here (not in ``strands_robots.mesh.security``) because it
+#: touches a hardware object's shape, while the security module must stay
+#: importable without lerobot installed.
 def declared_units(robot: Any) -> dict[str, str]:
     """What unit does THIS robot say each of its joints is in?
 
