@@ -109,13 +109,26 @@ def fleet_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("strands_robots.simulation.Simulation", _StubSim)
 
 
-def _build_with_no_session(module: Any, builder: str) -> BaseException:
-    """Run one builder with no session available; return what it raised."""
+def _refusal_from(module: Any, builder: str) -> RuntimeError:
+    """Run one builder with no session available; return the refusal it raised.
+
+    Every refusal these builders raise is a ``RuntimeError`` -- the
+    ``mesh.alive`` path and the deliberate ``STRANDS_MESH=0`` opt-out alike -- so
+    anything else is a leak to report here rather than an exception to hand back
+    for the caller to classify. Reporting it here is also what keeps the clause
+    that catches a leak of any kind ending in a lexical ``raise``, matching the
+    tree's other two leak-catching test helpers.
+    """
     with patch("strands_robots.mesh.core.get_session", return_value=None):
         try:
             getattr(module, builder)()
-        except BaseException as exc:  # noqa: BLE001 - the refusal is the subject
+        except RuntimeError as exc:
             return exc
+        except BaseException as exc:  # noqa: BLE001 - the point is to catch a leak
+            raise AssertionError(
+                f"{builder} raised {type(exc).__name__} ({exc}) instead of refusing to build a "
+                f"fleet whose peers are not on the mesh"
+            ) from exc
     raise AssertionError(f"{builder} returned a fleet whose peers are not on the mesh")
 
 
@@ -129,10 +142,8 @@ class TestEachLiveBuilderRefusesAMeshThatDidNotStart:
         module = _load(script)
         peer = expected_peer(module)
 
-        exc = _build_with_no_session(module, builder)
+        message = str(_refusal_from(module, builder))
 
-        message = str(exc)
-        assert isinstance(exc, RuntimeError), f"{builder} raised {type(exc).__name__}: {message}"
         assert "mesh.alive is False" in message, f"the refusal does not name the observable it read: {message}"
         assert peer in message, f"the refusal does not name the peer that failed ({peer!r}): {message}"
         assert "strands-robots[mesh]" in message, f"the refusal does not name the remedy: {message}"
@@ -156,7 +167,7 @@ class TestEachLiveBuilderRefusesAMeshThatDidNotStart:
             built.append(self)
 
         with patch.object(_StubSim, "__init__", record):
-            exc = _build_with_no_session(module, builder)
+            exc = _refusal_from(module, builder)
 
         assert "mesh.alive is False" in str(exc), (
             f"{builder} did not refuse on the alive observable, so this proves nothing about its "
@@ -178,7 +189,7 @@ class TestTheDeliberateOptOutKeepsItsOwnAdvice:
         monkeypatch.setenv("STRANDS_MESH", "false")
         module = _load(script)
 
-        exc = _build_with_no_session(module, builder)
+        exc = _refusal_from(module, builder)
 
         message = str(exc)
         assert "STRANDS_MESH=0" in message, f"the opt-out refusal no longer names the switch: {message}"
