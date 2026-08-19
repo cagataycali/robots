@@ -2,6 +2,8 @@
 
 Shared by :class:`strands_robots.hardware_robot.Robot` and the MuJoCo
 :class:`strands_robots.simulation.Simulation`. The only contract a host
+
+
 class must satisfy is a ``send_action(action: dict, robot_name: str | None
 = None) -> dict`` method (both already have it) and, for mesh publishing,
 the ``mesh`` / ``peer_id`` attributes (both already have them).
@@ -50,6 +52,44 @@ from typing import Any
 from strands_robots.utils import name_list_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
+
+
+#: Per-joint slew bound the LOCAL teleop loop applies, in frame units per second.
+#: Wider than the mesh path's radian-scoped 8*pi because the shipped SO hardware
+#: defaults speak degrees (90 deg/s for a calm sweep, 372 deg/s for the STS3215
+#: no-load max) and the gripper speaks 0-100. Above the fastest servo in any
+#: shipped unit system while still catching encoder glitches and full-scale jumps.
+LOCAL_SLEW_DEFAULT = 500.0
+
+
+def local_slew_bound(raw: str | None) -> float:
+    """Resolve ``STRANDS_TELEOP_SLEW_ABS`` to the bound the local loop uses.
+
+    Extracted from the loop body so the POLICY can be tested without racing a
+    wall-clock session. It used to be a literal inside ``_teleop_loop``, which
+    meant the only way to ask "does the default bound accommodate a 90 deg/s
+    sweep?" was to run a real loop for a real second and convert ticks to
+    speed using the rate the machine ACHIEVED - a test that failed under load
+    while the code was correct (Q29).
+
+    A malformed or non-positive value is a misconfiguration, not a licence to
+    run unbounded: it warns and falls back to the default.
+    """
+    if not raw:
+        return LOCAL_SLEW_DEFAULT
+    try:
+        value = float(raw)
+        if value <= 0 or not math.isfinite(value):
+            raise ValueError
+    except (ValueError, TypeError):
+        logger.warning(
+            "[teleop] STRANDS_TELEOP_SLEW_ABS=%r is not a positive finite number; using default %.1f",
+            raw,
+            LOCAL_SLEW_DEFAULT,
+        )
+        return LOCAL_SLEW_DEFAULT
+    return value
+
 
 # Default local control loop frequency (Hz). Matches InputPublisher.
 _TELEOP_HZ_DEFAULT = 50.0
@@ -804,22 +844,8 @@ class TeleopMixin:
         # 500 units/s is above the fastest servo in any shipped unit system
         # (deg, range-0-100, rad) while still catching encoder glitches and
         # full-scale jumps that would strip gears.
-        _LOCAL_SLEW_DEFAULT = 500.0
-        _local_slew_str = os.environ.get("STRANDS_TELEOP_SLEW_ABS", "")
-        if _local_slew_str:
-            try:
-                _local_slew = float(_local_slew_str)
-                if _local_slew <= 0 or not math.isfinite(_local_slew):
-                    raise ValueError
-            except (ValueError, TypeError):
-                logger.warning(
-                    "[teleop] STRANDS_TELEOP_SLEW_ABS=%r is not a positive finite number; using default %.1f",
-                    _local_slew_str,
-                    _LOCAL_SLEW_DEFAULT,
-                )
-                _local_slew = _LOCAL_SLEW_DEFAULT
-        else:
-            _local_slew = _LOCAL_SLEW_DEFAULT
+        _LOCAL_SLEW_DEFAULT = LOCAL_SLEW_DEFAULT
+        _local_slew = local_slew_bound(os.environ.get("STRANDS_TELEOP_SLEW_ABS", ""))
 
         # Magnitude envelope for the baseline prune, and the reason it is
         # infinite here. ``merge_slew_baseline`` drops an entry once enough time

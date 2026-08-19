@@ -282,48 +282,88 @@ class TestDefaultBoundAccommodatesDriverUnits:
         # A calm 90-degree arm sweep at 50 Hz: each tick moves 1.8 degrees,
         # producing 90 deg/s peak speed. The 500 units/s default must accept it.
         positions = [i * 1.8 for i in range(50)]  # 0.0, 1.8, ... 88.2
-        host = FakeHost()
-        result = _drive(host, SteppingLeader(positions), ticks=50)
+        refusals = _refusals_streaming_at(positions, hz=50.0)
 
-        telemetry = result["content"][1]["json"]
-        assert telemetry["slew_rejected"] == 0, (
-            f"a 90 deg/s degree-valued stream was refused at the default bound: {telemetry}"
+        assert refusals == [], (
+            f"a 90 deg/s degree-valued stream was refused at the default bound: {refusals}"
         )
 
     def test_a_half_second_gripper_close_is_not_refused(self) -> None:
         # Gripper in range-0-100: close from 0 to 100 in 0.5 s at 50 Hz is
         # 25 ticks of 4 units each = 200 units/s peak. Must be accepted.
         positions = [i * 4.0 for i in range(25)]  # 0, 4, 8, ... 96
-        host = FakeHost()
-        result = _drive(host, SteppingLeader(positions), ticks=25)
+        refusals = _refusals_streaming_at(positions, hz=50.0)
 
-        telemetry = result["content"][1]["json"]
-        assert telemetry["slew_rejected"] == 0, (
-            f"a 200 units/s gripper close was refused at the default bound: {telemetry}"
+        assert refusals == [], (
+            f"a 200 units/s gripper close was refused at the default bound: {refusals}"
         )
 
     def test_sts3215_no_load_max_in_degrees_is_not_refused(self) -> None:
         # STS3215 no-load max is 6.5 rad/s = ~372 deg/s. At 50 Hz that is
         # 7.44 deg/tick. Must be accepted at the default bound.
         positions = [i * 7.44 for i in range(20)]
-        host = FakeHost()
-        result = _drive(host, SteppingLeader(positions), ticks=20)
+        refusals = _refusals_streaming_at(positions, hz=50.0)
 
-        telemetry = result["content"][1]["json"]
-        assert telemetry["slew_rejected"] == 0, (
-            f"a 372 deg/s stream (STS3215 max) was refused at the default bound: {telemetry}"
+        assert refusals == [], (
+            f"a 372 deg/s stream (STS3215 max) was refused at the default bound: {refusals}"
         )
 
     def test_a_2000_units_per_second_glitch_is_still_refused(self) -> None:
         # An encoder glitch that jumps 40 units in one tick at 50 Hz =
         # 2000 units/s. This MUST still be caught even at the wider default.
-        host = FakeHost()
-        result = _drive(host, SteppingLeader([0.0, 0.0, 40.0, 0.0, 0.0, 0.0]), ticks=12)
+        refusals = _refusals_streaming_at([0.0, 0.0, 40.0, 0.0, 0.0, 0.0], hz=50.0)
 
-        telemetry = result["content"][1]["json"]
-        assert telemetry["slew_rejected"] >= 1, (
-            f"a 2000 units/s glitch was NOT refused at the default bound: {telemetry}"
+        assert len(refusals) >= 1, (
+            "a 2000 units/s glitch was NOT refused at the default bound"
         )
+        assert "joint1" in refusals[0], refusals[0]
+
+
+def _refusals_streaming_at(positions: list[float], hz: float, joint: str = "joint1") -> list[str]:
+    """Replay *positions* as one frame per 1/hz second and collect the refusals.
+
+    Q29, the honest fix: this class states its cases in UNITS PER SECOND ("a 90
+    deg/s sweep", "a 2000 units/s glitch"), but a wall-clock ``teleoperate()``
+    loop converts per-tick steps into per-second speeds using the rate it
+    ACHIEVES, not the rate it was asked for. Achieved rate here has been measured
+    as low as 6.5Hz against an asked 50 - the scheduler, other tests, a busy
+    machine - and at 6.5Hz the scripted "2000 units/s glitch" IS only 260
+    units/s, comfortably inside the 500 bound. The loop refusing nothing was
+    correct; the test's arithmetic was the fiction. Worse, the failure mode was
+    load-dependent, which is how this file earned "9-10 pre-existing failures
+    under sweep, 1 idle".
+
+    Driving the judgment itself at an exact synthetic cadence tests the BOUND
+    rather than this machine's scheduler: the speeds are the ones the docstrings
+    claim, the result is identical on an idle Mac and a loaded one, and it runs
+    in microseconds. The loop's own contract - that it feeds real elapsed time
+    into this function, per joint - is covered by the loop-driven tests
+    elsewhere in this file, which is where that belongs.
+    """
+    dt = 1.0 / hz
+    now = 1000.0
+    baseline: dict[str, tuple[float, float]] = {}
+    refusals: list[str] = []
+    for value in positions:
+        action = {joint: value}
+        reason = security.input_frame_slew_violation(
+            action,
+            baseline,
+            now,
+            min_interval_s=0.0,
+            # The LOCAL bound, resolved by the same function the loop uses - not
+            # a number retyped here, which would keep passing if the shipped
+            # default changed under it.
+            max_slew=teleop_mixin.local_slew_bound(None),
+        )
+        if reason is not None:
+            refusals.append(reason)
+        else:
+            baseline = security.merge_slew_baseline(
+                baseline, action, now, max_slew=teleop_mixin.local_slew_bound(None)
+            )
+        now += dt
+    return refusals
 
 
 class QuietThenGlitchLeader:
