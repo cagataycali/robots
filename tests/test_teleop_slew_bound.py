@@ -55,9 +55,42 @@ class SteppingLeader:
         return {self.joint: self.values[i]}
 
 
+def _calls(device: object) -> int:
+    """How many times the loop has read this device (both fake shapes count)."""
+    n = getattr(device, "calls", None)
+    return int(n if n is not None else device.get_action_calls)  # type: ignore[union-attr]
+
+
+def _run_for_ticks(host: FakeHost, counted: object, ticks: int, hz: float = HZ) -> dict:
+    """Drive the loop until ``counted`` has been read ``ticks`` times, then stop.
+
+    The scripts in this file are written in TICKS (a list index, a call count),
+    but ``duration`` is WALL-CLOCK - and the loop's achieved rate sits below the
+    asked 50Hz by the scheduler's wake-up overhead (~43Hz measured idle on this
+    Mac, less under sweep load). ``duration=ticks/hz`` therefore ends a session
+    10-15%+ short of its script: a glitch scripted for tick 42 was simply never
+    emitted, and ``slew_rejected == 0`` was the loop being HONEST about a frame
+    it never saw. Driving by tick count makes the script's premise true at any
+    achieved rate. (Q29: 1 deterministic failure idle, 9-10 under load.)
+    """
+    import time as _time
+
+    host.teleoperate(hz=hz)
+    deadline = _time.monotonic() + max(5.0, 4 * ticks / hz)
+    while _calls(counted) < ticks and _time.monotonic() < deadline:
+        _time.sleep(0.002)
+    reached = _calls(counted)
+    result = host.stop_teleoperate()
+    assert reached >= ticks, (
+        f"premise: the loop achieved only {reached}/{ticks} ticks within the budget - "
+        f"the script never finished, so its assertions are not being tested"
+    )
+    return result
+
+
 def _drive(host: FakeHost, leader: object, ticks: int, hz: float = HZ) -> dict:
     host.attach_teleop(leader, name="leader")
-    return host.teleoperate(block=True, hz=hz, duration=ticks / hz)
+    return _run_for_ticks(host, leader, ticks, hz)
 
 
 class TestAnOverSpeedFrameIsNotApplied:
@@ -358,7 +391,7 @@ class TestAQuietDeviceKeepsItsBaselineWhileOthersMove:
     def _drive_two(host: FakeHost, quiet: object, steady: object, ticks: int) -> dict:
         host.attach_teleop(quiet, name="quiet")
         host.attach_teleop(steady, name="steady")
-        return host.teleoperate(block=True, hz=HZ, duration=ticks / HZ)
+        return _run_for_ticks(host, quiet, ticks)
 
     def test_a_glitch_from_a_returning_device_is_still_refused(self) -> None:
         # joint1 rests at 0.0, then its device goes quiet for 30 ticks (0.6 s,
@@ -475,10 +508,10 @@ class TestNarrowingTheBoundDoesNotShortenTheBaseline:
         )
 
         host = FakeHost()
-        host.attach_teleop(QuietThenGlitchLeader(0.0, quiet_ticks, GLITCH), name="quiet")
+        quiet = QuietThenGlitchLeader(0.0, quiet_ticks, GLITCH)
+        host.attach_teleop(quiet, name="quiet")
         host.attach_teleop(SteadyLeader(), name="steady")
-        ticks = 2 + quiet_ticks + 4
-        result = host.teleoperate(block=True, hz=HZ, duration=ticks / HZ)
+        result = _run_for_ticks(host, quiet, 2 + quiet_ticks + 4)
 
         applied = [a["joint1"] for a, _ in host.sent if "joint1" in a]
         assert applied, "premise: the quiet device must have applied its resting frames"
@@ -492,9 +525,10 @@ class TestNarrowingTheBoundDoesNotShortenTheBaseline:
         # entry is only ever stamped for a key that was applied - the claim the
         # unbounded envelope rests on.
         host = FakeHost()
-        host.attach_teleop(QuietThenGlitchLeader(0.0, 10, GLITCH), name="quiet")
+        quiet = QuietThenGlitchLeader(0.0, 10, GLITCH)
+        host.attach_teleop(quiet, name="quiet")
         host.attach_teleop(SteadyLeader(), name="steady")
-        host.teleoperate(block=True, hz=HZ, duration=16 / HZ)
+        _run_for_ticks(host, quiet, 16)
 
         applied_keys = {k for a, _ in host.sent for k in a}
         assert applied_keys, "premise: the loop must have applied something"
