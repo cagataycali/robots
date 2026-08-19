@@ -357,6 +357,12 @@ def snapshot(*, bridge: Any = None, agent_status: dict[str, Any] | None = None) 
 #: making the operator guess.
 _RESTART_KEYS = {"mesh.connect", "mesh.listen", "mesh.port", "mesh.backend", "mesh.camera_hz"}
 
+#: Body fields of ``POST /api/config`` that are NOT settings sections: the
+#: caller's own vocabulary, so they must never be reported as unknown settings.
+_BODY_NON_SECTION_KEYS = frozenset(
+    {"env", "reset_prompt", "reset_agent", "clear_history", "restart_mesh", "force"}
+)
+
 #: Changing these rebuilds the agent on the next turn.
 _AGENT_KEYS = {"agent.model_id", "agent.system_prompt", "agent.temperature", "agent.max_tokens"}
 
@@ -409,6 +415,20 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
                 for key in ("connect", "listen"):
                     mesh_patch.pop(key, None)
 
+    # Names the schema does not know are dropped without an error, so without
+    # this the drawer says "nothing changed" for a patch that changed nothing
+    # BECAUSE IT WAS NOT UNDERSTOOD. Computed off the BODY, not the patch: an
+    # unknown SECTION never makes it into the patch at all. Non-section fields
+    # of the body ("env" and the action flags) are the caller's own vocabulary
+    # and are not settings names.
+    ignored = settings.unknown_keys(
+        {
+            key: value
+            for key, value in body.items()
+            if isinstance(value, dict) and key not in _BODY_NON_SECTION_KEYS
+        }
+    )
+
     if patch:
         changed, coercion_errors = settings.update_strict(patch)
         errors.extend(coercion_errors)
@@ -446,6 +466,7 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
 
     restart_required = sorted(k for k in changed if k in _RESTART_KEYS)
     return {
+        "ignored": ignored,
         "applied": sorted(k for k in changed if k not in _RESTART_KEYS),
         "restart_required": restart_required,
         "env_written": env_written,

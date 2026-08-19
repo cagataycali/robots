@@ -288,11 +288,41 @@ def update(patch: dict[str, Any]) -> list[str]:
     return changed
 
 
+def unknown_keys(patch: dict[str, Any]) -> list[str]:
+    """Dotted names in ``patch`` that this schema does not know.
+
+    ``_update`` ``continue``s past an unknown section and an unknown key, so such
+    a name is neither stored NOR reported: it lands in no ``changed`` list and
+    raises no coercion error. The settings drawer builds its status line out of
+    those two lists, so a whole patch of names the backend does not recognise -
+    a frontend field renamed on one side only, a typo in an env-ish key, a
+    section that moved - produced the same reassuring "nothing changed" as
+    re-saving values that were already correct.
+
+    The two cases are not the same. This one names them so they can be said out
+    loud, without changing what gets stored: reporting is not enforcement, and a
+    caller sending an extra field must never be refused because of it.
+    """
+    out: list[str] = []
+    for section, values in (patch or {}).items():
+        if section not in _SCHEMA:
+            out.append(f"{section}.*" if isinstance(values, dict) else str(section))
+            continue
+        if not isinstance(values, dict):
+            continue
+        for key in values:
+            if key not in _SCHEMA[section]:
+                out.append(f"{section}.{key}")
+    return sorted(out)
+
+
 def update_strict(patch: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Like :func:`update`, but invalid values are reported, never stored.
+    """Like :func:`update`, but invalid VALUES are reported, never stored.
 
     Returns ``(changed, errors)`` where each error names the dotted key and
-    the reason. Valid keys in the same patch still apply.
+    the reason. Valid keys in the same patch still apply. An unrecognised
+    section or key is a different thing - a name, not a value - and is skipped
+    here without an error; :func:`unknown_keys` is what names those.
     """
     return _update(patch, strict=True)
 

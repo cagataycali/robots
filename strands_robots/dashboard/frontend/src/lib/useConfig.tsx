@@ -4,6 +4,8 @@ import type { ConfigDoc, PolicyProvider } from '../types'
 import { api, post } from './endpoints'
 
 export interface ApplyResult {
+  /** setting names this backend does not know - dropped, never stored */
+  ignored?: string[]
   applied: string[]
   restart_required: string[]
   env_written: string[]

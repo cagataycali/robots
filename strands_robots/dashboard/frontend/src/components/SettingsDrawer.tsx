@@ -128,6 +128,10 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
       if (r.mesh_restart.orphaned?.length) parts.push(`orphaned local robots: ${r.mesh_restart.orphaned.join(', ')}`)
     }
     if (r.errors.length) parts.push(`errors: ${r.errors.join('; ')}`)
+    // A name the backend does not recognise is dropped without an error, so
+    // without this line "nothing changed" covers both "already correct" and
+    // "I did not understand what you sent".
+    if (r.ignored?.length) parts.push(`⚠ not recognised, so not saved: ${r.ignored.join(', ')}`)
     setStatus(parts.join(' · ') || 'nothing changed')
   }
 
