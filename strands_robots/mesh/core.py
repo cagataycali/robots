@@ -3723,6 +3723,20 @@ class Mesh(SensorLoopsMixin):
 
 
 # init_mesh -- the only public constructor
+def mesh_kill_switch_engaged(env: dict[str, str] | None = None) -> bool:
+    """True when ``STRANDS_MESH`` explicitly forbids joining the mesh.
+
+    Shared so that every path which can OPEN a session asks the same question.
+    :func:`init_mesh` used to own this test inline, which let
+    ``robot_mesh._gateway_mesh()`` construct a ``Mesh`` directly and join the live
+    fleet with ``STRANDS_MESH=false`` set (BUGS.md Q32: that is how a unit-test run
+    became a live ``gateway-*`` peer with six subscriber callback threads). The
+    switch only ever forces mesh OFF - it never turns it on.
+    """
+    source = os.environ if env is None else env
+    return source.get("STRANDS_MESH", "").strip().lower() in ("false", "0", "no")
+
+
 def init_mesh(
     robot: Any,
     peer_id: str | None = None,
@@ -3740,8 +3754,7 @@ def init_mesh(
     # env var only ever forces mesh OFF here, never ON, so a caller that
     # explicitly opted out is honoured. The opt-in path (a bare ``Robot()``
     # turning mesh ON via STRANDS_MESH=true) is resolved in the Robot factory.
-    env = os.getenv("STRANDS_MESH", "").strip().lower()
-    if env in ("false", "0", "no"):
+    if mesh_kill_switch_engaged():
         mesh = False
     if not mesh:
         return None

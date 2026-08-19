@@ -607,7 +607,17 @@ def _gateway_mesh() -> Any | None:
             import socket as _socket
             import uuid as _uuid
 
-            from strands_robots.mesh.core import Mesh
+            from strands_robots.mesh.core import Mesh, mesh_kill_switch_engaged
+
+            # STRANDS_MESH=false is documented as a hard kill switch, but this
+            # path constructed a Mesh directly and so ignored it - a robot-less
+            # process (the dashboard, an agent, every unit test) joined the live
+            # fleet on the first robot_mesh call and published presence, which is
+            # how test runs turned into ghost `gateway-*` peers on the operator's
+            # fleet screen (BUGS.md Q32). Ask the same question init_mesh asks.
+            if mesh_kill_switch_engaged():
+                logger.debug("robot_mesh: gateway mesh suppressed by STRANDS_MESH kill switch")
+                return None
 
             gw = Mesh(
                 None,
