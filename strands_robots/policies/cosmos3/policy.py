@@ -155,8 +155,14 @@ class Cosmos3Policy(Policy):
             (default ``"nvidia/Cosmos3-Nano"``). Ignored by the service backend
             (the server selects the checkpoint via ``--checkpoint-path``).
         diffusers_backend: Pre-built
-            :class:`~strands_robots.policies.cosmos3.policy_diffusers.Cosmos3DiffusersBackend`
-            (dependency injection for tests; skips the heavy import).
+            :class:`~strands_robots.policies.cosmos3.policy_diffusers.Cosmos3DiffusersBackend`.
+            Injecting one skips the heavy import (how the tests drive this
+            backend), and it is also the supported route to the backend's own
+            load and sampling knobs: this constructor forwards only
+            ``embodiment``, ``model`` and ``mode``, so ``resolution_tier``,
+            ``view_point``, ``device``, ``dtype``, ``num_inference_steps``,
+            ``guidance_scale``, ``enable_sound`` and ``enable_safety_checker``
+            are set on the backend and reach the policy through this parameter.
 
     Notes:
         * This policy needs camera frames **and** robot state in the
