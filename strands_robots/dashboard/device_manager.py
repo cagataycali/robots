@@ -799,13 +799,23 @@ class DeviceManager:
             "serial_ports": scan_serial_ports(),
             "cameras": self._cameras(refresh=refresh),
             "camera_names": self._camera_names(refresh=refresh),
+            # The keys here are PEER IDS, not pids. The loop variable used to be
+            # named `pid`, which is very likely why the actual OS pid -- the one
+            # /api/robots/spawn hands back and an operator needs to `kill` or match
+            # in Activity Monitor -- was never in the payload: the name was already
+            # taken by something else.
             "managed": {
-                pid: {
+                peer_id: {
                     "peer_id": m.peer_id, "robot_name": m.robot_name, "mode": m.mode,
                     "port": m.port, "alive": m.alive(), "started_at": m.started_at,
+                    # None only when the child was never started; a pid for a dead
+                    # process is still useful (it is what the logs refer to), so it
+                    # is reported alongside alive=False rather than blanked.
+                    "pid": m.process.pid if m.process is not None else None,
+                    "returncode": m.process.poll() if m.process is not None else None,
                     "log_tail": list(m.logs)[-20:],
                 }
-                for pid, m in self.robots.items()
+                for peer_id, m in self.robots.items()
             },
         }
 

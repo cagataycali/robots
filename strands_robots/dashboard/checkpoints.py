@@ -187,8 +187,29 @@ def hf_auth_state() -> dict[str, Any]:
     return value
 
 
+#: Widest page the hub search is asked for, and the ceiling for any caller.
+MAX_LIMIT = 40
+
+
+def clamp_limit(limit: Any, default: int = 15, ceiling: int = MAX_LIMIT) -> int:
+    """A limit is a promise to the caller: 1 means one row.
+
+    ``rows[: max(limit, len(local))]`` used to keep every local cache row no
+    matter what was asked for, so a type-ahead requesting 1 got 16 (and 0 or -5
+    got 16 too). The no-hidden-local-rows intent survives without overriding the
+    caller, because local rows are ORDERED FIRST -- truncating drops hub rows
+    before local ones.
+    """
+    try:
+        n = int(limit)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(n, ceiling))
+
+
 def search(query: str = "", limit: int = 15) -> dict[str, Any]:
     """Merged checkpoint search: local cache first, then hub by downloads."""
+    limit = clamp_limit(limit)
     local = local_checkpoints(query)
     local_ids = {r["repo_id"] for r in local}
     remote_rows, hub_problem = hub_search(query, limit=limit)
@@ -196,7 +217,8 @@ def search(query: str = "", limit: int = 15) -> dict[str, Any]:
     rows = local + remote
     return {
         "query": query,
-        "results": rows[: max(limit, len(local))],
+        "results": rows[:limit],
+        "total_matched": len(rows),
         "hub_problem": hub_problem,
         "hf_auth": hf_auth_state(),
     }

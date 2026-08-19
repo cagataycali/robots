@@ -639,7 +639,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         """
         from strands_robots.dashboard import checkpoints
 
-        return await asyncio.to_thread(checkpoints.search, q, min(int(limit), 40))
+        return await asyncio.to_thread(checkpoints.search, q, checkpoints.clamp_limit(limit))
 
     @app.get("/api/checkpoints/families")
     async def checkpoint_families() -> dict[str, Any]:
@@ -1047,7 +1047,19 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     @app.get("/api/devices/logs/{peer_id}")
     async def device_logs(peer_id: str) -> dict[str, Any]:
         """Child-process output for one managed robot (ring buffer)."""
-        return app.state.devices.logs(peer_id)
+        out = app.state.devices.logs(peer_id)
+        if "error" in out:
+            # Q23, same errors-as-200 family as Q3: res.ok must not be true for a
+            # peer that does not exist. Only LOCALLY SPAWNED robots have logs at
+            # all, so the message says which ids qualify rather than implying the
+            # peer is unknown to the whole fleet.
+            managed = sorted(getattr(app.state.devices, "robots", None) or {})
+            raise HTTPException(404, {
+                "error": out["error"],
+                "hint": "only locally spawned robots keep a log ring buffer",
+                "managed_peers": managed,
+            })
+        return out
 
     @app.post("/api/robots/{peer_id}/twin")
     async def toggle_twin(peer_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
