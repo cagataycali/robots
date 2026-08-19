@@ -92,6 +92,12 @@ class TokenAuthMiddleware:
 
     @staticmethod
     def _client_is_local(scope: dict[str, Any]) -> bool:
+        # A reverse proxy (cloudflared tunnel) connects FROM loopback on behalf
+        # of the whole internet. Any forwarding header means the ORIGINAL
+        # client is remote, so "local" must be false no matter the socket peer.
+        headers = {k.decode().lower() for k, _ in scope.get("headers") or []}
+        if headers & {"cf-connecting-ip", "x-forwarded-for", "x-real-ip"}:
+            return False
         client = scope.get("client")
         host = client[0] if client else None
         if host is None or host == "testclient":

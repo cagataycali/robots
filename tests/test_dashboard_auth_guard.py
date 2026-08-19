@@ -93,6 +93,23 @@ def test_open_posture_refuses_lan_client():
     assert run_scope(_http_scope("/api/fleet", client=("192.168.1.50", 1))) == 401
 
 
+def test_open_posture_refuses_proxied_client_even_from_loopback():
+    # cloudflared/nginx connect FROM 127.0.0.1 on behalf of remote clients;
+    # any forwarding header means the ORIGINAL client is not local.
+    for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
+        scope = _http_scope(
+            "/api/fleet", client=("127.0.0.1", 1), headers={header: "203.0.113.9"}
+        )
+        assert run_scope(scope) == 401, f"{header} must defeat the loopback pass"
+
+
+def test_open_posture_proxied_websocket_refused_with_1008():
+    scope = _http_scope("/ws/chat", client=("127.0.0.1", 1), headers={"cf-connecting-ip": "203.0.113.9"})
+    scope["type"] = "websocket"
+    scope.pop("method")
+    assert run_scope(scope) == 1008
+
+
 def test_open_posture_lan_client_can_load_shell_and_health():
     assert run_scope(_http_scope("/", client=("192.168.1.50", 1))) == "passed"
     assert run_scope(_http_scope("/api/health", client=("192.168.1.50", 1))) == "passed"
