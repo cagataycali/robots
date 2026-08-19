@@ -1463,3 +1463,12 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   border-radius: var(--s2); background: rgb(0 0 0 / .34); border: 1px solid var(--glass-border-hi);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-small);
   line-height: 1.55; user-select: all; overflow-wrap: anywhere; }
+
+/* An activity row whose outcome is UNPROVEN (an e-stop nobody acknowledged, a
+   command the robot never answered) is neither the green of success nor the red
+   of a failed call: the call worked, the effect is unknown. */
+.activity li.warn { border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 6%, transparent); }
+.activity li.warn .verdict { color: var(--warn); }
+.activity li.pending .verdict { color: var(--muted); }
+.actnote { color: var(--muted); font-size: .82em; }
+.activity li.warn .actnote { color: color-mix(in srgb, var(--warn) 80%, var(--fg)); }

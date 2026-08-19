@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { activityLine } from '../lib/activityLine'
 import type { ActivityEntry } from '../types'
 import { api } from '../lib/endpoints'
 
@@ -87,16 +88,21 @@ export default function ActivityLog({ live, open, onClose }: {
           )}
           <ul className="activity">
             {entries.map((e, i) => (
-              <li key={`${e.t}-${i}`} className={e.ok === false ? 'bad' : e.ok ? 'ok' : ''}>
+              <li key={`${e.t}-${i}`} className={activityLine(e).tone}>
                 <span className="when" title={new Date(e.t * 1000).toLocaleString()}>
                   {ago(e.t, now)}
                 </span>
                 <span className="src">{SOURCE_ICON[e.source] ?? '•'}</span>
                 <span className="what">
-                  <b>{e.action}</b> → <code>{e.target}</code>
+                  <b>{e.action}</b> → <code>{activityLine(e).target}</code>
                   {e.elapsed != null && <em> {e.elapsed.toFixed(1)}s</em>}
+                  {/* The facts that decide what a row MEANS (who fired an e-stop,
+                      whether anything acknowledged it, whether the robot answered
+                      at all) belong on the visible line, not inside a collapsed
+                      <details> nobody opens during an incident. */}
+                  {activityLine(e).note && <span className="actnote"> {activityLine(e).note}</span>}
                 </span>
-                <span className="verdict">{e.ok === false ? '✗' : e.ok ? '✓' : '…'}</span>
+                <span className="verdict" title={activityLine(e).title}>{activityLine(e).glyph}</span>
                 {(e.detail != null || e.result) && (
                   <details>
                     <summary>what the robot answered</summary>
