@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
+import CalibrationSection from './CalibrationSection'
+import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
 
 interface SerialPort {
   device: string
@@ -39,7 +41,7 @@ interface DeviceDoc {
  */
 export default function DevicePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [doc, setDoc] = useState<DeviceDoc | null>(null)
-  const [robots, setRobots] = useState<string[]>([])
+  const [robots, setRobots] = useState<RegistryRobot[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -65,7 +67,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     if (!open) return
     void load()
     void api<{ robots: any }>('/api/robots/registry')
-      .then(r => setRobots(Array.isArray(r.robots) ? r.robots : Object.keys(r.robots ?? {})))
+      .then(r => setRobots(normalizeRegistry(r.robots)))
       .catch(() => setRobots([]))
     // Managed children die on their own (import errors, unplugged bus); poll so
     // an `alive: false` row does not sit there looking healthy.
@@ -174,7 +176,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                 <span>Robot</span>
                 <select value={robotName} onChange={e => setRobotName(e.target.value)}>
                   <option value="">select…</option>
-                  {robots.map(r => <option key={r} value={r}>{r}</option>)}
+                  {robots.map(r => <option key={r.name} value={r.name}>{r.label}</option>)}
                 </select>
               </label>
               <label className="field">
@@ -232,6 +234,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
               </button>
             </div>
           </section>
+
+          <CalibrationSection />
 
           <section>
             <h3>Detected hardware</h3>

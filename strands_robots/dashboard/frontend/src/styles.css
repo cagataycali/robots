@@ -428,6 +428,17 @@ body {
 }
 .logtail.tall { max-height: 40dvh; }
 
+/* calibration (read-only view of lerobot's files) */
+.calibgroup {
+  display: flex; align-items: baseline; gap: var(--s2);
+  margin: var(--s3) 0 var(--s2); font-size: var(--fs-small); font-weight: 600;
+}
+.calibgroup .meta { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+/* A full-width row under the li's flex children, so the table is not squeezed
+   into the leftover space beside the id. */
+.calibdetail { flex-basis: 100%; margin-top: var(--s2); }
+.calibdetail .jointtable { margin-bottom: var(--s2); }
+
 /* ── sheets (e-stop) ───────────────────────────────── */
 .sheet-backdrop {
   position: fixed; inset: 0; z-index: 90;
