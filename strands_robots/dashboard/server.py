@@ -795,12 +795,21 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 if not prompt:
                     continue
                 q: _queue.Queue = _queue.Queue()
-                _threading.Thread(target=run_turn_blocking, args=(prompt, q), daemon=True).start()
-                while True:
-                    ev = await asyncio.to_thread(q.get)
-                    if ev.get("type") == "__END__":
-                        break
-                    await ws.send_text(json.dumps(ev))
+                cancel = _threading.Event()
+                _threading.Thread(
+                    target=run_turn_blocking, args=(prompt, q, cancel), daemon=True,
+                ).start()
+                try:
+                    while True:
+                        ev = await asyncio.to_thread(q.get)
+                        if ev.get("type") == "__END__":
+                            break
+                        await ws.send_text(json.dumps(ev))
+                except BaseException:
+                    # Disconnect / cancellation / failed send: tell the worker
+                    # to abandon the turn so it stops holding the turn lock.
+                    cancel.set()
+                    raise
         except (WebSocketDisconnect, RuntimeError):
             pass
 

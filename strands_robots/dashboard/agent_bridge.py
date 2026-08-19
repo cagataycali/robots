@@ -339,14 +339,23 @@ def agent_status() -> dict[str, Any]:
     }
 
 
+class TurnCancelled(Exception):
+    """The client that asked for this turn went away - abandon it."""
+
+
 class WSStreamHandler:
     """Strands callback handler -> thread-safe queue of UI events."""
 
-    def __init__(self, q: "queue.Queue[dict]") -> None:
+    def __init__(self, q: "queue.Queue[dict]", cancel: "threading.Event | None" = None) -> None:
         self.q = q
+        self.cancel = cancel
         self._tool_ids: set[str] = set()
 
     def __call__(self, **kwargs: Any) -> None:
+        if self.cancel is not None and self.cancel.is_set():
+            # Cooperative cancellation: raising out of the stream callback ends
+            # the agent call so the turn lock is not held by a ghost turn.
+            raise TurnCancelled("client disconnected mid-turn")
         data = kwargs.get("data")
         current_tool_use = kwargs.get("current_tool_use") or {}
         reasoning_text = kwargs.get("reasoningText")
@@ -394,14 +403,32 @@ def _is_history_poisoned(exc: Exception) -> bool:
     )
 
 
-def run_turn_blocking(prompt: str, q: "queue.Queue[dict]") -> None:
-    """Run one agent turn in a worker thread, streaming events into q."""
+def run_turn_blocking(
+    prompt: str,
+    q: "queue.Queue[dict]",
+    cancel: "threading.Event | None" = None,
+) -> None:
+    """Run one agent turn in a worker thread, streaming events into q.
+
+    ``cancel`` is set by the websocket handler when its client goes away. The
+    lock is acquired/released explicitly in try/finally so no exit path -
+    including a cancelled or crashed turn - can leave it held by a ghost turn.
+    """
+    acquired = False
     try:
-        with _turn_lock:
+        if cancel is not None and cancel.is_set():
+            return
+        _turn_lock.acquire()
+        acquired = True
+        try:
+            if cancel is not None and cancel.is_set():
+                raise TurnCancelled("client disconnected before the turn started")
             agent = get_agent()
-            agent.callback_handler = WSStreamHandler(q)
+            agent.callback_handler = WSStreamHandler(q, cancel)
             try:
                 result = agent(prompt)
+            except TurnCancelled:
+                raise
             except Exception as exc:
                 # Self-heal instead of failing every future turn: drop the
                 # restored history, rebuild, and try once more from a clean
@@ -414,7 +441,7 @@ def run_turn_blocking(prompt: str, q: "queue.Queue[dict]") -> None:
                 with _agent_lock:
                     _agent = None
                 agent = get_agent()
-                agent.callback_handler = WSStreamHandler(q)
+                agent.callback_handler = WSStreamHandler(q, cancel)
                 agent.messages = []
                 q.put({"type": "notice", "text": "previous conversation was unusable and has been cleared"})
                 result = agent(prompt)
@@ -422,6 +449,9 @@ def run_turn_blocking(prompt: str, q: "queue.Queue[dict]") -> None:
                 _save_history(list(agent.messages))
             except Exception:
                 pass
+        finally:
+            _turn_lock.release()
+            acquired = False
         text = ""
         try:
             msg = getattr(result, "message", None)
@@ -432,8 +462,12 @@ def run_turn_blocking(prompt: str, q: "queue.Queue[dict]") -> None:
         except Exception:
             text = str(result)
         q.put({"type": "done", "text": text})
+    except TurnCancelled:
+        logger.info("agent turn abandoned: client disconnected mid-turn")
     except Exception as e:
         logger.exception("agent turn failed")
         q.put({"type": "error", "error": str(e)})
     finally:
+        if acquired:
+            _turn_lock.release()
         q.put({"type": "__END__"})
