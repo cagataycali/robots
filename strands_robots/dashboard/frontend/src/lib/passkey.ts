@@ -141,6 +141,12 @@ export async function beginLogin(): Promise<PreparedLogin> {
     method: 'POST',
     body: JSON.stringify({}),
   })
+  // Discoverable-credential flow: drop the allow list. Passkeys are resident
+  // keys, and iOS Safari has been seen wedging in a silent cross-device wait
+  // when an allowCredentials entry arrives without transports. With no list,
+  // the local Face ID sheet offers whatever passkeys exist for this rp — and
+  // the server verifies by the credential id the response carries anyway.
+  delete (options as any).allowCredentials
   return { challenge_id, options, t: Date.now() }
 }
 

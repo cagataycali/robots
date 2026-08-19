@@ -18,6 +18,10 @@ import {
   beginLogin, completeLogin, loginFresh, type PreparedLogin,
 } from '../lib/passkey'
 import StrandsMark from './StrandsMark'
+import { useRegisterSW } from 'virtual:pwa-register/react'
+
+/** Build stamp so a human (or a screenshot) can tell WHICH gate they're on. */
+const BUILD = (import.meta as any).env?.VITE_BUILD ?? 'dev'
 
 type Mode = 'checking' | 'open' | 'enroll' | 'login' | 'unreachable'
 
@@ -28,10 +32,26 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [busy, setBusy] = useState(false)
   const [label, setLabel] = useState('')
   const [bootstrap, setBootstrap] = useState('')
+  const [showToken, setShowToken] = useState(false)
+  const [tokenValue, setTokenValue] = useState('')
   // Login challenge fetched AHEAD of the tap: iOS Safari only opens the Face ID
   // sheet while the tap's user-activation is alive, so the click handler must
   // reach credentials.get() without awaiting the network first.
   const prepared = useRef<PreparedLogin | null>(null)
+
+  // The App's update prompt lives BEHIND the gate — a visitor stuck out here
+  // (exactly where auth bugs strand them) could otherwise be pinned to a stale
+  // bundle by the service worker forever. At the gate nothing is mid-task, so
+  // updating immediately is safe: take the new worker and reload.
+  const {
+    needRefresh: [gateNeedsRefresh],
+    updateServiceWorker,
+  } = useRegisterSW({ immediate: true })
+  useEffect(() => {
+    if (gateNeedsRefresh && mode !== 'open' && mode !== 'checking') {
+      void updateServiceWorker(true) // activate waiting SW + reload
+    }
+  }, [gateNeedsRefresh, mode, updateServiceWorker])
 
   useEffect(() => {
     if (mode !== 'login' || !webauthnReady()) return
@@ -165,10 +185,32 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             <button className="btn go" onClick={signIn} disabled={busy}>
               {busy ? 'waiting for the authenticator…' : 'sign in'}
             </button>
+            {!showToken && (
+              <button className="btn linklike" type="button" onClick={() => setShowToken(true)}>
+                passkey not working? sign in with an access token
+              </button>
+            )}
+            {showToken && (
+              <form onSubmit={e => { e.preventDefault(); if (tokenValue.trim()) setAuthToken(tokenValue.trim()) }}>
+                <div className="field">
+                  <label htmlFor="authgate-token">access token</label>
+                  <input id="authgate-token" type="password" value={tokenValue}
+                         placeholder="from the dashboard machine (tiny can mint one)"
+                         onChange={e => setTokenValue(e.target.value)} autoComplete="off" />
+                </div>
+                <p className="dim">
+                  The escape hatch when the passkey ceremony fails on this device: paste a
+                  session token minted on the machine running the dashboard. Wrong or expired
+                  tokens simply land back on this screen.
+                </p>
+                <button className="btn go" type="submit" disabled={!tokenValue.trim()}>unlock</button>
+              </form>
+            )}
           </>
         )}
 
         {error && mode !== 'unreachable' && <p className="autherror" role="alert">{error}</p>}
+        <p className="dim" style={{ fontSize: 11, opacity: 0.55, marginTop: 12 }}>build {BUILD}</p>
       </div>
     </div>
   )
