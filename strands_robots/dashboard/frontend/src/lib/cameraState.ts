@@ -33,6 +33,35 @@ export const STALL_MS = 2500
 const BUSY = /(in use|busy|already open|cannot open|could not open|-11852|EBUSY|Resource temporarily unavailable)/i
 const DENIED = /(unauthorized|not permitted|permission|denied|forbidden|TCC)/i
 
+/** No frame for this long and the peer's own last frame is history, not a warm-up. */
+export const PUBLISH_FRESH_MS = 15_000
+
+/**
+ * A duration a human reads at a glance. `24015s ago` is a number, not an
+ * answer: at six hours the useful unit is hours, and the point of the sentence
+ * is "this is not going to arrive", which seconds actively hide.
+ */
+export function ageText(ms: number): string {
+  if (!isFinite(ms) || ms < 0) return 'unknown'
+  if (ms < 1000) return '<1s'
+  if (ms < 90_000) return `${Math.round(ms / 1000)}s`
+  if (ms < 5_400_000) return `${Math.round(ms / 60_000)}m`
+  if (ms < 172_800_000) return `${(ms / 3_600_000).toFixed(1).replace(/\.0$/, '')}h`
+  return `${Math.round(ms / 86_400_000)}d`
+}
+
+/**
+ * `publishedAt` reaches us from the mesh snapshot, where python writes unix
+ * SECONDS, while `now` is `Date.now()` in milliseconds. Mixing them silently
+ * turns 2026 into 1970 and any age into ~57 years, so the unit is inferred
+ * (anything below ~2001-in-ms is seconds) instead of assumed. Returns ms.
+ */
+export function publishedAtMs(publishedAt?: number): number | undefined {
+  if (publishedAt === undefined || publishedAt === null || !isFinite(publishedAt)) return undefined
+  if (publishedAt <= 0) return undefined
+  return publishedAt < 1e12 ? publishedAt * 1000 : publishedAt
+}
+
 export function classifyCamera(input: {
   now: number
   conn: 'connecting' | 'open' | 'closed'
@@ -45,6 +74,7 @@ export function classifyCamera(input: {
   retryInMs?: number
   attempt?: number
   stallMs?: number
+  publishFreshMs?: number
 }): CamStatus {
   const { now, conn, frames, lastFrameAt, error, publishedAt } = input
   const stallMs = input.stallMs ?? STALL_MS
@@ -64,7 +94,7 @@ export function classifyCamera(input: {
   // A stall outranks a healthy socket: the connection being fine is exactly
   // what makes a frozen frame convincing.
   if (hadFrames && age! > stallMs) {
-    return { kind: 'stalled', title: 'stalled', detail: `last frame ${secs(age!)} ago`, live: false, frozen: true }
+    return { kind: 'stalled', title: 'stalled', detail: `last frame ${ageText(age!)} ago`, live: false, frozen: true }
   }
   if (hadFrames) return { kind: 'live', title: 'live', detail: '', live: true, frozen: false }
   if (conn === 'closed') {
@@ -78,8 +108,24 @@ export function classifyCamera(input: {
     return { kind: 'closed', title: 'disconnected', detail: 'stream closed', live: false, frozen: false }
   }
   if (conn === 'open') {
-    return publishedAt
-      ? { kind: 'waiting', title: 'waiting', detail: 'peer published frames, none arrived yet', live: false, frozen: false }
+    // `publishedAt` used to be read as a BOOLEAN, so a peer whose last frame for
+    // this camera was HOURS old still said "none arrived yet" - which reads as
+    // "any moment now" while the truth is that the camera stopped long ago and
+    // no amount of waiting will help. Measured live: an arm publishing its top
+    // camera at 30fps had a wrist entry 6.7 hours stale, presented identically.
+    const pubMs = publishedAtMs(publishedAt)
+    const pubAge = pubMs === undefined ? undefined : now - pubMs
+    if (pubAge !== undefined && pubAge > (input.publishFreshMs ?? PUBLISH_FRESH_MS)) {
+      return {
+        kind: 'silent', title: 'no frames',
+        // Says WHERE it stopped: the stream is fine, the camera at the other end
+        // is not, so the next step is that robot's log rather than this page.
+        detail: `the peer's last frame is ${ageText(pubAge)} old - the camera stopped there, not in transit`,
+        live: false, frozen: false,
+      }
+    }
+    return pubAge !== undefined
+      ? { kind: 'waiting', title: 'waiting', detail: `peer published ${ageText(pubAge)} ago, none arrived here yet`, live: false, frozen: false }
       : { kind: 'silent', title: 'no frames', detail: 'stream open, camera sending nothing', live: false, frozen: false }
   }
   return { kind: 'connecting', title: 'connecting', detail: 'opening the stream', live: false, frozen: false }
