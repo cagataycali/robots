@@ -9,15 +9,31 @@ Also disables the Zenoh mesh by default during the test suite so the
 ``Robot()`` / ``Simulation()`` factory does not spin up real Zenoh
 sessions and background heartbeat threads when ``eclipse-zenoh`` is
 installed in the test environment.  Mesh-specific tests opt back in
-explicitly via ``monkeypatch.delenv`` or by patching ``init_mesh``.
+explicitly via ``monkeypatch.delenv`` or by patching ``init_mesh`` -- a per-test
+opt-in, which is the only kind that cannot leak into the rest of the run.
 """
 
 import os
 
 # Disable mesh BEFORE any strands_robots import below pulls in robot.py.
-# Use setdefault so tests that explicitly enable the mesh (e.g. integ tests)
-# can override via the environment without conftest stomping on them.
-os.environ.setdefault("STRANDS_MESH", "false")
+#
+# This is FORCED, not setdefault. setdefault meant that an ambient
+# ``STRANDS_MESH=true`` -- exactly what a shell or an automation that reproduced a
+# running dashboard's environment (``ps eww``) exports -- silently disarmed the
+# suite's only protection and let a test run JOIN THE LIVE FLEET: publishing
+# presence, and in the estop drills broadcasting a real emergency stop
+# (BUGS.md Q30, Q32). A safety default that any inherited variable can switch off
+# is not a default. Opting in is now a deliberate act with a name that cannot be
+# inherited by accident, and it announces itself.
+if os.environ.get("STRANDS_TEST_ALLOW_LIVE_MESH", "").strip().lower() in ("1", "true", "yes"):
+    os.environ.pop("STRANDS_MESH", None)
+    print(
+        "WARNING: STRANDS_TEST_ALLOW_LIVE_MESH is set - the mesh kill switch is OFF for this "
+        "run and tests may reach a real fleet.",
+        flush=True,
+    )
+else:
+    os.environ["STRANDS_MESH"] = "false"
 
 # Disable the Device Connect dispatch path in robot_mesh by default so unit
 # tests exercise the built-in mesh deterministically, without opening real
