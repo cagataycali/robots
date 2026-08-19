@@ -313,6 +313,19 @@ def main() -> None:
         print("   ⚠️  STRANDS_MESH_LOCAL_DEV=1 - WIRE SECURITY DISABLED (no TLS, no auth)")
     if resolved["security"].get("auth_token"):
         print("   auth: bearer token required on /api and /ws")
+        if args.auth_token is not None:
+            # JOURNEYS #15, the half that is code: --auth-token-file exists and
+            # restart_dashboard.sh uses it, but nothing told an operator who
+            # typed --auth-token that the secret is now in every `ps` listing
+            # for the life of the process - and help text they already skipped
+            # is not a warning. This machine's own audit lifted a token that
+            # way, so the risk is measured, not theoretical. Printed even
+            # though the token IS working, because "auth: required" reads like
+            # the security question is settled.
+            print("   ⚠️  the token came from the command line, so every local "
+                  "user can read it: ps -eww | grep auth-token")
+            print("      fix (next start): put it in a 0600 file and pass "
+                  "--auth-token-file PATH instead")
     else:
         print("   ⚠️  no auth token - anyone who can reach this port can move motors "
               "(--auth-token to require one)")
