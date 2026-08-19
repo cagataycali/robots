@@ -25,7 +25,7 @@ import pkgutil
 import shutil
 import threading
 import time
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Mapping, MutableMapping
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
@@ -306,6 +306,94 @@ def _normalize_max_relative_target(value: Any, robot_type: str) -> float | dict[
     if err := positive_finite_number_error(value, param, context):
         raise ValueError(f"{err} {advice}")
     return float(value)
+
+
+def _degrade_to_available_cameras(robot: Any) -> dict[str, str]:
+    """Drop the cameras this machine will not open, so the arm can still run.
+
+    lerobot brings a robot up as one unit and gates ``is_connected`` on
+    ``bus.is_connected and all(cam.is_connected ...)``. One camera that refuses
+    to open therefore reports the WHOLE robot as disconnected -- no joints, no
+    teleop, no recording -- even though the motor bus is open and the arm is
+    mechanically fine. On macOS the common cause is not even the robot's fault:
+    the OS denies camera access to the process (TCC is granted to the app
+    responsible for the process tree), so every index fails and a perfectly
+    healthy arm looks dead.
+
+    An operator can work a camera-less arm (jog it, home it, read its joints)
+    and can go fix the camera afterwards; an arm reported dead gives them
+    nothing. So each unopened camera is retried ALONE -- which is also how its
+    own error message is obtained, rather than the one error that happened to
+    abort lerobot's loop -- and the ones that still refuse are removed from the
+    robot, leaving ``is_connected`` free to describe the motors.
+
+    This never masks a motor failure: it is called only with an open bus, and
+    it returns ``{}`` (nothing degraded, report the original error) whenever it
+    cannot produce a connected robot.
+
+    Args:
+        robot: The lerobot robot whose ``connect()`` just failed.
+
+    Returns:
+        ``{camera_name: reason}`` for every camera dropped -- empty when there
+        was nothing to drop or dropping did not help, in which case the
+        caller's original error stands.
+    """
+    cameras = getattr(robot, "cameras", None)
+    if not isinstance(cameras, MutableMapping) or not cameras:
+        return {}
+
+    # A camera failure is only degradable while the motors are actually open;
+    # otherwise the bus is the real fault and must be reported as such.
+    bus = getattr(robot, "bus", None)
+    if not getattr(bus, "is_connected", False):
+        return {}
+
+    dropped: dict[str, str] = {}
+    for name, camera in list(cameras.items()):
+        if getattr(camera, "is_connected", False):
+            continue
+        try:
+            camera.connect()
+        except Exception as exc:  # noqa: BLE001 - any refusal means "unusable"
+            dropped[name] = str(exc) or type(exc).__name__
+            continue
+        if not getattr(camera, "is_connected", False):
+            # Connected without complaint yet still not connected: lerobot's
+            # OpenCV backend does this when the OS hands back a dead device.
+            dropped[name] = "camera reported no error but did not connect"
+
+    if not dropped:
+        return {}
+
+    for name in dropped:
+        camera = cameras.pop(name, None)
+        # Keep the robot's own config in step, since that is what status
+        # reporting and dataset features read to list the cameras.
+        config_cameras = getattr(getattr(robot, "config", None), "cameras", None)
+        if isinstance(config_cameras, MutableMapping):
+            config_cameras.pop(name, None)
+        try:
+            # A camera that failed to open already released its resources;
+            # only a half-open one needs closing here.
+            if getattr(camera, "is_connected", False):
+                camera.disconnect()
+        except Exception:  # noqa: BLE001 - best-effort, per camera
+            logger.debug("camera %s close after degrade failed", name)
+
+    if not getattr(robot, "is_connected", False):
+        # Something else is still wrong -- do not claim a degraded success.
+        return {}
+
+    for name, reason in dropped.items():
+        logger.warning(
+            "camera %r is unavailable and was dropped so the arm can still be "
+            "used: %s. The motors are connected; this robot cannot record or "
+            "stream that camera until it is fixed.",
+            name,
+            reason,
+        )
+    return dropped
 
 
 @functools.cache
@@ -611,6 +699,11 @@ class Robot(TeleopMixin, AgentTool):
         # module, so the real bridge construction in _init_ros_bridge pays nothing.
         if ros2_bridge:
             self._check_ros2_bridge_deps(ros2_transport=ros2_transport)
+
+        # Cameras this machine refused to open, ``{name: reason}``. Populated by
+        # a degraded connect and reported in get_status(), so an arm running
+        # without a camera says why instead of looking healthy or looking dead.
+        self._degraded_cameras: dict[str, str] = {}
 
         # Initialize robot using lerobot's abstraction
         self.robot = self._initialize_robot(robot, cameras, **kwargs)
@@ -1369,8 +1462,15 @@ class Robot(TeleopMixin, AgentTool):
                 if "already connected" in error_str or "is already connected" in error_str:
                     logger.info(f"{self.robot} connection already established")
                 else:
-                    # Re-raise if it's a different error
-                    raise e
+                    # A camera that will not open must not cost the operator
+                    # the whole arm. If the motor bus came up and only cameras
+                    # are missing, drop them and carry on degraded; otherwise
+                    # this returns {} and the original error stands.
+                    degraded = _degrade_to_available_cameras(self.robot)
+                    if not degraded:
+                        # Re-raise if it's a different error
+                        raise e
+                    self._degraded_cameras.update(degraded)
 
             # Final connection check
             if not self.robot.is_connected:
@@ -2655,6 +2755,10 @@ class Robot(TeleopMixin, AgentTool):
                 "is_connected": is_connected,
                 "is_calibrated": is_calibrated,
                 "cameras": camera_status,
+                # Empty in the healthy case. A name here means the arm is
+                # connected and usable but that camera is not, with the
+                # operating system's or driver's own words as the reason.
+                "degraded_cameras": dict(getattr(self, "_degraded_cameras", {}) or {}),
                 "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
                 "ros2_transport": getattr(self, "_ros2_transport", "rclpy")
                 if getattr(self, "_ros_bridge", None) is not None
