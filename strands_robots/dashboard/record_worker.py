@@ -359,6 +359,13 @@ def hardware_backend(
                 follower_name, mode="real", port=follower_port,
                 cameras=cameras or {},
             )
+            # HardwareRobot connects lazily on the first task; recording
+            # reads observations directly, so connect eagerly the same way
+            # the fleet spawner does (calibrate=False - the arm was
+            # calibrated when its peer was set up).
+            inner = getattr(self._robot, "robot", None)
+            if inner is not None and not getattr(inner, "is_connected", False):
+                inner.connect(False)
             self._leader = Teleoperator(leader_type, port=leader_port)
             if hasattr(self._leader, "connect"):
                 self._leader.connect()

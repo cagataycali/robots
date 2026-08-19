@@ -1,14 +1,14 @@
 /**
  * The record screen's contract with the backend (U8: teleop episode collection).
  *
- * There is no /api/record on the server yet - the exact endpoints this module
- * wants are specified in FRONTEND_HANDOFF.md at the repo root. Until they
- * exist, `getRecordApi()` returns a mock that behaves like the real thing
- * (episodes accumulate, stop yields a summary, discard removes) so the whole
- * screen is testable end-to-end today and flips to the live backend the moment
- * `GET /api/record/session` stops 404ing. The probe result is cached per page
- * load; a `mock: true` flag rides on the api object so the UI can say so
- * honestly instead of pretending a dataset was written.
+ * The live implementation is /api/record (strands_robots/dashboard/record_api.py),
+ * speaking exactly the shape below. `getRecordApi()` probes
+ * `GET /api/record/session` once per page load and only a 404 - the route
+ * genuinely missing, e.g. an older backend - selects the in-browser mock,
+ * which behaves like the real thing (episodes accumulate, stop yields a
+ * summary, discard removes) so the screen stays testable against any server.
+ * A `mock: true` flag rides on the api object so the UI can say so honestly
+ * instead of pretending a dataset was written.
  */
 import { api, post } from './endpoints'
 
@@ -120,12 +120,16 @@ function makeReal(): RecordApi {
 
 let cached: Promise<RecordApi> | null = null
 
-/** Probe once per page load: real backend if /api/record/session answers. */
+/** Probe once per page load: real backend unless the route truly does not
+ * exist. Only a 404 selects the in-browser rehearsal - a 401 means the
+ * backend IS there and the auth gate will sort the token out, and a network
+ * blip must not silently swap a real recorder for a mock that pretends to
+ * write datasets. */
 export function getRecordApi(): Promise<RecordApi> {
   if (!cached) {
     cached = api('/api/record/session')
       .then(() => makeReal())
-      .catch(() => makeMock())
+      .catch(e => (e && (e as { status?: number }).status === 404 ? makeMock() : makeReal()))
   }
   return cached
 }
