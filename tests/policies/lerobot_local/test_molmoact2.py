@@ -33,6 +33,23 @@ def _require_lerobot_configs_features() -> None:
         pytest.skip("lerobot.configs lacks FeatureType/PolicyFeature (needs lerobot >= 0.5.2)")
 
 
+def _require_molmoact2_build_deps() -> None:
+    """Skip unless ``build_policy`` can actually reach the code under test.
+
+    ``build_policy`` guards its auxiliary runtime deps UP FRONT (see
+    ``TestBuildPolicyDependencyGuard``: naming ``strands-robots[molmoact2]`` beats
+    letting lerobot's own ``require_package`` fire deep inside model construction).
+    That guard runs before anything these tests stub, so in an environment without
+    the ``molmoact2`` extra every test here dies on the guard instead of exercising
+    its subject -- 9 failures whose message ("'transformers', 'peft' are required")
+    accuses the wrong thing entirely. Gate on the SAME tuple the code guards, read
+    from the module so the two cannot drift, and skip honestly instead.
+    """
+    _require_lerobot_configs_features()
+    for dep in molmoact2._MOLMOACT2_RUNTIME_DEPS:
+        pytest.importorskip(dep, reason=f"{dep} ships in the strands-robots[molmoact2] extra")
+
+
 def test_is_molmoact2_explicit_type():
     """Explicit policy_type='molmoact2' short-circuits to True without any I/O."""
     assert molmoact2.is_molmoact2("anything/at-all", "molmoact2") is True
@@ -233,7 +250,7 @@ class TestBuildPolicy:
     @pytest.fixture
     def fake_factory(self, monkeypatch):
         """Stub lerobot's factory + record what build_policy passes through it."""
-        _require_lerobot_configs_features()
+        _require_molmoact2_build_deps()
         import lerobot.policies.factory as factory
 
         calls: dict[str, object] = {}
@@ -369,7 +386,7 @@ class TestBuildPolicy:
 
     def test_missing_lerobot_factory_raises_install_hint(self, monkeypatch):
         """If lerobot.policies.factory is absent, a clear install hint is raised."""
-        pytest.importorskip("lerobot")
+        _require_molmoact2_build_deps()
         import builtins
 
         real_import = builtins.__import__
@@ -397,7 +414,7 @@ class TestBuildPolicy:
 
     def test_missing_lerobot_configs_raises_install_hint(self, monkeypatch):
         """If lerobot.configs is absent, the first import guard raises the hint."""
-        pytest.importorskip("lerobot")
+        _require_molmoact2_build_deps()
         import builtins
 
         real_import = builtins.__import__
@@ -435,7 +452,7 @@ class TestBuildPolicy:
         source is a dead end -- lerobot is fine; the missing package is the fix.
         The error must name the real package and how to install it.
         """
-        pytest.importorskip("lerobot")
+        _require_molmoact2_build_deps()
         import builtins
 
         real_import = builtins.__import__
@@ -474,7 +491,7 @@ class TestBuildPolicy:
         namespace package without them, so the real first-guard import would fail
         first and mask the factory-guard behaviour under test.
         """
-        pytest.importorskip("lerobot")
+        _require_molmoact2_build_deps()
         import builtins
         import types
 
