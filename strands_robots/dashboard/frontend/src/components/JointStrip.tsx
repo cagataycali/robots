@@ -3,6 +3,7 @@ import type { Presence, PeerState } from '../types'
 import { decideStripScale, fillPercent, type ScaleMemo } from '../lib/jointScale'
 import { createHistory, pushFrame, HISTORY_WINDOW_MS } from '../lib/jointHistory'
 import JointSpark from './JointSpark'
+import { humanJointNames, stripLegend } from '../lib/jointLabels'
 
 /**
  * One scale per strip, learned from the stream.
@@ -61,6 +62,12 @@ export default function JointStrip({
   const fmt = (n: number) =>
     Math.abs(n) >= 100 ? n.toFixed(0) : Math.abs(n) >= 10 ? n.toFixed(1) : n.toFixed(2)
 
+  // UX_REVIEW #4's remaining half: the numbers were there, but nothing on
+  // screen said what unit they are in or what the bar and the line mean — that
+  // lived only in `title=`, which does not exist on a touch screen. Labels fall
+  // back to raw keys if humanising two rows would read the same.
+  const labels = humanJointNames(entries.map(([name]) => name))
+
   return (
     <div className="joints" data-unit={unit}>
       {entries.map(([name, v], i) => {
@@ -76,7 +83,7 @@ export default function JointStrip({
             key={name}
             title={`${name}: ${pos.toFixed(3)}${vel !== undefined ? ` (v=${vel.toFixed(2)})` : ''} · ${unit} scale ${range.lo.toFixed(2)}…${range.hi.toFixed(2)}`}
           >
-            <div className="jname">{name.replace(/(_pos|\.pos)$/, '')}</div>
+            <div className="jname" title={name}>{labels[i]}</div>
             <div className="jval">{fmt(pos)}</div>
             <div className="jbar">
               <div className="jfill" style={{ width: `${pct}%` }} />
@@ -90,6 +97,7 @@ export default function JointStrip({
           </div>
         )
       })}
+      <div className="jlegend">{stripLegend(unit, HISTORY_WINDOW_MS, entries.map(([n]) => n))}</div>
     </div>
   )
 }
