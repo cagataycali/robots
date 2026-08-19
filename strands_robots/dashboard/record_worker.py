@@ -368,7 +368,27 @@ def hardware_backend(
                 inner.connect(False)
             self._leader = Teleoperator(leader_type, port=leader_port)
             if hasattr(self._leader, "connect"):
-                self._leader.connect()
+                # calibrate=False, same reason as the follower above — and
+                # doubly so here: lerobot's calibrate() talks to a HUMAN via
+                # input(), which in this stdin-less server dies as
+                # "EOF when reading a line" (cagatay hit exactly that from
+                # the record screen, 2026-08-19). A missing calibration must
+                # be a readable refusal naming the file, never an EOF.
+                try:
+                    self._leader.connect(calibrate=False)
+                except TypeError:  # keyboards/gamepads take no calibrate arg
+                    self._leader.connect()
+                if not getattr(self._leader, "is_calibrated", True):
+                    fpath = getattr(self._leader, "calibration_fpath", "its calibration file")
+                    self._leader.disconnect()
+                    raise ValueError(
+                        f"leader arm at {leader_port} has no usable calibration "
+                        f"({fpath} is missing or does not match the motors). "
+                        "Calibrate it once from a terminal (lerobot-calibrate "
+                        f"--teleop.type={leader_type} --teleop.port={leader_port}) "
+                        "or copy an existing calibration json to that path — "
+                        "a headless server cannot run the interactive wizard."
+                    )
             obs = self._robot.get_observation()
             self.camera_keys = sorted(
                 k for k, v in obs.items() if getattr(v, "ndim", 0) == 3
