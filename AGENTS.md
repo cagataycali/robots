@@ -1737,9 +1737,21 @@ apply to all future work on `strands_robots/mesh/{core,audit,security}.py`.
 ### Audit poison-record symmetry
 - **Every degraded audit path writes a poison record, never a silent drop.** The
   poison `sig` discriminators (`PSK_DEGRADED`, `SIGN_FAILED`, `SEQ_LOCK_DEGRADED`,
-  `NEXT_SEQ_DEGRADED`) let a `verify_audit_integrity` walker attribute a stream
-  gap to a specific failure class. When you add a new `_next_seq`/sign/persist
-  failure branch, add the matching poison `sig` instead of returning early.
+  `NEXT_SEQ_DEGRADED`, `SERIALISE_FAILED`) let a `verify_audit_integrity` walker
+  attribute a stream gap to a specific failure class. When you add a new
+  `_next_seq`/sign/serialise/persist failure branch, add the matching poison
+  `sig` instead of returning early.
+- **`_next_seq` runs before serialisation, so an early `return` is a deletion.**
+  The sequence number is consumed and persisted before the record is encoded, so
+  a branch that gives up after that point leaves the signature this module's
+  header documents as "records were deleted". A payload the JSON encoder cannot
+  represent keeps the envelope (`ts` / `event` / `peer_id` / `seq`) and swaps the
+  payload for a bounded diagnostic; the only remaining drop is an envelope that
+  is itself unrepresentable, where there is nothing left to poison with.
+- Pinned by `tests/mesh/test_audit_serialise_safety.py`, whose
+  `TestEveryDegradedPathWritesARecord` drives every degraded branch from one
+  table so a path added later is graded rather than quietly becoming the next
+  silent drop.
 
 ### Replay-cache eviction
 - **TTL purge runs unconditionally, not only when the cache is full.** On a
