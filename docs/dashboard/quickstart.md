@@ -161,6 +161,7 @@ unattended.
 | joints read but the arm fights its range | calibration `id` at spawn does not match the one you calibrated |
 | dashboard refuses to start | a dashboard already owns the port; its pid is in the message |
 | `{"detail":"unauthorized"}` from a browser that is not on this Mac | working as designed - see [Remote access](remote-access.md) |
+| anything else | [Troubleshooting](troubleshooting.md) quotes the real messages |
 | `doctor` fails on MuJoCo/sysctl | `/usr/sbin` missing from `PATH` |
 
 ## Next
@@ -172,6 +173,8 @@ unattended.
   running on the arm, every step as an HTTP call
 - [Remote access](remote-access.md) - reach the fleet from a phone, guard
   first and tunnel second
+- [When it does not work](troubleshooting.md) - every refusal and error string,
+  with what it is protecting
 - [Multi-robot Mesh](../mesh.md) - what the peers are actually saying
 - [Teleoperation](../hardware/teleoperation.md) - leader/follower and the
   teleoperator matrix

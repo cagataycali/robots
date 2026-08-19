@@ -34,6 +34,7 @@ nav:
   - Robots Defined in Code: dashboard/code-defined-robots.md
   - Collect, Train, Deploy: dashboard/collect-train-deploy.md
   - Remote Access: dashboard/remote-access.md
+  - Troubleshooting: dashboard/troubleshooting.md
 - Device Connect: device-connect.md
 - Multi-robot Mesh: mesh.md
 - ROS 2 Integration: ros2-integration.md

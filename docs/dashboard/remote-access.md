@@ -63,7 +63,7 @@ it is: generate a long token, use it once per device, and rotate it by
 restarting with a new value. For anything beyond your own household, put an
 identity proxy (Cloudflare Access and friends) in front of the tunnel as well.
 
-## Path B: passkeys (the module is in, the enrollment screen is not yet)
+## Path B: passkeys (shipped, end to end)
 
 `strands_robots/dashboard/auth.py` implements the full WebAuthn rail - the
 private key never leaves your Touch ID / Face ID enclave, the dashboard stores
@@ -85,11 +85,23 @@ curl -s localhost:8090/api/auth/status
 first enrollment must present that one-time token, so the open-enrollment window
 cannot be walked through by whoever finds the URL first.
 
-**Status, honestly:** the module, the routes and the guard are shipped and
-tested. The browser-side enrollment screen is not in the frontend yet - nothing
-in `frontend/src` calls `navigator.credentials`. Until it lands, use Path A for
-remote access. When it lands, enroll **from the device you will actually use
-remotely** (your phone), because a passkey lives in that device's enclave.
+Enrollment happens in the browser. `AuthGate` probes `/api/fleet` alongside
+`/api/auth/status` on mount and decides:
+
+- **200 from `/api/fleet`** -> the door is already open (local dev, a static
+  token, or a live session) and the gate shows nothing. The UI does not
+  second-guess a server that just said yes.
+- **401/403** -> the gate appears: the enroll form when `setup_required`, the
+  login prompt otherwise. The enroll form asks for the bootstrap token only when
+  the server demands one.
+
+The minted JWT rides the same token plumbing as Path A (localStorage -> `Bearer`
+header, `?token=` on sockets), so nothing below the gate knows passkeys exist.
+
+**Enroll from the device you will actually use remotely** - your phone - because
+the private key lives in *that* device's enclave and cannot be copied to it
+later. A second device means a second enrollment, and `GET
+/api/auth/credentials` shows both.
 
 Two rules WebAuthn imposes that will otherwise waste your evening:
 

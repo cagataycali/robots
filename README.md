@@ -329,6 +329,7 @@ so anything it can do, `curl` can do.
 | The same peer from your own script | [Robots defined in code](docs/dashboard/code-defined-robots.md) |
 | Episodes to a checkpoint on the arm | [Collect, train, deploy](docs/dashboard/collect-train-deploy.md) |
 | Reach it from a phone | [Remote access](docs/dashboard/remote-access.md) - guard first, tunnel second |
+| A refusal you do not understand | [Troubleshooting](docs/dashboard/troubleshooting.md) |
 
 Two facts worth knowing before the first spawn: a camera is declared as a
 **mapping of options** (`{"wrist": {"index_or_path": 1}}`), never a bare index,

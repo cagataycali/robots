@@ -17,8 +17,10 @@ python -m strands_robots dashboard --port 8090 --local-dev
 
 New here with two SO-101 arms and a Mac? Start with the
 [10-minute quickstart](quickstart.md) - install, calibrate, spawn both arms,
-identify the cameras, first dataset on disk. Reaching it from a phone is
-[Remote access](remote-access.md).
+identify the cameras, first dataset on disk. From there:
+[Collect, train, deploy](collect-train-deploy.md) closes the data loop,
+[Remote access](remote-access.md) reaches it from a phone, and
+[When it does not work](troubleshooting.md) is the error-string index.
 
 ## Command surface
 
