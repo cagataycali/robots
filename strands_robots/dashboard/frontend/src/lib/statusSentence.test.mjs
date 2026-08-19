@@ -41,3 +41,71 @@ for (const f of [{ ...base, stale: true }, { ...base, hwConnected: false },
   assert.ok(ribbonDetail(l).length > 12, `${l.word}: detail got thin: ${ribbonDetail(l)}`)
 }
 console.log('statusSentence/ribbonDetail: all assertions passed')
+
+const idleBase = {
+  stale: false, lastSeenAgoS: 2, hwConnected: true, taskStatus: 'idle',
+  instruction: null, taskDurationS: null, moving: false, stateAgeS: 0.3,
+}
+
+// --- SILENCE IS NOT STILLNESS (found on the live dashboard, iteration 42) ----
+// so101-arm-1 published zero joint positions. Its card showed the joints panel
+// saying "no joint data on this peer" and, right above it, a GREEN ribbon:
+// "IDLE and still - safe to approach". That sentence is a claim about the
+// physical world, made with no measurement of the physical world, on the arm
+// whose power state was in doubt at that very moment.
+
+const noJoints = statusSentence({
+  ...idleBase, moving: null, jointsSeen: false,
+})
+assert.equal(noJoints.severity, 'warn', 'a peer with no joint stream is not a green card')
+assert.equal(noJoints.word, 'idle?')
+assert.doesNotMatch(noJoints.text, /safe to approach/, 'never claim safety without a measurement')
+assert.match(noJoints.text, /publishes no joint positions/)
+assert.match(noJoints.text, /treat the arm as able to move/)
+
+// The transient case is DIFFERENT: the ring needs ~1s. Warning on every page
+// load would cry wolf, so it stays 'ok' - but it still may not say "safe".
+const measuring = statusSentence({ ...idleBase, moving: null, jointsSeen: true })
+assert.equal(measuring.severity, 'ok')
+assert.equal(measuring.word, 'idle')
+assert.doesNotMatch(measuring.text, /safe to approach/)
+assert.match(measuring.text, /motion not measured yet/)
+
+// jointsSeen unknown (null/absent - nothing heard yet) must behave like the
+// transient case, not like a verdict about the peer.
+for (const js of [null, undefined]) {
+  const unknown = statusSentence({ ...idleBase, moving: null, jointsSeen: js })
+  assert.equal(unknown.severity, 'ok', `jointsSeen=${js} is not evidence of absence`)
+  assert.doesNotMatch(unknown.text, /publishes no joint positions/)
+  assert.doesNotMatch(unknown.text, /safe to approach/)
+}
+
+// MEASURED stillness is the only thing that earns the green sentence - and it
+// still does, so the change costs the operator nothing when telemetry works.
+const measuredStill = statusSentence({ ...idleBase, moving: false, jointsSeen: true })
+assert.equal(measuredStill.severity, 'ok')
+assert.equal(measuredStill.text, 'idle and still \u2014 safe to approach')
+// ...and a card with no joint stream can NEVER reach it, even when the ring
+// claims moving:false - which is exactly what it used to claim, because motion
+// computed from an absent joint stream is 0 on every sample and hardens into a
+// fabricated "measured stillness" after 10 of them. jointsSeen===false wins.
+const fabricated = statusSentence({ ...idleBase, moving: false, jointsSeen: false })
+assert.equal(fabricated.severity, 'warn', 'stillness derived from an empty stream is not a measurement')
+assert.equal(fabricated.word, 'idle?')
+assert.doesNotMatch(fabricated.text, /safe to approach/)
+// A peer with no joints that somehow reports MOVING still warns about motion
+// first: an unexplained movement claim outranks the missing-stream complaint.
+assert.equal(statusSentence({ ...idleBase, moving: true, jointsSeen: false }).word, 'moving')
+
+// The higher-severity states are untouched by the new branch: a peer with no
+// joints that is also stale/frozen/unplugged still reports the bigger problem.
+assert.equal(statusSentence({ ...idleBase, stale: true, moving: null, jointsSeen: false }).word, 'offline')
+assert.equal(statusSentence({ ...idleBase, stateAgeS: 30, moving: null, jointsSeen: false }).word, 'frozen')
+assert.equal(statusSentence({ ...idleBase, hwConnected: false, moving: null, jointsSeen: false }).word, 'no hw')
+assert.equal(statusSentence({ ...idleBase, taskStatus: 'running', moving: null, jointsSeen: false }).word, 'running')
+
+// ribbonDetail must not mangle either new sentence.
+assert.match(ribbonDetail(noJoints), /publishes no joint positions/)
+assert.match(ribbonDetail(measuring), /motion not measured yet/)
+
+console.log('statusSentence: silence-is-not-stillness assertions ok')

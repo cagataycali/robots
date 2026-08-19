@@ -32,8 +32,15 @@ export interface StatusFacts {
   instruction: string | null
   /** seconds the current task has been going, when known */
   taskDurationS: number | null
-  /** joints changed over the last ~1s (from the telemetry ring) */
+  /** joints changed over the last ~1s (from the telemetry ring); null = not measured */
   moving: boolean | null
+  /**
+   * Whether the peer publishes joint positions AT ALL (null = unknown yet).
+   * Separates the two reasons `moving` can be null - "still filling the ring"
+   * from "this peer will never tell us" - which are the same silence to the ring
+   * and very different sentences to a human.
+   */
+  jointsSeen?: boolean | null
   /** seconds since the last state-topic sample (null = no samples yet) */
   stateAgeS: number | null
 }
@@ -103,6 +110,39 @@ export function statusSentence(f: StatusFacts): StatusLine {
       severity: 'warn',
       word: 'moving',
       text: 'arm is MOVING with no task — teleop or another client is commanding it, keep hands clear',
+    }
+  }
+
+  // THE THIRD LIE DETECTOR, and the one that was missing: "safe to approach" is
+  // a claim about the physical world, so it must be EARNED by a motion
+  // measurement. `moving === false` is measured stillness. `moving == null` is
+  // no measurement at all, and this branch used to treat the two identically -
+  // so a peer publishing zero joint positions rendered a green
+  // "idle and still - safe to approach" beside a panel reading "no joint data on
+  // this peer" (observed on the live dashboard: so101-arm-1, whose power state
+  // was in doubt at that moment). Silence is not stillness.
+  //
+  // `jointsSeen === false` is AUTHORITATIVE here, ahead of `moving`: the ring
+  // computes motion from joint positions, so an empty stream yields motion 0 on
+  // every sample and used to harden into `moving: false` - a measurement
+  // fabricated from nothing. Fixed at the source too (useTelemetry now reports
+  // null), and refused again here, because two layers agreeing is what keeps the
+  // green sentence honest if either one is edited later.
+  if (f.moving == null || f.jointsSeen === false) {
+    if (f.jointsSeen === false) {
+      return {
+        severity: 'warn',
+        word: 'idle?',
+        text: 'the robot reports idle, but it publishes no joint positions — stillness cannot be '
+          + 'confirmed here, so treat the arm as able to move',
+      }
+    }
+    // Transient: the ring needs ~1s of samples. Not a warning (every page load
+    // would cry wolf), but it does not get to say "safe" either.
+    return {
+      severity: 'ok',
+      word: 'idle',
+      text: 'idle per the robot — motion not measured yet, a second of telemetry decides',
     }
   }
 

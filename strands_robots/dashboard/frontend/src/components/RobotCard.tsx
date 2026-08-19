@@ -43,6 +43,9 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
     instruction: peer.state?.task?.instruction || p?.instruction || null,
     taskDurationS: peer.state?.task?.duration ?? null,
     moving: telemetry.moving,
+    // Silence is not stillness: a peer with no joint stream must not earn a
+    // green "safe to approach".
+    jointsSeen: telemetry.jointsSeen,
     stateAgeS: telemetry.stateAgeS,
   }) : null
 
