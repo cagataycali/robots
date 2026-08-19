@@ -45,7 +45,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from strands_robots.dashboard import config_api, consent, settings
+from strands_robots.dashboard import arm_roles, config_api, consent, settings
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
 
@@ -1093,6 +1093,32 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(503, str(e)) from e
         return Response(content=jpeg, media_type="image/jpeg",
                         headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/devices/arm-role")
+    async def arm_role(port: str, model: str = "sts3215") -> dict[str, Any]:
+        """Which role an arm actually IS, read off its servo bus (U2).
+
+        An SO-100/SO-101 follower runs a 12V bus, a leader 7.4V, and every
+        Feetech servo reports its own supply on the read-only Present_Voltage
+        register - so the role is measurable instead of inherited from whatever
+        name a profile was given. The operator's report was that the dashboard
+        has the two arms the wrong way round; a label cannot answer that, a
+        measurement can.
+
+        Register READS only: this cannot move an arm. 409 while a live child
+        holds the port - a servo bus has exactly one owner, and that child is it.
+        """
+        try:
+            verdict = await asyncio.to_thread(app.state.devices.read_bus_role, port, model)
+        except PermissionError as e:
+            raise HTTPException(409, str(e)) from e
+        except Exception as e:  # noqa: BLE001 - bus faults become HTTP, not tracebacks
+            raise HTTPException(503, f"could not read {port}: {e}") from e
+        # Keyed by USB serial, never by /dev name (the OS reassigns those).
+        profile = await asyncio.to_thread(app.state.devices.profile_for_port, port)
+        labelled = (profile or {}).get("role") if isinstance(profile, dict) else None
+        verdict["mismatch"] = arm_roles.disagreement(labelled, verdict)
+        return verdict
 
     @app.post("/api/devices/spawn")
     async def spawn(body: dict[str, Any]) -> dict[str, Any]:

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import arm_roles
 from . import cameras as camera_facts
 
 logger = logging.getLogger(__name__)
@@ -327,6 +328,32 @@ def diagnose_camera_indices(indices: Sequence[int], timeout: float = 12.0) -> di
             logger.debug("camera diagnosis for index %s failed: %r", index, e)
             out[index] = ""
     return out
+
+
+#: Read Present_Voltage from each servo id on a Feetech bus. Register 62, one
+#: byte, read-only - this script physically cannot move an arm.
+_BUS_VOLTAGE_SRC = """
+import json, sys
+port, model, ids = sys.argv[1], sys.argv[2], [int(i) for i in sys.argv[3].split(',') if i]
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus
+motors = {f'm{i}': Motor(i, model, MotorNormMode.RANGE_M100_100) for i in ids}
+bus = FeetechMotorsBus(port=port, motors=motors)
+out = {}
+try:
+    bus.connect(handshake=False)
+    for name in motors:
+        try:
+            out[name] = float(bus.read('Present_Voltage', name, normalize=False)) / 10.0
+        except Exception as e:
+            print(f'{name}: {e}', file=sys.stderr)
+finally:
+    try:
+        bus.disconnect()
+    except Exception:
+        pass
+print(json.dumps(out))
+"""
 
 
 def scan_camera_names() -> list[dict[str, Any]]:
@@ -1002,6 +1029,83 @@ class DeviceManager:
                 return bytes(buf.tobytes())
             finally:
                 cap.release()
+
+    def port_owner(self, port: str) -> str | None:
+        """peer_id of the LIVE managed child holding this serial port, if any."""
+        for m in self.robots.values():
+            if m.alive() and m.port and str(m.port) == str(port):
+                return m.peer_id
+        return None
+
+    def profile_for_port(self, port: str) -> dict[str, Any] | None:
+        """The remembered profile for the board at ``port``.
+
+        Profiles are keyed by USB SERIAL NUMBER, not by port - a /dev name is
+        reassigned by the OS, a serial is the board. Looking one up by port
+        would silently return None forever, which is how a mismatch check ends
+        up quietly checking nothing.
+        """
+        for entry in scan_serial_ports():
+            if entry.get("device") == port and entry.get("serial_number"):
+                return self.profiles.get(str(entry["serial_number"]))
+        return None
+
+    def read_bus_role(
+        self,
+        port: str,
+        motor_model: str = "sts3215",
+        ids: Sequence[int] = (1, 2, 3, 4, 5, 6),
+        timeout: float = 25.0,
+    ) -> dict[str, Any]:
+        """Measure a Feetech bus's supply voltage and say which arm role it is.
+
+        READS ONLY - Present_Voltage (register 62, one byte, read-only in
+        lerobot's Feetech table). Nothing here writes torque, goal position or
+        any other register, so it cannot move an arm.
+
+        Runs in a CHILD process on purpose: opening the serial port in-process
+        would put a second owner on a bus the dashboard also talks to through
+        spawned children (the Q26 collision class), and a servo bus that stops
+        answering can hang a read for as long as the SDK's retries take. The
+        child cannot wedge the event loop, and its stderr comes back as the
+        reason.
+
+        Refuses while a live child holds the port: that child IS the bus owner,
+        and stealing the port mid-episode is exactly the failure this dashboard
+        already learned to avoid.
+        """
+        owner = self.port_owner(port)
+        if owner is not None:
+            raise PermissionError(
+                f"{port} is held by {owner} - despawn it first, then read the voltage "
+                f"(the arm has to release the bus; nothing can share a servo port)"
+            )
+        code = _BUS_VOLTAGE_SRC
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", code, port, motor_model, ",".join(str(i) for i in ids)],
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "port": port,
+                **arm_roles.role_verdict({}),
+                "reason": f"the bus did not answer within {timeout:.0f}s",
+                "remedy": "unplug and replug the arm's USB cable, then retry",
+            }
+        readings: dict[str, float | None] = {}
+        try:
+            readings = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError:
+            pass
+        verdict = arm_roles.role_verdict(readings)
+        verdict["port"] = port
+        if verdict["role"] == "unknown" and proc.stderr:
+            # The SDK's own words beat a generic failure line.
+            tail = [ln for ln in proc.stderr.strip().splitlines() if ln.strip()][-1:]
+            if tail:
+                verdict["detail"] = tail[0][:300]
+        return verdict
 
     def _camera_fault(self, index: int) -> camera_facts.CameraUnavailable:
         """Ask OpenCV why, in a child process, and answer in the operator's terms.
