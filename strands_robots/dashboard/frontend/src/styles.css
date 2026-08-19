@@ -1294,3 +1294,5 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .cam-config-row input:nth-child(4),
 .cam-config-row input:nth-child(5) { flex: 1; max-width: 64px; }
 .cam-config-add { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.cam-config-modes { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 0 0 8px 4px; font-size: 12px; }
+.cam-config-modes .btn { padding: 2px 8px; font-size: 11px; }

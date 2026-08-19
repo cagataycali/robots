@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
-import { CamRow, applySummary, configFromRows, rowsFromConfig } from '../lib/cameraConfig'
+import { CamRow, applySummary, configFromRows, parseIndexOrPath, rowsFromConfig } from '../lib/cameraConfig'
 
 interface Detected { index: number; label?: string | null; in_use_by?: string | null }
+interface Mode { width: number; height: number; fps: number }
+interface Probe { busy?: boolean; error?: string; modes?: Mode[] }
 
 /**
  * U19: per-camera reconfigure for one managed robot.
@@ -42,6 +44,29 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
   const remove = (i: number) => setRows(rs => rs!.filter((_, j) => j !== i))
   const add = (indexOrPath = '') =>
     setRows(rs => [...(rs ?? []), { name: '', indexOrPath, fps: '', width: '', height: '' }])
+
+  // Verified modes per camera index (U19: selects offer what the camera
+  // AGREED to via set/read-back — never a fantasy the driver would ignore).
+  const [probes, setProbes] = useState<Record<number, Probe>>({})
+  const probe = async (idx: number) => {
+    setProbes(p => ({ ...p, [idx]: { ...p[idx], busy: true, error: undefined } }))
+    try {
+      const r = await api<any>(`/api/devices/camera/${idx}/modes`)
+      setProbes(p => ({ ...p, [idx]: { modes: r?.modes ?? [] } }))
+    } catch (e: any) {
+      // 409 = it is streaming for a robot right now; 404 = the running
+      // dashboard predates this route. Either way the free-text fields
+      // still work — the probe is a helper, not a gate.
+      setProbes(p => ({
+        ...p,
+        [idx]: {
+          error: e?.status === 404
+            ? 'this dashboard process predates mode probing — type the values by hand'
+            : (e?.message ?? String(e)),
+        },
+      }))
+    }
+  }
 
   const check = rows ? configFromRows(rows) : { cameras: null }
 
@@ -88,16 +113,44 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
         {rows !== null && !notManaged && !done && (
           <>
             {rows.length === 0 && <p className="hint">No cameras attached. Add one below.</p>}
-            {rows.map((r, i) => (
-              <div className="cam-config-row" key={i}>
-                <input placeholder="name (top / wrist)" value={r.name} onChange={e => edit(i, { name: e.target.value })} />
-                <input placeholder="index or path" value={r.indexOrPath} onChange={e => edit(i, { indexOrPath: e.target.value })} />
-                <input placeholder="fps" inputMode="numeric" value={r.fps} onChange={e => edit(i, { fps: e.target.value })} />
-                <input placeholder="width" inputMode="numeric" value={r.width} onChange={e => edit(i, { width: e.target.value })} />
-                <input placeholder="height" inputMode="numeric" value={r.height} onChange={e => edit(i, { height: e.target.value })} />
-                <button className="btn ghost" title="detach this camera" onClick={() => remove(i)}>detach</button>
-              </div>
-            ))}
+            {rows.map((r, i) => {
+              const iop = parseIndexOrPath(r.indexOrPath)
+              const idx = typeof iop === 'number' ? iop : null
+              const pr = idx !== null ? probes[idx] : undefined
+              return (
+                <div key={i}>
+                  <div className="cam-config-row">
+                    <input placeholder="name (top / wrist)" value={r.name} onChange={e => edit(i, { name: e.target.value })} />
+                    <input placeholder="index or path" value={r.indexOrPath} onChange={e => edit(i, { indexOrPath: e.target.value })} />
+                    <input placeholder="fps" inputMode="numeric" value={r.fps} onChange={e => edit(i, { fps: e.target.value })} />
+                    <input placeholder="width" inputMode="numeric" value={r.width} onChange={e => edit(i, { width: e.target.value })} />
+                    <input placeholder="height" inputMode="numeric" value={r.height} onChange={e => edit(i, { height: e.target.value })} />
+                    <button className="btn ghost" title="detach this camera" onClick={() => remove(i)}>detach</button>
+                  </div>
+                  {idx !== null && (
+                    <div className="cam-config-modes">
+                      {!pr?.modes && (
+                        <button className="btn ghost" disabled={pr?.busy} onClick={() => probe(idx)}
+                                title="set + read back each candidate on the device — offers only what the camera agreed to">
+                          {pr?.busy ? 'asking the camera…' : 'real modes'}
+                        </button>
+                      )}
+                      {pr?.error && <span className="hint">⚠ {pr.error}</span>}
+                      {pr?.modes && pr.modes.length === 0 && (
+                        <span className="hint">the camera verified no modes — the driver's defaults still work</span>
+                      )}
+                      {pr?.modes?.map(m => (
+                        <button key={`${m.width}x${m.height}@${m.fps}`} className="btn ghost"
+                                title="fill fps/size with a mode this camera verified"
+                                onClick={() => edit(i, { fps: String(m.fps), width: String(m.width), height: String(m.height) })}>
+                          {m.width}×{m.height} @ {m.fps}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
             <div className="cam-config-add">
               <button className="btn ghost" onClick={() => add()}>+ add camera</button>
               {free.map(d => (
