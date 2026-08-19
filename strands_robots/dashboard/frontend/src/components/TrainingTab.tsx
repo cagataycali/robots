@@ -3,8 +3,12 @@ import { api, post } from '../lib/endpoints'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
 import { setDeployIntent } from '../lib/deployIntent'
+import { datasetKey as dsKey, selectDataset, selectionKey, replayable, type DatasetRow } from '../lib/datasetSelection'
 
-interface Dataset { root: string; repo_id: string; total_episodes?: number; robot_type?: string; fps?: number }
+// One row is either LOCAL (has a `root` path, trains offline) or from the HUB
+// (no root, trains from repo_id after a download). lib/datasetSelection owns
+// that distinction and the rule that exactly one field reaches the trainer.
+type Dataset = DatasetRow
 interface Job { job_id: string; provider: string; dataset?: string; base_model?: string; output_dir?: string; steps?: number; submitted_at?: number }
 interface JobStatus { status: string; data: { status?: string; metrics?: Record<string, unknown> }; text: string }
 
@@ -29,7 +33,14 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({})
   const [traces, setTraces] = useState<Record<string, LossPoint[]>>({})
-  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora' })
+  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora' })
+  // R6: the picker searches the Hub as you type. `dsProblem` is the HUB half's
+  // verdict only — "no matches" is a real answer and must not wear an outage's
+  // clothes, so an empty list with problem===null says something different from
+  // an empty list with a reason.
+  const [dsQuery, setDsQuery] = useState('')
+  const [dsProblem, setDsProblem] = useState<string | null>(null)
+  const [dsAuth, setDsAuth] = useState<{ authenticated?: boolean; user?: string | null; detail?: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
@@ -37,15 +48,32 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     try {
       const [t, d, j] = await Promise.all([
         api('/api/training/trainers'),
-        api('/api/training/datasets'),
+        api(`/api/training/datasets?q=${encodeURIComponent(dsQuery)}`),
         api('/api/training/jobs'),
       ])
       setTrainers(t.trainers ?? [])
       setDatasets(d.datasets ?? [])
+      setDsProblem(d.problem ?? null)
+      setDsAuth(d.hf_auth ?? null)
       setJobs((j.jobs ?? []).slice().reverse())
     } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
   }
   useEffect(() => { refresh() }, [])
+
+  // Type-ahead: datasets only (re-polling jobs on every keystroke would be
+  // rude to a running job's status endpoint). 250ms because each miss is a Hub
+  // round trip; the backend caches a hit for 5 minutes, never a failure.
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      try {
+        const d = await api(`/api/training/datasets?q=${encodeURIComponent(dsQuery)}`)
+        setDatasets(d.datasets ?? [])
+        setDsProblem(d.problem ?? null)
+        setDsAuth(d.hf_auth ?? null)
+      } catch (e) { setDsProblem(`search failed: ${(e as any)?.message ?? e}`) }
+    }, 250)
+    return () => clearTimeout(t)
+  }, [dsQuery])
 
   // poll running job statuses every 5s
   useEffect(() => {
@@ -73,6 +101,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     const body = {
       provider: form.provider,
       dataset_root: form.dataset_root || undefined,
+      dataset_repo_id: form.dataset_repo_id || undefined,
       base_model: form.base_model || undefined,
       output_dir: form.output_dir || undefined,
       steps: Number(form.steps) || 10000,
@@ -109,6 +138,12 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   }
 
   const replay = async (d: Dataset) => {
+    // Replay reads episode 0 off the disk. A Hub row is not on this disk yet,
+    // so replaying it would fail somewhere deep in a loader; say so here.
+    if (!d.root) {
+      setMsg(`⚠ ${d.repo_id} is on the Hub, not on this machine — train with it (the trainer downloads it) or clone it locally to replay`)
+      return
+    }
     setBusy(true); setMsg(null)
     try {
       const j = await post('/api/replay', { repo_id: d.repo_id, root: d.root, episode: 0 })
@@ -156,12 +191,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // The form re-told as one sentence. A grid of fields answers "what can I
   // set"; the sentence answers the question that actually matters before a
   // multi-hour job: "what did I just ask for?"
-  const datasetLabel = (() => {
-    const d = datasets.find(x => x.root === form.dataset_root)
-    return d ? `${d.repo_id} (${d.total_episodes ?? '?'} eps)` : null
-  })()
-  const story = form.dataset_root
-    ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? form.dataset_root} for ${fmtStep(Number(form.steps) || 10000)} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.`
+  const datasetPicked = form.dataset_root || form.dataset_repo_id
+  const datasetLabel = selectDataset(datasets, selectionKey(form)).label || null
+  const story = datasetPicked
+    ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? datasetPicked} for ${fmtStep(Number(form.steps) || 10000)} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.`
     : 'Pick a dataset to begin — the plan reads back here before anything runs.'
 
   return (
@@ -172,21 +205,48 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="train-form">
-        <p className={`train-story${form.dataset_root ? '' : ' empty'}`}>{story}</p>
+        <p className={`train-story${datasetPicked ? '' : ' empty'}`}>{story}</p>
         <label className="field"><span>provider</span>
           <select value={form.provider} onChange={e => set('provider', e.target.value)} disabled={busy}>
             {trainers.map(t => <option key={t}>{t}</option>)}
           </select>
         </label>
         <label className="field"><span>dataset</span>
-          <select value={form.dataset_root} onChange={e => set('dataset_root', e.target.value)} disabled={busy}>
-            <option value="">— pick a local dataset —</option>
-            {datasets.map(d => (
-              <option key={d.root} value={d.root}>
-                {d.repo_id} ({d.total_episodes ?? '?'} eps{d.robot_type && d.robot_type !== 'unknown' ? `, ${d.robot_type}` : ''})
-              </option>
-            ))}
+          <input value={dsQuery} onChange={e => setDsQuery(e.target.value)} disabled={busy}
+                 placeholder="search this machine and the Hub — e.g. pusht, so101, your org" />
+          {/* Selecting sets EXACTLY ONE of dataset_root / dataset_repo_id: a
+              local dataset trains from its path, a Hub one from its repo id,
+              and sending both would leave the trainer to pick for you. */}
+          <select value={selectionKey(form)}
+                  onChange={e => {
+                    const sel = selectDataset(datasets, e.target.value)
+                    setForm(f => ({ ...f, dataset_root: sel.dataset_root, dataset_repo_id: sel.dataset_repo_id }))
+                  }} disabled={busy}>
+            <option value="">— pick a dataset —</option>
+            {datasets.filter(d => d.local !== false).length > 0 && (
+              <optgroup label="on this machine">
+                {datasets.filter(d => d.local !== false).map(d => (
+                  <option key={dsKey(d)} value={dsKey(d)}>
+                    {d.repo_id} ({d.total_episodes ?? '?'} eps{d.robot_type && d.robot_type !== 'unknown' ? `, ${d.robot_type}` : ''})
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {datasets.filter(d => d.local === false).length > 0 && (
+              <optgroup label="HuggingFace Hub — downloaded when training starts">
+                {datasets.filter(d => d.local === false).map(d => (
+                  <option key={dsKey(d)} value={dsKey(d)}>
+                    {d.repo_id}{d.downloads ? ` · ${d.downloads.toLocaleString()} downloads` : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
+          {dsProblem && <span className="hint warn">⚠ {dsProblem}</span>}
+          {!dsProblem && datasets.length === 0 && dsQuery &&
+            <span className="hint">nothing here or on the Hub matches “{dsQuery}” — the Hub answered, it simply has no match.</span>}
+          {dsAuth && dsAuth.authenticated === false && dsQuery &&
+            <span className="hint">Hub results are public only ({dsAuth.detail}) — a private or gated dataset will look like “no match”.</span>}
         </label>
         <label className="field"><span>base model</span>
           <input value={form.base_model} onChange={e => set('base_model', e.target.value)} disabled={busy} placeholder="lerobot/smolvla_base" />
@@ -207,7 +267,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         </div>
         <div className="train-actions">
           <button className="btn ghost" onClick={() => submit(true)} disabled={busy}>✓ validate</button>
-          <button className="btn go wide" onClick={() => submit(false)} disabled={busy || !form.dataset_root || !form.output_dir}>▶ train</button>
+          <button className="btn go wide" onClick={() => submit(false)} disabled={busy || !datasetPicked || !form.output_dir}>▶ train</button>
         </div>
         {msg && <div className="train-msg">{msg}</div>}
       </div>
@@ -251,16 +311,31 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
 
       <div className="train-jobs">
         <h3>Datasets</h3>
-        {datasets.length === 0 && <div className="dock-hint">No local LeRobotDatasets found.</div>}
+        {datasets.length === 0 && (
+          <div className="dock-hint">
+            {dsProblem
+              ? `No local LeRobotDatasets, and the Hub could not be searched — ${dsProblem}`
+              : dsQuery
+                ? `Nothing matches “${dsQuery}” here or on the Hub.`
+                : 'No LeRobotDatasets on this machine — type above to search the Hub, or record one in Collect.'}
+          </div>
+        )}
         {datasets.map(d => (
-          <div className="train-job" key={d.root}>
+          <div className="train-job" key={dsKey(d)}>
             <div className="train-job-head">
               <b>{d.repo_id}</b>
-              <span className="jstate">{d.total_episodes ?? '?'} eps · {d.fps ?? '?'} fps</span>
+              <span className="jstate">
+                {d.root
+                  ? `${d.total_episodes ?? '?'} eps · ${d.fps ?? '?'} fps`
+                  : `Hub${d.downloads ? ` · ${d.downloads.toLocaleString()} downloads` : ''}`}
+              </span>
             </div>
             <div className="train-job-actions">
-              <button className="btn ghost" onClick={() => replay(d)} disabled={busy}
-                title="Replay episode 0 in a live mesh sim — appears in the fleet grid">
+              {/* Replay reads episode 0 off this disk, so it is offered only for
+                  what is actually here — a disabled button with the reason beats
+                  a click that dies inside a dataset loader. */}
+              <button className="btn ghost" onClick={() => replay(d)} disabled={busy || !replayable(d).ok}
+                title={replayable(d).reason}>
                 🎬 replay in sim
               </button>
             </div>
