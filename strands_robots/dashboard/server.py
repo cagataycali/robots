@@ -129,8 +129,32 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
         _ab.set_bridge(app.state.bridge)
 
+        # USB auto-spawn: a board with a saved profile comes up on its own,
+        # and an unplugged one is stopped. Unknown boards are only reported.
+        watcher = app.state.devices.start_autospawn(
+            peer_ids=lambda: list(app.state.bridge.peers),
+        )
+        if watcher is not None:
+            app.state.autospawn_task = asyncio.create_task(_autospawn_loop(watcher))
+
+    async def _autospawn_loop(watcher: Any) -> None:
+        from strands_robots.dashboard.device_manager import AUTOSPAWN_POLL_S
+
+        while True:
+            try:
+                await asyncio.to_thread(watcher.poll)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                # A blind watcher is worse than a loud one: say it, keep polling.
+                logger.warning("USB auto-spawn poll failed: %r", e)
+            await asyncio.sleep(AUTOSPAWN_POLL_S)
+
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        task = getattr(app.state, "autospawn_task", None)
+        if task is not None:
+            task.cancel()
         app.state.devices.shutdown()
         await asyncio.to_thread(app.state.bridge.stop)
 
@@ -631,6 +655,20 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             body.get("cameras"),
             body.get("robot_id"),
         )
+
+    @app.get("/api/devices/profiles")
+    async def device_profiles() -> dict[str, Any]:
+        """Remembered USB device profiles, keyed by board serial number.
+
+        A profile is written whenever a real (serial-port) robot is spawned
+        successfully, and it is what the auto-spawn watcher replays when that
+        exact board is plugged back in.
+        """
+        return {
+            "profiles": app.state.devices.profiles.all(),
+            "path": app.state.devices.profiles.path,
+            "autospawn": getattr(app.state, "autospawn_task", None) is not None,
+        }
 
     @app.post("/api/devices/despawn")
     async def despawn(body: dict[str, Any]) -> dict[str, Any]:

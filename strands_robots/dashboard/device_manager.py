@@ -16,6 +16,7 @@ click from the UI.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -23,12 +24,25 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 LOG_TAIL_LINES = 200  # ring buffer per managed robot
+
+# Where USB device profiles live. One JSON object keyed by USB serial number
+# (the only stable identity a board keeps across replug and across port
+# renumbering), value = the spawn payload that worked last time.
+DEFAULT_PROFILES_PATH = os.path.join(Path.home(), ".strands_dashboard", "profiles.json")
+
+# Auto-spawn watcher cadence and unplug debounce. USB enumeration flaps: a
+# board can miss a single poll while the OS re-reads its descriptors, so one
+# absent poll must never tear down a running robot.
+AUTOSPAWN_POLL_S = 2.0
+AUTOSPAWN_MISSING_POLLS = 2
 
 # VIDs seen on servo-bus USB adapters. Keyword matching (feetech/dynamixel/...)
 # still applies; VIDs catch the generic-description boards.
@@ -270,16 +284,234 @@ os._exit(0)
 '''
 
 
+def profile_key(port: dict[str, Any]) -> str:
+    """Stable identity for a detected serial board.
+
+    The USB serial number survives replug and port renumbering, so it is the
+    key. Boards that report no serial number fall back to their device path,
+    which is weaker (the path can move between reboots) but still lets a
+    single-adapter setup be remembered.
+    """
+    serial = port.get("serial_number")
+    if serial:
+        return str(serial)
+    return str(port.get("device") or "")
+
+
+class ProfileStore:
+    """USB device profiles on disk: serial number -> saved spawn payload.
+
+    A profile is written whenever the operator successfully spawns a real
+    (serial-port) robot, so the next time that exact board appears the
+    dashboard can bring it up with the same calibration id, camera mapping
+    and peer_id instead of asking again.
+    """
+
+    def __init__(self, path: str | None = None) -> None:
+        self.path = path or os.environ.get("STRANDS_DASHBOARD_PROFILES") or DEFAULT_PROFILES_PATH
+        self._lock = threading.Lock()
+        self._data: dict[str, dict[str, Any]] = self._load()
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            # A corrupt or unreadable store must be visible, not silently
+            # treated as "no profiles remembered".
+            logger.warning("device profiles at %s unreadable (%r); starting empty", self.path, e)
+            return {}
+        if not isinstance(data, dict):
+            logger.warning("device profiles at %s are not a JSON object; starting empty", self.path)
+            return {}
+        return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+
+    def all(self) -> dict[str, dict[str, Any]]:
+        """Every remembered profile, keyed by USB serial number."""
+        with self._lock:
+            return {k: dict(v) for k, v in self._data.items()}
+
+    def get(self, key: str) -> dict[str, Any] | None:
+        """One profile by key, or None when that board was never spawned."""
+        with self._lock:
+            entry = self._data.get(key)
+            return dict(entry) if entry is not None else None
+
+    def save(self, key: str, payload: dict[str, Any], name: str | None = None) -> dict[str, Any]:
+        """Remember ``payload`` as the way to spawn the board at ``key``."""
+        entry = dict(payload)
+        entry["name"] = name or entry.get("name") or entry.get("peer_id") or key
+        entry["serial_number"] = key
+        entry["saved_at"] = time.time()
+        with self._lock:
+            self._data[key] = entry
+            snapshot = {k: dict(v) for k, v in self._data.items()}
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            tmp = f"{self.path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(snapshot, fh, indent=2, sort_keys=True)
+            os.replace(tmp, self.path)
+        except Exception as e:
+            # Kept in memory either way, but the operator has to know the
+            # profile will not survive a restart.
+            logger.warning("could not persist device profile %s to %s: %r", key, self.path, e)
+        return dict(entry)
+
+
+class AutoSpawnWatcher:
+    """Brings known USB boards up (and unplugged ones down) on its own.
+
+    One poll of the serial bus per :data:`AUTOSPAWN_POLL_S`:
+
+    * a board APPEARS and has a saved profile -> spawn it with that payload
+    * a board appears with NO profile -> left alone (it only shows in
+      ``/api/devices`` as detected; auto-spawning an unknown board would
+      energise hardware nobody configured)
+    * a board this watcher spawned DISAPPEARS for
+      :data:`AUTOSPAWN_MISSING_POLLS` consecutive polls -> its child process
+      is terminated so the card goes away
+
+    Dedupe is deliberately paranoid, because double-spawning a real arm means
+    two processes driving one servo bus: a port already claimed by a managed
+    robot, or a profile whose ``peer_id`` is already a mesh peer, is skipped.
+    Robots the watcher did not spawn are never terminated by it - process
+    lifecycle the operator started stays the operator's.
+
+    ``STRANDS_DASHBOARD_AUTOSPAWN=0`` disables the whole thing.
+    """
+
+    def __init__(
+        self,
+        manager: DeviceManager,
+        list_ports: Callable[[], list[dict[str, Any]]] | None = None,
+        peer_ids: Callable[[], Iterable[str]] | None = None,
+        missing_polls: int = AUTOSPAWN_MISSING_POLLS,
+    ) -> None:
+        self.manager = manager
+        self.list_ports = list_ports or scan_serial_ports
+        self.peer_ids = peer_ids or (lambda: ())
+        self.missing_polls = max(1, int(missing_polls))
+        # key -> peer_id we auto-spawned for it
+        self.adopted: dict[str, str] = {}
+        self._missing: dict[str, int] = {}
+        self._stop = threading.Event()
+
+    @staticmethod
+    def enabled() -> bool:
+        """False when STRANDS_DASHBOARD_AUTOSPAWN is set to a falsey value."""
+        raw = os.environ.get("STRANDS_DASHBOARD_AUTOSPAWN", "1").strip().lower()
+        return raw not in ("0", "false", "no", "off")
+
+    def _claimed(self, port: dict[str, Any], profile: dict[str, Any]) -> str | None:
+        """Reason this board must not be spawned, or None when it is free."""
+        device = port.get("device")
+        for m in self.manager.robots.values():
+            if not m.alive():
+                continue
+            if device and m.port == device:
+                return f"port {device} already claimed by managed robot {m.peer_id}"
+        peer_id = profile.get("peer_id")
+        if peer_id:
+            managed = self.manager.robots.get(peer_id)
+            if managed is not None and managed.alive():
+                return f"peer {peer_id} already running locally"
+            try:
+                if peer_id in set(self.peer_ids()):
+                    return f"peer {peer_id} already present on the mesh"
+            except Exception as e:
+                # Not knowing the mesh is a reason to hold back, not to guess.
+                logger.warning("autospawn: mesh peer lookup failed (%r); skipping %s", e, peer_id)
+                return f"mesh peer list unavailable, refusing to spawn {peer_id}"
+        return None
+
+    def poll(self) -> dict[str, Any]:
+        """One appear/disappear pass. Returns what it did, for tests and logs."""
+        if not self.enabled():
+            return {"skipped": "autospawn disabled"}
+        ports = {profile_key(p): p for p in self.list_ports() if profile_key(p)}
+        spawned: list[str] = []
+        despawned: list[str] = []
+        ignored: list[str] = []
+
+        for key, port in ports.items():
+            self._missing.pop(key, None)
+            if key in self.adopted:
+                continue
+            profile = self.manager.profiles.get(key)
+            if profile is None:
+                ignored.append(key)
+                continue
+            reason = self._claimed(port, profile)
+            if reason is not None:
+                logger.debug("autospawn: %s", reason)
+                ignored.append(key)
+                continue
+            res = self._spawn_from_profile(port, profile)
+            peer_id = res.get("peer_id")
+            if res.get("error") or not peer_id:
+                logger.warning("autospawn: spawning %s failed: %s", key, res.get("error"))
+                continue
+            self.adopted[key] = peer_id
+            spawned.append(peer_id)
+            logger.info("autospawn: %s appeared, spawned %s", key, peer_id)
+
+        for key, peer_id in list(self.adopted.items()):
+            if key in ports:
+                continue
+            misses = self._missing.get(key, 0) + 1
+            self._missing[key] = misses
+            if misses < self.missing_polls:
+                continue
+            self._missing.pop(key, None)
+            self.adopted.pop(key, None)
+            self.manager.despawn(peer_id)
+            despawned.append(peer_id)
+            logger.info("autospawn: %s unplugged, stopped %s", key, peer_id)
+
+        return {"spawned": spawned, "despawned": despawned, "detected_unknown": ignored}
+
+    def _spawn_from_profile(self, port: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+        return self.manager.spawn(
+            robot_name=profile.get("robot_name") or "so101",
+            mode=profile.get("mode") or "real",
+            peer_id=profile.get("peer_id"),
+            # The board may have re-enumerated on a new path; the live path
+            # wins over whatever the profile remembered.
+            port=port.get("device") or profile.get("port"),
+            cameras=profile.get("cameras"),
+            robot_id=profile.get("robot_id"),
+            remember=False,
+        )
+
+    def run_forever(self, interval: float = AUTOSPAWN_POLL_S) -> None:
+        """Poll until :meth:`stop`. For a thread; the server uses asyncio."""
+        while not self._stop.is_set():
+            try:
+                self.poll()
+            except Exception as e:  # a watcher crash must not be silent
+                logger.warning("autospawn poll failed: %r", e)
+            self._stop.wait(interval)
+
+    def stop(self) -> None:
+        """Ask :meth:`run_forever` to return after the current sleep."""
+        self._stop.set()
+
+
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
     CAMERA_CACHE_TTL_S = 30.0  # don't re-open /dev cameras on every request
 
-    def __init__(self) -> None:
+    def __init__(self, profiles_path: str | None = None) -> None:
         self.robots: dict[str, ManagedRobot] = {}
         self._lock = threading.Lock()
         self._camera_cache: list[dict[str, Any]] = []
         self._camera_cache_t = 0.0
+        self.profiles = ProfileStore(profiles_path)
+        self.autospawn: AutoSpawnWatcher | None = None
 
     def _claimed_camera_indices(self) -> dict[int, str]:
         """OpenCV indices owned by LIVE managed robots -> peer_id.
@@ -345,6 +577,7 @@ class DeviceManager:
         port: str | None = None,
         cameras: dict[str, Any] | None = None,
         robot_id: str | None = None,
+        remember: bool = True,
     ) -> dict[str, Any]:
         import json as _json
 
@@ -370,7 +603,42 @@ class DeviceManager:
                 name=f"drain-{peer_id}", daemon=True,
             ).start()
         logger.info("spawned %s (%s, pid=%s)", peer_id, mode, proc.pid)
+        if remember and mode == "real" and port:
+            self.remember_profile(cfg)
         return {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
+
+    def remember_profile(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Save this spawn payload as the profile for the board behind its port.
+
+        Keyed by the port's USB serial number so a replug on a different
+        ``/dev/cu.*`` path still finds it. Returns the stored profile, or None
+        when the board is no longer enumerable (nothing to key on).
+        """
+        port = payload.get("port")
+        if not port:
+            return None
+        try:
+            detected = {p.get("device"): p for p in scan_serial_ports()}
+        except Exception as e:
+            logger.warning("could not rescan serial ports to save a profile: %r", e)
+            return None
+        info = detected.get(port)
+        key = profile_key(info) if info else str(port)
+        if not key:
+            return None
+        return self.profiles.save(key, payload)
+
+    def start_autospawn(
+        self,
+        list_ports: Callable[[], list[dict[str, Any]]] | None = None,
+        peer_ids: Callable[[], Iterable[str]] | None = None,
+    ) -> AutoSpawnWatcher | None:
+        """Create the USB auto-spawn watcher, or None when disabled by env."""
+        if not AutoSpawnWatcher.enabled():
+            logger.info("USB auto-spawn disabled (STRANDS_DASHBOARD_AUTOSPAWN=0)")
+            return None
+        self.autospawn = AutoSpawnWatcher(self, list_ports=list_ports, peer_ids=peer_ids)
+        return self.autospawn
 
     def replay(
         self,
