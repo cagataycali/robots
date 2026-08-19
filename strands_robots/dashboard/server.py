@@ -843,6 +843,25 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         """
         return await asyncio.to_thread(app.state.devices.devices, refresh)
 
+    @app.get("/api/devices/camera/{index}/preview")
+    async def camera_preview(index: int) -> Response:
+        """One JPEG frame from an unclaimed camera index.
+
+        The authoritative "which camera is index N" answer - device names are
+        listed in a different order than OpenCV indices on macOS, so the
+        picture is the identity. 409 when the index is streaming for a
+        running robot (watch that robot's card instead), 503 when the camera
+        will not produce a frame (unplugged, or another app holds it).
+        """
+        try:
+            jpeg = await asyncio.to_thread(app.state.devices.preview_frame, index)
+        except PermissionError as e:
+            raise HTTPException(409, str(e)) from e
+        except Exception as e:  # noqa: BLE001 - camera faults become HTTP, not tracebacks
+            raise HTTPException(503, str(e)) from e
+        return Response(content=jpeg, media_type="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
+
     @app.post("/api/devices/spawn")
     async def spawn(body: dict[str, Any]) -> dict[str, Any]:
         robot_name = body.get("robot_name")
@@ -1046,7 +1065,20 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
         @app.get("/{path:path}")
-        async def spa(path: str) -> FileResponse:
+        async def spa(path: str) -> Response:
+            # An unrouted /api path is a MISSING ENDPOINT, never a client-side
+            # route: answering it with index.html made every typo and every
+            # renamed endpoint look like a 200 to the browser, so a fetch()
+            # then died on "Unexpected token '<'" - or worse, a frontend
+            # feature-probe ("use the real backend if it answers") concluded
+            # the endpoint existed and fed HTML-shaped junk into its state.
+            # Same for /ws: an HTTP GET there is a wrong protocol, not a page.
+            first = path.split("/", 1)[0]
+            if first in ("api", "ws"):
+                return JSONResponse(
+                    {"error": "not found", "detail": f"no endpoint at /{path}"},
+                    status_code=404,
+                )
             candidate = FRONTEND_DIST / path
             if path and candidate.is_file():
                 return FileResponse(candidate)

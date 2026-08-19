@@ -142,10 +142,67 @@ def scan_cameras(max_index: int = 4, skip: set[int] | None = None) -> list[dict[
                 ok, frame = cap.read()
                 if ok and frame is not None:
                     h, w = frame.shape[:2]
-                    cams.append({"index": i, "width": w, "height": h})
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 0
+                    cams.append({
+                        "index": i, "width": w, "height": h,
+                        "fps": round(fps, 1) if fps and fps > 0 else None,
+                    })
         finally:
             cap.release()
     return cams
+
+
+def scan_camera_names() -> list[dict[str, Any]]:
+    """Human names of the attached cameras, best effort per platform.
+
+    macOS: parsed from ffmpeg's AVFoundation device listing (if ffmpeg is
+    installed). Linux: read from /sys/class/video4linux. IMPORTANT: the
+    listing order is NOT guaranteed to match OpenCV index order (Continuity
+    cameras in particular renumber), so a name here is a roster entry, not
+    an index label - the preview endpoint is the authoritative way to tell
+    which index is which camera.
+    """
+    names: list[dict[str, Any]] = []
+    if sys.platform == "darwin":
+        import re
+        import shutil
+
+        ffmpeg = shutil.which("ffmpeg") or next(
+            (p for p in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg") if os.path.exists(p)),
+            None,
+        )
+        if not ffmpeg:
+            return names
+        try:
+            out = subprocess.run(
+                [ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+                capture_output=True, text=True, timeout=10,
+            ).stderr
+        except Exception as e:  # noqa: BLE001 - enumeration is decoration, never fatal
+            logger.debug("camera name scan failed: %r", e)
+            return names
+        in_video = False
+        for line in out.splitlines():
+            if "AVFoundation video devices" in line:
+                in_video = True
+                continue
+            if "AVFoundation audio devices" in line:
+                break
+            if in_video:
+                m = re.search(r"\[(\d+)\]\s+(.+)$", line)
+                if m:
+                    names.append({"listing_index": int(m.group(1)), "name": m.group(2).strip()})
+    elif sys.platform.startswith("linux"):
+        import glob
+
+        for path in sorted(glob.glob("/sys/class/video4linux/video*/name")):
+            try:
+                idx = int(path.split("video")[-1].split("/")[0])
+                with open(path) as f:
+                    names.append({"listing_index": idx, "name": f.read().strip()})
+            except (OSError, ValueError):
+                continue
+    return names
 
 
 _SPAWNER = r'''
@@ -518,6 +575,11 @@ class DeviceManager:
         self._lock = threading.Lock()
         self._camera_cache: list[dict[str, Any]] = []
         self._camera_cache_t = 0.0
+        self._camera_names_cache: list[dict[str, Any]] = []
+        self._camera_names_cache_t = 0.0
+        # One preview at a time: two concurrent opens of the same device
+        # wedge some UVC cameras until replug.
+        self._preview_lock = threading.Lock()
         self.profiles = ProfileStore(profiles_path)
         self.autospawn: AutoSpawnWatcher | None = None
 
@@ -560,6 +622,7 @@ class DeviceManager:
         return {
             "serial_ports": scan_serial_ports(),
             "cameras": self._cameras(refresh=refresh),
+            "camera_names": self._camera_names(refresh=refresh),
             "managed": {
                 pid: {
                     "peer_id": m.peer_id, "robot_name": m.robot_name, "mode": m.mode,
@@ -569,6 +632,55 @@ class DeviceManager:
                 for pid, m in self.robots.items()
             },
         }
+
+    def _camera_names(self, refresh: bool = False) -> list[dict[str, Any]]:
+        """Cached roster of camera names (see scan_camera_names on ordering)."""
+        now = time.time()
+        if refresh or (now - self._camera_names_cache_t) > self.CAMERA_CACHE_TTL_S:
+            self._camera_names_cache = scan_camera_names()
+            self._camera_names_cache_t = now
+        return self._camera_names_cache
+
+    def preview_frame(self, index: int) -> bytes:
+        """One JPEG frame from an UNCLAIMED camera index.
+
+        This is the authoritative "which camera is index N" tool - names are
+        a roster in listing order, but a picture cannot lie. Refuses indices
+        owned by a running robot (opening one steals its frames mid-stream).
+
+        Raises:
+            PermissionError: the index is claimed by a managed robot.
+            RuntimeError: the index would not open or produced no frame.
+        """
+        claimed = self._claimed_camera_indices()
+        if index in claimed:
+            raise PermissionError(
+                f"camera index {index} is streaming for {claimed[index]} - "
+                f"watch it on that robot's card instead"
+            )
+        import cv2
+
+        with self._preview_lock:
+            cap = cv2.VideoCapture(index)
+            try:
+                if not cap.isOpened():
+                    raise RuntimeError(f"camera index {index} would not open")
+                # A couple of warm-up reads: first frames from a cold sensor
+                # are often black or half-exposed.
+                frame = None
+                for _ in range(3):
+                    ok, frame = cap.read()
+                    if not ok:
+                        frame = None
+                        break
+                if frame is None:
+                    raise RuntimeError(f"camera index {index} produced no frame")
+                ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                if not ok:
+                    raise RuntimeError("JPEG encode failed")
+                return bytes(buf.tobytes())
+            finally:
+                cap.release()
 
     def logs(self, peer_id: str) -> dict[str, Any]:
         """Full ring buffer for one managed robot."""
