@@ -218,6 +218,96 @@ def stop_outcome(response: dict[str, Any] | None) -> dict[str, Any]:
     return {"state": "not_stopped", "detail": detail or str(error or "refused")}
 
 
+#: Per-type ceiling on UNCHANGED repeats, in Hz. Measured on a fleet of ONE arm and
+#: one client: /ws/mesh carried 34.7 Hz, of which presence re-sent ~6 Hz and
+#: camera_meta ~10 Hz although neither changes at that rate. Twelve clients meant
+#: ~420 JSON serializations/s to say nothing new.
+#:
+#: These are COALESCE rates, not dedupe: an event whose content actually changed is
+#: forwarded immediately, and an unchanged one still goes out at this rate as a
+#: liveness tick. That second half is not optional -- useMesh.ts sets
+#: `last_seen: Date.now(), stale: false` on EVERY event, so the client's staleness
+#: comes from arrival. Suppressing unchanged repeats outright would paint an idle
+#: peer (one that only publishes presence) as dead while it is alive.
+COALESCE_HZ: dict[str, float] = {
+    "presence": float(os.getenv("STRANDS_DASHBOARD_PRESENCE_HZ", "1.0")),
+    "camera_meta": float(os.getenv("STRANDS_DASHBOARD_CAMERA_META_HZ", "2.0")),
+}
+
+#: Fields that tick on their own and therefore say nothing about whether the
+#: PAYLOAD changed. Compared-out so a per-frame timestamp cannot defeat coalescing.
+_VOLATILE_FIELDS = frozenset({
+    "t", "ts", "time", "timestamp", "last_seen", "seq", "frame", "frames",
+    "frame_id", "count", "uptime", "uptime_s", "elapsed", "fps",
+})
+
+
+def _stable_content(data: Any) -> str:
+    """A comparable rendering of an event payload, minus self-ticking fields."""
+    def strip(v: Any) -> Any:
+        if isinstance(v, dict):
+            return {k: strip(x) for k, x in sorted(v.items()) if k not in _VOLATILE_FIELDS}
+        if isinstance(v, (list, tuple)):
+            return [strip(x) for x in v]
+        return v
+    try:
+        return json.dumps(strip(data), sort_keys=True, default=str)
+    except Exception:  # noqa: BLE001 - never let bookkeeping drop an event
+        return repr(data)[:2000]
+
+
+class EventCoalescer:
+    """Decides whether an event is worth another JSON serialization.
+
+    Rules, per (type, peer, cam):
+
+    * a type with no configured rate is ALWAYS forwarded -- ``state`` is real
+      telemetry (the joint traces plot it), ``safety`` must never be delayed by a
+      millisecond, and ``activity``/``snapshot`` are one-offs;
+    * changed content is forwarded immediately, so a stale flag flipping, a camera
+      error appearing or ``action_keys`` changing is never late;
+    * unchanged content is forwarded at the configured rate as a liveness tick.
+    """
+
+    def __init__(self, rates: dict | None = None) -> None:
+        self.rates = dict(COALESCE_HZ if rates is None else rates)
+        self._last: dict[tuple, tuple] = {}
+        self.suppressed = 0
+        self.forwarded = 0
+
+    def key(self, event: dict) -> tuple:
+        return (event.get("type"), event.get("peer_id"), event.get("cam"))
+
+    def allow(self, event: dict, now: float) -> bool:
+        hz = self.rates.get(event.get("type") or "")
+        if not hz or hz <= 0:
+            self.forwarded += 1
+            return True
+        k = self.key(event)
+        content = _stable_content(event.get("data"))
+        prev = self._last.get(k)
+        if prev is not None and prev[0] == content and (now - prev[1]) < (1.0 / hz):
+            self.suppressed += 1
+            return False
+        self._last[k] = (content, now)
+        self.forwarded += 1
+        return True
+
+    def forget(self, peer_id: str) -> None:
+        """Drop bookkeeping for a peer that left, so a respawn starts clean."""
+        for k in [k for k in self._last if k[1] == peer_id]:
+            self._last.pop(k, None)
+
+    def stats(self) -> dict:
+        total = self.forwarded + self.suppressed
+        return {
+            "forwarded": self.forwarded,
+            "suppressed": self.suppressed,
+            "suppressed_pct": round(100 * self.suppressed / total, 1) if total else 0.0,
+            "rates_hz": dict(self.rates),
+        }
+
+
 class MeshBridge:
     """Dashboard-side mesh peer. One instance per server process."""
 
@@ -238,6 +328,8 @@ class MeshBridge:
         # Async fan-out. Subscribers get JSON-able event dicts.
         self._queues: set[asyncio.Queue] = set()
         self._queues_lock = threading.Lock()
+        self._coalescer = EventCoalescer()
+        self._coalesce_lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
 
         # Signed safety rail (lazy - see _safety_mesh)
@@ -408,11 +500,21 @@ class MeshBridge:
         with self._queues_lock:
             self._queues.discard(q)
 
+    def coalesce_stats(self) -> dict[str, Any]:
+        """Forwarded vs suppressed /ws/mesh events since process start."""
+        with self._coalesce_lock:
+            return self._coalescer.stats()
+
     def _emit(self, event: dict[str, Any]) -> None:
         """Push an event to all consumer queues (thread -> loop safe)."""
         loop = self._loop
         if loop is None or loop.is_closed():
             return
+        # Coalesce BEFORE fan-out: one decision serves every client, and the
+        # serialization it avoids is per-client.
+        with self._coalesce_lock:
+            if not self._coalescer.allow(event, time.time()):
+                return
         with self._queues_lock:
             queues = list(self._queues)
         for q in queues:
@@ -716,6 +818,11 @@ class MeshBridge:
             # only feeds the same ghosts back on every later snapshot.
             for pid in set(self.peers) - set(peers):
                 self.peers.pop(pid, None)
+                # Drop coalescing bookkeeping too, so a peer that comes BACK with
+                # the same content as when it left is forwarded at once instead of
+                # waiting out a rate window against a memory of its former self.
+                with self._coalesce_lock:
+                    self._coalescer.forget(pid)
         return {
             "type": "snapshot",
             "dashboard_peer_id": self.peer_id,

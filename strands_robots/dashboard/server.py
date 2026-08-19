@@ -349,6 +349,10 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "mesh_online": app.state.mesh_online,
             "dashboard_peer_id": app.state.bridge.peer_id,
             "peers": len(app.state.bridge.peers),
+            # How much /ws/mesh fan-out the coalescer avoided. Reported rather
+            # than asserted: a saving nobody can measure is a claim, and this is
+            # the number the perf lens should be able to check on a live fleet.
+            "mesh_coalesce": app.state.bridge.coalesce_stats(),
             "t": time.time(),
         }
 
