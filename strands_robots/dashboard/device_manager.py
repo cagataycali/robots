@@ -25,10 +25,12 @@ import threading
 import uuid
 import time
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from . import cameras as camera_facts
 
 logger = logging.getLogger(__name__)
 
@@ -242,16 +244,38 @@ def scan_cameras(max_index: int = 4, skip: set[int] | None = None) -> list[dict[
     ``skip`` indices are NOT opened (probing an index owned by a
     running robot's camera thread steals/flaps its frames mid-episode).
     """
+    cams, _ = scan_cameras_with_failures(max_index=max_index, skip=skip)
+    return cams
+
+
+def scan_cameras_with_failures(
+    max_index: int = 4, skip: set[int] | None = None,
+) -> tuple[list[dict[str, Any]], dict[int, str]]:
+    """Like :func:`scan_cameras`, but also says WHY each index failed.
+
+    ``isOpened() == False`` is returned for a missing camera, a busy camera and
+    a camera macOS is refusing to let us touch — the difference is only on
+    OpenCV's stderr, which a library write goes straight past the logging
+    module (it is printed by C++ code on fd 2). The failing indices are
+    therefore re-probed in a CHILD process, whose stderr is ours to read
+    cleanly: no dup2 juggling that would swallow this process's own log lines,
+    and a cv2 that wedges or aborts takes the child down instead of the
+    dashboard.
+
+    Only failures pay that cost, and the caller caches the result.
+    """
     try:
         import cv2
     except ImportError:
-        return []
+        return [], {}
     cams: list[dict[str, Any]] = []
+    failed: list[int] = []
     for i in range(max_index):
         if skip and i in skip:
             continue
         cap = cv2.VideoCapture(i)
         try:
+            got = False
             if cap.isOpened():
                 ok, frame = cap.read()
                 if ok and frame is not None:
@@ -261,9 +285,48 @@ def scan_cameras(max_index: int = 4, skip: set[int] | None = None) -> list[dict[
                         "index": i, "width": w, "height": h,
                         "fps": round(fps, 1) if fps and fps > 0 else None,
                     })
+                    got = True
         finally:
             cap.release()
-    return cams
+        if not got:
+            failed.append(i)
+    return cams, diagnose_camera_indices(failed)
+
+
+#: Re-probe one index and let OpenCV print its own complaint to stderr.
+_DIAGNOSE_SRC = (
+    "import sys;import cv2;"
+    "cap=cv2.VideoCapture(int(sys.argv[1]));"
+    "ok=cap.isOpened();"
+    "r=cap.read()[0] if ok else False;"
+    "cap.release();"
+    "print('opened' if r else 'failed')"
+)
+
+
+def diagnose_camera_indices(indices: Sequence[int], timeout: float = 12.0) -> dict[int, str]:
+    """index -> the stderr OpenCV produced while failing to open it.
+
+    Best effort by design: a diagnosis that cannot be obtained must not remove
+    the camera from the list, so every failure path here returns an empty
+    string (which classifies as "absent") rather than raising.
+    """
+    out: dict[int, str] = {}
+    for index in indices:
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", _DIAGNOSE_SRC, str(index)],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            out[index] = proc.stderr or ""
+        except subprocess.TimeoutExpired:
+            # A probe that hangs is a real symptom of a camera in a bad state -
+            # report it as such instead of dropping the index.
+            out[index] = "device or resource busy (the probe never returned)"
+        except Exception as e:  # noqa: BLE001 - diagnosis is decoration, never fatal
+            logger.debug("camera diagnosis for index %s failed: %r", index, e)
+            out[index] = ""
+    return out
 
 
 def scan_camera_names() -> list[dict[str, Any]]:
@@ -751,6 +814,11 @@ class DeviceManager:
         self._lock = threading.Lock()
         self._camera_cache: list[dict[str, Any]] = []
         self._camera_cache_t = 0.0
+        #: index -> stderr from the last failed probe, and index -> last known
+        #: geometry. The second one is why a claimed camera can still say
+        #: 1920x1080 instead of going blank the moment a robot takes it.
+        self._camera_failures: dict[int, str] = {}
+        self._camera_memory: dict[int, dict[str, Any]] = {}
         self._camera_names_cache: list[dict[str, Any]] = []
         self._camera_names_cache_t = 0.0
         # One preview at a time: two concurrent opens of the same device
@@ -782,22 +850,40 @@ class DeviceManager:
         return claimed
 
     def _cameras(self, refresh: bool = False) -> list[dict[str, Any]]:
-        """Cached camera list. Claimed indices are reported, never probed."""
+        """Every camera this machine could have, each with its state and WHY.
+
+        A camera is never omitted because it could not be opened: dropping the
+        unopenable ones made "held by a running robot", "blocked by macOS
+        privacy" and "not plugged in" indistinguishable, all three rendering as
+        an absence. Geometry measured while an index was free is remembered and
+        carried into the in-use row, tagged as remembered rather than fresh.
+        """
         claimed = self._claimed_camera_indices()
         now = time.time()
         if refresh or (now - self._camera_cache_t) > self.CAMERA_CACHE_TTL_S:
-            self._camera_cache = scan_cameras(skip=set(claimed))
+            probed, failures = scan_cameras_with_failures(skip=set(claimed))
+            self._camera_cache = probed
+            self._camera_failures = failures
             self._camera_cache_t = now
-        cams = [c for c in self._camera_cache if c["index"] not in claimed]
-        cams.extend(
-            {"index": i, "claimed_by": peer} for i, peer in sorted(claimed.items())
+            for cam in probed:
+                # What we know about an index survives someone claiming it.
+                self._camera_memory[int(cam["index"])] = dict(cam)
+        return camera_facts.merge_cameras(
+            probed=[c for c in self._camera_cache if c["index"] not in claimed],
+            claimed=claimed,
+            roster=self._camera_names(),
+            remembered=self._camera_memory,
+            failures={i: t for i, t in (self._camera_failures or {}).items() if i not in claimed},
         )
-        return sorted(cams, key=lambda c: c["index"])
 
     def devices(self, refresh: bool = False) -> dict[str, Any]:
+        cams = self._cameras(refresh=refresh)
         return {
             "serial_ports": scan_serial_ports(),
-            "cameras": self._cameras(refresh=refresh),
+            "cameras": cams,
+            # One loud line when the whole machine is blocked, instead of the
+            # same reason repeated on every row (and missed on all of them).
+            "camera_problem": camera_facts.blocked_verdict(cams),
             "camera_names": self._camera_names(refresh=refresh),
             # The keys here are PEER IDS, not pids. The loop variable used to be
             # named `pid`, which is very likely why the actual OS pid -- the one
