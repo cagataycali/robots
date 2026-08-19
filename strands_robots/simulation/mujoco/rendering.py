@@ -2157,6 +2157,13 @@ class RenderingMixin:
             _max_warmup_attempts = 30
             _cold_std_threshold = 5.0
             _warm: dict[str, bool] = dict.fromkeys(names, False)
+            # A render can come back as a structured ERROR RESULT rather than a
+            # frame ("Rendering unavailable (no OpenGL context)"). That is not a
+            # cold context that will settle with more attempts, and because it is
+            # a returned dict and not a raised exception, the ``except`` branch
+            # below never sees it: without this capture the reason is lost at
+            # every log level and the operator is told the camera is merely cold.
+            _refusals: dict[str, str] = {}
             for _attempt in range(_max_warmup_attempts):
                 if all(_warm.values()):
                     break
@@ -2170,6 +2177,11 @@ class RenderingMixin:
                         logger.debug("recorder thread warmup render failed for %s: %s", cam, e)
                         continue
                     if arr is None:
+                        if isinstance(r, dict) and r.get("status") == "error":
+                            try:
+                                _refusals[cam] = str(r["content"][0]["text"])
+                            except Exception:  # noqa: BLE001 - defensive
+                                _refusals[cam] = "render returned an error result with no text"
                         continue
                     # arr.std(axis=0) is per-column std-dev; .mean()
                     # collapses to a scalar. Cold gradients have
@@ -2185,13 +2197,31 @@ class RenderingMixin:
                         )
             if not all(_warm.values()):
                 cold = [c for c, w in _warm.items() if not w]
-                logger.warning(
-                    "recorder thread warmup: %d cameras still cold after %d attempts: %s. "
-                    "First captured frames may show gradient artifact.",
-                    len(cold),
-                    _max_warmup_attempts,
-                    cold,
-                )
+                refused = {c: _refusals[c] for c in cold if c in _refusals}
+                if refused:
+                    # Rendering REFUSED, so "cold" would be a lie: no number of
+                    # attempts fixes a missing GL context, every capture will be
+                    # empty, and stop_cameras_recording would otherwise report
+                    # success with 0 frames and an empty MP4 - the failure the
+                    # preflight guards exist to make impossible.
+                    state["refusals"] = refused
+                    logger.warning(
+                        "recorder thread warmup: rendering REFUSED for %d of %d cameras: %s. "
+                        "This is not a cold context that settles - every captured frame will be "
+                        "empty. First reason: %s",
+                        len(refused),
+                        len(names),
+                        list(refused),
+                        next(iter(refused.values())),
+                    )
+                if [c for c in cold if c not in refused]:
+                    logger.warning(
+                        "recorder thread warmup: %d cameras still cold after %d attempts: %s. "
+                        "First captured frames may show gradient artifact.",
+                        len([c for c in cold if c not in refused]),
+                        _max_warmup_attempts,
+                        [c for c in cold if c not in refused],
+                    )
 
             # Warmup done (or capped) - capture loop is about to run. Unblock
             # the caller waiting in start_cameras_recording so the success
@@ -2376,6 +2406,14 @@ class RenderingMixin:
                 artifact["frames_skipped_size_mismatch"] = frames_skipped
             if flush_error:
                 artifact["flush_error"] = flush_error
+            # A render refusal caught during warmup is WHY this camera has no
+            # frames. Without it the caller sees frames=0 next to status
+            # "success" and has to guess between an empty scene, a too-short
+            # window and a machine that cannot render at all.
+            refusal = (state.get("refusals") or {}).get(cam)
+            if refusal:
+                artifact["render_refused"] = refusal
+                lines.append(f"   {cam:20s} rendering refused: {refusal}")
             artifacts.append(artifact)
 
         return {
