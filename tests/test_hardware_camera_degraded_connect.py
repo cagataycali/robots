@@ -183,3 +183,100 @@ def test_a_half_open_camera_is_closed_when_dropped():
     _degrade_to_available_cameras(robot)
 
     assert "wrist" not in robot.cameras
+
+
+# ---------------------------------------------------------------------------
+# connect_eagerly: the one path both the dashboard's children and the lazy
+# task connect use. Exercised against a duck-typed self so these tests need no
+# hardware, no lerobot import and no HardwareRobot construction.
+# ---------------------------------------------------------------------------
+
+
+class EagerHost:
+    """Just enough of the hardware Robot for its own connect_eagerly."""
+
+    from strands_robots.hardware_robot import Robot as _HardwareRobot
+
+    connect_eagerly = _HardwareRobot.connect_eagerly
+
+    def __init__(self, robot: object) -> None:
+        self.robot = robot
+        self._degraded_cameras: dict[str, str] = {}
+
+
+class ConnectingRobot(FakeRobot):
+    """A robot whose connect() opens the bus, then each camera in turn."""
+
+    def __init__(self, cameras: dict[str, FakeCamera], *, bus_fails: str | None = None) -> None:
+        super().__init__(cameras)
+        self.bus.is_connected = False
+        self.bus_fails = bus_fails
+
+    def connect(self, calibrate: bool = True) -> None:  # lerobot's signature
+        if self.bus_fails is not None:
+            raise OSError(self.bus_fails)
+        self.bus.is_connected = True
+        for camera in self.cameras.values():
+            camera.connect()  # aborts the loop on the first refusal, as lerobot does
+
+
+def test_connect_eagerly_healthy_reports_no_degradation():
+    host = EagerHost(ConnectingRobot({"top": FakeCamera()}))
+
+    ok, degraded, err = host.connect_eagerly()
+
+    assert (ok, degraded, err) == (True, {}, "")
+    assert host.robot.is_connected is True
+
+
+def test_connect_eagerly_keeps_the_arm_when_a_camera_refuses():
+    """The live so101-arm-1 case: OpenCV denied, motors fine."""
+    robot = ConnectingRobot(
+        {
+            "top": FakeCamera(fails="Failed to open OpenCVCamera(2)."),
+            "wrist": FakeCamera(),
+        }
+    )
+    host = EagerHost(robot)
+
+    ok, degraded, err = host.connect_eagerly()
+
+    assert ok is True
+    assert err == ""
+    assert list(degraded) == ["top"]
+    assert robot.is_connected is True
+    assert set(robot.cameras) == {"wrist"}
+    # Remembered on the instance, which is what get_status() reports.
+    assert host._degraded_cameras == degraded
+
+
+def test_connect_eagerly_still_fails_loudly_when_the_motors_fail():
+    """A dead bus must not be smoothed over into a degraded success."""
+    host = EagerHost(ConnectingRobot({"top": FakeCamera()}, bus_fails="port not found"))
+
+    ok, degraded, err = host.connect_eagerly()
+
+    assert ok is False
+    assert degraded == {}
+    assert "port not found" in err
+
+
+def test_connect_eagerly_is_idempotent_on_an_open_robot():
+    robot = ConnectingRobot({"top": FakeCamera()})
+    robot.connect(False)
+    host = EagerHost(robot)
+
+    assert host.connect_eagerly() == (True, {}, "")
+    assert robot.cameras["top"].connect_calls == 1  # not reconnected
+
+
+def test_connect_eagerly_catches_the_silent_partial_connect():
+    """connect() returning happily while is_connected stays False."""
+    robot = ConnectingRobot({"top": FakeCamera(lies=True)})
+    host = EagerHost(robot)
+
+    ok, degraded, err = host.connect_eagerly()
+
+    assert ok is True
+    assert list(degraded) == ["top"]
+    assert err == ""

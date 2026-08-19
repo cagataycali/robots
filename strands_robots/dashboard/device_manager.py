@@ -226,14 +226,22 @@ if cfg["mode"] == "real":
         mesh=True, peer_id=cfg["peer_id"], **kwargs,
     )
     # Connect eagerly so the mesh publishes joints + camera frames right away
-    # (HardwareRobot otherwise connects lazily on the first task).
-    inner = getattr(robot, "robot", None)
-    if inner is not None and not getattr(inner, "is_connected", False):
-        try:
-            inner.connect(False)  # calibrate=False
+    # (HardwareRobot otherwise connects lazily on the first task). Goes through
+    # connect_eagerly so a camera this machine will not open costs the camera
+    # and not the whole arm -- lerobot's own connect() gates is_connected on
+    # every camera, so one refusal reported a healthy arm as dead.
+    try:
+        ok, degraded, err = robot.connect_eagerly()
+        if ok and degraded:
+            for cam_name, reason in degraded.items():
+                print(f"camera {cam_name!r} unavailable, dropped: {reason}", flush=True)
+            print(f"hardware connected WITHOUT camera(s): {', '.join(degraded)}", flush=True)
+        elif ok:
             print("hardware connected", flush=True)
-        except Exception as e:
-            print(f"eager connect failed (will retry on first task): {e}", flush=True)
+        else:
+            print(f"eager connect failed (will retry on first task): {err}", flush=True)
+    except Exception as e:
+        print(f"eager connect failed (will retry on first task): {e}", flush=True)
     print(f"{cfg['peer_id']} (real @ {cfg['port']}) online", flush=True)
     while True:
         time.sleep(1)

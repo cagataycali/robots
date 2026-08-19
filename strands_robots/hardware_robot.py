@@ -2658,6 +2658,51 @@ class Robot(TeleopMixin, AgentTool):
                 )
             )
 
+    def connect_eagerly(self) -> tuple[bool, dict[str, str], str]:
+        """Connect the hardware now, dropping cameras this machine will not open.
+
+        HardwareRobot otherwise connects lazily on the first task, which is
+        wrong for a mesh peer: the fleet wants joints and frames the moment the
+        arm appears, not after someone gives it a job. Callers that want that
+        (the dashboard's spawned children) used to call lerobot's
+        ``robot.connect()`` themselves, which meant they also inherited its
+        all-or-nothing camera behaviour and each re-implemented the recovery.
+
+        This is that one path: connect, and if the attempt fails while the motor
+        bus is open, drop the cameras that refuse to open rather than report a
+        mechanically healthy arm as dead. Synchronous, because the callers are
+        plain scripts with no event loop.
+
+        Returns:
+            ``(connected, degraded_cameras, error)`` -- ``degraded_cameras`` is
+            ``{name: reason}`` for every camera given up on (empty when all are
+            healthy), and ``error`` is non-empty only when ``connected`` is
+            False.
+        """
+        inner = self.robot
+        if getattr(inner, "is_connected", False):
+            return True, dict(self._degraded_cameras), ""
+
+        try:
+            inner.connect(False)  # calibrate=False
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            degraded = _degrade_to_available_cameras(inner)
+            if not degraded:
+                return False, {}, str(exc)
+            self._degraded_cameras.update(degraded)
+            return True, dict(self._degraded_cameras), ""
+
+        if not getattr(inner, "is_connected", False):
+            # connect() reporting success while is_connected stays False is the
+            # partial-connect trap: some device in the set never came up.
+            degraded = _degrade_to_available_cameras(inner)
+            if degraded:
+                self._degraded_cameras.update(degraded)
+                return True, dict(self._degraded_cameras), ""
+            return False, {}, f"{inner} did not connect and gave no error"
+
+        return True, dict(self._degraded_cameras), ""
+
     def cleanup(self) -> None:
         """Cleanup resources and stop any running tasks.
 
