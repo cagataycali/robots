@@ -266,11 +266,13 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                   <span>Temperature</span>
                   <input type="number" step="0.1" min="0" max="2" value={temperature}
                          placeholder="default" onChange={e => setTemperature(e.target.value)} />
+                  <FieldMeta k="agent.temperature" raw={temperature} />
                 </label>
                 <label className="field">
                   <span>Max tokens</span>
                   <input type="number" min="1" value={maxTokens}
                          placeholder="default" onChange={e => setMaxTokens(e.target.value)} />
+                  <FieldMeta k="agent.max_tokens" raw={maxTokens} />
                 </label>
               </div>
               <label className="field">
