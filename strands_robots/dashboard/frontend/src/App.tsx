@@ -14,6 +14,7 @@ import DevicePanel from './components/DevicePanel'
 import EstopSheet from './components/EstopSheet'
 import HelpSheet from './components/HelpSheet'
 import EstopButton from './components/EstopButton'
+import { hotkeyVerdict } from './lib/hotkeys'
 import ErrorBoundary from './components/ErrorBoundary'
 import TrainingTab from './components/TrainingTab'
 import RecordPanel from './components/RecordPanel'
@@ -65,15 +66,24 @@ function Dashboard() {
   // operator most needs to see a moving arm.
   useEffect(() => { void pwa.keepAwake(anyRunning) }, [anyRunning])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keyboard: Escape closes whatever is on top, "." opens the stop sheet.
+  // Keyboard: Escape closes, "." (or Cmd/Ctrl+. even while typing) opens the
+  // stop sheet, "?" opens help. The decision itself is pure and tested in
+  // lib/hotkeys.ts — including the case that made JOURNEYS #12 dangerous: an
+  // operator mid-sentence in a form, where the bare key must stay a character
+  // and the brake still has to be one chord away.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = (e.target as HTMLElement)?.tagName?.match(/INPUT|TEXTAREA|SELECT/)
-      if (e.key === 'Escape') { setPanel(null); return }
-      if (!typing && e.key === '.') setPanel('estop')
-      // "?" is the conventional help key and costs nothing to guess. Gated on
-      // `typing` like the stop hotkey, so it cannot fire inside a task sentence.
-      if (!typing && e.key === '?') setPanel('help')
+      const el = e.target as HTMLElement | null
+      const verdict = hotkeyVerdict({
+        key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+        targetTag: el?.tagName, editable: el?.isContentEditable, repeat: e.repeat,
+      })
+      if (!verdict) return
+      if (verdict === 'close') { setPanel(null); return }
+      // The chord must not also reach the browser (Cmd+. is "stop loading" in
+      // some builds) or insert anything into the field it was pressed in.
+      if (e.metaKey || e.ctrlKey) e.preventDefault()
+      setPanel(verdict === 'estop' ? 'estop' : 'help')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -113,6 +123,15 @@ function Dashboard() {
 
   return (
     <div className="stage">
+      {/* FIRST IN THE DOM, therefore the FIRST TAB STOP on every screen
+          (JOURNEYS #12: measured 14 to 30+ tab stops to reach it, and on the
+          training screen it was unreachable inside 30). It is position:fixed in
+          its own layer, so moving it to the top of the document changes nothing
+          visually and no overlay can swallow the stop. A keyboard user's brake
+          must not be behind the fleet bar's chips, a robot card's controls, or
+          whatever a drawer happens to render today. */}
+      <EstopButton onClick={() => setPanel('estop')} posture={estopPosture(link)} />
+
       <FleetBar
         conn={conn}
         peerCount={list.filter(p => !p.stale).length}
@@ -132,8 +151,6 @@ function Dashboard() {
         onHelp={() => setPanel('help')}
       />
 
-      {/* Its own layer, so no overlay can ever swallow the stop. */}
-      <EstopButton onClick={() => setPanel('estop')} posture={estopPosture(link)} />
 
       {pwa.needRefresh && (
         <div className="toast">

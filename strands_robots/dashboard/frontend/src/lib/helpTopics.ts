@@ -77,7 +77,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
   {
     title: 'Stopping things — read this first',
     lines: [
-      'STOP ALL is in the top-right corner of every screen, and the "." key opens it from anywhere, including over an open drawer.',
+      'STOP ALL is in the top-right corner of every screen and is the first thing the Tab key reaches. The "." key opens it from anywhere, including over an open drawer, and Cmd+. (Ctrl+. on Windows and Linux) works even while you are typing in a field.',
       'It broadcasts an emergency stop and then LOCKS OUT commands until you resume; it does not power anything down.',
       'If this page cannot reach the server it says so and marks the button degraded — the arm\'s own power switch is then the only brake that does not go through this page.',
     ],

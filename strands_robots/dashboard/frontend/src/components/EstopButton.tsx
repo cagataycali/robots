@@ -22,6 +22,8 @@
  * a brake that refuses a click it might have delivered. The degraded style +
  * title say what will happen and name the arms' power switch instead.
  */
+import { ESTOP_KEYSHORTCUTS } from '../lib/hotkeys'
+
 export default function EstopButton({
   onClick, posture,
 }: { onClick: () => void; posture?: { degraded: boolean; title: string } }) {
@@ -31,11 +33,11 @@ export default function EstopButton({
       <button
         className={`estop${degraded ? ' unreachable' : ''}`}
         onClick={onClick}
-        title={posture?.title ?? 'Stop every robot on the mesh - keyboard shortcut: .'}
+        title={posture?.title ?? 'Stop every robot on the mesh - keyboard: . anywhere, or Cmd/Ctrl+. even while typing'}
         aria-label={degraded
           ? 'Emergency stop: the link is down, so this may not reach the robots'
           : 'Emergency stop: stop every robot on the mesh'}
-        aria-keyshortcuts="."
+        aria-keyshortcuts={ESTOP_KEYSHORTCUTS}
       >
         {degraded ? '🛑 STOP ALL ⚠' : '🛑 STOP ALL'}
       </button>
