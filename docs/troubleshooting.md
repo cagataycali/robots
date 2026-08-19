@@ -72,7 +72,7 @@ description: Error → fix table for the most common gotchas across install, sim
 |---------|--------------|-----|
 | `mesh.peers` empty | Other peer not running | Wait ~1s; verify `mesh.alive == True` on both |
 | Port already bound | Another zenoh process | Mesh auto falls back to client mode; or set `STRANDS_MESH_PORT` |
-| `init_mesh` raises | `eclipse-zenoh` missing | `uv pip install "strands-robots[mesh]"` |
+| `mesh.alive` is `False`, `mesh.peers` stays empty | `eclipse-zenoh` missing (logged at WARNING: "eclipse-zenoh is not installed") | `uv pip install "strands-robots[mesh]"` |
 | Want mesh off | - | `STRANDS_MESH=false` or `Robot(..., mesh=False)` |
 
 ## Agent integration
