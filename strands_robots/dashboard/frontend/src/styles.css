@@ -1305,3 +1305,17 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .cam-config-add { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
 .cam-config-modes { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 0 0 8px 4px; font-size: 12px; }
 .cam-config-modes .btn { padding: 2px 8px; font-size: 11px; }
+
+/* R5: the prefilled lerobot-calibrate command, inside a servo-board row.
+   Tokens, not raw values, so it stays inside the U12 glass language. The
+   command line must be readable and SELECTABLE even when navigator.clipboard
+   is unavailable (a non-secure LAN origin), so it wraps on the flag
+   boundaries instead of scrolling out of sight. */
+.calibcmd { margin-top: var(--s3); padding: var(--s3) var(--s4);
+  border-radius: var(--s3); background: var(--glass-1); border: 1px solid var(--glass-border); }
+.calibcmd .row { align-items: center; gap: var(--s3); margin-top: var(--s2); }
+.calibcmd .hint { margin-top: var(--s2); }
+.cmdline { display: block; margin-top: var(--s2); padding: var(--s2) var(--s3);
+  border-radius: var(--s2); background: rgb(0 0 0 / .34); border: 1px solid var(--glass-border-hi);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-small);
+  line-height: 1.55; user-select: all; overflow-wrap: anywhere; }

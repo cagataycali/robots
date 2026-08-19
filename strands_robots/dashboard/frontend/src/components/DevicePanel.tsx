@@ -5,6 +5,7 @@ import { api, post } from '../lib/endpoints'
 import CalibrationSection from './CalibrationSection'
 import CameraGallery, { type CameraInfo, type CameraName, type CameraProblem } from './CameraGallery'
 import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
+import { calibratePlan } from '../lib/calibrateCommand'
 
 interface SerialPort {
   device: string
@@ -84,6 +85,12 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   // that bail-out changes the hook count between renders (React #310).
   const [roles, setRoles] = useState<Record<string, RoleVerdict>>({})
   const [measuring, setMeasuring] = useState<string | null>(null)
+  // R5: which port's calibrate panel is open, the family the operator confirmed
+  // for it, and the last copy attempt's verdict (copying can genuinely fail —
+  // see copyCommand).
+  const [calibFor, setCalibFor] = useState<string | null>(null)
+  const [calibFamily, setCalibFamily] = useState<Record<string, string>>({})
+  const [copied, setCopied] = useState<string | null>(null)
 
   const load = useCallback(async (refresh = false) => {
     try {
@@ -174,6 +181,43 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const managed = Object.values(doc?.managed ?? {})
   const freePorts = doc?.serial_ports ?? []
   const claimedPorts = new Set(managed.filter(m => m.alive && m.port).map(m => m.port as string))
+
+  /**
+   * Which robot family this board is, and HOW we know — the model name in the
+   * calibrate command is half family, so its provenance has to be visible.
+   * Precedence: what is actually running on this port (a fact) > what the
+   * operator picked here > the spawn form's current pick > `likely_robot`,
+   * which is only `vid == 0x1A86 ? "so101" : null` (device_manager.py:239) and
+   * so is a guess about a USB-serial chip used by many boards. A guess may
+   * PREFILL the picker; it must never quietly become the model name, which is
+   * why the source is rendered next to it.
+   */
+  const familyFor = (p: SerialPort): { family: string; source: string } => {
+    const running = managed.find(m => m.alive && m.port === p.device)
+    if (running?.robot_name) return { family: running.robot_name, source: 'the arm running on this port' }
+    const picked = (calibFamily[p.device] ?? '').trim()
+    if (picked) return { family: picked, source: 'your pick' }
+    if (robotName.trim()) return { family: robotName.trim(), source: 'the robot selected in the spawn form above' }
+    if (p.likely_robot) return { family: p.likely_robot, source: 'a guess from the USB id — confirm it' }
+    return { family: '', source: '' }
+  }
+
+  /**
+   * Copy, and say so honestly when it fails. `navigator.clipboard` is undefined
+   * on a NON-SECURE origin, and this dashboard is regularly opened at
+   * http://<lan-ip>:8090 — a copy button that silently does nothing there is
+   * exactly the kind of lie this project keeps hunting. The command is always
+   * rendered as selectable text, so the keyboard route never depends on this.
+   */
+  const copyCommand = async (port: string, command: string) => {
+    try {
+      if (!navigator.clipboard) throw new Error('this page is not a secure origin, so the browser blocks copying')
+      await navigator.clipboard.writeText(command)
+      setCopied(`${port}\u0000ok`)
+    } catch (e: any) {
+      setCopied(`${port}\u0000${e?.message ?? String(e)}`)
+    }
+  }
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
@@ -382,7 +426,60 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                           ? 'reading…'
                           : busy ? 'running — despawn to measure' : 'measure role'}
                       </button>
+                      <button className="btn ghost"
+                              aria-expanded={calibFor === p.device}
+                              title="show the exact lerobot-calibrate command for this arm — the dashboard runs nothing"
+                              onClick={() => { setCopied(null); setCalibFor(calibFor === p.device ? null : p.device) }}>
+                        {calibFor === p.device ? 'hide calibrate command' : 'calibrate…'}
+                      </button>
                     </div>
+                    {calibFor === p.device && (() => {
+                      const { family, source } = familyFor(p)
+                      const plan = calibratePlan(p, family)
+                      const verdict = copied?.startsWith(p.device + '\u0000') ? copied.split('\u0000')[1] : null
+                      return (
+                        <div className="calibcmd">
+                          <p className="muted small">{plan.reason}</p>
+                          {plan.command ? (
+                            <>
+                              <p className="muted small">
+                                model <span className="mono">{plan.deviceModel}</span> — family from {source}
+                              </p>
+                              {/* Selectable text first: the copy button is a convenience, not the only route. */}
+                              <code className="cmdline">{plan.command}</code>
+                              <div className="row">
+                                <button className="btn ghost" onClick={() => void copyCommand(p.device, plan.command!)}>
+                                  copy
+                                </button>
+                                {verdict === 'ok' && <span className="muted small">copied — paste it in a terminal</span>}
+                                {verdict && verdict !== 'ok' &&
+                                  <span className="warn small">⚠ could not copy: {verdict} — select the line above instead</span>}
+                              </div>
+                              <p className="hint">
+                                It will ask you to move the arm through its range BY HAND. Nothing here moves it:
+                                the dashboard only writes the command you run. When the file lands, press
+                                <em> reload</em> in Calibration above to see it.
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              {plan.needsMeasurement &&
+                                <p className="hint">use <em>measure role</em> on this row first — one register read, no motion.</p>}
+                              {!family && robots.length > 0 && (
+                                <label className="row">
+                                  <span className="muted small">which arm is this?</span>
+                                  <select value={calibFamily[p.device] ?? ''}
+                                          onChange={e => setCalibFamily({ ...calibFamily, [p.device]: e.target.value })}>
+                                    <option value="">— pick the robot type —</option>
+                                    {robots.map(r => <option key={r.name} value={r.name}>{r.label}</option>)}
+                                  </select>
+                                </label>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )
+                    })()}
                     {v && (
                       <p className={v.mismatch ? 'warn small' : 'muted small'}>
                         {v.reason}
