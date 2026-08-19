@@ -35,6 +35,29 @@ if os.environ.get("STRANDS_TEST_ALLOW_LIVE_MESH", "").strip().lower() in ("1", "
 else:
     os.environ["STRANDS_MESH"] = "false"
 
+# Q34 ROOT CAUSE: pick the GL backend that EXISTS on this host, here, first.
+#
+# 40-odd test modules do ``os.environ.setdefault("MUJOCO_GL", "egl")`` (or
+# "glfw") at IMPORT time, so the first module pytest collects picks the GL
+# backend for the WHOLE process - every test after it, in any directory. On
+# macOS there is no EGL at all (MuJoCo renders through CGL there), so whichever
+# module won the race left every later renderer unable to create a context, and
+# the failure surfaced far away as "Rendering unavailable (no OpenGL context)"
+# in whatever test happened to render next. That is exactly the reported shape:
+# tests that PASS alone and fail in a sweep, "the context vanishes after the
+# add_robot group" (the winner was
+# test_add_robot_unknown_model_message.py, bisected 2026-08-19), and a sim
+# recording that writes an empty video while reporting success.
+#
+# conftest is imported before any test module, so setting the value here makes
+# all of those setdefault calls no-ops without touching 40 files. An explicit
+# MUJOCO_GL from the shell still wins: if it is already in the environment at
+# this point, it came from the operator, not from a test.
+if "MUJOCO_GL" not in os.environ:
+    import sys as _sys
+
+    os.environ["MUJOCO_GL"] = "cgl" if _sys.platform == "darwin" else "egl"
+
 # Disable the Device Connect dispatch path in robot_mesh by default so unit
 # tests exercise the built-in mesh deterministically, without opening real
 # Device Connect (Zenoh) connections. The GUIDE E2E demo runs outside pytest

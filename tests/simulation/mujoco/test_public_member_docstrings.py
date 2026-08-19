@@ -62,6 +62,10 @@ _EXPECTED_FUNCTIONS = {
     "backend.py::capture_stderr_fd",
     "backend.py::filter_mujoco_attach_noise",
     "backend.py::mj_name_to_id",
+    # The one sentence every renderer consumer says when there is no GL context
+    # (platform-correct: no apt-get advice on a Mac). Public because all three
+    # consumers share it rather than each keeping its own drifting copy.
+    "rendering.py::no_gl_context_message",
     "scene_ops.py::actuate_robot_in_scene",
     "scene_ops.py::actuator_driven_joint_ids",
     "scene_ops.py::actuator_joint_id",
