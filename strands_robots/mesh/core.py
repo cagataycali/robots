@@ -399,6 +399,14 @@ class Mesh(SensorLoopsMixin):
         self._inbox_lock = threading.Lock()
         self._stop_event = threading.Event()
 
+        # Telemetry degradation, reported once per category. _read_state
+        # probes a robot driver defensively: a flaky joint read must not kill
+        # the state thread, but it must not vanish either (BUGS.md bug #3 --
+        # a broken joint read that silently stopped publishing joints). Each
+        # category below is warned about the FIRST time it fails and then
+        # stays quiet, because the state loop retries at STATE_HZ.
+        self._read_state_warned: set[str] = set()
+
         # RPC correlation state.
         #
         # _expected_responders maps turn_id -> the peer_id we expect to
@@ -1076,6 +1084,40 @@ class Mesh(SensorLoopsMixin):
             if self._stop_event.wait(period):
                 break
 
+    def _warn_read_state_once(self, category: str, exc: BaseException) -> None:
+        """Log a degraded :meth:`_read_state` probe once per category.
+
+        Args:
+            category: Which probe degraded -- ``hw_joints``, ``task_state``,
+                ``sim_world`` or ``sim_joints``.
+            exc: The exception the probe raised, logged as ``repr`` so the
+                type survives even when the message is empty.
+
+        The state loop runs at ``STATE_HZ``, so a persistent fault would
+        otherwise emit a warning every tick. Only the first failure of each
+        category is logged; the rest are dropped at debug level.
+        """
+        warned = getattr(self, "_read_state_warned", None)
+        if warned is None:
+            warned = set()
+            self._read_state_warned = warned
+        if category in warned:
+            logger.debug(
+                "[mesh] %s: state probe %r still failing: %r",
+                self.peer_id,
+                category,
+                exc,
+            )
+            return
+        warned.add(category)
+        logger.warning(
+            "[mesh] %s: state probe %r failed, that section of the snapshot is "
+            "omitted (further failures logged at debug): %r",
+            self.peer_id,
+            category,
+            exc,
+        )
+
     def _read_state(self) -> dict[str, Any] | None:
         r = self.robot
         snapshot: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
@@ -1098,8 +1140,8 @@ class Mesh(SensorLoopsMixin):
                         joints[key] = value
                 if joints:
                     snapshot["joints"] = joints
-        except Exception:
-            pass
+        except Exception as exc:
+            self._warn_read_state_once("hw_joints", exc)
 
         try:
             ts = getattr(r, "_task_state", None)
@@ -1111,8 +1153,8 @@ class Mesh(SensorLoopsMixin):
                     "steps": getattr(ts, "step_count", 0),
                     "duration": getattr(ts, "duration", 0.0),
                 }
-        except Exception:
-            pass
+        except Exception as exc:
+            self._warn_read_state_once("task_state", exc)
 
         try:
             world = getattr(r, "_world", None)
@@ -1146,10 +1188,10 @@ class Mesh(SensorLoopsMixin):
                                 }
                         if sim_joints:
                             snapshot["joints"] = sim_joints
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as exc:
+                        self._warn_read_state_once("sim_joints", exc)
+        except Exception as exc:
+            self._warn_read_state_once("sim_world", exc)
 
         return snapshot if len(snapshot) > 2 else None
 
