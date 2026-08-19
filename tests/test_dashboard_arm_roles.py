@@ -188,3 +188,83 @@ def test_profiles_are_looked_up_by_serial_not_by_port(tmp_path, monkeypatch):
     )
     assert mgr.profile_for_port("/dev/cu.usbmodem5AB01584281")["role"] == "leader"
     assert mgr.profile_for_port("/dev/cu.usbmodem-other") is None
+
+
+# ------------------------------------------------------- remembering the role
+
+
+def test_a_measured_role_is_remembered_by_serial(tmp_path):
+    store = dm.ProfileStore(path=str(tmp_path / "p.json"))
+    saved = store.record_role("5AB0158428", {"role": "follower", "volts": 12.6})
+    assert saved["role"] == "follower" and saved["role_volts"] == 12.6
+    assert saved["role_source"] == "measured" and saved["role_measured_at"] > 0
+    # Survives a restart: a role that only lives in RAM fixes nothing.
+    assert dm.ProfileStore(path=str(tmp_path / "p.json")).get("5AB0158428")["role"] == "follower"
+
+
+def test_a_fault_never_erases_a_known_role(tmp_path):
+    """Switching a power supply off must not delete what we measured earlier -
+    a refusal is not new information about the arm."""
+    store = dm.ProfileStore(path=str(tmp_path / "p.json"))
+    store.record_role("5AB0158428", {"role": "follower", "volts": 12.6})
+    for junk in ({"role": "unpowered", "volts": 5.5}, {"role": "mixed"}, {"role": "unknown"}):
+        assert store.record_role("5AB0158428", junk) is None
+    assert store.get("5AB0158428")["role"] == "follower"
+
+
+def test_a_spawn_does_not_wipe_the_measured_role(tmp_path):
+    """save() rebuilt the entry from the spawn payload, so the first spawn after
+    a measurement silently deleted it - it would have looked like it worked."""
+    store = dm.ProfileStore(path=str(tmp_path / "p.json"))
+    store.record_role("5AB0158428", {"role": "follower", "volts": 12.6})
+    store.save("5AB0158428", {"robot_name": "so101", "peer_id": "so101-arm-2"})
+    entry = store.get("5AB0158428")
+    assert entry["role"] == "follower" and entry["role_volts"] == 12.6
+    assert entry["peer_id"] == "so101-arm-2"  # the spawn payload still lands
+    # An explicit role in the payload still wins.
+    store.save("5AB0158428", {"robot_name": "so101", "role": "leader"})
+    assert store.get("5AB0158428")["role"] == "leader"
+
+
+def test_measure_arm_role_remembers_and_reports_the_mismatch(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path)
+    mgr.profiles.save("5AB0158428", {"robot_name": "so101", "role": "leader"})
+    monkeypatch.setattr(
+        dm, "scan_serial_ports",
+        lambda: [{"device": "/dev/cu.usbmodemX", "serial_number": "5AB0158428"}],
+    )
+    monkeypatch.setattr(
+        dm.subprocess, "run",
+        lambda argv, **kw: SimpleNamespace(stdout=json.dumps({"m1": 12.6, "m2": 12.6}), stderr=""),
+    )
+    v = mgr.measure_arm_role("/dev/cu.usbmodemX")
+    assert v["role"] == "follower" and v["remembered"] is True
+    assert v["mismatch"]["labelled"] == "leader"  # the swap is named
+    assert mgr.profiles.get("5AB0158428")["role"] == "follower"
+
+
+def test_a_board_without_a_serial_says_why_it_cannot_be_remembered(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path)
+    monkeypatch.setattr(dm, "scan_serial_ports", lambda: [{"device": "/dev/cu.usbmodemX"}])
+    monkeypatch.setattr(
+        dm.subprocess, "run",
+        lambda argv, **kw: SimpleNamespace(stdout=json.dumps({"m1": 7.5}), stderr=""),
+    )
+    v = mgr.measure_arm_role("/dev/cu.usbmodemX")
+    assert v["role"] == "leader" and v["remembered"] is False
+    assert "no USB serial number" in v["remember_problem"]
+
+
+def test_the_devices_payload_carries_the_known_role(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path)
+    mgr.profiles.record_role("5AB0158428", {"role": "follower", "volts": 12.6})
+    monkeypatch.setattr(
+        dm, "scan_serial_ports",
+        lambda: [{"device": "/dev/cu.usbmodemX", "serial_number": "5AB0158428"},
+                 {"device": "/dev/cu.usbmodemY", "serial_number": "never-measured"}],
+    )
+    monkeypatch.setattr(mgr, "_cameras", lambda **kw: [])
+    monkeypatch.setattr(mgr, "_camera_names", lambda **kw: [])
+    ports = mgr.devices()["serial_ports"]
+    assert ports[0]["role"] == "follower" and ports[0]["role_volts"] == 12.6
+    assert "role" not in ports[1]  # unmeasured stays unmeasured, not "unknown"

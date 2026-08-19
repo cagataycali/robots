@@ -608,15 +608,66 @@ class ProfileStore:
             entry = self._data.get(key)
             return dict(entry) if entry is not None else None
 
+    def record_role(self, key: str, verdict: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Remember a measured leader/follower role against a board's serial.
+
+        Only a trustworthy verdict is written. An unpowered arm, a mixed bus or
+        a failed read must NOT overwrite a role that was measured earlier: the
+        operator switching a power supply off would otherwise delete what the
+        dashboard knows, and the next session would be back to guessing. A
+        refusal is not new information about the arm.
+
+        Writes a profile even for a board that was never spawned - the whole
+        point is to know the role BEFORE bringing it up.
+        """
+        role = verdict.get("role")
+        if role not in ("leader", "follower"):
+            return None
+        with self._lock:
+            entry = dict(self._data.get(key) or {})
+            entry.update({
+                "serial_number": key,
+                "role": role,
+                "role_volts": verdict.get("volts"),
+                "role_source": "measured",
+                "role_measured_at": time.time(),
+            })
+            entry.setdefault("name", key)
+            self._data[key] = entry
+            snapshot = {k: dict(v) for k, v in self._data.items()}
+        self._persist(snapshot, key)
+        return dict(entry)
+
+    #: Facts about the BOARD that a spawn payload knows nothing about, so they
+    #: survive being re-saved. Without this, one spawn wipes a measured role.
+    MEASURED_FIELDS = ("role", "role_volts", "role_source", "role_measured_at")
+
     def save(self, key: str, payload: dict[str, Any], name: str | None = None) -> dict[str, Any]:
-        """Remember ``payload`` as the way to spawn the board at ``key``."""
+        """Remember ``payload`` as the way to spawn the board at ``key``.
+
+        A spawn payload describes how to bring the board UP; a measured role
+        describes what the board IS. This used to replace the whole entry, so
+        the first spawn after a role measurement silently deleted it - the
+        measurement would have appeared to work and then evaporated. Measured
+        fields are carried over unless the caller states them explicitly.
+        """
         entry = dict(payload)
+        with self._lock:
+            previous = dict(self._data.get(key) or {})
+        for field in self.MEASURED_FIELDS:
+            if field not in entry and field in previous:
+                entry[field] = previous[field]
         entry["name"] = name or entry.get("name") or entry.get("peer_id") or key
         entry["serial_number"] = key
         entry["saved_at"] = time.time()
         with self._lock:
             self._data[key] = entry
             snapshot = {k: dict(v) for k, v in self._data.items()}
+        self._persist(snapshot, key)
+        return dict(entry)
+
+    def _persist(self, snapshot: dict[str, dict[str, Any]], key: str) -> None:
+        """Atomic write of the whole store (tmp + os.replace)."""
         try:
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
             tmp = f"{self.path}.tmp"
@@ -627,7 +678,6 @@ class ProfileStore:
             # Kept in memory either way, but the operator has to know the
             # profile will not survive a restart.
             logger.warning("could not persist device profile %s to %s: %r", key, self.path, e)
-        return dict(entry)
 
 
 class AutoSpawnWatcher:
@@ -943,7 +993,10 @@ class DeviceManager:
     ) -> dict[str, Any]:
         cams = self._cameras(refresh=refresh, live_cameras=live_cameras)
         return {
-            "serial_ports": scan_serial_ports(),
+            # Each board carries what is KNOWN about its role (measured earlier,
+            # remembered by serial) so the devices screen can show it without a
+            # second round trip - and so a wrong label is visible at a glance.
+            "serial_ports": [self._with_known_role(e) for e in scan_serial_ports()],
             "cameras": cams,
             # One loud line when the whole machine is blocked, instead of the
             # same reason repeated on every row (and missed on all of them).
@@ -968,6 +1021,17 @@ class DeviceManager:
                 for peer_id, m in self.robots.items()
             },
         }
+
+    def _with_known_role(self, entry: dict[str, Any]) -> dict[str, Any]:
+        serial = entry.get("serial_number")
+        profile = self.profiles.get(str(serial)) if serial else None
+        if not profile:
+            return entry
+        out = dict(entry)
+        for field in ("role", "role_volts", "role_source", "role_measured_at"):
+            if profile.get(field) is not None:
+                out[field] = profile[field]
+        return out
 
     def _camera_names(self, refresh: bool = False) -> list[dict[str, Any]]:
         """Cached roster of camera names (see scan_camera_names on ordering)."""
@@ -1105,6 +1169,35 @@ class DeviceManager:
             tail = [ln for ln in proc.stderr.strip().splitlines() if ln.strip()][-1:]
             if tail:
                 verdict["detail"] = tail[0][:300]
+        return verdict
+
+    def measure_arm_role(self, port: str, model: str = "sts3215") -> dict[str, Any]:
+        """Read the role off the bus AND remember it against the board's serial.
+
+        The measurement is worth nothing if it lives only in one HTTP response:
+        the label the dashboard shows next session is what the operator acts on.
+        Keyed by serial, so a board keeps its role across /dev renumbering and
+        reboots. A refusal (unpowered / mixed / unread) is reported but NOT
+        written - see ProfileStore.record_role.
+        """
+        verdict = self.read_bus_role(port, model)
+        serial = None
+        for entry in scan_serial_ports():
+            if entry.get("device") == port:
+                serial = entry.get("serial_number")
+                break
+        verdict["serial_number"] = serial
+        previous = self.profiles.get(str(serial)) if serial else None
+        verdict["mismatch"] = arm_roles.disagreement((previous or {}).get("role"), verdict)
+        if serial:
+            saved = self.profiles.record_role(str(serial), verdict)
+            verdict["remembered"] = bool(saved)
+        else:
+            verdict["remembered"] = False
+            verdict["remember_problem"] = (
+                f"{port} reports no USB serial number, so the role cannot be remembered "
+                f"for this board (a /dev name is reassigned by the OS)"
+            )
         return verdict
 
     def _camera_fault(self, index: int) -> camera_facts.CameraUnavailable:

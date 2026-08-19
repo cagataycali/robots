@@ -1237,3 +1237,33 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .camcard.cam-blocked { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
 .camproblem { margin-bottom: 12px; display: grid; gap: 4px; }
 .campill-assigned { background: color-mix(in srgb, #d9a020 34%, transparent); color: #ffe6b0; border-color: color-mix(in srgb, #d9a020 60%, transparent); }
+
+/* Servo-board roster: a measured role and the ABSENCE of one must not look the
+   same (U2). Uses this sheet's real tokens - my first pass invented
+   --surface-2/-3, --hairline, --radius-sm and --text-2, none of which exist, so
+   the badge rendered on a transparent background. A token name is only a token
+   if the sheet defines it. */
+.boardlist { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s3); }
+.boardlist > li {
+  padding: var(--s3) var(--s4); border-radius: var(--r2);
+  background: var(--panel2); border: 1px solid var(--border);
+  display: grid; gap: var(--s2);
+}
+.row.between { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.rolebadge {
+  font-size: var(--fs-micro); letter-spacing: .05em; text-transform: uppercase;
+  padding: 2px var(--s3); border-radius: var(--rpill);
+  border: 1px solid var(--border-hi); color: var(--dim);
+  background: var(--panel3); white-space: nowrap;
+}
+/* Both fills are the AA-safe twins, not --accent/--red: white on those measured
+   2.75:1 and 3.24:1 in the earlier a11y pass. */
+.rolebadge.follower { color: #fff; background: var(--accent-fill); border-color: transparent; }
+.rolebadge.leader   { color: #08120c; background: var(--green); border-color: transparent; }
+.rolebadge.unpowered, .rolebadge.mixed {
+  color: #1a1206; background: var(--amber); border-color: transparent;
+}
+/* Never measured reads as an invitation, not as a fault. */
+.rolebadge.unmeasured { font-style: italic; color: var(--dim); background: transparent; }
+.boardlist .small { font-size: var(--fs-tiny); }
+.boardlist .warn, p.warn { color: var(--amber); }

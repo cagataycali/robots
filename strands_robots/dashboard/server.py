@@ -1109,16 +1109,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         holds the port - a servo bus has exactly one owner, and that child is it.
         """
         try:
-            verdict = await asyncio.to_thread(app.state.devices.read_bus_role, port, model)
+            # Measures AND remembers (keyed by USB serial, never by /dev name -
+            # the OS reassigns those). A measurement that lives only in one HTTP
+            # response does not fix the label the operator sees next session.
+            return await asyncio.to_thread(app.state.devices.measure_arm_role, port, model)
         except PermissionError as e:
             raise HTTPException(409, str(e)) from e
         except Exception as e:  # noqa: BLE001 - bus faults become HTTP, not tracebacks
             raise HTTPException(503, f"could not read {port}: {e}") from e
-        # Keyed by USB serial, never by /dev name (the OS reassigns those).
-        profile = await asyncio.to_thread(app.state.devices.profile_for_port, port)
-        labelled = (profile or {}).get("role") if isinstance(profile, dict) else None
-        verdict["mismatch"] = arm_roles.disagreement(labelled, verdict)
-        return verdict
 
     @app.post("/api/devices/spawn")
     async def spawn(body: dict[str, Any]) -> dict[str, Any]:

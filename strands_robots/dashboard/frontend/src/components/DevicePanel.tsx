@@ -13,6 +13,22 @@ interface SerialPort {
   pid?: string | null
   serial_number?: string | null
   likely_robot?: string | null
+  // Measured off the servo bus (12V = follower, 7.4V = leader) and remembered by
+  // serial. ABSENT means never measured, which is not the same as "unknown".
+  role?: string | null
+  role_volts?: number | null
+  role_source?: string | null
+  role_measured_at?: number | null
+}
+
+interface RoleVerdict {
+  role: string
+  reason: string
+  volts?: number | null
+  remedy?: string
+  remembered?: boolean
+  remember_problem?: string
+  mismatch?: { labelled: string, measured: string, message: string, remedy: string } | null
 }
 
 interface DeviceDoc {
@@ -63,6 +79,11 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [camW, setCamW] = useState('')
   const [camH, setCamH] = useState('')
   const [robotId, setRobotId] = useState('')
+  // Measured servo-bus roles, keyed by port. Declared here with the other hooks
+  // on purpose: this component returns null when closed, so a useState below
+  // that bail-out changes the hook count between renders (React #310).
+  const [roles, setRoles] = useState<Record<string, RoleVerdict>>({})
+  const [measuring, setMeasuring] = useState<string | null>(null)
 
   const load = useCallback(async (refresh = false) => {
     try {
@@ -129,6 +150,24 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       setLogs({ peer, lines: r.lines ?? [] })
     } catch (e: any) {
       setLogs({ peer, lines: [`⚠ ${e?.message ?? String(e)}`] })
+    }
+  }
+
+  const measureRole = async (port: string) => {
+    setMeasuring(port)
+    try {
+      const v = await api<RoleVerdict>(`/api/devices/arm-role?port=${encodeURIComponent(port)}`)
+      setRoles(r => ({ ...r, [port]: v }))
+      // The verdict is remembered server-side against the board's serial, so
+      // reload to pick up the badge rather than mirroring it in two places.
+      if (v.remembered) void load(false)
+    } catch (e: any) {
+      setRoles(r => ({
+        ...r,
+        [port]: { role: 'unknown', reason: e?.message ?? String(e) },
+      }))
+    } finally {
+      setMeasuring(null)
     }
   }
 
@@ -306,6 +345,58 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
           </section>
 
           <CalibrationSection />
+
+          <section>
+            <h3>Servo boards</h3>
+            <p className="hint">
+              A follower arm runs a 12V servo bus, a leader 7.4V — so the role can be read off the
+              hardware instead of inherited from a name. The read touches one register
+              (<code>Present_Voltage</code>) and cannot move the arm. A servo bus has a single owner,
+              so an arm that is running must be despawned before it can be measured.
+            </p>
+            <ul className="boardlist">
+              {freePorts.length === 0 && <li className="muted">no servo board detected</li>}
+              {freePorts.map(p => {
+                const v = roles[p.device]
+                const busy = claimedPorts.has(p.device)
+                return (
+                  <li key={p.device}>
+                    <div className="row between">
+                      <span className="mono">{p.device}</span>
+                      {p.role
+                        ? <span className={'rolebadge ' + p.role}>
+                            {p.role}{p.role_volts ? ' · ' + p.role_volts + 'V' : ''}
+                          </span>
+                        : <span className="rolebadge unmeasured">role not measured</span>}
+                    </div>
+                    <div className="row between">
+                      <span className="muted small">
+                        {p.serial_number ? 'serial ' + p.serial_number : 'no serial number'}
+                      </span>
+                      <button className="btn ghost" disabled={busy || measuring === p.device}
+                              title={busy
+                                ? 'this arm is running and owns its bus — despawn it first'
+                                : 'reads one register; cannot move the arm'}
+                              onClick={() => void measureRole(p.device)}>
+                        {measuring === p.device
+                          ? 'reading…'
+                          : busy ? 'running — despawn to measure' : 'measure role'}
+                      </button>
+                    </div>
+                    {v && (
+                      <p className={v.mismatch ? 'warn small' : 'muted small'}>
+                        {v.reason}
+                        {v.remedy ? ' — ' + v.remedy : ''}
+                        {v.mismatch ? ' ⚠ ' + v.mismatch.message + ' — ' + v.mismatch.remedy : ''}
+                        {v.remembered ? ' · remembered for this board' : ''}
+                        {v.remember_problem ? ' · ' + v.remember_problem : ''}
+                      </p>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
 
           <section>
             <h3>Detected hardware</h3>
