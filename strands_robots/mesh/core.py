@@ -22,6 +22,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots.bus_access import read_observation
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.sensors import SensorLoopsMixin
@@ -1125,7 +1126,10 @@ class Mesh(SensorLoopsMixin):
         try:
             inner = getattr(r, "robot", None)
             if inner is not None and hasattr(inner, "get_observation") and getattr(inner, "is_connected", False):
-                obs = inner.get_observation()
+                # Through the device's bus lock: this probe shares the wire with
+                # the camera publisher, the sensors probe and teleop, and two
+                # readers at once make the SDK refuse ("Port is in use!").
+                obs = read_observation(inner)
                 cam_keys = set(getattr(getattr(inner, "config", None), "cameras", {}).keys())
                 joints: dict[str, Any] = {}
                 for key, value in obs.items():
@@ -1254,7 +1258,7 @@ class Mesh(SensorLoopsMixin):
 
         obs = None
         try:
-            obs = inner.get_observation()
+            obs = read_observation(inner)
         except Exception:
             pass
 

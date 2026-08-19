@@ -59,6 +59,7 @@ hardening is tracked in #249.
 
 from __future__ import annotations
 
+from strands_robots.bus_access import read_observation
 import logging
 import os
 import time
@@ -253,7 +254,7 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
             return
 
         try:
-            obs = inner.get_observation()
+            obs = read_observation(inner)
         except Exception as exc:  # noqa: BLE001 -- LeRobot get_observation() may raise hardware-specific errors
             logger.debug("[camera_offload] get_observation failed: %s", exc)
             return
