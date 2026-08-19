@@ -88,7 +88,9 @@ robot = Robot(
 With `mesh=True` (or `STRANDS_MESH=true`) this process publishes presence,
 joint state and camera frames on the mesh, and the dashboard renders it beside
 its own managed spawns. Dashboard-spawned and code-defined peers differ only in
-an origin badge.
+an origin badge. The camera argument is a mapping of options per camera, not a
+bare index - full shape and the deployment story in
+[Robots defined in code](code-defined-robots.md).
 
 ## Security posture
 

@@ -79,7 +79,8 @@ and a camera index. Ports and cameras already claimed by a running peer are
 shown greyed out, so you cannot double-open one.
 
 The form attaches a single camera, named `main`. A two-camera rig (top + wrist)
-goes through the API or your own script:
+goes through the API or your own script - and note that each camera is a
+**mapping of options**, never a bare index:
 
 ```bash
 curl -sX POST localhost:8090/api/devices/spawn -H 'content-type: application/json' -d '{
@@ -87,9 +88,16 @@ curl -sX POST localhost:8090/api/devices/spawn -H 'content-type: application/jso
   "peer_id": "so101-arm-1",
   "port": "/dev/cu.usbmodem5AB0181806",
   "robot_id": "follower_arm",
-  "cameras": {"top": 1, "wrist": 0}
+  "cameras": {
+    "top":   {"type": "opencv", "index_or_path": 2, "width": 1920, "height": 1080, "fps": 30},
+    "wrist": {"type": "opencv", "index_or_path": 1, "width": 1920, "height": 1080, "fps": 30}
+  }
 }'
 ```
+
+`{"top": 2}` is refused with `Camera 'top' config must be a mapping of option
+name to value, got int: 2` - see
+[Robots defined in code](code-defined-robots.md#the-cameras-argument-is-a-mapping-of-mappings).
 
 Each spawn is a **child process that joins the mesh as its own peer** - it is
 not a thread inside the dashboard. `GET /api/devices/logs/{peer_id}` is its
@@ -157,6 +165,8 @@ unattended.
 ## Next
 
 - [Fleet dashboard overview](index.md) - every CLI flag and HTTP route
+- [Robots defined in code](code-defined-robots.md) - the same peer from your
+  own script, and how to deploy it to an edge device
 - [Multi-robot Mesh](../mesh.md) - what the peers are actually saying
 - [Teleoperation](../hardware/teleoperation.md) - leader/follower and the
   teleoperator matrix
