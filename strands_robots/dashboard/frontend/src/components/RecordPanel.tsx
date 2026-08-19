@@ -24,6 +24,9 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   const [form, setForm] = useState({
     dataset: '', task: '', leader: guessLeader, follower: guessFollower, target_episodes: '20',
   })
+  const [upload, setUpload] = useState(false)
+  const [repoId, setRepoId] = useState('')
+  const [closed, setClosed] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -134,6 +137,62 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
       )}
 
       {open && s && <FollowerLive peer={peers.find(p => p.peer_id === s.follower)} recording={recording} />}
+
+      {open && s && s.episodes.length > 0 && (
+        <div className="rec-strip" role="list" aria-label="recorded episodes">
+          {s.episodes.slice().reverse().map(ep => (
+            <div key={ep.index} role="listitem" className={`rec-ep${ep.discarded ? ' dead' : ''}`}>
+              <div className="rec-ep-head">
+                <b>ep {ep.index}</b>
+                <span>{ep.frames}f · {ep.duration_s}s</span>
+              </div>
+              {Object.entries(ep.thumbnails).length > 0 && (
+                <div className="rec-thumbs">
+                  {Object.entries(ep.thumbnails).slice(0, 3).map(([cam, url]) => (
+                    <img key={cam} src={url} alt={`${cam} thumbnail of episode ${ep.index}`} loading="lazy" />
+                  ))}
+                </div>
+              )}
+              {ep.discarded
+                ? <span className="rec-ep-gone">discarded</span>
+                : <button className="btn ghost" onClick={() => void run(() => api!.discard(ep.index))} disabled={busy}>
+                    ✕ discard
+                  </button>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {open && s && !recording && (
+        <div className="train-form">
+          <label className="field check">
+            <input type="checkbox" checked={upload} onChange={e => setUpload(e.target.checked)} />
+            <span>upload to the Hugging Face Hub after finishing</span>
+          </label>
+          {upload && (
+            <label className="field"><span>hub repo id <em>(defaults to the dataset name)</em></span>
+              <input value={repoId} placeholder={s.dataset ?? ''} onChange={e => setRepoId(e.target.value)} />
+            </label>
+          )}
+          <div className="train-actions">
+            <button className="btn wide" disabled={busy} onClick={() => {
+              void (async () => {
+                setBusy(true); setErr(null)
+                try {
+                  const r = await api!.close(upload ? { upload, repo_id: repoId.trim() || s.dataset || undefined } : {})
+                  setClosed(r.detail ?? (r.ok ? `dataset finished with ${kept} episode(s)` : 'close failed'))
+                  setS(await api!.session())
+                } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
+                setBusy(false)
+              })()
+            }}>
+              ✓ finish dataset ({kept} kept{s.episodes.length - kept ? `, ${s.episodes.length - kept} discarded` : ''})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {closed && !open && <div className="toast">✓ {closed}</div>}
 
       {err && <div className="train-msg">✗ {err}</div>}
     </div>
