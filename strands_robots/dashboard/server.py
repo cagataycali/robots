@@ -981,6 +981,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if "already running" in (result.get("error") or ""):
             # A conflict with something that exists, not a bad request.
             raise HTTPException(409, result)
+        if "port required" in (result.get("error") or ""):
+            # Also a bad request: mode=real without a port describes no device.
+            # It answered 200 with an error body, so a caller checking the status
+            # code alone saw a successful spawn.
+            raise HTTPException(422, result)
         return result
 
     @app.get("/api/devices/profiles")
