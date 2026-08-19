@@ -140,6 +140,33 @@ body {
 .apply-chip.live { color: #7de3a0; border-color: rgba(125,227,160,.35); }
 .apply-chip.next-turn { color: #7cc0ff; border-color: rgba(124,192,255,.35); }
 .apply-chip.mesh-restart, .apply-chip.startup { color: #ffc46b; border-color: rgba(255,196,107,.35); }
+/* Settings search: find a field without knowing which tab hides it */
+.settings-search { position: relative; padding: 0 var(--s4); margin-bottom: var(--s2); }
+.settings-search input {
+  width: 100%; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r2);
+  padding: 7px 10px; font-size: var(--fs-small); font-family: inherit;
+}
+.settings-search .search-results {
+  list-style: none; margin: var(--s1) 0 0; padding: var(--s1);
+  background: var(--panel2); border: 1px solid var(--border); border-radius: var(--r2);
+  max-height: 260px; overflow-y: auto;
+}
+.settings-search .search-results button {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--text); padding: 6px 8px; border-radius: var(--r1, 6px);
+  cursor: pointer; font-family: inherit; font-size: var(--fs-small);
+}
+.settings-search .search-results button:hover,
+.settings-search .search-results button:focus-visible { background: rgba(124,192,255,.12); }
+.settings-search .search-results b { font-weight: 600; }
+.settings-search .search-results .tabname {
+  font-size: 9.5px; color: var(--dim); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 8px; padding: 1px 6px; margin-left: 6px; text-transform: uppercase;
+}
+.settings-search .search-results em {
+  display: block; font-style: normal; font-size: 10.5px; color: var(--dim); margin-top: 2px;
+}
 .field input, .field select, .field textarea {
   background: var(--panel2); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--r2); padding: 8px 10px; font-size: var(--fs-small); font-family: inherit;

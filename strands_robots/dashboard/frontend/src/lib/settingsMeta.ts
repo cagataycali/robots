@@ -135,3 +135,102 @@ export function validateSetting(key: string, raw: string): string | null {
 export function allValid(drafts: Record<string, string>): boolean {
   return Object.entries(drafts).every(([k, v]) => validateSetting(k, v) === null)
 }
+
+// ---------------------------------------------------------------------------
+// Env var validation (UI half of the Q13 family: a newline in a key or value
+// used to inject a second variable into .env).
+
+/** Env var NAME: POSIX-shell shaped, no whitespace, never a newline. */
+export function envKeyError(raw: string): string | null {
+  const s = raw.trim()
+  if (s === '') return null // nothing typed yet - the save path skips empty keys
+  if (/[\r\n]/.test(raw)) return 'key must be a single line'
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(s)) {
+    return 'keys are UPPER_SNAKE_CASE: letters, digits and _ only, not starting with a digit'
+  }
+  return null
+}
+
+/** Env var VALUE: anything except a line break (a newline writes a second var). */
+export function envValueError(raw: string): string | null {
+  if (/[\r\n]/.test(raw)) return 'value must be a single line - a line break would write a second variable'
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Search: find a setting without knowing which tab hides it.
+
+export type SettingsTab = 'connection' | 'agent' | 'voice' | 'mesh' | 'env' | 'security'
+
+export interface SearchEntry {
+  /** settingsMeta key when the field has one, otherwise a stable synthetic id. */
+  key: string
+  label: string
+  tab: SettingsTab
+  /** Extra words a user might type ("fps" for camera rate, "api key" for env). */
+  keywords: string
+  effect: string
+}
+
+const TAB_OF: Record<string, SettingsTab> = {
+  'agent.temperature': 'agent',
+  'agent.max_tokens': 'agent',
+  'agent.model_id': 'agent',
+  'mesh.port': 'mesh',
+  'mesh.camera_hz': 'mesh',
+  'mesh.connect': 'mesh',
+  'mesh.listen': 'mesh',
+}
+
+const EXTRA_ENTRIES: SearchEntry[] = [
+  { key: 'connection.base', label: 'API base URL', tab: 'connection', keywords: 'backend server address host remote', effect: 'Which dashboard server this browser talks to.' },
+  { key: 'connection.token', label: 'Auth token (this browser)', tab: 'connection', keywords: 'login password bearer', effect: 'Credential this browser sends with every request.' },
+  { key: 'agent.system_prompt', label: 'System prompt', tab: 'agent', keywords: 'instructions personality behavior', effect: 'Standing instructions for the fleet agent.' },
+  { key: 'voice.provider', label: 'Voice provider', tab: 'voice', keywords: 'speech tts openai gemini nova sonic', effect: 'Which service speaks and listens.' },
+  { key: 'voice.voice_name', label: 'Voice name', tab: 'voice', keywords: 'speaker tts', effect: 'Which voice the provider uses.' },
+  { key: 'env.vars', label: 'Environment variables', tab: 'env', keywords: 'api key secret credential openai huggingface hf token .env', effect: 'Credentials and flags written to the server .env file.' },
+  { key: 'env.trust_remote_code', label: 'HuggingFace trust_remote_code', tab: 'env', keywords: 'lerobot kimodo model repo security allow', effect: 'Allows model repos to execute their own code when loaded.' },
+  { key: 'security.auth_token', label: 'Server auth token', tab: 'security', keywords: 'password protect lock api', effect: 'Token every client must present on /api and /ws.' },
+  { key: 'security.cors_origins', label: 'CORS origins', tab: 'security', keywords: 'browser cross origin websites', effect: 'Which websites a browser may call this API from.' },
+  { key: 'mesh.restart', label: 'Restart mesh', tab: 'mesh', keywords: 're-point reconnect zenoh session', effect: 'Re-opens the shared mesh session.' },
+]
+
+const KEYWORDS_OF: Record<string, string> = {
+  'agent.temperature': 'sampling randomness creativity',
+  'agent.max_tokens': 'length limit reply cutoff',
+  'agent.model_id': 'llm claude bedrock provider',
+  'mesh.port': 'zenoh network 7447',
+  'mesh.camera_hz': 'fps frames rate video bandwidth',
+  'mesh.connect': 'endpoints dial router zenoh peer',
+  'mesh.listen': 'endpoints bind accept zenoh',
+}
+
+export const SEARCH_INDEX: SearchEntry[] = [
+  ...SETTINGS.filter(s => TAB_OF[s.key]).map(s => ({
+    key: s.key, label: s.label, tab: TAB_OF[s.key],
+    keywords: KEYWORDS_OF[s.key] ?? '', effect: s.effect,
+  })),
+  ...EXTRA_ENTRIES,
+]
+
+/**
+ * Rank: label prefix > label substring > keyword/key/effect substring.
+ * Every query term must match somewhere (so "camera rate" narrows, not widens).
+ */
+export function searchSettings(query: string, limit = 8): SearchEntry[] {
+  const q = query.trim().toLowerCase()
+  if (q === '') return []
+  const terms = q.split(/\s+/)
+  const scored: { e: SearchEntry; score: number }[] = []
+  for (const e of SEARCH_INDEX) {
+    const label = e.label.toLowerCase()
+    const hay = `${label} ${e.key.toLowerCase()} ${e.keywords} ${e.effect.toLowerCase()}`
+    if (!terms.every(t => hay.includes(t))) continue
+    let score = 1
+    if (label.includes(q)) score = 2
+    if (label.startsWith(q)) score = 3
+    scored.push({ e, score })
+  }
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, limit).map(s => s.e)
+}

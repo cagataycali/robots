@@ -5,7 +5,9 @@ import {
   setAuthToken, setBackendBase,
 } from '../lib/endpoints'
 import { useConfig, type ApplyResult } from '../lib/useConfig'
-import { APPLY_LABEL, settingMeta, validateSetting } from '../lib/settingsMeta'
+import {
+  APPLY_LABEL, envKeyError, envValueError, searchSettings, settingMeta, validateSetting,
+} from '../lib/settingsMeta'
 
 /** Inline validation message + "what happens if I change this" chip for one field. */
 function FieldMeta({ k, raw }: { k: string; raw: string }) {
@@ -46,6 +48,7 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
 }) {
   const { config, loading, error, reload, save } = useConfig()
   const [tab, setTab] = useState<Tab>('connection')
+  const [query, setQuery] = useState('')
   const [status, setStatus] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -104,6 +107,10 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
     validateSetting('mesh.camera_hz', cameraHz) === null &&
     validateSetting('mesh.connect', connect) === null &&
     validateSetting('mesh.listen', listen) === null
+  const envValid =
+    envKeyError(newKey) === null && envValueError(newValue) === null &&
+    Object.values(envDraft).every(v => envValueError(v) === null)
+  const results = searchSettings(query)
 
   const report = (r: ApplyResult) => {
     const parts: string[] = []
@@ -159,6 +166,34 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
           <h2>Settings</h2>
           <button className="btn ghost" onClick={onClose}>✕</button>
         </header>
+
+        <div className="settings-search">
+          <input
+            type="search"
+            placeholder="Search settings… (fps, token, prompt)"
+            aria-label="Search settings"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+          {results.length > 0 && (
+            <ul className="search-results" role="listbox">
+              {results.map(r => (
+                <li key={r.key}>
+                  <button
+                    role="option"
+                    onClick={() => { setTab(r.tab); setQuery('') }}
+                  >
+                    <b>{r.label}</b> <span className="tabname">{r.tab}</span>
+                    <em>{r.effect}</em>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {query.trim() !== '' && results.length === 0 && (
+            <p className="hint">no setting matches "{query.trim()}"</p>
+          )}
+        </div>
 
         <nav className="tabs">
           {TABS.map(t => (
@@ -405,10 +440,12 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
                   <span>New key</span>
                   <input value={newKey} placeholder="MY_API_KEY"
                          onChange={e => setNewKey(e.target.value.toUpperCase())} />
+                  {envKeyError(newKey) && <em className="field-err" role="alert">⚠ {envKeyError(newKey)}</em>}
                 </label>
                 <label className="field">
                   <span>Value</span>
                   <input value={newValue} onChange={e => setNewValue(e.target.value)} />
+                  {envValueError(newValue) && <em className="field-err" role="alert">⚠ {envValueError(newValue)}</em>}
                 </label>
               </div>
               <label className="field check">
@@ -419,7 +456,9 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
                 </span>
               </label>
               <div className="sheet-actions">
-                <button className="btn go" disabled={saving} onClick={() => {
+                <button className="btn go" disabled={saving || !envValid}
+                        title={envValid ? undefined : 'fix the highlighted fields first'}
+                        onClick={() => {
                   const env = { ...envDraft }
                   if (newKey.trim()) env[newKey.trim()] = newValue
                   void apply({ env, runtime: { trust_remote_code: trustRemote } })
