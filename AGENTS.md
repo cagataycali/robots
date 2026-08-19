@@ -1419,6 +1419,19 @@ Corrections from code review that apply to all future contributions:
   opt-out - the one remedy that turns that refusal into a silent open of the surface the
   caller asked to close. Checking the flag makes such a branch reachable only where its
   advice is actionable.
+- **A flag whose misread only shows up in a rendered frame is checked at construction.**
+  Where the branch a flag selects is applied later - a fitted transform, a compositing
+  decision - the misread has no error to surface at, so it reads as a scene that looks
+  slightly wrong rather than as a bad argument. `GsplatBackground` already raises for a
+  nonexistent scene path for exactly that reason (its first `render` sits inside an app's
+  catch-all that demotes the photoreal backdrop to a procedural fallback), and its four
+  alignment flags - `auto_backdrop`, `skybox`, `metric`, `own_floor` - were read by
+  truthiness beside it. `metric` is the sharpest: it also decides whether `radius` is read
+  at all, so `metric="no"` kept a capture's raw scale and stood a real 500k-splat room up
+  at a 4.45 m radius for a caller who asked for 2.5 m. Check such a flag where the caller
+  supplied it, not where the branch is taken. Pinned by
+  `tests/rendering/test_gsplat_background_posture_flag_domain.py`, which measures the
+  branch each of the four selects.
 - Pinned by `tests/simulation/mujoco/test_actuate_robot_posture_flag_domain.py`,
   `tests/simulation/test_recording_posture_flag_domain.py`,
   `tests/tools/test_lerobot_teleoperate_flag_domain.py`,
