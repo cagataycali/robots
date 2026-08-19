@@ -82,15 +82,27 @@ class ManagedRobot:
 def crash_reason(lines: Iterable[str]) -> str | None:
     """The line that explains why a child died, or None if nothing does.
 
-    Reads the FIRST exception-shaped line rather than the last, because a
-    process dying mid-construction logs its cause first and then the fallout of
-    unwinding a half-built object::
+    Two Python conventions decide where the answer lives, and both are easy to
+    get backwards -- the live spawn probe reported "Traceback (most recent call
+    last):" until this read them properly:
 
-        ValueError: Camera 'main' config must be a mapping of option name to value, got int: 3.
-        ERROR:strands_robots.hardware_robot:Cleanup error for so101: 'Robot' object has no attribute 'robot'
+    1. A traceback prints its frames first and the MESSAGE LAST. The header is
+       the first fault-shaped line and says nothing; the operator needs the
+       tail::
 
-    The second line is true and useless -- it blames teardown for a
-    configuration mistake. Timestamps and logger prefixes are stripped so the
+           Traceback (most recent call last):
+             File ".../hardware_robot.py", line 177, in _build_camera_config
+               raise ValueError(
+           ValueError: Camera 'main' config must be a mapping ... got int: 3.
+
+    2. When exceptions chain ("During handling of the above exception..."), the
+       FIRST block holds the root cause and later blocks are the fallout of
+       unwinding a half-built object. Same for a trailing "Cleanup error", which
+       is true and useless -- it blames teardown for a configuration mistake.
+
+    So: the exception line of the first traceback, else the first fault-shaped
+    line for children that die without one (a bare "error: unknown option", a
+    usage message). Timestamps and ``LEVEL:logger:`` prefixes are stripped so the
     result can be shown to a person as-is.
 
     Args:
@@ -100,26 +112,59 @@ def crash_reason(lines: Iterable[str]) -> str | None:
         A one-line reason, or None when the output blames nothing (a silent
         exit, or a child killed from outside).
     """
+    cleaned: list[str] = []
     for raw in lines:
         line = str(raw).strip()
         if not line:
             continue
-        low = line.lower()
-        if any(marker in low for marker in _CONSEQUENCE_MARKERS):
+        body = _strip_log_prefixes(line)
+        low = body.lower()
+        if low.startswith("during handling of the above") or low.startswith(
+            "the above exception was the direct cause"
+        ):
+            # A chained block starts here: everything after it is fallout.
+            break
+        if "cleanup error" in low:
             continue
-        # Strip a leading "HH:MM:SS " stamp added by the drain thread.
-        body = line
-        if len(body) > 9 and body[2] == ":" and body[5] == ":" and body[8] == " ":
-            body = body[9:]
-        # Strip a "LEVEL:logger.name:" prefix so the message leads.
-        for level in ("ERROR:", "CRITICAL:", "WARNING:"):
-            if body.startswith(level):
-                rest = body[len(level):]
-                body = rest.split(":", 1)[1].strip() if ":" in rest else rest.strip()
-                break
+        cleaned.append(body)
+
+    in_traceback = False
+    for body in cleaned:
+        if body.lower().startswith("traceback (most recent"):
+            in_traceback = True
+            continue
+        if in_traceback:
+            # Frames are indented; the exception line is not.
+            if body != body.lstrip():
+                continue
+            if _looks_like_a_fault(body):
+                return body[:400]
+            continue
         if _looks_like_a_fault(body):
             return body[:400]
+
+    if in_traceback:
+        # A traceback whose tail never arrived (ring buffer cut it, child was
+        # killed mid-print). Say that rather than quoting a frame.
+        return "the process died with a traceback (see the log)"
     return None
+
+
+def _strip_log_prefixes(line: str) -> str:
+    """Drop the drain thread's ``HH:MM:SS`` stamp and any ``LEVEL:logger:``.
+
+    Indentation after the stamp is preserved, because it is what distinguishes a
+    traceback frame from the exception line that ends it.
+    """
+    body = line
+    if len(body) > 9 and body[2] == ":" and body[5] == ":" and body[8] == " ":
+        body = body[9:]
+    for level in ("ERROR:", "CRITICAL:", "WARNING:"):
+        if body.lstrip().startswith(level):
+            rest = body.lstrip()[len(level):]
+            body = rest.split(":", 1)[1].strip() if ":" in rest else rest.strip()
+            break
+    return body
 
 
 def _looks_like_a_fault(text: str) -> bool:

@@ -74,9 +74,42 @@ def test_the_cause_wins_over_the_cleanup_error_that_follows_it():
 
     reason = crash_reason(lines)
 
-    assert reason is not None
-    assert reason.startswith("Traceback (most recent")  # the traceback header leads the fault
+    # The MESSAGE, not the header: a traceback prints frames first and the
+    # reason last, so "Traceback (most recent call last):" is the first
+    # fault-shaped line and tells an operator nothing. (This test asserted the
+    # header until the live probe returned exactly that and proved it useless.)
+    assert reason == (
+        "ValueError: Camera 'main' config must be a mapping of option name to value, got int: 3."
+    )
     assert "Cleanup error" not in reason  # never blame teardown
+
+
+def test_a_chained_exception_reports_the_root_cause_not_the_fallout():
+    """The first block is the cause; later blocks unwind a half-built object."""
+    reason = crash_reason([
+        "Traceback (most recent call last):",
+        '  File "/…/hardware_robot.py", line 177, in _build_camera_config',
+        "OSError: [Errno 16] Resource busy: '/dev/cu.usbmodem5AB0181806'",
+        "",
+        "During handling of the above exception, another exception occurred:",
+        "",
+        "Traceback (most recent call last):",
+        '  File "/…/hardware_robot.py", line 233, in disconnect',
+        "AttributeError: 'Robot' object has no attribute 'robot'",
+    ])
+
+    assert reason == "OSError: [Errno 16] Resource busy: '/dev/cu.usbmodem5AB0181806'"
+
+
+def test_a_traceback_whose_tail_was_cut_says_so_instead_of_quoting_a_frame():
+    """The ring buffer can drop the message; a frame is not an explanation."""
+    reason = crash_reason([
+        "Traceback (most recent call last):",
+        '  File "/…/hardware_robot.py", line 997, in _initialize_robot',
+        "    config = self._create_minimal_config(robot, cameras, **kwargs)",
+    ])
+
+    assert reason == "the process died with a traceback (see the log)"
 
 
 def test_a_bare_exception_line_is_reported_with_its_message():
