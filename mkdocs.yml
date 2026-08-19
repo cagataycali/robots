@@ -32,6 +32,7 @@ nav:
   - Overview: dashboard/index.md
   - Quickstart (SO-101): dashboard/quickstart.md
   - Robots Defined in Code: dashboard/code-defined-robots.md
+  - Remote Access: dashboard/remote-access.md
 - Device Connect: device-connect.md
 - Multi-robot Mesh: mesh.md
 - ROS 2 Integration: ros2-integration.md

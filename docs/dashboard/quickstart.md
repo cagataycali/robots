@@ -160,6 +160,7 @@ unattended.
 | a camera tile shows nothing | another app owns that index, or the index moved; check `GET /api/devices` and re-map |
 | joints read but the arm fights its range | calibration `id` at spawn does not match the one you calibrated |
 | dashboard refuses to start | a dashboard already owns the port; its pid is in the message |
+| `{"detail":"unauthorized"}` from a browser that is not on this Mac | working as designed - see [Remote access](remote-access.md) |
 | `doctor` fails on MuJoCo/sysctl | `/usr/sbin` missing from `PATH` |
 
 ## Next
@@ -167,6 +168,8 @@ unattended.
 - [Fleet dashboard overview](index.md) - every CLI flag and HTTP route
 - [Robots defined in code](code-defined-robots.md) - the same peer from your
   own script, and how to deploy it to an edge device
+- [Remote access](remote-access.md) - reach the fleet from a phone, guard
+  first and tunnel second
 - [Multi-robot Mesh](../mesh.md) - what the peers are actually saying
 - [Teleoperation](../hardware/teleoperation.md) - leader/follower and the
   teleoperator matrix
