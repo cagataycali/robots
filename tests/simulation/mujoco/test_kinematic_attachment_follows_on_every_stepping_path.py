@@ -125,13 +125,24 @@ def _attach(sim, parent: str = _PARENT, child: str = _CHILD, mode: str = "kinema
     return _ok(sim.attach_bodies(parent, child, mode=mode), f"attach_bodies(mode={mode!r})")
 
 
+#: run_multi_policy PACES ITSELF IN WALL CLOCK: it sleeps 1/control_frequency after
+#: every step (simulation.py, ``action_sleep``), which is correct product behaviour
+#: and deliberately not what this file asserts -- these tests are about an attached
+#: body holding its offset through the loop. At the product default of 50Hz the four
+#: 200-step drives below spend ~16s of the run doing nothing but sleeping, and the
+#: file stalls a sweep for minutes. A high frequency keeps every stepping path and
+#: every assertion identical while making the pacing sleep negligible (0 is refused:
+#: _validate_positive_frequency).
+_TEST_CONTROL_HZ = 2000.0
+
+
 def _drive_multi_policy(sim, n_steps: int = 200):
     return _ok(
         sim.run_multi_policy(
             policies={"alpha": MockPolicy()},
             instructions="carry the cube",
             n_steps=n_steps,
-            control_frequency=50.0,
+            control_frequency=_TEST_CONTROL_HZ,
         ),
         "run_multi_policy",
     )
