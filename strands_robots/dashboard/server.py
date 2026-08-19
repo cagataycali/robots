@@ -660,11 +660,25 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         return {"trainers": await asyncio.to_thread(training.list_trainers)}
 
     @app.get("/api/training/datasets")
-    async def training_datasets(q: str = "") -> dict[str, Any]:
-        """Local LeRobotDataset roots for the submit form's dataset picker."""
+    async def training_datasets(q: str = "", hub: bool = True, limit: int = 12) -> dict[str, Any]:
+        """Datasets for the submit form's picker: local roots + a Hub search.
+
+        R6: training could always accept a Hub ``dataset_repo_id``, but nothing
+        here ever OFFERED one, so a machine with no local recording showed an
+        empty picker and a dead end. Local rows still come first and keep their
+        shape, so existing callers (and the U20 golden-path test) are unaffected;
+        the response merely gains ``problem``/counts alongside ``datasets``.
+
+        ``hub=false`` keeps the old local-only behaviour for a caller that must
+        not touch the network.
+        """
         from strands_robots.dashboard import training
 
-        return {"datasets": await asyncio.to_thread(training.local_datasets, q)}
+        if not hub:
+            return {"datasets": await asyncio.to_thread(training.local_datasets, q)}
+        from strands_robots.dashboard import checkpoints
+
+        return await asyncio.to_thread(training.search_datasets, q, checkpoints.clamp_limit(limit, 12, 50))
 
     @app.get("/api/training/jobs")
     async def training_jobs() -> dict[str, Any]:

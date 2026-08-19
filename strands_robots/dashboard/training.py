@@ -196,6 +196,117 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
     return sorted(out, key=lambda r: r["repo_id"])[:50]
 
 
+_HUB_DS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_HUB_DS_TTL_S = 300.0
+_HUB_DS_LOCK = threading.Lock()
+
+
+def hub_datasets(query: str = "", limit: int = 12) -> tuple[list[dict[str, Any]], str | None]:
+    """Type-ahead search of public LeRobot datasets on the Hub.
+
+    Mirrors ``checkpoints.hub_search`` deliberately, including its hard-won
+    behaviours: returns ``(rows, problem)`` so a hub outage, no network and a
+    query with no matches cannot all render as the same empty list; a FAILURE
+    IS NEVER CACHED, so the next keystroke retries; and a ``TypeError`` from a
+    hub-client version bump falls back to an unsorted call instead of killing
+    search.
+
+    The filter is the ``LeRobot`` tag, which is what ``lerobot`` itself writes
+    when it pushes a dataset - searching all of HF datasets would offer text
+    corpora that ``train_policy`` cannot open.
+
+    A Hub row carries NO ``root``: that absence is load-bearing. A local
+    dataset trains from ``dataset_root`` (a path) and a Hub one from
+    ``dataset_repo_id``, so the presence of ``root`` is how every caller tells
+    which of the two fields to fill.
+    """
+    key = f"{query}:{limit}"
+    now = time.time()
+    with _HUB_DS_LOCK:
+        hit = _HUB_DS_CACHE.get(key)
+        if hit and now - hit[0] < _HUB_DS_TTL_S:
+            return hit[1], None
+    try:
+        from huggingface_hub import HfApi
+
+        api = HfApi()
+        try:
+            found = api.list_datasets(filter="LeRobot", search=query or None, sort="downloads", limit=limit)
+        except TypeError:
+            found = api.list_datasets(filter="LeRobot", search=query or None, limit=limit)
+        rows = [
+            {
+                "repo_id": d.id,
+                "local": False,
+                "downloads": getattr(d, "downloads", None),
+                "tags": [t for t in (getattr(d, "tags", None) or []) if not t.startswith(("region:", "license:", "arxiv:"))][:6],
+            }
+            for d in found
+        ]
+    except Exception as exc:  # noqa: BLE001 - hub outage degrades to local-only
+        logger.warning("hub dataset search failed: %r", exc)
+        kind = type(exc).__name__
+        return [], f"Hub search unavailable ({kind}) - showing local datasets only"
+    with _HUB_DS_LOCK:
+        _HUB_DS_CACHE[key] = (now, rows)
+    return rows, None
+
+
+def search_datasets(query: str = "", limit: int = 12) -> dict[str, Any]:
+    """Local dataset roots merged with a Hub search, local first.
+
+    Local wins a repo_id collision: an already-downloaded dataset trains
+    offline and instantly, so offering the Hub copy of something on disk would
+    trade a working path for a download.
+
+    Local rows come FIRST rather than being ranked against downloads, because
+    they are the ones the operator just recorded - the collect wizard's whole
+    promise is that what you record is what the train screen offers next
+    (pinned by the U20 golden-path test).
+
+    ``problem`` is a sentence about the HUB half only: local discovery cannot
+    fail this way, and an empty screen with a working Hub is a real answer
+    ("no matches") that must not be dressed up as an outage.
+
+    The slice is a plain ``[:limit]``, NOT ``[: max(limit, len(local))]``. I
+    wrote the max() version first and ``checkpoints.clamp_limit``'s docstring
+    caught it: that idiom means a type-ahead asking for 1 row gets every local
+    row instead. Ordering local first already guarantees truncation drops hub
+    rows before local ones, so the caller's limit can simply be honoured
+    (``total_matched`` reports what was found before the cut).
+    """
+    limit = max(1, int(limit))
+    local = [dict(r, local=True) for r in local_datasets(query)]
+    hub, problem = hub_datasets(query, limit)
+    have = {r.get("repo_id") for r in local}
+    merged = local + [r for r in hub if r.get("repo_id") not in have]
+    rows = merged[:limit]
+    return {
+        "query": query,
+        "datasets": rows,
+        "total_matched": len(merged),
+        "problem": problem,
+        "hub_count": len([r for r in rows if not r.get("local")]),
+        "local_count": len([r for r in rows if r.get("local")]),
+        "hf_auth": _hf_auth_state(),
+    }
+
+
+def _hf_auth_state() -> dict[str, Any]:
+    """Who the Hub thinks we are - reused from checkpoints, not re-implemented.
+
+    A private or gated dataset is exactly the case where "no matches" and "you
+    are anonymous" look identical on screen, so the picker needs the same auth
+    line the checkpoint picker already shows.
+    """
+    try:
+        from strands_robots.dashboard import checkpoints
+
+        return checkpoints.hf_auth_state()
+    except Exception as exc:  # noqa: BLE001 - never let an auth probe break search
+        return {"authenticated": False, "user": None, "detail": f"auth state unavailable ({type(exc).__name__})"}
+
+
 def submit(body: dict[str, Any]) -> dict[str, Any]:
     """Validate + launch a training job; persist it for the tab."""
     kwargs, err = _spec_kwargs(body)
