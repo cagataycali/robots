@@ -46,6 +46,13 @@ function Dashboard() {
      guess in either direction. */
   const [recordMock, setRecordMock] = useState<boolean | null>(null)
 
+  /* R2: which robots currently have a live sim twin. Read from the SAME snapshot
+     the cards render from, so the button's state and the twin's own card can
+     never disagree; a stale twin peer does not count as live. */
+  const liveTwins = useMemo(() => new Set(
+    Object.values(peers).filter(p => p.peer_id.endsWith('-twin') && !p.stale).map(p => p.peer_id),
+  ), [peers])
+
   const list = useMemo(() => Object.values(peers)
     // Infrastructure peers are not robots: 'gateway' meshes (robot_mesh's
     // robot-less fallback, one per coordinating agent process) and the
@@ -236,6 +243,7 @@ function Dashboard() {
             <RobotCard
               key={p.peer_id}
               peer={p}
+              twinLive={liveTwins.has(`${p.peer_id}-twin`)}
               onOpen={setDetail}
               onBusyChange={(id, running) => setBusyPeers(s => (s[id] === running ? s : { ...s, [id]: running }))}
             />
@@ -246,7 +254,8 @@ function Dashboard() {
 
       {detailPeer && (
         <ErrorBoundary label="the robot detail view" onDismiss={() => setDetail(null)}>
-          <RobotDetail peer={detailPeer} onClose={() => setDetail(null)} />
+          <RobotDetail peer={detailPeer} twinLive={liveTwins.has(`${detailPeer.peer_id}-twin`)}
+                       onClose={() => setDetail(null)} />
         </ErrorBoundary>
       )}
 

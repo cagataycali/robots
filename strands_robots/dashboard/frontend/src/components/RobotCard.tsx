@@ -3,14 +3,17 @@ import type { Peer } from '../types'
 import { useTask } from '../lib/useTask'
 import { useTelemetry } from '../lib/useTelemetry'
 import { ribbonDetail, statusSentence } from '../lib/statusSentence'
+import { twinButtonCopy } from '../lib/twinButton'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
 import RunForm from './RunForm'
 import ConsentSheet from './ConsentSheet'
 
-export default function RobotCard({ peer, onOpen, onBusyChange }: {
+export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }: {
   peer: Peer
+  /** a '<id>-twin' peer is live in the fleet (App reads the same snapshot) */
+  twinLive?: boolean
   onOpen?: (peerId: string) => void
   onBusyChange?: (peerId: string, running: boolean) => void
 }) {
@@ -25,6 +28,8 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
   const cams = Object.keys(peer.cameras ?? {})
   const offline = !!peer.stale
   const telemetry = useTelemetry(peer)
+  // R2: a button that spawns a process says so in words.
+  const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
 
   // The 5-second answer: one sentence joining heartbeat, hardware, task and
   // MEASURED motion - so "running but frozen" and "moving with no task"
@@ -81,7 +86,8 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
           <span className="badge warn" title="peer is online but its hardware is not connected">hw off</span>
         )}
         {type === 'robot' && !peer.peer_id.includes('__') && !peer.peer_id.endsWith('-twin') && (
-          <button className="twinbtn" onClick={toggleTwin} disabled={twinBusy} title="Toggle sim twin">⿻</button>
+          <button className={`twinbtn${twin.cls ? ` ${twin.cls}` : ''}`} onClick={toggleTwin}
+                  disabled={twinBusy} title={twin.title} aria-label={twin.aria}>{twin.label}</button>
         )}
         <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'}
               title={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'} />

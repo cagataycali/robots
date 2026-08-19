@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
+import { twinButtonCopy } from '../lib/twinButton'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
@@ -25,9 +26,16 @@ function fmt(v: unknown): string {
  * emitting rather than a 3-line summary. Steps are buffered client-side because
  * `strands/<peer>/stream` is fire-and-forget - nothing on the mesh replays it.
  */
-export default function RobotDetail({ peer, onClose }: { peer: Peer; onClose: () => void }) {
+export default function RobotDetail({ peer, twinLive = false, onClose }: {
+  peer: Peer
+  /** a '<id>-twin' peer is live in the fleet */
+  twinLive?: boolean
+  onClose: () => void
+}) {
   const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer)
   const cams = Object.keys(peer.cameras ?? {})
+  // R2: same words as the card, from the same pure module.
+  const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
   const [cam, setCam] = useState<string | null>(null)
   const [camConfig, setCamConfig] = useState(false)
   const [steps, setSteps] = useState<StreamStep[]>([])
@@ -69,7 +77,8 @@ export default function RobotDetail({ peer, onClose }: { peer: Peer; onClose: ()
           <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'} />
           {p?.hostname && <span className="host">{p.hostname}</span>}
           {p?.robot_type === 'robot' && !peer.peer_id.endsWith('-twin') && (
-            <button className="twinbtn" onClick={toggleTwin} disabled={twinBusy} title="Toggle sim twin">⿻</button>
+            <button className={`twinbtn${twin.cls ? ` ${twin.cls}` : ''}`} onClick={toggleTwin}
+                    disabled={twinBusy} title={twin.title} aria-label={twin.aria}>{twin.label}</button>
           )}
           {p?.robot_type === 'robot' && peer.origin === 'external' && (
             <span className="originbadge"
