@@ -43,9 +43,13 @@ export function prepCreate(opts: any): PublicKeyCredentialCreationOptions {
 export function prepGet(opts: any): PublicKeyCredentialRequestOptions {
   const out = { ...opts }
   out.challenge = b64uToBuf(opts.challenge)
-  if (opts.allowCredentials) {
-    out.allowCredentials = opts.allowCredentials.map((c: any) => ({ ...c, id: b64uToBuf(c.id) }))
-  }
+  // Passkeys are discoverable credentials: let the authenticator show its own
+  // account picker instead of pinning an explicit credential list. iOS Safari
+  // has been seen never opening the sheet for an allowCredentials entry that
+  // carries no transports hint (observed live 2026-08-19); an empty list is
+  // the documented flow for resident keys and the server verifies the
+  // returned credential id against its store either way.
+  delete out.allowCredentials
   return out
 }
 
