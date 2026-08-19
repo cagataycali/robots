@@ -11,10 +11,11 @@
  * -> Authorization: Bearer on fetches, ?token= on WebSockets), so nothing below
  * this component knows passkeys exist.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, setAuthToken, HttpError } from '../lib/endpoints'
 import {
-  fetchAuthStatus, enroll, login, webauthnReady, type AuthStatus,
+  fetchAuthStatus, enroll, webauthnReady, type AuthStatus,
+  beginLogin, completeLogin, loginFresh, type PreparedLogin,
 } from '../lib/passkey'
 import StrandsMark from './StrandsMark'
 
@@ -27,6 +28,44 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [busy, setBusy] = useState(false)
   const [label, setLabel] = useState('')
   const [bootstrap, setBootstrap] = useState('')
+  // Login challenge fetched AHEAD of the tap: iOS Safari only opens the Face ID
+  // sheet while the tap's user-activation is alive, so the click handler must
+  // reach credentials.get() without awaiting the network first.
+  const prepared = useRef<PreparedLogin | null>(null)
+
+  useEffect(() => {
+    if (mode !== 'login' || !webauthnReady()) return
+    let alive = true
+    const arm = () => {
+      if (loginFresh(prepared.current)) return
+      beginLogin().then(p => { if (alive) prepared.current = p }).catch(() => {})
+    }
+    arm()
+    const t = setInterval(arm, 200_000) // refresh before the 300s server TTL
+    window.addEventListener('focus', arm)
+    document.addEventListener('visibilitychange', arm)
+    return () => {
+      alive = false; clearInterval(t)
+      window.removeEventListener('focus', arm)
+      document.removeEventListener('visibilitychange', arm)
+    }
+  }, [mode])
+
+  /** Tap handler: synchronous path into the authenticator when armed. */
+  function signIn() {
+    const p = loginFresh(prepared.current) ? prepared.current : null
+    prepared.current = null
+    if (p) {
+      void run(() => completeLogin(p)) // first await inside = credentials.get()
+    } else {
+      // Not armed (first paint, stale, or begin failed): fetch then re-arm and
+      // ask for one more tap rather than risk a dead sheet on iOS.
+      setBusy(true); setError('')
+      beginLogin()
+        .then(np => { prepared.current = np; setBusy(false); setError('ready — tap sign in again') })
+        .catch(e => { setBusy(false); setError(String((e as Error).message ?? e)) })
+    }
+  }
 
   useEffect(() => {
     let alive = true
@@ -123,7 +162,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         {mode === 'login' && !noWebauthn && (
           <>
             <p className="dim">This dashboard is sealed with a passkey.</p>
-            <button className="btn go" onClick={() => void run(login)} disabled={busy}>
+            <button className="btn go" onClick={signIn} disabled={busy}>
               {busy ? 'waiting for the authenticator…' : 'sign in'}
             </button>
           </>

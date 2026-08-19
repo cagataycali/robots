@@ -119,17 +119,55 @@ export async function enroll(label: string, bootstrap = ''): Promise<string> {
   return res.token as string
 }
 
-/** Sign in with an already-enrolled passkey. Returns the session token. */
-export async function login(): Promise<string> {
+/**
+ * A login challenge fetched AHEAD of the tap. iOS Safari only opens the Face ID
+ * sheet while the tap's transient user-activation is alive — an awaited network
+ * round-trip inside the click handler spends it, and credentials.get() then
+ * hangs forever without an error. So: fetch first, tap later.
+ */
+export interface PreparedLogin { challenge_id: string; options: any; t: number }
+
+/** Server keeps challenges 300s; treat ours as fresh for 240s. */
+export function loginFresh(p: PreparedLogin | null): p is PreparedLogin {
+  return !!p && Date.now() - p.t < 240_000
+}
+
+export async function beginLogin(): Promise<PreparedLogin> {
   const { challenge_id, options } = await api('/api/auth/login/begin', {
     method: 'POST',
     body: JSON.stringify({}),
   })
-  const cred = await navigator.credentials.get({ publicKey: prepGet(options) })
+  return { challenge_id, options, t: Date.now() }
+}
+
+/**
+ * Run the authenticator ceremony for a prepared challenge. The FIRST await in
+ * this function is credentials.get() itself, so when the click handler calls
+ * it synchronously the user-activation is still alive. A hard timeout aborts
+ * the ceremony instead of leaving an infinite spinner (Safari has been seen
+ * ignoring options.timeout silently).
+ */
+export async function completeLogin(p: PreparedLogin, timeoutMs = 75_000): Promise<string> {
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), timeoutMs)
+  let cred: any
+  try {
+    cred = await navigator.credentials.get({ publicKey: prepGet(p.options), signal: ac.signal })
+  } catch (e: any) {
+    if (ac.signal.aborted) throw new Error('the authenticator did not answer in time — tap sign in to try again')
+    throw e
+  } finally { clearTimeout(timer) }
   if (!cred) throw new Error('passkey sign-in was cancelled')
   const res = await api('/api/auth/login/finish', {
     method: 'POST',
-    body: JSON.stringify({ challenge_id, credential: credToJSON(cred) }),
+    body: JSON.stringify({ challenge_id: p.challenge_id, credential: credToJSON(cred) }),
   })
   return res.token as string
+}
+
+/** Sign in with an already-enrolled passkey. Returns the session token.
+ *  (Desktop-friendly one-shot; the gate uses beginLogin/completeLogin so the
+ *  ceremony starts inside the tap's user-activation on iOS.) */
+export async function login(): Promise<string> {
+  return completeLogin(await beginLogin())
 }
