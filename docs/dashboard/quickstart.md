@@ -71,6 +71,11 @@ is exposed yet.
 A second dashboard on a taken port is refused **with the pid that owns it** -
 pass `--force` only if you mean it.
 
+If the browser shows a passkey gate instead of the fleet, a credential is
+configured on this server: the UI probes `/api/fleet` first and only shows the
+door when it gets a 401/403. That is [remote access](remote-access.md) working,
+not a broken build.
+
 ## 5. Add the arms to the fleet (2 min)
 
 **From the UI:** *Devices* panel -> **Spawn**: pick the robot (`so101`), Mode
@@ -147,10 +152,15 @@ drives the policy for `n_episodes`, verifies episode boundaries against the
 parquet files, and exits. Counts come from the parquet, not from a counter that
 hopes.
 
-**Human teleop demos on the real arms are a different rail**: they need the
-leader arm driving the follower, which is real motion and therefore gated
-behind an explicit confirmation in the UI. Scripted collection is what runs
-unattended.
+**Human teleop demos on the real arms are a different rail.** Teleop itself is
+live over the API - point the follower at the leader's stream with
+`POST /api/robots/<follower>/teleop/receive` and watch the counters on
+`GET /api/robots/<follower>/teleop`. What is *not* live yet is recording those
+demos from the UI: the Record panel runs against a mock (it says so in a banner)
+because `/api/record` does not exist on the server yet, so **no dataset is
+written from that screen**. Until it lands, scripted collection above and the
+agent's own recording actions are the two rails that produce real files. Details:
+[Collect, train, deploy](collect-train-deploy.md#1-get-episodes-onto-disk).
 
 ## Where things go wrong
 
