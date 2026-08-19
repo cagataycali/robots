@@ -250,6 +250,11 @@ body {
 .conn.open { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .conn.connecting { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .conn.closed, .conn.unauthorized { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+/* UX_REVIEW #3: a scoped verdict ("LIVE · page only", when the mesh session is
+   closed) must not keep the healthy green — the words narrow the claim and the
+   colour has to agree, or the eye reads the green and skips the words. */
+.conn.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.conn.bad { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 /* ── safety layer ──────────────────────────────────────
  * z-index 200 sits above every overlay in this file (70 sheet backdrop,
  * 80 drawer, 90 confirm sheet, 100 auth gate). The stop is reachable from

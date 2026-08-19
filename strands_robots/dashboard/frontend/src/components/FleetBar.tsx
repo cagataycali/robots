@@ -1,14 +1,8 @@
 import type { MeshInfo } from '../types'
 import type { ConnState } from '../lib/useMesh'
 import { backendLabel } from '../lib/endpoints'
+import { connBadge } from '../lib/connBadge'
 import StrandsMark from './StrandsMark'
-
-const CONN_LABEL: Record<ConnState, string> = {
-  open: 'LIVE',
-  connecting: 'CONNECTING',
-  closed: 'OFFLINE',
-  unauthorized: 'NO ACCESS',
-}
 
 interface Props {
   conn: ConnState
@@ -38,6 +32,11 @@ export default function FleetBar({
   // be LIVE while the robot mesh is down, and vice versa. Showing only one of
   // them is how "why is the fleet empty" becomes unanswerable.
   const meshDown = mesh.online === false
+  // UX_REVIEW #3: the badge used to print a bare 'LIVE' for this browser's
+  // socket — one line above camera tiles reading "connecting", and even while
+  // the robot mesh session was closed. lib/connBadge.ts narrows the CLAIM
+  // instead of faking the state, and names the subject out loud.
+  const badge = connBadge(conn, { meshDown })
 
   return (
     <header className="fleetbar">
@@ -90,8 +89,12 @@ export default function FleetBar({
         >? help</button>
 
         <span className="peers">{peerCount} peer{peerCount === 1 ? '' : 's'}</span>
-        <span className={`conn ${conn}`} title={conn === 'unauthorized' ? 'the server rejected this token - set it in Settings' : ''}>
-          {CONN_LABEL[conn]}
+        <span
+          className={`conn ${conn}${badge.tone ? ` ${badge.tone}` : ''}`}
+          title={badge.title}
+          aria-label={badge.aria}
+        >
+          {badge.label}
         </span>
       </div>
     </header>
