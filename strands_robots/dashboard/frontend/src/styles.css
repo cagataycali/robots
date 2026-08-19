@@ -322,13 +322,18 @@ body {
 /* ── grid layout ───────────────────────────────────── */
 .grid {
   display: grid; gap: var(--s4); padding: var(--s4);
-  grid-template-columns: 1fr;
+  /* minmax(0,1fr), NOT 1fr: a bare 1fr track is minmax(auto,1fr) and auto floors
+     at the widest card's MIN-CONTENT, so on a 390px phone one card whose camera
+     pair will not shrink blew the track to 445px and the whole app scrolled
+     sideways (measured, iteration 11). Clamping the floor lets the card shrink
+     and keeps any stubborn child's overflow inside that card. */
+  grid-template-columns: minmax(0, 1fr);
   /* the agent dock is fixed over the bottom edge */
   padding-bottom: calc(var(--dock-h) + env(safe-area-inset-bottom));
 }
-@media (min-width: 640px)  { .grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1024px) { .grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 1500px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 640px)  { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1500px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 /* ── robot card ────────────────────────────────────── */
 .card {
@@ -385,7 +390,18 @@ body {
   background: none; border: 1px solid var(--border); color: var(--accent);
   border-radius: var(--r1); font-size: 13px; padding: 3px 8px; cursor: pointer;
 }
+.twinbtn {
+  /* R2: it carries words now, so it needs the mono/micro treatment of the rest
+     of the card head and must not push the name out of the row. */
+  font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: .02em;
+  white-space: nowrap; flex-shrink: 0;
+}
 .twinbtn:hover { border-color: var(--accent); }
+/* a LIVE twin is a running process — that is content, so it never recedes */
+.twinbtn.on {
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
 
 /* cameras */
 .cams { display: grid; gap: var(--s2); grid-template-columns: 1fr; }
