@@ -133,3 +133,41 @@ class TestOwnerLookupIsBestEffort:
     def test_process_command_of_a_dead_pid_is_none(self) -> None:
         """An owner that exited between lookup and describe is not an error."""
         assert cli._process_command(2**22) is None
+
+
+class TestLeftoverConnectionIsNotAPileup:
+    """CLOSE_WAIT residue from a dead instance must not block a restart.
+
+    uvicorn's listener gets ``SO_REUSEADDR`` from asyncio on POSIX, so a
+    leftover ``CLOSE_WAIT``/``TIME_WAIT`` socket (no listener) does not stop
+    the server from binding. A probe WITHOUT the option is stricter than the
+    server it fronts: it reported "in use" for a port uvicorn would have taken,
+    and the guard refused a perfectly good restart. Only a live LISTENer is a
+    pileup.
+    """
+
+    def test_close_wait_leftover_reports_free(self) -> None:
+        # Manufacture the exact post-restart shape: a listener accepts one
+        # connection, the client side closes, the listener closes - leaving
+        # only the accepted socket, now in CLOSE_WAIT, holding the port.
+        lst = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        lst.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        lst.bind(("127.0.0.1", 0))
+        lst.listen(1)
+        port = lst.getsockname()[1]
+        client = socket.create_connection(("127.0.0.1", port))
+        accepted, _ = lst.accept()
+        try:
+            client.close()  # -> accepted transitions to CLOSE_WAIT
+            lst.close()  # no listener remains, only the CLOSE_WAIT socket
+            assert cli._port_in_use(port, "127.0.0.1") is None, (
+                "a CLOSE_WAIT leftover is not a pileup - uvicorn binds "
+                "past it, so the guard must too"
+            )
+        finally:
+            accepted.close()
+            client.close()
+
+    def test_probe_still_catches_a_real_listener(self, taken_port: int) -> None:
+        # SO_REUSEADDR must not blind the probe to the case it exists for.
+        assert cli._port_in_use(taken_port, "127.0.0.1") is not None

@@ -128,10 +128,17 @@ def _port_in_use(port: int, host: str = "0.0.0.0") -> str | None:
     it joined - by the time the bind error is printed. The guard therefore
     probes the port itself, up front, rather than letting the server surface it.
 
-    The probe binds and closes a socket with ``SO_REUSEADDR`` deliberately
-    *unset*, on ``host`` plus both wildcard and loopback: a listener on
-    ``0.0.0.0`` and a listener on ``127.0.0.1`` each conflict with the other, so
-    one address alone reports a free port that the server then cannot bind.
+    The probe binds and closes a socket with ``SO_REUSEADDR`` *set* - the same
+    option uvicorn's own listener gets from asyncio on POSIX - on ``host`` plus
+    both wildcard and loopback: a listener on ``0.0.0.0`` and a listener on
+    ``127.0.0.1`` each conflict with the other, so one address alone reports a
+    free port that the server then cannot bind. ``SO_REUSEADDR`` matters
+    because without it the probe is *stricter than the server it fronts*: a
+    leftover ``CLOSE_WAIT``/``TIME_WAIT`` socket from the previous instance
+    (no listener at all) fails the bare bind with ``EADDRINUSE`` and the guard
+    refuses a restart that uvicorn would have completed happily. With the
+    option set, only a live LISTENer on the same address still collides -
+    which is exactly the pileup this guard exists to catch.
     Only ``EADDRINUSE`` counts as occupied - ``EACCES`` on a privileged port and
     ``EADDRNOTAVAIL`` on an address this host does not own are different
     failures, and reporting them as a pileup would name an owner that does not
@@ -155,6 +162,7 @@ def _port_in_use(port: int, host: str = "0.0.0.0") -> str | None:
             continue
         seen.add(address)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((address, port))
         except OSError as exc:
