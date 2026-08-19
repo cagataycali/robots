@@ -1421,6 +1421,35 @@ Corrections from code review that apply to all future contributions:
   `boolean_flag_error` itself rather than a copied spelling list, so a spelling added to
   the shared domain is covered without an edit.
 
+### A subset selector is read by membership, never by truthiness
+- **A parameter that names a SUBSET of a collection the call already owns is not a value
+  with a default; it is a selection.** `None` means "all of it" on these surfaces, so
+  reading the parameter by truthiness makes every other falsy value take that same branch
+  - and for a selector, that is not a wider default but the *opposite* answer. An empty
+  selection asks for nothing and was served everything: `teleoperate(names=[])`, which is
+  what a filter that matched nothing produces, connected and drove every attached leader,
+  and `detach_teleop("")` removed the whole attached set. Both reported success.
+- **Read it `is None`, and refuse the empty selection rather than widening it.** A scalar
+  default (a path, a device string, an empty `fields` dict) can be read by truthiness
+  because empty and absent genuinely coincide there - the value is derived either way. A
+  subset selector is the case where they diverge, so it needs the membership read plus its
+  own verdict on emptiness, which the shared name-list domain deliberately leaves to the
+  caller ("a surface where an absent value IS an error keeps that verdict its own").
+- **The other unhonorable spellings belong to `name_list_error`.** A single name as a bare
+  string is iterable per character, a repeated name makes the call do its unit of work
+  twice, and a one-shot iterator is consumed by whichever check reads it first, leaving the
+  real consumer nothing. Route the shape through the shared domain and keep only the
+  emptiness verdict local; refuse before the call touches hardware, a filesystem or a
+  thread, so a refused selection has no partial effect to undo.
+- **A selection widened to everything can also reach past the call.** `detach_teleop` stops
+  the local loop once nothing is left to drive, so a detach widened from one stream to all
+  of them ended a running session as a side effect of the misread.
+- Pinned by `tests/test_teleop_device_selection_domain.py`, whose controls assert that the
+  documented spellings (`names=None`, a real subset, `detach_teleop(None)`) are unchanged,
+  and by the render path's `cameras` resolution, which has read the same kind of selector
+  `is None` all along - an empty camera selection there resolves to no camera rather than
+  to every one.
+
 ### One writer per log file
 - **A file two writers share needs one file object, not one path.** Two file objects over
   one path each track their own write offset, so a buffered writer flushes at its offset
