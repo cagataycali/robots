@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { classifyCamera, ageText, publishedAtMs, PUBLISH_FRESH_MS } from '/tmp/cameraState.mjs'
+import { classifyCamera, ageText, publishedAtMs, PUBLISH_FRESH_MS, CAPTURE_STALE_MS } from '/tmp/cameraState.mjs'
 
 const NOW = 1_787_180_409_000 // ms, matching the live snapshot this was measured on
 
@@ -108,4 +108,81 @@ const stallBeatsPublish = classifyCamera({
 })
 assert.equal(stallBeatsPublish.kind, 'stalled')
 
-console.log('cameraState: 40 assertions ok')
+// --- ARRIVAL IS NOT CAPTURE (found on the live page, iteration 41) ----------
+// The camera socket replays the peer's last cached frame to a new subscriber, so
+// a frame taken this morning ARRIVES now. Measured on so101-arm-1's wrist tile:
+// class "cam-stalled frozen", text "last frame 8s ago", over pixels the peer had
+// captured 24,307 seconds (6.8h) earlier - and for the first 2.5s after connect
+// the same tile was classified `live`, at full brightness.
+const replayed = classifyCamera({
+  now: NOW, conn: 'open', frames: 3, lastFrameAt: NOW - 1000,   // arrived 1s ago
+  publishedAt: (NOW - 24_307_000) / 1000,                        // captured 6.8h ago
+})
+assert.notEqual(replayed.kind, 'live', 'a replayed cache entry must never read as live')
+assert.equal(replayed.kind, 'stalled')
+assert.equal(replayed.live, false)
+assert.equal(replayed.frozen, true, 'the pixels are old: the image must be dimmed')
+assert.equal(replayed.title, 'stale frame')
+assert.match(replayed.detail, /captured this 6\.8h ago/)
+assert.match(replayed.detail, /arrived here 1s ago/)
+assert.match(replayed.detail, /replay of its last frame, not a new one/)
+// The capture age is ATTRIBUTED, never asserted: it is computed across two
+// machines' clocks, and a phone minutes behind must not become a verdict about
+// the hardware.
+assert.match(replayed.detail, /the peer says/)
+
+// A fresh capture that arrives fresh is still simply live - the new rule must not
+// make every camera look broken.
+const reallyLive = classifyCamera({
+  now: NOW, conn: 'open', frames: 30, lastFrameAt: NOW - 200, publishedAt: (NOW - 200) / 1000,
+})
+assert.equal(reallyLive.kind, 'live')
+assert.equal(reallyLive.live, true)
+
+// Both clocks stale: the arrival age leads (the socket really did stop) and the
+// capture age is added, because the two together say "the camera stopped, and so
+// did the stream" rather than "someone reconnected to a corpse".
+const bothStale = classifyCamera({
+  now: NOW, conn: 'open', frames: 8, lastFrameAt: NOW - 60_000, publishedAt: (NOW - 90_000) / 1000,
+})
+assert.equal(bothStale.title, 'stalled')
+assert.match(bothStale.detail, /last frame 60s ago/)
+assert.match(bothStale.detail, /captured it 2m ago/)  // 90s crosses into minutes by design
+
+// A peer clock AHEAD of ours can only be skew. It is discarded, not read as
+// freshness - and it must not manufacture staleness either.
+const clockAhead = classifyCamera({
+  now: NOW, conn: 'open', frames: 4, lastFrameAt: NOW - 300, publishedAt: (NOW + 600_000) / 1000,
+})
+assert.equal(clockAhead.kind, 'live', 'negative capture age is skew, not evidence')
+assert.doesNotMatch(clockAhead.detail, /captured/)
+
+// No capture timestamp at all: fall back to arrival exactly as before. Absence
+// of a clock is not evidence of an age.
+const noCapture = classifyCamera({ now: NOW, conn: 'open', frames: 4, lastFrameAt: NOW - 9000 })
+assert.equal(noCapture.title, 'stalled')
+assert.equal(noCapture.detail, 'last frame 9s ago')
+
+// The threshold is a threshold, and injectable.
+assert.equal(classifyCamera({
+  now: NOW, conn: 'open', frames: 4, lastFrameAt: NOW - 100,
+  publishedAt: (NOW - (CAPTURE_STALE_MS - 2000)) / 1000,
+}).kind, 'live')
+assert.equal(classifyCamera({
+  now: NOW, conn: 'open', frames: 4, lastFrameAt: NOW - 100,
+  publishedAt: (NOW - (CAPTURE_STALE_MS + 2000)) / 1000,
+}).kind, 'stalled')
+assert.equal(classifyCamera({
+  now: NOW, conn: 'open', frames: 4, lastFrameAt: NOW - 100,
+  publishedAt: (NOW - 3000) / 1000, captureStaleMs: 1000,
+}).kind, 'stalled', 'captureStaleMs must be honoured')
+
+// An ERROR still outranks both clocks: the reason beats the timing.
+const errFirst = classifyCamera({
+  now: NOW, conn: 'open', frames: 4, lastFrameAt: NOW - 100,
+  publishedAt: (NOW - 24_307_000) / 1000, error: 'camera in use',
+})
+assert.equal(errFirst.kind, 'busy')
+assert.equal(errFirst.frozen, true, 'old pixels are still on screen and still marked')
+
+console.log('cameraState: 62 assertions ok')
