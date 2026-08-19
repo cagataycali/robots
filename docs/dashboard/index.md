@@ -15,8 +15,9 @@ python -m strands_robots dashboard --port 8090 --local-dev
 # open http://localhost:8090
 ```
 
-New here with two SO-101 arms and a Mac? A step-by-step quickstart, remote
-access guide and collect-train-deploy walkthrough live alongside this page.
+New here with two SO-101 arms and a Mac? Start with the
+[10-minute quickstart](quickstart.md) - install, calibrate, spawn both arms,
+identify the cameras, first dataset on disk.
 
 ## Command surface
 
@@ -114,5 +115,6 @@ Measured on this build, so you do not lose an evening to them:
 - Camera indices are **not stable identities**. `GET /api/devices` only probes
   indices nothing has claimed, so an index used by a running peer (or by
   Photo Booth) simply will not be listed, and adding an iPhone Continuity
-  camera renumbers the rest. Identify a camera by its live thumbnail before you
-  map it to an arm; never trust the number alone.
+  camera renumbers the rest. Identify a camera by looking at a frame before you
+  map it to an arm; never trust the number alone
+  ([how](quickstart.md#6-identify-the-cameras-1-min-and-the-one-that-saves-an-evening)).

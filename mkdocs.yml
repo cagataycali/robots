@@ -30,6 +30,7 @@ nav:
   - Isaac Sim Backend (GPU): simulation/isaac.md
 - Fleet Dashboard:
   - Overview: dashboard/index.md
+  - Quickstart (SO-101): dashboard/quickstart.md
 - Device Connect: device-connect.md
 - Multi-robot Mesh: mesh.md
 - ROS 2 Integration: ros2-integration.md
