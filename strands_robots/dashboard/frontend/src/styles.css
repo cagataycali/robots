@@ -1048,3 +1048,28 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   color: var(--text, #e8eef6);
 }
 .rec-hint { opacity: 0.8; max-width: 60ch; }
+
+/* ---- camera identity gallery (devices drawer) ---- */
+.camgrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px; margin-bottom: 10px;
+}
+.camcard {
+  border: 1px solid var(--border, #263042); border-radius: var(--r2, 10px);
+  background: var(--panel2, #161d29); overflow: hidden;
+}
+.camcard.claimed { opacity: 0.75; }
+.camcard-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 6px 9px; font-size: 12px;
+}
+.camcard-head .meta { font-size: 11px; color: var(--dim, #8b98a9); }
+.camcard-body { padding: 0 9px 9px; }
+.camcard-body img {
+  width: 100%; border-radius: var(--r1, 6px); display: block; cursor: pointer;
+  aspect-ratio: 4 / 3; object-fit: cover; background: #000;
+}
+.campreview-btn { width: 100%; aspect-ratio: 4 / 3; }
+.claimed-note { font-size: 11.5px; color: var(--dim, #8b98a9); padding-bottom: 9px; }
+.camerr { font-size: 11px; color: var(--danger, #ff4d5e); margin-top: 6px; overflow-wrap: anywhere; }
+.camnames { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }

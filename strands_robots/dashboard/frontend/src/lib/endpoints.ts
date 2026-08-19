@@ -153,3 +153,27 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
 
 export const post = <T = any>(path: string, body?: unknown) =>
   api<T>(path, { method: 'POST', body: body === undefined ? '{}' : JSON.stringify(body) })
+
+/**
+ * Authed fetch of a binary endpoint (camera previews), returned as an object
+ * URL. An <img src> cannot carry an Authorization header, so the bytes come
+ * through fetch and the caller MUST revoke the URL when done with it.
+ */
+export async function apiBlob(path: string): Promise<string> {
+  const token = authToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  let res: Response
+  try {
+    res = await fetch(apiUrl(path), { headers })
+  } catch (e) {
+    throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`)
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    let detail = text || res.statusText
+    try { detail = JSON.parse(text).detail ?? detail } catch { /* raw text */ }
+    throw new HttpError(res.status, typeof detail === 'string' ? detail : JSON.stringify(detail))
+  }
+  return URL.createObjectURL(await res.blob())
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
 import CalibrationSection from './CalibrationSection'
+import CameraGallery, { type CameraInfo, type CameraName } from './CameraGallery'
 import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
 
 interface SerialPort {
@@ -12,7 +13,12 @@ interface SerialPort {
   likely_robot?: string | null
 }
 
-interface Camera { index: number; width?: number; height?: number; claimed_by?: string }
+interface DeviceDoc {
+  serial_ports: SerialPort[]
+  cameras: CameraInfo[]
+  camera_names?: CameraName[]
+  managed: Record<string, Managed>
+}
 
 interface Managed {
   peer_id: string
@@ -22,12 +28,6 @@ interface Managed {
   alive: boolean
   started_at?: number
   log_tail?: string[]
-}
-
-interface DeviceDoc {
-  serial_ports: SerialPort[]
-  cameras: Camera[]
-  managed: Record<string, Managed>
 }
 
 /**
@@ -52,6 +52,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [mode, setMode] = useState<'sim' | 'real'>('sim')
   const [port, setPort] = useState('')
   const [camIndex, setCamIndex] = useState('')
+  const [camFps, setCamFps] = useState('')
+  const [camW, setCamW] = useState('')
+  const [camH, setCamH] = useState('')
   const [robotId, setRobotId] = useState('')
 
   const load = useCallback(async (refresh = false) => {
@@ -94,9 +97,17 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     robot_name: robotName,
     mode,
     port: mode === 'real' ? port || null : null,
-    // The spawner takes a {name: index} map; one camera covers the common case
-    // and anything richer belongs in a config file, not a form.
-    cameras: camIndex === '' ? null : { main: Number(camIndex) },
+    // The camera config must be a MAPPING per entry ({index_or_path: N, ...});
+    // a bare int here is the exact ValueError an operator once hit live:
+    // "Camera 'main' config must be a mapping ... got int: 3".
+    cameras: camIndex === '' ? null : {
+      main: {
+        index_or_path: Number(camIndex),
+        ...(camFps !== '' ? { fps: Number(camFps) } : {}),
+        ...(camW !== '' ? { width: Number(camW) } : {}),
+        ...(camH !== '' ? { height: Number(camH) } : {}),
+      },
+    },
     robot_id: robotId || null,
   }), 'spawned')
 
@@ -222,17 +233,55 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                   <option key={c.index} value={c.index} disabled={!!c.claimed_by}>
                     index {c.index}
                     {c.width ? ` — ${c.width}×${c.height}` : ''}
+                    {c.fps ? ` @ ${c.fps}fps` : ''}
                     {c.claimed_by ? ` — claimed by ${c.claimed_by}` : ''}
                   </option>
                 ))}
               </select>
             </label>
+            {camIndex !== '' && (
+              <>
+                <div className="row">
+                  <label className="field">
+                    <span>FPS</span>
+                    <input type="number" inputMode="numeric" min={1} max={120}
+                           value={camFps} placeholder="30"
+                           onChange={e => setCamFps(e.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span>Width</span>
+                    <input type="number" inputMode="numeric" min={64} step={2}
+                           value={camW} placeholder="640"
+                           onChange={e => setCamW(e.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span>Height</span>
+                    <input type="number" inputMode="numeric" min={64} step={2}
+                           value={camH} placeholder="480"
+                           onChange={e => setCamH(e.target.value)} />
+                  </label>
+                </div>
+                <p className="hint">
+                  Blank = the driver's defaults (640×480 @ 30). A setting the camera can't do
+                  fails loudly at spawn — check the log tail, not the stream.
+                </p>
+              </>
+            )}
             <div className="sheet-actions">
               <button className="btn go" disabled={busy || !robotName || (mode === 'real' && !port)}
                       onClick={spawn}>
                 spawn
               </button>
             </div>
+          </section>
+
+          <section>
+            <h3>Cameras</h3>
+            <CameraGallery cameras={doc?.cameras ?? []} names={doc?.camera_names ?? []} />
+            <p className="hint">
+              Camera indices owned by a running robot are never re-probed — opening one steals
+              frames from its capture thread mid-episode.
+            </p>
           </section>
 
           <CalibrationSection />
@@ -253,10 +302,6 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                   : 'none probed'}
               </dd>
             </dl>
-            <p className="hint">
-              Camera indices owned by a running robot are never re-probed — opening one steals
-              frames from its capture thread mid-episode.
-            </p>
           </section>
         </div>
 
