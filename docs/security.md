@@ -56,6 +56,7 @@ mTLS alone is not sufficient - pair it with an access-control list:
 - The built-in default ACL is permissive: any CA-signed peer may publish and subscribe on any key. If you forget to supply an ACL, the SDK warns on every session open.
 - Supply an operator ACL via `STRANDS_MESH_ACL_FILE` that enumerates each peer's certificate CN and the key expressions it may use. See [`examples/mesh/mesh_acl_example.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh/mesh_acl_example.json5) and [`examples/mesh/mesh_acl_strict_per_peer.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh/mesh_acl_strict_per_peer.json5).
 - `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1` exists only to silence the permissive-ACL warning when you have deliberately accepted it (e.g. a closed lab). Do not set it in production - it does not make the mesh safer, it only quiets the reminder that it is not.
+- An ACL file the loader cannot read is refused, not ignored. A missing, oversize, non-UTF-8, malformed, or too-deeply-nested file is reported as an unloadable ACL, which the start-time gate treats as the permissive default and therefore refuses to bring the wire up. The error names the path and the reason, so a typo in the ACL stops the mesh rather than quietly widening it.
 
 > ⚠️ **WAN/cloud Zenoh routers MUST deploy a topic-level ACL.**
 > mTLS authenticates *who* a device is; it does **not** restrict *what* topics

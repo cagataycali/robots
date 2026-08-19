@@ -333,6 +333,131 @@ class TestJSON5MalformedFailsLoudly:
         assert parsed["subjects"][0]["cert_common_names"] == ["op-1"]
 
 
+#: Nesting depth used by the deeply-nested cases below. The parser runs out of
+#: stack at ~60 levels measured at module scope; under pytest the interpreter is
+#: already several frames deeper, so the tests use a depth well clear of the
+#: boundary rather than pinning a number that moves with the caller's stack.
+_DEEP = 200
+
+
+def _nested_acl_text(shape: str) -> str:
+    """Return a deeply nested JSON5 document in one of the measured shapes."""
+    if shape == "arrays":
+        return "[" * _DEEP + "]" * _DEEP
+    if shape == "objects":
+        return '{"a":' * _DEEP + "1" + "}" * _DEEP
+    if shape == "unclosed-arrays":
+        return "[" * _DEEP
+    raise AssertionError(f"unknown shape {shape!r}")
+
+
+class TestADeeplyNestedACLReachesTheFailClosedBoundary:
+    """A file the parser cannot descend is refused as an unloadable ACL.
+
+    ``json5`` is a recursive-descent parser, so it exhausts the interpreter
+    stack on a deeply nested document and raises ``RecursionError``. That is a
+    ``RuntimeError``, so it is outside the ``ValueError`` :func:`_parse_json5`
+    documents for *any* malformed input, and outside the
+    ``(OSError, ValueError)`` tuple both fail-closed callers narrow to -
+    :func:`snapshot_acl`, which reports an unloadable file as permissive so the
+    start-time gate refuses the wire, and ``Mesh.start``'s ACL gate, whose own
+    comment reserves wider classes for "genuine bugs" that should propagate. An
+    unreadable ACL file is not a bug in this library, so it was misclassified:
+    the refusal escaped the boundary and took the path, the reason and the
+    remedy with it.
+
+    ``ACL_FILE_MAX_BYTES`` is not the bound that covers this. It exists for a
+    hostile file ("certainly an attacker probing for an OOM") and caps the read
+    at 256 KiB, but nesting depth rather than size is what the parser runs out
+    of room for: 60 levels is 120 bytes, and the shipped operator templates
+    nest four. :meth:`test_the_payload_is_far_inside_the_size_budget` is that
+    gap as an assertion.
+
+    The sibling class above pins the same contract for input this parser *can*
+    descend; these are the inputs it cannot.
+    """
+
+    @pytest.mark.parametrize("shape", ["arrays", "objects", "unclosed-arrays"])
+    def test_a_deeply_nested_file_is_refused_as_an_unloadable_acl(self, tmp_path, shape):
+        # Pre-fix this raises RecursionError straight through ``_load_acl_file``,
+        # so the ValueError every caller of this boundary handles never arrives.
+        path = tmp_path / "deep.json5"
+        path.write_text(_nested_acl_text(shape))
+        with pytest.raises(ValueError, match=r"nested too deeply to parse"):
+            ac._load_acl_file(path)
+
+    def test_the_refusal_names_the_file_and_a_remedy(self, tmp_path):
+        # Every other unloadable-ACL refusal names the path and points at the
+        # operator template; this one must too, or the operator is left with a
+        # bare stack-depth complaint about an unnamed file.
+        path = tmp_path / "deep.json5"
+        path.write_text(_nested_acl_text("arrays"))
+        with pytest.raises(ValueError) as excinfo:
+            ac._load_acl_file(path)
+        message = str(excinfo.value)
+        assert str(path) in message
+        assert "mesh_acl_example.json5" in message
+
+    def test_the_refusal_does_not_report_valid_json5_as_malformed(self, tmp_path):
+        # A deeply nested document is valid JSON5 this parser cannot read, so
+        # reusing the "not valid JSON5" wording would send the operator looking
+        # for a syntax error that is not there.
+        path = tmp_path / "deep.json5"
+        path.write_text(_nested_acl_text("arrays"))
+        with pytest.raises(ValueError) as excinfo:
+            ac._load_acl_file(path)
+        assert "not valid JSON5" not in str(excinfo.value)
+
+    def test_the_snapshot_gate_sees_it_as_permissive_instead_of_crashing(self, monkeypatch, tmp_path):
+        # The consequence the conversion exists for: ``snapshot_acl`` reports an
+        # unloadable file as permissive precisely so ``Mesh.start`` refuses to
+        # bring up the wire. Pre-fix the RecursionError escaped this function,
+        # so that gate never ran.
+        path = tmp_path / "deep.json5"
+        path.write_text(_nested_acl_text("arrays"))
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+        ac._clear_acl_cache_for_test()
+        ac._clear_thread_snapshot()
+        is_permissive, resolved = ac.snapshot_acl("strands")
+        assert is_permissive is True
+        assert resolved == ac.default_acl("strands")
+
+    def test_the_payload_is_far_inside_the_size_budget(self, tmp_path):
+        # Severity, as an assertion: the file that defeats the parser is orders
+        # of magnitude under the bound written to keep hostile files out, so the
+        # size cap cannot stand in for this conversion.
+        path = tmp_path / "deep.json5"
+        path.write_text(_nested_acl_text("arrays"))
+        assert path.stat().st_size < ac.ACL_FILE_MAX_BYTES // 100
+
+    def test_a_shallow_malformed_file_keeps_its_own_reason(self, tmp_path):
+        # Control: the branch that already worked is untouched, byte for byte.
+        # Fails if the two are collapsed into one message.
+        path = tmp_path / "bad.json5"
+        path.write_text("{a:")
+        with pytest.raises(ValueError) as excinfo:
+            ac._load_acl_file(path)
+        assert f"ACL file {path} is not valid JSON5: " in str(excinfo.value)
+        assert "nested too deeply" not in str(excinfo.value)
+
+    def test_a_valid_acl_still_loads(self, tmp_path):
+        # Control: the new handler does not reach past the parse call. A
+        # legitimate ACL nests four levels and is unaffected.
+        path = tmp_path / "ok.json5"
+        path.write_text(json.dumps(_ENABLED_ACL))
+        loaded = ac._load_acl_file(path)
+        assert loaded["enabled"] is True
+
+    def test_an_oversize_file_is_still_refused_on_size(self, tmp_path):
+        # Control: ordering. The size cap is checked before the parser is
+        # reached, so a file that is both oversize and deeply nested is still
+        # reported as oversize rather than as unparseable.
+        path = tmp_path / "huge.json5"
+        path.write_text("[" * (ac.ACL_FILE_MAX_BYTES + 10))
+        with pytest.raises(ValueError, match=r"refusing to load"):
+            ac._load_acl_file(path)
+
+
 class TestDefaultACLPermissiveShape:
     """Pin the post-the prior permissive-allow shape of the default ACL.
 

@@ -98,6 +98,13 @@ def _parse_json5(raw: str, path: Path) -> Any:
     malformed input. The ACL loader treats this as a fail-closed
     boundary: a malformed file does NOT silently degrade to the
     permissive default.
+
+    That includes a document the parser cannot descend. ``json5`` is a
+    recursive-descent parser, so a deeply nested file raises
+    :class:`RecursionError` rather than :class:`ValueError` -- a
+    :class:`RuntimeError`, outside both the class this boundary documents and
+    the ``(OSError, ValueError)`` tuple its two fail-closed callers narrow to.
+    It is converted here so the refusal reaches them.
     """
     # Use the project-standard
     # ``require_optional`` helper so the operator-facing import error
@@ -120,6 +127,31 @@ def _parse_json5(raw: str, path: Path) -> Any:
         ) from exc
     try:
         return _json5_mod.loads(raw)
+    except RecursionError as exc:
+        # ``json5`` is a recursive-descent parser, so nesting depth -- not file
+        # size -- is what it runs out of room for, and ``RecursionError`` is a
+        # ``RuntimeError``. It therefore missed both this boundary's documented
+        # ``ValueError`` and the ``(OSError, ValueError)`` tuple the two
+        # fail-closed callers narrow to (``snapshot_acl``, which reports an
+        # unloadable file as permissive so the start-time gate refuses the
+        # wire, and ``Mesh.start``'s ACL gate). The refusal escaped both, and
+        # with it the path, the reason and the remedy.
+        #
+        # ``ACL_FILE_MAX_BYTES`` does not bound this: 60 levels of nesting is
+        # 120 bytes, three orders of magnitude under that budget, while the
+        # shipped operator templates nest four levels. Every ``json5`` release
+        # the floor admits (0.9.0 through 0.15.0) raises it the same way, so
+        # this is the handler's to convert rather than a version to pin away.
+        #
+        # The message does not reuse the "not valid JSON5" wording below: a
+        # deeply nested document is valid JSON5 that this parser cannot read,
+        # and reporting it as malformed syntax would send the operator looking
+        # for a typo.
+        raise ValueError(
+            f"ACL file {path} is nested too deeply to parse: the JSON5 parser "
+            f"exhausted the interpreter stack. A role-separated ACL nests about "
+            f"four levels -- see examples/mesh/mesh_acl_example.json5."
+        ) from exc
     except ValueError as exc:
         # json5 raises ValueError (subclass) with a useful message that
         # includes line/column. Re-raise with the path attached so an
