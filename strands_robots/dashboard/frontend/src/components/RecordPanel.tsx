@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
+import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordApi'
+import CameraTile from './CameraTile'
+import JointStrip from './JointStrip'
 
 /**
  * Record screen (U8): collect teleop episodes into a LeRobotDataset.
@@ -10,7 +13,8 @@ import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordA
  * same session. While /api/record is unbuilt the api is an honest mock, and
  * the banner says so.
  */
-export default function RecordPanel({ peerIds, onClose }: { peerIds: string[]; onClose: () => void }) {
+export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose: () => void }) {
+  const peerIds = peers.map(p => p.peer_id)
   const [api, setApi] = useState<RecordApi | null>(null)
   const [s, setS] = useState<RecordSession | null>(null)
   const [busy, setBusy] = useState(false)
@@ -129,7 +133,39 @@ export default function RecordPanel({ peerIds, onClose }: { peerIds: string[]; o
         </div>
       )}
 
+      {open && s && <FollowerLive peer={peers.find(p => p.peer_id === s.follower)} recording={recording} />}
+
       {err && <div className="train-msg">✗ {err}</div>}
+    </div>
+  )
+}
+
+/**
+ * What the dataset sees: the follower's cameras and joints, live during the
+ * whole session (not just while recording - the operator lines the arms up
+ * BETWEEN episodes, and needs eyes then most of all).
+ */
+function FollowerLive({ peer, recording }: { peer?: Peer; recording: boolean }) {
+  if (!peer) {
+    return <div className="toast warn">The follower is not on the mesh — its card left the fleet. Recording would capture nothing.</div>
+  }
+  const cams = Object.keys(peer.cameras ?? {})
+  return (
+    <div className={`train-form rec-live-view${recording ? ' armed' : ''}`}>
+      <div className="rec-live-head">
+        <span>{peer.peer_id} — what the dataset sees</span>
+        {recording && <span className="rec-dot" aria-hidden="true" />}
+      </div>
+      {cams.length > 0 ? (
+        <div className={cams.length > 1 ? 'cams multi' : 'cams'}>
+          {cams.slice(0, 4).map(c => (
+            <CameraTile key={c} peerId={peer.peer_id} cam={c} meta={peer.cameras?.[c]} />
+          ))}
+        </div>
+      ) : (
+        <div className="train-msg">⚠ no cameras announced by this peer — the dataset will have joints only</div>
+      )}
+      <JointStrip state={peer.state} presence={peer.presence} />
     </div>
   )
 }

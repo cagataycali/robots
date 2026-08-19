@@ -178,7 +178,7 @@ function Dashboard() {
       <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)} />
       {panel === 'training' && <TrainingTab onClose={() => setPanel(null)} />}
       {panel === 'record' && (
-        <RecordPanel peerIds={list.filter(p => !p.stale).map(p => p.peer_id)} onClose={() => setPanel(null)} />
+        <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => setPanel(null)} />
       )}
 
       <AgentDock

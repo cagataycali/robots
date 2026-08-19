@@ -923,3 +923,7 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .rec-live { background: var(--danger-fill); animation: recpulse 1.6s ease-in-out infinite; }
 @keyframes recpulse { 50% { filter: brightness(1.25); } }
 @media (prefers-reduced-motion: reduce) { .rec-live { animation: none; } }
+.rec-live-view.armed { border-color: var(--danger); }
+.rec-live-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--dim); }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: recpulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .rec-dot { animation: none; } }
