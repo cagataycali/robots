@@ -1122,3 +1122,25 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   padding: 6px 10px; margin-bottom: 8px;
 }
 .deploy-banner .btn { flex-shrink: 0; }
+
+/* ---- status ribbon: the 5-second answer, one sentence per robot ---- */
+.status-ribbon {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 11.5px; line-height: 1.35;
+  padding: 5px 10px; margin: 2px 0 6px;
+  border-radius: var(--r1, 6px);
+  border: 1px solid var(--border, #263042);
+  color: var(--dim, #8b98a9);
+}
+.status-ribbon .status-word {
+  text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+.status-ribbon.ok { border-color: rgba(125, 216, 160, 0.35); }
+.status-ribbon.ok .status-word { color: #7dd8a0; }
+.status-ribbon.active { border-color: rgba(74, 158, 255, 0.5); color: var(--text, #e8eef6); }
+.status-ribbon.active .status-word { color: #7cc0ff; }
+.status-ribbon.warn { border-color: rgba(255, 204, 102, 0.55); color: var(--text, #e8eef6); }
+.status-ribbon.warn .status-word { color: #ffcc66; }
+.status-ribbon.danger { border-color: var(--danger, #ff4d5e); color: var(--text, #e8eef6); }
+.status-ribbon.danger .status-word { color: #ff8d99; }

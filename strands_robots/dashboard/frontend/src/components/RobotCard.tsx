@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import type { Peer } from '../types'
 import { useTask } from '../lib/useTask'
+import { useTelemetry } from '../lib/useTelemetry'
+import { statusSentence } from '../lib/statusSentence'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
@@ -17,6 +19,22 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
   const type = p?.robot_type ?? '?'
   const cams = Object.keys(peer.cameras ?? {})
   const offline = !!peer.stale
+  const telemetry = useTelemetry(peer)
+
+  // The 5-second answer: one sentence joining heartbeat, hardware, task and
+  // MEASURED motion - so "running but frozen" and "moving with no task"
+  // (teleop/runaway: exactly when hands must stay clear) are said out loud
+  // instead of being left for the operator to infer from four widgets.
+  const status = type === 'robot' ? statusSentence({
+    stale: offline,
+    lastSeenAgoS: peer.last_seen ? Date.now() / 1000 - peer.last_seen : null,
+    hwConnected: p?.connected ?? null,
+    taskStatus: peer.state?.task?.status ?? p?.task_status ?? null,
+    instruction: peer.state?.task?.instruction || p?.instruction || null,
+    taskDurationS: peer.state?.task?.duration ?? null,
+    moving: telemetry.moving,
+    stateAgeS: telemetry.stateAgeS,
+  }) : null
 
   // The app keeps a screen wake lock while anything is moving.
   useEffect(() => { onBusyChange?.(peer.peer_id, running) }, [running, peer.peer_id])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -39,7 +57,13 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
               title={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'} />
       </div>
 
-      {offline && (
+      {status && (
+        <div className={`status-ribbon ${status.severity}`} role="status">
+          <b className="status-word">{status.word}</b>
+          <span>{status.text}</span>
+        </div>
+      )}
+      {offline && !status && (
         <div className="stale-note">
           no heartbeat — last seen{' '}
           {peer.last_seen ? `${Math.round(Date.now() / 1000 - peer.last_seen)}s ago` : 'unknown'}
