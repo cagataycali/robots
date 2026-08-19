@@ -5,7 +5,23 @@ import {
   type CalibrationDetail, type CalibrationEntry,
 } from '../lib/calibration'
 
-type TextReply = { status?: string; text?: string }
+/** One motor as the server sends it: numbers, not the markdown they used to be. */
+type ServerMotor = {
+  name: string
+  id?: number | null
+  drive_mode?: number | null
+  homing_offset?: number | null
+  range_min?: number | null
+  range_max?: number | null
+}
+
+type TextReply = {
+  status?: string
+  text?: string
+  path?: string
+  modified?: string
+  motors?: ServerMotor[]
+}
 
 type Selected = {
   entry: CalibrationEntry
@@ -14,6 +30,10 @@ type Selected = {
   /** the server's own words when the detail could not be shown */
   problem?: string
 }
+
+/** A number for display, or undefined so the row renders a dash rather than "null". */
+const show = (v: number | null | undefined): string | undefined =>
+  v === null || v === undefined ? undefined : String(v)
 
 const label = (e: CalibrationEntry) => `${e.deviceType}/${e.model}/${e.id}`
 
@@ -58,15 +78,28 @@ export default function CalibrationSection() {
   const select = async (entry: CalibrationEntry) => {
     if (sel && label(sel.entry) === label(entry)) { setSel(null); return }
     setSel({ entry, loading: true })
-    // device_model is not a parameter the endpoint declares today; it is sent
-    // because the view it wraps needs it, and an undeclared query param is
-    // ignored rather than rejected.
+    // Both parameters are required to identify a calibration: a name alone is
+    // ambiguous (leader_arm exists under three models here) and the endpoint
+    // answers 409 with the candidates rather than guessing.
     const path = `/api/calibration/${encodeURIComponent(entry.id)}`
       + `?device_type=${encodeURIComponent(entry.deviceType)}`
       + `&device_model=${encodeURIComponent(entry.model)}`
     try {
       const r = await api<TextReply>(path)
-      const detail = parseCalibrationDetail(r.text ?? '')
+      // The server sends the motors as data now. Markdown parsing stays as the
+      // fallback for an older backend, but reading prose for numbers that exist
+      // in a field is a bridge, not a plan.
+      const detail = r.motors?.length
+        ? { title: r.text?.split('\n')[0], path: r.path, modified: r.modified,
+            motors: r.motors.map(m => ({
+              name: m.name,
+              id: show(m.id),
+              driveMode: show(m.drive_mode),
+              homingOffset: show(m.homing_offset),
+              rangeMin: show(m.range_min),
+              rangeMax: show(m.range_max),
+            })) }
+        : parseCalibrationDetail(r.text ?? '')
       if (r.status === 'success' && detail.motors.length > 0) {
         setSel({ entry, loading: false, detail })
       } else {
