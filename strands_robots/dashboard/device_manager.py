@@ -687,6 +687,60 @@ class AutoSpawnWatcher:
         self._stop.set()
 
 
+#: The only modes the dashboard can spawn. The child spawner branches on
+#: ``mode == "real"`` and takes the sim path for everything else, so an
+#: unvalidated string does not fail -- it becomes a LABEL on a card whose peer is
+#: something other than what the label says.
+SPAWNABLE_MODES = ("sim", "real")
+
+
+def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, str]:
+    """Normalise and check what a spawn was asked for, BEFORE any process exists.
+
+    Returns ``(robot_name, mode)`` or an ``{"error": ...}`` dict.
+
+    Two failures used to survive all the way into a running process:
+
+    * ``mode="quantum"`` -- the spawner's ``if mode == "real"`` else-branch meant
+      any unknown mode quietly produced a SIM peer, wearing "quantum" as its
+      label in the fleet grid. Nothing ever said no.
+    * ``mode="Real"`` -- the SDK lowercases modes, the dashboard did not, so the
+      string missed the ``== "real"`` comparison by a capital letter and the
+      operator got a SIMULATION on a card that said Real. That is the direction
+      that matters: believing hardware is moving when it is not, or the reverse.
+
+    An unknown robot name reached ``Popen`` too, and the ValueError surfaced
+    inside a child whose pid had already been reported as success. The SDK's own
+    validator is used here so the message keeps naming the registry rather than
+    this file inventing a second vocabulary.
+    """
+    mode_s = mode.strip().lower() if isinstance(mode, str) else mode
+    if mode_s not in SPAWNABLE_MODES:
+        shown = mode if isinstance(mode, str) else type(mode).__name__
+        extra = (
+            " 'auto' is an SDK-side detection that resolves inside the child, so"
+            " the dashboard cannot label the card honestly - say which you mean."
+            if mode_s == "auto" else ""
+        )
+        return {"error": f"mode must be one of {', '.join(SPAWNABLE_MODES)} (got {shown!r}).{extra}"}
+
+    name_s = robot_name.strip() if isinstance(robot_name, str) else robot_name
+    if not name_s or not isinstance(name_s, str):
+        return {"error": "robot_name required"}
+    try:
+        from strands_robots.robot import _validate_known_robot, resolve_name
+
+        canonical = resolve_name(name_s)
+        _validate_known_robot(canonical, name_s, None)
+    except ValueError as exc:
+        # The SDK's message already names the registry and the resolution.
+        return {"error": str(exc)}
+    except Exception as exc:  # importing the SDK must never be the thing that fails
+        logger.warning("robot-name validation unavailable (%s); accepting %r", exc, name_s)
+        return (name_s, mode_s)
+    return (canonical, mode_s)
+
+
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
@@ -858,9 +912,17 @@ class DeviceManager:
     ) -> dict[str, Any]:
         import json as _json
 
+        # Refuse before a process exists: a pid reported for a child that is
+        # already raising is worse than a refusal, because the fleet grid shows
+        # a card for it and the operator waits out the settle window to find out.
+        checked = validate_spawn(robot_name, mode)
+        if isinstance(checked, dict):
+            return checked
+        robot_name, mode = checked
+
         if mode == "real" and not port:
             return {"error": "port required for mode=real"}
-        peer_id = peer_id or f"{robot_name}-{mode}-{int(time.time()) % 10000}"
+        peer_id = peer_id or self._unique_peer_id(f"{robot_name}-{mode}-{int(time.time()) % 10000}")
         with self._lock:
             if peer_id in self.robots and self.robots[peer_id].alive():
                 return {"error": f"peer {peer_id} already running"}

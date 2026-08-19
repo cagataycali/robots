@@ -926,6 +926,20 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         robot_name = body.get("robot_name")
         if not robot_name:
             raise HTTPException(422, "robot_name required")
+        # An unspawnable mode or an unknown robot is a bad REQUEST, answered
+        # before any process exists. It used to reach Popen: the child raised, the
+        # route had already reported a pid, and mode="quantum" quietly produced a
+        # sim peer wearing "quantum" as its label (the spawner branches on
+        # mode == "real" and sims everything else, so "Real" did it too).
+        from strands_robots.dashboard.device_manager import validate_spawn
+
+        checked = await asyncio.to_thread(validate_spawn, robot_name, body.get("mode", "sim"))
+        if isinstance(checked, dict):
+            app.state.bridge.record_activity(
+                "api", "spawn", target=str(robot_name),
+                detail=f"refused: {checked['error']}", ok=False,
+            )
+            raise HTTPException(422, checked)
         result = await asyncio.to_thread(
             app.state.devices.spawn,
             robot_name,
@@ -964,6 +978,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             ),
             ok="error" not in result,
         )
+        if "already running" in (result.get("error") or ""):
+            # A conflict with something that exists, not a bad request.
+            raise HTTPException(409, result)
         return result
 
     @app.get("/api/devices/profiles")
