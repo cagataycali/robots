@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post } from '../lib/endpoints'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
@@ -32,6 +33,11 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({})
+  // WHEN each status was last read, and how many reads have failed since - a
+  // swallowed poll error used to leave a dead run rendering as healthy progress.
+  const [polledAt, setPolledAt] = useState<Record<string, number>>({})
+  const [pollFail, setPollFail] = useState<Record<string, { n: number; msg: string }>>({})
+  const [nowS, setNowS] = useState(() => Date.now() / 1000)
   const [traces, setTraces] = useState<Record<string, LossPoint[]>>({})
   const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora' })
   // R6: the picker searches the Hub as you type. `dsProblem` is the HUB half's
@@ -83,16 +89,31 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         try {
           const s = await api(`/api/training/status?provider=${job.provider}&job_id=${encodeURIComponent(job.job_id)}`)
           setStatuses(prev => ({ ...prev, [job.job_id]: s }))
+          setPolledAt(prev => ({ ...prev, [job.job_id]: Date.now() / 1000 }))
+          setPollFail(prev => (prev[job.job_id] ? { ...prev, [job.job_id]: { n: 0, msg: '' } } : prev))
           const m = s?.data?.metrics as Record<string, unknown> | undefined
           if (m) setTraces(prev => ({
             ...prev,
             [job.job_id]: pushLoss(prev[job.job_id] ?? [], m.latest_step, m.latest_loss),
           }))
-        } catch { /* transient */ }
+        } catch (e) {
+          // ONE failed poll is transient; an unbounded swallow is how a dead run
+          // keeps rendering "running" at 4.7k/10k steps forever. Count them, and
+          // let the card say the numbers went old.
+          const msg = String((e as any)?.message ?? e).slice(0, 120)
+          setPollFail(prev => ({ ...prev, [job.job_id]: { n: (prev[job.job_id]?.n ?? 0) + 1, msg } }))
+        }
       }
     }, 5000)
     return () => clearInterval(id)
   }, [jobs])
+
+  // The age must advance while NOTHING arrives, so it cannot be driven by the
+  // poll that stopped.
+  useEffect(() => {
+    const id = setInterval(() => setNowS(Date.now() / 1000), 5000)
+    return () => clearInterval(id)
+  }, [])
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -347,12 +368,23 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         {jobs.map(job => {
           const st = statuses[job.job_id]
           const state = st?.data?.status ?? '…'
+          const fresh = trainingFreshness({
+            polledAtS: polledAt[job.job_id], nowS,
+            failures: pollFail[job.job_id]?.n, error: pollFail[job.job_id]?.msg || null,
+            state: st?.data?.status ?? null,
+          })
           return (
-            <div className="train-job" key={job.job_id ?? Math.random()}>
+            <div className={`train-job${fresh.stale ? ' stalefeed' : ''}`} key={job.job_id ?? Math.random()}>
               <div className="train-job-head">
                 <b>{job.provider}</b>
-                <span className={`jstate ${state}`}>{state}</span>
+                {/* The chip is the word an operator trusts for hours, so it says
+                    how old that word is - always, not only when it goes stale. */}
+                <span className={`jstate ${state}`} title={fresh.title}>{state}</span>
+                {fresh.stale && <span className="jstale" title={fresh.title}>
+                  as of {fresh.ageS != null && fresh.ageS < 90 ? `${Math.round(fresh.ageS)}s` : `${Math.round((fresh.ageS ?? 0) / 60)}m`} ago
+                </span>}
               </div>
+              {fresh.note && <div className="train-msg warn">{fresh.note}</div>}
               <div className="train-job-meta">
                 {job.dataset?.split('/').slice(-2).join('/')} → {job.output_dir} · {job.steps} steps
               </div>

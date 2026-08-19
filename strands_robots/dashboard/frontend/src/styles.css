@@ -1472,3 +1472,10 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .activity li.pending .verdict { color: var(--muted); }
 .actnote { color: var(--muted); font-size: .82em; }
 .activity li.warn .actnote { color: color-mix(in srgb, var(--warn) 80%, var(--fg)); }
+
+/* A training job whose status feed stopped: the numbers stay readable (they were
+   true once) but visibly lose their authority, and the age is stated. */
+.train-job.stalefeed .train-progress-fill { opacity: .45; }
+.train-job.stalefeed .jstate { opacity: .6; }
+.jstale { font-size: .74rem; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent); border-radius: 999px; padding: 0 .4em; }
+.train-msg.warn { color: color-mix(in srgb, var(--warn) 85%, var(--fg)); }
