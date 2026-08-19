@@ -53,6 +53,28 @@ Each robot is wrapped as a Device Connect device by a `DeviceDriver` adapter:
 | `RobotDeviceDriver` | a hardware `Robot` | the same RPC surface, driving real servos |
 | `ReachyMiniDriver` | a Pollen Reachy Mini | device-native RPCs (`look`, `nod`, …) over Zenoh / WebSocket |
 
+### Published state events
+
+Besides answering RPCs, a driver publishes its own state on a 10 Hz loop while a
+policy is running. `SimulationDeviceDriver` emits two events:
+
+| Event | Payload |
+|-------|---------|
+| `stateUpdate` | `sim_time`, `step_count`, and `running_policies` (`{robot: {steps, instruction}}`) |
+| `observationUpdate` | `robot_name`, `sim_time`, `step_count`, and `joints` |
+
+`joints` is `{joint name: position}` in **radians**, and carries exactly the
+per-joint scalars the simulation's own
+[`get_observation`](simulation/overview.md) reports for that robot:
+
+- a value is read at the joint's own qpos address, so a robot with a floating
+  base reports its leg and arm angles rather than components of its base pose;
+- a floating base has no scalar joint position (its state is a position plus a
+  quaternion), so it is **not** a key in `joints` - subscribe to the simulation's
+  observation for `base_pos` / `base_quat` if you need the base pose;
+- only that robot's own joints appear, under their short names, whatever the
+  compiled model namespaces them to in a multi-robot scene.
+
 `init_device_connect()` / `init_device_connect_sync()` attach the right driver and start the runtime — `Robot().run()` calls these for you.
 
 ## Driving it from an agent
