@@ -194,6 +194,9 @@ class RecordWorker:
                 "episodes": [e.to_dict() for e in self._episodes]
                 + ([self._current.to_dict()] if self._current else []),
                 "error": self._last_error,
+                # None unless a requested camera is missing: absent cameras
+                # must be visible BEFORE 10 episodes are collected blind.
+                "camera_notice": getattr(self._backend, "camera_notice", None),
             }
 
     # ------------------------------------------------------------ commands
@@ -337,6 +340,44 @@ class RecordWorker:
             return True
 
 
+def camera_verdict(requested, present) -> dict[str, Any] | None:
+    """What the operator must be told about cameras BEFORE they collect.
+
+    ``camera_keys`` is derived from the follower's first observation, so a
+    camera the machine refuses to open (macOS TCC denies the daemon, a cable
+    is out, another process holds it) is simply ABSENT — and lerobot's schema
+    is then built from what is present. The session records happily, every
+    episode reports success, and the dataset that comes out has no image
+    channel at all: it cannot train the visual policy it was collected for,
+    and nothing in the flow ever said so. Same failure shape as a recorder
+    that reports success with 0 frames, one layer up.
+
+    Returns None when there is nothing to say (every requested camera is
+    present, or none was requested and none appeared).
+    """
+    req = sorted(str(c) for c in (requested or ()))
+    got = sorted(str(c) for c in (present or ()))
+    missing = [c for c in req if c not in got]
+    if not missing:
+        return None
+    consequence = (
+        "the dataset will have NO image channel and cannot train a visual policy"
+        if not got
+        else "the dataset will be missing those image channels"
+    )
+    return {
+        "requested": req,
+        "present": got,
+        "missing": missing,
+        "message": (
+            f"{len(missing)} of {len(req)} requested cameras did not open "
+            f"({', '.join(missing)}) — {consequence}. The follower's own log says "
+            "why it dropped them; on macOS a server started by a background "
+            "daemon can never be granted camera access."
+        ),
+    }
+
+
 def hardware_backend(
     *,
     follower_name: str,
@@ -396,6 +437,9 @@ def hardware_backend(
             self._camera_dims = {
                 k: (obs[k].shape[0], obs[k].shape[1]) for k in self.camera_keys
             }
+            # Requested vs actually-present, judged at OPEN time: the caller's
+            # ``cameras`` dict is the intent, the first observation is reality.
+            self.camera_notice = camera_verdict(cameras or {}, self.camera_keys)
             self._robot_type = follower_name
 
         def recorder_kwargs(self) -> dict[str, Any]:
