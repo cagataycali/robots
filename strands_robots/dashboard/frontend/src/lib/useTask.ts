@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Peer, StopResult } from '../types'
 import { HttpError, post } from './endpoints'
+import { findConsent, type ConsentNeed } from './consent'
 import type { RunBody } from '../components/RunForm'
 
 /**
@@ -25,6 +26,10 @@ export function useTask(peer: Peer) {
   const [phase, setPhase] = useState<TaskPhase>('idle')
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [twinBusy, setTwinBusy] = useState(false)
+  // A refusal the operator can answer (U18) plus the body that was refused, so
+  // "approve" can re-send the SAME request instead of asking them to retype it.
+  const [consent, setConsent] = useState<ConsentNeed | null>(null)
+  const lastBody = useRef<RunBody | null>(null)
   const mounted = useRef(true)
   useEffect(() => () => { mounted.current = false }, [])
 
@@ -48,7 +53,8 @@ export function useTask(peer: Peer) {
   }
 
   const run = async (body: RunBody) => {
-    setPhase('starting'); setOutcome(null)
+    setPhase('starting'); setOutcome(null); setConsent(null)
+    lastBody.current = body
     try {
       const res = await post<{ ok: boolean; result: any; routed_to?: string; mirrored_to_twin?: boolean }>(
         `/api/robots/${encodeURIComponent(peer.peer_id)}/task`, body,
@@ -59,10 +65,20 @@ export function useTask(peer: Peer) {
         ? { ok: true, text: `running${res.routed_to ? ` via ${res.routed_to}` : ''}${res.mirrored_to_twin ? ' + twin' : ''}` }
         : { ok: false, text: err ? String(err) : 'refused', detail: JSON.stringify(res.result).slice(0, 300) })
       setPhase(res.ok ? 'running' : 'failed')
+      if (!res.ok) setConsent(findConsent(res))
     } catch (e) {
       if (!mounted.current) return
       setOutcome(fail(e)); setPhase('failed')
+      // A 4xx carries the same needs_consent in its body - a validation refusal
+      // must be as answerable as a peer's refusal.
+      if (e instanceof HttpError) setConsent(findConsent(e.body))
     }
+  }
+
+  /** Re-send the exact request that was refused (after a grant). */
+  const retryLast = async () => {
+    setConsent(null)
+    if (lastBody.current) await run(lastBody.current)
   }
 
   const stop = async () => {
@@ -93,5 +109,8 @@ export function useTask(peer: Peer) {
     }
   }
 
-  return { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, setOutcome }
+  return {
+    phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, setOutcome,
+    consent, clearConsent: () => setConsent(null), retryLast,
+  }
 }

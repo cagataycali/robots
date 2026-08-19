@@ -1175,3 +1175,36 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   padding: 1px 5px; border-radius: 4px; font-size: 11px;
   background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .18);
 }
+
+/* A safety refusal you can answer (components/ConsentSheet.tsx, U18).
+   The sheet reads like a permission prompt, not an error toast: risk first,
+   then exactly what "yes" allows. Buttons use the *-fill tokens because the
+   text tokens tuned for dark backgrounds fail AA as a fill (measured earlier:
+   white on --accent = 2.75:1, on --accent-fill = 4.90:1). */
+.consent-sheet { max-width: min(560px, calc(100vw - 32px)); }
+.consent-sheet h2 { margin: 0 0 8px; font-size: 16px; line-height: 1.35; }
+.cs-risk { margin: 0 0 14px; font-size: 13px; line-height: 1.55; color: var(--text-2, #c8d2de); }
+.cs-label {
+  font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-3, #8b98a9); margin-bottom: 5px;
+}
+.cs-grants { margin: 0 0 14px; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+.cs-grants li { margin: 0; }
+.cs-note, .cs-error, .cs-blocked {
+  margin: 0 0 12px; padding: 9px 11px; border-radius: 8px;
+  font-size: 12.5px; line-height: 1.5;
+}
+.cs-note { background: color-mix(in srgb, var(--ok, #38d39f) 14%, transparent); border: 1px solid color-mix(in srgb, var(--ok, #38d39f) 34%, transparent); }
+.cs-error, .cs-blocked { background: color-mix(in srgb, var(--danger, #ff4d5e) 13%, transparent); border: 1px solid color-mix(in srgb, var(--danger, #ff4d5e) 34%, transparent); }
+.cs-raw { margin: 0 0 12px; font-size: 12px; }
+.cs-raw summary { cursor: pointer; color: var(--text-3, #8b98a9); }
+.cs-raw pre {
+  margin: 8px 0 0; padding: 9px 11px; max-height: 180px; overflow: auto;
+  font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+  background: rgba(0, 0, 0, .35); border-radius: 8px;
+}
+/* Shared additions: an affirmative primary fill and a compact button. */
+.btn.primary { background: var(--accent-fill); color: #fff; font-weight: 700; border: 1px solid transparent; }
+.btn.primary:disabled { background: var(--panel2); color: var(--dim); cursor: default; transform: none; }
+.btn.danger:disabled { opacity: .5; cursor: default; transform: none; }
+.btn.small { font-size: 11.5px; padding: 3px 8px; }

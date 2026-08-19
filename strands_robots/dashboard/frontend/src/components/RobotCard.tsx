@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { Peer } from '../types'
 import { useTask } from '../lib/useTask'
 import { useTelemetry } from '../lib/useTelemetry'
@@ -7,13 +7,18 @@ import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
 import RunForm from './RunForm'
+import ConsentSheet from './ConsentSheet'
 
 export default function RobotCard({ peer, onOpen, onBusyChange }: {
   peer: Peer
   onOpen?: (peerId: string) => void
   onBusyChange?: (peerId: string, running: boolean) => void
 }) {
-  const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer)
+  const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, consent, clearConsent, retryLast } = useTask(peer)
+
+  // The sheet opens on request: a refusal must not steal focus from an
+  // operator who is watching an arm move.
+  const [sheet, setSheet] = useState(false)
 
   const p = peer.presence
   const type = p?.robot_type ?? '?'
@@ -101,7 +106,21 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
         <div className={outcome.ok ? 'result ok' : 'result bad'}>
           <span>{outcome.ok ? '✓' : '⚠'} {outcome.text}</span>
           {outcome.detail && <details><summary>details</summary><pre>{outcome.detail}</pre></details>}
+          {/* The refusal is answerable: offer the decision where the error is,
+              not in a settings screen the operator has to go find. */}
+          {consent && (
+            <button className="btn small" onClick={() => setSheet(true)}>review permission…</button>
+          )}
         </div>
+      )}
+
+      {consent && sheet && (
+        <ConsentSheet
+          need={consent}
+          target="peer"
+          onCancel={() => { setSheet(false); clearConsent() }}
+          onRetry={() => { setSheet(false); void retryLast() }}
+        />
       )}
     </div>
   )

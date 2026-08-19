@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { findConsent, type ConsentNeed } from '../lib/consent'
+import ConsentSheet from './ConsentSheet'
 import { api, post } from '../lib/endpoints'
 import CalibrationSection from './CalibrationSection'
 import CameraGallery, { type CameraInfo, type CameraName } from './CameraGallery'
@@ -46,6 +48,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [logs, setLogs] = useState<{ peer: string; lines: string[] } | null>(null)
+  // A spawn refused by a safety guard (U18): keep the request so approving can
+  // re-run exactly what was refused.
+  const [consent, setConsent] = useState<ConsentNeed | null>(null)
+  const retry = useRef<{ fn: () => Promise<any>; label: string } | null>(null)
 
   // spawn form
   const [robotName, setRobotName] = useState('')
@@ -81,13 +87,18 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   if (!open) return null
 
   const act = async (fn: () => Promise<any>, label: string) => {
-    setBusy(true); setStatus(null)
+    setBusy(true); setStatus(null); setConsent(null)
+    retry.current = { fn, label }
     try {
       const r = await fn()
       setStatus(r?.error ? `⚠ ${r.error}` : `${label}: ${r?.peer_id ?? 'ok'}`)
+      // 200-with-error is how a settled-then-dead spawn reports itself; the
+      // consent hint rides in that same body.
+      setConsent(findConsent(r))
       await load()
     } catch (e: any) {
       setStatus(`⚠ ${e?.message ?? String(e)}`)
+      setConsent(findConsent(e?.body))
     } finally {
       setBusy(false)
     }
@@ -137,6 +148,14 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
 
         <div className="drawer-body">
           {error && <div className="result bad">⚠ {error}</div>}
+          {consent && (
+            <ConsentSheet
+              need={consent}
+              target="spawn"
+              onCancel={() => setConsent(null)}
+              onRetry={() => { const again = retry.current; setConsent(null); if (again) void act(again.fn, again.label) }}
+            />
+          )}
 
           <section>
             <h3>Managed robots ({managed.length})</h3>
