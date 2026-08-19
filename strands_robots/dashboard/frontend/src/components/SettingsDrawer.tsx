@@ -260,6 +260,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 <datalist id="known-models">
                   {config.agent.known_models.map(m => <option key={m} value={m} />)}
                 </datalist>
+                <FieldMeta k="agent.model_id" raw={modelId} />
               </label>
               <div className="row">
                 <label className="field">
@@ -312,11 +313,13 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 <select value={voiceProvider} onChange={e => setVoiceProvider(e.target.value)}>
                   {config.voice.providers.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
+                <FieldMeta k="voice.provider" raw={voiceProvider} />
               </label>
               <label className="field">
                 <span>Voice name</span>
                 <input value={voiceName} placeholder="provider default"
                        onChange={e => setVoiceName(e.target.value)} />
+                <FieldMeta k="voice.voice_name" raw={voiceName} />
               </label>
               <div className="sheet-actions">
                 <button className="btn go" disabled={saving} onClick={() => apply({

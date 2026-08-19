@@ -121,6 +121,22 @@ export const SETTINGS: SettingMeta[] = [
     apply: 'mesh-restart',
     validate: endpointList,
   },
+  {
+    key: 'voice.provider',
+    label: 'Voice provider',
+    effect: 'Which service speaks and listens. Each provider needs its credential in the Env tab.',
+    safeDefault: 'openai',
+    apply: 'live',
+    validate: () => null,
+  },
+  {
+    key: 'voice.voice_name',
+    label: 'Voice name',
+    effect: "Which of the provider's voices answers. Empty uses the provider default.",
+    safeDefault: '',
+    apply: 'live',
+    validate: () => null,
+  },
 ]
 
 const byKey = new Map(SETTINGS.map(s => [s.key, s]))
