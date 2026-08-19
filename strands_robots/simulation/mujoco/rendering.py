@@ -45,6 +45,37 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
+def no_gl_context_message(*, depth: bool = False, platform: str | None = None) -> str:
+    """The one sentence every renderer consumer says when there is no GL context.
+
+    The advice used to be a Linux package install on every host,
+    which is nonsense on the Mac this dashboard runs on: macOS has neither EGL
+    nor OSMesa (MuJoCo renders through CGL there), so the reader is sent to
+    install a package that does not exist for their machine, and the real cause
+    keeps its cover. Kept for Linux, where it is exactly right.
+    """
+    import sys as _sys
+
+    system = platform or _sys.platform
+    head = (
+        "Depth rendering unavailable (no OpenGL context). "
+        if depth
+        else "Rendering unavailable (no OpenGL context). "
+    )
+    if system == "darwin":
+        return head + (
+            "macOS has no EGL or OSMesa - MuJoCo renders through CGL - so installing "
+            "Linux GL packages cannot help here. A CGL context needs a window-server "
+            "session, which a process started by launchd, cron or a bare ssh login does "
+            "not have; run it from a terminal on the logged-in desktop. If rendering "
+            "worked EARLIER in this same process, the context was lost rather than "
+            "missing, and a fresh process is the fix."
+        )
+    return head + (
+        "Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
+    )
+
+
 def _is_pixel_count(value: Any) -> bool:
     """True when ``value`` is usable as a pixel dimension (an int, not a bool)."""
     return isinstance(value, int) and not isinstance(value, bool)
@@ -1073,11 +1104,7 @@ class RenderingMixin:
                     "status": "error",
                     "content": [
                         {
-                            "text": (
-                                "Rendering unavailable (no OpenGL context). "
-                                "Install EGL or OSMesa for offscreen rendering: "
-                                "apt-get install libosmesa6-dev"
-                            )
+                            "text": no_gl_context_message()
                         }
                     ],
                 }
@@ -1225,10 +1252,7 @@ class RenderingMixin:
                     "status": "error",
                     "content": [
                         {
-                            "text": (
-                                "Depth rendering unavailable (no OpenGL context). "
-                                "Install EGL or OSMesa for offscreen rendering."
-                            )
+                            "text": no_gl_context_message(depth=True)
                         }
                     ],
                 }
@@ -1405,10 +1429,7 @@ class RenderingMixin:
         with self._lock:
             renderer = self._get_renderer(w, h)
             if renderer is None:
-                raise RuntimeError(
-                    "Rendering unavailable (no OpenGL context). "
-                    "Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
-                )
+                raise RuntimeError(no_gl_context_message())
             if camera_name in FREE_CAMERA_TOKENS:
                 cam_id = -1
             else:
