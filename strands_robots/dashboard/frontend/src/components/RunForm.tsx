@@ -30,6 +30,10 @@ interface Props {
 }
 
 interface ValidateResult {
+  /** did the preflight have a model to inspect at all (see validate_scope.py) */
+  resolved?: boolean
+  /** what the verdict does NOT cover, in plain words */
+  scope_note?: string
   ok: boolean
   stage: string
   error?: string
@@ -356,8 +360,16 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
           <div className={cls}>
             {!scope.applies
               ? `${validation.ok ? '✓' : '✗'} (outdated) ${validation.ok ? `${validatedFor?.provider ?? providerName} resolved` : `${validation.stage}: ${validation.error}`}`
-              : validation.ok ? `✓ ${providerName} resolves` : `✗ ${validation.stage}: ${validation.error}`}
+              : validation.ok
+                // resolved === false means the preflight found no model to inspect:
+                // "no objection could be raised" is not "I checked what you are
+                // about to run on a real arm".
+                ? validation.resolved === false
+                  ? `— nothing to resolve for ${providerName}`
+                  : `✓ ${providerName} resolves`
+                : `✗ ${validation.stage}: ${validation.error}`}
             {!scope.applies && <div className="hint warn">{scope.note}</div>}
+            {validation.scope_note && <div className="hint">{validation.scope_note}</div>}
             {validation.note && <div className="hint">{validation.note}</div>}
           </div>
         )

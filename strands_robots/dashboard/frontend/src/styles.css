@@ -1483,3 +1483,7 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 /* A verdict that no longer describes the form: readable (it was true for the
    input it was taken on) but stripped of its authority - never green. */
 .validation.stale { color: var(--muted); background: transparent; border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent); }
+
+/* A preflight that had nothing to inspect: an honest neutral, never the green of
+   a checked policy. */
+.validation.thin { color: var(--muted); background: transparent; border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); }

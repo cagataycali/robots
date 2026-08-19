@@ -795,6 +795,23 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         result = await asyncio.to_thread(_check)
         result["policy_provider"] = provider
         result["observation_keys"] = sorted(observation_keys)
+        # An "ok" here means "no objection could be raised", which is NOT the same
+        # as "I checked the policy you are about to run on a real arm": with no
+        # checkpoint named there is no model for the preflight to inspect, and the
+        # form used to render that empty pass as a green "resolves".
+        if result.get("ok"):
+            from strands_robots.dashboard.validate_scope import validation_scope
+
+            spec = None
+            try:
+                catalog = await asyncio.to_thread(config_api._policy_catalog)
+                spec = next((p for p in (catalog or []) if p.get("name") == provider), None)
+            except Exception:  # noqa: BLE001 - a scope hint must never break validate
+                spec = None
+            scope = validation_scope(spec, config)
+            result["resolved"] = scope["resolved"]
+            if scope["scope_note"]:
+                result["scope_note"] = scope["scope_note"]
         if not observation_keys:
             result["note"] = (
                 "no live observation keys for that peer - camera/joint routing "
