@@ -800,7 +800,35 @@ def bake_gsplat_panorama(
 
     Returns the path to the written panorama ``.jpg`` (cached next to the ply
     unless ``out_path`` says otherwise).
+
+    Raises:
+        ValueError: if ``face_size``, ``equi_w`` or ``equi_h`` is not a positive
+            whole number. These knobs are forwarded to
+            :func:`~strands_robots.rendering.ibl.render_environment_map`, which
+            owns their domain, so this bake checks that same domain rather than
+            restating it -- and checks it *here* because two things read the
+            values before that renderer does (see below).
     """
+    # Both of those reads happen before ``render_environment_map`` is reached, so
+    # its own refusal arrives too late to be the only one.
+    #
+    # The default path is composed from these values and that name is the cache
+    # key, so an integral float must not spell a second file for pixels already
+    # baked: the shared domain accepts ``face_size=640.0``, which composed
+    # ``<stem>_pano_2048x1024_f640.0.jpg`` and re-baked a warm
+    # ``..._f640.jpg`` beside it -- the silent-no-op failure the geometry in this
+    # name exists to prevent, reintroduced by spelling. ``int()`` normalizes it
+    # away, as ``environment_map_cache_path`` does for the same reason.
+    #
+    # The splat load is what an unusable resolution would otherwise pay for
+    # first, and without the ``sim-gs`` extra installed the load does not merely
+    # delay the refusal, it replaces it: ``equi_w=0`` reported a missing ``torch``
+    # and advised installing it, which fixes nothing and names no resolution.
+    from .ibl import _resolution_error, render_environment_map
+
+    if text := _resolution_error("bake_gsplat_panorama", face_size=face_size, equi_w=equi_w, equi_h=equi_h):
+        raise ValueError(text)
+    face_size, equi_w, equi_h = int(face_size), int(equi_w), int(equi_h)
     ply_path = Path(ply_path)
     if out_path is not None:
         out = Path(out_path)
@@ -821,10 +849,9 @@ def bake_gsplat_panorama(
     base._transform = T
 
     # The six-cube-face render + equirect reprojection is shared with the
-    # world-frame environment-map bake (issue #2323). This bake keeps its own
-    # viewpoint (the scene centroid, in the unaligned upright frame above).
-    from .ibl import render_environment_map
-
+    # world-frame environment-map bake (issue #2323), imported above with the
+    # resolution domain it owns. This bake keeps its own viewpoint (the scene
+    # centroid, in the unaligned upright frame above).
     pano = render_environment_map(
         base,
         origin_world=(0.0, 0.0, 0.0),

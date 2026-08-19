@@ -107,7 +107,10 @@ def _resolution_error(
 
     The three knobs that size the pixel grid share one domain, checked in one
     place so the render, the bake and the cache-path cannot disagree about which
-    resolutions this module can honor.
+    resolutions this module can honor. That "one place" reaches past this module:
+    :func:`~strands_robots.rendering.backgrounds.bake_gsplat_panorama` forwards
+    the same three knobs to :func:`render_environment_map` and checks them here,
+    because it composes its cache key and loads its splats first.
 
     Only the domain is checked here, not the *quality* a resolution buys. A very
     coarse cube face is still a cube face: the reprojection scales by
