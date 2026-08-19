@@ -147,6 +147,13 @@ body {
 .field > span { font-size: 11px; color: var(--dim); letter-spacing: .03em; }
 .field > span em { color: var(--dim); opacity: .8; font-style: normal; }
 .field > span b { color: var(--warn); }
+/* The API field name, kept beside the human label (JOURNEYS #13): quiet enough
+   that it is not read on every visit, present enough to copy into a script. */
+.field > span code.ident {
+  margin-left: 6px; font-size: 10px; opacity: .55;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  background: rgba(255,255,255,.05); border-radius: 4px; padding: 0 4px;
+}
 /* Settings metadata: one-line "what this does" + how the change applies */
 .field-meta { font-size: 10.5px; line-height: 1.45; color: var(--dim); font-style: normal; opacity: .85; }
 .field-err { font-size: 11px; color: var(--danger, #ff4d5e); font-style: normal; }

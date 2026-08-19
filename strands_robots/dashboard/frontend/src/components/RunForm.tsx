@@ -5,6 +5,7 @@ import CheckpointPicker from './CheckpointPicker'
 import { useConfig } from '../lib/useConfig'
 import { peekDeployIntent, clearDeployIntent, type DeployIntent } from '../lib/deployIntent'
 import { runRisk } from '../lib/runRisk'
+import { fieldCopy, requirementSummary, missingSummary, localOnlySummary } from '../lib/policyCopy'
 import RunConfirm from './RunConfirm'
 import type { Presence } from '../types'
 
@@ -204,7 +205,11 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
           {policies.map(p => (
             <option key={p.name} value={p.name} disabled={!p.wire_safe}>
               {p.wire_safe ? '' : '🔒 '}{p.name === 'mock' ? 'mock — sine test (safe, no model)' : p.name}
-              {p.requires.length ? ` (needs: ${p.requires.join(', ')})` : ''}
+              {/* JOURNEYS #13: the option line says what the operator must HAVE
+                  ("needs a checkpoint + policy family"), not the constructor
+                  kwarg names. The identifiers stay in the options drawer, where
+                  they are next to the input that carries them. */}
+              {p.requires.length ? ` — needs ${requirementSummary(p.requires)}` : ''}
             </option>
           ))}
         </select>
@@ -224,7 +229,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
               disabled={blocked || !instruction.trim() || missing.length > 0 || !!locked}
               title={locked
                 ? `${providerName} is not in the mesh policy allowlist`
-                : missing.length ? `missing: ${missing.join(', ')}` : 'Run'}
+                : missing.length ? `missing: ${missingSummary(missing)}` : 'Run'}
             >▶</button>
           )}
         <button
@@ -236,7 +241,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
 
       {missing.length > 0 && !advanced && (
         <button className="needs" onClick={() => setAdvanced(true)}>
-          {providerName} needs {missing.join(', ')} → open options
+          {providerName} needs {missingSummary(missing)} → open options
         </button>
       )}
 
@@ -253,8 +258,12 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
 
           {wireFields.map(f => (
             <label className={f.required && !String(value(f.key, f.default)).trim() ? 'field missing' : 'field'} key={f.key}>
+              {/* Label in words, identifier kept beside it: operators paste
+                  `f.key` into their own scripts, so replacing it would trade one
+                  comprehension bug for a copy-paste one. */}
               <span>
-                {f.key}{f.required && <b title="required"> *</b>}
+                {fieldCopy(f.key).label}{f.required && <b title="required"> *</b>}
+                {fieldCopy(f.key).known && <code className="ident" title="the API field name">{f.key}</code>}
                 {f.wire_key !== f.key && <em title={`sent as ${f.wire_key}`}> →{f.wire_key}</em>}
               </span>
               {f.type === 'bool' ? (
@@ -282,7 +291,9 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
                 <input
                   type={f.type === 'int' || f.type === 'float' ? 'number' : 'text'}
                   value={value(f.key, f.default)}
-                  placeholder={f.type === 'json' ? '{"…": …}' : f.type}
+                  /* "string" as a placeholder tells the operator the TYPE, which
+                     they can see, and not the value, which they cannot guess. */
+                  placeholder={f.type === 'json' ? '{"…": …}' : (fieldCopy(f.key).hint ?? f.type)}
                   onChange={e => setFields(s => ({ ...s, [f.key]: e.target.value }))}
                   disabled={blocked}
                 />
@@ -301,8 +312,9 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
 
           {provider && provider.unsettable_over_mesh.length > 0 && (
             <div className="hint local-only">
-              local-only kwargs (the mesh command schema does not carry them):{' '}
-              <code>{provider.unsettable_over_mesh.join(', ')}</code>
+              these options only work when the policy is built on the robot itself —
+              the mesh command cannot carry them:{' '}
+              <code>{localOnlySummary(provider.unsettable_over_mesh)}</code>
             </div>
           )}
           {locked && (
