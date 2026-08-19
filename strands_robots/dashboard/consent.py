@@ -40,6 +40,7 @@ _PROVIDER_RE = re.compile(r"provider '([^']{1,120})'")
 #: never asked for, which is the opposite of what a consent dialog is for.
 _REPO_QUOTED_RE = re.compile(r"pretrained_name_or_path=(['\"])(.{0,250}?)\1")
 _REPO_BARE_RE = re.compile(r"pretrained_name_or_path=([^\s,]{1,250})")
+_PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 #: The refusal text can be a whole traceback; keep the evidence bounded.
 _MAX_MESSAGE = 2000
@@ -71,6 +72,64 @@ class ConsentRequest:
         }
 
 
+#: The only things an operator can be asked to approve. A client posting an
+#: approval names one of these and (at most) a subject — never an env var and
+#: never a value, because "which variable does this grant touch" is a decision
+#: this module owns.
+KINDS: tuple[str, ...] = ("trust_remote_code", "hf_repo_allow")
+
+
+def build_request(kind: str, subject: object = None, message: str = "") -> ConsentRequest | None:
+    """Construct a consent request from ``kind`` + ``subject``, validating both.
+
+    This is the single constructor: :func:`classify_refusal` parses a refusal
+    into these two arguments, and the approval endpoint rebuilds the request the
+    same way from what the browser sent. So a hostile client can ask for an
+    allowlist entry, but it cannot ask for a *different variable* or smuggle a
+    value past :data:`_HF_ENTRY_RE`.
+    """
+    if kind not in KINDS:
+        return None
+    text = message.strip()[:_MAX_MESSAGE] if isinstance(message, str) else ""
+    name = subject.strip() if isinstance(subject, str) and subject.strip() else None
+
+    if kind == "trust_remote_code":
+        if name is not None and not _PROVIDER_NAME_RE.match(name):
+            name = None
+        shown = name or "this policy provider"
+        return ConsentRequest(
+            kind=kind,
+            scope="trust_remote_code",
+            title=f"Run model code from HuggingFace ({shown})?",
+            risk=(
+                f"{shown} loads the model with trust_remote_code=True: code stored in the "
+                "model repository executes on this machine, with your files and your robots. "
+                "Approve only for organisations you trust."
+            ),
+            env_var=_TRUST_ENV,
+            subject=name,
+            message=text,
+            grants=("run repository code for every policy load from now on",),
+        )
+
+    if name is not None and not _HF_ENTRY_RE.match(name):
+        name = None  # unparseable/hostile: ask, but grant nothing automatically
+    shown = name or "the requested model"
+    return ConsentRequest(
+        kind=kind,
+        scope=f"hf_repo_allow:{name}" if name else "hf_repo_allow",
+        title=f"Allow the model {shown}?",
+        risk=(
+            f"{shown} is not in this machine's HuggingFace allowlist, so the mesh refused "
+            "to load it. Approving adds exactly this repository — no other org, no wildcard."
+        ),
+        env_var=_HF_ENV,
+        subject=name,
+        message=text,
+        grants=(f"load {name}" if name else "nothing yet — the repository name could not be read",),
+    )
+
+
 def classify_refusal(text: object) -> ConsentRequest | None:
     """Recognise a *continuable* refusal in ``text``, else ``None``.
 
@@ -84,43 +143,13 @@ def classify_refusal(text: object) -> ConsentRequest | None:
 
     if _TRUST_ENV in message:
         m = _PROVIDER_RE.search(message)
-        provider = m.group(1) if m else None
-        subject = provider or "this policy provider"
-        return ConsentRequest(
-            kind="trust_remote_code",
-            scope="trust_remote_code",
-            title=f"Run model code from HuggingFace ({subject})?",
-            risk=(
-                f"{subject} loads the model with trust_remote_code=True: code stored in the "
-                "model repository executes on this machine, with your files and your robots. "
-                "Approve only for organisations you trust."
-            ),
-            env_var=_TRUST_ENV,
-            subject=provider,
-            message=message,
-            grants=("run repository code for every policy load from now on",),
-        )
+        return build_request("trust_remote_code", m.group(1) if m else None, message)
 
     if _HF_ENV in message:
         quoted = _REPO_QUOTED_RE.search(message)
         bare = _REPO_BARE_RE.search(message)
         repo = quoted.group(2) if quoted else (bare.group(1) if bare else None)
-        if repo and not _HF_ENTRY_RE.match(repo):
-            repo = None  # unparseable/hostile: ask, but grant nothing automatically
-        subject = repo or "the requested model"
-        return ConsentRequest(
-            kind="hf_repo_allow",
-            scope=f"hf_repo_allow:{repo}" if repo else "hf_repo_allow",
-            title=f"Allow the model {subject}?",
-            risk=(
-                f"{subject} is not in this machine's HuggingFace allowlist, so the mesh refused "
-                "to load it. Approving adds exactly this repository — no other org, no wildcard."
-            ),
-            env_var=_HF_ENV,
-            subject=repo,
-            message=message,
-            grants=(f"load {repo}" if repo else "nothing yet — the repository name could not be read",),
-        )
+        return build_request("hf_repo_allow", repo, message)
 
     return None
 

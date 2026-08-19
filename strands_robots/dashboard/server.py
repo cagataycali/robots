@@ -35,6 +35,7 @@ import contextlib
 import hmac
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from strands_robots.dashboard import config_api, settings
+from strands_robots.dashboard import config_api, consent, settings
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
 
@@ -750,7 +751,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         result = await app.state.bridge.send_cmd_async(target, cmd, timeout=timeout_s)
         from strands_robots.dashboard.mesh_bridge import command_succeeded
 
-        return {
+        payload = {
             "peer_id": peer_id,
             "routed_to": target if target != peer_id else None,
             "mirrored_to_twin": mirrored,
@@ -760,6 +761,17 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "timeout_s": timeout_s,
             "result": result,
         }
+        if not payload["ok"] and isinstance(result, dict):
+            # The refusal is inside the peer's answer, under whichever key that
+            # peer chose; check the ones that carry prose rather than guessing one.
+            consent.attach_consent(
+                payload,
+                result.get("error"),
+                result.get("detail"),
+                result.get("message"),
+                result.get("reason"),
+            )
+        return payload
 
     @app.post("/api/robots/{peer_id}/stop")
     async def stop_task(peer_id: str) -> dict[str, Any]:
@@ -858,6 +870,75 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if result["restart_required"] and body.get("restart_mesh"):
             result["mesh_restart"] = await _restart_mesh(force=bool(body.get("force")))
         return result
+
+    @app.get("/api/consent")
+    async def get_consent() -> dict[str, Any]:
+        """What this machine currently grants, and what can be asked for (U18)."""
+        allow = [e.strip() for e in os.environ.get("STRANDS_MESH_HF_REPO_ALLOW", "").split(",") if e.strip()]
+        return {
+            "kinds": list(consent.KINDS),
+            "trust_remote_code": os.environ.get("STRANDS_TRUST_REMOTE_CODE", "").strip().lower()
+            in ("1", "true", "yes"),
+            "hf_repo_allow": allow,
+            "env_file": str(config_api.ENV_FILE),
+        }
+
+    @app.post("/api/consent")
+    async def post_consent(body: dict[str, Any]) -> dict[str, Any]:
+        """Approve one refusal, by kind + subject — nothing else is settable.
+
+        The browser never sends the variable or the value: the request is
+        REBUILT here from ``kind``/``subject`` so an approval can only ever
+        widen the exact guard the SDK named. A grant reaches this process'
+        environment (so the next spawned child inherits it) and .env (so it
+        survives a restart), and the answer says plainly whether the peer that
+        was refused needs a respawn to see it.
+        """
+        request = consent.build_request(str(body.get("kind", "")), body.get("subject"))
+        if request is None:
+            raise HTTPException(422, f"unknown consent kind; expected one of {', '.join(consent.KINDS)}")
+        patch = consent.env_patch(request, os.environ)
+        if not patch:
+            return {
+                "granted": False,
+                "scope": request.scope,
+                "already_granted": True,
+                "note": (
+                    "nothing to change - this is already allowed here. A process started "
+                    "before the grant keeps the old environment: respawn it."
+                ),
+                "respawn_required": True,
+            }
+        for key, value in patch.items():
+            problem = config_api.env_entry_error(key, value)
+            if problem:  # pragma: no cover - the builder cannot produce one today
+                raise HTTPException(422, problem)
+        written = await asyncio.to_thread(config_api.upsert_env_file, patch)
+        os.environ.update(patch)
+        try:  # the mesh caches its parsed allowlist per value, so re-read it
+            from strands_robots.mesh import security as _mesh_security
+
+            _mesh_security.hf_repo_allowlist()
+        except Exception:  # noqa: BLE001 - a cache warm-up must not fail a grant
+            logger.debug("consent: allowlist warm-up failed", exc_info=True)
+        app.state.bridge.record_activity(
+            "api", "consent", target=request.scope,
+            detail=f"approved: {', '.join(request.grants)}", ok=True,
+        )
+        return {
+            "granted": True,
+            "scope": request.scope,
+            "kind": request.kind,
+            "env_written": written,
+            "grants": list(request.grants),
+            # Children get the environment they were STARTED with. Say so
+            # instead of letting a retry fail for a reason we already know.
+            "respawn_required": True,
+            "note": (
+                "granted for new processes. A robot already running was started with the "
+                "old environment - respawn it, then retry."
+            ),
+        }
 
     async def _restart_mesh(*, force: bool = False) -> dict[str, Any]:
         """Re-open the mesh session against the current settings.
@@ -1001,6 +1082,12 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 # Surface it in the field every caller already reads, so a
                 # dead spawn cannot be mistaken for a live one by any client.
                 result["error"] = outcome.get("reason") or "the peer did not start"
+                # A refusal the operator can answer travels as needs_consent, so
+                # the UI offers "Approve & retry" instead of a wall of prose
+                # whose only remedy is a shell (U18).
+                consent.attach_consent(
+                    result, result["error"], "\n".join(outcome.get("log_tail") or [])
+                )
 
         # Lifecycle lands in the audit trail: "who started this peer" is as
         # unanswerable as "who moved that arm" without it - the auto-spawn
