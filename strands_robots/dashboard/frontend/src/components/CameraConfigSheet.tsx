@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
-import { CamRow, applySummary, configFromRows, parseIndexOrPath, rowsFromConfig } from '../lib/cameraConfig'
+import { CamRow, applySummary, configFromRows, parseIndexOrPath, previewRateNote, rowsFromConfig } from '../lib/cameraConfig'
+import { useConfig } from '../lib/useConfig'
 
 interface Detected { index: number; label?: string | null; in_use_by?: string | null }
 interface Mode { width: number; height: number; fps: number }
@@ -17,7 +18,13 @@ interface Probe { busy?: boolean; error?: string; modes?: Mode[] }
  * that can only fail.
  */
 export default function CameraConfigSheet({ peerId, onClose }: { peerId: string; onClose: () => void }) {
+  const { config } = useConfig()
   const [rows, setRows] = useState<CamRow[] | null>(null)
+  // The fastest capture rate the operator has asked for — the one a slower
+  // publish rate would visibly contradict. Blank fps rows claim nothing, so
+  // they are not counted.
+  const askedFps = (rows ?? []).map(r => Number(r.fps)).filter(n => Number.isFinite(n) && n > 0)
+  const rateNote = previewRateNote(askedFps.length ? Math.max(...askedFps) : null, config?.mesh?.camera_hz)
   const [detected, setDetected] = useState<Detected[]>([])
   const [notManaged, setNotManaged] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -164,6 +171,11 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
               Blank fps/size = the driver's defaults (640×480 @ 30). Detaching all cameras is allowed —
               the robot streams joints only.
             </p>
+            {/* The fps field is the CAMERA's capture rate; what this dashboard
+                receives is the mesh publish rate. Without this line an operator
+                who picks a 30 fps mode and sees a ~5/s preview concludes the
+                config was ignored. Shown only when the two can disagree. */}
+            {rateNote && <p className="hint">⏱ {rateNote}</p>}
             {check.error && <div className="result bad">✗ {check.error}</div>}
             {error && <div className="result bad">⚠ {error}</div>}
             {!confirming ? (

@@ -48,3 +48,21 @@ assert.match(applySummary([row()], 'so101-arm-1'), /restarting it/, 'the cost is
 assert.match(applySummary([], 'so101-arm-1'), /detach every camera/, 'detach-all is explicit')
 
 console.log('cameraConfig: all assertions passed')
+
+// --- previewRateNote: the fps field promises a capture rate, not a preview rate
+{
+  const { previewRateNote, DEFAULT_MESH_CAMERA_HZ } = await import('/tmp/cameraConfig.mjs')
+  // The case that produces a false bug report: 30 fps chosen, 5/s delivered.
+  const note = previewRateNote(30, 5)
+  assert.ok(note && note.includes('30 fps') && note.includes('5/s'), note)
+  assert.ok(note.includes('camera_hz'), 'must say where to change it')
+  // Silent when the two rates cannot disagree - a caveat that is not true here
+  // would train the operator to ignore the line that matters.
+  assert.equal(previewRateNote(5, 5), null)
+  assert.equal(previewRateNote(5, 30), null)
+  assert.equal(previewRateNote(null, 5), null, 'blank fps = driver default, nothing claimed yet')
+  // No config answer yet: assume the rate every spawned child inherits rather
+  // than staying silent, because silence is what the bug report grew from.
+  assert.ok(previewRateNote(30, null)?.includes(`${DEFAULT_MESH_CAMERA_HZ}/s`))
+  assert.ok(previewRateNote(30, 0)?.includes(`${DEFAULT_MESH_CAMERA_HZ}/s`), 'a nonsense hz is not a rate')
+}

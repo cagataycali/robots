@@ -92,3 +92,32 @@ export function applySummary(rows: CamRow[], peerId: string): string {
   const what = n === 0 ? 'detach every camera from' : `apply ${n} camera${n === 1 ? '' : 's'} to`
   return `This will ${what} ${peerId} by restarting it — its streams (and any running task) stop during the restart.`
 }
+
+/** The default publish rate every spawned child inherits (device_manager's
+ *  `STRANDS_MESH_CAMERA_HZ` setdefault). Named here so the sheet can be honest
+ *  even before /api/config has answered. */
+export const DEFAULT_MESH_CAMERA_HZ = 5
+
+/**
+ * What the fps field actually buys — the sentence that stops a false bug report.
+ *
+ * `fps` is the CAMERA's capture rate, handed to lerobot's OpenCVCameraConfig.
+ * What reaches this dashboard is a different number: every spawned peer
+ * publishes frames onto the mesh at `mesh.camera_hz` (5/s by default), so an
+ * operator who selects a 1920x1080@30 mode and then watches a ~5 fps preview
+ * has no way to tell "my config was ignored" from "this is the publish rate" —
+ * and the first conclusion is the one people reach. It also matters the other
+ * way: publishing faster than the camera captures cannot invent frames.
+ *
+ * Returns null when the two rates cannot disagree (publish >= capture, or no
+ * capture rate chosen), because a caveat that is not true here is noise.
+ */
+export function previewRateNote(fps: number | null | undefined, cameraHz?: number | null): string | null {
+  const publish = cameraHz == null || !Number.isFinite(cameraHz) || cameraHz <= 0
+    ? DEFAULT_MESH_CAMERA_HZ
+    : cameraHz
+  const capture = fps == null || !Number.isFinite(fps) || fps <= 0 ? null : fps
+  if (capture == null || publish >= capture) return null
+  return `${capture} fps is the camera's capture rate — this dashboard receives ${publish}/s, `
+    + `the mesh publish rate (Settings › mesh › camera_hz). The recording on disk is not capped by it.`
+}
