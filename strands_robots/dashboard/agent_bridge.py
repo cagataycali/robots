@@ -113,6 +113,93 @@ def _json_safe(messages: list) -> list:
     return safe
 
 
+def _tool_ids(msg: Any, key: str) -> set:
+    """Ids of ``toolUse``/``toolResult`` blocks carried by one message."""
+    out = set()
+    content = msg.get("content") if isinstance(msg, dict) else None
+    for block in content if isinstance(content, list) else []:
+        if isinstance(block, dict) and isinstance(block.get(key), dict):
+            tid = block[key].get("toolUseId")
+            if tid is not None:
+                out.add(tid)
+    return out
+
+
+def _drop_orphan_tool_blocks(messages: list) -> list:
+    """Remove toolUse blocks with no toolResult and vice versa.
+
+    A half of a pair is what Bedrock rejects; the surrounding text is fine, so
+    only the orphaned block is dropped, and a message left with no content at
+    all goes with it.
+    """
+    used: set = set()
+    resulted: set = set()
+    for msg in messages:
+        used |= _tool_ids(msg, "toolUse")
+        resulted |= _tool_ids(msg, "toolResult")
+    paired = used & resulted
+    kept = []
+    for msg in messages:
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        blocks = []
+        for block in content:
+            if isinstance(block, dict):
+                for key in ("toolUse", "toolResult"):
+                    inner = block.get(key)
+                    if isinstance(inner, dict) and inner.get("toolUseId") not in paired:
+                        break
+                else:
+                    blocks.append(block)
+        if blocks:
+            kept.append({**msg, "content": blocks})
+    return kept
+
+
+def sanitize_history(messages: Any) -> list:
+    """Make a persisted conversation structurally safe to restore.
+
+    JSON round-trip, trim on a user boundary, drop orphaned tool pairs, then
+    drop any leading non-user prefix the pruning exposed. Returns ``[]`` rather
+    than anything a provider would reject.
+    """
+    if not isinstance(messages, list):
+        return []
+    out = _drop_orphan_tool_blocks(_trim_history(_json_safe(messages)))
+    while out and not _is_plain_user_message(out[0]):
+        out.pop(0)
+    return out if _history_problem(out) is None else []
+
+
+def _history_problem(messages: list) -> str | None:
+    """Why this conversation would be rejected, or None if it is valid."""
+    if not messages:
+        return None
+    if not _is_plain_user_message(messages[0]):
+        return "first message is not a plain user turn"
+    used: set = set()
+    resulted: set = set()
+    for msg in messages:
+        used |= _tool_ids(msg, "toolUse")
+        resulted |= _tool_ids(msg, "toolResult")
+    if used ^ resulted:
+        return f"orphaned tool blocks: {sorted(used ^ resulted)}"
+    return None
+
+
+def _backup_history_file() -> Path | None:
+    """Keep the poisoned file aside so it is inspectable, not just gone."""
+    try:
+        if HISTORY_FILE.exists():
+            backup = HISTORY_FILE.with_suffix(".poisoned.json")
+            HISTORY_FILE.replace(backup)
+            return backup
+    except OSError as e:
+        logger.warning("could not back up chat history: %s", e)
+    return None
+
+
 def _load_history() -> list:
     try:
         if HISTORY_FILE.exists():
@@ -127,7 +214,7 @@ def _load_history() -> list:
 def _save_history(messages: list) -> None:
     try:
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        HISTORY_FILE.write_text(json.dumps(_trim_history(_json_safe(list(messages)))))
+        HISTORY_FILE.write_text(json.dumps(sanitize_history(list(messages))))
     except Exception as e:
         logger.debug("could not save chat history: %s", e)
 
@@ -274,8 +361,17 @@ def _build_agent() -> Any:
 
     # Restore conversation history from disk so the fleet agent survives
     # dashboard restarts instead of waking up amnesiac.
-    history = _trim_history(_load_history())
-    if history:
+    raw = _load_history()
+    history = sanitize_history(raw)
+    if raw and not history:
+        # Poison in, nothing out: never restore a conversation a provider would
+        # reject - start clean and keep the evidence on disk.
+        backup = _backup_history_file()
+        logger.warning(
+            "chat history was unusable and was NOT restored - starting empty; kept a copy at %s",
+            backup or "(no file)",
+        )
+    elif history:
         try:
             agent.messages = history
             logger.info("restored %d chat messages", len(history))
