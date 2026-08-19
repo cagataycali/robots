@@ -354,6 +354,23 @@ class MeshBridge:
         # bridge stays usable standalone.
         self.protected_peer_ids: Any | None = None
 
+        # Set by the server to a callable returning {peer_id: {role, ...}} for
+        # locally managed arms whose servo bus was MEASURED. Applied inside
+        # snapshot() on purpose: the UI reads the WEBSOCKET snapshot, so enriching
+        # only the /api/fleet route (my first attempt) put the answer on a rail
+        # nothing renders from.
+        self.peer_annotations: Any | None = None
+
+    def _peer_annotations(self) -> dict[str, dict[str, Any]]:
+        if self.peer_annotations is None:
+            return {}
+        try:
+            data = self.peer_annotations()
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:  # never let a bad hook break the snapshot
+            logger.warning("[mesh] peer annotation lookup failed (%r)", exc)
+            return {}
+
     def _protected_peer_ids(self) -> frozenset[str]:
         if self.protected_peer_ids is None:
             return frozenset()
@@ -823,6 +840,14 @@ class MeshBridge:
                 # waiting out a rate window against a memory of its former self.
                 with self._coalesce_lock:
                     self._coalescer.forget(pid)
+        # Facts about a peer that the MESH cannot know (today: the role measured
+        # off a local arm's servo bus). Copied onto the peer dict so both the WS
+        # snapshot and /api/fleet carry it, and only for peers already present -
+        # an annotation must never conjure a peer into the fleet.
+        for pid, fields in self._peer_annotations().items():
+            peer = peers.get(pid)
+            if isinstance(peer, dict) and isinstance(fields, dict):
+                peers[pid] = {**peer, **fields}
         return {
             "type": "snapshot",
             "dashboard_peer_id": self.peer_id,

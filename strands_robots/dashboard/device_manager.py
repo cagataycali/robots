@@ -885,6 +885,10 @@ class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
     CAMERA_CACHE_TTL_S = 30.0  # don't re-open /dev cameras on every request
+    #: How long a port -> serial mapping is trusted. /api/fleet is polled about
+    #: once a second; enumerating the USB bus that often to answer "which arm is
+    #: the leader" would be absurd, and the answer only changes on a replug.
+    PORT_SERIAL_TTL_S = 10.0
 
     def __init__(self, profiles_path: str | None = None) -> None:
         self.robots: dict[str, ManagedRobot] = {}
@@ -898,6 +902,8 @@ class DeviceManager:
         self._camera_memory: dict[int, dict[str, Any]] = {}
         self._camera_names_cache: list[dict[str, Any]] = []
         self._camera_names_cache_t = 0.0
+        self._port_serial_cache: dict[str, str] = {}
+        self._port_serial_cache_t = 0.0
         # One preview at a time: two concurrent opens of the same device
         # wedge some UVC cameras until replug.
         self._preview_lock = threading.Lock()
@@ -1036,6 +1042,40 @@ class DeviceManager:
                 for peer_id, m in self.robots.items()
             },
         }
+
+    def _port_serials(self, refresh: bool = False) -> dict[str, str]:
+        """/dev path -> USB serial, cached (see PORT_SERIAL_TTL_S)."""
+        now = time.time()
+        if refresh or (now - self._port_serial_cache_t) > self.PORT_SERIAL_TTL_S:
+            try:
+                self._port_serial_cache = {
+                    str(p["device"]): str(p["serial_number"])
+                    for p in scan_serial_ports()
+                    if p.get("device") and p.get("serial_number")
+                }
+                self._port_serial_cache_t = now
+            except Exception as e:
+                # Keep the previous map rather than forgetting every role because
+                # one scan failed: a stale answer beats "no arm has a role".
+                logger.warning("serial rescan for roles failed (%r); keeping the last map", e)
+        return self._port_serial_cache
+
+    def roles_by_peer(self) -> dict[str, dict[str, Any]]:
+        """Measured role per MANAGED peer id, for callers polled at 1Hz.
+
+        Cheap on purpose: the profiles are already in memory and the port ->
+        serial map is cached, so this touches no hardware. Peers whose board was
+        never measured are simply absent - the fleet must be able to say "not
+        measured" rather than inventing "unknown".
+        """
+        serials = self._port_serials()
+        out: dict[str, dict[str, Any]] = {}
+        for peer_id, m in self.robots.items():
+            serial = serials.get(m.port or "")
+            fields = self._role_fields(self.profiles.get(serial) if serial else None)
+            if fields:
+                out[peer_id] = fields
+        return out
 
     @staticmethod
     def _role_fields(profile: Mapping[str, Any] | None) -> dict[str, Any]:

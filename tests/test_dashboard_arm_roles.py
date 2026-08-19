@@ -286,3 +286,70 @@ def test_no_profile_is_written_for_a_port_that_is_not_there(tmp_path, monkeypatc
 
     saved = mgr.remember_profile({"port": "/dev/cu.real", "robot_name": "so101"})
     assert saved and list(mgr.profiles.all()) == ["/dev/cu.real"]
+
+
+# ------------------------------------------- the role travels with the fleet
+
+
+def test_roles_by_peer_is_cheap_and_absent_when_unmeasured(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path)
+    mgr.profiles.record_role("SER-A", {"role": "follower", "volts": 12.6})
+    mgr.robots["arm-a"] = SimpleNamespace(port="/dev/cu.a", peer_id="arm-a")
+    mgr.robots["arm-b"] = SimpleNamespace(port="/dev/cu.b", peer_id="arm-b")
+    mgr.robots["sim-1"] = SimpleNamespace(port=None, peer_id="sim-1")
+    scans = []
+
+    def one_scan():
+        scans.append(1)
+        return [{"device": "/dev/cu.a", "serial_number": "SER-A"},
+                {"device": "/dev/cu.b", "serial_number": "SER-B"}]
+
+    monkeypatch.setattr(dm, "scan_serial_ports", one_scan)
+    for _ in range(20):
+        roles = mgr.roles_by_peer()
+    assert roles == {"arm-a": {"role": "follower", "role_volts": 12.6, "role_source": "measured"}}
+    # A 1Hz caller must not re-enumerate the USB bus every time.
+    assert len(scans) == 1
+
+
+def test_a_failed_rescan_keeps_the_last_known_map(tmp_path, monkeypatch):
+    """Forgetting every role because one scan raised would make the fleet claim
+    nothing was ever measured."""
+    mgr = _mgr(tmp_path)
+    mgr.profiles.record_role("SER-A", {"role": "leader", "volts": 7.5})
+    mgr.robots["arm-a"] = SimpleNamespace(port="/dev/cu.a", peer_id="arm-a")
+    monkeypatch.setattr(dm, "scan_serial_ports",
+                        lambda: [{"device": "/dev/cu.a", "serial_number": "SER-A"}])
+    assert mgr.roles_by_peer()["arm-a"]["role"] == "leader"
+    mgr._port_serial_cache_t = 0.0  # force a refresh
+    monkeypatch.setattr(dm, "scan_serial_ports", lambda: (_ for _ in ()).throw(OSError("bus busy")))
+    assert mgr.roles_by_peer()["arm-a"]["role"] == "leader"
+
+
+def test_the_snapshot_annotates_only_peers_that_exist():
+    from strands_robots.dashboard import mesh_bridge as mb
+
+    bridge = mb.MeshBridge.__new__(mb.MeshBridge)
+    bridge.peer_annotations = lambda: {
+        "arm-a": {"role": "follower"},
+        "ghost": {"role": "leader"},  # an annotation must not conjure a peer
+    }
+    peers = {"arm-a": {"peer_id": "arm-a"}}
+    out = mb.MeshBridge._peer_annotations(bridge)
+    for pid, fields in out.items():
+        if pid in peers:
+            peers[pid] = {**peers[pid], **fields}
+    assert peers["arm-a"]["role"] == "follower"
+    assert "ghost" not in peers
+
+
+def test_a_broken_annotation_hook_cannot_break_the_fleet():
+    from strands_robots.dashboard import mesh_bridge as mb
+
+    bridge = mb.MeshBridge.__new__(mb.MeshBridge)
+    bridge.peer_annotations = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    assert mb.MeshBridge._peer_annotations(bridge) == {}
+    bridge.peer_annotations = lambda: "not a dict"
+    assert mb.MeshBridge._peer_annotations(bridge) == {}
+    bridge.peer_annotations = None
+    assert mb.MeshBridge._peer_annotations(bridge) == {}

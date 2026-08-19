@@ -39,6 +39,12 @@ export interface Peer {
   peer_id: string
   last_seen?: number
   stale?: boolean
+  /** Measured off this arm's servo bus (12V follower / 7.4V leader) and
+   *  remembered by USB serial. Absent = nobody measured it, which is NOT the
+   *  same as unknown. Only locally managed arms can carry it. */
+  role?: string | null
+  role_volts?: number | null
+  role_source?: string | null
   presence?: Presence
   state?: PeerState
   stream?: StreamStep

@@ -51,6 +51,16 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
         <button className="peername" title={`open ${peer.peer_id}`} onClick={() => onOpen?.(peer.peer_id)}>
           {peer.peer_id}
         </button>
+        {/* Which arm this IS, measured off its bus - the swap the operator
+            reported was visible here first, where a name was the only clue. */}
+        {peer.role && (
+          <span className={`rolebadge ${peer.role}`}
+                title={peer.role_volts
+                  ? `measured ${peer.role_volts}V on its servo bus`
+                  : 'measured off its servo bus'}>
+            {peer.role}
+          </span>
+        )}
         {p?.hostname && <span className="host">{p.hostname}</span>}
         {p?.connected === false && type === 'robot' && (
           <span className="badge warn" title="peer is online but its hardware is not connected">hw off</span>

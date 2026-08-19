@@ -299,6 +299,10 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app.state.bridge.protected_peer_ids = lambda: {
         pid for pid, m in list(app.state.devices.robots.items()) if m.alive()
     }
+    # The measured leader/follower role travels with the fleet snapshot (both
+    # rails), so a card can say which arm it IS instead of leaving the operator to
+    # infer it from a name. Cached server-side; /api/fleet is polled ~1Hz.
+    app.state.bridge.peer_annotations = app.state.devices.roles_by_peer
 
     @app.on_event("startup")
     async def _startup() -> None:
@@ -359,6 +363,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/fleet")
     async def fleet() -> dict[str, Any]:
+        # Roles ride along inside snapshot() (bridge.peer_annotations), so this
+        # route and the WS stream cannot disagree about which arm is the leader.
         return app.state.bridge.snapshot()
 
     # ------------------------------------------------------------------
