@@ -1219,3 +1219,20 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .cg-row > div { min-width: 0; }
 .cg-row b { font-size: 13px; word-break: break-word; }
 .cg-row .hint { margin-top: 2px; }
+
+/* Camera states (U14): a camera that cannot be opened stays on screen and says
+   why, because "unplugged", "held by a robot" and "blocked by macOS privacy"
+   need three different actions from the operator. */
+.campill {
+  font-size: 10.5px; letter-spacing: .03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.campill-in_use { background: color-mix(in srgb, var(--accent-fill) 26%, transparent); color: #dce9ff; border-color: color-mix(in srgb, var(--accent-fill) 55%, transparent); }
+.campill-blocked { background: var(--danger-fill); color: #fff; }
+.campill-unreadable, .campill-unknown { background: color-mix(in srgb, #d9a020 30%, transparent); color: #ffe6b0; border-color: color-mix(in srgb, #d9a020 55%, transparent); }
+.campill-absent { background: rgba(255, 255, 255, .07); color: var(--text-3, #8b98a9); }
+.camname-hint { font-size: 11.5px; color: var(--text-3, #8b98a9); margin: 2px 0 6px; }
+.cam-why { display: grid; gap: 6px; font-size: 12.5px; line-height: 1.45; }
+.camcard.cam-blocked { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.camproblem { margin-bottom: 12px; display: grid; gap: 4px; }

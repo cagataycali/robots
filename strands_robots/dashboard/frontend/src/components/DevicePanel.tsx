@@ -3,7 +3,7 @@ import { findConsent, type ConsentNeed } from '../lib/consent'
 import ConsentSheet from './ConsentSheet'
 import { api, post } from '../lib/endpoints'
 import CalibrationSection from './CalibrationSection'
-import CameraGallery, { type CameraInfo, type CameraName } from './CameraGallery'
+import CameraGallery, { type CameraInfo, type CameraName, type CameraProblem } from './CameraGallery'
 import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
 
 interface SerialPort {
@@ -19,6 +19,7 @@ interface DeviceDoc {
   serial_ports: SerialPort[]
   cameras: CameraInfo[]
   camera_names?: CameraName[]
+  camera_problem?: CameraProblem | null
   managed: Record<string, Managed>
 }
 
@@ -296,7 +297,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
 
           <section>
             <h3>Cameras</h3>
-            <CameraGallery cameras={doc?.cameras ?? []} names={doc?.camera_names ?? []} />
+            <CameraGallery cameras={doc?.cameras ?? []} names={doc?.camera_names ?? []}
+                           problem={doc?.camera_problem ?? null} />
             <p className="hint">
               Camera indices owned by a running robot are never re-probed — opening one steals
               frames from its capture thread mid-episode.
