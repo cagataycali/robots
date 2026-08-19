@@ -1395,7 +1395,21 @@ class DeviceManager:
             logger.warning("could not rescan serial ports to save a profile: %r", e)
             return None
         info = detected.get(port)
-        key = profile_key(info) if info else str(port)
+        if info is None:
+            # The port is not in the scan at all, so there is no board to
+            # remember. The old fallback keyed the profile by the /dev string
+            # anyway, which wrote an entry that can never match anything again
+            # (found live: a failed test spawn left profile
+            # "/dev/cu.usbmodem5AB0181806" -> peer q1-bad, a path that does not
+            # even exist). A board that reports no serial still gets its path as
+            # a key via profile_key - that one IS matchable, because the scan
+            # produced it.
+            logger.warning(
+                "not saving a profile for %s: it is not in the serial scan, so there is "
+                "no board to key it to", port,
+            )
+            return None
+        key = profile_key(info)
         if not key:
             return None
         return self.profiles.save(key, payload)

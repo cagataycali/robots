@@ -268,3 +268,21 @@ def test_the_devices_payload_carries_the_known_role(tmp_path, monkeypatch):
     ports = mgr.devices()["serial_ports"]
     assert ports[0]["role"] == "follower" and ports[0]["role_volts"] == 12.6
     assert "role" not in ports[1]  # unmeasured stays unmeasured, not "unknown"
+
+
+def test_no_profile_is_written_for_a_port_that_is_not_there(tmp_path, monkeypatch):
+    """A profile keyed by a /dev string the scan never produced can never match
+    anything again. Found live: a failed test spawn had left
+    "/dev/cu.usbmodem5AB0181806" -> peer q1-bad in the store, a path that does
+    not even exist. A detected board WITHOUT a serial still gets its path as a
+    key - that one is matchable, because the scan produced it."""
+    mgr = _mgr(tmp_path)
+    monkeypatch.setattr(
+        dm, "scan_serial_ports",
+        lambda: [{"device": "/dev/cu.real", "serial_number": None}],
+    )
+    assert mgr.remember_profile({"port": "/dev/cu.ghost", "robot_name": "so101"}) is None
+    assert mgr.profiles.all() == {}
+
+    saved = mgr.remember_profile({"port": "/dev/cu.real", "robot_name": "so101"})
+    assert saved and list(mgr.profiles.all()) == ["/dev/cu.real"]
