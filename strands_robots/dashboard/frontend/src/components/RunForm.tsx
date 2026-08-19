@@ -198,10 +198,13 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
           disabled={blocked}
           title={provider?.description}
         >
-          {policies.length === 0 && <option value="mock">mock</option>}
+          {/* Only when the policy list has not loaded: name what mock IS —
+              the bare word next to live telemetry reads as "this is fake". */}
+          {policies.length === 0 && <option value="mock">mock — built-in sine test (safe, no model)</option>}
           {policies.map(p => (
             <option key={p.name} value={p.name} disabled={!p.wire_safe}>
-              {p.wire_safe ? '' : '🔒 '}{p.name}{p.requires.length ? ` (${p.requires.join(',')})` : ''}
+              {p.wire_safe ? '' : '🔒 '}{p.name === 'mock' ? 'mock — sine test (safe, no model)' : p.name}
+              {p.requires.length ? ` (needs: ${p.requires.join(', ')})` : ''}
             </option>
           ))}
         </select>

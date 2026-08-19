@@ -54,6 +54,13 @@ export default function JointStrip({
   const { unit, ranges } = memo.current
   pending.current = samples
 
+  // The number, not just the bar: bars without values are decoration on a
+  // machine that can hit things (UX review #4). Precision adapts to the
+  // stream's magnitude; the unit is NOT invented — 'servo' streams mix
+  // degrees and 0..100 grippers, so a fabricated '°' would lie for some rows.
+  const fmt = (n: number) =>
+    Math.abs(n) >= 100 ? n.toFixed(0) : Math.abs(n) >= 10 ? n.toFixed(1) : n.toFixed(2)
+
   return (
     <div className="joints" data-unit={unit}>
       {entries.map(([name, v], i) => {
@@ -70,6 +77,7 @@ export default function JointStrip({
             title={`${name}: ${pos.toFixed(3)}${vel !== undefined ? ` (v=${vel.toFixed(2)})` : ''} · ${unit} scale ${range.lo.toFixed(2)}…${range.hi.toFixed(2)}`}
           >
             <div className="jname">{name.replace(/(_pos|\.pos)$/, '')}</div>
+            <div className="jval">{fmt(pos)}</div>
             <div className="jbar">
               <div className="jfill" style={{ width: `${pct}%` }} />
               {vel !== undefined && Math.abs(vel) > 1e-3 && <span className="jvel" />}
