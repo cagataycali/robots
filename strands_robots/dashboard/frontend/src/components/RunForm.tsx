@@ -6,6 +6,7 @@ import { useConfig } from '../lib/useConfig'
 import { peekDeployIntent, clearDeployIntent, type DeployIntent } from '../lib/deployIntent'
 import { runRisk } from '../lib/runRisk'
 import { fieldCopy, requirementSummary, missingSummary, localOnlySummary } from '../lib/policyCopy'
+import { policyLabel, groupPolicies } from '../lib/policyLabels'
 import RunConfirm from './RunConfirm'
 import type { Presence } from '../types'
 
@@ -197,20 +198,33 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
           value={providerName}
           onChange={e => { setProviderName(e.target.value); setFields({}); setValidation(null) }}
           disabled={blocked}
-          title={provider?.description}
+          // The control that decides what drives a physical arm was unlabelled:
+          // a screen reader announced only the current value.
+          aria-label="Policy — what will drive this robot"
+          title={provider ? `${policyLabel(provider.name)} (${provider.name}) — ${provider.description}` : 'Policy — what will drive this robot'}
         >
           {/* Only when the policy list has not loaded: name what mock IS —
               the bare word next to live telemetry reads as "this is fake". */}
-          {policies.length === 0 && <option value="mock">mock — built-in sine test (safe, no model)</option>}
-          {policies.map(p => (
-            <option key={p.name} value={p.name} disabled={!p.wire_safe}>
-              {p.wire_safe ? '' : '🔒 '}{p.name === 'mock' ? 'mock — sine test (safe, no model)' : p.name}
-              {/* JOURNEYS #13: the option line says what the operator must HAVE
-                  ("needs a checkpoint + policy family"), not the constructor
-                  kwarg names. The identifiers stay in the options drawer, where
-                  they are next to the input that carries them. */}
-              {p.requires.length ? ` — needs ${requirementSummary(p.requires)}` : ''}
-            </option>
+          {policies.length === 0 && <option value="mock">{policyLabel('mock')}</option>}
+          {/* UX_REVIEW #1: registry identifiers (cosmos3, wbc_gait, lerobot_async)
+              are not names a person recognises, and the groups say what the
+              choice COSTS — a checkpoint, a server that must be up, or nothing
+              at all. lib/policyLabels.ts never invents a label: an unknown
+              provider renders verbatim under "Other" rather than being dressed
+              up as something it might not be. */}
+          {groupPolicies(policies, p => p.name).map(g => (
+            <optgroup key={g.group} label={g.group}>
+              {g.items.map(p => (
+                <option key={p.name} value={p.name} disabled={!p.wire_safe}>
+                  {p.wire_safe ? '' : '🔒 '}{policyLabel(p.name)}
+                  {/* JOURNEYS #13: the option line says what the operator must HAVE
+                      ("needs a checkpoint + policy family"), not the constructor
+                      kwarg names. The identifiers stay in the options drawer, where
+                      they are next to the input that carries them. */}
+                  {p.requires.length ? ` — needs ${requirementSummary(p.requires)}` : ''}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         <input
