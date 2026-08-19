@@ -36,7 +36,15 @@ What is pinned here:
   not installed, so the agreement is asserted rather than assumed;
 * the determinism configuration the wrapper exists to apply - cuDNN flags,
   ``CUBLAS_WORKSPACE_CONFIG``, the optional strict mode, the ``reset`` patch,
-  and the hand-off to the unmodified server entrypoint.
+  and the hand-off to the unmodified server entrypoint;
+* and that the startup banner records the mode the server *ended up in*.
+  Enabling strict mode is best-effort - an op with no deterministic kernel makes
+  torch refuse, which degrades the server rather than killing it - but the
+  banner reported the *request*, so a run whose tightening was dropped was
+  logged as ``strict=True`` one line after its own failure warning. That banner
+  is the only record of a container run's determinism, so an investigation into
+  a rollout that failed to reproduce would read it and rule out the one setting
+  that was in fact missing.
 """
 
 from __future__ import annotations
@@ -197,6 +205,37 @@ def _states_equal(left: tuple[Any, Any], right: tuple[Any, Any]) -> bool:
     return py_ok and np_ok
 
 
+_BANNER_PREFIX = "[srv_wrap] determinism: "
+
+#: ``(strict requested, what torch raises, whether strict ends up in effect)``.
+#: The two agreeing rows are the controls: they pin that reporting the outcome
+#: did not change what a server without the opt-in, or one whose opt-in torch
+#: accepted, records.
+_STRICT_STATES = [
+    pytest.param(False, None, False, id="not-requested"),
+    pytest.param(True, None, True, id="requested-and-applied"),
+    pytest.param(True, RuntimeError("no deterministic kernel for aten::foo"), False, id="requested-and-refused"),
+]
+
+
+def _strict_verdict(out: str) -> str:
+    """Return the ``strict=`` claim from the wrapper's single startup banner."""
+    banner = [line for line in out.splitlines() if line.startswith(_BANNER_PREFIX)]
+    assert len(banner) == 1, f"expected exactly one determinism banner, got {banner!r}"
+    _, _, verdict = banner[0].partition("strict=")
+    assert verdict, f"the banner must state a strict verdict: {banner[0]!r}"
+    return verdict
+
+
+def _banner_says_strict_on(out: str) -> bool:
+    """Whether the banner's verdict reads as strict mode being in effect.
+
+    Reads the leading token so the check is about the verdict rather than about
+    any reason the banner appends after it.
+    """
+    return _strict_verdict(out).split()[0] == "True"
+
+
 class TestTheStartupSeedIsAppliedOrRefusedWhole:
     """``STRANDS_GR00T_SERVER_SEED`` is applied to every RNG, or to none."""
 
@@ -273,6 +312,71 @@ class TestStrictDeterminismIsOptIn:
         server_wrapper.main()
         assert container.server_configs == ["parsed-config"], (
             "strict mode is a tightening, so losing it must degrade rather than kill the server"
+        )
+
+    def test_a_refused_strict_request_is_not_recorded_as_a_strict_run(
+        self, container: _Container, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A run cannot log the applier failing and still record itself as strict."""
+        monkeypatch.setenv("STRANDS_GR00T_STRICT_DETERMINISTIC", "1")
+        container.strict_raises = RuntimeError("no deterministic kernel for aten::foo")
+        server_wrapper.main()
+        out = capsys.readouterr().out
+
+        warning = [line for line in out.splitlines() if "use_deterministic_algorithms failed" in line]
+        assert warning, "premise: torch must have refused the request this case is about"
+        assert not _banner_says_strict_on(out), (
+            "one log cannot both report the applier failing and record the run as strict - the banner is "
+            f"what an operator reads back to see what the server enforces. warning: {warning[0]!r}, "
+            f"banner verdict: {_strict_verdict(out)!r}"
+        )
+
+    @pytest.mark.parametrize(("requested", "raises", "in_effect"), _STRICT_STATES)
+    def test_the_banner_states_the_mode_the_server_ended_up_in(
+        self,
+        container: _Container,
+        monkeypatch,
+        capsys: pytest.CaptureFixture[str],
+        requested: bool,
+        raises: Exception | None,
+        in_effect: bool,
+    ) -> None:
+        """The banner's verdict tracks what was applied, not what was asked for."""
+        if requested:
+            monkeypatch.setenv("STRANDS_GR00T_STRICT_DETERMINISTIC", "1")
+        container.strict_raises = raises
+        server_wrapper.main()
+        out = capsys.readouterr().out
+
+        applied = container.strict_calls == [(True,)] and raises is None
+        assert applied is in_effect, "premise: the stub must reach the state this case is about"
+        assert _banner_says_strict_on(out) is in_effect, (
+            f"strict mode was {'applied' if in_effect else 'not applied'}, but the banner reads "
+            f"{_strict_verdict(out)!r}"
+        )
+
+    def test_the_banner_names_a_strict_request_it_could_not_honor(
+        self, container: _Container, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Off-because-refused and never-asked-for are different configurations."""
+        monkeypatch.setenv("STRANDS_GR00T_STRICT_DETERMINISTIC", "1")
+        container.strict_raises = RuntimeError("no deterministic kernel for aten::foo")
+        server_wrapper.main()
+        verdict = _strict_verdict(capsys.readouterr().out)
+        assert "requested" in verdict, (
+            "an operator who set the variable needs to see that the request was read and dropped, not "
+            f"only that strict is off: {verdict!r}"
+        )
+
+    def test_the_strict_line_only_appears_when_torch_accepted_the_request(
+        self, container: _Container, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The ``STRICT mode`` line is the applied record, so a refusal must not print it."""
+        monkeypatch.setenv("STRANDS_GR00T_STRICT_DETERMINISTIC", "1")
+        container.strict_raises = RuntimeError("no deterministic kernel for aten::foo")
+        server_wrapper.main()
+        assert "STRICT mode:" not in capsys.readouterr().out, (
+            "that line reports the tightening taking effect, so it must not announce a refused request"
         )
 
 

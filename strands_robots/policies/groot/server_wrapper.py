@@ -6,7 +6,8 @@ enforces:
 - ``cudnn.deterministic = True``
 - ``cudnn.benchmark = False``
 - ``torch.use_deterministic_algorithms(True, warn_only=True)`` (opt-in via
-  ``STRANDS_GR00T_STRICT_DETERMINISTIC=1``)
+  ``STRANDS_GR00T_STRICT_DETERMINISTIC=1``; a request torch refuses degrades to
+  non-strict, and the startup banner reports it as off)
 - ``CUBLAS_WORKSPACE_CONFIG=":4096:8"`` (required for cuBLAS determinism)
 - A monkey-patch on the upstream ``Gr00tPolicy.reset`` (a no-op by default)
   that reseeds torch / numpy / random at the start of each episode. The
@@ -43,7 +44,11 @@ Environment variables (read inside the container):
   can force slower kernels whose numerics differ slightly from the default,
   sometimes hurting trained-model quality; ``cudnn.deterministic=True``
   alone is the safer "deterministic enough" middle ground for diffusion
-  sampling.
+  sampling. Enabling it is best-effort: an op with no deterministic kernel
+  makes torch refuse, which degrades the server to non-strict rather than
+  killing it. The startup banner reports ``strict=`` as the mode the server
+  actually ended up in, so a refused request reads as off and names itself
+  instead of being recorded as the strict run it is not.
 """
 
 from __future__ import annotations
@@ -116,16 +121,29 @@ def main() -> None:
     # safer "deterministic enough" middle ground for diffusion sampling.
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    strict_det = os.environ.get("STRANDS_GR00T_STRICT_DETERMINISTIC", "0") == "1"
-    if strict_det:
+    strict_requested = os.environ.get("STRANDS_GR00T_STRICT_DETERMINISTIC", "0") == "1"
+    strict_applied = False
+    if strict_requested:
         try:
             torch.use_deterministic_algorithms(True, warn_only=True)
-            print("[srv_wrap] STRICT mode: torch.use_deterministic_algorithms(True)", flush=True)
         except Exception as e:  # noqa: BLE001 - degrade to non-strict, never kill the server
             print(f"[srv_wrap] warning: use_deterministic_algorithms failed: {e}", flush=True)
+        else:
+            strict_applied = True
+            print("[srv_wrap] STRICT mode: torch.use_deterministic_algorithms(True)", flush=True)
 
+    # Report the determinism the server got, not the determinism it was asked
+    # for. The banner below is the only record of that configuration for a
+    # container run - an operator reads it out of `docker logs` to confirm what
+    # the server enforces - so a strict mode that was requested and then refused
+    # by torch has to read as off. Naming the dropped request keeps the reason
+    # in the same line as the verdict, the way the seed path below reports a
+    # value it could not use.
+    strict_report = str(strict_applied)
+    if strict_requested and not strict_applied:
+        strict_report = "False (requested, but use_deterministic_algorithms failed)"
     print(
-        f"[srv_wrap] determinism: cudnn.deterministic=True, benchmark=False, strict={strict_det}",
+        f"[srv_wrap] determinism: cudnn.deterministic=True, benchmark=False, strict={strict_report}",
         flush=True,
     )
     print(f"[srv_wrap] CUBLAS_WORKSPACE_CONFIG={os.environ.get('CUBLAS_WORKSPACE_CONFIG')}", flush=True)
