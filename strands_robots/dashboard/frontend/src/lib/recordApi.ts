@@ -63,7 +63,15 @@ function makeMock(): RecordApi {
   const clone = () => JSON.parse(JSON.stringify(s)) as RecordSession
   return {
     mock: true,
-    async session() { return clone() },
+    async session() {
+      // tick the in-flight take's frames, as the real control loop would
+      if (s.phase === 'recording' && s.episodes.length > 0) {
+        const ep = s.episodes[s.episodes.length - 1]
+        ep.frames = Math.max(0, Math.round(((Date.now() - startedAt) / 1000) * s.fps))
+        ep.duration_s = Math.round(((Date.now() - startedAt) / 1000) * 10) / 10
+      }
+      return clone()
+    },
     async open(opts) {
       s = { ...EMPTY, ...opts, episodes: [], phase: 'idle' }
       return clone()
@@ -73,21 +81,23 @@ function makeMock(): RecordApi {
       if (s.phase === 'recording') return clone()
       s.phase = 'recording'
       startedAt = Date.now()
+      // The real backend lists the take in flight as the last episode entry,
+      // frames growing as they are captured - mirror that so the UI's live
+      // frame tick behaves identically against both.
+      s.episodes.push({ index: s.episodes.length, frames: 0, duration_s: 0, thumbnails: {} })
       return clone()
     },
     async stopEpisode() {
       if (s.phase !== 'recording') return clone()
       const duration = (Date.now() - startedAt) / 1000
-      s.episodes.push({
-        index: s.episodes.length,
-        frames: Math.max(1, Math.round(duration * s.fps)),
-        duration_s: Math.round(duration * 10) / 10,
-        thumbnails: {},
-      })
+      const ep = s.episodes[s.episodes.length - 1]
+      ep.frames = Math.max(1, Math.round(duration * s.fps))
+      ep.duration_s = Math.round(duration * 10) / 10
       s.phase = 'idle'
       return clone()
     },
     async redoEpisode() {
+      if (s.phase === 'recording') s.episodes.pop()
       s.phase = 'idle'
       return clone()
     },

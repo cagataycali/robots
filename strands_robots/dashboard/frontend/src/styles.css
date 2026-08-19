@@ -215,6 +215,9 @@ body {
   position: sticky; top: 0; z-index: 50;
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--s3); padding: 10px 14px;
+  /* the fixed safety layer owns the top-right corner; keep header content out
+   * from under it so nothing overlaps STOP ALL */
+  padding-right: 136px;
   padding-top: calc(10px + env(safe-area-inset-top));
   background: var(--glass-2);
   backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-sat));
@@ -240,17 +243,29 @@ body {
 .conn.open { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .conn.connecting { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .conn.closed, .conn.unauthorized { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+/* ── safety layer ──────────────────────────────────────
+ * z-index 200 sits above every overlay in this file (70 sheet backdrop,
+ * 80 drawer, 90 confirm sheet, 100 auth gate). The stop is reachable from
+ * every screen or it is not a stop. See components/EstopButton.tsx. */
+.estop-layer {
+  position: fixed; z-index: 200;
+  top: calc(8px + env(safe-area-inset-top)); right: 14px;
+  pointer-events: none;
+}
+.estop-layer .estop { pointer-events: auto; }
 .estop {
   border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  /* opaque: this button is read on top of drawers and sheets, not just the page */
+  background: color-mix(in srgb, var(--danger) 16%, var(--bg));
+  box-shadow: var(--shadow2);
   color: var(--danger); font-weight: 700; font-size: var(--fs-small);
   padding: 7px 12px; border-radius: var(--r3); cursor: pointer;
   transition: background var(--dur);
 }
-.estop:hover { background: color-mix(in srgb, var(--danger) 22%, transparent); }
+.estop:hover { background: color-mix(in srgb, var(--danger) 30%, var(--bg)); }
 @keyframes pulse { to { opacity: .72; } }
 .safety { font-size: var(--fs-small); font-weight: 700; }
-.safety.estop { color: var(--danger); border: none; background: none; }
+.safety.estop { color: var(--danger); border: none; background: none; box-shadow: none; }
 .safety.resume { color: var(--ok); }
 
 /* ── toast ─────────────────────────────────────────── */
@@ -446,6 +461,8 @@ body {
 .drawer-head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
   padding: var(--s4) var(--s5);
+  /* rescan / ✕ must not sit under the fixed STOP ALL */
+  padding-right: 150px;
   padding-top: calc(var(--s4) + env(safe-area-inset-top));
   border-bottom: 1px solid var(--border);
 }
@@ -900,6 +917,9 @@ body::before {
 /* the live bar keeps priority over the history on narrow cards */
 .joint .jbar { flex: 1 1 60px; }
 @media (max-width: 420px) {
+  .estop-layer .estop { padding: 6px 9px; font-size: var(--fs-tiny); }
+  .fleetbar { padding-right: 104px; }
+  .drawer-head { padding-right: 116px; }
   .jhist { flex-basis: 60px; min-width: 40px; }
 }
 
@@ -1014,3 +1034,17 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   font-size: var(--fs-small); line-height: 1.4; border-radius: var(--r2); padding: var(--s3) var(--s4);
   color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
+
+/* record screen: keyboard legend + role hint (product loop iter 9) */
+.rec-keys { opacity: 0.75; }
+.rec-keys kbd {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.18));
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  font: 600 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text, #e8eef6);
+}
+.rec-hint { opacity: 0.8; max-width: 60ch; }

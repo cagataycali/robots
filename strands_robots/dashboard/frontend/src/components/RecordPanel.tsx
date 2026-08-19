@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordApi'
 import CameraTile from './CameraTile'
@@ -9,9 +9,11 @@ import JointStrip from './JointStrip'
  * The leader arm drives the follower; the follower is what gets recorded.
  *
  * Session state lives on the backend (see lib/recordApi.ts) - this component
- * only renders it and sends intents, so a phone and a laptop can watch the
- * same session. While /api/record is unbuilt the api is an honest mock, and
- * the banner says so.
+ * only renders it and sends intents, and it POLLS while a session is open, so
+ * a phone and a laptop really do watch the same session (frame counts tick,
+ * a stop pressed on one device appears on the other). Space starts/stops an
+ * episode and X redoes a bad one - collection is a two-handed job and the
+ * operator's eyes are on the arms, not the pointer.
  */
 export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose: () => void }) {
   const peerIds = peers.map(p => p.peer_id)
@@ -38,6 +40,25 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
     return () => { alive = false }
   }, [])
 
+  // Poll while a session is open: frame counts tick during an episode and a
+  // second device (the phone next to the arms) stays in sync. One request in
+  // flight at a time; the mock answers from memory so polling it is free.
+  const sRef = useRef(s); sRef.current = s
+  useEffect(() => {
+    if (!api || !s?.dataset) return
+    let alive = true
+    let pending = false
+    const t = setInterval(() => {
+      if (pending) return
+      pending = true
+      api.session()
+        .then(sess => { if (alive) setS(sess) })
+        .catch(() => { /* a blip; the next tick retries */ })
+        .finally(() => { pending = false })
+    }, 1000)
+    return () => { alive = false; clearInterval(t) }
+  }, [api, s?.dataset])
+
   const run = async (fn: () => Promise<RecordSession>) => {
     if (busy) return
     setBusy(true); setErr(null)
@@ -45,10 +66,42 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
     setBusy(false)
   }
 
+  // Collection is a two-handed job - eyes on the arms, not the pointer.
+  // Space: start / stop-and-keep. X: redo (throw the take away). Only while
+  // a session is open, and never while typing in a field.
+  const runRef = useRef(run); runRef.current = run
+  const apiRef = useRef(api); apiRef.current = api
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const cur = sRef.current
+      const a = apiRef.current
+      if (!a || !cur?.dataset) return
+      const el = e.target as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return
+      if (e.code === 'Space') {
+        e.preventDefault()
+        void runRef.current(() => (cur.phase === 'recording' ? a.stopEpisode() : a.startEpisode()))
+      } else if (e.key === 'x' || e.key === 'X') {
+        if (cur.phase !== 'recording') return
+        e.preventDefault()
+        void runRef.current(() => a.redoEpisode())
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
-  const kept = s?.episodes.filter(e => !e.discarded).length ?? 0
   const open = !!s?.dataset
   const recording = s?.phase === 'recording'
+  // While recording, the last episode entry is the take in flight - its frame
+  // count ticking is the only proof data is actually being captured. It is
+  // not "kept" until stop saves it.
+  const finished = s ? (recording ? s.episodes.slice(0, -1) : s.episodes) : []
+  const kept = finished.filter(e => !e.discarded).length
+  const liveFrames = recording && s!.episodes.length > 0
+    ? s!.episodes[s!.episodes.length - 1].frames
+    : null
 
   return (
     <div className="train-sheet" role="dialog" aria-label="Record episodes">
@@ -59,7 +112,7 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
 
       {api?.mock && (
         <div className="toast warn">
-          The backend has no /api/record yet — this is a rehearsal. Nothing is written to disk.
+          This backend has no /api/record (older server?) — this is a rehearsal. Nothing is written to disk.
         </div>
       )}
 
@@ -81,12 +134,12 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
                    onChange={e => set('task', e.target.value)} />
           </label>
           <div className="train-row">
-            <label className="field"><span>leader (you move this one)</span>
+            <label className="field"><span>leader — you move this one</span>
               <select value={form.leader} onChange={e => set('leader', e.target.value)}>
                 {peerIds.map(p => <option key={p}>{p}</option>)}
               </select>
             </label>
-            <label className="field"><span>follower (gets recorded)</span>
+            <label className="field"><span>follower — gets recorded</span>
               <select value={form.follower} onChange={e => set('follower', e.target.value)}>
                 {peerIds.map(p => <option key={p}>{p}</option>)}
               </select>
@@ -95,6 +148,10 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
               <input inputMode="numeric" value={form.target_episodes}
                      onChange={e => set('target_episodes', e.target.value)} />
             </label>
+          </div>
+          <div className="train-msg rec-hint">
+            not sure which is which? the leader is the lighter 7.4V arm (no gearbox load —
+            easy to move by hand); the follower is the stronger 12V arm that mirrors it.
           </div>
           <div className="train-actions">
             <button className="btn go wide" type="submit"
@@ -123,7 +180,7 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
                   ↺ redo
                 </button>
                 <button className="btn go wide rec-live" onClick={() => void run(() => api!.stopEpisode())} disabled={busy}>
-                  ⏹ stop &amp; keep
+                  ⏹ stop &amp; keep{liveFrames !== null ? ` · ${liveFrames}f` : ''}
                 </button>
               </>
             )}
@@ -133,6 +190,9 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
               ? `recording — drive ${s.follower} with ${s.leader}, then stop (or redo to throw this one away)`
               : 'start when both arms are in position'}
           </div>
+          <div className="train-msg rec-keys" aria-hidden="true">
+            <kbd>space</kbd> {recording ? 'stop & keep' : 'start'} · <kbd>X</kbd> redo
+          </div>
         </div>
       )}
 
@@ -140,7 +200,9 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
 
       {open && s && s.episodes.length > 0 && (
         <div className="rec-strip" role="list" aria-label="recorded episodes">
-          {s.episodes.slice().reverse().map(ep => (
+          {/* the last entry while recording is the take in flight - the live
+              counter on the stop button represents it, not a card */}
+          {(recording ? s.episodes.slice(0, -1) : s.episodes).slice().reverse().map(ep => (
             <div key={ep.index} role="listitem" className={`rec-ep${ep.discarded ? ' dead' : ''}`}>
               <div className="rec-ep-head">
                 <b>ep {ep.index}</b>
