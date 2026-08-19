@@ -69,6 +69,37 @@ def is_secret(key: str) -> bool:
     return bool(SECRET_RX.search(key))
 
 
+#: .env is read by every process the dashboard spawns, so an unrestricted
+#: upsert is configuration -> code execution (PATH=/tmp/evil hijacks python/
+#: ffmpeg for every child). Only variables the dashboard actually owns are
+#: writable from the UI (Q13).
+ALLOWED_ENV_PREFIXES: tuple[str, ...] = ("STRANDS_", "DASHBOARD_", "VOICE_", "HF_")
+ALLOWED_ENV_KEYS = frozenset(INTERESTING_ENV)
+ENV_VALUE_MAX_LEN = 4096
+
+
+def env_key_allowed(key: str) -> bool:
+    return key in ALLOWED_ENV_KEYS or key.startswith(ALLOWED_ENV_PREFIXES)
+
+
+def env_entry_error(key: str, value: str) -> str | None:
+    """Why this key/value pair must not reach the env file, or None if fine."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key or ""):
+        return f"invalid env key {key!r}"
+    if not env_key_allowed(key):
+        return (
+            f"env key {key!r} is not dashboard-managed - allowed: "
+            f"{', '.join(ALLOWED_ENV_PREFIXES)}* and {', '.join(sorted(ALLOWED_ENV_KEYS))}"
+        )
+    if any(ord(ch) < 0x20 for ch in value):
+        # a newline in a VALUE writes a second variable on its own line,
+        # defeating any key allow-list - so control chars are refused outright.
+        return f"env value for {key} contains control characters"
+    if len(value) > ENV_VALUE_MAX_LEN:
+        return f"env value for {key} exceeds {ENV_VALUE_MAX_LEN} characters"
+    return None
+
+
 def mask(value: str) -> str:
     """``sk-abc...xyz`` -> ``sk-••••••yz``. Short values are fully hidden."""
     if not value:
@@ -106,9 +137,17 @@ def read_env_file() -> dict[str, str]:
 
 
 def upsert_env_file(updates: dict[str, str]) -> list[str]:
-    """Order-preserving upsert into the env file. Returns the keys written."""
+    """Order-preserving upsert into the env file. Returns the keys written.
+
+    Belt-and-braces: refuses disallowed keys and control characters itself,
+    so no future caller can reintroduce Q13 by skipping apply()'s checks.
+    """
     if not updates:
         return []
+    for key, value in updates.items():
+        problem = env_entry_error(str(key), str(value))
+        if problem:
+            raise ValueError(problem)
     lines: list[str] = []
     if ENV_FILE.exists():
         lines = ENV_FILE.read_text().splitlines()
@@ -384,13 +423,15 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, str] = {}
         for key, value in raw_env.items():
             key = str(key).strip()
-            if not key or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-                errors.append(f"invalid env key {key!r}")
-                continue
             if looks_masked(value):
                 skipped_masked.append(key)
                 continue
-            updates[key] = "" if value is None else str(value)
+            value_str = "" if value is None else str(value)
+            problem = env_entry_error(key, value_str)
+            if problem:
+                errors.append(problem)
+                continue
+            updates[key] = value_str
         env_written = upsert_env_file(updates)
         for key, value in updates.items():
             os.environ[key] = value
