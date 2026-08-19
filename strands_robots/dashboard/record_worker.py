@@ -293,8 +293,23 @@ class RecordWorker:
             except Exception as exc:  # noqa: BLE001
                 self._backend.close()
                 return {"ok": False, "detail": f"dataset saved but upload failed: {exc}"}
+        # The finished dataset's own completion sentence must carry the defect
+        # it was born with. A "10 episodes kept" toast is a receipt, and a
+        # receipt that omits "this dataset has no camera channel" sends the
+        # operator to the training screen to discover it there.
+        notice = getattr(self._backend, "camera_notice", None)
         self._backend.close()
-        return {"ok": True, "detail": detail, "discarded_indices": [e.index for e in dropped]}
+        result = {"ok": True, "detail": detail, "discarded_indices": [e.index for e in dropped]}
+        if notice:
+            missing = ", ".join(notice.get("missing") or ())
+            result["camera_notice"] = notice
+            result["detail"] = (
+                f"{detail} — WITHOUT camera(s) {missing}: "
+                + ("no image channel at all, so this dataset cannot train a visual policy"
+                   if not notice.get("present")
+                   else "those image channels are missing from every episode")
+            )
+        return result
 
     # ------------------------------------------------------------- helpers
 

@@ -67,3 +67,35 @@ class TestTheSessionCarriesIt:
         # A backend that DID measure a missing camera surfaces it unchanged.
         backend.camera_notice = camera_verdict({"top": {}, "wrist": {}}, ["top"])
         assert worker.session()["camera_notice"]["missing"] == ["wrist"]
+
+
+class TestTheFinishedDatasetSaysItToo:
+    """A receipt that omits the defect sends the operator to training to find it."""
+
+    def _worker_with(self, notice):
+        from tests.test_dashboard_record_worker import make_worker
+
+        worker, backend, recorder, _clock = make_worker()
+        backend.camera_notice = notice
+        return worker, recorder
+
+    def test_close_detail_names_the_missing_cameras_and_the_consequence(self):
+        worker, _rec = self._worker_with(camera_verdict({"top": {}, "wrist": {}}, []))
+        result = worker.close()
+        assert result["ok"] is True
+        assert "top, wrist" in result["detail"]
+        assert "cannot train a visual policy" in result["detail"]
+        assert result["camera_notice"]["missing"] == ["top", "wrist"]
+
+    def test_a_partial_loss_is_not_reported_as_total(self):
+        worker, _rec = self._worker_with(camera_verdict({"top": {}, "wrist": {}}, ["top"]))
+        detail = worker.close()["detail"]
+        assert "wrist" in detail
+        assert "cannot train a visual policy" not in detail, "one live camera is not zero"
+
+    def test_a_healthy_session_keeps_its_plain_receipt(self):
+        worker, _rec = self._worker_with(None)
+        result = worker.close()
+        assert "camera_notice" not in result
+        assert "WITHOUT" not in result["detail"]
+        assert result["detail"].endswith("episode(s) kept")
