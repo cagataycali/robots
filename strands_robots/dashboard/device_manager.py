@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -834,6 +835,35 @@ class AutoSpawnWatcher:
 SPAWNABLE_MODES = ("sim", "real")
 
 
+#: What a caller-chosen peer_id may look like. A peer_id is a ZENOH KEY segment,
+#: not a label: ``*`` and ``**`` are key-expression WILDCARDS there, so a peer
+#: named ``*`` shadows the whole fleet's key space; ``/`` is the hierarchy
+#: separator and splices arbitrary levels into every topic built from the id;
+#: ``{}``/``$`` have DSL meanings in key expressions too. The allow-list is the
+#: character set every id this codebase generates already uses.
+_PEER_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+
+
+def validate_peer_id(peer_id: Any) -> str | None:
+    """Refusal reason for a caller-supplied peer_id, or None if acceptable.
+
+    Only judges ids a CALLER chose (``None`` -- "generate one for me" -- is
+    fine). Found as Q3's unprobed corollary: the route accepted ``peer_id``
+    verbatim into zenoh key expressions, where ``*`` is a wildcard, not a name.
+    """
+    if peer_id is None:
+        return None
+    if not isinstance(peer_id, str):
+        return f"peer_id must be a string, got {type(peer_id).__name__}"
+    if not _PEER_ID_RE.match(peer_id):
+        return (
+            f"peer_id {peer_id!r} refused: it becomes a zenoh key segment, so it must "
+            f"match [A-Za-z0-9._:-]{{1,64}} - '*' or '/' there rewrites the fleet's "
+            f"key space rather than naming a peer"
+        )
+    return None
+
+
 def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, str]:
     """Normalise and check what a spawn was asked for, BEFORE any process exists.
 
@@ -1336,6 +1366,12 @@ class DeviceManager:
         if isinstance(checked, dict):
             return checked
         robot_name, mode = checked
+
+        # A caller-chosen peer_id becomes a zenoh key segment (see
+        # validate_peer_id): '*' there is a fleet-wide wildcard, not a name.
+        bad_id = validate_peer_id(peer_id)
+        if bad_id:
+            return {"error": bad_id}
 
         if mode == "real" and not port:
             return {"error": "port required for mode=real"}
