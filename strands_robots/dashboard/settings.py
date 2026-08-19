@@ -141,13 +141,38 @@ def _coerce(section: str, key: str, value: Any, strict: bool = False) -> Any:
     except CoercionError:
         if strict:
             raise
+        # Lenient degrade (env/CLI/file paths) must still degrade to the key's
+        # own SHAPE: a list key that fell back to a scalar poisons every
+        # comma-split consumer, which is worse than the empty default.
+        if (section, key) in _LIST_KEYS:
+            return []
         return None if key in ("temperature", "camera_hz", "max_tokens", "port") else value
+
+
+#: What "true" and "false" may be spelled like. Anything else is a typo the
+#: strict path reports rather than resolving to False (Q15: _as_bool("banana")
+#: silently disabled a setting the operator believed they turned on).
+_TRUTHY = ("1", "true", "yes", "on")
+_FALSY = ("0", "false", "no", "off", "")
 
 
 def _coerce_strict(section: str, key: str, value: Any) -> Any:
     if (section, key) in _LIST_KEYS:
+        # Q15: cors_origins=5 became [] - silently REPLACING a security posture
+        # with a different one. A list key takes a list or a comma-separated
+        # string; any other type is the client's bug, reported as such.
+        if value is not None and not isinstance(value, (str, list, tuple)):
+            raise CoercionError(
+                f"{key}: expected a list or comma-separated string, got {type(value).__name__}"
+            )
         return _as_list(value)
     if key in ("trust_remote_code",):
+        if not isinstance(value, bool):
+            spelled = str(value).strip().lower()
+            if spelled not in _TRUTHY and spelled not in _FALSY:
+                raise CoercionError(
+                    f"{key}: {value!r} is not a boolean (use true/false)"
+                )
         return _as_bool(value)
     if key == "temperature":
         if value in (None, ""):
@@ -179,6 +204,14 @@ def _coerce_strict(section: str, key: str, value: Any) -> Any:
         return out
     if value is None:
         return None
+    # The string fallback (model_id, auth_token, backend, ...) must not repr a
+    # structure into a value: str({'a': 1}) as auth_token locks the operator
+    # out of the UI that set it (Q15). Numbers are fine - ids are sometimes
+    # typed unquoted - but containers are always a client bug.
+    if isinstance(value, (dict, list, tuple, set)):
+        raise CoercionError(
+            f"{key}: expected a string, got {type(value).__name__}"
+        )
     return str(value)
 
 
