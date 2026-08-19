@@ -265,6 +265,16 @@ body {
   transition: background var(--dur);
 }
 .estop:hover { background: color-mix(in srgb, var(--danger) 30%, var(--bg)); }
+/* The link is down, so pressing this may not reach the arms. Deliberately still
+   RED and still the biggest thing in the corner - dimming it to a grey ghost
+   would make the operator hunt for the brake at the exact moment they need it.
+   The dashed edge is the only difference the eye must decode, and the title
+   carries the sentence (see lib/linkHealth). */
+.estop.unreachable {
+  border-style: dashed;
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg));
+}
 @keyframes pulse { to { opacity: .72; } }
 .safety { font-size: var(--fs-small); font-weight: 700; }
 .safety.estop { color: var(--danger); border: none; background: none; box-shadow: none; }

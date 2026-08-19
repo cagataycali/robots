@@ -15,17 +15,29 @@
  * The wrapper is pointer-events:none so this layer intercepts nothing but the
  * button itself.
  */
-export default function EstopButton({ onClick }: { onClick: () => void }) {
+/**
+ * `posture` (lib/linkHealth.estopPosture) marks the button when this page cannot
+ * currently deliver the stop. It is NEVER disabled: the verdict is a snapshot,
+ * the socket may be back by the time the finger lands, and a disabled brake is
+ * a brake that refuses a click it might have delivered. The degraded style +
+ * title say what will happen and name the arms' power switch instead.
+ */
+export default function EstopButton({
+  onClick, posture,
+}: { onClick: () => void; posture?: { degraded: boolean; title: string } }) {
+  const degraded = !!posture?.degraded
   return (
     <div className="estop-layer">
       <button
-        className="estop"
+        className={`estop${degraded ? ' unreachable' : ''}`}
         onClick={onClick}
-        title="Stop every robot on the mesh - keyboard shortcut: ."
-        aria-label="Emergency stop: stop every robot on the mesh"
+        title={posture?.title ?? 'Stop every robot on the mesh - keyboard shortcut: .'}
+        aria-label={degraded
+          ? 'Emergency stop: the link is down, so this may not reach the robots'
+          : 'Emergency stop: stop every robot on the mesh'}
         aria-keyshortcuts="."
       >
-        🛑 STOP ALL
+        {degraded ? '🛑 STOP ALL ⚠' : '🛑 STOP ALL'}
       </button>
     </div>
   )

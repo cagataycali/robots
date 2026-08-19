@@ -13,6 +13,10 @@ export interface MeshStore {
   activity: ActivityEntry[]
   /** true once a snapshot has arrived - "no robots" only means something then. */
   loaded: boolean
+  /** epoch ms of the last frame on the socket (undefined = none yet) */
+  lastEventAt?: number
+  /** true once the socket has opened at least once this session */
+  everOpen: boolean
 }
 
 const ACTIVITY_CAP = 200
@@ -26,6 +30,11 @@ export function useMesh(): MeshStore {
   const [mesh, setMesh] = useState<MeshInfo>({})
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [loaded, setLoaded] = useState(false)
+  // When the last frame arrived, and whether the socket ever opened this
+  // session: lib/linkHealth needs both to tell ordinary startup from a
+  // reconnect, and to say how old a frozen fleet view is IN SECONDS.
+  const [lastEventAt, setLastEventAt] = useState<number | undefined>(undefined)
+  const [everOpen, setEverOpen] = useState(false)
   const retryRef = useRef(0)
 
   useEffect(() => {
@@ -37,7 +46,7 @@ export function useMesh(): MeshStore {
       ws = new WebSocket(wsUrl('/ws/mesh'))
       setConn('connecting')
 
-      ws.onopen = () => { setConn('open'); retryRef.current = 0 }
+      ws.onopen = () => { setConn('open'); setEverOpen(true); retryRef.current = 0 }
       ws.onclose = (ev) => {
         // 1008 is the server refusing our token. Retrying forever just hides a
         // fixable problem behind a spinner.
@@ -51,6 +60,9 @@ export function useMesh(): MeshStore {
       ws.onmessage = (msg) => {
         let ev: MeshEvent
         try { ev = JSON.parse(msg.data) } catch { return }
+        // Batched with the state update below in the same handler, so this is
+        // one render, not two.
+        setLastEventAt(Date.now())
         switch (ev.type) {
           case 'snapshot':
             setDashboardId(ev.dashboard_peer_id)
@@ -109,5 +121,5 @@ export function useMesh(): MeshStore {
     return () => { closed = true; clearInterval(sweep); ws?.close() }
   }, [])
 
-  return { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded }
+  return { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded, lastEventAt, everOpen }
 }

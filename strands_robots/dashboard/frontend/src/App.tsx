@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMesh } from './lib/useMesh'
 import { usePwa } from './lib/usePwa'
+import { linkHealth, estopPosture } from './lib/linkHealth'
 import { ConfigProvider } from './lib/useConfig'
 import { backendKey, backendLabel, setAuthToken } from './lib/endpoints'
 import FleetBar from './components/FleetBar'
@@ -30,7 +31,7 @@ function initialPanel(): Panel {
 }
 
 function Dashboard() {
-  const { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded } = useMesh()
+  const { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded, lastEventAt, everOpen } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
   const [settingsTab, setSettingsTab] = useState<'mesh' | undefined>(undefined)
@@ -81,6 +82,31 @@ function Dashboard() {
     if (detail && !peers[detail]) setDetail(null)
   }, [detail, peers])
 
+  // Re-evaluated on a 1s tick ONLY while something is wrong, so the "frozen
+  // (Ns old)" number keeps counting instead of freezing with the view it
+  // describes. A healthy link does no work here.
+  const [linkTick, setLinkTick] = useState(0)
+  const link = linkHealth({
+    conn, browserOnline: pwa.online, lastEventAt, everOpen,
+    // list.length, NOT the non-stale count: what is RENDERED is what can
+    // mislead. Measured — when the stream dies quietly the stale sweep drops
+    // the non-stale count to 0, so gating on it went silent at the exact moment
+    // the screen was worst (2 frozen cards, no banner, a normal-looking brake).
+    peerCount: list.length, now: Date.now(),
+  })
+  // The tick runs ALWAYS, and that is the whole point. I first gated it on the
+  // verdict being unhealthy and MEASURED the result: with the link healthy
+  // nothing schedules a render, so when the stream went quiet the component
+  // never re-rendered, never recomputed the verdict, and sat there showing a
+  // live-looking fleet with a normal brake — until an unrelated click forced a
+  // render 23 s later. A watchdog gated on its own subject cannot fire. 1 Hz is
+  // free next to the telemetry renders a healthy fleet already causes.
+  useEffect(() => {
+    const id = setInterval(() => setLinkTick(t => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  void linkTick
+
   return (
     <div className="stage">
       <FleetBar
@@ -102,7 +128,7 @@ function Dashboard() {
       />
 
       {/* Its own layer, so no overlay can ever swallow the stop. */}
-      <EstopButton onClick={() => setPanel('estop')} />
+      <EstopButton onClick={() => setPanel('estop')} posture={estopPosture(link)} />
 
       {pwa.needRefresh && (
         <div className="toast">
@@ -112,9 +138,14 @@ function Dashboard() {
         </div>
       )}
 
-      {!pwa.online && (
-        <div className="toast warn">
-          This device is offline — the fleet view is a cached snapshot and commands will fail.
+      {/* One judgment for all the ways this page can stop being attached to the
+          fleet (lib/linkHealth): this device's network, a refused token, a dead
+          API, a mute socket. The old toast covered only the first — yet the
+          measured outage was the API dying twice in 30 minutes, which showed a
+          frozen fleet and a brake that looked fine. */}
+      {link.headline && (
+        <div className={`toast ${link.commandsWork ? '' : 'warn'}`} role="status">
+          <b>{link.headline}</b> {link.detail}
         </div>
       )}
 
@@ -194,7 +225,8 @@ function Dashboard() {
       <ErrorBoundary label="the devices screen" onDismiss={() => setPanel(null)}>
         <DevicePanel open={panel === 'devices'} onClose={() => setPanel(null)} />
       </ErrorBoundary>
-      <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)} />
+      <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)}
+        linkWarning={link.commandsWork ? null : link.estopReason} />
       {panel === 'training' && (
         <ErrorBoundary label="the training screen" onDismiss={() => setPanel(null)}>
           <TrainingTab onClose={() => setPanel(null)} />

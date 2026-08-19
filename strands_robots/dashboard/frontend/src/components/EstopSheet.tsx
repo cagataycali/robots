@@ -11,7 +11,16 @@ import { post } from '../lib/endpoints'
  * open until every live peer is accounted for, and stays *red* while any peer is
  * unconfirmed.
  */
-export default function EstopSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function EstopSheet({
+  open, onClose, linkWarning,
+}: {
+  open: boolean
+  onClose: () => void
+  /** Set when this page cannot currently deliver the stop (lib/linkHealth). The
+   *  person who just pressed a dashed STOP ALL is owed the reason HERE, before
+   *  the second click, not in a toast after it fails. */
+  linkWarning?: string | null
+}) {
   const [firing, setFiring] = useState(false)
   const [result, setResult] = useState<EstopResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -68,6 +77,13 @@ export default function EstopSheet({ open, onClose }: { open: boolean; onClose: 
               operator override code. A peer that is wedged or fully off the mesh still needs
               the hardware e-stop.
             </p>
+            {linkWarning && (
+              <p className="hint warn">
+                ⚠ {linkWarning} Pressing STOP ALL is still worth it — it is sent the moment the
+                link returns — but do not wait for it: the arms’ power switch is the only brake
+                that does not go through this page.
+              </p>
+            )}
             <p className="hint">
               tip: <kbd>.</kbd> opens this sheet from anywhere — it works even when a drawer
               or dialog is covering the button.
