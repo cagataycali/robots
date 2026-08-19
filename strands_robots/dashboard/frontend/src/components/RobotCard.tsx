@@ -89,6 +89,7 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
 
       <RunForm
         peerId={peer.peer_id}
+        presence={p}
         running={running}
         busy={busy}
         disabled={offline}

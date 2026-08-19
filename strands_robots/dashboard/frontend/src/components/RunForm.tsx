@@ -4,6 +4,9 @@ import { post } from '../lib/endpoints'
 import CheckpointPicker from './CheckpointPicker'
 import { useConfig } from '../lib/useConfig'
 import { peekDeployIntent, clearDeployIntent, type DeployIntent } from '../lib/deployIntent'
+import { runRisk } from '../lib/runRisk'
+import RunConfirm from './RunConfirm'
+import type { Presence } from '../types'
 
 export interface RunBody {
   instruction: string
@@ -14,6 +17,8 @@ export interface RunBody {
 
 interface Props {
   peerId: string
+  /** Used only to judge whether ▶ moves metal - see lib/runRisk.ts. */
+  presence?: Presence | null
   running: boolean
   busy: boolean
   disabled?: boolean
@@ -43,7 +48,7 @@ interface ValidateResult {
  * (`wire_fields`); the provider's remaining kwargs are listed as
  * "local only" rather than rendered as inputs that get silently dropped.
  */
-export default function RunForm({ peerId, running, busy, disabled, onRun, onStop }: Props) {
+export default function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop }: Props) {
   const { policies } = useConfig()
   const [providerName, setProviderName] = useState('mock')
   const [instruction, setInstruction] = useState('')
@@ -53,6 +58,9 @@ export default function RunForm({ peerId, running, busy, disabled, onRun, onStop
   const [validating, setValidating] = useState(false)
   const [validation, setValidation] = useState<ValidateResult | null>(null)
   const [staged, setStaged] = useState<DeployIntent | null>(null)
+  // A run body held back for confirmation: non-null means the sheet is up and
+  // NOTHING has been sent yet.
+  const [pending, setPending] = useState<RunBody | null>(null)
 
   // A deploy intent staged from the Training tab prefills THIS form - once,
   // visibly, and only into fields; running still takes the human pressing
@@ -132,6 +140,12 @@ export default function RunForm({ peerId, running, busy, disabled, onRun, onStop
       }
     }
     setValidation(null)
+    // A real arm gets a confirmation naming itself first; sim runs stay a
+    // single click, because there is nothing to be careful about.
+    if (runRisk(presence).physical) {
+      setPending(body)
+      return
+    }
     onRun(body)
   }
 
@@ -153,8 +167,24 @@ export default function RunForm({ peerId, running, busy, disabled, onRun, onStop
   const locked = provider && !provider.wire_safe
   const blocked = !!disabled || busy
 
+  const modelKey = wireFields.find(
+    f => f.key === 'pretrained_name_or_path' || f.key === 'model_path')?.key
+  const modelValue = modelKey ? String(value(modelKey, '') || '').trim() : ''
+
   return (
     <div className="runform">
+      {pending && (
+        <RunConfirm
+          peerId={peerId}
+          risk={runRisk(presence)}
+          instruction={pending.instruction}
+          provider={providerName}
+          model={modelValue || null}
+          durationS={duration}
+          onCancel={() => setPending(null)}
+          onConfirm={() => { const body = pending; setPending(null); onRun(body) }}
+        />
+      )}
       {staged && (
         <div className="deploy-banner">
           <span>🚀 prefilled from {staged.source} — review below, then press Run. Nothing has started.</span>
