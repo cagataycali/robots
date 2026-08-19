@@ -61,6 +61,21 @@ export default function RobotCard({ peer, onOpen, onBusyChange }: {
             {peer.role}
           </span>
         )}
+        {/* U15: a robot the user started from their own script is a full
+            citizen here - same card, same telemetry, same commands. The one
+            thing it cannot have is a local child process, so this marker
+            exists to say WHY logs, camera reconfigure and despawn are missing
+            for it, before those are reached. Robots only: labelling every
+            gateway "started elsewhere" would be noise, and none of the three
+            gaps apply to one. */}
+        {type === 'robot' && peer.origin === 'external' && (
+          <span className="originbadge"
+                title={'started outside this dashboard (your own script, or another machine).\n'
+                  + 'Everything on this card works normally. Only the three things that need a local\n'
+                  + 'child process are unavailable: logs, camera reconfigure and despawn.'}>
+            external
+          </span>
+        )}
         {p?.hostname && <span className="host">{p.hostname}</span>}
         {p?.connected === false && type === 'robot' && (
           <span className="badge warn" title="peer is online but its hardware is not connected">hw off</span>

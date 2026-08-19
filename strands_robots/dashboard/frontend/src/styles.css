@@ -1269,6 +1269,15 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 }
 /* Never measured reads as an invitation, not as a fault. */
 .rolebadge.unmeasured { font-style: italic; color: var(--dim); background: transparent; }
+/* U15 origin marker. Deliberately the quietest pill on the card: "you started
+   this one yourself" is a fact about a process, not a fault and not a warning,
+   so it must not compete with hw-off or the status ribbon for attention. */
+.originbadge {
+  font-size: var(--fs-micro); letter-spacing: .05em; text-transform: uppercase;
+  padding: 2px var(--s3); border-radius: var(--rpill);
+  border: 1px dashed var(--border-hi); color: var(--dim);
+  background: transparent; white-space: nowrap; cursor: help;
+}
 .boardlist .small { font-size: var(--fs-tiny); }
 .boardlist .warn, p.warn { color: var(--amber); }
 

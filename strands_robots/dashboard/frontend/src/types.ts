@@ -45,6 +45,14 @@ export interface Peer {
   role?: string | null
   role_volts?: number | null
   role_source?: string | null
+  /** Who STARTED this peer's process: 'managed' = this dashboard spawned it,
+   *  'external' = it arrived on its own (the user's own Robot(..., mesh=True)
+   *  script, or a peer on another box). Absent on a server older than the
+   *  origin field - render nothing rather than guessing, since claiming
+   *  'external' for every peer would be a lie on a managed fleet.
+   *  U15: this is the ONLY thing that may differ. It says nothing about the
+   *  robot's health and gates no control. */
+  origin?: 'managed' | 'external' | string | null
   presence?: Presence
   state?: PeerState
   stream?: StreamStep
