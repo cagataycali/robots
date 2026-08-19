@@ -21,13 +21,19 @@ from __future__ import annotations
 from statistics import median
 from typing import Any, Mapping
 
-#: Above this, the bus is on the 12V supply → follower.
+#: Above this, the bus is on the 12V supply → follower. Measured live on this
+#: rig: a powered SO-101 follower reads 12.6-12.7V on every servo.
 FOLLOWER_MIN_V = 9.0
-#: Below this, nothing is properly powered: a 7.4V pack and a dead pack are NOT
-#: distinguishable by a number near zero, so the verdict must be "unpowered",
-#: never "leader". Calling an unpowered follower a leader is how an arm ends up
-#: being driven as a teleoperator.
-POWERED_MIN_V = 5.5
+#: Below this the arm is NOT on its own supply. Measured live: an SO-101 whose
+#: power supply was off still answered 5.5-5.6V on all six servos - the USB/UART
+#: logic rail, not a battery. That is why this floor is 6.5V and not 5.5V: a
+#: 7.4V pack reads 6.6-8.4V, so 5.5V sits below every real supply, and the first
+#: version of this threshold (5.5) called an UNPOWERED arm "leader" by a tenth
+#: of a volt. Guessing a role there is how a follower gets driven as a
+#: teleoperator - the exact swap this package exists to catch.
+POWERED_MIN_V = 6.5
+#: What an unpowered Feetech bus reads through USB alone, for the message.
+USB_RAIL_V = 5.5
 #: Wider than any real supply ripple; a spread this large means the readings are
 #: not describing one bus.
 SPREAD_MAX_V = 1.5
@@ -41,10 +47,17 @@ def classify_role(volts: float | None) -> tuple[str, str]:
         return "follower", f"{volts:.1f}V bus — the 12V supply, which is the follower arm"
     if volts >= POWERED_MIN_V:
         return "leader", f"{volts:.1f}V bus — the 7.4V supply, which is the leader arm"
+    if volts >= USB_RAIL_V - 0.5:
+        return (
+            "unpowered",
+            f"{volts:.1f}V — that is the USB logic rail, not a supply: this arm's power "
+            f"is off. A leader's 7.4V pack reads 6.6-8.4V and a follower's 12V reads "
+            f"10.5-12.7V, so the role cannot be read until it is powered",
+        )
     return (
         "unpowered",
         f"{volts:.1f}V — this arm is not on its power supply, so its role cannot be read "
-        f"(an unpowered follower reads like nothing at all, not like a leader)",
+        f"(an unpowered arm reads like nothing at all, not like a leader)",
     )
 
 
@@ -94,7 +107,7 @@ def role_verdict(readings: Mapping[Any, float | None]) -> dict[str, Any]:
         "motors_answered": len(good),
     }
     if role == "unpowered":
-        verdict["remedy"] = "connect the arm's power supply and retry"
+        verdict["remedy"] = "switch on / plug in this arm's power supply, then retry"
     return verdict
 
 

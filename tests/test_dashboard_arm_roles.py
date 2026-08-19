@@ -36,11 +36,28 @@ def test_seven_four_volt_bus_is_the_leader():
 
 
 def test_an_unpowered_arm_is_never_called_a_leader():
-    """A dead pack reads near zero. Calling that "leader" is how a follower
-    ends up being driven as a teleoperator."""
-    role, reason = ar.classify_role(0.4)
+    """MEASURED LIVE, and it corrected this module: an SO-101 with its power
+    supply OFF answers 5.5-5.6V on all six servos - the USB logic rail, not a
+    battery near zero. The first threshold (5.5V floor) therefore called an
+    unpowered arm "leader" by a tenth of a volt, which is how a follower gets
+    driven as a teleoperator - the exact swap U2 exists to catch."""
+    role, reason = ar.classify_role(5.55)
     assert role == "unpowered"
-    assert "not on its power supply" in reason
+    assert "USB logic rail" in reason and "6.6-8.4V" in reason
+
+    # A genuinely dead bus is still unpowered, with the plainer sentence.
+    role, reason = ar.classify_role(0.4)
+    assert role == "unpowered" and "not on its power supply" in reason
+
+
+def test_the_live_readings_from_this_rig():
+    """The two real arms, verbatim from /api/devices/arm-role."""
+    arm2 = ar.role_verdict({"m1": 12.6, "m2": 12.6, "m3": 12.6, "m4": 12.7, "m5": 12.6, "m6": 12.7})
+    assert arm2["role"] == "follower" and arm2["volts"] == 12.6
+
+    arm1 = ar.role_verdict({"m1": 5.6, "m2": 5.6, "m3": 5.5, "m4": 5.5, "m5": 5.6, "m6": 5.5})
+    assert arm1["role"] == "unpowered", "5.55V must never read as a role"
+    assert "power supply" in arm1["remedy"]
 
 
 def test_no_reading_is_unknown_not_a_guess():
@@ -65,6 +82,9 @@ def test_a_clean_twelve_volt_bus_reads_follower():
 
 def test_a_clean_leader_bus_reads_leader():
     assert ar.role_verdict({"m1": 7.5, "m2": 7.4, "m3": 7.5})["role"] == "leader"
+    # The bottom of a real 7.4V pack still reads leader; the USB rail does not.
+    assert ar.role_verdict({"m1": 6.7})["role"] == "leader"
+    assert ar.role_verdict({"m1": 6.4})["role"] == "unpowered"
 
 
 def test_silence_is_a_refusal_with_a_remedy():
