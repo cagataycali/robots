@@ -55,17 +55,49 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ANN001, ARG001
 
     from tests.session_leak import leak_report
 
-    for line in leak_report(session_open=session_open, threads=threads):
-        print(line)
+    lines = leak_report(session_open=session_open, threads=threads)
+    # `print` here is swallowed: global capture is still installed during
+    # sessionfinish, so the first version of this guard was invisible in exactly
+    # the run it was meant to warn. Write through the terminal reporter (the
+    # plugin that prints the summary the user does see), and fall back to
+    # suspending capture only if that plugin is absent.
+    reporter = getattr(session.config, "pluginmanager", None)
+    reporter = reporter.get_plugin("terminalreporter") if reporter else None
+    if reporter is not None:
+        for line in lines:
+            reporter.write_line(line)
+    elif lines:
+        capman = session.config.pluginmanager.get_plugin("capturemanager") if session.config else None
+        if capman is not None:
+            capman.suspend_global_capture(in_=True)
+        try:
+            for line in lines:
+                print(line)
+        finally:
+            if capman is not None:
+                capman.resume_global_capture()
 
     if session_open and _mesh_session is not None:
         # release_session() is refcounted and a leaked session has lost count of
         # its owners, so close the object itself - this hook runs after the last
         # test, when nothing legitimate can still be publishing.
+        closed: object = "no session handle"
         try:
             live = _mesh_session.current_session()
             if live is not None:
                 live.close()
+                closed = "closed"
+        except Exception as exc:  # a close that fails must not be reported as success
+            closed = f"close FAILED: {type(exc).__name__}: {exc}"
+        # Closing the handle does not clear the module's global, so
+        # current_session() would keep handing out a DEAD session to whatever
+        # imported it next — a failure that looks like a transport fault rather
+        # than a leak. Reset the global too, and say so.
+        try:
+            _mesh_session._SESSION = None  # noqa: SLF001 - test-only hygiene
+            _mesh_session._SESSION_REFS = 0  # noqa: SLF001
         except Exception:
             pass
+        if reporter is not None:
+            reporter.write_line(f"  -> leaked mesh session: {closed}, module global reset")
 
