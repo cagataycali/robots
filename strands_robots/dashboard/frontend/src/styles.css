@@ -123,6 +123,10 @@ body {
   transition: border-color var(--dur), color var(--dur);
 }
 .chip:hover { border-color: var(--border-hi); color: var(--text); }
+/* UX_REVIEW #10: a nav entry whose backend cannot actually do the thing. Amber,
+   dashed — the house language for "this works, but not for real". */
+.chip.rehearsal { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); border-style: dashed; }
+.chip.rehearsal:hover { color: var(--warn); border-color: var(--warn); }
 .chip.on { border-color: var(--accent); color: var(--accent); }
 .chip.static { cursor: default; }
 

@@ -5,6 +5,7 @@ import { linkHealth, estopPosture } from './lib/linkHealth'
 import { ConfigProvider } from './lib/useConfig'
 import { backendKey, backendLabel, setAuthToken } from './lib/endpoints'
 import FleetBar from './components/FleetBar'
+import { getRecordApi } from './lib/recordApi'
 import RobotCard from './components/RobotCard'
 import RobotDetail from './components/RobotDetail'
 import AgentDock from './components/AgentDock'
@@ -39,6 +40,11 @@ function Dashboard() {
   const [settingsTab, setSettingsTab] = useState<'mesh' | undefined>(undefined)
   const [detail, setDetail] = useState<string | null>(null)
   const [busyPeers, setBusyPeers] = useState<Record<string, boolean>>({})
+  /* UX_REVIEW #10: the record backend is probed ONCE per page load (lib/recordApi
+     caches it), so asking here costs nothing and lets the nav warn before the
+     click instead of after. null until the answer arrives — the nav must not
+     guess in either direction. */
+  const [recordMock, setRecordMock] = useState<boolean | null>(null)
 
   const list = useMemo(() => Object.values(peers)
     // Infrastructure peers are not robots: 'gateway' meshes (robot_mesh's
@@ -65,6 +71,11 @@ function Dashboard() {
   // A phone that sleeps mid-task drops the camera sockets, exactly when the
   // operator most needs to see a moving arm.
   useEffect(() => { void pwa.keepAwake(anyRunning) }, [anyRunning])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let live = true
+    void getRecordApi().then(a => { if (live) setRecordMock(a.mock) }).catch(() => {})
+    return () => { live = false }
+  }, [])
 
   // Keyboard: Escape closes, "." (or Cmd/Ctrl+. even while typing) opens the
   // stop sheet, "?" opens help. The decision itself is pure and tested in
@@ -141,6 +152,7 @@ function Dashboard() {
         online={pwa.online}
         installable={pwa.installable}
         activityCount={activity.length}
+        recordMock={recordMock}
         onInstall={() => void pwa.install()}
         onSettings={() => { setSettingsTab(undefined); setPanel('settings') }}
         onWireSecurity={() => { setSettingsTab('mesh'); setPanel('settings') }}

@@ -2,6 +2,7 @@ import type { MeshInfo } from '../types'
 import type { ConnState } from '../lib/useMesh'
 import { backendLabel } from '../lib/endpoints'
 import { connBadge } from '../lib/connBadge'
+import { recordNavFlag } from '../lib/rehearsalNav'
 import StrandsMark from './StrandsMark'
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
   online: boolean
   installable: boolean
   activityCount: number
+  /** true = the record backend is a rehearsal, null = not probed yet */
+  recordMock: boolean | null
   onInstall: () => void
   onSettings: () => void
   onWireSecurity: () => void
@@ -25,7 +28,7 @@ interface Props {
 
 export default function FleetBar({
   conn, peerCount, dashboardId, safetyFlash, mesh, online, installable,
-  activityCount, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
+  activityCount, recordMock, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
   onHelp,
 }: Props) {
   // The mesh session and this browser's socket fail independently: the page can
@@ -37,6 +40,8 @@ export default function FleetBar({
   // the robot mesh session was closed. lib/connBadge.ts narrows the CLAIM
   // instead of faking the state, and names the subject out loud.
   const badge = connBadge(conn, { meshDown })
+  // UX_REVIEW #10: a feature that cannot write a dataset says so in the nav.
+  const rec = recordNavFlag(recordMock)
 
   return (
     <header className="fleetbar">
@@ -73,7 +78,12 @@ export default function FleetBar({
           <button className="chip" onClick={onInstall} title="Install as an app">⤓ install</button>
         )}
         <button className="chip" onClick={onDevices} title="Local hardware and managed robots">⚙ devices</button>
-        <button className="chip" onClick={onRecord} title="Record teleop episodes into a dataset">⏺ record</button>
+        <button
+          className={`chip${rec.cls ? ` ${rec.cls}` : ''}`}
+          onClick={onRecord}
+          title={rec.title}
+          aria-label={rec.aria}
+        >⏺ record{rec.suffix}</button>
         <button className="chip" onClick={onTraining} title="Train policies on recorded datasets">🎓 train</button>
         <button className="chip" onClick={onActivity} title="Command history">
           ☰ activity{activityCount > 0 ? ` (${activityCount})` : ''}
