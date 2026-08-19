@@ -71,9 +71,28 @@ export default function RobotDetail({ peer, onClose }: { peer: Peer; onClose: ()
           {p?.robot_type === 'robot' && !peer.peer_id.endsWith('-twin') && (
             <button className="twinbtn" onClick={toggleTwin} disabled={twinBusy} title="Toggle sim twin">⿻</button>
           )}
+          {p?.robot_type === 'robot' && peer.origin === 'external' && (
+            <span className="originbadge"
+                  title={'started outside this dashboard (your own script, or another machine).\n'
+                    + 'Everything here works normally except the three things that need a local\n'
+                    + 'child process: logs, camera reconfigure and despawn.'}>
+              external
+            </span>
+          )}
           {p?.robot_type === 'robot' && (
             <button className="btn ghost" onClick={() => setCamConfig(true)}
-                    title="attach / detach cameras, change fps and resolution (restarts the robot)">
+                    /* U15: reconfiguring cameras IS a respawn, and we have no
+                       process to respawn for a peer we did not start - the
+                       request could only ever 404. Refuse it here, with the
+                       reason, instead of opening a sheet that cannot submit.
+                       Only when we KNOW: an absent origin (a server older than
+                       the field) must keep the button working, and the sheet
+                       already explains the 404 if it comes. */
+                    disabled={peer.origin === 'external'}
+                    title={peer.origin === 'external'
+                      ? 'this robot was started outside the dashboard, so it has no local process to '
+                        + 'restart — change its cameras where it was launched (its own script or machine)'
+                      : 'attach / detach cameras, change fps and resolution (restarts the robot)'}>
               cameras
             </button>
           )}
