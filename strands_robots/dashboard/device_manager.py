@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import threading
+import uuid
 import time
 from collections import deque
 from collections.abc import Callable, Iterable
@@ -74,6 +75,10 @@ class ManagedRobot:
     # with stdout=PIPE and no reader, the child blocks in print() once the
     # OS pipe buffer (~64KB) fills and the peer silently freezes.
     logs: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
+    # What this process was started to DO ({"repo_id","episode"} for a replay,
+    # {"dataset_root"} for a collect). Without it "is this already running?"
+    # cannot be answered, and a second identical job silently starts.
+    job: dict[str, Any] = field(default_factory=dict)
 
     def alive(self) -> bool:
         return self.process is not None and self.process.poll() is None
@@ -806,6 +811,41 @@ class DeviceManager:
             return {"error": f"unknown peer {peer_id}"}
         return {"peer_id": peer_id, "alive": m.alive(), "lines": list(m.logs)}
 
+    def _unique_peer_id(self, base: str) -> str:
+        """A peer id that is not already tracked, starting from ``base``.
+
+        Ids were minted as ``f"replay-{int(time.time()) % 100000}"``, so two
+        replays started in the SAME SECOND produced the same id and the second
+        one's ``self.robots[peer_id] = managed`` overwrote the first's entry.
+        The first process was then untracked: nothing could show its logs, stop
+        it, or despawn it, and it kept publishing to the mesh under an id that
+        now belonged to someone else -- two processes claiming to be one peer.
+
+        Dead-but-tracked ids are avoided too: their logs are still the record of
+        what happened, and the mesh may still hold the ghost until it ages out.
+
+        Caller must hold ``self._lock``.
+        """
+        if base not in self.robots:
+            return base
+        for n in range(2, 1000):
+            candidate = f"{base}-{n}"
+            if candidate not in self.robots:
+                return candidate
+        return f"{base}-{uuid.uuid4().hex[:6]}"  # pathological; still unique
+
+    def _running_job(self, mode: str, **fields: Any) -> ManagedRobot | None:
+        """A live process of ``mode`` whose job matches every given field.
+
+        Caller must hold ``self._lock``.
+        """
+        for managed in self.robots.values():
+            if managed.mode != mode or not managed.alive():
+                continue
+            if all(managed.job.get(k) == v for k, v in fields.items()):
+                return managed
+        return None
+
     def spawn(
         self,
         robot_name: str,
@@ -971,12 +1011,26 @@ class DeviceManager:
         """
         import json as _json
 
-        peer_id = f"replay-{int(time.time()) % 100000}"
-        cfg = {
-            "peer_id": peer_id, "repo_id": repo_id, "episode": episode,
-            "root": root, "speed": speed, "robot_name": robot_name,
-        }
         with self._lock:
+            # Clicking Run twice is one click too many: a second sim of the same
+            # episode fights the first for the same mesh peer name and doubles
+            # the physics load for nothing. Point the operator at the card that
+            # is already showing what they asked for.
+            running = self._running_job("replay", repo_id=repo_id, episode=episode)
+            if running is not None:
+                return {
+                    "error": (
+                        f"episode {episode} of {repo_id} is already replaying as "
+                        f"{running.peer_id} - watch that card instead"
+                    ),
+                    "peer_id": running.peer_id,
+                    "already_running": True,
+                }
+            peer_id = self._unique_peer_id(f"replay-{int(time.time()) % 100000}")
+            cfg = {
+                "peer_id": peer_id, "repo_id": repo_id, "episode": episode,
+                "root": root, "speed": speed, "robot_name": robot_name,
+            }
             proc = subprocess.Popen(
                 [sys.executable, "-c", _REPLAY_SPAWNER, _json.dumps(cfg)],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -984,6 +1038,7 @@ class DeviceManager:
             managed = ManagedRobot(
                 peer_id=peer_id, robot_name=robot_name, mode="replay",
                 process=proc, started_at=time.time(),
+                job={"repo_id": repo_id, "episode": episode},
             )
             self.robots[peer_id] = managed
             threading.Thread(
@@ -1014,7 +1069,27 @@ class DeviceManager:
         """
         import json as _json
 
-        peer_id = f"collect-{int(time.time()) % 100000}"
+        with self._lock:
+            # Two recorders writing one dataset directory interleave episodes
+            # into each other's files -- this guard protects DATA, not just CPU.
+            running = self._running_job("collect", dataset_root=dataset_root)
+            if running is not None:
+                return {
+                    "error": (
+                        f"a recording session is already writing to {dataset_root} "
+                        f"as {running.peer_id} - stop it before starting another"
+                    ),
+                    "peer_id": running.peer_id,
+                    "already_running": True,
+                }
+            peer_id = self._unique_peer_id(f"collect-{int(time.time()) % 100000}")
+            # The id is reserved immediately, under the SAME lock as the guard:
+            # releasing it here would let two concurrent recorders both pass the
+            # check and both mint the same id -- the bug this method is fixing.
+            self.robots[peer_id] = ManagedRobot(
+                peer_id=peer_id, robot_name=robot_name, mode="collect",
+                started_at=time.time(), job={"dataset_root": dataset_root},
+            )
         cfg = {
             "peer_id": peer_id, "robot_name": robot_name,
             "policy_provider": policy_provider, "policy_config": policy_config,
@@ -1027,11 +1102,8 @@ class DeviceManager:
                 [sys.executable, "-c", _COLLECT_SPAWNER, _json.dumps(cfg)],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
-            managed = ManagedRobot(
-                peer_id=peer_id, robot_name=robot_name, mode="collect",
-                process=proc, started_at=time.time(),
-            )
-            self.robots[peer_id] = managed
+            managed = self.robots[peer_id]  # the reservation made above
+            managed.process = proc
             threading.Thread(
                 target=_drain, args=(proc, managed.logs, peer_id),
                 name=f"drain-{peer_id}", daemon=True,

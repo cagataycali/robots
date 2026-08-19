@@ -494,7 +494,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         from strands_robots.dashboard import training as _training
 
         _training.remember_dataset_root(dataset_root)
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             lambda: app.state.devices.collect(
                 dataset_root=dataset_root,
                 dataset_repo_id=body.get("dataset_repo_id", "local/collected"),
@@ -507,6 +507,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 fps=int(body.get("fps", 30)),
             )
         )
+        # Two recorders writing one dataset directory interleave episodes into
+        # each other's files. 409 names the session already holding it.
+        if result.get("already_running"):
+            raise HTTPException(409, result)
+        return result
 
     @app.post("/api/replay")
     async def replay_episode(body: dict[str, Any]) -> dict[str, Any]:
@@ -519,7 +524,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         repo_id = (body.get("repo_id") or "").strip()
         if not repo_id:
             raise HTTPException(422, "repo_id required")
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             app.state.devices.replay,
             repo_id,
             int(body.get("episode", 0)),
@@ -527,6 +532,12 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             float(body.get("speed", 1.0)),
             body.get("robot_name") or "so101",
         )
+        # 409, not an error-shaped 200: a second replay of the same episode is a
+        # conflict with something that already exists, and the response names
+        # the peer whose card is already showing it.
+        if result.get("already_running"):
+            raise HTTPException(409, result)
+        return result
 
     @app.get("/api/training/trainers")
     async def training_trainers() -> dict[str, Any]:
