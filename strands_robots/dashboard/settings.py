@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import logging
 import os
 import threading
@@ -113,21 +114,69 @@ def as_list(value: Any) -> list[str]:
     return _as_list(value)
 
 
-def _coerce(section: str, key: str, value: Any) -> Any:
+class CoercionError(ValueError):
+    """A settings value that must be REPORTED, not silently defaulted.
+
+    Raised only on the strict path (UI/API writes). The lenient path (env
+    vars / built-in defaults at import time) keeps the old degrade-to-None
+    behavior, because a typo'd env var must not kill startup.
+    """
+
+
+def _finite_float(key: str, value: Any) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        raise CoercionError(f"{key}: {value!r} is not a number")
+    if not math.isfinite(out):
+        # json.dumps would emit bare NaN/Infinity - not JSON (RFC 8259); one
+        # such write bricks the config screen for every browser forever.
+        raise CoercionError(f"{key}: {value!r} is not a finite number")
+    return out
+
+
+def _coerce(section: str, key: str, value: Any, strict: bool = False) -> Any:
+    try:
+        return _coerce_strict(section, key, value)
+    except CoercionError:
+        if strict:
+            raise
+        return None if key in ("temperature", "camera_hz", "max_tokens", "port") else value
+
+
+def _coerce_strict(section: str, key: str, value: Any) -> Any:
     if (section, key) in _LIST_KEYS:
         return _as_list(value)
     if key in ("trust_remote_code",):
         return _as_bool(value)
-    if key in ("temperature", "camera_hz"):
-        try:
-            return None if value in (None, "") else float(value)
-        except (TypeError, ValueError):
+    if key == "temperature":
+        if value in (None, ""):
             return None
+        out = _finite_float(key, value)
+        if not 0.0 <= out <= 2.0:
+            raise CoercionError(f"temperature: {out} is outside 0..2")
+        return out
+    if key == "camera_hz":
+        if value in (None, ""):
+            return None
+        out = _finite_float(key, value)
+        if not 0.0 < out <= 240.0:
+            # a publisher sleeps 1/hz between frames: 0 divides by zero,
+            # negative sleeps never, huge busy-loops the camera thread.
+            raise CoercionError(f"camera_hz: {out} is outside (0, 240]")
+        return out
     if key in ("max_tokens", "port"):
-        try:
-            return None if value in (None, "") else int(value)
-        except (TypeError, ValueError):
+        if value in (None, ""):
             return None
+        try:
+            out = int(value)
+        except (TypeError, ValueError):
+            raise CoercionError(f"{key}: {value!r} is not an integer")
+        if key == "port" and not 1 <= out <= 65535:
+            raise CoercionError(f"port: {out} is outside 1..65535")
+        if key == "max_tokens" and out < 1:
+            raise CoercionError(f"max_tokens: {out} must be at least 1")
+        return out
     if value is None:
         return None
     return str(value)
@@ -151,7 +200,14 @@ def _defaults() -> dict[str, dict[str, Any]]:
 def _read_file() -> dict[str, Any]:
     try:
         if SETTINGS_FILE.exists():
-            data = json.loads(SETTINGS_FILE.read_text())
+            # parse_constant fires only for NaN/Infinity, which are not JSON;
+            # a file poisoned by an old write must count as corrupt (browsers
+            # already refuse it), so it heals to defaults instead of being
+            # handed back to JSON.parse forever.
+            data = json.loads(
+                SETTINGS_FILE.read_text(),
+                parse_constant=lambda c: (_ for _ in ()).throw(ValueError(f"non-finite {c}")),
+            )
             if isinstance(data, dict):
                 return data
     except Exception as exc:  # noqa: BLE001 - a corrupt file must not kill startup
@@ -190,10 +246,27 @@ def get(section: str, key: str | None = None, default: Any = None) -> Any:
 def update(patch: dict[str, Any]) -> list[str]:
     """Merge *patch* into the settings file. Returns the changed dotted keys.
 
-    Only keys declared in :data:`_SCHEMA` are accepted - a typo'd key from the
-    UI is dropped rather than silently persisted forever.
+    Lenient (bad values degrade to None) - kept for the CLI path where flags
+    were already validated by argparse. UI/API writes go through
+    :func:`update_strict` so a bad value is an ERROR the user sees, not a
+    silent default (Q14/Q15).
     """
+    changed, _ = _update(patch, strict=False)
+    return changed
+
+
+def update_strict(patch: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Like :func:`update`, but invalid values are reported, never stored.
+
+    Returns ``(changed, errors)`` where each error names the dotted key and
+    the reason. Valid keys in the same patch still apply.
+    """
+    return _update(patch, strict=True)
+
+
+def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
     changed: list[str] = []
+    errors: list[str] = []
     with _lock:
         current = load()
         stored = _read_file()
@@ -203,7 +276,11 @@ def update(patch: dict[str, Any]) -> list[str]:
             for key, raw in values.items():
                 if key not in _SCHEMA[section]:
                     continue
-                value = _coerce(section, key, raw)
+                try:
+                    value = _coerce(section, key, raw, strict=strict)
+                except CoercionError as exc:
+                    errors.append(f"{section}.{exc}")
+                    continue
                 if value == current[section].get(key):
                     continue
                 stored.setdefault(section, {})[key] = value
@@ -213,13 +290,13 @@ def update(patch: dict[str, Any]) -> list[str]:
             global _cache
             _cache = None
             load(refresh=True)
-    return changed
+    return changed, errors
 
 
 def _write_file(data: dict[str, Any]) -> None:
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True, allow_nan=False))
     tmp.replace(SETTINGS_FILE)
     # settings.json holds no secrets, but it does hold the auth token - so
     # keep it owner-only like the .env file.

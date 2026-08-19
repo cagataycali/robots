@@ -370,7 +370,11 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
                 for key in ("connect", "listen"):
                     mesh_patch.pop(key, None)
 
-    changed = settings.update(patch) if patch else []
+    if patch:
+        changed, coercion_errors = settings.update_strict(patch)
+        errors.extend(coercion_errors)
+    else:
+        changed = []
 
     # --- env upsert -------------------------------------------------
     env_written: list[str] = []
