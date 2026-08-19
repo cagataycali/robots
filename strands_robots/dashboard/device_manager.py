@@ -960,6 +960,55 @@ def validate_replay(
 
 
 
+def validate_cameras(cameras: Any) -> dict[str, str] | None:
+    """Refusal reason for a spawn/reconfigure camera config, or None.
+
+    The child process used to be the first thing that judged this: a camera
+    entry of ``3`` instead of ``{"index_or_path": 3}`` raised inside the
+    spawned robot AFTER the route had answered 200 + pid (cagatay hit exactly
+    this live). Everything the child would refuse is refused here, before a
+    process exists.
+
+    Shape is lerobot's: ``{name: {index_or_path: int|str, fps?, width?,
+    height?, type?}}``. Bounds are deliberately generous — they refuse only
+    what no driver can mean (fps 0 divides a sleep, a 100000-pixel width is a
+    typo), not what a given camera happens to support: the probe-vs-fantasy
+    line belongs to the UI's mode discovery, and a camera that rejects a legal
+    setting still reports honestly through the settle window.
+    """
+    if cameras is None:
+        return None
+    if not isinstance(cameras, dict):
+        return {"error": f"cameras must be a mapping of name -> config, got {type(cameras).__name__}"}
+    for name, cfg in cameras.items():
+        if not isinstance(name, str) or not name.strip():
+            return {"error": f"camera name {name!r} must be a non-empty string (top/wrist/main...)"}
+        if not isinstance(cfg, dict):
+            return {
+                "error": (
+                    f"camera {name!r} config must be a mapping like "
+                    f'{{"index_or_path": 0, "fps": 30}}, got {type(cfg).__name__}: {cfg!r}'
+                )
+            }
+        iop = cfg.get("index_or_path")
+        if iop is None:
+            return {"error": f"camera {name!r} needs index_or_path (an OpenCV index or a device path)"}
+        if isinstance(iop, bool) or not isinstance(iop, (int, str)):
+            return {"error": f"camera {name!r}: index_or_path must be an integer index or a path string"}
+        if isinstance(iop, int) and iop < 0:
+            return {"error": f"camera {name!r}: index_or_path {iop} - an OpenCV index is not negative"}
+        for field, lo, hi in (("fps", 1, 240), ("width", 16, 7680), ("height", 16, 4320)):
+            v = cfg.get(field)
+            if v is None:
+                continue
+            if isinstance(v, bool) or not isinstance(v, int):
+                return {"error": f"camera {name!r}: {field} must be an integer, got {type(v).__name__}"}
+            if not lo <= v <= hi:
+                return {"error": f"camera {name!r}: {field}={v} is outside {lo}..{hi}"}
+    return None
+
+
+
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
@@ -1422,6 +1471,13 @@ class DeviceManager:
         if bad_id:
             return {"error": bad_id}
 
+        # The camera config used to be judged first by the CHILD - a ValueError
+        # after the route had already answered 200 + pid (Q-class: the operator
+        # watched a card die instead of reading a refusal).
+        bad_cams = validate_cameras(cameras)
+        if bad_cams:
+            return bad_cams
+
         if mode == "real" and not port:
             return {"error": "port required for mode=real"}
         peer_id = peer_id or self._unique_peer_id(f"{robot_name}-{mode}-{int(time.time()) % 10000}")
@@ -1709,6 +1765,56 @@ class DeviceManager:
                     m.process.kill()
             del self.robots[peer_id]
         return {"peer_id": peer_id, "stopped": True}
+
+    def reconfigure_cameras(self, peer_id: str, cameras: dict[str, Any] | None) -> dict[str, Any]:
+        """Respawn a managed peer with a new camera config (U19 v1).
+
+        Peers take cameras only at spawn, so "change the wrist camera's fps"
+        is honestly a RESPAWN — this makes it one atomic, named operation
+        instead of a despawn the operator must remember to follow up. The
+        streams the peer was publishing DO drop for the settle window; the
+        route's confirm dialog is where that is consented to, not here.
+
+        Only locally-managed children can be respawned: a peer that lives on
+        another machine shows up in the fleet but its process is not ours to
+        kill. ``remember=True`` persists the new config into the port profile,
+        so the auto-spawn watcher keeps the change across replugs (and the
+        profile store's MEASURED_FIELDS carry-over keeps the arm's measured
+        role through the rewrite).
+        """
+        bad = validate_cameras(cameras)
+        if bad:
+            return bad
+        with self._lock:
+            m = self.robots.get(peer_id)
+            if m is None:
+                return {
+                    "error": (
+                        f"unknown managed peer {peer_id} - only robots this dashboard "
+                        f"spawned can be respawned with new cameras"
+                    )
+                }
+            # Everything about the old spawn EXCEPT the cameras.
+            robot_name, mode, port = m.robot_name, m.mode, m.port
+        if mode not in SPAWNABLE_MODES:
+            return {"error": f"{peer_id} is a {mode} job, not a respawnable robot"}
+        # robot_id is the lerobot CALIBRATION identity - ManagedRobot does not
+        # carry it, but the port profile does. Dropping it here would respawn
+        # an arm that silently forgot its calibration.
+        robot_id = None
+        if port:
+            profile = self.profile_for_port(port)
+            if profile:
+                robot_id = profile.get("robot_id")
+        stopped = self.despawn(peer_id)
+        if "error" in stopped:
+            return stopped
+        result = self.spawn(
+            robot_name, mode, peer_id=peer_id, port=port, cameras=cameras,
+            robot_id=robot_id, remember=True,
+        )
+        result["reconfigured"] = "error" not in result
+        return result
 
     def shutdown(self) -> None:
         for pid in list(self.robots):

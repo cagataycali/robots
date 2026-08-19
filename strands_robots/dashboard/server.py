@@ -1296,6 +1296,53 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         )
         return result
 
+    @app.post("/api/devices/{peer_id}/cameras")
+    async def reconfigure_cameras(peer_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Respawn a managed peer with a new camera config (U19 v1).
+
+        Cameras are taken only at spawn, so attach/detach/fps/resolution is
+        honestly a respawn - one named atomic operation. The peer's streams
+        drop for the settle window; the UI's confirm dialog owns that consent.
+        ``cameras: null`` detaches everything; each entry is lerobot-shaped
+        ({name: {index_or_path, fps?, width?, height?}}). Invalid configs are
+        422 BEFORE the running peer is touched - a refusal must never cost the
+        operator the process they already had.
+        """
+        if "cameras" not in body:
+            raise HTTPException(422, "cameras required (a mapping, or null to detach all)")
+        from strands_robots.dashboard.device_manager import validate_cameras
+
+        bad = validate_cameras(body.get("cameras"))
+        if bad:
+            raise HTTPException(422, bad)
+        result = await asyncio.to_thread(
+            app.state.devices.reconfigure_cameras, peer_id, body.get("cameras")
+        )
+        if "error" in result and not result.get("reconfigured"):
+            app.state.bridge.record_activity(
+                "api", "cameras", target=peer_id,
+                detail=f"refused: {result['error']}", ok=False,
+            )
+            status = 404 if "unknown managed peer" in result["error"] else 409
+            raise HTTPException(status, result)
+        # Same honesty rail as spawn: a pid is not a running robot.
+        bridge = app.state.bridge
+        outcome = await asyncio.to_thread(
+            app.state.devices.settle,
+            peer_id,
+            is_up=lambda pid: pid in (getattr(bridge, "peers", None) or {}),
+        )
+        result.update(outcome)
+        if outcome.get("status") == "failed":
+            result["error"] = outcome.get("reason") or "the peer did not come back"
+        app.state.bridge.record_activity(
+            "api", "cameras", target=peer_id,
+            detail=f"respawned with {len(body.get('cameras') or {})} camera(s)"
+            + (f" -> {result['error']}" if result.get("error") else ""),
+            ok="error" not in result,
+        )
+        return result
+
     @app.get("/api/devices/logs/{peer_id}")
     async def device_logs(peer_id: str) -> dict[str, Any]:
         """Child-process output for one managed robot (ring buffer)."""
