@@ -35,6 +35,15 @@ jobs:
           cache: 'pip'
 
       - name: Install system dependencies (OpenGL for MuJoCo)
+        # The step's own ceiling, so a stall is reaped here rather than at the
+        # job's 45 - only the step-level bound marks the step that stalled, and
+        # a job-level reap renders as a rollup FAILURE with no reason (#2442).
+        # Sized from the observed band, which is narrow at both ends: 31
+        # successful runs put this step at p50 33s and max 455s (7m35s), so 12
+        # clears the maximum by ~1.6x, while the rest of the job costs up to
+        # ~32 min, so anything above ~13 lets a slow apt push the job into the
+        # 45-minute reap it is meant to prevent.
+        timeout-minutes: 12
         run: |
           # The GitHub runner image preconfigures third-party apt repos (e.g.
           # the packages.microsoft.com azure-cli feed) whose mirrors sometimes
@@ -43,11 +52,24 @@ jobs:
           # whole build. The packages we actually need (libosmesa6-dev, ffmpeg)
           # come from the standard Ubuntu archive, so retry a few times with a
           # short backoff to ride out transient mirror hiccups before failing.
+          #
+          # The loop is driven by apt-get's *exit status*, so it rides out a
+          # mirror that answers wrongly but not one that never answers: on a
+          # hang the `if` never evaluates, attempt 2 is never reached, and the
+          # echo that would have named apt never prints. `timeout` turns the
+          # hang into exit 124 - the failure this loop already handles - so the
+          # backoff and the diagnostic start working for that case too.
+          #
+          # 180s bounds `update` only, which is the command the loop retries.
+          # It is not a bound on the download: `update` costs ~5s even on the
+          # slow runs (the 455s maximum above was `install` fetching ffmpeg's
+          # ~115 packages), so a bound tight enough to be useful here would
+          # reap a healthy `install`. `install` is bounded by the step instead.
           for attempt in 1 2 3; do
-            if sudo apt-get update; then
+            if sudo timeout 180 apt-get update; then
               break
             fi
-            echo "apt-get update failed (attempt ${attempt}/3), retrying in 5s..."
+            echo "apt-get update failed or hung (attempt ${attempt}/3), retrying in 5s..."
             sleep 5
           done
           sudo apt-get install -y libosmesa6-dev ffmpeg
