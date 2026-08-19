@@ -101,8 +101,11 @@ export default function JointSpark({
     }
 
     raf = requestAnimationFrame(draw)
-    // idle robots still need the window to scroll; 4Hz is invisible work
-    if (live) timer = window.setInterval(() => { raf = requestAnimationFrame(draw) }, 250)
+    // Idle robots still need the window to scroll; 4Hz is invisible work.
+    // Under prefers-reduced-motion the trace only advances when new state
+    // arrives: the data is still complete, it just stops crawling on its own.
+    const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (live && !calm) timer = window.setInterval(() => { raf = requestAnimationFrame(draw) }, 250)
     return () => {
       cancelAnimationFrame(raf)
       if (timer) window.clearInterval(timer)
