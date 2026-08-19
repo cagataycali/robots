@@ -1112,3 +1112,13 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .ckpt-note.ok { color: #7dd8a0; }
 .ckpt-note.warn { color: #ffcc66; }
 .ckpt-note.bad { color: #ff8d99; }
+
+/* ---- deploy intent banner: a prefill that explains itself ---- */
+.deploy-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11.5px; line-height: 1.4; color: var(--text, #e8eef6);
+  background: rgba(74, 158, 255, 0.08);
+  border: 1px solid var(--accent, #4a9eff); border-radius: var(--r1, 6px);
+  padding: 6px 10px; margin-bottom: 8px;
+}
+.deploy-banner .btn { flex-shrink: 0; }

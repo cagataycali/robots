@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
+import { setDeployIntent } from '../lib/deployIntent'
 
 interface Dataset { root: string; repo_id: string; total_episodes?: number; robot_type?: string; fps?: number }
 interface Job { job_id: string; provider: string; dataset?: string; base_model?: string; output_dir?: string; steps?: number; submitted_at?: number }
@@ -15,6 +16,13 @@ interface JobStatus { status: string; data: { status?: string; metrics?: Record<
  * scans local LeRobotDataset roots; the trained checkpoint feeds straight
  * back into the run form's checkpoint search (record → train → deploy).
  */
+// Same family-name heuristic the backend's checkpoint search uses - only a
+// PREFILL for the run form's policy_type field, never a decision.
+function guessPolicyType(baseModel: string | undefined): string | null {
+  const m = (baseModel ?? '').replace(/_/g, '-').match(/\b(smolvla|act|diffusion|pi0-fast|pi05|pi0|tdmpc|vqbet)\b/i)
+  return m ? m[1].toLowerCase().replace('-', '_').replace('pi0fast', 'pi0_fast') : null
+}
+
 export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [trainers, setTrainers] = useState<string[]>([])
   const [datasets, setDatasets] = useState<Dataset[]>([])
@@ -114,8 +122,32 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const exportCkpt = async (job: Job) => {
     setBusy(true)
     try {
-      const j = await post('/api/training/export', { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset })
+      const j = await post('/api/training/export', { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset, base_model: job.base_model })
       setMsg(j.status === 'success' ? `✓ ${j.text?.slice(0, 250)}` : `✗ ${j.text?.slice(0, 250)}`)
+    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
+    setBusy(false)
+  }
+
+  // "Deploy" cannot start a policy from here - the run form is per-robot and
+  // a policy moves a real arm. So deploy = export (to get the honest loadable
+  // path from the trainer, never a guessed directory), stamp a deploy intent,
+  // and send the user to a robot card whose run form will prefill from it and
+  // WAIT for them to press Run.
+  const deployCkpt = async (job: Job) => {
+    setBusy(true)
+    try {
+      const j = await post('/api/training/export', { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset, base_model: job.base_model })
+      const ckpt = j?.data?.exported_model
+      if (j.status !== 'success' || typeof ckpt !== 'string' || !ckpt) {
+        setMsg(`✗ nothing deployable: ${j.text?.slice(0, 200) ?? 'export returned no artifact path'}`)
+      } else {
+        setDeployIntent({
+          checkpoint: ckpt,
+          policy_type: guessPolicyType(job.base_model),
+          source: `training job ${job.job_id} (${job.base_model || job.provider})`,
+        })
+        setMsg('🚀 checkpoint staged — close this sheet and open a robot\u2019s run form: it will be prefilled, and nothing runs until you press Run there')
+      }
     } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
     setBusy(false)
   }
@@ -276,6 +308,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               })()}
               <div className="train-job-actions">
                 <button className="btn ghost" onClick={() => exportCkpt(job)} disabled={busy}>📦 export checkpoint</button>
+                {state === 'success' && (
+                  <button className="btn ghost" onClick={() => deployCkpt(job)} disabled={busy}
+                          title="stages this checkpoint into a robot's run form — never starts it">🚀 deploy…</button>
+                )}
               </div>
             </div>
           )

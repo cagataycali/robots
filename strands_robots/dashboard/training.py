@@ -237,12 +237,26 @@ def status(provider: str, job_id: str) -> dict[str, Any]:
     return _tool_result(train_policy(action="status", provider=provider, job_id=job_id))
 
 
-def export(provider: str, output_dir: str, dataset_root: str = "", dataset_repo_id: str | None = None) -> dict[str, Any]:
+def export(
+    provider: str,
+    output_dir: str,
+    dataset_root: str = "",
+    dataset_repo_id: str | None = None,
+    base_model: str = "",
+) -> dict[str, Any]:
+    """Export the run's last checkpoint as a loadable artifact.
+
+    ``base_model`` must ride along: the export action revalidates the spec,
+    and a provider whose training required a base model (smolvla post-tune,
+    GR00T) refuses the export of ITS OWN finished run without it. The job
+    record carries the value - the caller just has to forward it.
+    """
     from strands_robots.tools.train_policy import train_policy
 
     return _tool_result(train_policy(
         action="export", provider=provider, output_dir=output_dir,
         dataset_root=dataset_root or None, dataset_repo_id=dataset_repo_id,
+        base_model=base_model or "",
     ))
 
 

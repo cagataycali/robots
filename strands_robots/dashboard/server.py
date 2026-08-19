@@ -537,6 +537,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             body.get("output_dir", ""),
             body.get("dataset_root", ""),
             body.get("dataset_repo_id"),
+            body.get("base_model", ""),
         )
 
     @app.get("/api/checkpoints/search")

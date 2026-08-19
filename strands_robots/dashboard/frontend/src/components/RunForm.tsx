@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { PolicyProvider } from '../types'
 import { post } from '../lib/endpoints'
 import CheckpointPicker from './CheckpointPicker'
 import { useConfig } from '../lib/useConfig'
+import { peekDeployIntent, clearDeployIntent, type DeployIntent } from '../lib/deployIntent'
 
 export interface RunBody {
   instruction: string
@@ -51,6 +52,32 @@ export default function RunForm({ peerId, running, busy, disabled, onRun, onStop
   const [fields, setFields] = useState<Record<string, string>>({})
   const [validating, setValidating] = useState(false)
   const [validation, setValidation] = useState<ValidateResult | null>(null)
+  const [staged, setStaged] = useState<DeployIntent | null>(null)
+
+  // A deploy intent staged from the Training tab prefills THIS form - once,
+  // visibly, and only into fields; running still takes the human pressing
+  // Run. Consumed on apply so it cannot ambush a second robot's form later.
+  useEffect(() => {
+    const intent = peekDeployIntent()
+    if (!intent) return
+    const target = policies.find(p =>
+      p.wire_safe && p.wire_fields?.some(f => f.key === 'pretrained_name_or_path' || f.key === 'model_path'))
+    if (!target) return
+    const pathKey = target.wire_fields.find(f => f.key === 'pretrained_name_or_path' || f.key === 'model_path')!.key
+    setProviderName(target.name)
+    setFields(prev => ({
+      ...prev,
+      [pathKey]: intent.checkpoint,
+      ...(intent.policy_type && target.wire_fields.some(f => f.key === 'policy_type')
+        ? { policy_type: intent.policy_type } : {}),
+    }))
+    setStaged(intent)
+    // the prefilled field lives in the advanced section - open it, because a
+    // prefill the user cannot SEE is not "review then Run", it is a surprise
+    setAdvanced(true)
+    clearDeployIntent()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policies])
 
   const provider: PolicyProvider | undefined = useMemo(
     () => policies.find(p => p.name === providerName),
@@ -128,6 +155,12 @@ export default function RunForm({ peerId, running, busy, disabled, onRun, onStop
 
   return (
     <div className="runform">
+      {staged && (
+        <div className="deploy-banner">
+          <span>🚀 prefilled from {staged.source} — review below, then press Run. Nothing has started.</span>
+          <button className="btn ghost" onClick={() => { setStaged(null); setFields({}) }}>discard</button>
+        </div>
+      )}
       <div className="controls">
         <select
           value={providerName}
