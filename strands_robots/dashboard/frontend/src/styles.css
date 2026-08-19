@@ -16,6 +16,12 @@
   --border-hi: #2c3a4f;
   --text: #e6edf3;
   --dim: #8b98a9;
+  /* UX_REVIEW #2: --dim is the DISABLED colour (.btn:disabled, .btn.go:disabled
+     both paint it). Enabled secondary buttons used it too, so a clickable
+     control and a dead one were the same grey. --text-2 is the "enabled, not
+     primary" tone — and it retro-fills the two places that already referenced
+     the token with a hardcoded fallback. */
+  --text-2: #c3cedb;
   --green: #00e5a0;
   --blue: #4a9eff;
   --red: #ff4d5e;
@@ -134,7 +140,10 @@ body {
 .btn.go { background: var(--ok); color: #05130d; font-weight: 700; }
 .btn.go:disabled { background: var(--panel2); color: var(--dim); cursor: default; transform: none; }
 .btn.stop { background: var(--danger-fill); color: #fff; }
-.btn.ghost { background: none; border: 1px solid var(--border); color: var(--dim); font-size: var(--fs-small); }
+.btn.ghost { background: none; border: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-small); }
+/* ...and a ghost that really IS dead keeps the dim grey, so colour and opacity
+   both say so. */
+.btn.ghost:disabled { color: var(--dim); }
 .btn.ghost:hover { border-color: var(--border-hi); color: var(--text); }
 .btn.ghost.on { border-color: var(--accent); color: var(--accent); }
 .btn.ghost.danger, .btn.danger { color: var(--danger); }
@@ -1282,7 +1291,8 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 
 /* Servo-board roster: a measured role and the ABSENCE of one must not look the
    same (U2). Uses this sheet's real tokens - my first pass invented
-   --surface-2/-3, --hairline, --radius-sm and --text-2, none of which exist, so
+   --surface-2/-3, --hairline, --radius-sm and --text-2 (only --text-2 exists
+   now, defined by UX_REVIEW #2), so
    the badge rendered on a transparent background. A token name is only a token
    if the sheet defines it. */
 .boardlist { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s3); }
