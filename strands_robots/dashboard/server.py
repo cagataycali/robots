@@ -862,12 +862,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/safety/estop")
     async def estop() -> dict[str, Any]:
-        """Fleet-wide stop: broadcast {action: stop} to every live peer.
+        """Fleet-wide stop: BOTH rails fire, results reported side by side.
 
-        Note: the signed strands/safety/estop envelope requires a Mesh
-        instance with a robot, so the dashboard sends per-peer stop commands
-        instead. The full lockout-engaging e-stop lands once the dashboard
-        embeds a local sim peer or lifts envelope signing into the bridge.
+        Rail 1: broadcast {action: stop} to every live peer (works even for
+        peers that ignore the signed envelope). Rail 2: the signed
+        strands/safety/estop envelope, which engages the fleet-wide LOCKOUT
+        on every listening peer — they refuse all further commands until a
+        proofed resume (/api/safety/resume with the override code).
 
         Only *live* peers are addressed, and every peer is classified
         stopped / not_stopped / no_answer. A stale peer counted as "stopped"
