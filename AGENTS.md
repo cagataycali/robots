@@ -1765,6 +1765,18 @@ From the `robot_mesh` human-in-the-loop review trail (#227). Apply to the
   so the audit log is a complete record of agent mesh access - operators get the
   "agent read N frames from sub X at time T" trail that raw telemetry access
   otherwise lacks.
+- **The row belongs to the action, not to the backend that served it.** `robot_mesh`
+  renders each action onto an agent-side Device Connect connection when one has
+  devices and onto the built-in mesh otherwise, and Device Connect is the one tried
+  FIRST - so auditing only the mesh rendering left the audited implementations as the
+  fallback. Widen an audit contract across every backend that answers the action, and
+  record the magnitude that was read (`devices=N`, `local=N remote=M`) rather than a
+  bare marker. `peers` is the read worth recording: it returns every device id plus
+  every function name the fleet exposes, which is the callable surface a later `rpc`
+  would use.
+- Pinned by `tests/mesh/test_robot_mesh_readonly_audit_parity.py`, which discovers the
+  actions Device Connect answers by calling the dispatcher rather than restating a
+  list, so an action added to that backend is graded without editing the test.
 
 ### Rate-limit safety semantics
 - **A declined HITL approval must NOT consume a rate-limit slot.** The slot is
