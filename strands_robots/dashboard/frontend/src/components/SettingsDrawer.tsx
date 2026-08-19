@@ -4,6 +4,7 @@ import {
   authToken, backendBase, backendLabel, normalize, post,
   setAuthToken, setBackendBase,
 } from '../lib/endpoints'
+import ConsentSettings from './ConsentSettings'
 import { useConfig, type ApplyResult } from '../lib/useConfig'
 import {
   APPLY_LABEL, envKeyError, envValueError, searchSettings, settingMeta, validateSetting,
@@ -538,6 +539,8 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 browser so you are not locked out). <code>STRANDS_MESH_LOCAL_DEV=1</code> is separate
                 and disables mesh <em>wire</em> security — see the Mesh tab.
               </p>
+              {/* The consent sheet promises a way back; this is it (U18). */}
+              <ConsentSettings />
             </section>
           )}
         </div>

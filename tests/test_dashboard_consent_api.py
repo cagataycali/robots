@@ -143,3 +143,32 @@ def test_task_refusal_carries_needs_consent():
     assert body["ok"] is False
     assert body["needs_consent"]["scope"] == "hf_repo_allow:HashtagRobotics/smolvla-tic-tac-toe"
     assert "trust" not in body["needs_consent"]["kind"]
+
+
+def test_revoke_removes_one_repo_and_keeps_the_others(monkeypatch):
+    monkeypatch.setenv("STRANDS_MESH_HF_REPO_ALLOW", "nvidia,Org/keep,Org/drop")
+    client, _ = _client()
+    r = client.post("/api/consent/revoke", json={"kind": "hf_repo_allow", "subject": "Org/drop"})
+    assert r.json()["revoked"] is True
+    assert client.get("/api/consent").json()["hf_repo_allow"] == ["nvidia", "Org/keep"]
+
+
+def test_revoke_trust_clears_the_flag():
+    client, _ = _client()
+    client.post("/api/consent", json={"kind": "trust_remote_code"})
+    assert client.get("/api/consent").json()["trust_remote_code"] is True
+    body = client.post("/api/consent/revoke", json={"kind": "trust_remote_code"}).json()
+    assert body["revoked"] is True and body["respawn_required"] is True
+    assert client.get("/api/consent").json()["trust_remote_code"] is False
+
+
+def test_revoking_something_not_granted_says_so():
+    client, _ = _client()
+    body = client.post("/api/consent/revoke", json={"kind": "hf_repo_allow", "subject": "Org/never"}).json()
+    assert body["revoked"] is False
+    assert "nothing to revoke" in body["note"]
+
+
+def test_revoke_rejects_an_unknown_kind():
+    client, _ = _client()
+    assert client.post("/api/consent/revoke", json={"kind": "sudo"}).status_code == 422

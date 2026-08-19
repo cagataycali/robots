@@ -1208,3 +1208,14 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .btn.primary:disabled { background: var(--panel2); color: var(--dim); cursor: default; transform: none; }
 .btn.danger:disabled { opacity: .5; cursor: default; transform: none; }
 .btn.small { font-size: 11.5px; padding: 3px 8px; }
+
+/* Granted permissions, with the way back (components/ConsentSettings.tsx). */
+.consent-settings { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
+.consent-settings h3 { margin: 0 0 10px; }
+.cg-row {
+  display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
+  padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.cg-row > div { min-width: 0; }
+.cg-row b { font-size: 13px; word-break: break-word; }
+.cg-row .hint { margin-top: 2px; }

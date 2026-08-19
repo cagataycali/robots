@@ -183,6 +183,39 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
     return {}
 
 
+def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The env change that takes a grant BACK, given the current ``env``.
+
+    A promise the UI makes ("you can revoke this") has to be executable, so
+    revocation is computed by the same module that computes the grant — and it
+    is narrow in the same way: revoking one repository leaves the rest of the
+    allowlist exactly as it was. ``{}`` means there was nothing to take back.
+
+    An empty string is how a variable is *cleared* here rather than deleted,
+    because the .env file is the durable record: an absent line would let a
+    stale value from a shell profile or a launchd plist win the next restart,
+    which is a revocation that silently does not hold.
+    """
+    env = env or {}
+    if request.kind == "trust_remote_code":
+        if str(env.get(_TRUST_ENV, "")).strip().lower() not in ("1", "true", "yes"):
+            return {}
+        return {_TRUST_ENV: ""}
+
+    if request.kind == "hf_repo_allow":
+        repo = request.subject
+        if not repo:
+            return {}
+        current = [e.strip() for e in str(env.get(_HF_ENV, "")).split(",") if e.strip()]
+        if repo not in current:
+            # The org may still cover it; say nothing changed rather than
+            # silently widening or narrowing something the caller did not name.
+            return {}
+        return {_HF_ENV: ",".join(e for e in current if e != repo)}
+
+    return {}
+
+
 def attach_consent(payload: dict, *sources: object) -> dict:
     """Add ``needs_consent`` to an error ``payload`` if any source is continuable.
 

@@ -940,6 +940,45 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             ),
         }
 
+    @app.post("/api/consent/revoke")
+    async def revoke_consent(body: dict[str, Any]) -> dict[str, Any]:
+        """Take one grant back — the other half of a promise the dialog makes.
+
+        Narrow in the same way the grant was: revoking one repository leaves the
+        rest of the allowlist untouched. Already-running children keep the
+        permission they were started with, and the answer says so instead of
+        implying the fleet was locked down retroactively.
+        """
+        request = consent.build_request(str(body.get("kind", "")), body.get("subject"))
+        if request is None:
+            raise HTTPException(422, f"unknown consent kind; expected one of {', '.join(consent.KINDS)}")
+        patch = consent.revoke_patch(request, os.environ)
+        if not patch:
+            return {
+                "revoked": False,
+                "scope": request.scope,
+                "note": "nothing to revoke - this machine does not grant that (an org-wide entry may still cover it).",
+            }
+        written = await asyncio.to_thread(config_api.upsert_env_file, patch)
+        for key, value in patch.items():
+            if value:
+                os.environ[key] = value
+            else:
+                os.environ.pop(key, None)
+        app.state.bridge.record_activity(
+            "api", "consent", target=request.scope, detail="revoked", ok=True,
+        )
+        return {
+            "revoked": True,
+            "scope": request.scope,
+            "env_written": written,
+            "respawn_required": True,
+            "note": (
+                "revoked for new processes. A robot already running kept the permission it "
+                "started with - respawn it to apply this."
+            ),
+        }
+
     async def _restart_mesh(*, force: bool = False) -> dict[str, Any]:
         """Re-open the mesh session against the current settings.
 

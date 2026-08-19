@@ -92,8 +92,8 @@ export default function ConsentSheet({ need, target, onCancel, onRetry }: Props)
 
         {need.env_var ? (
           <p className="hint">
-            Stored on this machine as <code>{need.env_var}</code> — it survives a restart, and you
-            can revoke it in settings.
+            Stored on this machine as <code>{need.env_var}</code> — it survives a restart, and it is
+            listed under Settings → Security → “Permissions you granted”, where you can revoke it.
           </p>
         ) : null}
 
