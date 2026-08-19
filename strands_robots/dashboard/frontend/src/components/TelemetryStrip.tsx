@@ -1,5 +1,6 @@
 import type { Peer } from '../types'
 import { useTelemetry, TELEMETRY_CAP } from '../lib/useTelemetry'
+import { motionChip } from '../lib/motionChip'
 
 /**
  * Rate + motion telemetry from the state topic.
@@ -12,7 +13,7 @@ import { useTelemetry, TELEMETRY_CAP } from '../lib/useTelemetry'
  * sentence so both read the SAME motion judgment.
  */
 export default function TelemetryStrip({ peer }: { peer: Peer }) {
-  const { samples, hz, moving, stateAgeS } = useTelemetry(peer)
+  const { samples, hz, moving, stateAgeS, jointsSeen } = useTelemetry(peer)
   if (samples.length < 2) return null
 
   const peak = Math.max(...samples.map(s => s.motion), 1e-6)
@@ -34,15 +35,19 @@ export default function TelemetryStrip({ peer }: { peer: Peer }) {
       </span>
       {/* ...and "is it moving RIGHT NOW" is the question an operator asks before
           reaching over the desk, so it gets a chip with a dot instead of one more
-          grey word in a row of grey words. */}
-      <span
-        className={`motionchip ${moving ? 'moving' : 'still'}`}
-        title={moving
-          ? 'joints are changing (mean absolute delta over the last samples) — keep hands clear'
-          : 'joints are not changing (mean absolute delta over the last samples)'}
-      >
-        <span className="motiondot" aria-hidden />{moving ? 'moving' : 'still'}
-      </span>
+          grey word in a row of grey words.
+
+          THREE states, not two: `moving` is a tri-state and `moving ? … : 'still'`
+          rendered "not measured" as a green "still". */}
+      {(() => {
+        const chip = motionChip(moving, { jointsSeen })
+        return (
+          <span className={`motionchip ${chip.tone}`} title={chip.title}>
+            <span className="motiondot" aria-hidden />{chip.label}
+            <span className="sr-only">{chip.aria}</span>
+          </span>
+        )
+      })()}
       {age > 3 && <span className="metric warn" title="no state message recently">stale {age.toFixed(0)}s</span>}
       {peer.state?.sim_time !== undefined && (
         <span className="metric" title="simulation clock">t={peer.state.sim_time.toFixed(1)}</span>
