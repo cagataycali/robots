@@ -59,7 +59,25 @@ jobs:
         # over the last 30 runs, whose p50 is 15s.
         timeout-minutes: 9
         run: |
-          sudo timeout 180 apt-get update
+          # Bounded and retried for the reason test-lint.yml's step is: the
+          # mirrors here stall as well as fail, and `timeout` only converts the
+          # stall into exit 124 - something has to act on that exit, or a
+          # transient stall becomes a hard red. Observed on this very step: the
+          # azure.archive mirror was ignored after 3 tries, the fallback to
+          # archive.ubuntu.com then went silent for 142s mid-InRelease, and the
+          # bound ended it at 180s with nothing left to retry it.
+          #
+          # 150s x 3 attempts, tighter than test-lint.yml's 180 because this
+          # job's budget is 10 minutes rather than 45: 3x(150+5) plus the
+          # install is ~8 min, so the worst case still lands inside the step's
+          # own 9 and the reap keeps naming this step.
+          for attempt in 1 2 3; do
+            if sudo timeout 150 apt-get update; then
+              break
+            fi
+            echo "apt-get update failed or hung (attempt ${attempt}/3), retrying in 5s..."
+            sleep 5
+          done
           sudo apt-get install -y libosmesa6-dev
 
       # Importing the sim backend needs the sim-mujoco extra. CPU-only backend,

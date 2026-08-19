@@ -9,11 +9,13 @@ but not one that never answers - on a hang the `if` never evaluates, the next
 attempt and the backoff are unreachable, and the diagnostic `echo` never
 prints.
 
-The looped `apt-get update` is now wrapped in `timeout`, which turns a hang
+Each retried `apt-get update` is now wrapped in `timeout`, which turns a hang
 into the non-zero exit the loop already handles, and both apt steps
 (`test-lint.yml`, `agent-api-check.yml`) declare their own `timeout-minutes` so
 a stall is reaped on the step that caused it rather than aggregated into a
-rollup `FAILURE` carrying no reason. Bounds are sized from the observed
+rollup `FAILURE` carrying no reason. `agent-api-check.yml` gains the retry loop
+as well: `timeout` only converts a stall into an exit status, so without
+something reading that status a transient stall becomes a hard failure. Bounds are sized from the observed
 distribution rather than from the command's nominal cost: `update` finishes in
 ~5s even on slow runs, while `install` fetching ffmpeg's ~115 packages reached
 455s of a 45-minute budget, so `install` is bounded by the step and not by a

@@ -57,6 +57,17 @@ because that is the command the loop retries and its honest cost is seconds,
 while ``install`` is bounded by the step, because any per-command bound tight
 enough to be useful is inside the healthy distribution.
 
+**A bound needs something to act on the exit it produces.**  The first push of
+this change bounded ``agent-api-check.yml``'s ``apt-get update`` without giving
+it the loop, and CI produced the stall on that very step: the
+``azure.archive.ubuntu.com`` mirror was ignored after three tries, the fallback
+to ``archive.ubuntu.com`` then went **silent for 142s** mid-``InRelease``, and
+the bound ended it at 180s -- correctly, but with nothing to retry it, so a
+transient stall read as a hard red.  ``timeout`` converts a hang into exit 124
+and that is all it does; the recovery is the loop.  Hence the pairing is the
+contract: a bounded apt-get sits in a loop that reads its status, and the loop
+is what makes fast failure recoverable rather than merely faster.
+
 What is asserted, therefore:
 
 1. every step that runs ``apt-get`` declares a literal ``timeout-minutes``,
