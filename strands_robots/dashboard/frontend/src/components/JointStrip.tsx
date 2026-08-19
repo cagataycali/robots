@@ -1,16 +1,16 @@
 import { useRef } from 'react'
 import type { Presence, PeerState } from '../types'
+import { decideStripScale, fillPercent, type ScaleMemo } from '../lib/jointScale'
 
 /**
- * Per-joint observed range, learned from the stream.
+ * One scale per strip, learned from the stream.
  *
- * A single global span (`|pos| > 4 ? 100 : π`) puts a servo reading 0..100 and a
- * radian joint on the same axis, so a gripper at 45 % and an elbow at 0.7 rad
- * render identically and neither bar means anything. Tracking min/max per joint
- * makes each bar a real fraction of that joint's travel - and it costs one
- * comparison per sample.
+ * The scale decision lives in `../lib/jointScale` as pure functions: a robot
+ * reports every joint in one unit, so the unit belongs to the strip, and a
+ * change of unit needs several consecutive frames of agreement before the
+ * axis moves. See that module for why the old per-joint
+ * `|pos| > 4 ? 100 : PI` rule made bars incomparable and jumpy.
  */
-interface Range { lo: number; hi: number }
 
 function readValue(v: unknown): number {
   if (typeof v === 'number') return v
@@ -20,7 +20,7 @@ function readValue(v: unknown): number {
 }
 
 export default function JointStrip({ state, presence }: { state?: PeerState; presence?: Presence }) {
-  const ranges = useRef<Record<string, Range>>({})
+  const memo = useRef<ScaleMemo | undefined>(undefined)
 
   const joints = state?.joints
   if (!joints || Object.keys(joints).length === 0) {
@@ -34,21 +34,16 @@ export default function JointStrip({ state, presence }: { state?: PeerState; pre
   }
 
   const entries = Object.entries(joints).slice(0, 12)
-  return (
-    <div className="joints">
-      {entries.map(([name, v]) => {
-        const pos = readValue(v)
-        const seen = ranges.current[name]
-        // Seed from the unit the value looks like, then widen with observation:
-        // a joint that has only ever been at 0 still needs a sane axis.
-        const seed: Range = Math.abs(pos) > 4 ? { lo: -100, hi: 100 } : { lo: -Math.PI, hi: Math.PI }
-        const range: Range = seen
-          ? { lo: Math.min(seen.lo, pos), hi: Math.max(seen.hi, pos) }
-          : { lo: Math.min(seed.lo, pos), hi: Math.max(seed.hi, pos) }
-        ranges.current[name] = range
+  const samples: Array<[string, number]> = entries.map(([name, v]) => [name, readValue(v)])
+  memo.current = decideStripScale(samples, memo.current)
+  const { unit, ranges } = memo.current
 
-        const width = range.hi - range.lo || 1
-        const pct = Math.max(0, Math.min(100, ((pos - range.lo) / width) * 100))
+  return (
+    <div className="joints" data-unit={unit}>
+      {entries.map(([name, v], i) => {
+        const pos = samples[i][1]
+        const range = ranges[name]
+        const pct = fillPercent(pos, range)
         const vel = (v && typeof v === 'object' && !Array.isArray(v))
           ? (v as { velocity?: number }).velocity
           : undefined
@@ -56,7 +51,7 @@ export default function JointStrip({ state, presence }: { state?: PeerState; pre
           <div
             className="joint"
             key={name}
-            title={`${name}: ${pos.toFixed(3)}${vel !== undefined ? ` (v=${vel.toFixed(2)})` : ''} · observed ${range.lo.toFixed(2)}…${range.hi.toFixed(2)}`}
+            title={`${name}: ${pos.toFixed(3)}${vel !== undefined ? ` (v=${vel.toFixed(2)})` : ''} · ${unit} scale ${range.lo.toFixed(2)}…${range.hi.toFixed(2)}`}
           >
             <div className="jname">{name.replace(/(_pos|\.pos)$/, '')}</div>
             <div className="jbar">
