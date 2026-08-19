@@ -1103,3 +1103,12 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   color: var(--text, #e8eef6); margin-top: 2px;
 }
 .loss-spark-label .dim { color: var(--dim, #8b98a9); }
+
+/* ---- checkpoint search: hub health + HF auth state ---- */
+.ckpt-note {
+  font-size: 11px; padding: 6px 10px; color: var(--dim, #8b98a9);
+  border-bottom: 1px solid var(--border, #263042);
+}
+.ckpt-note.ok { color: #7dd8a0; }
+.ckpt-note.warn { color: #ffcc66; }
+.ckpt-note.bad { color: #ff8d99; }

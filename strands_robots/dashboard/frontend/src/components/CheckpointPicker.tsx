@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { api } from '../lib/endpoints'
 
 interface CheckpointRow {
   repo_id: string
@@ -7,6 +8,8 @@ interface CheckpointRow {
   policy_type: string | null
   tags: string[]
 }
+
+interface HfAuth { authenticated: boolean; user: string | null; detail: string | null }
 
 /**
  * Type-ahead over LeRobot policy checkpoints for `pretrained_name_or_path`.
@@ -28,6 +31,9 @@ export default function CheckpointPicker({ value, onPick, disabled }: {
   const [rows, setRows] = useState<CheckpointRow[]>([])
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [hubProblem, setHubProblem] = useState<string | null>(null)
+  const [hfAuth, setHfAuth] = useState<HfAuth | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
   const debounce = useRef<ReturnType<typeof setTimeout>>()
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -47,11 +53,19 @@ export default function CheckpointPicker({ value, onPick, disabled }: {
     debounce.current = setTimeout(async () => {
       setLoading(true)
       try {
-        const r = await fetch(`/api/checkpoints/search?q=${encodeURIComponent(q)}&limit=12`)
-        const j = await r.json()
+        const j = await api(`/api/checkpoints/search?q=${encodeURIComponent(q)}&limit=12`)
         setRows(j.results ?? [])
+        setHubProblem(j.hub_problem ?? null)
+        setHfAuth(j.hf_auth ?? null)
+        setFailed(null)
         setOpen(true)
-      } catch { setRows([]) }
+      } catch (e) {
+        // the search endpoint itself failed (auth, network) - name it instead
+        // of rendering the same silence as 'no matches'
+        setRows([])
+        setFailed((e as any)?.message ?? String(e))
+        setOpen(true)
+      }
       setLoading(false)
     }, 300)
   }
@@ -69,8 +83,20 @@ export default function CheckpointPicker({ value, onPick, disabled }: {
         disabled={disabled}
       />
       {loading && <span className="ckpt-spin">…</span>}
-      {open && rows.length > 0 && (
+      {open && (
         <div className="ckpt-menu">
+          {failed && <div className="ckpt-note bad">✗ search failed: {failed}</div>}
+          {!failed && hubProblem && <div className="ckpt-note warn">⚠ {hubProblem}</div>}
+          {!failed && hfAuth && (
+            <div className={`ckpt-note ${hfAuth.authenticated ? 'ok' : ''}`}>
+              {hfAuth.authenticated
+                ? `HF: signed in as ${hfAuth.user} — private + gated repos reachable`
+                : `HF: anonymous — ${hfAuth.detail ?? 'public repos only'}`}
+            </div>
+          )}
+          {rows.length === 0 && !failed && (
+            <div className="ckpt-note">no checkpoints match “{query || '…'}”</div>
+          )}
           {rows.map(r => (
             <button
               key={r.repo_id}

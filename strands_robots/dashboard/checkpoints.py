@@ -103,14 +103,22 @@ def local_checkpoints(query: str = "") -> list[dict[str, Any]]:
     return out
 
 
-def hub_search(query: str, limit: int = 12) -> list[dict[str, Any]]:
-    """Type-ahead search of public LeRobot checkpoints on the Hub."""
+def hub_search(query: str, limit: int = 12) -> tuple[list[dict[str, Any]], str | None]:
+    """Type-ahead search of public LeRobot checkpoints on the Hub.
+
+    Returns ``(rows, problem)`` - ``problem`` is None when the Hub answered,
+    otherwise a short human sentence. The old behavior (log at DEBUG, return
+    []) made three very different worlds render identically as "no results":
+    hub outage, no network, and a fine query with no matches. The operator
+    typing into the search box is exactly the person who needs to know which
+    world they are in.
+    """
     key = f"{query}:{limit}"
     now = time.time()
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
         if hit and now - hit[0] < _CACHE_TTL_S:
-            return hit[1]
+            return hit[1], None
     try:
         from huggingface_hub import HfApi
 
@@ -133,20 +141,65 @@ def hub_search(query: str, limit: int = 12) -> list[dict[str, Any]]:
             for m in models
         ]
     except Exception as exc:  # noqa: BLE001 - hub outage degrades to local-only
-        logger.debug("hub search failed (%s) - local-only results", exc)
-        rows = []
+        logger.warning("hub checkpoint search failed: %r", exc)
+        # do NOT cache a failure - the next keystroke should retry
+        kind = type(exc).__name__
+        return [], f"Hub search unavailable ({kind}) - showing local cache only"
     with _CACHE_LOCK:
         _CACHE[key] = (now, rows)
-    return rows
+    return rows, None
+
+
+_WHOAMI: dict[str, Any] = {"at": 0.0, "value": None}
+_WHOAMI_TTL_S = 600.0
+
+
+def hf_auth_state() -> dict[str, Any]:
+    """Whether this machine can reach gated/private HF repos, and as whom.
+
+    Token discovery is local + instant (env or ~/.cache/huggingface/token).
+    whoami() is a network call, so its answer is cached 10 minutes; a token
+    that fails whoami is reported as invalid rather than silently treated
+    like anonymity - a revoked token behaves differently from no token
+    (401 vs public-only), and the UI should say which one the user has.
+    """
+    try:
+        from huggingface_hub import get_token
+        token = get_token()
+    except Exception:  # noqa: BLE001
+        token = None
+    if not token:
+        return {"authenticated": False, "user": None, "detail": "no HF token on this machine"}
+    now = time.time()
+    if now - _WHOAMI["at"] < _WHOAMI_TTL_S and _WHOAMI["value"] is not None:
+        return _WHOAMI["value"]
+    try:
+        from huggingface_hub import HfApi
+        user = HfApi().whoami(token=token).get("name")
+        value = {"authenticated": True, "user": user, "detail": None}
+    except Exception as exc:  # noqa: BLE001
+        value = {
+            "authenticated": False,
+            "user": None,
+            "detail": f"HF token present but rejected ({type(exc).__name__})",
+        }
+    _WHOAMI.update(at=now, value=value)
+    return value
 
 
 def search(query: str = "", limit: int = 15) -> dict[str, Any]:
     """Merged checkpoint search: local cache first, then hub by downloads."""
     local = local_checkpoints(query)
     local_ids = {r["repo_id"] for r in local}
-    remote = [r for r in hub_search(query, limit=limit) if r["repo_id"] not in local_ids]
+    remote_rows, hub_problem = hub_search(query, limit=limit)
+    remote = [r for r in remote_rows if r["repo_id"] not in local_ids]
     rows = local + remote
-    return {"query": query, "results": rows[: max(limit, len(local))]}
+    return {
+        "query": query,
+        "results": rows[: max(limit, len(local))],
+        "hub_problem": hub_problem,
+        "hf_auth": hf_auth_state(),
+    }
 
 
 def policy_families() -> list[str]:
