@@ -43,12 +43,15 @@ const TABS: { id: Tab; label: string }[] = [
  * written back - typing over a mask with bullets would otherwise destroy a live
  * API key.
  */
-export default function SettingsDrawer({ open, onClose, mesh }: {
-  open: boolean; onClose: () => void; mesh: MeshInfo
+export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
+  open: boolean; onClose: () => void; mesh: MeshInfo; initialTab?: Tab
 }) {
   const { config, loading, error, reload, save } = useConfig()
   const [tab, setTab] = useState<Tab>('connection')
   const [query, setQuery] = useState('')
+
+  // Deep links (the header's wire-security chip opens straight to Mesh).
+  useEffect(() => { if (open && initialTab) setTab(initialTab) }, [open, initialTab])
   const [status, setStatus] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -339,6 +342,31 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
                   <><dt>policy allowlist</dt><dd className="mono">{mesh.policy_allow.join(', ')}</dd></>
                 ) : null}
               </dl>
+
+              {mesh.local_dev && (
+                <div className="explain">
+                  <b>What "wire security off" means:</b> robot commands and camera frames travel
+                  the mesh unencrypted and unauthenticated (<code>STRANDS_MESH_LOCAL_DEV=1</code>).
+                  That is fine on a trusted home LAN. Before this network is shared or bridged,
+                  restart the dashboard <em>without</em> that env var so the mesh requires mTLS —
+                  then only <code>tls/</code> and <code>quic/</code> endpoints are accepted.
+                  This is separate from dashboard login, which already guards the web UI.
+                </div>
+              )}
+
+              <div className="sheet-actions preset-row">
+                <button className="btn ghost" disabled={saving} title="Fills the fields below - nothing is saved until you click save & re-point" onClick={() => {
+                  setMeshPort(''); setConnect(''); setListen(''); setMeshBackend(''); setCameraHz('15')
+                  setStatus('SO-101 preset filled in below - review, then "save & re-point"')
+                }}>
+                  ✦ recommended for SO-101 desk setup
+                </button>
+              </div>
+              <p className="hint">
+                Preset: multicast discovery (no endpoints), default port 7447, camera 15 Hz —
+                smooth preview for two USB arm cams without flooding the LAN. It only fills the
+                form; nothing applies until you save.
+              </p>
 
               <label className="field">
                 <span>Connect endpoints</span>

@@ -31,6 +31,7 @@ function Dashboard() {
   const { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
+  const [settingsTab, setSettingsTab] = useState<'mesh' | undefined>(undefined)
   const [detail, setDetail] = useState<string | null>(null)
   const [busyPeers, setBusyPeers] = useState<Record<string, boolean>>({})
 
@@ -91,7 +92,8 @@ function Dashboard() {
         activityCount={activity.length}
         onInstall={() => void pwa.install()}
         onEstop={() => setPanel('estop')}
-        onSettings={() => setPanel('settings')}
+        onSettings={() => { setSettingsTab(undefined); setPanel('settings') }}
+        onWireSecurity={() => { setSettingsTab('mesh'); setPanel('settings') }}
         onActivity={() => setPanel('activity')}
         onDevices={() => setPanel('devices')}
         onTraining={() => setPanel('training')}
@@ -173,7 +175,7 @@ function Dashboard() {
 
       {detailPeer && <RobotDetail peer={detailPeer} onClose={() => setDetail(null)} />}
 
-      <SettingsDrawer open={panel === 'settings'} onClose={() => setPanel(null)} mesh={mesh} />
+      <SettingsDrawer open={panel === 'settings'} onClose={() => setPanel(null)} mesh={mesh} initialTab={settingsTab} />
       <ActivityLog open={panel === 'activity'} onClose={() => setPanel(null)} live={activity} />
       <DevicePanel open={panel === 'devices'} onClose={() => setPanel(null)} />
       <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)} />

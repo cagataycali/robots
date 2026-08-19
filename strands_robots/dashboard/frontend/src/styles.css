@@ -94,6 +94,21 @@ body {
 }
 .badge.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .badge.danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+/* Clickable warning chip: informative, not alarming (UX review #5) */
+.badge.warnchip {
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  cursor: pointer; font-family: inherit;
+}
+.badge.warnchip:hover { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+/* Plain-language explainer block inside the settings drawer */
+.explain {
+  font-size: var(--fs-small); line-height: 1.55; color: var(--text);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+  border-radius: var(--r2); padding: 10px 12px; margin-bottom: var(--s4);
+}
+.explain b { color: var(--warn); }
 
 .chip {
   font-size: 11px; color: var(--dim); background: var(--panel2);

@@ -22,6 +22,7 @@ interface Props {
   onInstall: () => void
   onEstop: () => void
   onSettings: () => void
+  onWireSecurity: () => void
   onActivity: () => void
   onDevices: () => void
   onTraining: () => void
@@ -30,7 +31,7 @@ interface Props {
 
 export default function FleetBar({
   conn, peerCount, dashboardId, safetyFlash, mesh, online, installable,
-  activityCount, onInstall, onEstop, onSettings, onActivity, onDevices, onTraining, onRecord,
+  activityCount, onInstall, onEstop, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
 }: Props) {
   // The mesh session and this browser's socket fail independently: the page can
   // be LIVE while the robot mesh is down, and vice versa. Showing only one of
@@ -58,9 +59,13 @@ export default function FleetBar({
         )}
         {!online && <span className="badge warn" title="this device has no network">offline</span>}
         {mesh.local_dev && (
-          <span className="badge danger" title="STRANDS_MESH_LOCAL_DEV=1 - mesh traffic is unauthenticated and unencrypted">
-            wire security off
-          </span>
+          <button
+            className="badge warnchip"
+            onClick={onWireSecurity}
+            title="Robot mesh traffic is not encrypted. Fine on a trusted LAN - click for details and how to enable wire security."
+          >
+            mesh unencrypted · local only
+          </button>
         )}
         {meshDown && <span className="badge danger" title="the dashboard's own mesh session is closed">mesh down</span>}
 
