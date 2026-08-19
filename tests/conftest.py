@@ -29,3 +29,43 @@ from tests.mocks.torch_mock import install_torch_mock
 
 # Must run before any test imports policy modules
 install_torch_mock()
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ANN001, ARG001
+    """Q32: refuse to leave a mesh session open, and say so.
+
+    A suite that finishes while still joined to the mesh becomes a live
+    ``gateway-*`` peer on cagatay's fleet screen and keeps a rail open to real
+    hardware - three such ghosts were found holding the hub, one of them three
+    days old. Whatever the exit status, the session is closed here and the
+    reason is printed, so the leak is visible in the run that caused it instead
+    of hours later in ``lsof``.
+    """
+    import threading
+
+    session_open = False
+    try:
+        from strands_robots.mesh import session as _mesh_session
+
+        session_open = _mesh_session.current_session() is not None
+    except Exception:  # zenoh absent, or the module never imported - nothing to leak
+        _mesh_session = None  # type: ignore[assignment]
+
+    threads = [t.name for t in threading.enumerate() if t.is_alive() and not t.daemon]
+
+    from tests.session_leak import leak_report
+
+    for line in leak_report(session_open=session_open, threads=threads):
+        print(line)
+
+    if session_open and _mesh_session is not None:
+        # release_session() is refcounted and a leaked session has lost count of
+        # its owners, so close the object itself - this hook runs after the last
+        # test, when nothing legitimate can still be publishing.
+        try:
+            live = _mesh_session.current_session()
+            if live is not None:
+                live.close()
+        except Exception:
+            pass
+
