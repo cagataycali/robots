@@ -161,7 +161,15 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; }
-.logo { font-size: 24px; }
+.logo { display: flex; align-items: center; }
+/* The mark's back strand is structure, the front one is the live signal, so it
+ * carries the same green that means "the robot answered" everywhere else. */
+.mark .mark-back { fill: color-mix(in srgb, var(--text) 42%, transparent); }
+.mark .mark-front { fill: var(--ok); }
+.brand:hover .mark .mark-front { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--ok) 55%, transparent)); }
+@media (prefers-contrast: more) {
+  .mark .mark-back { fill: var(--text); }
+}
 .brand h1 { font-size: 15px; font-weight: 700; letter-spacing: .04em; }
 .brand .sub { font-size: var(--fs-tiny); color: var(--dim); font-family: var(--mono); }
 .brand .backend { opacity: .65; }

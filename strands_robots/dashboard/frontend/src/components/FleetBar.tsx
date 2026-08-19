@@ -1,6 +1,7 @@
 import type { MeshInfo } from '../types'
 import type { ConnState } from '../lib/useMesh'
 import { backendLabel } from '../lib/endpoints'
+import StrandsMark from './StrandsMark'
 
 const CONN_LABEL: Record<ConnState, string> = {
   open: 'LIVE',
@@ -38,7 +39,7 @@ export default function FleetBar({
   return (
     <header className="fleetbar">
       <div className="brand">
-        <span className="logo">🤖</span>
+        <span className="logo"><StrandsMark size={26} title="Strands Agents" /></span>
         <div>
           <h1>strands robots</h1>
           <div className="sub" title={`API: ${backendLabel()}`}>
