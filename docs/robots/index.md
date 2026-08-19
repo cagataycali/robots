@@ -88,15 +88,15 @@ sim = Robot("aloha")
 
 | Category | Count | Page |
 |----------|------:|------|
-| Arms | 22 | [arms](arms.md) |
-| Bimanual | 3 | [bimanual](bimanual.md) |
+| Arms | 23 | [arms](arms.md) |
+| Bimanual | 4 | [bimanual](bimanual.md) |
 | Humanoids | 18 | [humanoids](humanoids.md) |
-| Hands | 8 | [hands](hands.md) |
+| Hands | 9 | [hands](hands.md) |
 | Mobile | 10 | [mobile](mobile.md) |
-| Mobile manip | 4 | [mobile](mobile.md) |
+| Mobile manip | 5 | [mobile](mobile.md) |
 | Aerial | 2 | [mobile](mobile.md) |
 | Expressive | 1 | [humanoids](humanoids.md) |
-| **Total** | **68** | |
+| **Total** | **72** | |
 
 
 ## Add a new robot

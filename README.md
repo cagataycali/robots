@@ -320,8 +320,19 @@ python -m strands_robots dashboard --port 8090 --local-dev
 The dashboard is a mesh peer, not a hub: a robot you start in your own script
 with `mesh=True` shows up in it unchanged. The UI is a client of a plain HTTP
 API (`/api/fleet`, `/api/devices/spawn`, `/api/collect`, `/api/training/*`, ...),
-so anything it can do, `curl` can do. Full reference:
-[Fleet dashboard docs](docs/dashboard/index.md).
+so anything it can do, `curl` can do.
+
+| | |
+|---|---|
+| **Two SO-101 arms and a Mac?** | [10-minute quickstart](docs/dashboard/quickstart.md) - install, calibrate, spawn both arms, identify which camera is the wrist, first dataset on disk |
+| Every flag, route and panel | [Fleet dashboard reference](docs/dashboard/index.md) |
+| The same peer from your own script | [Robots defined in code](docs/dashboard/code-defined-robots.md) |
+| Reach it from a phone | [Remote access](docs/dashboard/remote-access.md) - guard first, tunnel second |
+
+Two facts worth knowing before the first spawn: a camera is declared as a
+**mapping of options** (`{"wrist": {"index_or_path": 1}}`), never a bare index,
+and with no credential configured the API answers **loopback only** - a
+tunnelled request is refused rather than trusted.
 
 ## Recording & streaming datasets
 

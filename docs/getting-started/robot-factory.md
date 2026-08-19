@@ -99,6 +99,6 @@ Mesh failure is non-fatal; `.mesh = None` if Zenoh unavailable.
 
 ## See also
 
-- [Robot catalog](../robots/index.md) - 68 catalog names.
+- [Robot catalog](../robots/index.md) - 72 catalog names.
 - [Architecture](../architecture.md) - factory in the module map.
 - [Multi-robot mesh](../mesh.md) - mesh peer discovery.
