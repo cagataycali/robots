@@ -334,6 +334,7 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         "step",
         "reset",
         "teleop_status",
+        "teleop_publish",
         "teleop_receive",
         "teleop_stop",
         # ``resume`` clears the emergency-stop lockout; the only action
@@ -1127,6 +1128,24 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
 
     elif action == "step":
         out["steps"] = _coerce_int("steps", cmd.get("steps", 1), lo=1, hi=10_000, default=1)
+
+    elif action == "teleop_publish":
+        # device_name becomes a segment of the published key expression, exactly
+        # as on the receive side, so it is validated by the same rule. hz drives
+        # the publish loop's 1/hz period AND a real bus read per frame: an absurd
+        # rate is a denial of service against the arm's own state stream.
+        if "device_name" in cmd:
+            out["device_name"] = validate_mesh_identifier(cmd["device_name"], "teleop_publish.device_name")
+        if "hz" in cmd:
+            hz = cmd["hz"]
+            if isinstance(hz, bool) or not isinstance(hz, (int, float)):
+                raise ValidationError("teleop_publish.hz must be a number")
+            hz = float(hz)
+            if not (0 < hz <= 200):
+                raise ValidationError("teleop_publish.hz must be > 0 and <= 200")
+            out["hz"] = hz
+        if cmd.get("robot_name") is not None:
+            out["robot_name"] = validate_mesh_identifier(cmd["robot_name"], "teleop_publish.robot_name")
 
     elif action == "teleop_receive":
         # Both fields flow into ``r.start_teleop_receive(source, dev)``, which

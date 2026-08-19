@@ -174,6 +174,65 @@ class TeleopMixin:
             ],
         }
 
+    def start_teleop_publish_self(
+        self,
+        device_name: str = "leader",
+        hz: float = 30.0,
+        robot_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Publish THIS arm's own measured positions as a teleop stream.
+
+        The missing half of the teleop chain. ``start_teleop_publish`` needs a
+        lerobot ``Teleoperator`` handed to it in-process, and no mesh verb could
+        create one - so a remote caller could point a follower at a leader
+        stream that nothing was able to bring into existence, and the follower
+        just waited out its subscribe budget.
+
+        A leader arm the dashboard already spawned is a valid source as it is:
+        its joints come off the wire through the shared bus lock (no second
+        serial connection, no "Port is in use!"), and ``get_observation`` already
+        names them the way a follower's ``send_action`` expects. See
+        :mod:`strands_robots.teleop_source`.
+
+        READ-ONLY on this arm: it moves nothing. A follower moves only when
+        someone separately points it at this stream.
+
+        Args:
+            device_name: Input-stream name; the last segment of the mesh key.
+            hz: Publish rate. 30Hz is the default rather than the publisher's
+                50Hz because every frame here is a real bus read shared with the
+                state probe and the camera publisher.
+            robot_name: Sim only: which robot in the world is the leader.
+
+        Returns:
+            The status dict from :meth:`start_teleop_publish`, or an error dict
+            when this host cannot be read.
+        """
+        from strands_robots.teleop_source import RobotAsTeleoperator
+
+        source = RobotAsTeleoperator(self, robot_name=robot_name)
+        # Fail loudly HERE rather than starting a loop that publishes empty
+        # frames forever: a stream of {} looks alive in the counters and moves
+        # nothing, which is the worst possible failure to debug.
+        probe = source.get_action()
+        if not probe:
+            return {
+                "status": "error",
+                "content": [{
+                    "text": "this host reports no joint positions, so it cannot be a teleop leader "
+                            "(is its hardware connected?)",
+                }],
+            }
+        publish = getattr(self, "start_teleop_publish", None)
+        if publish is None:
+            return {"status": "error", "content": [{"text": "host does not support teleop publishing"}]}
+        result = dict(publish(source, device_name=device_name, method="arm", hz=hz))
+        # What the receiver needs, without making the caller parse prose.
+        result["source_peer_id"] = getattr(self, "peer_id", None)
+        result["device_name"] = device_name
+        result["joints"] = sorted(probe)
+        return result
+
     def get_teleop_status(self) -> dict[str, Any]:
         """Status of all active teleop publishers/receivers (host-agnostic)."""
         publishers = {}

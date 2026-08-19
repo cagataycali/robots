@@ -1922,6 +1922,18 @@ class Mesh(SensorLoopsMixin):
             if hasattr(r, "get_teleop_status"):
                 return dict(r.get_teleop_status())
             return {"inputs": [], "publishers": {}, "receivers": {}}
+        if action == "teleop_publish":
+            # Makes this peer a teleop SOURCE from its own joints. Read-only on
+            # this arm - the mover is whoever calls teleop_receive.
+            if hasattr(r, "start_teleop_publish_self"):
+                return dict(
+                    r.start_teleop_publish_self(
+                        device_name=cmd.get("device_name", "leader"),
+                        hz=cmd.get("hz", 30.0),
+                        robot_name=cmd.get("robot_name"),
+                    )
+                )
+            return {"error": "robot does not support teleop_publish"}
         if action == "teleop_receive":
             source = cmd.get("source_peer_id", "")
             dev = cmd.get("device_name", "leader")

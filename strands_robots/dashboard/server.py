@@ -8,6 +8,7 @@ Endpoints:
     POST /api/policies/validate          pre-flight a provider config
     POST /api/robots/{peer}/task         start a task on a peer
     POST /api/robots/{peer}/stop         stop the running task on a peer
+    POST /api/robots/{peer}/teleop/publish  publish a leader's own joints
     POST /api/safety/estop               fleet-wide emergency stop
     GET  /api/config                     agent / voice / mesh / env config
     POST /api/config                     apply config (hot where possible)
@@ -482,6 +483,27 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         keep. Works on hardware AND sim peers (TeleopMixin lift)."""
         require_peer(peer_id)
         result = await app.state.bridge.send_cmd_async(peer_id, {"action": "teleop_status"}, timeout=10.0)
+        return {"peer_id": peer_id, "result": result}
+
+    @app.post("/api/robots/{peer_id}/teleop/publish")
+    async def teleop_publish(peer_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Make a peer a teleop SOURCE from its own joints (U3, leader half).
+
+        Until this existed the chain was half-built: /teleop/receive could point
+        a follower at a leader stream, but nothing on the mesh could make that
+        stream exist, so the follower waited out its subscribe budget and
+        answered with a shrug.
+
+        Read-only on the arm named here - it publishes what it measures and moves
+        nothing. The mover is whoever is pointed at this stream.
+        """
+        require_peer(peer_id)
+        body = body or {}
+        cmd: dict[str, Any] = {"action": "teleop_publish"}
+        for field in ("device_name", "hz", "robot_name"):
+            if body.get(field) is not None:
+                cmd[field] = body[field]
+        result = await app.state.bridge.send_cmd_async(peer_id, cmd, timeout=30.0)
         return {"peer_id": peer_id, "result": result}
 
     @app.post("/api/robots/{peer_id}/teleop/receive")
