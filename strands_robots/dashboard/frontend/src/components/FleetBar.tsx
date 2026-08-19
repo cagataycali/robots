@@ -26,11 +26,13 @@ interface Props {
   onDevices: () => void
   onTraining: () => void
   onRecord: () => void
+  onHelp: () => void
 }
 
 export default function FleetBar({
   conn, peerCount, dashboardId, safetyFlash, mesh, online, installable,
   activityCount, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
+  onHelp,
 }: Props) {
   // The mesh session and this browser's socket fail independently: the page can
   // be LIVE while the robot mesh is down, and vice versa. Showing only one of
@@ -78,6 +80,14 @@ export default function FleetBar({
           ☰ activity{activityCount > 0 ? ` (${activityCount})` : ''}
         </button>
         <button className="chip" onClick={onSettings} title="Settings">⚒ settings</button>
+        {/* JOURNEYS #7: the page had 0 links and 0 onboarding words. One labelled
+            affordance, present on every screen, keyboard shortcut "?". */}
+        <button
+          className="chip"
+          onClick={onHelp}
+          title="What this page is, how to stop a robot, and where the docs are"
+          aria-keyshortcuts="?"
+        >? help</button>
 
         <span className="peers">{peerCount} peer{peerCount === 1 ? '' : 's'}</span>
         <span className={`conn ${conn}`} title={conn === 'unauthorized' ? 'the server rejected this token - set it in Settings' : ''}>

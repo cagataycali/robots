@@ -584,6 +584,20 @@ body {
 .sheet h2 { font-size: var(--fs-lg); font-weight: 700; }
 .sheet p { font-size: var(--fs-body); color: var(--dim); line-height: 1.55; }
 .sheet.estop-sheet { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+/* Help sheet (JOURNEYS #7). Scrollable because it is read, not scanned, and the
+   phone is where a tooltip could never have helped. */
+.sheet.help-sheet { max-width: 620px; max-height: 82vh; overflow-y: auto; }
+.help-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.help-topic { margin-top: var(--s4); }
+.help-topic h3 { font-size: var(--fs-body); font-weight: 700; margin-bottom: var(--s2); }
+.help-topic p { font-size: var(--fs-body); color: var(--dim); line-height: 1.55; margin-bottom: var(--s2); }
+.help-links, .help-paths { list-style: none; display: grid; gap: var(--s2); font-size: var(--fs-body); }
+.help-paths { color: var(--dim); }
+.help-links a { color: var(--accent, #7cc7ff); text-decoration: underline; }
+.sheet.help-sheet kbd {
+  font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 11px;
+  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; opacity: .85;
+}
 .sheet.estop-sheet.danger { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger), var(--shadow2); }
 .estop-list { list-style: none; display: flex; flex-direction: column; gap: var(--s1); }
 .estop-list li {

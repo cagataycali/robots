@@ -12,13 +12,14 @@ import SettingsDrawer from './components/SettingsDrawer'
 import ActivityLog from './components/ActivityLog'
 import DevicePanel from './components/DevicePanel'
 import EstopSheet from './components/EstopSheet'
+import HelpSheet from './components/HelpSheet'
 import EstopButton from './components/EstopButton'
 import ErrorBoundary from './components/ErrorBoundary'
 import TrainingTab from './components/TrainingTab'
 import RecordPanel from './components/RecordPanel'
 import AuthGate from './components/AuthGate'
 
-type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | null
+type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | 'help' | null
 
 /**
  * `?panel=…` is what the manifest shortcuts deep-link to. Note there is
@@ -70,6 +71,9 @@ function Dashboard() {
       const typing = (e.target as HTMLElement)?.tagName?.match(/INPUT|TEXTAREA|SELECT/)
       if (e.key === 'Escape') { setPanel(null); return }
       if (!typing && e.key === '.') setPanel('estop')
+      // "?" is the conventional help key and costs nothing to guess. Gated on
+      // `typing` like the stop hotkey, so it cannot fire inside a task sentence.
+      if (!typing && e.key === '?') setPanel('help')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -125,6 +129,7 @@ function Dashboard() {
         onDevices={() => setPanel('devices')}
         onTraining={() => setPanel('training')}
         onRecord={() => setPanel('record')}
+        onHelp={() => setPanel('help')}
       />
 
       {/* Its own layer, so no overlay can ever swallow the stop. */}
@@ -225,6 +230,7 @@ function Dashboard() {
       <ErrorBoundary label="the devices screen" onDismiss={() => setPanel(null)}>
         <DevicePanel open={panel === 'devices'} onClose={() => setPanel(null)} />
       </ErrorBoundary>
+      <HelpSheet open={panel === 'help'} onClose={() => setPanel(null)} />
       <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)}
         linkWarning={link.commandsWork ? null : link.estopReason} />
       {panel === 'training' && (
