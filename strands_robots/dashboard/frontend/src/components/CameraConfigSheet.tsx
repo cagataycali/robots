@@ -51,9 +51,14 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
     try {
       const r = await post<any>(`/api/devices/${encodeURIComponent(peerId)}/cameras`, { cameras: check.cameras })
       if (r?.error) setError(r.error)
+      // The settle rail answers running / starting / failed / gone. `failed`
+      // arrives as r.error above; `gone` means the peer despawned while we
+      // watched — "watch its card come back" would be a promise about a card
+      // that is never coming back, so it is an error, not a ✓.
+      else if (r?.status === 'gone') setError(`${peerId} despawned during the respawn window — check devices › logs`)
       else setDone(r?.status === 'running'
         ? `✓ ${peerId} is back on the mesh with the new cameras`
-        : `✓ respawned (status: ${r?.status ?? 'starting'}) — watch its card come back`)
+        : `respawned, not yet announced on the mesh (status: ${r?.status ?? 'starting'}) — watch its card, or check devices › logs if it stays away`)
     } catch (e: any) {
       // A 404 here has one honest meaning on this codebase: the running
       // dashboard process predates this route.
