@@ -848,9 +848,17 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         from strands_robots.dashboard.mesh_bridge import route_task_target
 
         target, cmd = route_task_target(peer_id, cmd)
-        # The peer only answers when the policy *finishes*, so a timeout below
-        # duration reports a bare "timeout" on a task that is running fine.
-        timeout_s = max(float(body.get("timeout", 60.0)), duration + 10.0)
+        # Two different waits: "start" is answered by an immediate ack (so waiting
+        # duration+10 meant a 1-hour run held ▶ in "starting" for 3610s if the peer
+        # never answered), while "execute" blocks until the rollout ends. The ack
+        # budget is still generous, because a cold checkpoint download happens
+        # BEFORE the ack and a premature "failed" on a policy that then loads and
+        # moves an arm is worse than waiting.
+        from strands_robots.dashboard.task_timeout import task_ack_budget, timeout_verdict
+
+        timeout_s, timeout_kind = task_ack_budget(
+            cmd["action"], body.get("timeout"), duration
+        )
         # Twin mirroring: fire the same instruction at '<peer>-twin' when one
         # is live (fire-and-forget; twin progress streams on the mesh).
         twin_id = f"{peer_id}-twin"
@@ -872,6 +880,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "timeout_s": timeout_s,
             "result": result,
         }
+        # A timeout is not "nothing happened": the command was delivered, so the
+        # robot may be loading a policy and about to move. Say which wait ended.
+        if isinstance(result, dict) and not payload["ok"] and str(result.get("error", "")).startswith("timeout"):
+            verdict = timeout_verdict(timeout_kind, timeout_s, target)
+            result.update(verdict)
+            payload["motion_possible"] = True
+            payload["timeout_kind"] = verdict["timeout_kind"]
         if not payload["ok"] and isinstance(result, dict):
             # The refusal is inside the peer's answer, under whichever key that
             # peer chose; check the ones that carry prose rather than guessing one.
