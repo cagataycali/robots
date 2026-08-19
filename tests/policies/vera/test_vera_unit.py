@@ -12,7 +12,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from strands_robots.policies.factory import create_policy, list_providers
+# strands_robots.policies.vera imports its vendored msgpack packer at import
+# time, so guard here: an absent optional extra must skip, not fail.
+pytest.importorskip("msgpack", reason="msgpack (optional `cosmos3`/`vera` extra) needed for the wire format")
+
+from strands_robots.policies.factory import create_policy, list_providers  # noqa: E402
 from strands_robots.policies.vera import VeraConfig, VeraPolicy, VeraServerRunner
 from strands_robots.policies.vera import _msgpack_numpy as mnp
 

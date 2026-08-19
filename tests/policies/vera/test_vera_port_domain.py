@@ -28,7 +28,12 @@ from typing import Any
 
 import pytest
 
-from strands_robots.policies.vera import VeraConfig, VeraPolicy, VeraServerRunner
+# The vera/cosmos3 packages import their vendored msgpack packer at import time, so
+# guard at module level: an absent OPTIONAL extra must skip, not fail (a bare
+# ModuleNotFoundError here reads like the policy itself is broken).
+pytest.importorskip("msgpack", reason="msgpack (optional `cosmos3`/`vera` extra) needed for the wire format")
+
+from strands_robots.policies.vera import VeraConfig, VeraPolicy, VeraServerRunner  # noqa: E402
 from strands_robots.policies.vera.config import _viewer_port_error
 
 # Values no TCP port can be addressed by. ``0`` is in this set for

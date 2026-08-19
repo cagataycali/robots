@@ -5,6 +5,11 @@ import types
 
 import numpy as np
 import pytest
+# The vera/cosmos3 packages import their vendored msgpack packer at import time, so
+# guard at module level: an absent OPTIONAL extra must skip, not fail (a bare
+# ModuleNotFoundError here reads like the policy itself is broken).
+pytest.importorskip("msgpack", reason="msgpack (optional `cosmos3`/`vera` extra) needed for the wire format")
+
 
 
 @pytest.fixture(autouse=True)

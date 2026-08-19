@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("websockets", reason="websockets needed for the raw transport")
+pytest.importorskip("msgpack", reason="msgpack (optional `cosmos3`/`vera` extra) needed for the wire format")
 
 from strands_robots.policies.cosmos3 import _msgpack_numpy as mnp  # noqa: E402
 from strands_robots.policies.cosmos3.client import (  # noqa: E402
