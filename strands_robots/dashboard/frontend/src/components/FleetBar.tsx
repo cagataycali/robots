@@ -25,11 +25,12 @@ interface Props {
   onActivity: () => void
   onDevices: () => void
   onTraining: () => void
+  onRecord: () => void
 }
 
 export default function FleetBar({
   conn, peerCount, dashboardId, safetyFlash, mesh, online, installable,
-  activityCount, onInstall, onEstop, onSettings, onActivity, onDevices, onTraining,
+  activityCount, onInstall, onEstop, onSettings, onActivity, onDevices, onTraining, onRecord,
 }: Props) {
   // The mesh session and this browser's socket fail independently: the page can
   // be LIVE while the robot mesh is down, and vice versa. Showing only one of
@@ -67,6 +68,7 @@ export default function FleetBar({
           <button className="chip" onClick={onInstall} title="Install as an app">⤓ install</button>
         )}
         <button className="chip" onClick={onDevices} title="Local hardware and managed robots">⚙ devices</button>
+        <button className="chip" onClick={onRecord} title="Record teleop episodes into a dataset">⏺ record</button>
         <button className="chip" onClick={onTraining} title="Train policies on recorded datasets">🎓 train</button>
         <button className="chip" onClick={onActivity} title="Command history">
           ☰ activity{activityCount > 0 ? ` (${activityCount})` : ''}

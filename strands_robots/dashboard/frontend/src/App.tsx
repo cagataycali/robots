@@ -12,8 +12,9 @@ import ActivityLog from './components/ActivityLog'
 import DevicePanel from './components/DevicePanel'
 import EstopSheet from './components/EstopSheet'
 import TrainingTab from './components/TrainingTab'
+import RecordPanel from './components/RecordPanel'
 
-type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | null
+type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | null
 
 /**
  * `?panel=…` is what the manifest shortcuts deep-link to. Note there is
@@ -22,7 +23,7 @@ type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | null
  */
 function initialPanel(): Panel {
   const want = new URLSearchParams(location.search).get('panel')
-  return want === 'settings' || want === 'activity' || want === 'devices' || want === 'training' ? want : null
+  return want === 'settings' || want === 'activity' || want === 'devices' || want === 'training' || want === 'record' ? want : null
 }
 
 function Dashboard() {
@@ -93,6 +94,7 @@ function Dashboard() {
         onActivity={() => setPanel('activity')}
         onDevices={() => setPanel('devices')}
         onTraining={() => setPanel('training')}
+        onRecord={() => setPanel('record')}
       />
 
       {pwa.needRefresh && (
@@ -175,6 +177,9 @@ function Dashboard() {
       <DevicePanel open={panel === 'devices'} onClose={() => setPanel(null)} />
       <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)} />
       {panel === 'training' && <TrainingTab onClose={() => setPanel(null)} />}
+      {panel === 'record' && (
+        <RecordPanel peerIds={list.filter(p => !p.stale).map(p => p.peer_id)} onClose={() => setPanel(null)} />
+      )}
 
       <AgentDock
         onSettings={() => setPanel('settings')}

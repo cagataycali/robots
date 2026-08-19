@@ -914,3 +914,12 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
+
+/* record screen (U8) */
+.rec-counter { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.rec-counter b { font-size: 28px; font-variant-numeric: tabular-nums; }
+.rec-counter span { color: var(--dim); font-size: 13px; }
+.rec-counter .rec-task { flex-basis: 100%; font-size: 12px; }
+.rec-live { background: var(--danger-fill); animation: recpulse 1.6s ease-in-out infinite; }
+@keyframes recpulse { 50% { filter: brightness(1.25); } }
+@media (prefers-reduced-motion: reduce) { .rec-live { animation: none; } }
