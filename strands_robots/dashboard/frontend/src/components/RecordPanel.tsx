@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordApi'
+import { openActionCopy } from '../lib/recordAction'
 import { api as httpGet } from '../lib/endpoints'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
 import CameraTile from './CameraTile'
@@ -156,6 +157,9 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
     ? episodes[episodes.length - 1]?.frames ?? null
     : null
 
+  // R1: the button's words depend on which recorder answered the probe.
+  const openCopy = openActionCopy(api ? api.mock : null)
+
   return (
     <div className="train-sheet" role="dialog" aria-label="Record episodes">
       <div className="train-head">
@@ -234,12 +238,16 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
             not sure which is which? the leader is the lighter 7.4V arm (no gearbox load —
             easy to move by hand); the follower is the stronger 12V arm that mirrors it.
           </div>
+          {/* R1: the consequence is stated BEFORE the click, because this is the
+              moment two real arms change state — not after, in a toast. */}
+          <div className={`train-msg rec-hint${openCopy.cls ? ' warn' : ''}`}>{openCopy.hint}</div>
           <div className="train-actions">
-            <button className="btn go wide" type="submit"
+            <button className={`btn go wide${openCopy.cls ? ` ${openCopy.cls}` : ''}`} type="submit"
+                    aria-label={openCopy.aria}
                     disabled={busy || !api || !form.dataset.trim() || !form.task.trim()
                               || !form.leader || !form.follower || form.leader === form.follower
                               || (problems.length > 0 && !ack)}>
-              open session
+              {openCopy.label}
             </button>
           </div>
           {/* Only a real collision. Both slots start EMPTY now, and '' === '' was

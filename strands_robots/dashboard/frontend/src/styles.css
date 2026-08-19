@@ -127,6 +127,10 @@ body {
    dashed — the house language for "this works, but not for real". */
 .chip.rehearsal { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); border-style: dashed; }
 .chip.rehearsal:hover { color: var(--warn); border-color: var(--warn); }
+/* R1: the same language on the button that opens a recording session — a
+   rehearsal must not wear the confident green of the real thing. */
+.btn.go.rehearsal { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 60%, transparent); }
+.btn.go.rehearsal:disabled { background: var(--panel2); color: var(--dim); border-style: solid; }
 .chip.on { border-color: var(--accent); color: var(--accent); }
 .chip.static { cursor: default; }
 
