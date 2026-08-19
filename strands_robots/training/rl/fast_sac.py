@@ -146,6 +146,10 @@ class FastSacTrainer(BaseRLAlgo):
         # and critics take spec.learning_rate, the entropy temperature takes
         # this one, and only the first is covered above.
         problems.extend(self._temperature_learning_rate_problems(spec))
+        # init_alpha is the temperature that rate moves, and it reaches
+        # torch.log on both branches, so only a positive finite value has a
+        # usable logarithm - the same domain, on the value rather than the rate.
+        problems.extend(self._initial_temperature_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:

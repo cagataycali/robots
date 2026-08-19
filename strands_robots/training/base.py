@@ -572,6 +572,52 @@ class Trainer(ABC):
 
         return temperature_learning_rate_problems(spec, context=self.provider_name)
 
+    def _initial_temperature_problems(self, spec: TrainSpec) -> list[str]:
+        """Entropy-temperature starting-value preflight, for backends that hold one.
+
+        Returns a problem when :attr:`RLTrainSpec.init_alpha` is not a positive
+        finite number. FastSAC stores the temperature's logarithm, so the field
+        reaches ``torch.log`` and only a positive finite value has a finite one.
+        A :meth:`validate` implementation that builds a temperature MUST call
+        this **in addition to** :meth:`_temperature_learning_rate_problems`: the
+        two fields are the temperature's starting value and the rate that moves
+        it, so guarding the rate leaves the value it starts from unchecked -
+        which that gate's own reasoning depends on, since it refuses
+        ``alpha_lr=0`` on the grounds that "the temperature stays at
+        ``init_alpha`` for the whole run".
+
+        ``init_alpha=0`` makes ``log(0) == -inf`` and the temperature exactly
+        zero, so the entropy term is absent from both losses and automatic
+        tuning cannot lift it back - no finite update moves an infinity - while
+        the run reports success and checkpoints the non-finite value. A negative
+        value, ``nan`` or ``inf`` poisons the actor loss instead and raises from
+        inside ``torch.distributions.Normal``, naming that distribution's
+        parameter rather than the field.
+
+        Unlike :meth:`_temperature_learning_rate_problems` this is not scoped to
+        ``autotune_alpha``: that gate guards an optimizer only the tuning branch
+        constructs, while ``init_alpha`` is read on both branches, and with
+        tuning off it is the temperature for the entire run.
+
+        Only a backend that holds an entropy temperature may call this: like
+        :meth:`_gae_lambda_problems`, and unlike :meth:`_learning_rate_problems`,
+        a backend that does not read the field MUST NOT report on it, because
+        per :class:`TrainSpec` a backend ignores the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``init_alpha`` has no finite logarithm;
+            empty when it is usable.
+        """
+        from strands_robots.training._validate import initial_temperature_problems
+
+        return initial_temperature_problems(spec, context=self.provider_name)
+
     def _gradient_clip_problems(self, spec: TrainSpec) -> list[str]:
         """Gradient-clip preflight for a backend that clips before it steps.
 

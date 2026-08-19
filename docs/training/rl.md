@@ -224,6 +224,23 @@ log-probability in the actor loss the resulting checkpoint holds non-finite
 parameters. Both previously reported success. It is inert when
 `autotune_alpha=False`, which builds no temperature optimizer.
 
+`init_alpha` - the temperature that rate moves - must be a positive finite
+number, checked by the same `validate()`. FastSAC stores the temperature's
+*logarithm* (`log_alpha = log(init_alpha)`, with `alpha = exp(log_alpha)`
+scaling the entropy term in both the critic target and the actor loss), so only
+a positive finite value has a usable logarithm. `init_alpha=0` makes
+`log(0) = -inf` and the temperature exactly `0`, which removes the entropy term
+from both losses - the run is no longer the maximum-entropy algorithm that was
+asked for - and no finite gradient step moves an infinity, so `autotune_alpha`
+cannot recover it; the run previously reported success and checkpointed
+`log_alpha = -inf`, so the unusable temperature outlived it. `True` was a silent
+temperature of exactly `1.0`, and a negative value, `nan` or `inf` poisoned the
+actor loss and raised `ValueError` from `torch.distributions.Normal` about a
+tensor of `nan` policy means - naming that distribution's parameter rather than
+the field, and only once `train()` was already under way. Unlike `alpha_lr`
+this check is **not** conditioned on `autotune_alpha`: the field is read on both
+branches, and with tuning off it is the temperature for the whole run.
+
 `max_grad_norm` must be a positive number a 64-bit float can represent, checked
 by `validate()` on the on-policy backend only (`clip_grad_norm_` appears in
 `rl/ppo.py` and nowhere else). It is the last thing that touches a gradient
