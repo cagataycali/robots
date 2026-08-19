@@ -441,11 +441,35 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(500, "policy registry unavailable")
         return {"providers": catalog, "names": [p["name"] for p in catalog]}
 
+    def require_peer(peer_id: str) -> None:
+        """404 for a peer that was never in the fleet, before spending the RPC.
+
+        Every /api/robots/{peer}/* route used to send the command and wait out its
+        whole timeout -- 10s for stop, up to duration+10 for a task -- then answer
+        200 with state "no_answer". That is the SAME word a real robot that went
+        quiet produces, so a typo and a wedged arm were indistinguishable, on the
+        stop path of all places. A known-but-stale peer is still addressed: "it
+        went quiet, try stopping it anyway" is a real thing to want.
+        """
+        from strands_robots.dashboard.mesh_bridge import peer_is_known
+
+        bridge = app.state.bridge
+        managed = getattr(getattr(app.state, "devices", None), "robots", None) or {}
+        if peer_is_known(peer_id, getattr(bridge, "peers", None) or {}, managed):
+            return
+        known = sorted(set(getattr(bridge, "peers", None) or {}) | set(managed))
+        raise HTTPException(404, {
+            "error": f"no peer {peer_id!r} in the fleet",
+            "hint": "GET /api/fleet lists the peers that can be commanded",
+            "known_peers": known,
+        })
+
     @app.get("/api/robots/{peer_id}/teleop")
     async def teleop_status(peer_id: str) -> dict[str, Any]:
         """Live teleop health for one peer: publisher/receiver rates, drops,
         slew rejections - the counters InputPublisher/InputReceiver already
         keep. Works on hardware AND sim peers (TeleopMixin lift)."""
+        require_peer(peer_id)
         result = await app.state.bridge.send_cmd_async(peer_id, {"action": "teleop_status"}, timeout=10.0)
         return {"peer_id": peer_id, "result": result}
 
@@ -456,9 +480,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         With the TeleopMixin lift a SIM twin can follow a REAL leader arm -
         practice-on-the-twin before metal.
         """
+        require_peer(peer_id)
         source = (body.get("source_peer_id") or "").strip()
         if not source:
             raise HTTPException(422, "source_peer_id required")
+        # The leader is a peer too: pointing a follower at a stream nobody
+        # publishes is a 45s wait ending in a shrug.
+        require_peer(source)
         cmd = {
             "action": "teleop_receive",
             "source_peer_id": source,
@@ -471,6 +499,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/robots/{peer_id}/teleop/stop")
     async def teleop_stop(peer_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        require_peer(peer_id)
         cmd: dict[str, Any] = {"action": "teleop_stop"}
         if body and body.get("device_name"):
             cmd["device_name"] = body["device_name"]
@@ -676,6 +705,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/robots/{peer_id}/task")
     async def start_task(peer_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        require_peer(peer_id)
         instruction = (body.get("instruction") or "").strip()
         if not instruction:
             raise HTTPException(422, "instruction required")
@@ -729,6 +759,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/robots/{peer_id}/stop")
     async def stop_task(peer_id: str) -> dict[str, Any]:
+        require_peer(peer_id)
         result = await app.state.bridge.send_cmd_async(peer_id, {"action": "stop"}, timeout=10.0)
         outcome = stop_outcome(result)
         return {"peer_id": peer_id, **outcome, "result": result}

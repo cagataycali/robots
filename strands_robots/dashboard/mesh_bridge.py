@@ -28,6 +28,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,45 @@ MAX_CMD_BYTES = int(os.getenv("STRANDS_MESH_MAX_CMD_BYTES", str(16 * 1024)))
 
 #: How many fleet actions to keep for the activity panel.
 ACTIVITY_CAP = 300
+
+
+def peer_is_known(
+    peer_id: str,
+    peers: Mapping[str, Any] | Iterable[str],
+    managed_ids: Iterable[str] = (),
+) -> bool:
+    """Is this peer id something the fleet could plausibly answer for?
+
+    Used to refuse a command for a peer that was NEVER in the fleet before
+    spending the RPC timeout on it. ``/api/robots/{peer}/stop ghost_peer_zz``
+    burned 10 seconds and then answered ``state: "no_answer"`` -- which is the
+    same word a REAL robot that stopped answering produces, and that is the case
+    an operator must be able to tell apart. A typo and a wedged arm should not
+    look identical, least of all on the stop path.
+
+    Known means any of:
+
+    * the id is in the mesh peer table;
+    * it is a locally managed process (a peer inside its spawn/settle window has
+      a pid but no mesh presence yet -- refusing a task there would break the
+      spawn-then-drive sequence the UI performs);
+    * it is a ``"<parent>__<robot>"`` child of either of those, because child sim
+      peers live and die inside the parent's process and ``route_task_target``
+      forwards their commands to the parent anyway.
+
+    Deliberately NOT a liveness check: a stale-but-known peer stays addressable,
+    since "the arm went quiet, try stopping it anyway" is a real thing to want.
+    """
+    if not peer_id:
+        return False
+    haystack = set(peers) | set(managed_ids)
+    if peer_id in haystack:
+        return True
+    # Both halves must be non-empty, matching route_task_target's own condition
+    # exactly: "arm-1__" does NOT get rerouted there, so calling it known here
+    # would hand it straight back to the timeout this guard exists to avoid.
+    parent, _, child = peer_id.partition("__")
+    return bool(parent and child) and parent in haystack
 
 
 def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, Any]]:
