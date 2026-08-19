@@ -3,9 +3,174 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import logging
 import os
+import shutil
+import socket
+import subprocess
 import sys
+
+#: Where an ``lsof`` binary is looked for. ``PATH`` first, then the two absolute
+#: locations it actually ships in, because ``/usr/sbin`` is missing from the
+#: ``PATH`` of a login-less shell (launchd jobs, CI runners, an agent's
+#: subprocess) on exactly the platform where ``lsof`` is the only owner lookup
+#: available to an unprivileged process.
+_LSOF_CANDIDATES: tuple[str, ...] = ("/usr/sbin/lsof", "/usr/bin/lsof")
+
+#: Longest command line reproduced in the refusal. The point is recognition, not
+#: a full argv - a dashboard command line with mesh endpoints on it runs long
+#: enough to bury the pid that precedes it.
+_COMMAND_CHARS = 120
+
+
+def _lsof_path() -> str | None:
+    """Absolute path of an ``lsof`` binary, or ``None`` if none is installed."""
+    found = shutil.which("lsof")
+    if found:
+        return found
+    for candidate in _LSOF_CANDIDATES:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _listening_pid(port: int) -> int | None:
+    """Pid of the process *listening* on ``port``, or ``None`` if not found.
+
+    Two lookups, in order of how much they can be trusted:
+
+    * ``psutil``, when it is installed *and* the platform lets an unprivileged
+      process enumerate another's sockets (macOS raises ``AccessDenied``
+      instead, which is why this is not the only route);
+    * ``lsof``, restricted to ``-sTCP:LISTEN``. The restriction is
+      load-bearing: a bare ``lsof -ti tcp:8090`` also returns every *client*
+      with an established connection to the port, so the first pid it printed on
+      this machine was a browser tab, not the server it was talking to.
+
+    Owner discovery is best-effort by construction - the refusal it decorates is
+    decided by the bind probe, never by whether a pid could be named.
+
+    Args:
+        port: TCP port to look up.
+
+    Returns:
+        The listening pid, or ``None`` when neither lookup can name one.
+    """
+    try:
+        import psutil
+    except ImportError:
+        pass
+    else:
+        try:
+            for conn in psutil.net_connections(kind="tcp"):
+                laddr = getattr(conn, "laddr", None)
+                if getattr(laddr, "port", None) == port and conn.status == psutil.CONN_LISTEN:
+                    if conn.pid:
+                        return int(conn.pid)
+        except Exception:  # AccessDenied on macOS, NotImplementedError elsewhere
+            pass
+
+    lsof = _lsof_path()
+    if lsof is None:
+        return None
+    try:
+        out = subprocess.run(
+            [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.split():
+        try:
+            return int(line)
+        except ValueError:
+            continue
+    return None
+
+
+def _process_command(pid: int) -> str | None:
+    """Command line of ``pid``, truncated for a one-line message.
+
+    Args:
+        pid: Process id to describe.
+
+    Returns:
+        The command line, or ``None`` if the process is gone or unreadable.
+    """
+    try:
+        import psutil
+    except ImportError:
+        pass
+    else:
+        try:
+            cmdline = " ".join(psutil.Process(pid).cmdline()).strip()
+            if cmdline:
+                return cmdline[:_COMMAND_CHARS]
+        except Exception:
+            pass
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.splitlines()[0][:_COMMAND_CHARS] if out else None
+
+
+def _port_in_use(port: int, host: str = "0.0.0.0") -> str | None:
+    """Describe whoever holds ``port``, or ``None`` when it is free to bind.
+
+    A second dashboard on a taken port does not fail cleanly: it initialises a
+    mesh peer and a zenoh session *before* uvicorn asks the kernel for the
+    socket, so the duplicate hub exists - and has already partitioned the mesh
+    it joined - by the time the bind error is printed. The guard therefore
+    probes the port itself, up front, rather than letting the server surface it.
+
+    The probe binds and closes a socket with ``SO_REUSEADDR`` deliberately
+    *unset*, on ``host`` plus both wildcard and loopback: a listener on
+    ``0.0.0.0`` and a listener on ``127.0.0.1`` each conflict with the other, so
+    one address alone reports a free port that the server then cannot bind.
+    Only ``EADDRINUSE`` counts as occupied - ``EACCES`` on a privileged port and
+    ``EADDRNOTAVAIL`` on an address this host does not own are different
+    failures, and reporting them as a pileup would name an owner that does not
+    exist.
+
+    Args:
+        port: TCP port the dashboard was asked to serve on.
+        host: Address the dashboard was asked to bind, probed alongside the
+            wildcard and loopback addresses.
+
+    Returns:
+        A human-readable description of the holder (``"pid 28346 (python -m
+        strands_robots dashboard)"``, or ``"an unidentified process"`` when the
+        owner cannot be looked up), or ``None`` if the port is free.
+    """
+    candidates = [host, "0.0.0.0", "127.0.0.1"]
+    seen: set[str] = set()
+    occupied = False
+    for address in candidates:
+        if address in seen:
+            continue
+        seen.add(address)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind((address, port))
+        except OSError as exc:
+            if exc.errno == errno.EADDRINUSE:
+                occupied = True
+                break
+        finally:
+            sock.close()
+    if not occupied:
+        return None
+
+    pid = _listening_pid(port)
+    if pid is None:
+        return "an unidentified process"
+    command = _process_command(pid)
+    return f"pid {pid} ({command})" if command else f"pid {pid}"
 
 
 def main() -> None:
@@ -51,7 +216,27 @@ def main() -> None:
         "--cors-origin", action="append", default=None, metavar="ORIGIN",
         help="Allowed CORS origin (repeatable). Default '*'.",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Start even when --port is already bound. Without it a second "
+             "dashboard on a taken port is refused, because it joins the mesh "
+             "as a duplicate hub before the bind fails.",
+    )
     args = parser.parse_args()
+
+    # Before anything joins the mesh: a second dashboard on a bound port creates
+    # a duplicate zenoh hub and partitions the fleet, and it does so during
+    # MeshBridge construction - well before uvicorn's bind would have failed.
+    if not args.force:
+        owner = _port_in_use(args.port, args.host)
+        if owner is not None:
+            print(
+                f"dashboard: port {args.port} is already in use by {owner} "
+                f"- refusing to start a second instance (--force to override, "
+                f"--port N for another port)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     if args.local_dev:
         os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", "1")
