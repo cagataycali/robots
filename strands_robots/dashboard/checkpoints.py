@@ -1,7 +1,10 @@
 """Policy checkpoint discovery for the run form.
 
-Three sources, merged and ranked:
+Four sources, merged and ranked:
 
+0. **Trained here** (the training jobs ledger's ``output_dir``s) - a policy
+   the dashboard itself trained must be findable in the dashboard's own
+   picker. Marked ``source="trained"``; ``repo_id`` is the loadable PATH.
 1. **Local HF cache** (``~/.cache/huggingface/hub``) - instant, offline,
    already-downloaded checkpoints run without a fetch. Marked ``local=True``.
 2. **HuggingFace Hub search** (``filter="lerobot"``) - type-ahead search of
@@ -207,14 +210,116 @@ def clamp_limit(limit: Any, default: int = 15, ceiling: int = MAX_LIMIT) -> int:
     return max(1, min(n, ceiling))
 
 
+def _artifact_dir(output_dir: Path) -> Path | None:
+    """The loadable artifact inside one training run's output_dir, or None.
+
+    Two shapes are real: the export path writes ``config.json`` /
+    ``train_config.json`` directly into the directory, and a LeRobot training
+    run writes ``checkpoints/<step>/pretrained_model/`` — prefer the ``last``
+    symlink, else the highest step, because the picker should offer the most
+    trained weights, not the first save.
+    """
+    if (output_dir / "config.json").exists() or (output_dir / "train_config.json").exists():
+        return output_dir
+    ckpts = output_dir / "checkpoints"
+    if not ckpts.is_dir():
+        return None
+    candidates = [ckpts / "last"]
+    def _step(d: Path) -> tuple[int, str]:
+        # LeRobot zero-pads step dirs so name-sort works, but a bare "900" vs
+        # "1000" must still order numerically.
+        try:
+            return (int(d.name), d.name)
+        except ValueError:
+            return (-1, d.name)
+
+    try:
+        candidates += sorted(
+            (d for d in ckpts.iterdir() if d.name != "last"),
+            key=_step,
+            reverse=True,
+        )
+    except OSError:
+        return None
+    for cand in candidates:
+        if cand.name == "last":
+            # lerobot's own pointer — but resolve it: a picker row must name
+            # the concrete weights, not a path whose contents silently change
+            # when training resumes.
+            try:
+                cand = cand.resolve(strict=True)
+            except OSError:
+                continue
+        pm = cand / "pretrained_model"
+        if (pm / "config.json").exists() or (pm / "train_config.json").exists():
+            return pm
+    return None
+
+
+def trained_checkpoints(query: str = "") -> list[dict[str, Any]]:
+    """Checkpoints THIS dashboard trained, discovered via the jobs ledger.
+
+    U20's broken link: submit() records every run's output_dir, but the
+    picker only searched the HF cache and the hub — so the user could train
+    a policy here and then be unable to find it here, reduced to typing the
+    raw path from memory. Every job output that holds a loadable artifact is
+    a picker row; ``repo_id`` is the PATH (which is exactly what
+    ``pretrained_name_or_path`` accepts for a local load).
+    """
+    from strands_robots.dashboard import training
+
+    q = query.lower()
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for job in reversed(training.jobs()):  # newest training first
+        raw = (job.get("output_dir") or "").strip()
+        if not raw:
+            continue
+        try:
+            artifact = _artifact_dir(Path(raw).expanduser())
+        except OSError:
+            continue
+        if artifact is None:
+            continue  # still training, failed, or cleaned up — not loadable, not listed
+        path = str(artifact)
+        if path in seen:
+            continue
+        label = f"{path} {job.get('base_model') or ''} {job.get('dataset') or ''}"
+        if q and q not in label.lower():
+            continue
+        seen.add(path)
+        policy_type = None
+        try:
+            import json as _json
+
+            cfg = artifact / "config.json"
+            if cfg.exists():
+                policy_type = _json.loads(cfg.read_text()).get("type")
+        except Exception:  # noqa: BLE001 - unreadable config -> still list it
+            pass
+        out.append({
+            "repo_id": path,
+            "local": True,
+            "source": "trained",
+            "downloads": None,
+            "policy_type": policy_type or _guess_policy_type(str(job.get("base_model") or ""), []),
+            "tags": [],
+            "job_id": job.get("job_id"),
+            "dataset": job.get("dataset"),
+            "trained_at": job.get("submitted_at"),
+        })
+    return out
+
+
 def search(query: str = "", limit: int = 15) -> dict[str, Any]:
-    """Merged checkpoint search: local cache first, then hub by downloads."""
+    """Merged checkpoint search: trained here, then local cache, then hub."""
     limit = clamp_limit(limit)
+    trained = trained_checkpoints(query)
     local = local_checkpoints(query)
-    local_ids = {r["repo_id"] for r in local}
+    local_ids = {r["repo_id"] for r in trained} | {r["repo_id"] for r in local}
     remote_rows, hub_problem = hub_search(query, limit=limit)
     remote = [r for r in remote_rows if r["repo_id"] not in local_ids]
-    rows = local + remote
+    rows = trained + local + remote
     return {
         "query": query,
         "results": rows[:limit],
