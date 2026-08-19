@@ -842,3 +842,28 @@ body::before {
 @media (max-width: 420px) {
   .jhist { flex-basis: 60px; min-width: 40px; }
 }
+
+/* ── camera truth states (U13) ──────────────────────── */
+/* A stale frame must never look like a live one. When the stream stalls the
+ * pixels stay (they are still the best evidence available) but they are dimmed,
+ * desaturated and covered by a scrim carrying the age of the frame. */
+.camtile.frozen img { filter: grayscale(.85) brightness(.42); }
+.camtile.frozen .camstate {
+  background: radial-gradient(120% 90% at 50% 50%, rgb(10 14 20 / .35), rgb(10 14 20 / .82));
+}
+.camstale { color: var(--warn); }
+/* the overlay sits on glass so the tile keeps the language of the rest */
+.camtile:not(.cam-live) .camstate { backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+/* colour carries the same meaning it does everywhere: amber = degraded, red =
+ * something is actually wrong, dim = nothing has happened yet */
+.cam-stalled .camstate b { color: var(--warn); }
+.cam-busy .camstate b, .cam-error .camstate b, .cam-unauthorized .camstate b { color: var(--danger); }
+.cam-retrying .camstate b, .cam-closed .camstate b { color: var(--warn); }
+.cam-live .camstate { display: none; }
+/* a tile with no pixels at all should not pretend to be a screen that is off */
+.camtile:not(.cam-live):not(.frozen) {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / .03), rgb(255 255 255 / 0) 60%),
+    repeating-linear-gradient(135deg, rgb(255 255 255 / .022) 0 8px, transparent 8px 16px),
+    #05080d;
+}
