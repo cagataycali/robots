@@ -111,10 +111,29 @@ The `cosmos3-diffusers` extra is native `diffusers` + `torch` + `transformers`
 > `cosmos_guardrail` package and otherwise raises `ImportError: cosmos_guardrail
 > is not installed`. The diffusers backend disables it by default
 > (`enable_safety_checker=False`, passed through to `from_pretrained`) so the
-> pipeline loads without that extra. Install `cosmos_guardrail` and pass
-> `enable_safety_checker=True` to re-enable it. Note Cosmos runs in `bfloat16`,
-> so the backend up-casts the half-precision action tensor to `float32` before
-> returning the chunk.
+> pipeline loads without that extra. To re-enable it, install `cosmos_guardrail`
+> and build the backend with `enable_safety_checker=True`, then hand that backend
+> to the policy - the flag is a `Cosmos3DiffusersBackend` parameter, not a
+> `Cosmos3Policy` one:
+>
+> ```python
+> from strands_robots.policies.cosmos3.embodiments import get_embodiment
+> from strands_robots.policies.cosmos3.policy import Cosmos3Policy
+> from strands_robots.policies.cosmos3.policy_diffusers import Cosmos3DiffusersBackend
+>
+> backend = Cosmos3DiffusersBackend(
+>     embodiment=get_embodiment("droid"),
+>     model="nvidia/Cosmos3-Nano",
+>     enable_safety_checker=True,   # needs cosmos_guardrail installed
+> )
+> policy = Cosmos3Policy(embodiment="droid", backend="diffusers", diffusers_backend=backend)
+> ```
+>
+> `Cosmos3Policy` forwards only `embodiment`, `model` and `mode` to the backend, so
+> the same route is how you reach its other load and sampling knobs
+> (`resolution_tier`, `view_point`, `device`, `dtype`, `num_inference_steps`,
+> `guidance_scale`, `enable_sound`). Note Cosmos runs in `bfloat16`, so the backend
+> up-casts the half-precision action tensor to `float32` before returning the chunk.
 
 ### `backend="diffusers"` — world video alongside the action chunk
 
