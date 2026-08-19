@@ -105,6 +105,9 @@ body {
   color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
   cursor: pointer; font-family: inherit;
+  /* R4: it is a BUTTON (it opens the mesh security panel), so it obeys the
+     same 24px floor as the chips beside it. */
+  min-height: 24px; box-sizing: border-box;
 }
 .badge.warnchip:hover { background: color-mix(in srgb, var(--warn) 22%, transparent); }
 /* Plain-language explainer block inside the settings drawer */
@@ -121,6 +124,12 @@ body {
   border: 1px solid var(--border); border-radius: var(--rpill);
   padding: 4px 10px; cursor: pointer; white-space: nowrap;
   transition: border-color var(--dur), color var(--dur);
+  /* R4: the nav chips measured 20-23px tall on a phone — 1 to 4px short of the
+     24px minimum, which is exactly the miss that makes a thumb tap the page
+     instead of the button. The pill grows downward from its own box; the text
+     size and the fleet bar's layout are untouched. */
+  min-height: 24px; display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box;
 }
 .chip:hover { border-color: var(--border-hi); color: var(--text); }
 /* UX_REVIEW #10: a nav entry whose backend cannot actually do the thing. Amber,
@@ -380,8 +389,15 @@ body {
 .typebadge.sim { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
 .peername {
   font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
-  background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+  background: none; border: none; cursor: pointer; text-align: left;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* R4: measured 86x15 — the button that OPENS a robot was half the 24px minimum
+     target, and it is the primary action of the whole card. The height comes
+     from vertical padding and a min-height, never from the font, and the
+     horizontal padding stays 0 so the name still starts flush with the type
+     badge (the card head is a flex row; a left inset would shift every card). */
+  padding: 5px 0; min-height: 24px; display: inline-flex; align-items: center;
+  box-sizing: border-box; max-width: 100%;
 }
 .peername:hover { color: var(--accent); }
 .host { color: var(--dim); font-size: 11px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px; }
@@ -389,6 +405,9 @@ body {
 .twinbtn {
   background: none; border: 1px solid var(--border); color: var(--accent);
   border-radius: var(--r1); font-size: 13px; padding: 3px 8px; cursor: pointer;
+  /* R4: 57x20 measured — a button that spawns a process must clear 24px too. */
+  min-height: 24px; display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box;
 }
 .twinbtn {
   /* R2: it carries words now, so it needs the mono/micro treatment of the rest
