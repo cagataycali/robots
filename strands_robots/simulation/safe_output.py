@@ -191,7 +191,23 @@ def validate_output_path(
         raw = sandbox_root / raw
     # Refuse to follow a symlink planted at the target (arbitrary-write vector).
     if raw.is_symlink():
-        raise ValueError(f"{label} {output_path!r} is a symlink - refusing to follow")
+        # Refusing is right - following a planted link is an arbitrary-write
+        # vector - but the refusal has to leave the caller somewhere to go, and
+        # on macOS the single most reachable scratch path IS a symlink: /tmp
+        # points at /private/tmp. So a caller (often an LLM) that asked for the
+        # most ordinary directory on the machine got a dead end that read like
+        # an attack had been detected. Name the destination and hand over the
+        # path that works; still never follow it ourselves.
+        hint = ""
+        try:
+            dest = raw.resolve(strict=False)
+            if dest != raw:
+                hint = f" - it points at {str(dest)!r}, pass that path instead"
+        except OSError:  # a broken or looping link: nothing honest to suggest
+            hint = ""
+        raise ValueError(
+            f"{label} {output_path!r} is a symlink - refusing to follow{hint}"
+        )
 
     # resolve() normalizes "..", expands the chain, and follows any intermediate
     # symlinks, so the confinement check below sees the true on-disk destination.
