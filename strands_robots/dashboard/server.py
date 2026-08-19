@@ -190,6 +190,47 @@ class TokenAuthMiddleware:
         await response(scope, receive, send)
 
 
+CHAT_MAX_FRAME_BYTES = 32 * 1024  # a generous chat turn; 2 MB frames ran real model turns
+
+
+def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+    """One /ws/chat frame -> ``(prompt, reply)``.
+
+    Exactly one of the two is non-None, or both are None (nothing to do).
+    A protocol error is a typed ``error`` REPLY, never a prompt: junk frames
+    used to be promoted to prompts and billed as model turns (Q18), and a
+    binary frame or non-string ``text`` killed the socket outright (Q17).
+    Raises WebSocketDisconnect for a disconnect message.
+    """
+    if message.get("type") == "websocket.disconnect":
+        raise WebSocketDisconnect(int(message.get("code") or 1000))
+    raw = message.get("text")
+    if raw is None:
+        # bytes-only frame: a Blob/ArrayBuffer sent by mistake must not kill
+        # the operator's chat with a server-side KeyError.
+        return None, {"type": "error", "error": "binary frames are not accepted on /ws/chat - send JSON text"}
+    if len(raw.encode("utf-8", "ignore")) > CHAT_MAX_FRAME_BYTES:
+        return None, {
+            "type": "error",
+            "error": f"frame exceeds {CHAT_MAX_FRAME_BYTES // 1024} KB - not forwarded to the model",
+        }
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, {"type": "error", "error": 'frame is not JSON - send {"type": "chat", "text": "..."}'}
+    if not isinstance(msg, dict):
+        return None, {"type": "error", "error": "frame must be a JSON object"}
+    if msg.get("type") == "ping":
+        return None, {"type": "pong"}
+    text = msg.get("text")
+    if text is None:
+        return None, None
+    if not isinstance(text, str):
+        return None, {"type": "error", "error": f"text must be a string, got {type(text).__name__}"}
+    prompt = text.strip()
+    return (prompt or None), None
+
+
 def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app = FastAPI(title="strands-robots dashboard")
     origins = settings.get("security", "cors_origins", []) or []
@@ -933,22 +974,27 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         import queue as _queue
         import threading as _threading
 
-        from strands_robots.dashboard.agent_bridge import run_turn_blocking
+        from strands_robots.dashboard.agent_bridge import _turn_lock, run_turn_blocking
 
         await ws.accept()
         try:
             while True:
-                raw = await ws.receive_text()
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    msg = {"type": "chat", "text": raw}
-                if msg.get("type") == "ping":
-                    await ws.send_text(json.dumps({"type": "pong"}))
+                message = await ws.receive()
+                prompt, reply = parse_chat_frame(message)
+                if reply is not None:
+                    await ws.send_text(json.dumps(reply))
                     continue
-                prompt = (msg.get("text") or "").strip()
-                if not prompt:
+                if prompt is None:
                     continue
+                # Q19: turns are serialized by _turn_lock (chat + voice). The
+                # second client used to stare at a dead chat box for the whole
+                # first turn (measured 21.8s) - say so, in a 'notice' the
+                # frontend already renders.
+                if _turn_lock.locked():
+                    await ws.send_text(json.dumps({
+                        "type": "notice",
+                        "text": "another turn is running - yours is queued and will start when it finishes",
+                    }))
                 q: _queue.Queue = _queue.Queue()
                 cancel = _threading.Event()
                 _threading.Thread(
