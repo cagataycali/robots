@@ -20,7 +20,6 @@ interface Props {
   installable: boolean
   activityCount: number
   onInstall: () => void
-  onEstop: () => void
   onSettings: () => void
   onWireSecurity: () => void
   onActivity: () => void
@@ -31,7 +30,7 @@ interface Props {
 
 export default function FleetBar({
   conn, peerCount, dashboardId, safetyFlash, mesh, online, installable,
-  activityCount, onInstall, onEstop, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
+  activityCount, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
 }: Props) {
   // The mesh session and this browser's socket fail independently: the page can
   // be LIVE while the robot mesh is down, and vice versa. Showing only one of
@@ -84,9 +83,6 @@ export default function FleetBar({
         <span className={`conn ${conn}`} title={conn === 'unauthorized' ? 'the server rejected this token - set it in Settings' : ''}>
           {CONN_LABEL[conn]}
         </span>
-        <button className="estop" onClick={onEstop} title="Stop every robot on the mesh">
-          🛑 STOP ALL
-        </button>
       </div>
     </header>
   )

@@ -11,6 +11,7 @@ import SettingsDrawer from './components/SettingsDrawer'
 import ActivityLog from './components/ActivityLog'
 import DevicePanel from './components/DevicePanel'
 import EstopSheet from './components/EstopSheet'
+import EstopButton from './components/EstopButton'
 import TrainingTab from './components/TrainingTab'
 import RecordPanel from './components/RecordPanel'
 import AuthGate from './components/AuthGate'
@@ -91,7 +92,6 @@ function Dashboard() {
         installable={pwa.installable}
         activityCount={activity.length}
         onInstall={() => void pwa.install()}
-        onEstop={() => setPanel('estop')}
         onSettings={() => { setSettingsTab(undefined); setPanel('settings') }}
         onWireSecurity={() => { setSettingsTab('mesh'); setPanel('settings') }}
         onActivity={() => setPanel('activity')}
@@ -99,6 +99,9 @@ function Dashboard() {
         onTraining={() => setPanel('training')}
         onRecord={() => setPanel('record')}
       />
+
+      {/* Its own layer, so no overlay can ever swallow the stop. */}
+      <EstopButton onClick={() => setPanel('estop')} />
 
       {pwa.needRefresh && (
         <div className="toast">
