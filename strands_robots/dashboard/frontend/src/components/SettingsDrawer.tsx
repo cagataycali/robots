@@ -5,6 +5,22 @@ import {
   setAuthToken, setBackendBase,
 } from '../lib/endpoints'
 import { useConfig, type ApplyResult } from '../lib/useConfig'
+import { APPLY_LABEL, settingMeta, validateSetting } from '../lib/settingsMeta'
+
+/** Inline validation message + "what happens if I change this" chip for one field. */
+function FieldMeta({ k, raw }: { k: string; raw: string }) {
+  const meta = settingMeta(k)
+  const err = validateSetting(k, raw)
+  if (err) return <em className="field-err" role="alert">⚠ {err}</em>
+  if (!meta) return null
+  return (
+    <em className="field-meta">
+      {meta.effect}
+      {meta.safeDefault !== '' && <> · default {meta.safeDefault}{meta.unit ? ` ${meta.unit}` : ''}</>}
+      {' · '}<span className={`apply-chip ${meta.apply}`}>{APPLY_LABEL[meta.apply]}</span>
+    </em>
+  )
+}
 
 type Tab = 'connection' | 'agent' | 'voice' | 'mesh' | 'env' | 'security'
 
@@ -77,6 +93,17 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
   }, [config])
 
   if (!open) return null
+
+  // Live validation: a field that cannot be parsed never reaches the server
+  // (Q14: temperature "NaN" used to be written into settings.json verbatim).
+  const agentValid =
+    validateSetting('agent.temperature', temperature) === null &&
+    validateSetting('agent.max_tokens', maxTokens) === null
+  const meshValid =
+    validateSetting('mesh.port', meshPort) === null &&
+    validateSetting('mesh.camera_hz', cameraHz) === null &&
+    validateSetting('mesh.connect', connect) === null &&
+    validateSetting('mesh.listen', listen) === null
 
   const report = (r: ApplyResult) => {
     const parts: string[] = []
@@ -213,7 +240,9 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
                 <textarea rows={10} value={prompt} onChange={e => setPrompt(e.target.value)} />
               </label>
               <div className="sheet-actions">
-                <button className="btn go" disabled={saving} onClick={() => apply({
+                <button className="btn go" disabled={saving || !agentValid}
+                        title={agentValid ? undefined : 'fix the highlighted fields first'}
+                        onClick={() => apply({
                   agent: {
                     model_id: modelId || null,
                     system_prompt: prompt,
@@ -280,17 +309,20 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
                 <span>Connect endpoints</span>
                 <input placeholder="tls/robot.lan:7447, tls/10.0.0.5:7447"
                        value={connect} onChange={e => setConnect(e.target.value)} />
+                <FieldMeta k="mesh.connect" raw={connect} />
               </label>
               <label className="field">
                 <span>Listen endpoints</span>
                 <input placeholder="tls/0.0.0.0:7447"
                        value={listen} onChange={e => setListen(e.target.value)} />
+                <FieldMeta k="mesh.listen" raw={listen} />
               </label>
               <div className="row">
                 <label className="field">
                   <span>Port</span>
                   <input type="number" value={meshPort} placeholder="7447"
                          onChange={e => setMeshPort(e.target.value)} />
+                  <FieldMeta k="mesh.port" raw={meshPort} />
                 </label>
                 <label className="field">
                   <span>Transport</span>
@@ -304,6 +336,7 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
                   <span>Camera Hz</span>
                   <input type="number" step="1" value={cameraHz} placeholder="default"
                          onChange={e => setCameraHz(e.target.value)} />
+                  <FieldMeta k="mesh.camera_hz" raw={cameraHz} />
                 </label>
               </div>
               {!mesh.local_dev && (
@@ -313,7 +346,9 @@ export default function SettingsDrawer({ open, onClose, mesh }: {
                 </p>
               )}
               <div className="sheet-actions">
-                <button className="btn go" disabled={saving} onClick={() => apply({
+                <button className="btn go" disabled={saving || !meshValid}
+                        title={meshValid ? undefined : 'fix the highlighted fields first'}
+                        onClick={() => apply({
                   mesh: {
                     connect, listen,
                     port: meshPort === '' ? null : Number(meshPort),

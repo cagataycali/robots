@@ -132,6 +132,14 @@ body {
 .field > span { font-size: 11px; color: var(--dim); letter-spacing: .03em; }
 .field > span em { color: var(--dim); opacity: .8; font-style: normal; }
 .field > span b { color: var(--warn); }
+/* Settings metadata: one-line "what this does" + how the change applies */
+.field-meta { font-size: 10.5px; line-height: 1.45; color: var(--dim); font-style: normal; opacity: .85; }
+.field-err { font-size: 11px; color: var(--danger, #ff4d5e); font-style: normal; }
+.apply-chip { padding: 1px 6px; border-radius: 8px; font-size: 9.5px; white-space: nowrap;
+  border: 1px solid rgba(255,255,255,.14); color: var(--dim); }
+.apply-chip.live { color: #7de3a0; border-color: rgba(125,227,160,.35); }
+.apply-chip.next-turn { color: #7cc0ff; border-color: rgba(124,192,255,.35); }
+.apply-chip.mesh-restart, .apply-chip.startup { color: #ffc46b; border-color: rgba(255,196,107,.35); }
 .field input, .field select, .field textarea {
   background: var(--panel2); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--r2); padding: 8px 10px; font-size: var(--fs-small); font-family: inherit;
