@@ -39,6 +39,7 @@ Env knobs (all optional):
 
 from __future__ import annotations
 
+import logging
 import ipaddress
 import json
 import os
@@ -238,11 +239,81 @@ def _headers(request_or_ws: Any) -> Any:
     return request_or_ws.headers
 
 
-def _derive_rp_id(request_or_ws: Any) -> str:
-    forced = _forced_rp_id()
+#: Hostnames that are always acceptable as a relying-party id: a browser on this
+#: machine is the operator, and local dev must never depend on remote config.
+_LOOPBACK_RP_IDS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def known_rp_ids(store: Optional[dict] = None) -> set:
+    """Every rp_id this deployment has PROVEN it uses.
+
+    A credential is cryptographically bound to the rp_id it was created under, so
+    once one is recorded here it is the only value a login can ever verify
+    against. Credentials enrolled before this was recorded carry no rp_id: they
+    contribute nothing (see rp_id_verdict's "legacy" case) and are healed on their
+    first successful authentication, which proves the binding rather than guessing
+    it.
+    """
+    s = store if store is not None else _load()
+    return {c["rp_id"] for c in s.get("credentials", []) if c.get("rp_id")}
+
+
+def rp_id_verdict(host_rp_id: str, forced: str = "", known: Optional[set] = None) -> tuple:
+    """Decide the rp_id for a ceremony: ``(rp_id, reason)``, or ``(None, reason)``.
+
+    ``_derive_rp_id`` used to return the client's ``Host`` header verbatim, and
+    ``finish_registration`` then verified against that same claimed value -- a
+    self-consistent check that enforced nothing. Anyone who could reach the port
+    could run a ceremony bound to a domain THEY control; combined with anonymous
+    first-enrollment that burned the owner's enrollment slot with a credential
+    unusable from the real hostname.
+
+    The store is the authority, in this order:
+
+    * ``STRANDS_DASH_AUTH_RP_ID`` wins outright -- explicit operator config.
+    * loopback is always allowed, so a browser on this machine and local dev keep
+      working no matter what is recorded.
+    * a host matching an rp_id already recorded on an enrolled credential is
+      allowed: it is the value that can actually verify.
+    * otherwise, if the store records NO rp_id at all (a fresh install, or a store
+      written before rp_ids were recorded), fall back to the host. First
+      enrollment has to be able to bind SOMETHING, and it is gated by the
+      bootstrap token; the value it binds is then recorded, which closes this door
+      behind it.
+    * once any rp_id is known, a different host is REFUSED. It could only produce
+      a credential nobody can use, or a login that cannot verify.
+    """
+    # Loopback outranks even the pin, and that ordering is deliberate: a browser
+    # at http://localhost:8090 CANNOT use 'robots.cagatay.my' as an rp_id -- the
+    # spec requires the rp_id to be a registrable suffix of the page's origin, so
+    # honouring the pin here would make the browser refuse the ceremony before it
+    # starts, and a passkey bound to the domain could not be used from localhost
+    # anyway. Pinning describes the remote hostname; it must not confiscate the
+    # local door.
+    if host_rp_id in _LOOPBACK_RP_IDS:
+        return (host_rp_id, "loopback")
     if forced:
-        return forced
-    return _host_only(_headers(request_or_ws).get("host", "localhost"))
+        return (forced, "forced by STRANDS_DASH_AUTH_RP_ID")
+    known = known_rp_ids() if known is None else known
+    if host_rp_id in known:
+        return (host_rp_id, "matches an enrolled credential")
+    if not known:
+        return (host_rp_id, "legacy: no rp_id recorded yet, binding on first use")
+    return (None, f"host {host_rp_id!r} is not one of the enrolled {sorted(known)}")
+
+
+def _derive_rp_id(request_or_ws: Any) -> str:
+    host = _host_only(_headers(request_or_ws).get("host", "localhost"))
+    rp_id, reason = rp_id_verdict(host, _forced_rp_id())
+    if rp_id is None:
+        logger.warning("refused WebAuthn ceremony: %s", reason)
+        raise HTTPException(400, {
+            "error": "this host cannot be used for a passkey ceremony",
+            "detail": reason,
+            "hint": "reach the dashboard on its enrolled hostname, or set "
+                    "STRANDS_DASH_AUTH_RP_ID if it legitimately changed",
+        })
+    return rp_id
 
 
 def _derive_origin(request_or_ws: Any) -> str:
@@ -269,19 +340,74 @@ def _rpid_error(rp_id: str) -> HTTPException:
 
 # --- challenge cache (short-lived, in-memory) --------------------------------
 
+logger = logging.getLogger(__name__)
+
 _challenges: Dict[str, Dict[str, Any]] = {}
 _chal_lock = threading.Lock()
 _CHAL_TTL = 300.0
 
 
-def _stash_challenge(kind: str, challenge: bytes, extra: Optional[dict] = None) -> str:
+#: Caps on the challenge table. Both are per-process and generous: a challenge
+#: measures ~0.5KB, so 512 of them is ~256KB. The point is not memory -- the
+#: measured growth was slow -- it is that an unauthenticated caller could hold an
+#: unbounded number of entries on a public path.
+_CHAL_MAX = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX", "512"))
+#: The property that actually matters: no single client may fill the table and
+#: push out the operator's pending login. A cap alone does not give this -- with
+#: only a global limit, a flood at ~470 req/s evicts a legitimate challenge within
+#: a second of it being issued.
+_CHAL_MAX_PER_IP = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX_PER_IP", "16"))
+
+
+def _evict_oldest(where: Dict[str, Dict[str, Any]], keep: int, ip: Optional[str] = None) -> int:
+    """Drop the oldest entries (optionally only one ip's) until ``keep`` remain."""
+    pool = [(v["t"], k) for k, v in where.items() if ip is None or v.get("ip") == ip]
+    dropped = 0
+    for _t, k in sorted(pool)[: max(0, len(pool) - keep)]:
+        where.pop(k, None)
+        dropped += 1
+    return dropped
+
+
+def _stash_challenge(
+    kind: str, challenge: bytes, extra: Optional[dict] = None, ip: Optional[str] = None,
+) -> str:
     cid = secrets.token_urlsafe(16)
     now = time.time()
     with _chal_lock:
         for k in [k for k, v in _challenges.items() if now - v["t"] > _CHAL_TTL]:
             _challenges.pop(k, None)
-        _challenges[cid] = {"kind": kind, "challenge": challenge, "t": now, "extra": extra or {}}
+        # Evict the flooder's OWN oldest entries first, so one noisy client
+        # cannot cost anybody else their in-flight ceremony.
+        if ip:
+            evicted = _evict_oldest(_challenges, _CHAL_MAX_PER_IP - 1, ip=ip)
+            if evicted:
+                logger.warning("challenge cap: dropped %d stale challenge(s) from %s", evicted, ip)
+        if len(_challenges) >= _CHAL_MAX:
+            _evict_oldest(_challenges, _CHAL_MAX - 1)
+            logger.warning("challenge table full (%d); evicted oldest", _CHAL_MAX)
+        _challenges[cid] = {
+            "kind": kind, "challenge": challenge, "t": now, "extra": extra or {}, "ip": ip,
+        }
     return cid
+
+
+def _client_ip(request_or_ws: Any) -> Optional[str]:
+    """Best-effort client identity for the per-ip cap only -- NEVER for trust.
+
+    A forwarded header is attacker-settable, so it is used solely to spread the
+    cap across claimed identities; fb5f2a0a is the rule for anything that grants
+    access, and it stands: a forwarded request is never loopback.
+    """
+    try:
+        h = _headers(request_or_ws)
+        fwd = h.get("cf-connecting-ip") or h.get("x-forwarded-for") or h.get("x-real-ip")
+        if fwd:
+            return fwd.split(",")[0].strip()[:64] or None
+        client = getattr(request_or_ws, "client", None)
+        return getattr(client, "host", None)
+    except Exception:
+        return None
 
 
 def _pop_challenge(cid: str, kind: str) -> Dict[str, Any]:
@@ -371,7 +497,7 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
             user_verification=UserVerificationRequirement.PREFERRED,
         ),
     )
-    cid = _stash_challenge("reg", opts.challenge, {"label": label, "rp_id": rp_id})
+    cid = _stash_challenge("reg", opts.challenge, {"label": label, "rp_id": rp_id}, ip=_client_ip(request))
     return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
 
 
@@ -393,6 +519,9 @@ def finish_registration(request: Any, challenge_id: str, credential: dict) -> Di
         "sign_count": verification.sign_count,
         "name": rec["extra"].get("label", "passkey"),
         "created": time.time(),
+        # The binding, recorded: from here on the Host header cannot introduce a
+        # different rp_id (see rp_id_verdict).
+        "rp_id": rec["extra"]["rp_id"],
     })
     _save(store)
     token = issue_token(cred_id, name=rec["extra"].get("label", "passkey"))
@@ -415,7 +544,7 @@ def begin_authentication(request: Any) -> Dict[str, Any]:
         allow_credentials=allow,
         user_verification=UserVerificationRequirement.PREFERRED,
     )
-    cid = _stash_challenge("auth", opts.challenge, {"rp_id": rp_id})
+    cid = _stash_challenge("auth", opts.challenge, {"rp_id": rp_id}, ip=_client_ip(request))
     return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
 
 
@@ -436,6 +565,12 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
         require_user_verification=False,
     )
     match["sign_count"] = verification.new_sign_count
+    # Self-heal the binding for credentials enrolled before rp_ids were recorded:
+    # this authentication VERIFIED against rec["extra"]["rp_id"], which is proof,
+    # not a guess. From here on rp_id_verdict refuses any other Host.
+    if not match.get("rp_id") and rec["extra"].get("rp_id"):
+        match["rp_id"] = rec["extra"]["rp_id"]
+        logger.info("recorded rp_id %r for credential %s", match["rp_id"], match.get("name"))
     _save(store)
     token = issue_token(cred_id, name=match.get("name", "passkey"))
     return {"ok": True, "token": token, "credential_id": cred_id}
