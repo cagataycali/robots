@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.bus_access import write_action
 from strands_robots.mesh.security import (
+    input_envelope_for_units,
     ValidationError,
     input_frame_slew_violation,
     merge_slew_baseline,
@@ -337,6 +338,61 @@ class InputPublisher:
             return {"raw": float(action)}
 
 
+#: Frame keys are ``"{motor}.pos"``; lerobot's motor table is keyed by the bare
+#: motor name. Kept here (not in security.py) because it touches a hardware
+#: object's shape, while the security module must stay importable without
+#: lerobot installed.
+def declared_units(robot: Any) -> dict[str, str]:
+    """What unit does THIS robot say each of its joints is in?
+
+    Read from ``bus.motors[name].norm_mode`` - lerobot's own declaration
+    (``DEGREES`` / ``RANGE_M100_100`` / ``RANGE_0_100``), which is why the answer
+    cannot be influenced by whoever is sending frames. An SO-101 typically
+    answers ``deg`` for the body joints and ``pct`` for the gripper, in the same
+    frame, which is exactly why the bound has to be per joint.
+
+    Every failure here is silent and returns ``{}``: an unreadable motor table
+    must fall back to the conservative radian default, never abort a teleop
+    session that would otherwise work.
+    """
+    from strands_robots.mesh.security import NORM_MODE_UNITS
+
+    units: dict[str, str] = {}
+    # The motor table can sit a couple of wrappers down (strands Robot ->
+    # hardware robot -> lerobot SOFollower.bus), so walk the .robot chain
+    # instead of assuming a depth. Bounded, and cycle-safe by identity.
+    holders: list[Any] = []
+    node, seen = robot, set()
+    while node is not None and len(holders) < 4 and id(node) not in seen:
+        seen.add(id(node))
+        holders.append(node)
+        try:
+            node = getattr(node, "robot", None)
+        except Exception:  # noqa: BLE001 - a wrapper's property may raise
+            break
+    for holder in holders:
+        try:
+            # A property on a live hardware object can do anything, including
+            # raise or block; the envelope must degrade to the conservative
+            # default rather than take a teleop session down with it.
+            bus = getattr(holder, "bus", None)
+            motors = getattr(bus, "motors", None)
+            if not isinstance(motors, dict):
+                continue
+            for name, motor in motors.items():
+                mode = getattr(motor, "norm_mode", None)
+                label = getattr(mode, "name", None) or (mode if isinstance(mode, str) else None)
+                unit = NORM_MODE_UNITS.get(str(label).upper()) if label else None
+                if unit:
+                    units[f"{name}.pos"] = unit
+        except Exception as exc:  # noqa: BLE001 - see above; nothing here is fatal
+            logger.debug("[mesh] could not read declared units from %r: %r", holder, exc)
+            continue
+        if units:
+            break
+    return units
+
+
 class InputReceiver:
     """Subscribes to a remote peer's input stream and applies actions locally.
 
@@ -388,6 +444,12 @@ class InputReceiver:
         # joints cannot erase the baseline of the ones it omits.
         self._last_applied: dict[str, tuple[float, float]] = {}
         self._start_mono = 0.0
+        # Per-joint bounds, filled in at start() from the robot's own declared
+        # units. Empty means "radian defaults", which is what a robot that
+        # declares nothing gets.
+        self._value_abs_by_key: dict[str, float] = {}
+        self._slew_abs_by_key: dict[str, float] = {}
+        self._declared_units: dict[str, str] = {}
 
     def __repr__(self) -> str:
         try:
@@ -427,6 +489,10 @@ class InputReceiver:
             "rate_dropped": self._rate_dropped,
             "slew_rejected": self._slew_rejected,
             "hz_actual": self._frame_count / elapsed if elapsed > 0 else 0,
+            # Which envelope is actually in force: a rejected-frame count is
+            # unreadable without it. Reported as the declared units themselves
+            # rather than reverse-engineered from the bounds.
+            "envelope_units": dict(sorted(self._declared_units.items())),
         }
 
     def start(self) -> None:
@@ -440,11 +506,21 @@ class InputReceiver:
             callback=self._on_input,
             name=f"input:{self.source_peer_id}/{self.device_name}",
         )
+        # Derive the per-joint safety envelope from OUR OWN hardware's declared
+        # units before the first frame can arrive. The radian default refuses
+        # every frame a degree-valued arm sends, and the refusal is only visible
+        # in this process's log, so a session that cannot work must not start
+        # quietly: the decision is logged once, either way.
+        self._declared_units = declared_units(self.robot)
+        self._value_abs_by_key, self._slew_abs_by_key, note = input_envelope_for_units(
+            self._declared_units
+        )
         if self._sub_name:
             logger.info(
-                "[mesh] input receiver started: %s from %s",
+                "[mesh] input receiver started: %s from %s (envelope: %s)",
                 self.device_name,
                 self.source_peer_id,
+                note,
             )
         else:
             logger.warning("[mesh] input receiver failed to subscribe: %s", self.topic)
@@ -564,7 +640,9 @@ class InputReceiver:
             # finite magnitude. Rejected frames are counted + logged and
             # dropped (never applied) rather than crashing the receiver.
             try:
-                safe_action = validate_input_frame(action)
+                safe_action = validate_input_frame(
+                    action, value_abs_by_key=self._value_abs_by_key
+                )
             except ValidationError as verr:
                 self._rejected = getattr(self, "_rejected", 0) + 1
                 if self._rejected <= 5:
@@ -612,6 +690,7 @@ class InputReceiver:
                 self._last_applied,
                 apply_mono,
                 min_apply_interval,
+                max_slew_by_key=self._slew_abs_by_key,
             )
             if slew_reason is not None:
                 self._slew_rejected += 1
