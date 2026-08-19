@@ -1160,6 +1160,12 @@ class DeviceManager:
                     "pid": m.process.pid if m.process is not None else None,
                     "returncode": m.process.poll() if m.process is not None else None,
                     "log_tail": list(m.logs)[-20:],
+                    # The camera CONFIG this child was spawned with (name ->
+                    # {index_or_path, fps?, ...}) - the mesh snapshot only says
+                    # which streams exist, so without this the reconfigure
+                    # editor (U19) would open blank and "change the fps" would
+                    # mean re-typing everything from memory.
+                    "cameras": dict(m.cameras or {}),
                     # The measured role of the board this child is driving, so a
                     # screen that pairs arms (record/teleop) can name the leader
                     # from the HARDWARE instead of from the peer id. Absent when

@@ -1279,3 +1279,14 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 }
 .ackrow input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--amber); }
 .ackrow span { line-height: 1.45; }
+
+/* U19: camera reconfigure sheet — one row per camera, inputs sized to their
+ * content (a fps field the width of a sentence invites a sentence). */
+.cam-config-row { display: flex; gap: 6px; margin: 6px 0; align-items: center; }
+.cam-config-row input { min-width: 0; }
+.cam-config-row input:nth-child(1) { flex: 2; }
+.cam-config-row input:nth-child(2) { flex: 2; }
+.cam-config-row input:nth-child(3),
+.cam-config-row input:nth-child(4),
+.cam-config-row input:nth-child(5) { flex: 1; max-width: 64px; }
+.cam-config-add { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }

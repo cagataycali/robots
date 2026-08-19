@@ -5,6 +5,7 @@ import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
 import RunForm from './RunForm'
+import CameraConfigSheet from './CameraConfigSheet'
 
 const HISTORY = 40
 
@@ -28,6 +29,7 @@ export default function RobotDetail({ peer, onClose }: { peer: Peer; onClose: ()
   const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer)
   const cams = Object.keys(peer.cameras ?? {})
   const [cam, setCam] = useState<string | null>(null)
+  const [camConfig, setCamConfig] = useState(false)
   const [steps, setSteps] = useState<StreamStep[]>([])
   const lastStep = useRef<number | null>(null)
 
@@ -69,6 +71,12 @@ export default function RobotDetail({ peer, onClose }: { peer: Peer; onClose: ()
           {p?.robot_type === 'robot' && !peer.peer_id.endsWith('-twin') && (
             <button className="twinbtn" onClick={toggleTwin} disabled={twinBusy} title="Toggle sim twin">⿻</button>
           )}
+          {p?.robot_type === 'robot' && (
+            <button className="btn ghost" onClick={() => setCamConfig(true)}
+                    title="attach / detach cameras, change fps and resolution (restarts the robot)">
+              cameras
+            </button>
+          )}
           <button className="btn ghost" onClick={onClose} title="Escape">✕</button>
         </header>
 
@@ -79,6 +87,8 @@ export default function RobotDetail({ peer, onClose }: { peer: Peer; onClose: ()
             Commands will time out.
           </div>
         )}
+
+        {camConfig && <CameraConfigSheet peerId={peer.peer_id} onClose={() => setCamConfig(false)} />}
 
         <div className="detail-body">
           <div className="detail-stage">
