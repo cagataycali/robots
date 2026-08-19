@@ -4,6 +4,7 @@ import { api } from '../lib/endpoints'
 
 const SOURCE_ICON: Record<string, string> = {
   api: '🖥', agent: '🤖', estop: '🛑', safety: '🛑', mesh: '🔗', voice: '🎙',
+  training: '🎓', record: '🎬', resume: '🟢',
 }
 
 function ago(t: number, now: number): string {
@@ -80,8 +81,8 @@ export default function ActivityLog({ live, open, onClose }: {
         <div className="drawer-body">
           {entries.length === 0 && (
             <p className="hint">
-              Nothing yet. Every task, stop and e-stop — from this UI, the agent, or voice —
-              lands here with what the robot answered.
+              Nothing yet. Every task, stop, e-stop, spawn, recording session and training
+              job — from this UI, the agent, or voice — lands here with what the robot answered.
             </p>
           )}
           <ul className="activity">

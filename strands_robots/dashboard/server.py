@@ -253,7 +253,12 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     from strands_robots.dashboard import record_api
 
     app.state.record = record_api.RecordController(app.state.devices)
-    app.include_router(record_api.build_router(app.state.record))
+    # Late-bound on purpose: capturing the bound method here would pin the
+    # router to THIS bridge instance forever (tests swap it, restart_mesh may).
+    app.include_router(record_api.build_router(
+        app.state.record,
+        on_activity=lambda *a, **k: app.state.bridge.record_activity(*a, **k),
+    ))
     # A peer with a LIVE managed local process is never aged out of the fleet
     # snapshot, even if its state stream goes quiet.
     app.state.bridge.protected_peer_ids = lambda: {
@@ -518,7 +523,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         """Launch a training job (train_policy validates the spec first)."""
         from strands_robots.dashboard import training
 
-        return await asyncio.to_thread(training.submit, body)
+        result = await asyncio.to_thread(training.submit, body)
+        job = (result.get("data") or {}).get("job_id") if isinstance(result, dict) else None
+        app.state.bridge.record_activity(
+            "training", "submit", target=str(job or body.get("provider", "?")),
+            detail=f"{body.get('provider')} on {body.get('dataset_root') or body.get('dataset_repo_id') or '?'}",
+            ok=bool(isinstance(result, dict) and result.get("status") == "success"),
+        )
+        return result
 
     @app.get("/api/training/status")
     async def training_status(provider: str, job_id: str) -> dict[str, Any]:
@@ -868,7 +880,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         robot_name = body.get("robot_name")
         if not robot_name:
             raise HTTPException(422, "robot_name required")
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             app.state.devices.spawn,
             robot_name,
             body.get("mode", "sim"),
@@ -877,6 +889,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             body.get("cameras"),
             body.get("robot_id"),
         )
+        # Lifecycle lands in the audit trail: "who started this peer" is as
+        # unanswerable as "who moved that arm" without it - the auto-spawn
+        # watcher and the UI use this same route.
+        app.state.bridge.record_activity(
+            "api", "spawn", target=result.get("peer_id") or robot_name,
+            detail=f"{robot_name} mode={body.get('mode', 'sim')}",
+            ok="error" not in result,
+        )
+        return result
 
     @app.get("/api/devices/profiles")
     async def device_profiles() -> dict[str, Any]:
@@ -897,7 +918,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         peer_id = body.get("peer_id")
         if not peer_id:
             raise HTTPException(422, "peer_id required")
-        return await asyncio.to_thread(app.state.devices.despawn, peer_id)
+        result = await asyncio.to_thread(app.state.devices.despawn, peer_id)
+        app.state.bridge.record_activity(
+            "api", "despawn", target=peer_id, ok="error" not in result,
+        )
+        return result
 
     @app.get("/api/devices/logs/{peer_id}")
     async def device_logs(peer_id: str) -> dict[str, Any]:

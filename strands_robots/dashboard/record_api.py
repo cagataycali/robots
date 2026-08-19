@@ -256,7 +256,10 @@ class RecordController:
             watcher.suspended = False
 
 
-def build_router(controller: RecordController) -> APIRouter:
+def build_router(
+    controller: RecordController,
+    on_activity: Callable[..., None] | None = None,
+) -> APIRouter:
     """The HTTP surface, exactly as FRONTEND_HANDOFF.md specifies it."""
     r = APIRouter(prefix="/api/record")
 
@@ -266,7 +269,18 @@ def build_router(controller: RecordController) -> APIRouter:
 
     @r.post("/open")
     async def open_session(body: dict[str, Any]) -> dict[str, Any]:
-        return controller.open(body)
+        result = controller.open(body)
+        # Opening a session PARKS real arms into teleop - an audit-worthy
+        # moment: it is the record screen taking the robots away from the
+        # fleet. The hook is optional so the router stays testable alone.
+        if on_activity is not None:
+            on_activity(
+                "record", "session_open",
+                target=str(body.get("dataset") or body.get("repo_id") or "session"),
+                detail=f"task={body.get('task', '')!r}",
+                ok="error" not in result,
+            )
+        return result
 
     @r.post("/episode/start")
     async def episode_start() -> dict[str, Any]:
@@ -288,7 +302,15 @@ def build_router(controller: RecordController) -> APIRouter:
 
     @r.post("/close")
     async def close_session(body: dict[str, Any] | None = None) -> dict[str, Any]:
-        return controller.close(body)
+        result = controller.close(body)
+        if on_activity is not None:
+            episodes = result.get("episodes_kept", result.get("episodes"))
+            on_activity(
+                "record", "session_close", target="session",
+                detail=None if episodes is None else f"{episodes} episodes",
+                ok="error" not in result,
+            )
+        return result
 
     @r.get("/thumb/{episode}/{camera}")
     async def thumb(episode: int, camera: str) -> FileResponse:
