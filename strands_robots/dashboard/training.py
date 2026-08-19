@@ -104,6 +104,38 @@ def list_trainers() -> list[str]:
     return list(_lt())
 
 
+#: The full set of fields a training spec accepts. submit() and validate()
+#: share it so the two can never drift: a field the form sends either reaches
+#: train_policy or is refused BY NAME — silently dropping a typo'd "step"
+#: would train 10k default steps and call it success.
+SPEC_KEYS = (
+    "provider", "dataset_root", "dataset_repo_id", "base_model",
+    "output_dir", "embodiment", "steps", "batch_size", "learning_rate",
+    "save_freq", "method", "lora_r", "lora_alpha", "seed",
+)
+
+
+def _spec_kwargs(body: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """(kwargs, None) for a clean body, (None, error-result) for a bad one.
+
+    Splatting the raw request body into train_policy as **kwargs was Q6:
+    any unexpected key became a TypeError, which FastAPI turned into a
+    bare-HTML 500 the UI's res.json() choked on. Unknown keys now come
+    back as a structured error naming them and the valid vocabulary.
+    """
+    unknown = sorted(k for k in body if k not in SPEC_KEYS and k != "action")
+    if unknown:
+        return None, {
+            "status": "error",
+            "data": {},
+            "text": (
+                "unknown field(s): " + ", ".join(unknown)
+                + ". Valid fields: " + ", ".join(SPEC_KEYS)
+            ),
+        }
+    return {k: body[k] for k in SPEC_KEYS if body.get(k) is not None}, None
+
+
 def local_datasets(query: str = "") -> list[dict[str, Any]]:
     """LeRobotDataset roots on disk (meta/info.json present).
 
@@ -166,17 +198,11 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
 
 def submit(body: dict[str, Any]) -> dict[str, Any]:
     """Validate + launch a training job; persist it for the tab."""
+    kwargs, err = _spec_kwargs(body)
+    if err is not None:
+        return err
     from strands_robots.tools.train_policy import train_policy
 
-    kwargs = {
-        k: body[k]
-        for k in (
-            "provider", "dataset_root", "dataset_repo_id", "base_model",
-            "output_dir", "embodiment", "steps", "batch_size", "learning_rate",
-            "save_freq", "method", "lora_r", "lora_alpha", "seed",
-        )
-        if body.get(k) is not None
-    }
     res = _tool_result(train_policy(action="train", **kwargs))
     if res["status"] == "success":
         job = {
@@ -197,9 +223,11 @@ def submit(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate(body: dict[str, Any]) -> dict[str, Any]:
+    kwargs, err = _spec_kwargs(body)
+    if err is not None:
+        return err
     from strands_robots.tools.train_policy import train_policy
 
-    kwargs = {k: v for k, v in body.items() if v is not None and k != "action"}
     return _tool_result(train_policy(action="validate", **kwargs))
 
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { api, post } from '../lib/endpoints'
 
 interface Dataset { root: string; repo_id: string; total_episodes?: number; robot_type?: string; fps?: number }
 interface Job { job_id: string; provider: string; dataset?: string; base_model?: string; output_dir?: string; steps?: number; submitted_at?: number }
@@ -24,14 +25,14 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const refresh = async () => {
     try {
       const [t, d, j] = await Promise.all([
-        fetch('/api/training/trainers').then(r => r.json()),
-        fetch('/api/training/datasets').then(r => r.json()),
-        fetch('/api/training/jobs').then(r => r.json()),
+        api('/api/training/trainers'),
+        api('/api/training/datasets'),
+        api('/api/training/jobs'),
       ])
       setTrainers(t.trainers ?? [])
       setDatasets(d.datasets ?? [])
       setJobs((j.jobs ?? []).slice().reverse())
-    } catch (e) { setMsg(`⚠ ${e}`) }
+    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
   }
   useEffect(() => { refresh() }, [])
 
@@ -41,7 +42,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       for (const job of jobs.slice(0, 5)) {
         if (!job.job_id) continue
         try {
-          const s = await fetch(`/api/training/status?provider=${job.provider}&job_id=${encodeURIComponent(job.job_id)}`).then(r => r.json())
+          const s = await api(`/api/training/status?provider=${job.provider}&job_id=${encodeURIComponent(job.job_id)}`)
           setStatuses(prev => ({ ...prev, [job.job_id]: s }))
         } catch { /* transient */ }
       }
@@ -62,13 +63,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       method: form.method || undefined,
     }
     try {
-      const r = await fetch(validateOnly ? '/api/training/validate' : '/api/training/submit', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      })
-      const j = await r.json()
+      const j = await post(validateOnly ? '/api/training/validate' : '/api/training/submit', body)
       setMsg(j.status === 'success' ? `✓ ${j.text?.slice(0, 200)}` : `✗ ${j.text?.slice(0, 300)}`)
       if (!validateOnly && j.status === 'success') refresh()
-    } catch (e) { setMsg(`⚠ ${e}`) }
+    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
     setBusy(false)
   }
 
@@ -79,50 +77,38 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     if (!collect.dataset_root.trim()) return
     setBusy(true); setMsg(null)
     try {
-      const r = await fetch('/api/collect', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dataset_root: collect.dataset_root,
-          instruction: collect.instruction,
-          n_episodes: Number(collect.n_episodes) || 5,
-          duration: Number(collect.duration) || 10,
-          robot_name: collect.robot_name,
-        }),
+      const j = await post('/api/collect', {
+        dataset_root: collect.dataset_root,
+        instruction: collect.instruction,
+        n_episodes: Number(collect.n_episodes) || 5,
+        duration: Number(collect.duration) || 10,
+        robot_name: collect.robot_name,
       })
-      const j = await r.json()
       setMsg(j.peer_id
         ? `▶ collecting ${j.n_episodes} episodes as ${j.peer_id} — watch it in the fleet grid; dataset appears below when done`
         : `⚠ ${JSON.stringify(j).slice(0, 200)}`)
       if (j.peer_id) setTimeout(refresh, 15000)
-    } catch (e) { setMsg(`⚠ ${e}`) }
+    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
     setBusy(false)
   }
 
   const replay = async (d: Dataset) => {
     setBusy(true); setMsg(null)
     try {
-      const r = await fetch('/api/replay', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_id: d.repo_id, root: d.root, episode: 0 }),
-      })
-      const j = await r.json()
+      const j = await post('/api/replay', { repo_id: d.repo_id, root: d.root, episode: 0 })
       setMsg(j.peer_id
         ? `▶ replaying ${d.repo_id} ep0 as ${j.peer_id} — watch it in the fleet grid`
         : `⚠ ${JSON.stringify(j).slice(0, 200)}`)
-    } catch (e) { setMsg(`⚠ ${e}`) }
+    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
     setBusy(false)
   }
 
   const exportCkpt = async (job: Job) => {
     setBusy(true)
     try {
-      const r = await fetch('/api/training/export', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset }),
-      })
-      const j = await r.json()
+      const j = await post('/api/training/export', { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset })
       setMsg(j.status === 'success' ? `✓ ${j.text?.slice(0, 250)}` : `✗ ${j.text?.slice(0, 250)}`)
-    } catch (e) { setMsg(`⚠ ${e}`) }
+    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
     setBusy(false)
   }
 
