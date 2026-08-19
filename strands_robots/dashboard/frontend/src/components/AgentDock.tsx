@@ -11,10 +11,14 @@ interface ChatMsg {
 }
 
 /** Bottom-docked fleet agent: text chat + speech-to-speech toggle. */
-export default function AgentDock({ onSettings, startOpen = false }: {
+export default function AgentDock({ onSettings, startOpen = false, exampleRobot }: {
   onSettings?: () => void
   /** true when launched from the manifest's "Ask the agent" shortcut. */
   startOpen?: boolean
+  /** a real online robot to name in examples - the placeholder is the
+   *  de-facto tutorial, and it should teach a one-robot command before a
+   *  fleet-wide one, with a name that actually exists on this desk. */
+  exampleRobot?: string
 }) {
   const [open, setOpen] = useState(startOpen)
   const [input, setInput] = useState('')
@@ -60,6 +64,7 @@ export default function AgentDock({ onSettings, startOpen = false }: {
       // the agent bubble makes the model look like it said it.
       if (ev.type === 'notice') {
         setMsgs(prev => [...prev, { role: 'notice', text: ev.text }])
+        setOpen(true)
         return
       }
       if (ev.type === 'pong') return
@@ -75,6 +80,9 @@ export default function AgentDock({ onSettings, startOpen = false }: {
         else if (ev.type === 'error') { last.text += `\n⚠ ${ev.error}`; setBusy(false) }
       })
       if (ev.type === 'done' || ev.type === 'error') void reload()
+      // A reply landing in a collapsed dock is a reply the user never sees -
+      // the transcript is the product here, so incoming activity reopens it.
+      setOpen(true)
     }
     ws.onclose = (e) => {
       wsRef.current = null
@@ -132,8 +140,8 @@ export default function AgentDock({ onSettings, startOpen = false }: {
               <div className="dock-hint">
                 Ask the fleet agent anything:<br />
                 <em>"what robots are online?"</em><br />
-                <em>"tell so101-arm-1 to pick up the red cube"</em><br />
-                <em>"everyone stop"</em>
+                <em>"tell {exampleRobot ?? 'so101-arm-1'} to wave hello"</em><br />
+                <em>"everyone stop" — the safety brake, it halts every robot</em>
                 <p className="hint">
                   It can start and stop real robots. Everything it does is recorded in Activity.
                 </p>
@@ -168,7 +176,8 @@ export default function AgentDock({ onSettings, startOpen = false }: {
           {voice.state === 'live' ? '🔴' : voice.state === 'connecting' ? '⏳' : '🎙'}
         </button>
         <input
-          placeholder="ask the fleet agent… (e.g. 'everyone pick up your cube')"
+          placeholder={`ask the fleet agent… (e.g. '${exampleRobot ?? 'so101-arm-1'}, wave hello')`}
+          aria-label="message to the fleet agent"
           value={input}
           onFocus={() => setOpen(true)}
           onChange={e => setInput(e.target.value)}
@@ -176,7 +185,11 @@ export default function AgentDock({ onSettings, startOpen = false }: {
           disabled={busy}
         />
         <button className="dock-send" onClick={send} disabled={busy || !input.trim()}>↑</button>
-        <button className="dock-min" onClick={() => setOpen(o => !o)}>{open ? '▾' : '▴'}</button>
+        <button className="dock-min" onClick={() => setOpen(o => !o)}
+                aria-label={open ? 'hide the conversation' : 'show the conversation'}
+                title={open ? 'hide the conversation' : 'show the conversation'}>
+          {open ? '▾ hide' : `▴ chat${msgs.length ? ` (${msgs.length})` : ''}`}
+        </button>
       </div>
     </>
   )

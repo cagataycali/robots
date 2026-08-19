@@ -190,6 +190,7 @@ function Dashboard() {
       <AgentDock
         onSettings={() => setPanel('settings')}
         startOpen={new URLSearchParams(location.search).get('panel') === 'chat'}
+        exampleRobot={list.find(p => !p.stale && p.presence?.robot_type === 'robot')?.peer_id}
       />
     </div>
   )
