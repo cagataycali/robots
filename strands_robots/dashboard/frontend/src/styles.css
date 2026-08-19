@@ -1487,3 +1487,8 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 /* A preflight that had nothing to inspect: an honest neutral, never the green of
    a checked policy. */
 .validation.thin { color: var(--muted); background: transparent; border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); }
+
+/* A calibration id that was CHECKED against the files on this machine reads as a
+   quiet confirmation - green enough to be evidence, never louder than a warning. */
+.hint.ok { color: color-mix(in srgb, var(--ok, #4ade80) 80%, var(--muted)); }
+.btn.tiny { padding: 1px 7px; font-size: 11px; line-height: 1.6; }

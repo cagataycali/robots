@@ -6,6 +6,8 @@ import CalibrationSection from './CalibrationSection'
 import CameraGallery, { type CameraInfo, type CameraName, type CameraProblem } from './CameraGallery'
 import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
 import { calibratePlan } from '../lib/calibrateCommand'
+import { parseCalibrationList, type CalibrationEntry } from '../lib/calibration'
+import { calibrationVerdict } from '../lib/calibrationMatch'
 
 interface SerialPort {
   device: string
@@ -80,6 +82,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [camW, setCamW] = useState('')
   const [camH, setCamH] = useState('')
   const [robotId, setRobotId] = useState('')
+  // The real calibration ids on this machine. `null` = not read yet / failed,
+  // which the verdict deliberately treats as "say nothing" rather than a guess.
+  const [calibIds, setCalibIds] = useState<CalibrationEntry[] | null>(null)
   // Measured servo-bus roles, keyed by port. Declared here with the other hooks
   // on purpose: this component returns null when closed, so a useState below
   // that bail-out changes the hook count between renders (React #310).
@@ -192,6 +197,16 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
    * PREFILL the picker; it must never quietly become the model name, which is
    * why the source is rendered next to it.
    */
+  // Read the calibration ids once: the spawn form's id field is checked against
+  // them, so a typo is caught before an arm runs on raw servo counts.
+  useEffect(() => {
+    let alive = true
+    api<{ status?: string; text?: string }>('/api/calibration')
+      .then(r => { if (alive && r?.text) setCalibIds(parseCalibrationList(r.text).entries) })
+      .catch(() => { /* unchecked is a state the verdict handles */ })
+    return () => { alive = false }
+  }, [])
+
   const familyFor = (p: SerialPort): { family: string; source: string } => {
     const running = managed.find(m => m.alive && m.port === p.device)
     if (running?.robot_name) return { family: running.robot_name, source: 'the arm running on this port' }
@@ -319,13 +334,35 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                   <label className="field">
                     <span>Calibration id</span>
                     <input value={robotId} placeholder="lerobot id (optional)"
+                           list="calib-ids"
                            onChange={e => setRobotId(e.target.value)} />
+                    <datalist id="calib-ids">
+                      {(calibIds ?? []).filter(c => c.id).map(c => (
+                        <option key={`${c.deviceType}/${c.model}/${c.id}`} value={c.id}>{c.model}</option>
+                      ))}
+                    </datalist>
                   </label>
                 </div>
                 <p className="hint">
                   A real robot moves as soon as a task runs. The calibration id must match the one
                   used by <code>lerobot-calibrate</code>, or the joint limits will be wrong.
                 </p>
+                {(() => {
+                  // The prose above was the ONLY check until now: this compares the
+                  // typed id against the files that actually exist. A warning, never
+                  // a block - spawning before calibrating is legitimate.
+                  const v = calibrationVerdict(robotId, calibIds, robotName)
+                  if (!v.note) return null
+                  return (
+                    <p className={v.warn ? 'hint warn' : 'hint ok'}>
+                      {v.warn ? '⚠ ' : '✓ '}{v.note}
+                      {v.suggestion && (
+                        <> <button type="button" className="btn ghost tiny"
+                                   onClick={() => setRobotId(v.suggestion!)}>use {v.suggestion}</button></>
+                      )}
+                    </p>
+                  )
+                })()}
               </>
             )}
             <label className="field">
