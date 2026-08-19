@@ -884,16 +884,33 @@ def _get_zenoh_session_directly() -> Any | None:
                     exc,
                 )
 
+            # Fall back to PEER mode on an ephemeral listener with a
+            # background connect-retry to the hub endpoint (#9) --
+            # mirroring the fix in ``get_session`` upstairs. The prior
+            # client-mode fallback here kept a dead session when the hub
+            # process died: no reconnect loop, no surfaced error, the
+            # bridge-transport peer just went permanently dark. Peer mode
+            # retries ``connect/endpoints`` in the background so a
+            # restarted hub re-links automatically.
             cfg = _build_config()
-            cfg.insert_json5("mode", '"client"')
+            ephemeral_ep = f"{scheme}/127.0.0.1:0"
+            cfg.insert_json5("listen/endpoints", json.dumps([ephemeral_ep]))
             cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
+            cfg.insert_json5("connect/exit_on_failure", "false")
+            cfg.insert_json5(
+                "connect/retry",
+                json.dumps({"period_init_ms": 1000, "period_max_ms": 8000, "period_increase_factor": 2}),
+            )
             try:
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
-                logger.info("Zenoh mesh session opened (client -> %s)", local_ep)
+                logger.info(
+                    "Zenoh mesh session opened (peer, ephemeral listener, retrying -> %s)",
+                    local_ep,
+                )
                 return _SESSION
             except zenoh_error_types() as exc:
-                logger.warning("Zenoh session open failed (client mode): %s", exc)
+                logger.warning("Zenoh session open failed (peer fallback): %s", exc)
                 return None
 
         cfg = _build_config()
