@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordApi'
+import { api as httpGet } from '../lib/endpoints'
+import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 
@@ -21,14 +23,60 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   const [s, setS] = useState<RecordSession | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  const guessLeader = peerIds.find(p => /leader|arm-2/.test(p)) ?? peerIds[1] ?? ''
-  const guessFollower = peerIds.find(p => /follower|arm-1/.test(p)) ?? peerIds[0] ?? ''
+  // Which arm is which comes from the servo bus, not from the peer id: the old
+  // default here was /leader|arm-2/, and arm-2 measures 12.6V - it is the
+  // FOLLOWER - so this screen used to pre-fill the pair backwards. Roles arrive
+  // from /api/devices (measured once, remembered by USB serial). Until they do,
+  // both slots stay empty rather than confidently wrong.
+  const [roles, setRoles] = useState<Record<string, RoleCandidate>>({})
+  const candidates: RoleCandidate[] = peerIds.map(id => roles[id] ?? { peer_id: id })
+  const suggestion = pairArms(candidates)
   const [form, setForm] = useState({
-    dataset: '', task: '', leader: guessLeader, follower: guessFollower, target_episodes: '20',
+    dataset: '', task: '', leader: '', follower: '', target_episodes: '20',
   })
+  const [touched, setTouched] = useState({ leader: false, follower: false })
+  // A pair the hardware contradicts is not forbidden - a bench rig can be wired
+  // in a way we cannot see - but it is not a silent default either. This follows
+  // the same posture as the other safety refusals in this dashboard: state the
+  // measurement, then let the operator continue DELIBERATELY.
+  const [ack, setAck] = useState(false)
+  // Every slot the measurement contradicts, in one place: the warnings, the
+  // acknowledgement and the submit gate must agree about what is wrong.
+  const problems = (['leader', 'follower'] as const)
+    .map(slot => ({ slot, msg: contradiction(candidates, slot, form[slot]) }))
+    .filter((x): x is { slot: 'leader' | 'follower'; msg: string } => !!x.msg)
+
   const [upload, setUpload] = useState(false)
   const [repoId, setRepoId] = useState('')
   const [closed, setClosed] = useState<string | null>(null)
+
+  // The measured roles. Managed children carry them keyed by peer id, so this is
+  // one request, not one per arm. A failure here is not worth a banner: the
+  // pickers simply stay unopinionated (basis 'none' says so out loud).
+  useEffect(() => {
+    let alive = true
+    httpGet<{ managed?: Record<string, RoleCandidate & { peer_id: string }> }>('/api/devices')
+      .then(doc => {
+        if (!alive) return
+        const next: Record<string, RoleCandidate> = {}
+        for (const m of Object.values(doc.managed ?? {})) {
+          if (m?.peer_id) next[m.peer_id] = { peer_id: m.peer_id, role: m.role, role_volts: m.role_volts }
+        }
+        setRoles(next)
+      })
+      .catch(() => { /* unmeasured is a valid state, not an error */ })
+    return () => { alive = false }
+  }, [])
+
+  // Fill a slot the operator has not touched. Their choice always wins - a late
+  // arriving measurement must never move a selection under their hands.
+  useEffect(() => {
+    setForm(f => ({
+      ...f,
+      leader: touched.leader ? f.leader : suggestion.leader,
+      follower: touched.follower ? f.follower : suggestion.follower,
+    }))
+  }, [suggestion.leader, suggestion.follower, touched.leader, touched.follower])
 
   useEffect(() => {
     let alive = true
@@ -140,13 +188,21 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
           </label>
           <div className="train-row">
             <label className="field"><span>leader — you move this one</span>
-              <select value={form.leader} onChange={e => set('leader', e.target.value)}>
-                {peerIds.map(p => <option key={p}>{p}</option>)}
+              <select value={form.leader}
+                      onChange={e => { setTouched(t => ({ ...t, leader: true })); set('leader', e.target.value) }}>
+                <option value="">select…</option>
+                {candidates.map(c => (
+                  <option key={c.peer_id} value={c.peer_id}>{roleLabel(c)}</option>
+                ))}
               </select>
             </label>
             <label className="field"><span>follower — gets recorded</span>
-              <select value={form.follower} onChange={e => set('follower', e.target.value)}>
-                {peerIds.map(p => <option key={p}>{p}</option>)}
+              <select value={form.follower}
+                      onChange={e => { setTouched(t => ({ ...t, follower: true })); set('follower', e.target.value) }}>
+                <option value="">select…</option>
+                {candidates.map(c => (
+                  <option key={c.peer_id} value={c.peer_id}>{roleLabel(c)}</option>
+                ))}
               </select>
             </label>
             <label className="field"><span>episodes</span>
@@ -154,17 +210,43 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
                      onChange={e => set('target_episodes', e.target.value)} />
             </label>
           </div>
+          {suggestion.basis === 'measured' && !suggestion.note && (
+            <div className="train-msg rec-hint">
+              paired from the servo buses — measured, not guessed from the names.
+            </div>
+          )}
+          {suggestion.note && <div className="train-msg rec-hint">{suggestion.note}</div>}
+          {problems.map(({ slot, msg }) => (
+            <div key={slot} className="train-msg warn">⚠ {msg}</div>
+          ))}
+          {problems.length > 0 && (
+            <label className="ackrow">
+              <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />
+              <span>
+                my arms really are wired that way — record anyway
+                {problems.some(x => x.slot === 'leader')
+                  ? ' (hand-moving a torqued arm can strip a gear: cut its power first)'
+                  : ''}
+              </span>
+            </label>
+          )}
           <div className="train-msg rec-hint">
             not sure which is which? the leader is the lighter 7.4V arm (no gearbox load —
             easy to move by hand); the follower is the stronger 12V arm that mirrors it.
           </div>
           <div className="train-actions">
             <button className="btn go wide" type="submit"
-                    disabled={busy || !api || !form.dataset.trim() || !form.task.trim() || form.leader === form.follower}>
+                    disabled={busy || !api || !form.dataset.trim() || !form.task.trim()
+                              || !form.leader || !form.follower || form.leader === form.follower
+                              || (problems.length > 0 && !ack)}>
               open session
             </button>
           </div>
-          {form.leader === form.follower && <div className="train-msg">⚠ leader and follower must be different arms</div>}
+          {/* Only a real collision. Both slots start EMPTY now, and '' === '' was
+              firing this warning at rest - scolding the operator before they had
+              chosen anything. */}
+          {!!form.leader && form.leader === form.follower &&
+            <div className="train-msg">⚠ leader and follower must be different arms</div>}
         </form>
       )}
 

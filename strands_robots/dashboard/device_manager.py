@@ -992,11 +992,20 @@ class DeviceManager:
         live_cameras: Mapping[str, Iterable[str]] | None = None,
     ) -> dict[str, Any]:
         cams = self._cameras(refresh=refresh, live_cameras=live_cameras)
+        # ONE serial scan per call, shared below: profile_for_port() rescans on
+        # every lookup, so per-child role resolution would have re-enumerated the
+        # USB bus once per managed robot.
+        ports = scan_serial_ports()
+        roles = {
+            p["device"]: self._role_fields(self.profiles.get(str(p["serial_number"])))
+            for p in ports
+            if p.get("device") and p.get("serial_number")
+        }
         return {
             # Each board carries what is KNOWN about its role (measured earlier,
             # remembered by serial) so the devices screen can show it without a
             # second round trip - and so a wrong label is visible at a glance.
-            "serial_ports": [self._with_known_role(e) for e in scan_serial_ports()],
+            "serial_ports": [{**e, **roles.get(e.get("device"), {})} for e in ports],
             "cameras": cams,
             # One loud line when the whole machine is blocked, instead of the
             # same reason repeated on every row (and missed on all of them).
@@ -1017,21 +1026,31 @@ class DeviceManager:
                     "pid": m.process.pid if m.process is not None else None,
                     "returncode": m.process.poll() if m.process is not None else None,
                     "log_tail": list(m.logs)[-20:],
+                    # The measured role of the board this child is driving, so a
+                    # screen that pairs arms (record/teleop) can name the leader
+                    # from the HARDWARE instead of from the peer id. Absent when
+                    # nobody measured it - which must stay distinguishable from
+                    # "measured and unknown".
+                    **roles.get(m.port, {}),
                 }
                 for peer_id, m in self.robots.items()
             },
         }
 
-    def _with_known_role(self, entry: dict[str, Any]) -> dict[str, Any]:
-        serial = entry.get("serial_number")
-        profile = self.profiles.get(str(serial)) if serial else None
+    @staticmethod
+    def _role_fields(profile: Mapping[str, Any] | None) -> dict[str, Any]:
+        """The measured-role fields of a profile, or {} when it has none.
+
+        Absent stays ABSENT: "nobody measured this board" must not arrive at the
+        UI looking like "measured, result unknown".
+        """
         if not profile:
-            return entry
-        out = dict(entry)
-        for field in ("role", "role_volts", "role_source", "role_measured_at"):
-            if profile.get(field) is not None:
-                out[field] = profile[field]
-        return out
+            return {}
+        return {
+            f: profile[f]
+            for f in ("role", "role_volts", "role_source")
+            if profile.get(f) is not None
+        }
 
     def _camera_names(self, refresh: bool = False) -> list[dict[str, Any]]:
         """Cached roster of camera names (see scan_camera_names on ordering)."""

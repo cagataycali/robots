@@ -1267,3 +1267,15 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .rolebadge.unmeasured { font-style: italic; color: var(--dim); background: transparent; }
 .boardlist .small { font-size: var(--fs-tiny); }
 .boardlist .warn, p.warn { color: var(--amber); }
+
+/* The deliberate-continue row under a contradicted arm pair. The box is big
+   enough to hit on a phone next to the arms (44px target), because that is where
+   this decision is actually made. */
+.ackrow {
+  display: flex; align-items: flex-start; gap: var(--s3);
+  padding: var(--s3) var(--s4); border-radius: var(--r2);
+  background: var(--panel2); border: 1px solid var(--border-hi);
+  font-size: var(--fs-tiny); color: var(--text); cursor: pointer;
+}
+.ackrow input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--amber); }
+.ackrow span { line-height: 1.45; }
