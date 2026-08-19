@@ -49,8 +49,15 @@ def classify_probe_stderr(text: str) -> tuple[str, str, str | None]:
         return (
             "blocked",
             "macOS has not granted camera access to the process running the dashboard",
-            "System Settings > Privacy & Security > Camera, enable the app that "
-            "launched the dashboard (Terminal / VS Code / iTerm), then restart it",
+            # Measured on this machine: macOS asks the APP responsible for the
+            # process, and a dashboard started by a background daemon has no app
+            # to ask - tccd logs "Policy disallows prompt" and denies it, so no
+            # dialog will EVER appear. Telling the operator to "click Allow"
+            # would send them to watch for a prompt that cannot happen.
+            "start the dashboard from Terminal, iTerm or VS Code and allow camera "
+            "access when macOS asks (System Settings > Privacy & Security > Camera "
+            "lists it afterwards). A dashboard started by a background daemon can "
+            "never be granted: macOS refuses to even show the prompt",
         )
     if "device or resource busy" in low or "busy" in low or "in use" in low:
         return (

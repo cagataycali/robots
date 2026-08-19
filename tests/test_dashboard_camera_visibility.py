@@ -36,8 +36,12 @@ def test_permission_denial_is_not_a_missing_camera():
     state, reason, remedy = cam.classify_probe_stderr(BLOCKED_STDERR)
     assert state == "blocked"
     assert "camera access" in reason
-    # The remedy has to name the actual place, or it is not a remedy.
-    assert "Privacy" in remedy and "restart" in remedy
+    # The remedy has to name the actual place, or it is not a remedy - and it
+    # has to be true for THIS case: a daemon-parented dashboard never gets a
+    # prompt at all (tccd: "Policy disallows prompt"), so advice that waits for
+    # one is worse than none.
+    assert "Privacy" in remedy and "Terminal" in remedy
+    assert "background daemon" in remedy
 
 
 def test_busy_device_is_in_use_not_absent():
