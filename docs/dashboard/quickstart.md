@@ -168,6 +168,8 @@ unattended.
 - [Fleet dashboard overview](index.md) - every CLI flag and HTTP route
 - [Robots defined in code](code-defined-robots.md) - the same peer from your
   own script, and how to deploy it to an edge device
+- [Collect, train, deploy](collect-train-deploy.md) - episodes to a checkpoint
+  running on the arm, every step as an HTTP call
 - [Remote access](remote-access.md) - reach the fleet from a phone, guard
   first and tunnel second
 - [Multi-robot Mesh](../mesh.md) - what the peers are actually saying

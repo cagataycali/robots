@@ -327,6 +327,7 @@ so anything it can do, `curl` can do.
 | **Two SO-101 arms and a Mac?** | [10-minute quickstart](docs/dashboard/quickstart.md) - install, calibrate, spawn both arms, identify which camera is the wrist, first dataset on disk |
 | Every flag, route and panel | [Fleet dashboard reference](docs/dashboard/index.md) |
 | The same peer from your own script | [Robots defined in code](docs/dashboard/code-defined-robots.md) |
+| Episodes to a checkpoint on the arm | [Collect, train, deploy](docs/dashboard/collect-train-deploy.md) |
 | Reach it from a phone | [Remote access](docs/dashboard/remote-access.md) - guard first, tunnel second |
 
 Two facts worth knowing before the first spawn: a camera is declared as a
