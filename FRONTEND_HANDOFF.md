@@ -55,3 +55,16 @@ loop + hardware adapter). The frontend probe now treats ONLY a 404 as "run
 the mock" - 401/network errors pick the real api. One addition beyond the
 spec: session responses carry an `error: string|null` field (e.g. a 0-frame
 episode, a failed control step) that the UI may surface.
+
+## U16 backend landed — POST /api/deploy/snippet (supervisor v6, 2026-08-19)
+Renders a spawn payload/profile as a copy-pasteable Python file that recreates the
+exact peer on an edge device (mirrors the child spawner's factory call + mesh env,
+ZENOH_CONNECT pointing back at this dashboard).
+- Body: `{"serial": "<profile key>"}` (remembered profile) OR `{"payload": {...form state...}}`
+  (works BEFORE first spawn). Optional `"hub_host"` — defaults to the host the browser
+  used to reach the dashboard (loopback withheld).
+- Returns `{snippet, filename, peer_id}`. 404 unknown serial, 422 unrunnable payload
+  (the error names the missing field — show it, it's already human wording).
+- UI wanted: a "deploy" button on device cards / the U4 form → sheet with syntax-lit
+  snippet, copy button, download-as-file (use `filename`). Show the header docstring
+  prominently — it carries the measured-role line and the per-machine camera-index warning.
