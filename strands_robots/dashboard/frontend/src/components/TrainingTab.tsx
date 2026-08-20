@@ -379,7 +379,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   }
 
   const replay = async (d: Dataset) => {
-    // Replay reads episode 0 off the disk. A Hub row is not on this disk yet,
+    // Replay reads the chosen episode off the disk. A Hub row is not on this disk yet,
     // so replaying it would fail somewhere deep in a loader; say so here.
     if (!d.root) {
       setMsg(`⚠ ${d.repo_id} is on the Hub, not on this machine — train with it (the trainer downloads it) or clone it locally to replay`)
@@ -748,7 +748,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               </span>
             </div>
             <div className="train-job-actions">
-              {/* Replay reads episode 0 off this disk, so it is offered only for
+              {/* Replay reads an episode off this disk, so it is offered only for
                   what is actually here — a disabled button with the reason beats
                   a click that dies inside a dataset loader. */}
               <input className="ep-box" type="number" min={0} inputMode="numeric"

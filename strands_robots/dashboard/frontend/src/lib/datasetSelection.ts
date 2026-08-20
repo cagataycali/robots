@@ -85,19 +85,22 @@ export function selectionKey(sel: { dataset_root: string; dataset_repo_id: strin
 }
 
 /**
- * Can this row be replayed here? Replay reads episode 0 off this disk, so a
+ * Can this row be replayed here? Replay reads an episode off this disk (episode 0 unless the operator picks
+ * another one — see episodeChoice below), so a
  * Hub row cannot — and saying so before the click beats a failure raised deep
  * inside a dataset loader.
  */
 export function replayable(d: DatasetRow): { ok: boolean; reason: string } {
   if (!d.root) return { ok: false, reason: 'on the Hub, not on this machine — training downloads it; replay needs it local' }
-  // Q37: replay reads EPISODE 0. A dataset whose metadata says zero episodes has no episode 0,
+  // Q37: replay reads an episode off the disk. A dataset whose metadata says zero episodes has none to read,
   // so the click cannot do anything but fail deep inside a loader — and this row exists at all
   // only because meta/info.json is written when a recording OPENS. The server's sentence is used
   // verbatim: it knows which of the failure modes this is, and re-wording it here would let the
   // two disagree.
   if (d.usable === false) return { ok: false, reason: d.problem ?? 'this dataset has no episodes to replay' }
-  return { ok: true, reason: 'Replay episode 0 in a live mesh sim — appears in the fleet grid' }
+  // Deliberately says no episode NUMBER: the number lives in the box next to the button now, and this
+  // sentence is composed with episodeChoice's in the tooltip — two claims about the index would contradict.
+  return { ok: true, reason: 'Replay in a live mesh sim — appears in the fleet grid' }
 }
 
 /**

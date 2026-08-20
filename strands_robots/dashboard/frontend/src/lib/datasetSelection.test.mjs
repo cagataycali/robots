@@ -68,7 +68,12 @@ console.log('datasetSelection: all assertions passed')
   // A row that is FINE is untouched by any of this.
   const good = { root: '/data/good', repo_id: 'org/good', total_episodes: 30, fps: 10, usable: true }
   assert.equal(replayable(good).ok, true)
-  assert.match(replayable(good).reason, /episode 0 in a live mesh sim/)
+  // The sentence deliberately names NO episode number: since the replay button gained an episode box,
+  // the number comes from episodeChoice and the tooltip composes both — a hardcoded "episode 0" here
+  // would let the two disagree in front of the operator. What must survive is the promise about WHERE
+  // it happens, because that is why the operator looks at the fleet grid afterwards.
+  assert.match(replayable(good).reason, /live mesh sim/)
+  assert.doesNotMatch(replayable(good).reason, /episode \d/, 'the index belongs to episodeChoice now')
   assert.equal(trainable(good).ok, true)
 
   // AN OLDER SERVER SENDS NO VERDICT. A missing verdict is not a bad verdict: behave exactly as
