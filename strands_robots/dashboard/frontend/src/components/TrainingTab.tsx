@@ -5,6 +5,7 @@ import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post, HttpError } from '../lib/endpoints'
 import { extraFields, missingForProvider } from '../lib/providerFields'
 import { holdout } from '../lib/holdout'
+import { fieldSupport } from '../lib/serverFields'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
@@ -56,6 +57,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
    * backend cannot classify stays fully selectable.
    */
   const [unsupported, setUnsupported] = useState<Record<string, string>>({})
+  // Q78: the field vocabulary the SERVER accepts, and whether we have actually heard from it.
+  // A long-running dashboard is regularly older than the bundle it serves.
+  const [srvFields, setSrvFields] = useState<string[] | null>(null)
+  const [srvHeard, setSrvHeard] = useState(false)
   /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLDivElement | null>(null)
   useDialogFocus(sheetRef)
@@ -103,6 +108,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       ])
       setTrainers(t.trainers ?? [])
       setUnsupported(t.unsupported ?? {})
+      setSrvFields(Array.isArray(t.fields) ? t.fields : null)
+      setSrvHeard(true)
       // Newest first from the DATA, not from the file's shape: the next effect polls
       // only the first five, so an out-of-order ledger used to give status to the
       // finished runs and none to the one just started.
@@ -282,7 +289,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         ? { embodiment: form.embodiment.trim() } : {}),
       // Held out only when the operator asked for it: `null` and an absent key both mean "train
       // on every episode", and sending 0 would show a split in the form that the backend drops.
-      ...(wantedHoldout.send !== null ? { val_episodes: wantedHoldout.send } : {}),
+      ...(wantedHoldout.send !== null && holdoutSupport.ok ? { val_episodes: wantedHoldout.send } : {}),
     }
     try {
       const j = await post(validateOnly ? '/api/training/validate' : '/api/training/submit', body)
@@ -323,6 +330,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
      round trip rather than by the trainer minutes in. Empty is a legal answer, so this never
      blocks the button on its own — only a value that would mean something other than it reads. */
   const wantedHoldout = holdout(form.val_episodes, selectedRow(datasets, form)?.total_episodes ?? null)
+  const holdoutSupport = fieldSupport(srvFields, 'val_episodes', srvHeard)
   const wantedEpisodes = numField(collect.n_episodes, { what: 'episodes', min: 1, max: 500, remedy: 'collect in batches' })
   const wantedSeconds = numField(collect.duration, { what: 'seconds per episode', min: 1, max: 600 })
 
@@ -577,11 +585,12 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             </span>
           </label>
           <label className="field"><span>val episodes</span>
-            <input type="number" value={form.val_episodes} placeholder="none"
-                   onChange={e => set('val_episodes', e.target.value)} disabled={busy}
+            <input type="number" value={holdoutSupport.ok ? form.val_episodes : ''} placeholder="none"
+                   onChange={e => set('val_episodes', e.target.value)}
+                   disabled={busy || !holdoutSupport.ok}
                    aria-invalid={!!wantedHoldout.problem} aria-describedby="train-val-say" />
-            <span id="train-val-say" className={`fieldsay${wantedHoldout.problem ? ' bad' : ''}`}>
-              {wantedHoldout.problem ?? wantedHoldout.say}
+            <span id="train-val-say" className={`fieldsay${wantedHoldout.problem || !holdoutSupport.ok ? ' bad' : ''}`}>
+              {holdoutSupport.why || wantedHoldout.problem || wantedHoldout.say}
             </span>
           </label>
           <label className="field"><span>method</span>
@@ -594,7 +603,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <div className="train-actions">
           <button className="btn ghost" onClick={() => submit(true)} disabled={busy || !!wantedSteps.problem}>✓ validate</button>
           <button className="btn go wide" onClick={() => submit(false)}
-                  disabled={busy || !datasetPicked || !!wantedSteps.problem || !!wantedHoldout.problem || !gate.ok}
+                  disabled={busy || !datasetPicked || !!wantedSteps.problem || (holdoutSupport.ok && !!wantedHoldout.problem) || !gate.ok}
                   title={gate.why ?? undefined}>
             {outSay.confirmable && gate.ok ? '▶ delete and train' : '▶ train'}
           </button>

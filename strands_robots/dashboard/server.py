@@ -757,6 +757,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         return {
             "trainers": await asyncio.to_thread(training.list_trainers),
             "unsupported": await asyncio.to_thread(training.form_unsupported),
+            # Q78: the vocabulary this SERVER accepts. A dashboard is long-lived - the one on
+            # this Mac had been up for days - so a freshly built bundle regularly talks to a
+            # server started before the field it is offering existed, and the operator gets
+            # "unknown field(s): val_episodes" with no way to read that as "restart me". The
+            # form asks instead of guessing. Same rule as `unsupported` above: a NEW key, so a
+            # cached older bundle ignores it and keeps working.
+            "fields": list(training.SPEC_KEYS),
         }
 
     @app.get("/api/training/datasets")
