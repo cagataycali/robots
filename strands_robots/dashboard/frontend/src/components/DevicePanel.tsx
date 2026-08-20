@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useDialogFocus } from '../lib/useDialogFocus'
+import { numField } from '../lib/numField'
 import { findConsent, type ConsentNeed } from '../lib/consent'
 import ConsentSheet from './ConsentSheet'
 import { api, post, HttpError } from '../lib/endpoints'
@@ -85,6 +86,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [mode, setMode] = useState<'sim' | 'real'>('sim')
   const [port, setPort] = useState('')
   const [camIndex, setCamIndex] = useState('')
+  /* Q60's class, spawn side: min/max on a number input are hints the browser only enforces in a
+     form submit — this is a button, so `fps: -5` or `width: 3` reached /api/devices/spawn and the
+     failure surfaced later as a camera the robot "could not open". Blank still means the driver's
+     own default, so an empty box is NOT a problem here. */
   const [camFps, setCamFps] = useState('')
   const [camW, setCamW] = useState('')
   const [camH, setCamH] = useState('')
@@ -242,6 +247,16 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     }
   }
 
+  const camNums = {
+    fps: camFps === '' ? null : numField(camFps, { what: 'fps', min: 1, max: 240 }),
+    width: camW === '' ? null : numField(camW, { what: 'pixels wide', min: 64, max: 7680 }),
+    height: camH === '' ? null : numField(camH, { what: 'pixels high', min: 64, max: 4320 }),
+  }
+  const camProblem = [camNums.fps, camNums.width, camNums.height].find(v => v?.problem)?.problem ?? null
+  // A correction we make must be admitted, not just the refusals: 12.5 fps becomes 12, and the
+  // operator who typed 12.5 would otherwise never learn which of the two the camera was given.
+  const camNote = [camNums.fps, camNums.width, camNums.height].map(v => v?.note).filter(Boolean).join(' · ') || null
+
   const spawn = () => act(() => post('/api/devices/spawn', {
     robot_name: robotName,
     mode,
@@ -252,9 +267,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     cameras: camIndex === '' ? null : {
       main: {
         index_or_path: Number(camIndex),
-        ...(camFps !== '' ? { fps: Number(camFps) } : {}),
-        ...(camW !== '' ? { width: Number(camW) } : {}),
-        ...(camH !== '' ? { height: Number(camH) } : {}),
+        ...(camNums.fps ? { fps: camNums.fps.value } : {}),
+        ...(camNums.width ? { width: camNums.width.value } : {}),
+        ...(camNums.height ? { height: camNums.height.value } : {}),
       },
     },
     robot_id: robotId || null,
@@ -502,6 +517,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                            onChange={e => setCamH(e.target.value)} />
                   </label>
                 </div>
+                {camProblem && <p className="hint bad" role="alert">⚠ {camProblem}</p>}
+                {!camProblem && camNote && <p className="hint">{camNote}</p>}
                 <p className="hint">
                   Blank = the driver's defaults (640×480 @ 30). A setting the camera can't do
                   fails loudly at spawn — check the log tail, not the stream.
@@ -509,7 +526,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
               </>
             )}
             <div className="sheet-actions">
-              <button className="btn go" disabled={busy || !robotName || (mode === 'real' && !port)}
+              <button className="btn go"
+                      disabled={busy || !robotName || (mode === 'real' && !port) || !!camProblem}
                       onClick={spawn}>
                 spawn
               </button>
