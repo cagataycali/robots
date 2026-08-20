@@ -1833,6 +1833,25 @@ From the `robot_mesh` human-in-the-loop review trail (#227). Apply to the
   flat, fixed sentinel to the model. Echoing the operator's typed reply turns the
   human into a prompt-injection content side-channel (the agent could phrase the
   approval reason so the operator's answer leaks data into the context).
+- **The record half is owed by EVERY gate, not just the mesh tool.** Three tools
+  stop and ask a human - `robot_mesh` for the physical-actuation actions, `use_ros`
+  for a publish/service_call/action_send_goal aimed at a safety-critical graph
+  surface, and `lerobot_train` for the `extra_flags` that control output paths,
+  telemetry and code loading - and each of them returned the flat sentinel while
+  only the mesh tool wrote the row. A declined `/cmd_vel` publish and a declined
+  `output_dir` override left no audit row, no log record, and so no trace that a
+  gate had fired at all. Every gate accepts a canonical affirmative only, so a
+  reply carrying a reason is always a decline and that row is the ONLY place the
+  reason survives; record the approval too, because "did a human authorise this"
+  is the first question an incident asks. One owner writes the row
+  (`strands_robots.tools._hitl_audit.log_operator_response`) so its wording
+  cannot differ between two gates writing to the same log - a reader greps one
+  phrasing, and a gate that spelled the row itself could drift to another and
+  become invisible to that search.
+- Pinned by `tests/tools/test_hitl_operator_response_audit.py`, which derives the
+  graded set from the `interrupt()` call sites so a fourth gate is graded on
+  arrival, and whose controls assert the reply still never reaches the model and
+  that an unwritable audit log does not change a gate's verdict.
 
 ### Audit completeness
 - **Audit read-only/observation actions too, not just actuation.** `peers`,
