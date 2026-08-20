@@ -487,6 +487,10 @@ class Mesh(SensorLoopsMixin):
         # category below is warned about the FIRST time it fails and then
         # stays quiet, because the state loop retries at STATE_HZ.
         self._read_state_warned: set[str] = set()
+        # Set once hardware has been readable at least once, so a degraded-only snapshot is only
+        # published for a peer that HAS hardware. Read with a default everywhere: several tests (and
+        # the sim paths) build a Mesh through __new__ and never run __init__.
+        self._read_state_hw_seen: bool = False
 
         # RPC correlation state.
         #
@@ -1286,11 +1290,26 @@ class Mesh(SensorLoopsMixin):
         about again instead of hiding behind the first occurrence forever.
         """
         records = getattr(self, "_read_state_degraded", None)
-        if records:
-            records.pop(category, None)
+        rec = records.pop(category, None) if records else None
         warned = getattr(self, "_read_state_warned", None)
+        was_warned = bool(warned and category in warned)
         if warned:
             warned.discard(category)
+        # A log that only ever records failures makes every past fault look permanent: whoever reads
+        # it later (a human, or this dashboard's own log-derived diagnosis) sees "probe failed" as the
+        # last word on an arm that has been fine for hours, and cannot tell the difference. One INFO
+        # line closes that, and it is emitted ONLY when there was something to clear -- logging a
+        # recovery on every healthy cycle would bury the failures it is meant to qualify.
+        if rec is not None or was_warned:
+            failures = int((rec or {}).get("failures", 0))
+            since = (rec or {}).get("since")
+            lasted = f" after {failures} failures over {time.time() - float(since):.1f}s" if since else ""
+            logger.info(
+                "[mesh] %s: state probe %r recovered%s",
+                self.peer_id,
+                category,
+                lasted,
+            )
 
     def _read_state(self) -> dict[str, Any] | None:
         r = self.robot
@@ -1311,6 +1330,10 @@ class Mesh(SensorLoopsMixin):
             # invisible only because further failures drop to debug. This branch is defence in depth
             # against a state nobody has observed yet, which is a fair thing to build and not a fair
             # thing to claim as a diagnosis.
+            # Proof that hardware was VISIBLE this cycle -- the difference between "an arm whose
+            # joint probe failed" (worth publishing the reason) and "an object we cannot read at all".
+            if inner is not None:
+                self._read_state_hw_seen = True
             skip: str | None = None
             if inner is None:
                 # A sim world or a gateway legitimately has no hardware object: stay silent, or every
@@ -1417,13 +1440,19 @@ class Mesh(SensorLoopsMixin):
 
         # Additive key: an older cached PWA bundle ignores it, so publishing it cannot break a tab
         # that is mid-session (the same rule /api/training/trainers follows).
+        # A degraded-only snapshot IS worth sending -- "this arm has no joints and here is why" is the
+        # case that used to travel as silence -- but only for a peer we could actually see hardware
+        # on. A hostile or non-robot object must still yield None (a contract older than this
+        # feature: tests/mesh/test_mesh.py), because if not even `robot` could be read then the
+        # problem is not this peer's joints, it is that there is no working robot behind it, and
+        # presence already carries connected/hw for that. Without this distinction every gateway and
+        # every broken object would broadcast a permanent complaint.
+        # peer_id and t are the two free keys, so content is anything beyond them.
         records = getattr(self, "_read_state_degraded", None)
-        if records:
+        has_content = len(snapshot) > 2 or bool(records and getattr(self, "_read_state_hw_seen", False))
+        if records and has_content:
             snapshot["degraded"] = degraded_report(records, time.time())
-        # A snapshot whose ONLY content is a degradation is still worth sending: "this arm has no
-        # joints and here is why" is exactly the case that used to travel as silence. peer_id and t
-        # are the two free keys, so the threshold counts anything beyond them.
-        return snapshot if len(snapshot) > 2 else None
+        return snapshot if has_content else None
 
     # Cameras - outgoing (opt-in)
     def _resolve_camera_hz(self) -> float:

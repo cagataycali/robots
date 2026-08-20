@@ -11,6 +11,7 @@ touches the process-global session is how a pytest run once e-stopped the live f
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -219,3 +220,40 @@ def test_a_thrown_failure_carries_no_skipped_flag(monkeypatch: pytest.MonkeyPatc
     m = _mesh(_Arm())
     monkeypatch.setattr(mesh_core, "read_joints", lambda inner: (_ for _ in ()).throw(RuntimeError(LEADER_REPR)))
     assert "skipped" not in m._read_state()["degraded"]["hw_joints"]
+
+
+def test_a_recovered_probe_says_so_exactly_once(monkeypatch: pytest.MonkeyPatch, caplog) -> None:
+    # The log's last word on a healed arm used to be "failed", which makes every past fault look
+    # permanent to a human AND to this dashboard's own log-derived diagnosis.
+    arm = _Arm()
+    m = _mesh(arm)
+    monkeypatch.setattr(mesh_core, "read_joints", lambda inner: (_ for _ in ()).throw(RuntimeError(LEADER_REPR)))
+    m._read_state()
+    m._read_state()
+    monkeypatch.setattr(mesh_core, "read_joints", lambda inner: {"shoulder_pan.pos": 4.0})
+    with caplog.at_level(logging.INFO, logger="strands_robots.mesh.core"):
+        m._read_state()
+        recovered = [r for r in caplog.records if "recovered" in r.message or "recovered" in r.getMessage()]
+        assert len(recovered) == 1, "exactly one line, naming the category"
+        assert "hw_joints" in recovered[0].getMessage()
+        assert "2 failures" in recovered[0].getMessage(), "how bad it was, and for how long"
+        caplog.clear()
+        # A healthy cycle is not news: logging a recovery every second would bury the failures it
+        # exists to qualify.
+        m._read_state()
+        m._read_state()
+        assert [r for r in caplog.records if "recovered" in r.getMessage()] == []
+
+
+def test_a_degraded_entry_never_creates_a_snapshot_on_its_own() -> None:
+    # Contract older than this feature (tests/mesh/test_mesh.py: a hostile robot yields None, never
+    # an exception). If EVERY probe failed, the peer's problem is not its joints -- there is no
+    # working robot behind it, and presence already carries connected/hw. My first version published
+    # a state whose only content was a complaint, which would also give every gateway a permanent
+    # broadcast; it regressed that test for three iterations because my -k filter never selected
+    # tests/mesh/.
+    class Hostile:
+        def __getattr__(self, name: str) -> Any:
+            raise RuntimeError("inner robot unavailable")
+
+    assert _mesh(Hostile())._read_state() is None
