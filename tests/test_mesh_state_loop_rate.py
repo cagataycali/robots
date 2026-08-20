@@ -285,3 +285,43 @@ def test_only_the_shared_generator_owns_a_ticker_in_the_sensors_module() -> None
     assert module_source.count("Ticker(") == 1, (
         "exactly one Ticker construction belongs in this module - the one inside _paced"
     )
+
+
+def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
+    """The inventory check: Q69 is only cured if NO pacer was missed.
+
+    I found the teleop apply loop (teleop_mixin.py) only after converting the
+    other eleven, because it uses a differently-named stop event
+    (``_teleop_stop_event``) and so did not match the grep I had been working
+    from. This scans for the SHAPE - a wait on any event, with a period-ish
+    argument - rather than for one spelling of it.
+
+    Waits that are NOT pacing (a shutdown join, a settle window) are allowed:
+    they run once, so a 145ms inflation costs 145ms rather than 60% of a stream.
+    They are listed explicitly, so adding one is a deliberate act.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "strands_robots"
+    allowed = {
+        # (file, fragment) -> why this wait is not a pacer
+        ("mesh/core.py", "self._stop_event.wait(timeout=timeout)"): "one-shot shutdown wait, not a loop tick",
+    }
+    pattern = re.compile(r"^\s*(?:if\s+)?self\._[a-z_]*stop_event\.wait\(([^)]*)\)")
+    offenders: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "pacing.py":
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            match = pattern.match(line)
+            if not match:
+                continue
+            rel = str(path.relative_to(root))
+            if any(rel == f and frag in line for (f, frag) in allowed):
+                continue
+            offenders.append(f"{rel}:{lineno}: {line.strip()}")
+    assert not offenders, (
+        "these waits pace a loop and carry the ~145ms daemon-tree penalty (BUGS.md Q69); "
+        f"pace them with mesh.pacing.Ticker or add them to `allowed` with a reason: {offenders}"
+    )

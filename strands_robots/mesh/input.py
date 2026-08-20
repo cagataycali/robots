@@ -31,6 +31,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.bus_access import write_action
+from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.security import (
     input_envelope_for_units,
     ValidationError,
@@ -253,10 +254,33 @@ class InputPublisher:
         return self.stats
 
     def _publish_loop(self) -> None:
+        """Read the leader device and publish one input frame per tick.
+
+        Paced by :class:`~strands_robots.mesh.pacing.Ticker` (BUGS.md Q69). This
+        loop was the ONLY one that already did deadline arithmetic -- it measured
+        its own body with ``perf_counter`` and slept ``period - elapsed`` -- so the
+        arithmetic is not what was wrong with it: the remaining ~145ms came from
+        the ``_stop_event.wait(sleep_time)`` that arithmetic fed. The ticker owns
+        both halves now, so the subtraction is not duplicated in two places that
+        can disagree.
+
+        THIS CORRECTS A CONCLUSION I RECORDED EARLIER: teleop_publish at hz=10 was
+        measured achieving ~4.1Hz and I attributed it to the cost of one
+        bus-locked serial read per frame. 1/(0.1 + 0.145) = 4.08Hz, and a Feetech
+        position read is single-digit milliseconds -- the pacing penalty accounts
+        for essentially all of it. teleop_health reported that number honestly and
+        the honest number was blamed on the wrong thing.
+        """
         # ``hz`` is validated in __init__, so the division is safe.
         period = 1.0 / float(self.hz)
+        ticker = Ticker(period, self._stop_event)
+        try:
+            self._publish_ticks(ticker)
+        finally:
+            ticker.close()
+
+    def _publish_ticks(self, ticker: Ticker) -> None:
         while self._running and not self._stop_event.is_set():
-            loop_start = time.perf_counter()
             try:
                 action = self.teleoperator.get_action()
                 action_dict = self._normalize_action(action)
@@ -307,10 +331,8 @@ class InputPublisher:
                 if self._error_count <= _MAX_LOGGED_LOOP_ERRORS:
                     logger.warning("[mesh] input publish error (%s): %s", self.device_name, exc)
 
-            elapsed = time.perf_counter() - loop_start
-            sleep_time = period - elapsed
-            if sleep_time > 0:
-                self._stop_event.wait(sleep_time)
+            if ticker.wait():
+                break
 
     @staticmethod
     def _normalize_action(action: Any) -> dict[str, float]:
