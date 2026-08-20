@@ -261,6 +261,13 @@ def main() -> None:
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    # A browser cannot set headers on a WebSocket handshake, so every camera socket
+    # carries its JWT in the query string and uvicorn's access log wrote it verbatim -
+    # 63k live bearer tokens in a world-readable /tmp file, measured. Installed before
+    # uvicorn so its own loggers are covered from the first request.
+    from strands_robots.dashboard.log_redaction import install_redaction
+
+    install_redaction()
 
     import uvicorn
 
