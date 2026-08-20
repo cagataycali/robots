@@ -25,6 +25,7 @@ from typing import Any
 from strands_robots.bus_access import read_joints, read_observation
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
+from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
@@ -1074,16 +1075,31 @@ class Mesh(SensorLoopsMixin):
 
     # State - outgoing
     def _state_loop(self) -> None:
-        period = 1.0 / STATE_HZ
-        while self._running:
-            try:
-                state = self._read_state()
-                if state:
-                    self.publish(f"strands/{self.peer_id}/state", state)
-            except Exception as exc:
-                logger.debug("[mesh] %s: state tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
+        """Publish this peer's state at ``STATE_HZ``.
+
+        Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than by
+        ``self._stop_event.wait(period)``: measured (BUGS.md Q69), in a process
+        tree descended from a daemon or launchd agent every ``Event.wait`` is
+        inflated by ~145ms, so this loop published at ~4Hz while STATE_HZ said 10
+        and the achieved rate was reported as if it were the robot's limit. The
+        ticker also makes the period a deadline, so the time ``_read_state``
+        spends on the serial bus is subtracted from the wait instead of added to
+        it. ``wait()`` keeps ``Event.wait``'s sense - True means stop - and
+        notices a stop within a 10ms slice rather than at the end of a tick.
+        """
+        ticker = Ticker(1.0 / STATE_HZ, self._stop_event)
+        try:
+            while self._running:
+                try:
+                    state = self._read_state()
+                    if state:
+                        self.publish(f"strands/{self.peer_id}/state", state)
+                except Exception as exc:
+                    logger.debug("[mesh] %s: state tick error: %s", self.peer_id, exc)
+                if ticker.wait():
+                    break
+        finally:
+            ticker.close()
 
     def _warn_read_state_once(self, category: str, exc: BaseException) -> None:
         """Log a degraded :meth:`_read_state` probe once per category.
