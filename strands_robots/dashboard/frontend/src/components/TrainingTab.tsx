@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post, HttpError } from '../lib/endpoints'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
@@ -35,6 +36,9 @@ function guessPolicyType(baseModel: string | undefined): string | null {
 
 export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [trainers, setTrainers] = useState<string[]>([])
+  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
+  const sheetRef = useRef<HTMLDivElement | null>(null)
+  useDialogFocus(sheetRef)
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({})
@@ -300,7 +304,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     /* role + label like RecordPanel's sheet: this is a full-bleed layer over the fleet, and a
        screen reader that is not told it entered a dialog reads it as more of the page it just
        left. Same reason its ✕ is the only way out on a phone. */
-    <div className="train-sheet" role="dialog" aria-label="Training">
+    <div ref={sheetRef} className="train-sheet" role="dialog" aria-label="Training">
       <div className="train-head">
         <h2>🎓 Training</h2>
         <button className="dock-min" onClick={onClose} aria-label="close training" title="Escape">✕</button>

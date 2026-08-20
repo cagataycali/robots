@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import type { MeshInfo } from '../types'
 import {
   authToken, backendBase, backendLabel, normalize, post,
@@ -49,6 +50,9 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
 }) {
   const { config, loading, error, reload, save } = useConfig()
   const [tab, setTab] = useState<Tab>('connection')
+  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
+  const sheetRef = useRef<HTMLElement | null>(null)
+  useDialogFocus(sheetRef, open)
   const [query, setQuery] = useState('')
 
   // Deep links (the header's wire-security chip opens straight to Mesh).
@@ -169,7 +173,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="drawer" onClick={e => e.stopPropagation()}>
+      <aside ref={sheetRef} className="drawer" onClick={e => e.stopPropagation()}>
         <header className="drawer-head">
           <h2>Settings</h2>
           <button className="btn ghost" onClick={onClose} aria-label="close settings" title="Escape">✕</button>

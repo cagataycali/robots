@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import { activityLine } from '../lib/activityLine'
 import type { ActivityEntry } from '../types'
 import { api } from '../lib/endpoints'
@@ -27,6 +28,9 @@ export default function ActivityLog({ live, open, onClose }: {
   live: ActivityEntry[]; open: boolean; onClose: () => void
 }) {
   const [history, setHistory] = useState<ActivityEntry[]>([])
+  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
+  const sheetRef = useRef<HTMLElement | null>(null)
+  useDialogFocus(sheetRef, open)
   const [filter, setFilter] = useState<string>('all')
   const [now, setNow] = useState(() => Date.now() / 1000)
 
@@ -64,7 +68,7 @@ export default function ActivityLog({ live, open, onClose }: {
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="drawer wide" onClick={e => e.stopPropagation()}>
+      <aside ref={sheetRef} className="drawer wide" onClick={e => e.stopPropagation()}>
         <header className="drawer-head">
           <h2>Activity</h2>
           <button className="btn ghost" onClick={onClose} aria-label="close the activity log" title="Escape">✕</button>

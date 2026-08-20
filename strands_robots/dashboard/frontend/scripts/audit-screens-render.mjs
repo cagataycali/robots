@@ -105,6 +105,23 @@ for (const [nav, extra] of [[null, null], ['settings', null], [null, 'peername']
   if (extra) await page.locator(`button.${extra}`).first().click().catch(() => {})
   await page.waitForTimeout(1800)
   iconOnly.push(...await ICON_SCAN())
+  // Q58: an overlay must own the keyboard while it is up, and hand it back on close. Before the
+  // fix, five of six sheets left focus on the nav chip BEHIND them, so Tab walked the fleet the
+  // sheet was covering. Also: a placeholder is not a label — it vanishes when the operator types.
+  if (nav || extra) {
+    const f = await page.evaluate(() => {
+      const dlg = document.querySelector('[role=dialog], .drawer, .train-sheet, .detail')
+      if (!dlg) return null
+      const a = document.activeElement
+      const unlabelled = [...dlg.querySelectorAll('input, select, textarea')]
+        .filter(i => !i.getAttribute('aria-label') && !i.getAttribute('aria-labelledby') && !i.closest('label')
+                     && !(i.id && dlg.querySelector(`label[for="${i.id}"]`)))
+        .map(i => i.placeholder || i.tagName.toLowerCase())
+      return { inside: !!(a && dlg.contains(a)), focus: a ? `${a.tagName.toLowerCase()}.${a.className}` : 'none', unlabelled }
+    })
+    if (f && !f.inside) { failures.push(`focus stayed outside ${nav ?? extra} (on ${f.focus})`); console.log(`  A11Y  opening ${nav ?? extra} left focus outside it, on ${f.focus}`) }
+    for (const u of f?.unlabelled ?? []) { failures.push(`unlabelled field in ${nav ?? extra}: "${u}"`); console.log(`  A11Y  ${nav ?? extra}: form control with no label ("${u}")`) }
+  }
   arialess.push(...await page.evaluate(() => [...document.querySelectorAll('button')]
     .filter(b => /(^|\s)(on|active|selected)(\s|$)/.test(b.className))
     .filter(b => !b.getAttribute('aria-pressed') && !b.getAttribute('aria-selected') && !b.getAttribute('aria-current'))

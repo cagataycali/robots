@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import { findConsent, type ConsentNeed } from '../lib/consent'
 import ConsentSheet from './ConsentSheet'
 import { api, post, HttpError } from '../lib/endpoints'
@@ -66,6 +67,9 @@ interface Managed {
  */
 export default function DevicePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [doc, setDoc] = useState<DeviceDoc | null>(null)
+  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
+  const sheetRef = useRef<HTMLElement | null>(null)
+  useDialogFocus(sheetRef, open)
   const [robots, setRobots] = useState<RegistryRobot[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -326,7 +330,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="drawer wide" onClick={e => e.stopPropagation()}>
+      <aside ref={sheetRef} className="drawer wide" onClick={e => e.stopPropagation()}>
         <header className="drawer-head">
           <h2>Devices</h2>
           <div>

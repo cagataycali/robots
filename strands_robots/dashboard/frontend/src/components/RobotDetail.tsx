@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
 import { twinButtonCopy } from '../lib/twinButton'
@@ -37,6 +38,9 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
   // R2: same words as the card, from the same pure module.
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
   const [cam, setCam] = useState<string | null>(null)
+  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
+  const sheetRef = useRef<HTMLElement | null>(null)
+  useDialogFocus(sheetRef)
   const [camConfig, setCamConfig] = useState(false)
   const [steps, setSteps] = useState<StreamStep[]>([])
   const lastStep = useRef<number | null>(null)
@@ -70,7 +74,8 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
 
   return (
     <div className="detail-backdrop" onClick={onClose}>
-      <section className={`detail${offline ? ' stale' : ''}`} onClick={e => e.stopPropagation()}>
+      <section ref={sheetRef} className={`detail${offline ? ' stale' : ''}`}
+               role="dialog" aria-label={`Robot ${peer.peer_id}`} onClick={e => e.stopPropagation()}>
         <header className="detail-head">
           <span className={`typebadge ${p?.robot_type ?? '?'}`}>{p?.robot_type ?? '?'}</span>
           <h2>{peer.peer_id}</h2>

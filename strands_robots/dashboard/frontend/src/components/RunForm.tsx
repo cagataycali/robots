@@ -239,6 +239,9 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
           ))}
         </select>
         <input
+          /* a placeholder is not a label: it disappears the moment the operator types, and a
+             screen reader on the robot detail screen announced this one as an unnamed text box */
+          aria-label="instruction for the policy"
           placeholder="pick up the red cube"
           value={instruction}
           onChange={e => setInstruction(e.target.value)}

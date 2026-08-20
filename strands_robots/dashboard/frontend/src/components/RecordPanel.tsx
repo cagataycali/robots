@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordApi'
 import { openActionCopy } from '../lib/recordAction'
@@ -24,6 +25,9 @@ import JointStrip from './JointStrip'
 export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose: () => void }) {
   const peerIds = peers.map(p => p.peer_id)
   const [api, setApi] = useState<RecordApi | null>(null)
+  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
+  const sheetRef = useRef<HTMLDivElement | null>(null)
+  useDialogFocus(sheetRef)
   const [s, setS] = useState<RecordSession | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -219,7 +223,7 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   const openCopy = openActionCopy(api ? api.mock : null)
 
   return (
-    <div className="train-sheet" role="dialog" aria-label="Record episodes">
+    <div ref={sheetRef} className="train-sheet" role="dialog" aria-label="Record episodes">
       <div className="train-head">
         <h2>⏺ Record</h2>
         <button className="dock-min" onClick={onClose} aria-label="close">✕</button>
