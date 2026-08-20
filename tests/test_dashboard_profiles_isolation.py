@@ -43,3 +43,37 @@ def test_a_save_cannot_reach_the_real_file(tmp_path):
     assert before == after, "a test just wrote into the operator's live profiles.json"
     # ...and it landed somewhere, so the test proves isolation rather than a no-op save.
     assert "TESTONLY" in Path(mgr.profiles.path).read_text()
+
+
+# --- the other three production stores under his home -------------------------------------------------
+
+def test_the_auth_store_is_not_his_real_passkey_file():
+    """His passkey store is the only door into robots.cagatay.my while he travels.
+
+    26 test files redirect this themselves, which is exactly why it needs a floor: the 27th file to touch
+    auth is the one that writes his real credentials, and it will not look like an auth test.
+    """
+    from strands_robots.dashboard import auth
+
+    real = Path.home() / ".strands_dashboard" / "auth.json"
+    assert auth._store_path() != real.resolve()
+
+
+def test_registering_a_credential_leaves_his_real_store_byte_identical():
+    from strands_robots.dashboard import auth
+
+    real = Path.home() / ".strands_dashboard" / "auth.json"
+    before = real.read_bytes() if real.exists() else None
+    auth._save({"credentials": [{"id": "isolation-test", "public_key": "x"}]})
+    after = real.read_bytes() if real.exists() else None
+    assert before == after, "a test just wrote into his real passkey store"
+    assert "isolation-test" in auth._store_path().read_text()   # ...and it did happen somewhere
+
+
+def test_the_record_crumb_and_settings_file_are_redirected_too():
+    from strands_robots.dashboard import record_crash, settings
+
+    assert record_crash.crumb_path() != Path.home() / ".strands_dashboard" / "record_session.json"
+    # settings.SETTINGS_FILE is a module constant resolved at import, so the env var alone cannot move it;
+    # this asserts the attribute patch, i.e. the mechanism, not just the intent.
+    assert Path.home() not in settings.SETTINGS_FILE.parents

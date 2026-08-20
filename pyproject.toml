@@ -830,7 +830,8 @@ warn_return_any = false
 testpaths = ["tests"]
 addopts = "-v --cov=strands_robots --cov-report=term-missing --cov-fail-under=80 --strict-markers --timeout=120"
 markers = [
-  "real_profiles: the test deliberately uses the operator\'s own ~/.strands_dashboard/profiles.json",
+  "real_dashboard_state: the test deliberately asserts the default ~/.strands_dashboard location",
+  "real_profiles: the test deliberately uses the operator's own ~/.strands_dashboard/profiles.json",
     "gpu: requires CUDA GPU and real model weights (run with: pytest -m gpu)",
     "slow: long-running test (deselect with: pytest -m 'not slow')",
     "integration: requires live Device Connect infra (Zenoh router + etcd via Docker); skipped unless DEVICE_CONNECT_ALLOW_INSECURE is set (deselect with: pytest -m 'not integration')",

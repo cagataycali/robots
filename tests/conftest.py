@@ -289,6 +289,43 @@ def pytest_report_header(config) -> str | None:  # noqa: ANN001 - pytest's own s
 
 
 @pytest.fixture(autouse=True)
+def _never_touch_the_real_dashboard_state(request, tmp_path_factory, monkeypatch):
+    """The profiles file was not the only production file this suite could write.
+
+    Under the operator's home the dashboard keeps four writable stores, and only one of them was ever
+    isolated here (and that only from today):
+      ~/.strands_dashboard/auth.json           - his PASSKEY credentials. While he is travelling this is
+                                                 the only door into robots.cagatay.my; a test that
+                                                 registers or clears a credential in the real store locks
+                                                 him out of his own lab from a hotel.
+      ~/.strands_dashboard/record_session.json - the record-crash breadcrumb, which decides whether the
+                                                 UI claims a recording died mid-episode.
+      ~/.strands_robots/dashboard/settings.json - model id, prompt, auth token.
+    26 test files remember to redirect the auth store themselves, which proves both that the hazard is
+    known and that nothing enforces it: the 27th file to touch auth is the one that writes his real
+    credentials, and it will look like an unrelated test.
+
+    Two mechanisms, because the modules resolve their paths differently: auth and the crumb read their env
+    var per call, while settings.SETTINGS_FILE is a module CONSTANT evaluated at import — an env var set in
+    a fixture arrives far too late for it, so that one is patched as an attribute.
+
+    Opt out with @pytest.mark.real_dashboard_state when a test genuinely asserts the default location.
+    """
+    if request.node.get_closest_marker("real_dashboard_state"):
+        return
+    home = tmp_path_factory.mktemp("dash_state")
+    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(home / "auth.json"))
+    monkeypatch.setenv("STRANDS_DASH_RECORD_CRUMB", str(home / "record_session.json"))
+    monkeypatch.setenv("DASHBOARD_SETTINGS_FILE", str(home / "settings.json"))
+    try:
+        from strands_robots.dashboard import settings as _settings
+
+        monkeypatch.setattr(_settings, "SETTINGS_FILE", home / "settings.json", raising=False)
+    except Exception:  # pragma: no cover - import shape is not this fixture's business
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _never_touch_the_real_profiles(request, tmp_path_factory, monkeypatch):
     """No test may read or write the operator's OWN device profiles (Q84 fallout).
 
