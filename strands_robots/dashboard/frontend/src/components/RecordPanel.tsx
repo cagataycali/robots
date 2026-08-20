@@ -90,7 +90,6 @@ export default function RecordPanel(
     return () => { alive = false }
   }, [])
   const nameWarn = nameVerdict(form.dataset, known)
-  const [repoId, setRepoId] = useState('')
   const [closed, setClosed] = useState<string | null>(null)
   // When did a session read last ARRIVE (not: last get attempted)? A hung
   // request would otherwise keep this screen looking live forever.
@@ -576,16 +575,25 @@ export default function RecordPanel(
             <span>upload to the Hugging Face Hub after finishing</span>
           </label>
           {upload && (
-            <label className="field"><span>hub repo id <em>(defaults to the dataset name)</em></span>
-              <input value={repoId} placeholder={s.dataset ?? ''} onChange={e => setRepoId(e.target.value)} />
-            </label>
+            /* Q56: this was a free-text "hub repo id" box, and a LeRobotDataset can only publish
+               under the repo_id it was created with — there is no argument that redirects the push.
+               So the box could only produce a refusal at the end of the session. It now states
+               where the push goes, and the two things the operator cannot see: the repo is public
+               unless their namespace defaults otherwise, and nothing in this dashboard can retry a
+               failed push (the session is gone once it closes). */
+            <p className="hint">
+              publishes as <code>{s.dataset ?? '(unnamed)'}</code> — a dataset can only be pushed
+              under the name it was recorded with. It will be <b>public</b> unless your Hub namespace
+              defaults to private, and if the push fails the episodes stay on this machine: finishing
+              closes the session, so a retry is a <code>huggingface-cli</code> job.
+            </p>
           )}
           <div className="train-actions">
             <button className="btn wide" disabled={busy} onClick={() => {
               void (async () => {
                 setBusy(true); setErr(null)
                 try {
-                  const r = await api!.close(upload ? { upload, repo_id: repoId.trim() || s.dataset || undefined } : {})
+                  const r = await api!.close(upload ? { upload } : {})
                   setClosed(r.detail ?? (r.ok ? `dataset finished with ${kept} episode(s)` : 'close failed'))
                   setS(await api!.session())
                 } catch (e) {

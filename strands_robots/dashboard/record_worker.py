@@ -190,6 +190,62 @@ def _save_thumbnail(frame: Any, path: Path) -> bool:
         return False
 
 
+def upload_verdict(
+    *,
+    asked_repo_id: str | None,
+    dataset: str,
+    push: Callable[[], Any],
+) -> dict[str, Any]:
+    """Publish this finished dataset, and report what actually happened (Q56).
+
+    Pure but for the injected ``push`` (so a test can prove the Hub is not called
+    in the cases that must not call it).
+
+    Two truths this encodes, both learned by reading the recorder rather than the
+    UI's promise:
+
+    * A LeRobotDataset publishes under the ``repo_id`` it was CREATED with. There
+      is no argument that redirects the push, so a different name asked for at
+      close time cannot be honoured -- and publishing under the recorded name
+      anyway would put the operator's data in a repo they did not name. It is a
+      refusal, stated with what would have to change (record under that name).
+    * ``DatasetRecorder.push_to_hub`` RETURNS ``{"status": "error"}`` for a
+      refused or failed push instead of raising. A caller that only guards with
+      try/except reports success for a push that never happened.
+    """
+    if asked_repo_id and asked_repo_id != dataset:
+        return {
+            "ok": False,
+            "detail": (
+                f"NOT uploaded: a dataset publishes under the name it was recorded with "
+                f"({dataset}), and this asked for {asked_repo_id}. The episodes are saved "
+                f"locally; to publish as {asked_repo_id}, record a session under that name"
+            ),
+        }
+    try:
+        result = push()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "detail": f"saved locally, upload FAILED: {exc}"}
+    status = (result or {}).get("status") if isinstance(result, dict) else None
+    if status == "success":
+        return {"ok": True, "detail": f"pushed to {(result or {}).get('repo_id') or dataset}"}
+    if status == "error":
+        # The recorder's own message names the cause (empty dataset, 403, no token).
+        return {
+            "ok": False,
+            "detail": f"saved locally, upload REFUSED: {(result or {}).get('message') or 'no reason given'}",
+        }
+    # An unrecognised answer is not evidence of a push. Saying "pushed" here is
+    # the exact lie this function exists to remove.
+    return {
+        "ok": False,
+        "detail": (
+            "saved locally; the upload returned an answer this dashboard cannot read "
+            f"({result!r}), so whether it published is UNKNOWN - check the Hub"
+        ),
+    }
+
+
 class RecordWorker:
     """The record session state machine + control loop.
 
@@ -396,12 +452,26 @@ class RecordWorker:
             self._backend.close()
             return {"ok": False, "detail": f"finalize failed: {exc}"}
         if upload:
-            try:
-                self._recorder.push_to_hub(repo_id=repo_id or self.dataset)
-                detail += f", pushed to {repo_id or self.dataset}"
-            except Exception as exc:  # noqa: BLE001
+            # Q56: this whole branch had never once published anything. It called
+            # push_to_hub(repo_id=...) and DatasetRecorder.push_to_hub takes
+            # (tags, private) only, so every tick of "upload to the Hugging Face
+            # Hub after finishing" raised TypeError, was swallowed by the except
+            # below, and surfaced at the END of a session as "dataset saved but
+            # upload failed" - wording that reads like a Hub problem.
+            # And the recorder does not RAISE on a real failure: it returns
+            # {"status": "error", ...} (empty dataset, 403, no token), so the old
+            # try/except would have reported "pushed to X" for a push that was
+            # refused. Both halves are judged by upload_verdict now.
+            wanted = (repo_id or "").strip() or None
+            verdict = upload_verdict(
+                asked_repo_id=wanted,
+                dataset=self.dataset,
+                push=lambda: self._recorder.push_to_hub(),
+            )
+            detail += f", {verdict['detail']}"
+            if not verdict["ok"]:
                 self._backend.close()
-                return {"ok": False, "detail": f"dataset saved but upload failed: {exc}"}
+                return {"ok": False, "detail": detail}
         # The finished dataset's own completion sentence must carry the defect
         # it was born with. A "10 episodes kept" toast is a receipt, and a
         # receipt that omits "this dataset has no camera channel" sends the

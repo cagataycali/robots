@@ -62,8 +62,16 @@ class FakeRecorder:
     def finalize(self):
         self.finalized = True
 
-    def push_to_hub(self, repo_id=None):
-        self.pushed = repo_id
+    def push_to_hub(self, tags=None, private=False):
+        """Q56: this fake used to accept ``repo_id=None`` — a kwarg the REAL
+        ``DatasetRecorder.push_to_hub`` has never had. That is what hid a branch
+        which could only ever raise TypeError in production. A fake's signature
+        is a claim about the real thing, so it now mirrors it exactly, and the
+        answer is the status DICT the recorder actually returns (it does not
+        raise on failure).
+        """
+        self.pushed = (tags, private)
+        return {"status": "success", "repo_id": "cagatay/so101-pick"}
 
 
 class Clock:
@@ -212,7 +220,7 @@ def test_close_mid_recording_keeps_nothing_half_written():
 
 def test_upload_failure_is_reported_but_dataset_survives():
     class PushBoom(FakeRecorder):
-        def push_to_hub(self, repo_id=None):
+        def push_to_hub(self, tags=None, private=False):
             raise RuntimeError("hub said no")
 
     w, backend, recorder, clock = make_worker(recorder=PushBoom())
@@ -220,11 +228,38 @@ def test_upload_failure_is_reported_but_dataset_survives():
     clock.t += 0.1
     w.tick()
     w.stop_episode()
-    r = w.close(upload=True, repo_id="cagatay/remote")
+    r = w.close(upload=True, repo_id="cagatay/so101-pick")
     assert r["ok"] is False
-    assert "saved but upload failed" in r["detail"]
+    assert "upload FAILED" in r["detail"] and "hub said no" in r["detail"]
+    # The episodes are the expensive part: say where they are.
+    assert "saved locally" in r["detail"]
     assert recorder.finalized  # local dataset was finalized before the push
     assert backend.closed
+
+
+def test_a_working_upload_reports_the_repo_it_published_to():
+    w, backend, recorder, clock = make_worker()
+    w.start_episode()
+    clock.t += 0.1
+    w.tick()
+    w.stop_episode()
+    r = w.close(upload=True)
+    assert r["ok"] is True and "pushed to cagatay/so101-pick" in r["detail"]
+    # Q56: no repo_id kwarg reaches the recorder — the real one has no such parameter.
+    assert recorder.pushed == (None, False)
+
+
+def test_asking_for_a_different_hub_name_is_refused_not_silently_renamed():
+    w, backend, recorder, clock = make_worker()
+    w.start_episode()
+    clock.t += 0.1
+    w.tick()
+    w.stop_episode()
+    r = w.close(upload=True, repo_id="cagatay/somewhere-else")
+    assert r["ok"] is False
+    assert "NOT uploaded" in r["detail"]
+    assert recorder.pushed is None, "the Hub must not be touched for a request we cannot honour"
+    assert recorder.finalized and backend.closed
 
 
 def test_first_frame_writes_thumbnails_with_contract_urls(tmp_path):
