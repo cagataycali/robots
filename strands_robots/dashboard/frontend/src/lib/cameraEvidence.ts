@@ -58,3 +58,34 @@ export function cameraEvidence(
       `connected; from here the two are indistinguishable, and ${peerId}'s log says which.`,
   }
 }
+
+
+/**
+ * The same verdict as a stage placeholder: a heading, one line under it, and the
+ * full sentence for `title`.
+ *
+ * RobotDetail's empty stage read `no camera / this peer publishes none` — the
+ * detail screen is exactly where an operator goes to find out WHY a camera is
+ * missing, so it was the worst place to state the one thing the snapshot cannot
+ * know. `mute` gets a heading that describes the evidence (no FRAMES, which is
+ * what is missing) instead of the hardware (no CAMERA, which was announced).
+ *
+ * Kept short because it renders inside a tile: the head is two words, the sub
+ * line names the announced cameras or the ambiguity, and the untruncated
+ * message goes to `title` so nothing is lost.
+ */
+export function cameraPlaceholder(ev: CameraEvidence): { head: string; sub: string; title: string } | null {
+  if (ev.kind === 'ok') return null
+  if (ev.kind === 'mute') {
+    return {
+      head: 'no frames',
+      sub: `${ev.announced.join(', ')} announced, nothing arriving`,
+      title: ev.message,
+    }
+  }
+  return {
+    head: 'no camera',
+    sub: 'none listed — joints-only, or dropped at connect',
+    title: ev.message,
+  }
+}

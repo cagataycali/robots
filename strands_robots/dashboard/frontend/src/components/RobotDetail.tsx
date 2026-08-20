@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { cameraEvidence, cameraPlaceholder } from '../lib/cameraEvidence'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
@@ -127,7 +128,20 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
           <div className="detail-stage">
             {active
               ? <CameraTile peerId={peer.peer_id} cam={active} meta={peer.cameras?.[active]} big />
-              : <div className="camtile big"><div className="camstate"><b>no camera</b><span>this peer publishes none</span></div></div>}
+              : (() => {
+                  // "this peer publishes none" was a denial of the presence THIS SAME peer
+                  // announces (lib/cameraEvidence): on a machine where macOS blocks capture,
+                  // both arms announce top+wrist and deliver nothing, and the detail screen is
+                  // where the operator comes to find out why. Say which of the two it is.
+                  const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, peer.presence?.cameras, cams))
+                  return (
+                    <div className="camtile big">
+                      <div className="camstate" title={ph?.title}>
+                        <b>{ph?.head ?? 'no camera'}</b><span>{ph?.sub ?? ''}</span>
+                      </div>
+                    </div>
+                  )
+                })()}
             {cams.length > 1 && (
               <div className="camswitch">
                 {cams.map(c => (

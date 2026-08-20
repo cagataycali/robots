@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cameraEvidence } from '/tmp/cameraEvidence.mjs'
+import { cameraEvidence, cameraPlaceholder } from '/tmp/cameraEvidence.mjs'
 
 // --- frames present: nothing to explain ---------------------------------------
 {
@@ -44,6 +44,23 @@ import { cameraEvidence } from '/tmp/cameraEvidence.mjs'
   const v = cameraEvidence('p', [], ['side'])
   assert.equal(v.kind, 'ok')
   assert.deepEqual(v.cams, ['side'])
+}
+
+// --- the stage placeholder (RobotDetail) --------------------------------------
+{
+  assert.equal(cameraPlaceholder(cameraEvidence('p', ['top'], ['top'])), null, 'tiles render, no placeholder')
+
+  const mute = cameraPlaceholder(cameraEvidence('so101-arm-1', ['top', 'wrist'], []))
+  // The head must describe what is MISSING (frames), not deny what was announced (cameras).
+  assert.equal(mute.head, 'no frames')
+  assert.match(mute.sub, /top, wrist announced/)
+  assert.doesNotMatch(`${mute.head} ${mute.sub}`, /publishes none|no camera/, 'the old denial is gone')
+  assert.match(mute.title, /devices › logs/, 'the full sentence survives in title')
+
+  const none = cameraPlaceholder(cameraEvidence('sim-a', [], []))
+  assert.equal(none.head, 'no camera')
+  assert.match(none.sub, /joints-only, or dropped at connect/, 'even here, do not claim intent')
+  assert.match(none.title, /indistinguishable/)
 }
 
 console.log('cameraEvidence: all assertions passed')
