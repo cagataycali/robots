@@ -54,6 +54,27 @@ from tests.test_hardware_control_loop_rate_guard import _FakeArm
 # rollout ran" is unambiguous, short enough to stay a unit test.
 _DURATION = 0.2
 _EXPECTED_ACTIONS = 10
+# ...but ten is a CEILING, not a promise. The loop sleeps action_sleep_time
+# between actions and stops at a wall-clock deadline, so on a busy machine the
+# last period does not fit and nine actions is a correct rollout. Asserting
+# equality made this file fail ~40% of the time under load (measured: 2 of 5
+# runs, then 3 of 3 for the class alone) - a flake that says "the dispatch is
+# broken" when the truth is "the scheduler was late", which is how a real
+# double-dispatch regression would get dismissed as noise.
+#
+# The subject of these tests is that the rollout runs ONCE. A second dispatch
+# would drive the loop again and land near 2x, so a window that admits scheduler
+# jitter still catches the bug this class exists for.
+_MIN_ACTIONS = _EXPECTED_ACTIONS // 2
+
+
+def _assert_one_rollout(actions: list[Any]) -> None:
+    """One rollout's worth of applied actions -- never two."""
+    assert _MIN_ACTIONS <= len(actions) <= _EXPECTED_ACTIONS, (
+        f"expected one rollout ({_MIN_ACTIONS}-{_EXPECTED_ACTIONS} actions at "
+        f"50 Hz for {_DURATION}s), got {len(actions)}: "
+        + ("the rollout was driven more than once" if len(actions) > _EXPECTED_ACTIONS else "the rollout barely ran")
+    )
 
 
 @pytest.fixture
@@ -213,7 +234,7 @@ class TestTheRolloutIsDrivenExactlyOnce:
     def test_on_the_sync_branch(self, hw: Any) -> None:
         result = _drive(hw)
         assert result["status"] == "success"
-        assert len(hw.robot.sent_actions) == _EXPECTED_ACTIONS
+        _assert_one_rollout(hw.robot.sent_actions)
 
     def test_on_the_nested_branch(self, hw: Any) -> None:
         async def caller() -> dict[str, Any]:
@@ -221,7 +242,7 @@ class TestTheRolloutIsDrivenExactlyOnce:
 
         result = asyncio.run(caller())
         assert result["status"] == "success"
-        assert len(hw.robot.sent_actions) == _EXPECTED_ACTIONS
+        _assert_one_rollout(hw.robot.sent_actions)
 
 
 class TestTheSyncBranchStillPropagates:
