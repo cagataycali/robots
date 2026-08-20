@@ -57,6 +57,13 @@ RECEIVERS = {
 COLLABORATORS = tuple(dict.fromkeys(RECEIVERS.values()))
 
 
+#: Collaborators that could not be imported in THIS run. A narrowed audit must never print like a
+#: complete one: under a venv without the dashboard extra, five of the seven classes skipped to stderr
+#: while the summary still said "7 collaborator classes checked" and exited 0 — a skip wearing a pass's
+#: clothes, which cost a supervisor loop two tool calls before it noticed (2026-08-20).
+SKIPPED: list[str] = []
+
+
 def real_methods() -> dict[str, list[tuple[str, inspect.Signature]]]:
     """method name -> [(class name, signature)] across every collaborator that imports."""
     out: dict[str, list[tuple[str, inspect.Signature]]] = {}
@@ -65,6 +72,7 @@ def real_methods() -> dict[str, list[tuple[str, inspect.Signature]]]:
             cls = getattr(__import__(mod, fromlist=[cname]), cname)
         except Exception as exc:  # a torch-less install must not fail the audit, only narrow it
             print(f"note: {cname} unavailable ({type(exc).__name__}) - not checked", file=sys.stderr)
+            SKIPPED.append(cname)
             continue
         for mname, fn in inspect.getmembers(cls, predicate=inspect.isfunction):
             if mname.startswith("__"):
@@ -124,5 +132,12 @@ if __name__ == "__main__":
     found = audit()
     for line in found:
         print("MISMATCH", line)
-    print(f"\n{len(found)} mismatch(es); {len(COLLABORATORS)} collaborator classes checked")
-    sys.exit(len(found))
+    checked = len(COLLABORATORS) - len(SKIPPED)
+    print(f"\n{len(found)} mismatch(es); {checked} of {len(COLLABORATORS)} collaborator classes checked")
+    if SKIPPED:
+        print(f"INCOMPLETE: {', '.join(SKIPPED)} could not be imported by {sys.executable} — a skip is")
+        print("not a pass. The dashboard collaborators need the dashboard extra (fastapi); on this Mac")
+        print("that is robots/.venv, NOT the workspace ../.venv.")
+    # Exit stays "number of mismatches" so existing gates keep working, but an INCOMPLETE run with
+    # nothing found must not exit 0 — that is the shape that reads as clean.
+    sys.exit(len(found) or (2 if SKIPPED else 0))
