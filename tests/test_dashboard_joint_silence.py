@@ -123,3 +123,75 @@ def test_the_bridge_snapshot_carries_it_and_the_gate_clears_it():
 
     reading = {"state": {"shoulder_pan.pos": 1.0}}
     assert "joint_problem" not in joint_silence.merge(reading, br.peer_annotations()["so101"])
+
+
+# --- the peer's OWN report is better evidence than this module's log reading (Q85/Q86) -----------
+
+
+def test_has_joints_reads_the_nested_shape_the_fleet_actually_publishes() -> None:
+    # mesh.core publishes state["joints"], and JointStrip renders state.joints. Scanning the TOP
+    # level for '*.pos' (the old behaviour) answered False for every healthy arm, so merge() could
+    # never clear a badge -- a permanent complaint is the one failure mode this module forbids.
+    assert joint_silence.has_joints({"joints": {"shoulder_pan.pos": 12.0}}) is True
+    assert joint_silence.has_joints({"joints": {}}) is False
+    assert joint_silence.has_joints({"peer_id": "x"}) is False
+
+
+def test_has_joints_still_tolerates_a_flat_shape() -> None:
+    assert joint_silence.has_joints({"shoulder_pan.pos": 1.0}) is True
+
+
+def test_live_joints_clear_a_log_derived_badge() -> None:
+    out = joint_silence.merge(
+        {"state": {"joints": {"shoulder_pan.pos": 3.0}}},
+        {"joint_problem": {"kind": "port_in_use"}},
+    )
+    assert "joint_problem" not in out
+
+
+def test_a_peer_reported_fault_carries_the_matching_remedy_and_its_duration() -> None:
+    got = joint_silence.classify_state(
+        {"degraded": {"hw_joints": {"reason": "RuntimeError: has no calibration registered.",
+                                    "failures": 900, "since": 1.0, "for_seconds": 12600.0}}}
+    )
+    assert got is not None
+    assert got["kind"] == "uncalibrated"
+    assert "Calibrate this arm" in got["remedy"]  # same table as the log path, never a second one
+    assert got["for_seconds"] == 12600.0 and got["failures"] == 900
+    assert got["source"] == "peer"
+
+
+def test_a_peer_reported_port_conflict_says_find_the_other_owner() -> None:
+    got = joint_silence.classify_state(
+        {"degraded": {"hw_joints": {"reason": "ConnectionError: Failed to sync read "
+                                              "'Present_Position' ... [TxRxResult] Port is in use!"}}}
+    )
+    assert got["kind"] == "port_in_use" and "lsof" in got["remedy"]
+
+
+def test_an_unrecognised_reason_still_points_at_the_log() -> None:
+    got = joint_silence.classify_state({"degraded": {"hw_joints": {"reason": "OSError: something new"}}})
+    assert got["kind"] == "probe_failed" and "devices > logs" in got["remedy"]
+
+
+def test_silence_and_junk_stay_silent() -> None:
+    for state in (None, {}, {"degraded": {}}, {"degraded": {"hw_joints": {}}},
+                  {"degraded": {"hw_joints": {"reason": "   "}}}, {"degraded": "yes"}, "nope"):
+        assert joint_silence.classify_state(state) is None
+
+
+def test_the_peers_own_report_beats_a_stale_log_verdict() -> None:
+    # The log keeps the FIRST fault forever (mesh.core never logs a recovery). If the peer now says
+    # the fault is a different one, the operator must be told the current one.
+    out = joint_silence.merge(
+        {"state": {"degraded": {"hw_joints": {"reason": "RuntimeError: has no calibration registered."}}}},
+        {"joint_problem": {"kind": "port_in_use", "headline": "from an old log line"}},
+    )
+    assert out["joint_problem"]["kind"] == "uncalibrated"
+    assert out["joint_problem"]["source"] == "peer"
+
+
+def test_a_child_older_than_the_degraded_field_keeps_its_log_verdict() -> None:
+    out = joint_silence.merge({"state": {"task": {"status": "idle"}}},
+                              {"joint_problem": {"kind": "uncalibrated"}})
+    assert out["joint_problem"] == {"kind": "uncalibrated"}

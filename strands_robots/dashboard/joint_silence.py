@@ -74,10 +74,9 @@ def classify(log_lines: Any) -> dict[str, str] | None:
     for line in reversed([str(x) for x in log_lines]):
         if not _PROBE_LINE.search(line):
             continue
-        for kind, needle, headline, remedy in _SIGNATURES:
-            if needle.lower() in line.lower():
-                return {"kind": kind, "headline": headline, "remedy": remedy,
-                        "detail": _tail(line)}
+        matched = _match(line)
+        if matched is not None:
+            return {**matched, "detail": _tail(line)}
         return {
             "kind": "probe_failed",
             "headline": "the joint read failed and the snapshot omits joints",
@@ -98,10 +97,79 @@ def _tail(line: str, limit: int = 240) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _match(text: Any) -> dict[str, str] | None:
+    """The signature this text carries, or None. Shared by the log and snapshot readers.
+
+    Both sources describe the SAME exception -- one as a log line, one as the reason the peer
+    published about itself -- so the remedies must come from one table. Two tables would drift, and
+    the drift would show up as two different answers to "what do I do about this arm".
+    """
+    haystack = str(text).lower()
+    for kind, needle, headline, remedy in _SIGNATURES:
+        if needle.lower() in haystack:
+            return {"kind": kind, "headline": headline, "remedy": remedy}
+    return None
+
+
+def classify_state(state: Any) -> dict[str, Any] | None:
+    """Explain a joint fault the PEER ITSELF reported in its snapshot, or return None.
+
+    ``mesh.core`` publishes ``state["degraded"]["hw_joints"] = {reason, failures, since,
+    for_seconds}`` for as long as the probe is failing (commit dde98e46). That is a better source
+    than this module's log parsing in four ways, which is why :func:`merge` prefers it:
+
+    * it exists for EXTERNAL peers, which have no log ring buffer here at all;
+    * it CLEARS itself when the probe recovers, so the badge cannot become permanent;
+    * it says how long and how often, so "failed once" and "failing for three hours" are different
+      sentences instead of the same one;
+    * it is reported by the process that owns the bus, not inferred from text by a reader.
+
+    The remedies still come from :data:`_SIGNATURES` via :func:`_match`, so both paths give the
+    operator the same instruction for the same fault.
+    """
+    if not isinstance(state, Mapping):
+        return None
+    degraded = state.get("degraded")
+    if not isinstance(degraded, Mapping):
+        return None
+    entry = degraded.get("hw_joints")
+    if not isinstance(entry, Mapping):
+        return None
+    reason = str(entry.get("reason") or "").strip()
+    if not reason:
+        return None
+    matched = _match(reason) or {
+        "kind": "probe_failed",
+        "headline": "the joint read failed and the snapshot omits joints",
+        "remedy": "Open this robot's log (devices > logs) - the exception the probe raised is "
+                  "recorded there in full.",
+    }
+    out: dict[str, Any] = {**matched, "detail": _tail(reason), "source": "peer"}
+    for key in ("failures", "for_seconds"):
+        value = entry.get(key)
+        if isinstance(value, (int, float)):
+            out[key] = value
+    return out
+
+
 def has_joints(state: Any) -> bool:
-    """Does this peer's published state carry any joint position at all?"""
+    """Does this peer's published state carry any joint position at all?
+
+    The positions live NESTED, at ``state["joints"]`` -- that is what ``mesh.core._read_state``
+    publishes and what ``JointStrip`` renders. This function used to scan the TOP level of the state
+    dict for keys ending in ``.pos``, which no real snapshot has, so it answered False for every
+    healthy arm in the fleet. The consequence was invisible but serious: :func:`merge` clears a
+    joint complaint only when this returns True, so a badge from one old log line could never clear
+    itself -- the exact permanence the module docstring promises to avoid.
+
+    A top-level ``*.pos`` key is still accepted, because a flat shape costs nothing to tolerate and
+    a diagnosis module should not be the thing that breaks on a snapshot it did not expect.
+    """
     if not isinstance(state, Mapping):
         return False
+    joints = state.get("joints")
+    if isinstance(joints, Mapping) and len(joints) > 0:
+        return True
     return any(str(k).endswith(".pos") for k in state)
 
 
@@ -113,6 +181,15 @@ def merge(peer: Mapping[str, Any], fields: Mapping[str, Any]) -> dict[str, Any]:
     rather than shown - a badge that cannot clear itself teaches the operator to ignore badges.
     """
     out = dict(fields)
-    if "joint_problem" in out and has_joints(peer.get("state")):
-        out.pop("joint_problem")
+    state = peer.get("state")
+    if has_joints(state):
+        # Live joints beat every complaint, from either source.
+        out.pop("joint_problem", None)
+        return out
+    reported = classify_state(state)
+    if reported is not None:
+        # The peer's own report wins over this module's reading of its log: same fault, better
+        # evidence (see classify_state). A log-derived verdict stays only when the peer publishes
+        # nothing -- i.e. it runs code older than dde98e46.
+        out["joint_problem"] = reported
     return out
