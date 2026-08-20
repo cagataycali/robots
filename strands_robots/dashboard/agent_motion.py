@@ -121,3 +121,61 @@ def agent_motion_allowed(
             f"is never gated - 'everyone stop' always works."
         ),
     }
+
+
+# --- the OTHER half of the same asymmetry: the HTTP route ------------------------------------------
+#
+# agent_motion_allowed() guards the in-process fleet tool. POST /api/robots/{peer}/task is guarded by
+# nothing: the ▶ button's confirmation lives in the browser, so anything holding the API token - a
+# script, a shell, an LLM handed the token, or whoever finds it after the public tunnel leaks it -
+# can start real motion with one curl and no confirmation step at all.
+#
+# That is DELIBERATELY still the default: the token is the operator, and breaking every existing
+# caller (the deploy snippet, tests, remote scripts) to enforce a claim a client can simply assert
+# would be theatre with an outage attached. So this is a LOCK THE OPERATOR CAN CHOOSE: when
+# TASK_CONFIRM_ENV is set, a task POST that does not carry the browser's confirmation marker is
+# refused before anything is sent. The marker is not a security boundary - a script can send it too -
+# it is an ANTI-ACCIDENT boundary, which is the honest thing to claim for it.
+TASK_CONFIRM_ENV = "STRANDS_DASH_TASK_REQUIRES_CONFIRM"
+
+
+def task_confirm_required(env: Mapping[str, str] | None = None) -> bool:
+    """Has the operator asked for real-motion task POSTs to carry a confirmation?"""
+    env = env if env is not None else os.environ
+    return str(env.get(TASK_CONFIRM_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def task_post_allowed(
+    *,
+    peer: Mapping[str, Any] | None,
+    confirmed: bool,
+    target: str = "",
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Verdict for one task POST. Same shape as ``agent_motion_allowed``.
+
+    Off by default, and never in the way of a simulated peer or of an already-confirmed click.
+    """
+    if not task_confirm_required(env):
+        return {"allowed": True, "physical": False, "reason": "", "gated": False}
+    if confirmed:
+        return {"allowed": True, "physical": True, "reason": "", "gated": True, "confirmed": True}
+
+    physical, why = peer_is_physical(peer)
+    if not physical:
+        return {"allowed": True, "physical": False, "reason": "", "gated": True}
+
+    shown = target.strip() or "that robot"
+    return {
+        "allowed": False,
+        "physical": True,
+        "gated": True,
+        "confirmed": False,
+        "reason": (
+            f"refused: this dashboard is set to require a confirmation before a task starts real "
+            f"motion, and this request did not carry one ({shown}: {why}). Nothing was sent. Press ▶ "
+            f"on {shown}'s card - the browser confirms there - or, for a script you trust, send "
+            f'"confirmed": true in the body. Turn the requirement off by clearing '
+            f"{TASK_CONFIRM_ENV}. Stopping is never gated."
+        ),
+    }

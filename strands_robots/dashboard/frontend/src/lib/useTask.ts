@@ -80,7 +80,12 @@ export function useTask(peer: Peer) {
     lastBody.current = body
     try {
       const res = await post<{ ok: boolean; result: any; routed_to?: string; mirrored_to_twin?: boolean }>(
-        `/api/robots/${encodeURIComponent(peer.peer_id)}/task`, body,
+        `/api/robots/${encodeURIComponent(peer.peer_id)}/task`,
+        /* The confirmation marker: this call is only reachable through the run form, whose ▶ passes
+           the RunConfirm dialog first, so the browser can honestly say a human confirmed. It matters
+           only when the operator turned the requirement on (STRANDS_DASH_TASK_REQUIRES_CONFIRM);
+           otherwise the server ignores it, and it is never forwarded onto the wire. */
+        { ...body, confirmed: true },
       )
       if (!mounted.current) return
       const err = res.result?.error ?? res.result?.result?.error

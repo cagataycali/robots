@@ -1050,6 +1050,18 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         instruction = (body.get("instruction") or "").strip()
         if not instruction:
             raise HTTPException(422, "instruction required")
+        # An opt-in anti-accident lock (off unless the operator set it): a task POST that would start
+        # REAL motion must carry the browser's confirmation. ▶ sends it; a curl against the public
+        # tunnel does not. Checked BEFORE the command is built, so a refusal cannot half-send.
+        from strands_robots.dashboard.agent_motion import task_post_allowed
+
+        verdict = task_post_allowed(
+            peer=app.state.bridge.peers.get(peer_id),
+            confirmed=bool(body.get("confirmed")),
+            target=peer_id,
+        )
+        if not verdict["allowed"]:
+            raise HTTPException(403, verdict["reason"])
         duration = float(body.get("duration", 30.0))
         cmd = {
             # Sim peers accept "start"; hardware peers accept both. "execute"
