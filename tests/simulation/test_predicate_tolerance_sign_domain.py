@@ -69,23 +69,41 @@ def _numeric_params(factory: Any) -> dict[str, str]:
     }
 
 
+# A placeholder for each annotation the shipped factories declare on a param with
+# no default, keyed on the WHOLE annotation. Exact rather than a substring test
+# for the same reason the tolerance rule below is: ``"str" in "list[str]"`` is
+# true, so a substring match hands a container param a bare string, and
+# :func:`strands_robots.utils.name_list_error` refuses one (a string is iterable
+# per character, so reading it as a list of names is the mistake that domain
+# exists to catch). An annotation this table does not name is refused rather than
+# guessed at - see ``test_every_required_param_shape_has_a_placeholder``.
+_PROBE_VALUES: dict[str, Any] = {
+    "float": lambda param: 0.25,
+    "int": lambda param: 1,
+    "str": lambda param: f"probe_{param}",
+    "list[str]": lambda param: [f"probe_{param}"],
+    "list[float]": lambda param: [0.0, 0.0, 0.0],
+}
+
+
 def _buildable_kwargs(factory: Any) -> dict[str, Any]:
     """Kwargs that let *factory* be constructed, without asserting on any value.
 
     Body/container names resolve to nothing in a bare sim, which every predicate
     already degrades to ``False`` for, so a placeholder name is enough to reach
-    the factory. Only params without a default need supplying.
+    the factory. Only params without a default need supplying, and each is
+    supplied per its exact annotation via :data:`_PROBE_VALUES`; a param whose
+    annotation is unknown is left out so the factory reports the missing argument
+    itself rather than receiving a guessed value.
     """
     annotations = getattr(factory, "__annotations__", {})
     kwargs: dict[str, Any] = {}
     for p in inspect.signature(factory).parameters.values():
         if p.default is not inspect.Parameter.empty:
             continue
-        annotation = str(annotations.get(p.name, ""))
-        if annotation in _NUMERIC_ANNOTATIONS:
-            kwargs[p.name] = 0.25
-        elif "str" in annotation:
-            kwargs[p.name] = f"probe_{p.name}"
+        probe = _PROBE_VALUES.get(str(annotations.get(p.name, "")))
+        if probe is not None:
+            kwargs[p.name] = probe(p.name)
     return kwargs
 
 
@@ -306,6 +324,50 @@ class TestTheRuleIsMatchedOnAWholeNameNotASubstring:
             assert callable(make_predicate(f"probe_substring_{param}", body="cube", **{param: -1.0}))
         finally:
             PREDICATE_REGISTRY.pop(f"probe_substring_{param}", None)
+
+    def test_every_probe_value_has_the_shape_its_annotation_declares(self):
+        """The annotation is matched whole too: a container param gets a container.
+
+        ``"str" in "list[str]"``, so a substring test on the annotation hands a
+        ``list[str]`` param a bare string. The name-list domain refuses one, which
+        makes every tolerance case on such a predicate unbuildable - the sweep
+        stops grading the tolerances it was pointed at instead of reporting on
+        them. Read from the registry so a predicate added later is checked too.
+        """
+        wrong: list[str] = []
+        for name in sorted(PREDICATE_REGISTRY):
+            factory = PREDICATE_REGISTRY[name]
+            annotations = getattr(factory, "__annotations__", {})
+            for param, value in _buildable_kwargs(factory).items():
+                annotation = str(annotations.get(param, ""))
+                if annotation.startswith("list[") and not isinstance(value, list):
+                    wrong.append(f"{name}.{param}: {annotation} got {value!r}")
+                elif annotation == "str" and not isinstance(value, str):
+                    wrong.append(f"{name}.{param}: {annotation} got {value!r}")
+                elif annotation in _NUMERIC_ANNOTATIONS and isinstance(value, str | list):
+                    wrong.append(f"{name}.{param}: {annotation} got {value!r}")
+        assert wrong == [], f"the probe value does not match the declared annotation for {wrong}"
+
+    def test_every_graded_predicate_can_actually_be_built(self):
+        """The sweep must reach every factory it points a tolerance case at.
+
+        A required param whose annotation :data:`_PROBE_VALUES` does not name gets
+        no value, so the factory raises about the missing argument. That is a loud
+        failure rather than a wrong one, but it still stops the tolerance from
+        being graded, so it is asserted here instead of surfacing case by case.
+        """
+        unbuildable: list[str] = []
+        for name, _param in _tolerance_cases():
+            factory = PREDICATE_REGISTRY[name]
+            required = {
+                p.name
+                for p in inspect.signature(factory).parameters.values()
+                if p.default is inspect.Parameter.empty and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+            }
+            missing = sorted(required - set(_buildable_kwargs(factory)))
+            if missing:
+                unbuildable.append(f"{name} (no probe value for {missing})")
+        assert unbuildable == [], f"the sweep cannot build {unbuildable}, so their tolerances go ungraded"
 
     def test_module_rule_matches_the_pinned_rule(self):
         """The one assertion that names the new helper - the two rules must agree."""
