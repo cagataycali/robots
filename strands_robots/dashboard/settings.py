@@ -86,6 +86,8 @@ _LIST_KEYS = {
 
 _lock = threading.RLock()
 _cache: dict[str, dict[str, Any]] | None = None
+# Process-scoped values that must never reach settings.json - see override().
+_overrides: dict[str, dict[str, Any]] = {}
 
 
 # ----------------------------------------------------------------------
@@ -248,8 +250,33 @@ def _read_file() -> dict[str, Any]:
     return {}
 
 
+def override(section: str, key: str, value: Any) -> None:
+    """Set a value for THIS PROCESS ONLY - never written to settings.json.
+
+    For a value the caller means for one run rather than forever. The case that
+    forced it (BUGS.md Q49): ``--auth-token`` was persisted like every other CLI
+    flag, so starting a second dashboard on another port silently rotated the
+    credential the *live* one would use at its next restart. A secret handed to
+    one process is not a new default for the machine.
+
+    Overrides sit ABOVE the file, because the alternative - relying on the env
+    layer - loses to a stored value and would leave the flag with no effect at
+    all whenever a token was already saved.
+    """
+    with _lock:
+        _overrides.setdefault(section, {})[key] = value
+        globals()["_cache"] = None
+
+
+def clear_overrides() -> None:
+    """Drop every process-scoped override (tests, and re-reading from scratch)."""
+    with _lock:
+        _overrides.clear()
+        globals()["_cache"] = None
+
+
 def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
-    """Full settings tree: file values layered over env/defaults."""
+    """Full settings tree: overrides over file values over env/defaults."""
     global _cache
     with _lock:
         if _cache is not None and not refresh:
@@ -261,6 +288,10 @@ def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
                 continue
             for key, value in values.items():
                 if key in _SCHEMA[section]:
+                    merged[section][key] = _coerce(section, key, value)
+        for section, values in _overrides.items():
+            for key, value in values.items():
+                if section in merged and key in _SCHEMA[section]:
                     merged[section][key] = _coerce(section, key, value)
         _cache = merged
         return copy.deepcopy(merged)

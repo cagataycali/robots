@@ -288,8 +288,7 @@ def main() -> None:
         patch["mesh"]["backend"] = args.mesh_backend
     if args.camera_hz is not None:
         patch["mesh"]["camera_hz"] = args.camera_hz
-    if args.auth_token is not None:
-        patch["security"]["auth_token"] = args.auth_token
+    cli_token: str | None = args.auth_token
     if args.auth_token_file is not None:
         # JOURNEYS #15: a token in argv is readable by every local user via ps
         # (this machine's audit literally lifted it that way). The file form
@@ -302,10 +301,28 @@ def main() -> None:
             file_token = ""
         if not file_token:
             parser.error(f"--auth-token-file {args.auth_token_file!r} is missing or empty")
-        patch["security"]["auth_token"] = file_token
+        cli_token = file_token
     if args.cors_origin is not None:
         patch["security"]["cors_origins"] = args.cors_origin
     changed = settings.update({k: v for k, v in patch.items() if v})
+
+    # A token is NOT persisted like the other flags (BUGS.md Q49). It used to be,
+    # and that made every extra dashboard a credential rotation: a second instance
+    # started on another port - a rehearsal, a colleague's test, a stale terminal -
+    # rewrote `security.auth_token`, so the LIVE dashboard's next restart came up
+    # demanding a token nobody had. The flag means "require this token for this
+    # run"; a process-scoped override says exactly that and cannot outlive it.
+    # First run is the one exception: with nothing stored yet, saving is pure gain
+    # (a bare `strands-robots dashboard` afterwards still asks for auth instead of
+    # coming up open) and there is no existing secret to destroy.
+    token_only_this_run = False
+    if cli_token is not None:
+        stored_token = str((settings.load().get("security") or {}).get("auth_token") or "")
+        if stored_token and stored_token != cli_token:
+            settings.override("security", "auth_token", cli_token)
+            token_only_this_run = True
+        else:
+            changed = sorted(set(changed) | set(settings.update({"security": {"auth_token": cli_token}})))
 
     resolved = settings.load(refresh=True)
     mesh_cfg = resolved["mesh"]
@@ -333,6 +350,9 @@ def main() -> None:
                   "user can read it: ps -eww | grep auth-token")
             print("      fix (next start): put it in a 0600 file and pass "
                   "--auth-token-file PATH instead")
+        if token_only_this_run:
+            print("   ℹ️  this token applies to THIS run only - a different one is "
+                  "saved in settings and was left untouched")
     else:
         print("   ⚠️  no auth token - anyone who can reach this port can move motors "
               "(--auth-token to require one)")
