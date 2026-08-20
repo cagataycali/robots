@@ -4,6 +4,7 @@ import { numField } from '../lib/numField'
 import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post, HttpError } from '../lib/endpoints'
 import { extraFields, missingForProvider } from '../lib/providerFields'
+import { holdout } from '../lib/holdout'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
@@ -67,7 +68,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [pollFail, setPollFail] = useState<Record<string, { n: number; msg: string }>>({})
   const [nowS, setNowS] = useState(() => Date.now() / 1000)
   const [traces, setTraces] = useState<Record<string, LossPoint[]>>({})
-  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora', embodiment: '' })
+  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora', embodiment: '', val_episodes: '' })
   // R6: the picker searches the Hub as you type. `dsProblem` is the HUB half's
   // verdict only — "no matches" is a real answer and must not wear an outage's
   // clothes, so an empty list with problem===null says something different from
@@ -279,6 +280,9 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       // train_policy as a real value and GR00T would tag the dataset with "".
       ...(extraFields(form.provider).some(f => f.key === 'embodiment') && form.embodiment.trim()
         ? { embodiment: form.embodiment.trim() } : {}),
+      // Held out only when the operator asked for it: `null` and an absent key both mean "train
+      // on every episode", and sending 0 would show a split in the form that the backend drops.
+      ...(wantedHoldout.send !== null ? { val_episodes: wantedHoldout.send } : {}),
     }
     try {
       const j = await post(validateOnly ? '/api/training/validate' : '/api/training/submit', body)
@@ -314,6 +318,11 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
      posted verbatim. Bounds stated, refusals explained, nothing corrected behind the operator. */
   const STEP_RULES = { what: 'steps', min: 1, max: 2_000_000, remedy: 'submit a shorter run' }
   const wantedSteps = numField(form.steps, STEP_RULES)
+  /* The validation holdout. The bound is the PICKED dataset's own episode count (the picker
+     already fetched it), so "20 of 20 leaves nothing to train on" is said before the submit
+     round trip rather than by the trainer minutes in. Empty is a legal answer, so this never
+     blocks the button on its own — only a value that would mean something other than it reads. */
+  const wantedHoldout = holdout(form.val_episodes, selectedRow(datasets, form)?.total_episodes ?? null)
   const wantedEpisodes = numField(collect.n_episodes, { what: 'episodes', min: 1, max: 500, remedy: 'collect in batches' })
   const wantedSeconds = numField(collect.duration, { what: 'seconds per episode', min: 1, max: 600 })
 
@@ -436,7 +445,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // missing field it says so here too, next to the promise.
   const missingExtra = missingForProvider(form.provider, form as Record<string, string>)
   const story = datasetPicked
-    ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? datasetPicked} for ${stepsPhrase} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.`
+    ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? datasetPicked} for ${stepsPhrase} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.${wantedHoldout.send ? ` Holding out the last ${wantedHoldout.send} episodes to score it.` : ''}`
       + (missingExtra ? ` This will be refused until you fill it in: ${missingExtra}.` : '')
     : 'Pick a dataset to begin — the plan reads back here before anything runs.'
 
@@ -567,6 +576,14 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               {wantedSteps.problem ?? wantedSteps.note ?? ''}
             </span>
           </label>
+          <label className="field"><span>val episodes</span>
+            <input type="number" value={form.val_episodes} placeholder="none"
+                   onChange={e => set('val_episodes', e.target.value)} disabled={busy}
+                   aria-invalid={!!wantedHoldout.problem} aria-describedby="train-val-say" />
+            <span id="train-val-say" className={`fieldsay${wantedHoldout.problem ? ' bad' : ''}`}>
+              {wantedHoldout.problem ?? wantedHoldout.say}
+            </span>
+          </label>
           <label className="field"><span>method</span>
             <select value={form.method} onChange={e => set('method', e.target.value)} disabled={busy}>
               <option value="lora">lora</option>
@@ -577,7 +594,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <div className="train-actions">
           <button className="btn ghost" onClick={() => submit(true)} disabled={busy || !!wantedSteps.problem}>✓ validate</button>
           <button className="btn go wide" onClick={() => submit(false)}
-                  disabled={busy || !datasetPicked || !!wantedSteps.problem || !gate.ok}
+                  disabled={busy || !datasetPicked || !!wantedSteps.problem || !!wantedHoldout.problem || !gate.ok}
                   title={gate.why ?? undefined}>
             {outSay.confirmable && gate.ok ? '▶ delete and train' : '▶ train'}
           </button>
