@@ -243,3 +243,71 @@ def test_port_advice_without_a_serial_stays_silent_about_serials():
     src = out["snippet"]
     assert "how THIS machine names" in src
     assert "USB serial" not in src
+
+
+# --- Q53: the snippet must mirror the LIVE posture, not a frozen table -------------------
+
+from strands_robots.dashboard import deploy  # noqa: E402
+
+_SIM_PAYLOAD = {"robot_name": "so101", "mode": "sim", "peer_id": "sim-1"}
+
+
+def test_configured_mesh_port_reaches_the_snippet():
+    """The Mesh tab says "every robot on the desk must agree on it" — and then the generated
+    file said 7447 regardless. A peer pointed at the wrong port starts, logs nothing wrong and
+    never appears in the fleet."""
+    out = deploy.render_snippet(_SIM_PAYLOAD, hub_host="10.0.0.5", hub_port=7448)
+    assert 'ZENOH_CONNECT", "tcp/10.0.0.5:7448"' in out["snippet"]
+    assert "7447" not in out["snippet"]
+
+
+def test_the_commented_line_carries_the_port_too():
+    """Same-machine deploy renders the line commented out; it is a template the operator edits,
+    so the wrong port there is just as misleading."""
+    out = deploy.render_snippet(_SIM_PAYLOAD, hub_port="7500")
+    assert '# os.environ.setdefault("ZENOH_CONNECT", "tcp/<dashboard-host>:7500")' in out["snippet"]
+
+
+def test_a_nonsense_port_falls_back_to_the_default():
+    for bad in ("", None, "abc", {}):
+        out = deploy.render_snippet(_SIM_PAYLOAD, hub_host="h", hub_port=bad)
+        assert "tcp/h:7447" in out["snippet"], bad
+
+
+def test_camera_rate_mirrors_the_desk():
+    out = deploy.render_snippet(_SIM_PAYLOAD, mesh_env={"STRANDS_MESH_CAMERA_HZ": "12"})
+    assert 'setdefault("STRANDS_MESH_CAMERA_HZ", "12")' in out["snippet"]
+
+
+def test_wire_security_is_never_disabled_by_a_hardcoded_default():
+    """STRANDS_MESH_LOCAL_DEV=1 disables mesh wire security. It was in the frozen table, so
+    every generated file turned it off on a machine the operator never chose to expose — and a
+    peer with security off cannot join a secured desk either."""
+    out = deploy.render_snippet(_SIM_PAYLOAD, mesh_env={})
+    assert "STRANDS_MESH_LOCAL_DEV" not in out["snippet"]
+
+
+def test_a_dashboard_running_local_dev_still_says_so():
+    """Mirroring the desk is the point: if wire security IS off here, a peer that leaves it on
+    will not join, and silence would be its own trap."""
+    out = deploy.render_snippet(_SIM_PAYLOAD, mesh_env={"STRANDS_MESH_LOCAL_DEV": "1"})
+    assert 'setdefault("STRANDS_MESH_LOCAL_DEV", "1")' in out["snippet"]
+
+
+def test_defaults_survive_for_the_keys_that_are_not_posture():
+    out = deploy.render_snippet(_SIM_PAYLOAD, mesh_env={})
+    for line in (
+        'setdefault("STRANDS_MESH", "true")',
+        'setdefault("STRANDS_MESH_MULTICAST", "true")',
+        'setdefault("STRANDS_MESH_CAMERA_HZ", "5")',
+        'setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")',
+    ):
+        assert line in out["snippet"], line
+
+
+def test_resolve_mesh_env_is_pure_and_ordered():
+    rows = deploy.resolve_mesh_env({"STRANDS_MESH_CAMERA_HZ": " 9 "})
+    assert dict(rows)["STRANDS_MESH_CAMERA_HZ"] == "9", "whitespace is the operator's typo, not a value"
+    assert [k for k, _ in rows] == [
+        k for k, _ in deploy._MESH_ENV if k != "STRANDS_MESH_LOCAL_DEV"
+    ]

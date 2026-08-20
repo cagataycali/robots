@@ -29,6 +29,42 @@ _MESH_ENV: tuple[tuple[str, str], ...] = (
     ("STRANDS_MESH_CAMERA_HZ", "5"),
 )
 
+#: Default zenoh port, mirroring ``mesh/session.py``.
+DEFAULT_HUB_PORT = 7447
+
+#: Q53: keys whose value must come from THIS dashboard's live posture rather than the frozen
+#: table above, because the file's whole promise is "recreates this exact rig".
+_LIVE_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_CAMERA_HZ", "STRANDS_MESH_MULTICAST"})
+
+#: Q53: a key that only ever LOOSENS security. STRANDS_MESH_LOCAL_DEV=1 disables mesh wire
+#: security, so it may be rendered only when this dashboard is itself running that way - never
+#: as a hardcoded default. Writing it into a file an operator runs on their LAN would disable
+#: encryption on a box they never chose to expose, and the peer would then fail to join a
+#: secured desk for a reason no message explains.
+_SECURITY_LOOSENING_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_LOCAL_DEV"})
+
+
+def resolve_mesh_env(env: Mapping[str, str] | None) -> list[tuple[str, str]]:
+    """The env block to render, taking live values over the frozen defaults.
+
+    Pure: the route passes ``os.environ`` (already carrying ``settings.apply_mesh_env()``'s
+    mesh keys), tests pass dicts. A key that loosens security is emitted ONLY when the live env
+    says so; every other key falls back to the default the dashboard's own spawner uses.
+    """
+    live = env or {}
+    out: list[tuple[str, str]] = []
+    for key, default in _MESH_ENV:
+        value = str(live.get(key, "")).strip()
+        if key in _SECURITY_LOOSENING_KEYS:
+            if value:
+                out.append((key, value))
+            continue
+        if key in _LIVE_KEYS and value:
+            out.append((key, value))
+        else:
+            out.append((key, default))
+    return out
+
 
 def snippet_filename(peer_id: str) -> str:
     """A filename safe to offer as a download, derived from the peer id."""
@@ -57,6 +93,8 @@ def render_snippet(
     payload: Mapping[str, Any],
     *,
     hub_host: str | None = None,
+    mesh_env: Mapping[str, str] | None = None,
+    hub_port: int | str | None = None,
     now: float | None = None,
 ) -> dict[str, Any]:
     """Render a spawn payload/profile as a deployable Python script.
@@ -128,14 +166,23 @@ def render_snippet(
     lines += ["", "import os", "import time", ""]
 
     lines.append("# The mesh posture this dashboard runs with (setdefault: your own env wins).")
-    for key, val in _MESH_ENV:
+    for key, val in resolve_mesh_env(mesh_env):
         lines.append(f'os.environ.setdefault("{key}", "{val}")')
+    # Q53: the port comes from THIS dashboard's mesh settings. Hardcoding 7447 while the desk
+    # ran on another port produced a peer that starts, logs nothing wrong and never appears -
+    # the exact failure the Mesh tab warns about with "every robot on the desk must agree on it".
+    try:
+        port_txt = str(int(str(hub_port))) if hub_port not in (None, "") else str(DEFAULT_HUB_PORT)
+    except (TypeError, ValueError):
+        port_txt = str(DEFAULT_HUB_PORT)
     if hub_host:
         lines.append("# Reach this dashboard's zenoh hub from the edge device:")
-        lines.append(f'os.environ.setdefault("ZENOH_CONNECT", "tcp/{hub_host}:7447")')
+        lines.append(f'os.environ.setdefault("ZENOH_CONNECT", "tcp/{hub_host}:{port_txt}")')
     else:
         lines.append("# Deploying to ANOTHER machine? Point the peer at this dashboard's hub:")
-        lines.append('# os.environ.setdefault("ZENOH_CONNECT", "tcp/<dashboard-host>:7447")')
+        lines.append(
+            f'# os.environ.setdefault("ZENOH_CONNECT", "tcp/<dashboard-host>:{port_txt}")'
+        )
     lines += ["", "from strands_robots import Robot", "", "robot = Robot("]
     lines.append(f"    {robot_name!r},")
     lines.append(f"    mode={mode!r},")

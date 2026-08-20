@@ -1527,7 +1527,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             reached_on = (request.url.hostname or "").strip()
             if reached_on and reached_on not in ("localhost", "127.0.0.1", "::1"):
                 hub_host = reached_on
-        result = deploy.render_snippet(payload, hub_host=hub_host or None)
+        # Q53: the snippet mirrors the LIVE posture (mesh port, camera rate, whether wire
+        # security is disabled here) instead of a frozen table - "recreates this exact rig"
+        # is the file's whole promise.
+        result = deploy.render_snippet(
+            payload,
+            hub_host=hub_host or None,
+            mesh_env=os.environ,
+            hub_port=settings.get("mesh", "port", deploy.DEFAULT_HUB_PORT),
+        )
         if "error" in result:
             raise HTTPException(422, result["error"])
         return result
