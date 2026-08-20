@@ -126,7 +126,11 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
             {cams.length > 1 && (
               <div className="camswitch">
                 {cams.map(c => (
-                  <button key={c} className={c === active ? 'chip on' : 'chip'} onClick={() => setCam(c)}>{c}</button>
+                  /* aria-pressed, not colour alone: `.chip.on` is the ONLY thing that said which
+                     camera is on screen, so a screen reader announced two identical "wrist, button"
+                     controls and voice control could not confirm a switch. */
+                  <button key={c} className={c === active ? 'chip on' : 'chip'}
+                          aria-pressed={c === active} onClick={() => setCam(c)}>{c}</button>
                 ))}
               </div>
             )}

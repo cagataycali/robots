@@ -205,7 +205,8 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
 
         <nav className="tabs">
           {TABS.map(t => (
-            <button key={t.id} className={tab === t.id ? 'tab on' : 'tab'} onClick={() => setTab(t.id)}>
+            <button key={t.id} className={tab === t.id ? 'tab on' : 'tab'} aria-pressed={tab === t.id}
+                    onClick={() => setTab(t.id)}>
               {t.label}
             </button>
           ))}

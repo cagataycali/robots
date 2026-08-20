@@ -83,6 +83,29 @@ if (await search.count()) {
   await check('train → dataset search results')
 }
 
+// A11y rule this dashboard kept breaking: SELECTED state expressed in CSS only. `.chip.on` and
+// `.tab.on` looked obvious on screen while a screen reader announced six identical "Mesh, button"
+// tabs and two identical "wrist, button" camera switches — the selected one indistinguishable.
+// Colour is not a state announcement, so a toggle that carries the marker class must also carry
+// aria-pressed / aria-selected / aria-current.
+const arialess = []
+for (const [nav, extra] of [[null, null], ['settings', null], [null, 'peername'], ['activity', null]]) {
+  await escape()
+  if (nav) await page.locator(`button.chip:has-text("${nav}")`).first().click().catch(() => {})
+  if (extra) await page.locator(`button.${extra}`).first().click().catch(() => {})
+  await page.waitForTimeout(1800)
+  arialess.push(...await page.evaluate(() => [...document.querySelectorAll('button')]
+    .filter(b => /(^|\s)(on|active|selected)(\s|$)/.test(b.className))
+    .filter(b => !b.getAttribute('aria-pressed') && !b.getAttribute('aria-selected') && !b.getAttribute('aria-current'))
+    .map(b => `${b.className} "${b.innerText.trim().slice(0, 20)}"`)))
+}
+const uniqueArialess = [...new Set(arialess)]
+if (uniqueArialess.length) {
+  for (const a of uniqueArialess) { failures.push(`selected-but-silent: ${a}`); console.log(`  A11Y  selected state is CSS-only: ${a}`) }
+} else {
+  console.log('  ok    every selected toggle announces itself (aria-pressed/selected/current)')
+}
+
 await browser.close()
 for (const t of thrown) { failures.push(t); console.log(`  ERROR ${t}`) }
 if (failures.length) {

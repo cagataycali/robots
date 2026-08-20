@@ -297,7 +297,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     : 'Pick a dataset to begin — the plan reads back here before anything runs.'
 
   return (
-    <div className="train-sheet">
+    /* role + label like RecordPanel's sheet: this is a full-bleed layer over the fleet, and a
+       screen reader that is not told it entered a dialog reads it as more of the page it just
+       left. Same reason its ✕ is the only way out on a phone. */
+    <div className="train-sheet" role="dialog" aria-label="Training">
       <div className="train-head">
         <h2>🎓 Training</h2>
         <button className="dock-min" onClick={onClose}>✕</button>

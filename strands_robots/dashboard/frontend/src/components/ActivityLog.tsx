@@ -70,11 +70,13 @@ export default function ActivityLog({ live, open, onClose }: {
           <button className="btn ghost" onClick={onClose}>✕</button>
         </header>
         <nav className="tabs">
-          <button className={filter === 'all' ? 'tab on' : 'tab'} onClick={() => setFilter('all')}>
+          <button className={filter === 'all' ? 'tab on' : 'tab'} aria-pressed={filter === 'all'}
+                  onClick={() => setFilter('all')}>
             all ({entries.length})
           </button>
           {sources.map(s => (
-            <button key={s} className={filter === s ? 'tab on' : 'tab'} onClick={() => setFilter(s)}>
+            <button key={s} className={filter === s ? 'tab on' : 'tab'} aria-pressed={filter === s}
+                    onClick={() => setFilter(s)}>
               {SOURCE_ICON[s] ?? '•'} {s}
             </button>
           ))}
