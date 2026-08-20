@@ -290,11 +290,19 @@ def test_only_the_shared_generator_owns_a_ticker_in_the_sensors_module() -> None
 def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
     """The inventory check: Q69 is only cured if NO pacer was missed.
 
-    I found the teleop apply loop (teleop_mixin.py) only after converting the
-    other eleven, because it uses a differently-named stop event
-    (``_teleop_stop_event``) and so did not match the grep I had been working
-    from. This scans for the SHAPE - a wait on any event, with a period-ish
-    argument - rather than for one spelling of it.
+    This scans for the SHAPE, because two spellings have already slipped past a
+    narrower check. First the teleop apply loop, found only after converting the
+    other eleven: its event is ``_teleop_stop_event``, so it did not match the
+    grep my inventory came from. Then - one iteration after this test was
+    written to stop exactly that - the dashboard's record loop
+    (``dashboard/record_worker.py``), which pairs a third name with the keyword
+    form: ``while not self._stop_evt.wait(timeout=period)``. The regex was the
+    hole, not the walk: rglob had been reading that file all along.
+
+    So the shape is now "``.wait(...)`` on an attribute whose name looks like a
+    stop flag", in any statement position, with or without ``timeout=``. That
+    record loop is also why this matters beyond telemetry: its rate is written
+    into a dataset as the declared fps and trained on (BUGS.md Q70).
 
     Waits that are NOT pacing (a shutdown join, a settle window) are allowed:
     they run once, so a 145ms inflation costs 145ms rather than 60% of a stream.
@@ -305,17 +313,39 @@ def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
 
     root = Path(__file__).resolve().parent.parent / "strands_robots"
     allowed = {
-        # (file, fragment) -> why this wait is not a pacer
+        # (file, fragment) -> why this wait's inflation does not matter here.
+        # Each reason carries the NUMBER it rests on, so a later change of that
+        # number (a poll interval dropped to 100ms, say) invalidates the excuse
+        # visibly instead of quietly.
         ("mesh/core.py", "self._stop_event.wait(timeout=timeout)"): "one-shot shutdown wait, not a loop tick",
+        ("dashboard/device_manager.py", "self._stop.wait(interval)"): (
+            "AUTOSPAWN_POLL_S is 2.0s, so +137ms is 6.8% late on a USB discovery poll - "
+            "nothing streams from it and no timestamp is derived from its rate"
+        ),
+        ("hardware_ros_bridge.py", "self._stop.wait(self._spin_period)"): (
+            "the EXCEPTION path only: a backoff after spin_once raised, where waiting longer "
+            "than spin_period is the intent. The happy path has no wait at all"
+        ),
     }
-    pattern = re.compile(r"^\s*(?:if\s+)?self\._[a-z_]*stop_event\.wait\(([^)]*)\)")
+    # Any statement position (`while not ...`, `if ...`, bare), any attribute
+    # whose name reads as a stop flag (_stop_event, _teleop_stop_event,
+    # _stop_evt, _shutdown_event), keyword form included.
+    pattern = re.compile(
+        r"self\._[a-z_0-9]*(?:stop|shutdown|halt)[a-z_0-9]*\.wait\(\s*(?:timeout\s*=\s*)?([^)]*)\)"
+    )
     offenders: list[str] = []
     for path in sorted(root.rglob("*.py")):
         if path.name == "pacing.py":
             continue
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
-            match = pattern.match(line)
+            match = pattern.search(line)
             if not match:
+                continue
+            # Prose is not a pacer. Several modules now DESCRIBE this bug in a
+            # comment or docstring quoting the offending call, and a scanner
+            # that flags its own documentation trains the reader to ignore it.
+            before = line[: match.start()]
+            if before.lstrip().startswith("#") or "``" in before or '"""' in before:
                 continue
             rel = str(path.relative_to(root))
             if any(rel == f and frag in line for (f, frag) in allowed):

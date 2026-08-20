@@ -26,6 +26,7 @@ import ast
 import inspect
 import pathlib
 import threading
+from unittest.mock import patch
 from typing import Any
 
 import numpy as np
@@ -34,6 +35,7 @@ import pytest
 import strands_robots
 import strands_robots.hardware_rtps_bridge as rtps_mod
 from strands_robots.hardware_ros_bridge import HardwareRosBridge
+from strands_robots import hardware_rtps_bridge
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 from strands_robots.utils import positive_finite_number_error
 
@@ -167,13 +169,39 @@ class TestTheStoredPeriodIsTheWholeCadenceOfTheLoop:
     """
 
     def test_the_rtps_poll_loop_paces_itself_with_the_stored_period(self) -> None:
+        """The stored period is what the loop's pacer is built from.
+
+        The loop no longer spends the period on ``self._stop.wait(period)``: that
+        wait is inflated ~137ms in a daemon-descended process tree (BUGS.md Q69),
+        which turned this 50Hz command poll into ~6.4Hz, so it now paces through
+        ``mesh.pacing.Ticker``. The PROPERTY this class is about is unchanged -
+        the stored value is the loop's whole cadence - so it is asserted through
+        the pacer the loop actually uses instead of through the call it used to
+        make. A recording double stands in for the Ticker and stops the loop
+        after a fixed number of ticks, keeping the assertion on the budget the
+        loop ASKS FOR rather than on throughput this host achieved.
+        """
         bridge = HardwareRtpsBridge.__new__(HardwareRtpsBridge)
-        stop = _RecordingStop(iterations=4)
-        bridge._stop = stop  # type: ignore[assignment]  # records the budget instead of waiting
+        bridge._stop = threading.Event()  # type: ignore[assignment]
         bridge._command_reader = type("_Reader", (), {"take": lambda self, N=10: []})()
         bridge._poll_period = 0.02
-        bridge._poll_loop()
-        assert stop.waits == [0.02] * 4
+        built: list[float] = []
+
+        class _RecordingTicker:
+            def __init__(self, period: float, stop_event: threading.Event) -> None:
+                built.append(period)
+                self._left = 4
+
+            def wait(self) -> bool:
+                self._left -= 1
+                return self._left < 0  # True == stop, ending the loop
+
+            def close(self) -> None:
+                built.append(-1.0)  # closed exactly once, on the way out
+
+        with patch.object(hardware_rtps_bridge, "Ticker", _RecordingTicker):
+            bridge._poll_loop()
+        assert built == [0.02, -1.0]
 
     def test_the_ros_spin_loop_forwards_the_stored_period_to_the_executor(self) -> None:
         """The rclpy loop spends the period as a ``spin_once`` timeout.

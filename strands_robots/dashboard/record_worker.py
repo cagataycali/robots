@@ -323,14 +323,30 @@ class RecordWorker:
     # ---------------------------------------------------------------- loop
 
     def _loop(self) -> None:
-        period = 1.0 / self.fps
-        while not self._stop_evt.wait(timeout=period):
-            try:
-                self.tick()
-            except Exception as exc:  # noqa: BLE001 - loop must survive a bad read
-                with self._lock:
-                    self._last_error = f"control step failed: {exc}"
-                logger.warning("record tick failed: %r", exc)
+        # Paced through the shared Ticker, NOT ``self._stop_evt.wait(period)``:
+        # in a process tree descended from a daemon or launchd agent every such
+        # wait is inflated by ~137ms on this machine (measured), so a session
+        # opened at fps=30 stepped at ~5.6Hz. That inflation is worse here than
+        # in a telemetry stream because it is PERSISTED: LeRobot timestamps a
+        # frame positionally as ``frame_index / fps``, so the dataset records the
+        # rate we DECLARED and there is no wall-clock column that could ever
+        # contradict it. The episode then trains a policy on a control period
+        # 5x longer than the one it is told about, and replays at the wrong
+        # speed. Ticker also treats the period as a deadline, so a slow leader
+        # read is subtracted from the next wait rather than added to the period.
+        from strands_robots.mesh.pacing import Ticker
+
+        ticker = Ticker(1.0 / self.fps, self._stop_evt)
+        try:
+            while not ticker.wait():
+                try:
+                    self.tick()
+                except Exception as exc:  # noqa: BLE001 - loop survives a bad read
+                    with self._lock:
+                        self._last_error = f"control step failed: {exc}"
+                    logger.warning("record tick failed: %r", exc)
+        finally:
+            ticker.close()
 
     def tick(self) -> bool:
         """One control step. Teleop runs in EVERY phase (the operator lines
