@@ -131,7 +131,11 @@ capability match, not a name match):
    safety does not depend on the dispatcher. The example *asserts* both halves
    (status answered, execute refused) and raises if either fails. The
    orchestrator then restarts and re-syncs from the two things that survived
-   the outage: the presence registry and the signed audit log.
+   the outage: the presence registry and the signed audit log. Both are
+   awaited on a bounded deadline rather than sampled once - a peer's own
+   `remote_estop_engaged` row is written by that peer's safety handler when
+   the broadcast reaches it, so it can land after the issuing call has
+   already returned.
 
 ```bash
 # No simulator, no mesh - scripted presence + loopback transport:
@@ -184,6 +188,35 @@ STRANDS_MESH_MULTICAST=true python examples/fleet/02_cross_zone_transport.py
 # Headless / CI posture: terminal renderer, bounded runtime:
 python examples/fleet/dashboard.py --no-rerun --duration 10
 ```
+
+On a headless or remote host - where a fleet dashboard naturally runs - the
+native viewer has no display to open on. `--serve-web` instead serves the
+Rerun web viewer and the live log stream from the dashboard process and
+prints the ready-to-open URL (the `?url=rerun%2Bhttp...` form):
+
+```bash
+# Remote box - no display needed. Binds 127.0.0.1 by default per the repo's
+# network-exposure convention; --bind 0.0.0.0 deliberately opts into wider
+# exposure and the startup output says so.
+STRANDS_MESH_MULTICAST=true python examples/fleet/dashboard.py --serve-web
+# ports: --web-port 9090 (viewer HTTP) / --grpc-port 9876 (log stream)
+
+# Local machine - tunnel BOTH ports (the browser fetches the viewer from one
+# and dials the log stream on the other), then open the printed URL:
+ssh -N -L 9090:127.0.0.1:9090 -L 9876:127.0.0.1:9876 user@remote-box
+```
+
+Any loopback address gets that tunnel recipe, not just the default one:
+`--bind` takes an IP literal, and the whole `127.0.0.0/8` block is reachable
+only from the host, so `--bind 127.0.0.2` (isolating the viewer on its own
+loopback address) prints the recipe forwarded to `127.0.0.2`. The
+network-exposure warning is for a bind that really is wider.
+
+The web viewer is a view, not a surface: it changes only the render
+transport, and the mesh peer stays subscribe-only exactly as above. With
+rerun-sdk absent, `--serve-web` fails with the install hint rather than
+silently falling back to the terminal renderer - the explicit ask for a web
+viewer must not degrade into tables nobody is watching.
 
 Because it attaches to the mesh and not the simulator, the dashboard works
 unchanged across every example in this suite and every backend (epic decision
@@ -296,3 +329,4 @@ with the network off, given cached robot assets).
 | `STRANDS_MESH_LOCAL_DEV=1` | Skip TLS for local development (defaulted by the examples). |
 | `STRANDS_MESH_MULTICAST=true` | Enable multicast scouting so separate processes (e.g. the dashboard and an example) discover each other. Off by default; trusted networks only. |
 | `STRANDS_MESH=0` | Disable the mesh entirely; use `--dry-run` in that posture. |
+| _(mesh extra absent)_ | With `eclipse-zenoh` not installed the mesh stays off (`mesh.alive` is `False`): the live paths refuse at start-up naming the peer and the remedy. Install `strands-robots[mesh]` or use `--dry-run`. |

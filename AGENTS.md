@@ -1350,6 +1350,32 @@ Corrections from code review that apply to all future contributions:
   `ctrlrange` is authoritative and already in the drive's own units, so only the
   *substitution* of a driven joint's limits needs the drive to be a servo.
 
+### MuJoCo enums are matched by value, never by operand order
+
+`mjModel` / `mjData` expose their type fields as numpy integer arrays, while the
+matching vocabulary is a pybind11 enum. Whether the two compare equal depends on
+which side the enum is on.
+
+- **Compare `int()` to `int()`.** `int(model.geom_type[i]) in (int(mjGEOM_PLANE),
+  int(mjGEOM_HFIELD))`, `int(model.actuator_trntype[a]) != int(mjTRN_TENDON)`.
+- **`x in (enum, ...)` is the trap, not a hand-written reversed `==`.** CPython
+  compares `element == needle`, so membership puts the ENUM on the left. That is
+  `True` on mujoco 3.9.0 / 3.10.0 / 3.11.0 and `False` on 3.12.0 - all inside the
+  declared `mujoco>=3.5.0,<4.0.0` range. A `set` of enum members degrades the
+  same way: the hashes still collide and the confirming equality is the failing
+  direction.
+- **The failure is silent.** The membership test simply answers `False` for every
+  element. Measured: a heightfield ground geom stopped being recognised as
+  ground, so a "lowest robot geom" scan returned the ground's own `z=0.0`; and an
+  example's home-pose helper matched 0 of 3 joints, writing no `qpos` and no
+  `ctrl` while logging that the pose had been set.
+- **The rule is uniform, with no exemption for a spec-side value.** `MjsGeom.type`
+  really is an enum, so `in` works there - but a reader cannot tell an `MjsGeom`
+  attribute from an `MjModel` array element at the call site, so both are written
+  by value.
+- Pinned by `tests/test_mujoco_enum_comparisons_are_value_based.py`, which grades
+  `strands_robots`, `tests`, `tests_integ` and `examples`.
+
 ### Clocks: a duration is measured, a stamp is recorded
 - **A duration belongs on `time.monotonic()`.** Anything that decides *how long to keep
   waiting* - a timeout, a deadline, a TTL, a retry window, a rate window, a frame pacer -
@@ -1419,6 +1445,32 @@ Corrections from code review that apply to all future contributions:
   opt-out - the one remedy that turns that refusal into a silent open of the surface the
   caller asked to close. Checking the flag makes such a branch reachable only where its
   advice is actionable.
+- **A facade that checks a flag does not check it for the method it forwards to.**
+  Where one contract is reachable through a convenience surface and a documented
+  direct API, both read the same caller input, so a guard on one leaves the other
+  disagreeing about which values are usable - which is what the shared *numeric*
+  domains in the same signatures exist to prevent. Every backend's
+  `start_recording` checked the `overwrite` it forwards to
+  `DatasetRecorder.create`, and `create` read it by truthiness and deleted the
+  caller's dataset. Guard the flag where it is *read*, on the same domain, and
+  ahead of the side effect it selects - for a confirmation gate in front of a
+  delete, that means before the target is touched, so a refusal cannot arrive
+  after the deletion it was refusing. Pinned by
+  `tests/test_dataset_recorder_posture_flag_domain.py`, which also records why
+  the neighbouring surfaces are out of scope.
+- **A flag whose misread only shows up in a rendered frame is checked at construction.**
+  Where the branch a flag selects is applied later - a fitted transform, a compositing
+  decision - the misread has no error to surface at, so it reads as a scene that looks
+  slightly wrong rather than as a bad argument. `GsplatBackground` already raises for a
+  nonexistent scene path for exactly that reason (its first `render` sits inside an app's
+  catch-all that demotes the photoreal backdrop to a procedural fallback), and its four
+  alignment flags - `auto_backdrop`, `skybox`, `metric`, `own_floor` - were read by
+  truthiness beside it. `metric` is the sharpest: it also decides whether `radius` is read
+  at all, so `metric="no"` kept a capture's raw scale and stood a real 500k-splat room up
+  at a 4.45 m radius for a caller who asked for 2.5 m. Check such a flag where the caller
+  supplied it, not where the branch is taken. Pinned by
+  `tests/rendering/test_gsplat_background_posture_flag_domain.py`, which measures the
+  branch each of the four selects.
 - Pinned by `tests/simulation/mujoco/test_actuate_robot_posture_flag_domain.py`,
   `tests/simulation/test_recording_posture_flag_domain.py`,
   `tests/tools/test_lerobot_teleoperate_flag_domain.py`,
@@ -1520,6 +1572,7 @@ Corrections from code review that apply to all future contributions:
 ### Env Vars
 - **Warn on unrecognized values** - `STRANDS_ROBOT_MODE=foo` (typo) must `logger.warning(...)`, not silently fall through. Silent typo'd env vars surprise users hours later.
 - **Document every env var in README.md** - if you introduce a new `STRANDS_*` variable, add it to the Configuration section in the same PR. The list is the single source of truth for users.
+- **A kill switch is honoured by every path that can start the thing it kills** - and by exactly one predicate. `STRANDS_MESH=false` is documented in README as overriding even an explicit `mesh=True`, but it was resolved by an inline `os.getenv` inside `init_mesh`, and `robot_mesh._gateway_mesh` builds its robot-less coordinator `Mesh` without going through `init_mesh`. So an operator who asked for no mesh still got a real Zenoh session, a `gateway-*` peer advertised to the fleet, and the nine threads `Mesh.start` spawns - cached until `atexit`, because the switch had no reach there. The second-order cost is test isolation: `tests/conftest.py` sets the same variable to keep the suite off Zenoh, so the escape put nine publishing threads inside unrelated tests and one of them failed on a `/health` payload it never provoked. When a flag means "do not start X", give it one predicate and call it at every construction site of X; a second inline spelling is how the first site gets forgotten. Pinned by `tests/mesh/test_gateway_mesh_kill_switch.py`.
 - **Currently tracked**: `STRANDS_ROBOT_MODE`, `STRANDS_TRUST_REMOTE_CODE`, `MUJOCO_GL`.
 
 ### Safety Defaults
@@ -1724,6 +1777,16 @@ apply to all future work on `strands_robots/mesh/{core,audit,security}.py`.
   vars (`_resume_forward_skew_s`, `_resume_freshness_window_s`) into locals at
   handler entry, before taking the cache lock, so the lock holds for the minimum
   window and a hot path never re-parses the environment per call.
+- **This covers every replay-cache lock and every lazy resolver, not just the
+  two the rule was written for.** `Mesh` keeps three replay caches - estop,
+  resume and inbound-command dedup (`_exec_cmd`) - and the eviction bound they
+  share is a third resolver, `_resume_replay_cache_max`. A resolver is one
+  `os.getenv` plus a validating parse, and on an unusable operator value it logs
+  too, so the cost is not constant: at the cache sizes these actually sit at, the
+  parse is the majority of the critical section rather than a rounding error.
+  Resolve into a local before the `with`, then read the local inside it.
+  Pinned by `tests/mesh/test_safety_tunables_cached_at_handler_entry.py`, which
+  derives the lock set from the class so a fourth cache is graded on arrival.
 - **Lockout-engagement is decoupled from the per-issuer cache cap.** A bounded
   replay cache that is full (flood, or a tiny operator override) must still let a
   legitimate peer ENGAGE a lockout - the cap bounds memory, not safety. Pin both
@@ -1737,9 +1800,21 @@ apply to all future work on `strands_robots/mesh/{core,audit,security}.py`.
 ### Audit poison-record symmetry
 - **Every degraded audit path writes a poison record, never a silent drop.** The
   poison `sig` discriminators (`PSK_DEGRADED`, `SIGN_FAILED`, `SEQ_LOCK_DEGRADED`,
-  `NEXT_SEQ_DEGRADED`) let a `verify_audit_integrity` walker attribute a stream
-  gap to a specific failure class. When you add a new `_next_seq`/sign/persist
-  failure branch, add the matching poison `sig` instead of returning early.
+  `NEXT_SEQ_DEGRADED`, `SERIALISE_FAILED`) let a `verify_audit_integrity` walker
+  attribute a stream gap to a specific failure class. When you add a new
+  `_next_seq`/sign/serialise/persist failure branch, add the matching poison
+  `sig` instead of returning early.
+- **`_next_seq` runs before serialisation, so an early `return` is a deletion.**
+  The sequence number is consumed and persisted before the record is encoded, so
+  a branch that gives up after that point leaves the signature this module's
+  header documents as "records were deleted". A payload the JSON encoder cannot
+  represent keeps the envelope (`ts` / `event` / `peer_id` / `seq`) and swaps the
+  payload for a bounded diagnostic; the only remaining drop is an envelope that
+  is itself unrepresentable, where there is nothing left to poison with.
+- Pinned by `tests/mesh/test_audit_serialise_safety.py`, whose
+  `TestEveryDegradedPathWritesARecord` drives every degraded branch from one
+  table so a path added later is graded rather than quietly becoming the next
+  silent drop.
 
 ### Replay-cache eviction
 - **TTL purge runs unconditionally, not only when the cache is full.** On a
@@ -1765,6 +1840,18 @@ From the `robot_mesh` human-in-the-loop review trail (#227). Apply to the
   so the audit log is a complete record of agent mesh access - operators get the
   "agent read N frames from sub X at time T" trail that raw telemetry access
   otherwise lacks.
+- **The row belongs to the action, not to the backend that served it.** `robot_mesh`
+  renders each action onto an agent-side Device Connect connection when one has
+  devices and onto the built-in mesh otherwise, and Device Connect is the one tried
+  FIRST - so auditing only the mesh rendering left the audited implementations as the
+  fallback. Widen an audit contract across every backend that answers the action, and
+  record the magnitude that was read (`devices=N`, `local=N remote=M`) rather than a
+  bare marker. `peers` is the read worth recording: it returns every device id plus
+  every function name the fleet exposes, which is the callable surface a later `rpc`
+  would use.
+- Pinned by `tests/mesh/test_robot_mesh_readonly_audit_parity.py`, which discovers the
+  actions Device Connect answers by calling the dispatcher rather than restating a
+  list, so an action added to that backend is graded without editing the test.
 
 ### Rate-limit safety semantics
 - **A declined HITL approval must NOT consume a rate-limit slot.** The slot is

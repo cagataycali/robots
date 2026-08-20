@@ -193,11 +193,17 @@ RESUME_REPLAY_CACHE_MAX: int = _parse_positive_int_env("STRANDS_MESH_RESUME_REPL
 def _resume_freshness_window_s() -> float:
     """Lazy resolver for ``STRANDS_MESH_RESUME_FRESHNESS_S``.
 
-    re-reads the env var on every call so operator-set values
-    take effect without a process restart. Cheap (one ``os.getenv``
-    + a regex parse via ``_parse_positive_float_env``) and called
-    only on safety-handler entry, which is bounded by the transport
-    rate cap.
+    Re-reads the env var on every call so operator-set values take effect
+    without a process restart. One ``os.getenv`` plus a validating parse via
+    :func:`_parse_positive_float_env` -- and, when the operator value is
+    unusable, a log record as well, so the cost is not constant.
+
+    Four paths resolve it, not only the safety handlers: presence
+    (``_on_presence``), inbound command dispatch (``_exec_cmd``) and both
+    ``_on_safety_estop`` / ``_on_safety_resume``. Each resolves it once, into a
+    local, before taking a replay-cache lock, so no critical section carries the
+    parse and the value cannot change mid-envelope. The next envelope re-reads
+    the env, which is what keeps the knob operator-tunable.
     """
     return _parse_positive_float_env("STRANDS_MESH_RESUME_FRESHNESS_S", "60")
 
@@ -692,7 +698,17 @@ class Mesh(SensorLoopsMixin):
                 # state.
                 _acl_config._clear_thread_snapshot()
             if session is None:
-                logger.debug("[mesh] %s: zenoh unavailable, mesh off", self.peer_id)
+                # The sibling refusal above leaves the mesh not-started and says
+                # so at ERROR.  Arriving here leaves it not-started too, so the
+                # caller learns that ``mesh.alive`` is False from the same level
+                # rather than from whichever downstream wait expires first.  The
+                # cause is reported by the session/transport layer that returned
+                # None; this names the peer it applies to.
+                logger.warning(
+                    "[mesh] %s: no mesh transport - mesh off (mesh.alive is False, so this "
+                    "peer publishes no presence and discovers no peers)",
+                    self.peer_id,
+                )
                 return
 
             self._has_session_ref = True
@@ -1611,11 +1627,17 @@ class Mesh(SensorLoopsMixin):
             _now_mono = time.monotonic()
             _key = (sender, turn)
             _is_replay = False
+            # Resolve the lazy tunables BEFORE taking the lock. Each one is an
+            # os.getenv plus a validating parse, and on a bad operator value it
+            # also logs -- work that has no reason to sit inside a critical
+            # section other peers are waiting on. Mirrors the hoist the two
+            # safety handlers do at entry (issue #265).
+            _ttl = _resume_freshness_window_s() + _resume_forward_skew_s()
+            _replay_cache_max = _resume_replay_cache_max()
             with self._cmd_replay_lock:
-                _ttl = _resume_freshness_window_s() + _resume_forward_skew_s()
                 _evict_replay_cache(
                     self._cmd_replay_cache,
-                    max_size=_resume_replay_cache_max(),
+                    max_size=_replay_cache_max,
                     ttl_s=_ttl,
                     now_mono=_now_mono,
                 )
@@ -2370,7 +2392,12 @@ class Mesh(SensorLoopsMixin):
         # most ``per_issuer_cap`` slots so a single attacker cannot
         # fill the global cache. Default cap is _resume_replay_cache_max()
         # / 4 -- four legitimate operators always have working slots.
-        per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
+        # Resolved here, outside the lock below, for the same reason the two
+        # float tunables are resolved at handler entry: the eviction call in
+        # the critical section reuses this local instead of re-parsing the env
+        # while holding _estop_replay_lock.
+        replay_cache_max = _resume_replay_cache_max()
+        per_issuer_cap = max(1, replay_cache_max // 4)
         # cache TTL bookkeeping uses time.monotonic() so an NTP step
         # backward cannot leave entries un-evictable and a step forward
         # cannot age fresh entries out early. Envelope freshness still
@@ -2474,7 +2501,7 @@ class Mesh(SensorLoopsMixin):
             ts_view: dict[float, float] = {k: v[1] for k, v in self._estop_replay_cache.items()}
             _evict_replay_cache(
                 ts_view,
-                max_size=_resume_replay_cache_max(),
+                max_size=replay_cache_max,
                 # include forward_skew so a forward-skewed envelope
                 # at t=now+skew stays cached for the full freshness window
                 # rather than the lesser ``freshness`` only.
@@ -2809,6 +2836,10 @@ class Mesh(SensorLoopsMixin):
         # wire_zid="ab12cd" no longer conflate into the same slot.
         issuer_key = ("wire", wire_zid) if wire_zid is not None else ("body", issuer_id)
         cache_key = (issuer_key, proof_nonce)
+        # Resolved before the lock, matching the estop site: both the eviction
+        # bound and the per-issuer cap below read this local rather than
+        # re-parsing the env inside _resume_replay_lock.
+        replay_cache_max = _resume_replay_cache_max()
         with self._resume_replay_lock:
             if cache_key in self._resume_replay_cache:
                 logger.warning(
@@ -2845,7 +2876,7 @@ class Mesh(SensorLoopsMixin):
             now_mono = time.monotonic()
             _evict_replay_cache(
                 self._resume_replay_cache,
-                max_size=_resume_replay_cache_max(),
+                max_size=replay_cache_max,
                 # see _evict_replay_cache docstring.
                 ttl_s=freshness_window_s + forward_skew_s,
                 now_mono=now_mono,
@@ -2859,7 +2890,7 @@ class Mesh(SensorLoopsMixin):
             # branch, suppressing real replay-rejection signals. The cap
             # is computed from the SAME expression as the estop site so
             # the two replay-cache defenses stay symmetric.
-            per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
+            per_issuer_cap = max(1, replay_cache_max // 4)
             issuer_slots = sum(1 for k in self._resume_replay_cache if k[0] == issuer_key)
             if issuer_slots >= per_issuer_cap:
                 logger.warning(
@@ -3774,6 +3805,41 @@ class Mesh(SensorLoopsMixin):
         put(key, payload)
 
 
+#: Values of ``STRANDS_MESH`` that trip the hard kill switch.
+#:
+#: Spelled once because two call sites resolve it: :func:`init_mesh`, the public
+#: constructor, and the robot-less coordinator peer in
+#: :mod:`strands_robots.tools.robot_mesh`, which builds its ``Mesh`` directly
+#: rather than through :func:`init_mesh`. A second inline spelling is how that
+#: peer came to escape the switch.
+_MESH_KILL_SWITCH_VALUES = ("false", "0", "no")
+
+
+def mesh_disabled_by_env() -> bool:
+    """Report whether ``STRANDS_MESH`` forces the mesh off.
+
+    ``STRANDS_MESH=false`` (or ``0`` / ``no``) is documented in README's
+    Configuration table as "a hard kill switch that also overrides an explicit
+    ``mesh=True``". An operator who sets it is asking for no Zenoh session and no
+    presence on the fleet, so every path that can open one answers this -- not
+    only :func:`init_mesh`.
+
+    The switch is one-directional here: it only ever forces mesh OFF. Opting a
+    bare ``Robot()`` *on* via ``STRANDS_MESH=true`` is resolved in the ``Robot``
+    factory, which reads the affirmative spellings instead. A caller asking "may
+    I start a mesh?" wants this predicate; a caller asking "was I asked to start
+    one?" wants that one, and the two are not each other's negation -- an unset
+    variable answers False to both.
+
+    This is the implementation; :func:`mesh_kill_switch_engaged` is the same question with an
+    injectable environment and delegates here for the ambient case. Two independent copies of this
+    test is precisely the shape of the bug the switch exists to prevent (Q32: a second inline spelling
+    is how the robot-less gateway peer escaped it), so a rename that leaves a duplicate behind would
+    re-create that hazard with better wording.
+    """
+    return os.getenv("STRANDS_MESH", "").strip().lower() in _MESH_KILL_SWITCH_VALUES
+
+
 # init_mesh -- the only public constructor
 def mesh_kill_switch_engaged(env: dict[str, str] | None = None) -> bool:
     """True when ``STRANDS_MESH`` explicitly forbids joining the mesh.
@@ -3785,8 +3851,9 @@ def mesh_kill_switch_engaged(env: dict[str, str] | None = None) -> bool:
     became a live ``gateway-*`` peer with six subscriber callback threads). The
     switch only ever forces mesh OFF - it never turns it on.
     """
-    source = os.environ if env is None else env
-    return source.get("STRANDS_MESH", "").strip().lower() in ("false", "0", "no")
+    if env is None:
+        return mesh_disabled_by_env()
+    return env.get("STRANDS_MESH", "").strip().lower() in _MESH_KILL_SWITCH_VALUES
 
 
 def init_mesh(
@@ -3806,7 +3873,7 @@ def init_mesh(
     # env var only ever forces mesh OFF here, never ON, so a caller that
     # explicitly opted out is honoured. The opt-in path (a bare ``Robot()``
     # turning mesh ON via STRANDS_MESH=true) is resolved in the Robot factory.
-    if mesh_kill_switch_engaged():
+    if mesh_disabled_by_env():
         mesh = False
     if not mesh:
         return None

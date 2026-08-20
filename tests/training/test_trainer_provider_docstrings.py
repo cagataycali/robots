@@ -6,10 +6,12 @@ contract (``validate`` / ``prepare`` / ``train`` / ``export`` / ``status`` /
 :class:`~strands_robots.training.mock.MockTrainer` follows suit. The real
 providers (:class:`~strands_robots.training.cosmos3.Cosmos3Trainer`,
 :class:`~strands_robots.training.groot.Gr00tTrainer`,
-:class:`~strands_robots.training.lerobot.LerobotTrainer`) genuinely differ per
-backend - each ``validate`` checks backend-specific inputs and each ``train``
-drives a different in-process training function - so every public override needs
-its own docstring rather than silently leaning on the inherited one.
+:class:`~strands_robots.training.lerobot.LerobotTrainer`,
+:class:`~strands_robots.training.sagemaker.SagemakerTrainer`) genuinely differ
+per backend - each ``validate`` checks backend-specific inputs, and each
+``train`` either drives a different in-process training function or submits the
+spec to a managed runner - so every public override needs its own docstring
+rather than silently leaning on the inherited one.
 
 This guard walks the provider modules and fails if any concrete ``Trainer``
 subclass defines a public method or property with no docstring.
@@ -25,8 +27,8 @@ import strands_robots.training as training_pkg
 _PACKAGE_DIR = Path(training_pkg.__file__).parent
 
 # Provider modules that define a concrete Trainer subclass (mock is the
-# dependency-free reference; the other three are the real backends).
-_PROVIDER_MODULES = ("mock.py", "cosmos3.py", "groot.py", "lerobot.py")
+# dependency-free reference; the others are the real backends).
+_PROVIDER_MODULES = ("mock.py", "cosmos3.py", "groot.py", "lerobot.py", "sagemaker.py")
 
 
 def _public_members_without_docstring(class_node: ast.ClassDef) -> list[str]:
@@ -55,13 +57,14 @@ def _concrete_trainer_classes() -> dict[str, ast.ClassDef]:
 
 
 def test_provider_modules_define_concrete_trainers() -> None:
-    """Guard: the scan actually found the four concrete Trainer subclasses."""
+    """Guard: the scan actually found the five concrete Trainer subclasses."""
     found = set(_concrete_trainer_classes())
     assert found == {
         "mock.py::MockTrainer",
         "cosmos3.py::Cosmos3Trainer",
         "groot.py::Gr00tTrainer",
         "lerobot.py::LerobotTrainer",
+        "sagemaker.py::SagemakerTrainer",
     }, found
 
 

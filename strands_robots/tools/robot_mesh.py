@@ -47,6 +47,7 @@ from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots.mesh import security as _security
+from strands_robots.mesh.core import mesh_disabled_by_env
 from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
 
 # Literal peer-id pattern for watch(target=...). Peer ids are an enumerable
@@ -176,7 +177,8 @@ def _warn_none_opt_out_once() -> None:
     logger.warning(
         "[robot_mesh] STRANDS_MESH_HITL_ACTIONS=none -- human-in-the-loop "
         "approval is DISABLED for all mesh actions. Physical-actuation "
-        "commands (tell/send/stop/broadcast/emergency_stop) will dispatch "
+        "commands (tell/send/stop/rpc/broadcast/emergency_stop) will "
+        "dispatch "
         "without operator confirmation."
     )
 
@@ -598,7 +600,32 @@ atexit.register(_stop_gateway_mesh)
 
 
 def _gateway_mesh() -> Any | None:
-    """Lazily create the robot-less gateway Mesh (None if zenoh unavailable)."""
+    """Lazily create the robot-less gateway Mesh.
+
+    Returns None when zenoh is unavailable, and -- before trying -- when
+    ``STRANDS_MESH`` trips the hard kill switch.
+
+    This is the one ``Mesh`` in the tree built without going through
+    :func:`~strands_robots.mesh.core.init_mesh`, so it did not inherit that
+    function's kill-switch check. README documents ``STRANDS_MESH=false`` as
+    overriding even an explicit ``mesh=True``, but an operator who set it and
+    then used the ``robot_mesh`` tool from a robot-less process still got a real
+    Zenoh session, this peer advertised to the fleet as ``gateway-*``, and the
+    heartbeat, state and seven sensor threads :meth:`Mesh.start` spawns -- for
+    the life of the process, since the result is cached here until
+    :func:`_stop_gateway_mesh` runs at exit. A kill switch that leaves nine
+    threads publishing is not a kill switch.
+
+    The check is deliberately outside ``_GATEWAY_LOCK``: it reads one env var and
+    touches no shared state, and a disabled mesh should not queue behind a
+    bring-up that is holding the lock through its discovery sleep.
+    """
+    if mesh_disabled_by_env():
+        logger.debug(
+            "robot_mesh: gateway mesh not started: STRANDS_MESH=%r disables the mesh",
+            os.getenv("STRANDS_MESH", ""),
+        )
+        return None
     with _GATEWAY_LOCK:
         cached = _GATEWAY.get("mesh")
         if cached is not None and getattr(cached, "alive", False):
@@ -841,6 +868,15 @@ def _device_connect_dispatch(
                     if funcs:
                         names = [f["name"] if isinstance(f, dict) else f for f in funcs]
                         text += f"    Functions: {', '.join(names)}\n"
+            # Audit the read-only observation actions on this backend too. The
+            # mesh rendering of ``peers`` / ``status`` records the fleet it read
+            # (see the ``peers`` branch in the mesh dispatch below); this backend
+            # is the one tried FIRST whenever Device Connect has devices, so
+            # leaving it out made the audited implementations the fallback and
+            # the unaudited ones the default. ``peers`` in particular returns
+            # every device id and every function name the fleet exposes, so an
+            # enumeration of the callable surface would otherwise leave no trail.
+            _audit_tool_action(action, target, True, f"devices={len(devices)}")
             return _DCResult(_ok(text))
 
         if action == "tell":
@@ -1034,13 +1070,13 @@ def robot_mesh(
           so a malformed or out-of-policy payload is rejected client-side
           before it hits the wire.
         * Every ``tell`` / ``send`` / ``broadcast`` / ``stop`` /
-          ``emergency_stop`` is audited.
+          ``emergency_stop`` / ``rpc`` is audited.
     """
     # Resolve which actions require a human-in-the-loop interrupt for THIS
     # call. Consumers configure the set via STRANDS_MESH_HITL_ACTIONS; the
     # default gates every physical-actuation action (emergency_stop,
-    # broadcast, tell, send, stop). A malformed env var fails loud here
-    # rather than silently degrading the gate.
+    # broadcast, tell, send, stop, rpc). A malformed env var fails loud
+    # here rather than silently degrading the gate.
     try:
         interrupt_actions = _resolve_interrupt_actions()
     except _InterruptConfigError as exc:
@@ -1297,6 +1333,15 @@ def robot_mesh(
     # All remaining actions need an outbound mesh.
     mesh = _resolve_mesh(target)
     if mesh is None:
+        if mesh_disabled_by_env():
+            # Naming the variable matters more here than anywhere else in this
+            # function: the generic remedy below is to construct a Robot(), and
+            # the kill switch would refuse that mesh too, so an operator
+            # following it learns nothing and tries twice.
+            return _err(
+                f"mesh disabled: STRANDS_MESH={os.getenv('STRANDS_MESH', '')!r} is a hard kill switch. "
+                f"Unset it (or set it to true) to use action={action!r}."
+            )
         return _err("no local mesh found. Construct a Robot()/Simulation() first to join the mesh, then retry.")
 
     # ── action: tell ──────────────────────────────────────────────────────
