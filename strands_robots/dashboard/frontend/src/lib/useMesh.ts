@@ -42,8 +42,14 @@ export function useMesh(): MeshStore {
     let ws: WebSocket | null = null
     let closed = false
     let flashTimer: ReturnType<typeof setTimeout>
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
 
     const connect = () => {
+      // `closed` was checked when the retry was SCHEDULED, not when it fired, so
+      // a backoff already in flight at teardown opened a socket afterwards: a
+      // zombie /ws/mesh nobody closes, still pushing peers into an unmounted
+      // tree. Both halves matter - clear the pending timer AND refuse here.
+      if (closed) return
       ws = new WebSocket(wsUrl('/ws/mesh'))
       setConn('connecting')
 
@@ -55,7 +61,7 @@ export function useMesh(): MeshStore {
         setConn('closed')
         if (!closed) {
           const delay = Math.min(1000 * 2 ** retryRef.current++, 15000)
-          setTimeout(connect, delay)
+          retryTimer = setTimeout(connect, delay)
         }
       }
       ws.onmessage = (msg) => {
@@ -131,7 +137,13 @@ export function useMesh(): MeshStore {
       })
     }, 5000)
 
-    return () => { closed = true; clearInterval(sweep); ws?.close() }
+    return () => {
+      closed = true
+      clearInterval(sweep)
+      if (retryTimer) clearTimeout(retryTimer)
+      if (flashTimer) clearTimeout(flashTimer)
+      ws?.close()
+    }
   }, [])
 
   return { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded, lastEventAt, everOpen }
