@@ -27,6 +27,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from strands_robots.dashboard.ttl_cache import TTLCache
+
 logger = logging.getLogger(__name__)
 
 JOBS_FILE = Path(os.getenv(
@@ -277,9 +279,9 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
     return sorted(out, key=lambda r: r["repo_id"])[:50]
 
 
-_HUB_DS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _HUB_DS_TTL_S = 300.0
-_HUB_DS_LOCK = threading.Lock()
+#: Bounded and self-pruning - see ttl_cache: the old dict kept every prefix ever typed.
+_HUB_DS_CACHE: TTLCache[list[dict[str, Any]]] = TTLCache(_HUB_DS_TTL_S)
 
 
 def hub_datasets(query: str = "", limit: int = 12) -> tuple[list[dict[str, Any]], str | None]:
@@ -302,11 +304,9 @@ def hub_datasets(query: str = "", limit: int = 12) -> tuple[list[dict[str, Any]]
     which of the two fields to fill.
     """
     key = f"{query}:{limit}"
-    now = time.time()
-    with _HUB_DS_LOCK:
-        hit = _HUB_DS_CACHE.get(key)
-        if hit and now - hit[0] < _HUB_DS_TTL_S:
-            return hit[1], None
+    cached = _HUB_DS_CACHE.get(key)
+    if cached is not None:
+        return cached, None
     try:
         from huggingface_hub import HfApi
 
@@ -328,8 +328,7 @@ def hub_datasets(query: str = "", limit: int = 12) -> tuple[list[dict[str, Any]]
         logger.warning("hub dataset search failed: %r", exc)
         kind = type(exc).__name__
         return [], f"Hub search unavailable ({kind}) - showing local datasets only"
-    with _HUB_DS_LOCK:
-        _HUB_DS_CACHE[key] = (now, rows)
+    _HUB_DS_CACHE.put(key, rows)
     return rows, None
 
 

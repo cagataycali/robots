@@ -23,16 +23,19 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-import threading
 import time
 from pathlib import Path
 from typing import Any
 
+from strands_robots.dashboard.ttl_cache import TTLCache
+
 logger = logging.getLogger(__name__)
 
-_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL_S = 300.0
-_CACHE_LOCK = threading.Lock()
+#: A dict keyed by query grew one entry per KEYSTROKE and never dropped one, not even
+#: after its TTL made it useless. TTLCache prunes itself; the eviction order is
+#: insertion order, which for a type-ahead is the order prefixes get abandoned in.
+_CACHE: TTLCache[list[dict[str, Any]]] = TTLCache(_CACHE_TTL_S)
 
 # lerobot policy family names that can appear in checkpoint tags/names.
 _FAMILY_RE = re.compile(
@@ -118,11 +121,9 @@ def hub_search(query: str, limit: int = 12) -> tuple[list[dict[str, Any]], str |
     world they are in.
     """
     key = f"{query}:{limit}"
-    now = time.time()
-    with _CACHE_LOCK:
-        hit = _CACHE.get(key)
-        if hit and now - hit[0] < _CACHE_TTL_S:
-            return hit[1], None
+    cached = _CACHE.get(key)
+    if cached is not None:
+        return cached, None
     try:
         from huggingface_hub import HfApi
 
@@ -149,8 +150,7 @@ def hub_search(query: str, limit: int = 12) -> tuple[list[dict[str, Any]], str |
         # do NOT cache a failure - the next keystroke should retry
         kind = type(exc).__name__
         return [], f"Hub search unavailable ({kind}) - showing local cache only"
-    with _CACHE_LOCK:
-        _CACHE[key] = (now, rows)
+    _CACHE.put(key, rows)
     return rows, None
 
 
