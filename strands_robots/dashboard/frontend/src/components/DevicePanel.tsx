@@ -14,6 +14,7 @@ import { parseCalibrationList, type CalibrationEntry } from '../lib/calibration'
 import { calibrationVerdict } from '../lib/calibrationMatch'
 import { rescanReport, hardwareKey, type RescanReport } from '../lib/rescanReport'
 import { isLatestRequest } from '../lib/requestOrder'
+import { peerNameField } from '../lib/peerName'
 
 interface SerialPort {
   device: string
@@ -112,6 +113,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [camW, setCamW] = useState('')
   const [camH, setCamH] = useState('')
   const [robotId, setRobotId] = useState('')
+  /* Q55: the name the peer will carry. The route has always accepted `peer_id` (and remembers it in
+     the board's profile), but no field ever sent one, so every arm was named after a clock. */
+  const [peerName, setPeerName] = useState('')
   // The real calibration ids on this machine. `null` = not read yet / failed,
   // which the verdict deliberately treats as "say nothing" rather than a guess.
   const [calibIds, setCalibIds] = useState<CalibrationEntry[] | null>(null)
@@ -287,8 +291,20 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   // operator who typed 12.5 would otherwise never learn which of the two the camera was given.
   const camNote = [camNums.fps, camNums.width, camNums.height].map(v => v?.note).filter(Boolean).join(' · ') || null
 
+  /* Judged against BOTH the live children and the remembered profiles: a name that collides with
+     either is the 409 the server would answer, and it costs nothing to say so before the button. */
+  const nameVerdict = peerNameField(peerName, {
+    existing: [
+      ...Object.keys(doc?.managed ?? {}),
+      ...Object.values(profiles ?? {}).map(p => (p as any)?.peer_id).filter(Boolean),
+    ],
+    robotName,
+    mode,
+  })
+
   const spawn = () => act(() => post('/api/devices/spawn', {
     robot_name: robotName,
+    peer_id: nameVerdict.value,
     mode,
     port: mode === 'real' ? port || null : null,
     // The camera config must be a MAPPING per entry ({index_or_path: N, ...});
@@ -460,6 +476,18 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
 
           <section>
             <h3>Spawn</h3>
+            <label className="field">
+              <span>Name</span>
+              <input value={peerName} placeholder="left-arm (optional)"
+                     aria-invalid={nameVerdict.problem ? true : undefined}
+                     onChange={e => setPeerName(e.target.value)} />
+            </label>
+            {nameVerdict.problem
+              ? <p className="hint bad" role="alert">⚠ {nameVerdict.problem}{nameVerdict.suggestion && (
+                  <> <button type="button" className="btn ghost tiny"
+                             onClick={() => setPeerName(nameVerdict.suggestion!)}>use {nameVerdict.suggestion}</button></>
+                )}</p>
+              : nameVerdict.note ? <p className="hint">{nameVerdict.note}</p> : null}
             <div className="row">
               <label className="field">
                 <span>Robot</span>
@@ -571,7 +599,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
             )}
             <div className="sheet-actions">
               <button className="btn go"
-                      disabled={busy || !robotName || (mode === 'real' && !port) || !!camProblem}
+                      disabled={busy || !robotName || (mode === 'real' && !port) || !!camProblem || !!nameVerdict.problem}
                       onClick={spawn}>
                 spawn
               </button>
