@@ -1,0 +1,46 @@
+{
+  "truth": [
+    {
+      "label": "smooth",
+      "freq": 0.0,
+      "true_rms_jerk": 177.8172281435814,
+      "n_ticks": 90,
+      "achieved_j1_start": 2.541995867381378e-06,
+      "achieved_j1_end": 0.5974530039217434
+    },
+    {
+      "label": "f02",
+      "freq": 2.0,
+      "true_rms_jerk": 183.50925398237757,
+      "n_ticks": 90,
+      "achieved_j1_start": 2.541995867381378e-06,
+      "achieved_j1_end": 0.596686299956949
+    },
+    {
+      "label": "f05",
+      "freq": 5.0,
+      "true_rms_jerk": 379.9514008425406,
+      "n_ticks": 90,
+      "achieved_j1_start": 2.541995867381378e-06,
+      "achieved_j1_end": 0.5976736834655604
+    },
+    {
+      "label": "f08",
+      "freq": 8.0,
+      "true_rms_jerk": 378.3468153658663,
+      "n_ticks": 90,
+      "achieved_j1_start": 2.541995867381378e-06,
+      "achieved_j1_end": 0.5974108764238656
+    },
+    {
+      "label": "f12",
+      "freq": 12.0,
+      "true_rms_jerk": 270.68238236621465,
+      "n_ticks": 90,
+      "achieved_j1_start": 2.541995867381378e-06,
+      "achieved_j1_end": 0.5974601114629629
+    }
+  ],
+  "root": "/tmp/jerk-32356608774/ds",
+  "dt_sim": 0.002
+}
