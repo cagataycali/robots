@@ -309,6 +309,33 @@ def _normalize_max_relative_target(value: Any, robot_type: str) -> float | dict[
     return float(value)
 
 
+def _degraded_notes(host: Any) -> dict[str, str]:
+    """The ``{camera: reason}`` book of a host, created on demand.
+
+    ``Robot.__init__`` sets ``_degraded_cameras``, so this is belt and braces —
+    but the write it guards is the LAST step of a recovery that has already
+    succeeded: the camera was dropped, the motors are up, the arm is usable. An
+    AttributeError there is swallowed by the caller's ``except Exception`` and
+    reported as ``connection failed: 'Robot' object has no attribute
+    '_degraded_cameras'``, which throws away the only sentence that named the
+    broken camera and calls a rescued arm dead. Bookkeeping must never be able to
+    destroy the diagnosis it exists to record.
+
+    A free function, not a method, for the same reason ``_degrade_to_available_cameras``
+    is one: the connect paths are borrowed by hosts that are not ``Robot``
+    instances (test stubs today, a composed host tomorrow), and a host built
+    without ``__init__`` must still get an honest answer.
+    """
+    book = getattr(host, "_degraded_cameras", None)
+    if not isinstance(book, dict):
+        book = {}
+        try:
+            host._degraded_cameras = book
+        except Exception:  # noqa: BLE001 - a frozen/slotted host still gets a book
+            return book
+    return book
+
+
 def _degrade_to_available_cameras(robot: Any) -> dict[str, str]:
     """Drop the cameras this machine will not open, so the arm can still run.
 
@@ -1490,7 +1517,7 @@ class Robot(TeleopMixin, AgentTool):
                     if not degraded:
                         # Re-raise if it's a different error
                         raise e
-                    self._degraded_cameras.update(degraded)
+                    _degraded_notes(self).update(degraded)
 
             # Final connection check
             if not self.robot.is_connected:
@@ -2701,7 +2728,7 @@ class Robot(TeleopMixin, AgentTool):
         """
         inner = self.robot
         if getattr(inner, "is_connected", False):
-            return True, dict(self._degraded_cameras), ""
+            return True, dict(_degraded_notes(self)), ""
 
         try:
             inner.connect(False)  # calibrate=False
@@ -2709,19 +2736,19 @@ class Robot(TeleopMixin, AgentTool):
             degraded = _degrade_to_available_cameras(inner)
             if not degraded:
                 return False, {}, str(exc)
-            self._degraded_cameras.update(degraded)
-            return True, dict(self._degraded_cameras), ""
+            _degraded_notes(self).update(degraded)
+            return True, dict(_degraded_notes(self)), ""
 
         if not getattr(inner, "is_connected", False):
             # connect() reporting success while is_connected stays False is the
             # partial-connect trap: some device in the set never came up.
             degraded = _degrade_to_available_cameras(inner)
             if degraded:
-                self._degraded_cameras.update(degraded)
-                return True, dict(self._degraded_cameras), ""
+                _degraded_notes(self).update(degraded)
+                return True, dict(_degraded_notes(self)), ""
             return False, {}, f"{inner} did not connect and gave no error"
 
-        return True, dict(self._degraded_cameras), ""
+        return True, dict(_degraded_notes(self)), ""
 
     def cleanup(self) -> None:
         """Cleanup resources and stop any running tasks.
