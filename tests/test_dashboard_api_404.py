@@ -9,6 +9,8 @@ of seeing a status it could branch on.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -45,10 +47,26 @@ class _StubBridge:
         pass
 
 
+#: The JSON 404 this file grades is emitted by the SPA catch-all, and create_app only registers that
+#: route when the built frontend exists. Without it FastAPI answers its own {"detail":"Not Found"} —
+#: still a 404, so the first assertion passes and the test fails one line later on a missing "error"
+#: key, which reads like the handler regressed. It has not: the handler was never mounted. A fresh
+#: clone and CI without a frontend build are both in that state, so say so instead of failing
+#: mysteriously — a test that grades a different code path depending on whether someone ran
+#: `npm run build` is not measuring what its name claims.
+_DIST = pathlib.Path(srv.__file__).parent / "frontend" / "dist"
+_needs_dist = pytest.mark.skipif(
+    not (_DIST / "index.html").exists(),
+    reason=f"no built frontend at {_DIST}: the JSON /api 404 lives in the SPA route, which is only "
+    "mounted when index.html exists. Run `npm run build` in strands_robots/dashboard/frontend.",
+)
+
+
 def _client() -> TestClient:
     return TestClient(srv.create_app(bridge=_StubBridge()))
 
 
+@_needs_dist
 def test_unknown_api_path_is_json_404() -> None:
     c = _client()
     r = c.get("/api/nope/does-not-exist")
@@ -59,6 +77,7 @@ def test_unknown_api_path_is_json_404() -> None:
     assert "/api/nope/does-not-exist" in body["detail"]
 
 
+@_needs_dist
 def test_unknown_api_path_never_returns_html() -> None:
     # the exact shape the frontend probes: a route family that does not exist
     c = _client()
@@ -72,6 +91,7 @@ def test_unknown_api_path_never_returns_html() -> None:
             assert "text/html" not in r.headers["content-type"], path
 
 
+@_needs_dist
 def test_http_get_on_a_websocket_path_is_404_not_a_page() -> None:
     c = _client()
     r = c.get("/ws/chat")
@@ -79,6 +99,7 @@ def test_http_get_on_a_websocket_path_is_404_not_a_page() -> None:
     assert r.headers["content-type"].startswith("application/json")
 
 
+@_needs_dist
 def test_real_spa_route_still_serves_the_shell() -> None:
     if not srv.FRONTEND_DIST.exists():  # unbuilt checkout
         return
