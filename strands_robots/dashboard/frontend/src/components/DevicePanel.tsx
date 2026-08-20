@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { boardListEmptyLine } from '../lib/boardList'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { numField } from '../lib/numField'
 import { findConsent, type ConsentNeed } from '../lib/consent'
@@ -647,7 +648,14 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
               so an arm that is running must be despawned before it can be measured.
             </p>
             <ul className="boardlist">
-              {freePorts.length === 0 && <li className="muted">no servo board detected</li>}
+              {/* `no servo board detected` used to appear whenever this array was empty — including
+                  while the first scan was in flight and when it FAILED (401 through the tunnel, dead
+                  dashboard). With two arms plugged in, a failed request told the operator their boards
+                  were gone. lib/boardList lets only an ANSWERED scan speak about hardware. */}
+              {freePorts.length === 0 && (() => {
+                const line = boardListEmptyLine({ scanned: doc !== null, error })
+                return <li className="muted" role="status">{line.message}</li>
+              })()}
               {freePorts.map(p => {
                 const v = roles[p.device]
                 const busy = claimedPorts.has(p.device)
