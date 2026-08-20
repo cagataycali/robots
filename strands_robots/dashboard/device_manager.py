@@ -908,9 +908,9 @@ def autospawn_veto(env: Mapping[str, str]) -> str | None:
     serial port, without anybody clicking anything. That is right for the operator's dashboard and
     catastrophic anywhere else, which Q81 measured the hard way:
 
-    ``tests/test_dashboard_datasets_route_recording.py`` builds the app with
-    ``with TestClient(app)``, which fires the startup hook, which starts the watcher, which scans
-    the real USB bus and spawns the saved profiles. The test then passes and the pytest process
+    Any test that builds the app with ``with TestClient(app)`` fires the startup hook, which starts
+    the watcher, which scans the real USB bus and spawns the saved profiles -- one such module, run
+    repeatedly, is all it takes. The test then passes and the pytest process
     exits -- leaving its children orphaned (ppid=1) and still holding the arm ports. By 2026-08-20
     **185 such orphans from ~30 runs of that one file** held cagatay's two SO-101 ports, and the
     live arm child could no longer read a byte: ``[TxRxResult] Port is in use!``. The dashboard
@@ -920,8 +920,8 @@ def autospawn_veto(env: Mapping[str, str]) -> str | None:
     Two signals in those orphans' own environment said plainly that they should never have existed:
 
     * ``PYTEST_CURRENT_TEST`` / ``PYTEST_VERSION`` -- this is a test run. A test may exercise the
-      watcher's LOGIC all it likes (``tests/test_dashboard_usb_autospawn.py`` drives a fake
-      manager, and still does), but it must never take a physical port. The suite cannot be trusted
+      watcher's LOGIC all it likes against a fake manager, and the suite does, but it must never
+      take a physical port. The suite cannot be trusted
       to remember an env var it does not know it needs, so the refusal lives here, once.
     * ``STRANDS_MESH=false`` -- the documented HARD kill switch. Q32 fixed the same class for the
       mesh gateway: a process with the mesh switched off had still joined the fleet because one
