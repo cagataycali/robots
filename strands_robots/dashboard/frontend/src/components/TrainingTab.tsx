@@ -13,6 +13,7 @@ import { datasetHint, isCurrentResponse } from '../lib/datasetHint'
 import { jobsLedgerNotice } from '../lib/jobsLedger'
 import { orderJobsNewestFirst } from '../lib/orderJobs'
 import { newerThanApplied } from '../lib/requestOrder'
+import { outputDirSay, trainGate, type OutputDirVerdict } from '../lib/outputDirIntent'
 
 // One row is either LOCAL (has a `root` path, trains offline) or from the HUB
 // (no root, trains from repo_id after a download). lib/datasetSelection owns
@@ -117,6 +118,29 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
   }
   useEffect(() => { refresh() }, [])
+
+  // Q58: ask what is in the output dir while the operator types. Read-only endpoint; a failure
+  // leaves the verdict null, which arms nothing and blocks nothing (the backend still refuses a
+  // destructive launch, so a probe outage costs a clearer message, never a delete).
+  const outSeq = useRef(0)
+  useEffect(() => {
+    const path = form.output_dir.trim()
+    setClearArmedFor(null)  // editing the field revokes a tick made for the old path
+    if (!path) { setOutDir(null); return }
+    const seq = ++outSeq.current
+    const t = setTimeout(async () => {
+      try {
+        const v = await api(`/api/training/output-dir?path=${encodeURIComponent(path)}`)
+        if (!isCurrentResponse(seq, outSeq.current)) return
+        setOutDir(v)
+      } catch {
+        if (!isCurrentResponse(seq, outSeq.current)) return
+        setOutDir(null)
+      }
+    }, 400)
+    return () => clearTimeout(t)
+  }, [form.output_dir])
+
 
   // Type-ahead: datasets only (re-polling jobs on every keystroke would be
   // rude to a running job's status endpoint). 250ms because each miss is a Hub
@@ -235,6 +259,9 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       // nobody re-made. Same rule as deployIntent: one click authorises one action.
       setDsOverride(null)
     }
+    // Q58: a run whose output_dir cannot be used - or whose contents would be DELETED without a
+    // deliberate tick - never leaves the browser. validate() writes nothing, so it is exempt.
+    if (!validateOnly && !gate.ok) { setMsg(`✗ ${gate.why}`); return }
     setBusy(true); setMsg(null)
     const body = {
       provider: form.provider,
@@ -242,6 +269,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       dataset_repo_id: form.dataset_repo_id || undefined,
       base_model: form.base_model || undefined,
       output_dir: form.output_dir || undefined,
+      // Q58: consent to deleting what is already in that directory, carried only when the
+      // operator ticked the box FOR THIS PATH. A run that needs it and lacks it never leaves
+      // the browser (the gate below refuses first), so this is never a silent yes.
+      ...(gate.confirmClear ? { confirm_clear: true } : {}),
       steps: wantedSteps.value,
       method: form.method || undefined,
       // Q49: sent only when the chosen provider asks for it. An empty string would reach
@@ -264,6 +295,16 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   /** Q37: the picked dataset's refusal, and the one key the operator has insisted on. */
   const [dsWarn, setDsWarn] = useState<{ key: string; reason: string; recording?: boolean } | null>(null)
   const [dsOverride, setDsOverride] = useState<string | null>(null)
+  // Q58: what a run would DO to the typed output_dir, and the path the operator has ticked
+  // for. `clearArmedFor` holds a PATH, not a boolean, so a yes given for one directory can
+  // never delete another after the field is edited (same rule as dsOverride/deployIntent).
+  const [outDir, setOutDir] = useState<OutputDirVerdict | null>(null)
+  const [clearArmedFor, setClearArmedFor] = useState<string | null>(null)
+
+  // Q58: the verdict's wording and whether the run may start at all.
+  const outSay = outputDirSay(outDir)
+  const gate = trainGate({ path: form.output_dir, verdict: outDir, armedFor: clearArmedFor })
+
 
   const [collect, setCollect] = useState({ dataset_root: '', instruction: 'pick up the red cube', n_episodes: '5', duration: '10', robot_name: 'so101' })
   const [showCollect, setShowCollect] = useState(false)
@@ -487,8 +528,24 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
           <input value={form.base_model} onChange={e => set('base_model', e.target.value)} disabled={busy} placeholder="lerobot/smolvla_base" />
         </label>
         <label className="field"><span>output dir</span>
-          <input value={form.output_dir} onChange={e => set('output_dir', e.target.value)} disabled={busy} placeholder="/tmp/my_policy_ckpt" />
+          <input value={form.output_dir} onChange={e => set('output_dir', e.target.value)} disabled={busy}
+                 placeholder="/tmp/my_policy_ckpt" aria-describedby="train-outdir-say"
+                 aria-invalid={outSay.blocked || outSay.confirmable} />
+          {/* Q58: a run into an existing directory DELETES it (the trainer rmtree's a dir with no
+              resumable checkpoint). This line is the only warning that exists before the loss, so
+              it names the count and the files rather than saying "not empty". */}
+          <span id="train-outdir-say" className={`fieldsay${outSay.tone === 'info' ? '' : ' bad'}`} role="status" aria-live="polite">
+            {outSay.text ?? ''}
+          </span>
         </label>
+        {outSay.confirmable && (
+          <label className="field check consent-clear">
+            <input type="checkbox" checked={clearArmedFor === (outDir?.path ?? form.output_dir.trim())}
+                   onChange={e => setClearArmedFor(e.target.checked ? (outDir?.path ?? form.output_dir.trim()) : null)}
+                   disabled={busy} />
+            <span>{outSay.confirmLabel}</span>
+          </label>
+        )}
         {/* Q49: appears only for the provider that needs it. GR00T's validate() refuses without
             an embodiment tag; before this the form had no field for it at all, so `groot` was a
             selectable option that could not be submitted whatever you typed. */}
@@ -520,7 +577,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <div className="train-actions">
           <button className="btn ghost" onClick={() => submit(true)} disabled={busy || !!wantedSteps.problem}>✓ validate</button>
           <button className="btn go wide" onClick={() => submit(false)}
-                  disabled={busy || !datasetPicked || !form.output_dir || !!wantedSteps.problem}>▶ train</button>
+                  disabled={busy || !datasetPicked || !!wantedSteps.problem || !gate.ok}
+                  title={gate.why ?? undefined}>
+            {outSay.confirmable && gate.ok ? '▶ delete and train' : '▶ train'}
+          </button>
         </div>
         {msg && <div className="train-msg">{msg}</div>}
         {/* Not started, and not blocked either. The reason is the server's own sentence, which

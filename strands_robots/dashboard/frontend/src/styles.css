@@ -1668,3 +1668,12 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .rec-fps-fix { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; align-items: flex-start; }
 .rec-fps-fix .btn { padding: 4px 10px; font-size: 0.85rem; }
 .rec-fps-fix .fieldsay { max-width: 46ch; }
+
+/* Q58: consenting to a delete must not look like any other checkbox on the form. */
+.field.check.consent-clear {
+  border: 1px solid var(--bad, #ff6b6b);
+  border-radius: var(--r2, 8px);
+  padding: var(--s2, 8px) var(--s3, 12px);
+  background: color-mix(in srgb, var(--bad, #ff6b6b) 8%, transparent);
+}
+.field.check.consent-clear span { color: var(--bad, #ff6b6b); font-weight: 600; }
