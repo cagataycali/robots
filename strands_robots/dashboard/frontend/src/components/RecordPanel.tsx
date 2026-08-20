@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer } from '../types'
-import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordApi'
+import { getRecordApi, type RecordApi, type RecordSession, type UploadPreflight } from '../lib/recordApi'
 import { openActionCopy } from '../lib/recordAction'
 import { sessionFreshness, staleSuffix } from '../lib/sessionFreshness'
 import { api as httpGet, HttpError } from '../lib/endpoints'
@@ -76,6 +76,27 @@ export default function RecordPanel(
     .filter((x): x is { slot: 'leader' | 'follower'; msg: string } => !!x.msg)
 
   const [upload, setUpload] = useState(false)
+  // Q72: whether this machine can publish AT ALL, and where to. Asked when the tick is made — the
+  // answer used to arrive at the end of the session, when the recording was already spent and the
+  // recorder about to be destroyed. Null = not asked yet; failure to ask stays silent (no evidence
+  // is not evidence of a problem), but then the tick cannot arm either: see armedUpload.
+  const [pre, setPre] = useState<UploadPreflight | null>(null)
+  const [preErr, setPreErr] = useState(false)
+  // The operator's deliberate "yes, that namespace really is mine" for the one refusal that is a
+  // genuine unknown from here.
+  const [uploadForce, setUploadForce] = useState(false)
+  useEffect(() => {
+    if (!upload || !api) { setPre(null); setPreErr(false); return }
+    let alive = true
+    void api.uploadPreflight()
+      .then(v => { if (alive) { setPre(v); setPreErr(false) } })
+      .catch(() => { if (alive) { setPre(null); setPreErr(true) } })
+    return () => { alive = false }
+  }, [upload, api, s?.dataset])
+  // A hard refusal cannot be forced; the foreign-namespace one can, deliberately. A preflight that
+  // could not be fetched leaves the tick disarmed rather than guessing it is fine.
+  const uploadBlocked = !!upload && (!pre || (!pre.ok && !(pre.needs_force && uploadForce)))
+  const armedUpload = upload && !uploadBlocked
 
   // Q39: the backend refuses a taken dataset name before it parks the arms - but by then the
   // operator has picked a pair, aimed two cameras and pressed the button. The training picker's own
@@ -580,20 +601,44 @@ export default function RecordPanel(
                So the box could only produce a refusal at the end of the session. It now states
                where the push goes, and the two things the operator cannot see: the repo is public
                unless their namespace defaults otherwise, and nothing in this dashboard can retry a
-               failed push (the session is gone once it closes). */
-            <p className="hint">
-              publishes as <code>{s.dataset ?? '(unnamed)'}</code> — a dataset can only be pushed
-              under the name it was recorded with. It will be <b>public</b> unless your Hub namespace
-              defaults to private, and if the push fails the episodes stay on this machine: finishing
-              closes the session, so a retry is a <code>huggingface-cli</code> job.
-            </p>
+               failed push (the session is gone once it closes).
+               Q72: and it is CHECKED now, not merely described — see uploadPreflight. */
+            <>
+              <p className={pre && !pre.ok ? 'hint bad' : 'hint'}>
+                publishes as <code>{pre?.destination ?? s.dataset ?? '(unnamed)'}</code> — a dataset
+                can only be pushed under the name it was recorded with. It will be <b>public</b> unless
+                your Hub namespace defaults to private, and if the push fails the episodes stay on this
+                machine: finishing closes the session, so a retry is a <code>huggingface-cli</code> job.
+              </p>
+              {!pre && !preErr && <p className="hint">checking whether this machine can publish…</p>}
+              {preErr && (
+                <p className="hint bad">
+                  could not check whether this machine can publish — leaving the upload OFF rather than
+                  finding out after the session. Finish without it and push with{' '}
+                  <code>huggingface-cli upload</code>, or retry by unticking and ticking again.
+                </p>
+              )}
+              {pre && !pre.ok && (
+                <p className="hint bad" role="alert">⚠ {pre.detail}</p>
+              )}
+              {pre && !pre.ok && pre.needs_force && (
+                <label className="field check">
+                  <input type="checkbox" checked={uploadForce}
+                    onChange={e => setUploadForce(e.target.checked)} />
+                  <span>
+                    I can write to <code>{pre.destination}</code> — publish there anyway
+                  </span>
+                </label>
+              )}
+              {pre?.ok && <p className="hint">✓ logged in as <b>{pre.user}</b></p>}
+            </>
           )}
           <div className="train-actions">
             <button className="btn wide" disabled={busy} onClick={() => {
               void (async () => {
                 setBusy(true); setErr(null)
                 try {
-                  const r = await api!.close(upload ? { upload } : {})
+                  const r = await api!.close(armedUpload ? { upload: true } : {})
                   setClosed(r.detail ?? (r.ok ? `dataset finished with ${kept} episode(s)` : 'close failed'))
                   setS(await api!.session())
                 } catch (e) {
@@ -612,7 +657,11 @@ export default function RecordPanel(
                 setBusy(false)
               })()
             }}>
-              ✓ finish dataset ({kept} kept{episodes.length - kept ? `, ${episodes.length - kept} discarded` : ''})
+              {/* Q72: the button says what it is ABOUT to do. With the tick on but the push refused,
+                  "finish dataset" would quietly not upload — the operator's episodes are safe either
+                  way, so finishing stays allowed, but it must not be mistaken for a publish. */}
+              ✓ {uploadBlocked ? 'finish WITHOUT uploading' : armedUpload ? 'finish + publish' : 'finish dataset'}
+              {' '}({kept} kept{episodes.length - kept ? `, ${episodes.length - kept} discarded` : ''})
             </button>
           </div>
         </div>

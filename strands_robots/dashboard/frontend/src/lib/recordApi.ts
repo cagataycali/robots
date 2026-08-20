@@ -107,6 +107,18 @@ export interface RecordSession {
   } | null
 }
 
+export interface UploadPreflight {
+  /** false = ticking upload can only produce an end-of-session failure */
+  ok: boolean
+  state: 'ready' | 'no_credential' | 'credential_rejected' | 'foreign_namespace' | 'no_dataset'
+  /** the one refusal that is a genuine unknown (an org you may or may not belong to) */
+  needs_force: boolean
+  user: string | null
+  /** the repo id the push would really create, e.g. "me/so101-pick" */
+  destination: string | null
+  detail: string
+}
+
 export interface RecordApi {
   mock: boolean
   session(): Promise<RecordSession>
@@ -130,6 +142,14 @@ export interface RecordApi {
   discard(index: number): Promise<RecordSession>
   /** close the session; upload=true pushes the dataset to the HF Hub */
   close(opts?: { upload?: boolean; repo_id?: string }): Promise<{ ok: boolean; detail?: string }>
+  /**
+   * Q72: can this machine publish this session's dataset — asked BEFORE the recording.
+   *
+   * Every failure `close({upload:true})` can report (no HF credential, revoked token, a dataset
+   * named under a namespace you cannot write to) used to surface at the END of the session, after
+   * the teleop, with no retry: closing destroys the recorder. Read-only, cheap, safe to poll.
+   */
+  uploadPreflight(): Promise<UploadPreflight>
 }
 
 const EMPTY: RecordSession = {
@@ -195,6 +215,18 @@ function makeMock(): RecordApi {
       s = { ...EMPTY }
       return { ok: true, detail: 'mock session closed (nothing was written)' }
     },
+    async uploadPreflight() {
+      // The rehearsal has no Hub credential and must not imply one: a mock that says "ready"
+      // teaches the operator a green tick this machine never earned.
+      return {
+        ok: false,
+        state: 'no_credential' as const,
+        needs_force: false,
+        user: null,
+        destination: s.dataset,
+        detail: 'this is the in-browser rehearsal - nothing is written and nothing can be published',
+      }
+    },
   }
 }
 
@@ -210,6 +242,7 @@ function makeReal(): RecordApi {
     redoEpisode: () => post<RecordSession>('/api/record/episode/redo'),
     discard: index => post<RecordSession>('/api/record/episode/discard', { index }),
     close: opts => post('/api/record/close', opts ?? {}),
+    uploadPreflight: () => api<UploadPreflight>('/api/record/upload-preflight'),
   }
 }
 
