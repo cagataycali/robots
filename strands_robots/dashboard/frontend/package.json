@@ -10,7 +10,8 @@
     "audit:screens": "node scripts/audit-screens-render.mjs",
     "audit:touch": "node scripts/audit-touch-targets.mjs",
     "audit:actions": "node scripts/audit-primary-actions.mjs",
-    "audit": "npm run audit:screens && npm run audit:touch"
+    "audit": "npm run audit:screens && npm run audit:touch && npm run audit:keyboard",
+    "audit:keyboard": "node scripts/audit-keyboard-path.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
