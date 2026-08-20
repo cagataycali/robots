@@ -34,8 +34,9 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+import os
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,74 @@ def call_callable(
         return fn(*args, **kwargs)
 
 
+#: How long a rendezvous may take before the launch FAILS instead of waiting. torch's
+#: own defaults are minutes long and land in a C++ socket wait that no Python-level
+#: timeout can interrupt (BUGS.md Q37), so the bound has to be handed to torch, not
+#: wrapped around it.
+DEFAULT_RDZV_TIMEOUT_S = 120
+RDZV_TIMEOUT_ENV = "STRANDS_TRAIN_RDZV_TIMEOUT_S"
+
+
+def free_local_port() -> int:
+    """A port that is free on the loopback interface right now.
+
+    Binding port 0 and reading back the assignment is the only way to learn a free
+    port without guessing; the gap between closing this socket and torch binding it
+    is a race, but a tiny and well-understood one, and the alternative (asking torch
+    for port 0) is what Q37 is about.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def rendezvous_endpoint(rdzv_endpoint: str, nnodes: int, *, port_picker: Callable[[], int] = free_local_port) -> str:
+    """The ``host:port`` torch should rendezvous on.
+
+    An explicit endpoint always wins — that is the multi-node case, where the
+    address has to be one every node can reach.
+
+    For a single-node launch we now pick a CONCRETE free port on ``127.0.0.1``
+    instead of passing ``localhost:0``. Two reasons, both measured (Q37):
+
+    * **port 0 is not an address a client can dial.** Whether torch's c10d backend
+      hosts the store or dials it depends on ``_matches_machine_hostname``; when it
+      decides to dial, ``localhost:0`` sends it into a retry loop inside
+      ``TCPStore``'s C++ connect that outlived an 8-minute test run.
+    * **``localhost`` is ambiguous on macOS**, resolving to both ``::1`` and
+      ``127.0.0.1``, so the store server and its client can end up on different
+      stacks. ``127.0.0.1`` cannot.
+
+    A multi-node launch with no endpoint used to fall back to ``localhost:0`` too,
+    which can never rendezvous across machines — it is refused now, with the reason.
+    """
+    if rdzv_endpoint:
+        return rdzv_endpoint
+    if nnodes > 1:
+        raise ValueError(
+            f"a {nnodes}-node launch needs an explicit rdzv_endpoint (host:port reachable by every "
+            "node); a loopback address only rendezvouses with itself"
+        )
+    return f"127.0.0.1:{port_picker()}"
+
+
+def rdzv_timeout_s(env: Mapping[str, str] | None = None) -> int:
+    """Seconds a rendezvous may spend before the launch gives up.
+
+    Junk and non-positive values fall back to the default rather than disabling the
+    bound: an unparseable env var must not be able to restore the hang this exists to
+    prevent.
+    """
+    raw = (env if env is not None else os.environ).get(RDZV_TIMEOUT_ENV, "")
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_RDZV_TIMEOUT_S
+    return value if value > 0 else DEFAULT_RDZV_TIMEOUT_S
+
+
 def elastic_launch_callable(
     fn: Callable[..., Any],
     *,
@@ -180,13 +249,18 @@ def elastic_launch_callable(
     """
     from torch.distributed.launcher.api import LaunchConfig, elastic_launch
 
+    timeout_s = rdzv_timeout_s()
     config = LaunchConfig(
         min_nodes=nnodes,
         max_nodes=nnodes,
         nproc_per_node=nproc_per_node,
         run_id=run_id or "strands-train",
         rdzv_backend=rdzv_backend,
-        rdzv_endpoint=rdzv_endpoint or "localhost:0",
+        rdzv_endpoint=rendezvous_endpoint(rdzv_endpoint, nnodes),
+        # Bound every phase of the rendezvous. Without these, a store that cannot be
+        # reached waits inside libtorch's C++ socket code, where pytest-timeout's
+        # signal and any caller-side timeout are both powerless (Q37).
+        rdzv_configs={"timeout": timeout_s, "read_timeout": timeout_s, "join_timeout": timeout_s},
         max_restarts=0,
         start_method="spawn",
     )
