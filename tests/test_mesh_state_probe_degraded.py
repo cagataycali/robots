@@ -173,9 +173,10 @@ class _Disconnected(_Arm):
 
 
 def test_a_probe_that_never_ran_says_which_precondition_stopped_it() -> None:
-    # 2026-08-20: both arms published connected:true, held their ports, logged NOTHING, and sent no
-    # joints for hours -- because this branch was never entered. No exception means no log line and
-    # nothing for the log-reading diagnosis to find, so the skip must speak for itself.
+    # No exception means no log line, nothing for the log-reading diagnosis to find, and no degraded
+    # entry -- so a peer can report connected:true with no joints forever and no rail can say why.
+    # (I originally justified this test with cagatay's two silent arms; that was wrong, their probes
+    # DO throw and I had searched the wrong log. The hole is real, the anecdote was not.)
     snap = _mesh(_NoObservation())._read_state()
     reason = snap["degraded"]["hw_joints"]["reason"]
     assert "did not run" in reason and "get_observation" in reason

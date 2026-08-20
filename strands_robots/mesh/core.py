@@ -1298,12 +1298,19 @@ class Mesh(SensorLoopsMixin):
 
         try:
             inner = getattr(r, "robot", None)
-            # WHY a skip is recorded and not merely skipped: on 2026-08-20 both of cagatay's arms
-            # published connected:true, held their serial ports, logged NO probe failure, and sent no
-            # joints for hours. Nothing was failing -- the branch below was never ENTERED, so there
-            # was no exception to log, nothing for the log-reading diagnosis to find, and no degraded
-            # entry either. Silence with no error is the hardest state to debug and the cheapest to
-            # explain, so each precondition now names itself.
+            # WHY a skip is recorded and not merely skipped: every rail built for this on 2026-08-20
+            # (the log reader, then the degraded channel) waits for an EXCEPTION. If a precondition
+            # below is false there is no exception, so nothing is logged, nothing is published, and a
+            # peer reports connected:true with no joints indefinitely with no way to ask why. Silence
+            # with no error is the hardest state to debug and the cheapest to explain, so each
+            # precondition names itself.
+            # HONEST PROVENANCE: I first believed this WAS the live state of cagatay's two silent
+            # arms, having found no probe failure in the dashboard's stdout. It was the wrong log --
+            # the per-child ring buffer (/api/devices/logs/<peer>) holds one failure line each, so
+            # those two arms are the throwing case after all (Q85 uncalibrated, Q86 port contention),
+            # invisible only because further failures drop to debug. This branch is defence in depth
+            # against a state nobody has observed yet, which is a fair thing to build and not a fair
+            # thing to claim as a diagnosis.
             skip: str | None = None
             if inner is None:
                 # A sim world or a gateway legitimately has no hardware object: stay silent, or every
