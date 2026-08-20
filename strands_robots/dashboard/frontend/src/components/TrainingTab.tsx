@@ -5,6 +5,7 @@ import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post, HttpError } from '../lib/endpoints'
 import { extraFields, missingForProvider } from '../lib/providerFields'
 import { holdout } from '../lib/holdout'
+import { labelsGate, labelSummary, labelRowLine, type LabelView } from '../lib/episodeLabels'
 import { fieldSupport } from '../lib/serverFields'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
@@ -329,6 +330,23 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
      already fetched it), so "20 of 20 leaves nothing to train on" is said before the submit
      round trip rather than by the trainer minutes in. Empty is a legal answer, so this never
      blocks the button on its own — only a value that would mean something other than it reads. */
+  // #2486 labels disclosure. Single-value on purpose, exactly like the devices screen's calibFor:
+  // one open panel at a time keeps the fetch bounded and the row list readable.
+  const [labelsFor, setLabelsFor] = useState<string | null>(null)
+  const [labelData, setLabelData] = useState<LabelView | null>(null)
+  const [labelErr, setLabelErr] = useState<string | null>(null)
+
+  async function openLabels(d: DatasetRow) {
+    const key = dsKey(d)
+    if (labelsFor === key) { setLabelsFor(null); return }
+    setLabelsFor(key); setLabelData(null); setLabelErr(null)
+    try {
+      setLabelData(await api<LabelView>(`/api/datasets/labels?root=${encodeURIComponent(d.root || '')}`))
+    } catch (e) {
+      setLabelErr(e instanceof HttpError ? e.message : String(e))
+    }
+  }
+
   const wantedHoldout = holdout(form.val_episodes, selectedRow(datasets, form)?.total_episodes ?? null)
   const holdoutSupport = fieldSupport(srvFields, 'val_episodes', srvHeard)
   const wantedEpisodes = numField(collect.n_episodes, { what: 'episodes', min: 1, max: 500, remedy: 'collect in batches' })
@@ -726,7 +744,31 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
                 title={replayable(d).reason}>
                 🎬 replay in sim
               </button>
+              {/* #2486: what was each episode judged to be? Read-only — annotate_episode refuses an
+                  episode with no deterministic verdict, so the panel explains rather than offers. */}
+              <button className="btn ghost" onClick={() => openLabels(d)} disabled={!labelsGate(d).ok}
+                title={labelsGate(d).reason} aria-expanded={labelsFor === dsKey(d)}>
+                🏷 labels
+              </button>
             </div>
+            {labelsFor === dsKey(d) && (() => {
+              const sum = labelSummary(labelData, labelErr)
+              return (
+                <div className="ds-labels">
+                  <div className={sum.tone === 'warn' ? 'dock-hint warn' : 'dock-hint'}>{sum.text}</div>
+                  {(labelData?.episodes ?? []).map(ep => {
+                    const line = labelRowLine(ep)
+                    return (
+                      <div className={line.muted ? 'ds-label-row muted' : 'ds-label-row'} key={ep.episode_index}>
+                        <span className="ds-label-badge">{line.badge}</span>
+                        <b>episode {ep.episode_index}</b>
+                        <span className="jstate">{line.detail}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
         ))}
 

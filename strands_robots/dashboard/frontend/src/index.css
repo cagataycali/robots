@@ -1,0 +1,7 @@
+
+/* #2486 episode-labels disclosure on a dataset row. Muted = nothing judged yet, which must look
+   different from a judged row without shouting: absence is information, not an error. */
+.ds-labels { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
+.ds-label-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.86rem; }
+.ds-label-row.muted { opacity: 0.62; }
+.ds-label-badge { width: 1.2em; text-align: center; }
