@@ -72,6 +72,59 @@ from tests.mocks.torch_mock import install_torch_mock
 install_torch_mock()
 
 
+
+def _surviving_children() -> list[dict[str, object]]:
+    """Every surviving DESCENDANT of this pytest process, as {pid, cmdline}.
+
+    Descendants, not just direct children: the robot bootstrap forks (the real leak was three
+    processes per arm sharing one inherited serial fd), so a direct-children-only sweep would see
+    one third of a leak and could see none at all if the middle process had already exited.
+
+    One `ps` call at session end and no psutil dependency: the guard has to work in the plain
+    environment that produced the leak, not only in a well-equipped one. Its own `ps` child is
+    excluded - a guard that reports itself is noise.
+    """
+    import os
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["/bin/ps", "-ax", "-o", "pid=,ppid=,command="],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+    except Exception:
+        return []
+
+    rows: dict[int, tuple[int, str]] = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            rows[int(parts[0])] = (int(parts[1]), parts[2])
+        except ValueError:
+            continue
+
+    kids: dict[int, list[int]] = {}
+    for pid, (ppid, _cmd) in rows.items():
+        kids.setdefault(ppid, []).append(pid)
+
+    me = os.getpid()
+    found: list[dict[str, object]] = []
+    stack = list(kids.get(me, ()))
+    seen: set[int] = set()
+    while stack:
+        pid = stack.pop()
+        if pid in seen or pid == me:
+            continue
+        seen.add(pid)
+        cmd = rows.get(pid, (0, ""))[1]
+        if "-o pid=,ppid=,command=" not in cmd:
+            found.append({"pid": pid, "cmdline": cmd})
+        stack.extend(kids.get(pid, ()))
+    return found
+
+
 def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ANN001, ARG001
     """Q32: refuse to leave a mesh session open, and say so.
 
@@ -97,6 +150,15 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ANN001, ARG001
     from tests.session_leak import leak_report
 
     lines = leak_report(session_open=session_open, threads=threads)
+    # Q81: and refuse to leave a REAL robot child behind unannounced. Thirty runs of one file
+    # orphaned 185 of them holding cagatay's arm ports while every run printed a green summary.
+    # Reported, never killed: a robot child may hold torque (see tests/hardware_leak.py).
+    try:
+        from tests.hardware_leak import hardware_leak_report
+
+        lines += hardware_leak_report(_surviving_children())
+    except Exception:  # a tripwire must never be the reason a suite fails to finish
+        pass
     # `print` here is swallowed: global capture is still installed during
     # sessionfinish, so the first version of this guard was invisible in exactly
     # the run it was meant to warn. Write through the terminal reporter (the
