@@ -211,7 +211,31 @@ def test_submodule_imports_are_not_flagged_as_drift(monkeypatch: pytest.MonkeyPa
     attribute-only implementation this fails; with submodule-aware resolution it
     passes deterministically.
     """
-    transport = importlib.import_module("lerobot.transport")
+    try:
+        transport = importlib.import_module("lerobot.transport")
+    except ImportError as exc:
+        # lerobot.transport needs grpcio, an OPTIONAL lerobot extra
+        # (lerobot[grpcio-dep]) that strands_robots deliberately does not
+        # require: policies/lerobot_async imports it lazily at first use, so an
+        # install without grpcio is fully supported. test_imported_lerobot_
+        # symbols_resolve already skips modules that cannot be imported for that
+        # reason, and this regression test must agree with it instead of failing
+        # in the very environment the guard is built to tolerate. A missing
+        # LEROBOT module is a different story - that is real breakage - so only a
+        # third-party dependency is allowed to skip.
+        # Skipping needs POSITIVE evidence of a missing optional dependency.
+        # lerobot's own guard raises a bare ImportError with exc.name unset, so a
+        # `not missing.startswith("lerobot")` test would also swallow a genuinely
+        # broken lerobot.transport. Accept either a named non-lerobot module or
+        # that install-me wording, and prove lerobot itself still imports.
+        missing = getattr(exc, "name", "") or ""
+        text = str(exc)
+        looks_optional = (missing and not missing.startswith("lerobot")) or (
+            "is required but not installed" in text or "pip install" in text
+        )
+        assert looks_optional, f"lerobot.transport is broken, not merely missing an extra: {exc}"
+        importlib.import_module("lerobot")  # a broken lerobot must not hide behind this skip
+        pytest.skip(f"lerobot.transport needs an optional dependency ({missing or 'grpcio'}): {exc}")
     submods = ("services_pb2", "services_pb2_grpc")
     imports = _collect_lerobot_imports()
     present = {sym for mod, sym, _f, _ln in imports if mod == "lerobot.transport" and sym in submods}
@@ -235,3 +259,38 @@ def test_submodule_imports_are_not_flagged_as_drift(monkeypatch: pytest.MonkeyPa
 
     # The full guard must also be clean: no submodule import is reported.
     test_imported_lerobot_symbols_resolve()
+
+def test_resolves_in_accepts_a_cold_submodule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_resolves_in`` resolves a not-yet-imported submodule, on any machine.
+
+    The lerobot-specific version of this above can only run where the optional
+    grpcio extra is installed, which means the defect it pins -- an attribute-only
+    check calling a valid ``from pkg import submodule`` API drift -- would go
+    unguarded exactly on the machines that skip it. The property is about
+    ``_resolves_in``, not about lerobot, so pin it against a package built here:
+    no optional extra, no import order, nothing to skip.
+    """
+    pkg = tmp_path / "coldpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+
+    import sys
+
+    monkeypatch.delitem(sys.modules, "coldpkg", raising=False)
+    monkeypatch.delitem(sys.modules, "coldpkg.leaf", raising=False)
+    parent = importlib.import_module("coldpkg")
+
+    # The cold state the guard actually runs in: the submodule is importable but
+    # unbound on its parent, so a hasattr check answers False for a valid import.
+    assert not hasattr(parent, "leaf")
+    assert _resolves_in(parent, "coldpkg", "leaf"), (
+        "a valid `from coldpkg import leaf` was reported as API drift; _resolves_in "
+        "regressed to an attribute-only check"
+    )
+    # And it must still say NO to a name that is neither attribute nor submodule,
+    # or the guard would stop catching real drift.
+    assert not _resolves_in(parent, "coldpkg", "no_such_name")
+    assert "coldpkg.leaf" not in sys.modules, "_resolves_in must not import the submodule"
