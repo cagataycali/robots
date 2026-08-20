@@ -1573,3 +1573,11 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   .lan-hint { flex-wrap: wrap; }
   .lan-hint-text { flex-basis: 100%; }
 }
+
+/* ---- Q45: a dead camera named on the card, not only in the dimmed tile ---- */
+.cam-dead-note {
+  margin: 4px 0 2px; padding: 5px 9px;
+  border-radius: 9px; font-size: 12px; line-height: 1.35;
+  border: 1px solid color-mix(in srgb, var(--warn, #e8b339) 38%, transparent);
+  background: color-mix(in srgb, var(--warn, #e8b339) 11%, transparent);
+}

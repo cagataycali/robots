@@ -5,6 +5,7 @@ import { lockoutBadge } from '../lib/lockoutBadge'
 import { useTelemetry } from '../lib/useTelemetry'
 import { ribbonDetail, statusSentence } from '../lib/statusSentence'
 import { twinButtonCopy } from '../lib/twinButton'
+import { agoText, stoppedCameras } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
@@ -120,6 +121,22 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
           {peer.last_seen ? `${Math.round(Date.now() / 1000 - peer.last_seen)}s ago` : 'unknown'}
         </div>
       )}
+
+      {/* Q45 follow-up, measured on the live rig: so101-arm-1 advertised `wrist` for 11.7h
+          after its reader thread died, and the only place that said so was the dimmed tile
+          itself. Scanning a fleet grid, a dim tile among four is not a message. This names
+          the camera and its age on the CARD - the same reasoning as the lockout banner:
+          an operator arriving at this screen must be told before they act. Silent unless
+          there is positive evidence of death (no history is not death). */}
+      {(() => {
+        const stopped = stoppedCameras(peer.cameras ?? {}, Date.now() / 1000)
+        return stopped.length ? (
+          <div className="cam-dead-note" role="status">
+            {stopped.length} of {cams.length} camera{cams.length > 1 ? 's' : ''} stopped —{' '}
+            {stopped.map(c => `${c.camera} ${agoText(c.ageS)} ago`).join(', ')}
+          </div>
+        ) : null
+      })()}
 
       {cams.length > 0 && (
         <div className={cams.length > 1 ? 'cams multi' : 'cams'}>
