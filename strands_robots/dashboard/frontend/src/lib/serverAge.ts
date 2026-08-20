@@ -48,6 +48,29 @@ export function routeKnown(livePaths: string[] | null | undefined, path: string)
 export function staleRouteMessage(path: string): string {
   return (
     `this dashboard's server does not have ${normalisePath(path)} — it is running code from before ` +
-    `this feature existed. Restart the dashboard to pick it up (the page itself is already new).`
+    `this feature existed. Restart the dashboard from a terminal to pick it up (the page itself is ` +
+    `already new; a restart from an agent or daemon would come back with no camera access).`
   )
+}
+
+/**
+ * The server ADMITTING, in its own 404 body, that it routes nothing at this path.
+ *
+ * routeKnown() is the authoritative test and is preferred, but it needs /openapi.json — when that
+ * cannot be read it returns null and this module deliberately stays silent rather than blame the
+ * server for our own missing fetch. This is the second-best evidence, and it comes from the server
+ * too: an unrouted /api path falls through to the dashboard's SPA catch-all, which answers
+ * {"error":"not found","detail":"no endpoint at /api/…"} (server.py ~2117) precisely so a missing
+ * endpoint cannot be served index.html and look like a 200.
+ *
+ * ONLY THE DETAIL IS TRUSTED. `error: "not found"` looks like a discriminator and is not one: nothing
+ * stops a route's OWN 404 from carrying that same word, and treating a genuine resource 404 ("no
+ * dataset directory at /tmp/x") as staleness sends an operator to restart a server that is working
+ * correctly. Measured against the live dashboard, because the stock framework wording ("Not Found")
+ * is NOT what this app sends — a matcher written from the framework's docs was dead code here.
+ */
+export function unroutedByDetail(detail: unknown): boolean {
+  if (typeof detail !== 'string') return false
+  const d = detail.trim().toLowerCase()
+  return d.startsWith('no endpoint at') || d === 'not found'
 }

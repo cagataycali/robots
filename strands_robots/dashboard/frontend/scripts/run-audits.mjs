@@ -28,7 +28,11 @@ import path from 'node:path'
 const HERE = new URL('.', import.meta.url).pathname
 const BASE = process.env.STRANDS_DASH_URL ?? 'http://127.0.0.1:8090'
 const TIMEOUT_S = Number(process.env.AUDIT_TIMEOUT_S ?? 180)
-const filter = process.argv[2] ?? ''
+// Substring filters: `run-audits server-age` re-runs one audit, and SEVERAL are OR'd
+// (`run-audits record training`) so a change touching two screens can be re-verified in seconds
+// instead of waiting out sixteen browser launches. One arg has always worked; iteration 217 added the
+// rest after writing a second filter that silently shadowed this one and reported "1 of 1".
+const filters = process.argv.slice(2).filter(a => !a.startsWith('-'))
 
 // These need the live dashboard. Say so once, here, instead of 15 browser launches failing obscurely.
 try {
@@ -43,8 +47,16 @@ try {
 
 let scripts = fs.readdirSync(HERE)
   .filter(f => /^audit-.*\.mjs$/.test(f))
-  .filter(f => f.includes(filter))
+  .filter(f => !filters.length || filters.some(x => f.includes(x)))
   .sort()
+
+// A filter that matches nothing must not look like a clean sweep: "PASS 0 audits" is the most
+// dangerous possible output for a verification tool.
+if (filters.length && !scripts.length) {
+  console.error(`  no audit matches ${filters.join(', ')} — nothing was verified`)
+  process.exit(1)
+}
+if (filters.length) console.log(`  filter ${filters.join(', ')} — ${scripts.length} of 16 audit(s)`)
 
 /** The one-line purpose the script states about itself (first prose line of its header). */
 const purpose = (f) => {
@@ -52,17 +64,6 @@ const purpose = (f) => {
   const line = head.split('\n').map(l => l.replace(/^\s*(\/\*+|\*+\/?)\s?/, '').trim())
     .find(l => l.length > 20 && !l.startsWith('Run:') && !/^import/.test(l))
   return (line ?? '').replace(/\s+$/, '').slice(0, 96)
-}
-
-// An optional substring filter: `node scripts/run-audits.mjs server-age` re-runs one audit instead of
-// the whole 4.5-minute sweep. Without it, a loop verifying a one-line fix either waits out every
-// browser launch or (worse) runs the audit by hand and forgets to re-run the suite.
-const only = process.argv.slice(2).filter(a => !a.startsWith('-'))
-if (only.length) {
-  const before = scripts.length
-  scripts = scripts.filter(f => only.some(o => f.includes(o)))
-  console.log(`  filter ${only.join(', ')} — running ${scripts.length} of ${before} audit(s)`)
-  if (!scripts.length) { console.log('  nothing matched that filter'); process.exit(1) }
 }
 
 let failed = 0, timedOut = 0

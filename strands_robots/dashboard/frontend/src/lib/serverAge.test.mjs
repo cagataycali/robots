@@ -1,7 +1,7 @@
 // Q79: assertions for serverAge.ts (route-age judgement behind a 404).
 // Run: npx esbuild src/lib/serverAge.ts --bundle --format=esm --outfile=/tmp/serverAge.mjs && node src/lib/serverAge.test.mjs
 import assert from 'node:assert/strict'
-const { routeKnown, normalisePath, staleRouteMessage } = await import('/tmp/serverAge.mjs')
+const { routeKnown, normalisePath, staleRouteMessage, unroutedByDetail } = await import('/tmp/serverAge.mjs')
 
 const live = [
   '/api/fleet',
@@ -40,4 +40,21 @@ assert.match(msg, /does not have \/api\/devices\/camera\/2\/modes —/)
 assert.ok(!msg.includes('probe=1'))
 assert.match(msg, /Restart the dashboard/)
 
+
+// MERGED FROM serverSkew (iteration 217): the body-based fallback for when /openapi.json is
+// unreadable. Kept as assertions on unroutedByDetail because the mechanism now lives in ONE place —
+// two explanations of the same 404, one of them wired to a single screen, is worse than one.
+{
+  // The shape this app ACTUALLY sends, measured against the live server (server.py ~2117).
+  assert.equal(unroutedByDetail('no endpoint at /api/datasets/labels'), true)
+  // The framework's stock wording, which this app never sends — accepted for a TestClient app or a
+  // later refactor. A matcher written from the docs alone was dead code here.
+  assert.equal(unroutedByDetail('Not Found'), true)
+  assert.equal(unroutedByDetail(' not found '), true)
+  // THE DISCRIMINATOR: a route's own resource 404 must never be read as staleness, or an operator is
+  // sent to restart a server that is working correctly.
+  assert.equal(unroutedByDetail('no dataset directory at /tmp/x'), false)
+  assert.equal(unroutedByDetail('unknown peer so101-arm-9'), false)
+  for (const junk of [null, undefined, 404, {}, []]) assert.equal(unroutedByDetail(junk), false)
+}
 console.log('serverAge: all assertions passed')

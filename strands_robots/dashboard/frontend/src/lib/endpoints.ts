@@ -11,7 +11,7 @@
  * expects.
  */
 
-import { routeKnown, staleRouteMessage } from './serverAge'
+import { routeKnown, staleRouteMessage, unroutedByDetail } from './serverAge'
 
 const BASE_KEY = 'strands.backend'
 const TOKEN_KEY = 'strands.token'
@@ -188,7 +188,12 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
     // Q79: a 404 on a route this server does not have at all is the server being older than the
     // bundle, not the resource being absent. Only ever ADDS an explanation - the server's own words
     // stay, because when the route does exist they are the truth.
-    if (res.status === 404 && routeKnown(await liveRoutes(), path) === false) {
+    // The authoritative test is the server's own route list; when /openapi.json cannot be read
+    // routeKnown() stays null on purpose, and the catch-all's own words are the fallback evidence.
+    // Both live here, in the one place every call passes through — a second mechanism at a single
+    // call site would explain one screen and leave the rest reading "HTTP 404".
+    if (res.status === 404 && (routeKnown(await liveRoutes(), path) === false
+        || unroutedByDetail(body && (body.detail ?? null)))) {
       message = staleRouteMessage(path)
     }
     throw new HttpError(res.status, message, body)

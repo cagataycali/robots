@@ -6,7 +6,6 @@ import { api, post, HttpError } from '../lib/endpoints'
 import { extraFields, missingForProvider } from '../lib/providerFields'
 import { holdout } from '../lib/holdout'
 import { labelsGate, labelSummary, labelRowLine, type LabelView } from '../lib/episodeLabels'
-import { failureText, probeFromError } from '../lib/serverSkew'
 import { fieldSupport } from '../lib/serverFields'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
@@ -345,10 +344,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     try {
       setLabelData(await api<LabelView>(`${path}?root=${encodeURIComponent(d.root || '')}`))
     } catch (e) {
-      // A dashboard process older than this bundle has never heard of the route, and "HTTP 404"
-      // reads as a broken feature. failureText names the real action instead: restart from a
-      // terminal. A route's own 404 (no such dataset directory) keeps its own message.
-      setLabelErr(failureText(probeFromError(e, path), e instanceof HttpError ? e.message : String(e)))
+      // No special-casing here: api() already replaces a 404 on a route this server does not route
+      // with the "restart the dashboard" explanation (lib/serverAge), so the message is right for
+      // every screen at once. A route's own 404 keeps the server's own words.
+      setLabelErr(e instanceof HttpError ? e.message : String(e))
     }
   }
 

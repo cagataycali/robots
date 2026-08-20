@@ -104,13 +104,18 @@ await local.click(); await p.waitForTimeout(400); await local.click(); await p.w
   if (/0\/0 judged/.test(text)) failures.push('an impossibility rendered as a count — the exact confusion #2486 removed')
 }
 
-// CLAIM 4 — a route the running server does not have says RESTART, not HTTP 404 (iteration 213).
+// CLAIM 4 — a route the running server does not have says RESTART, not HTTP 404. The explanation
+// comes from the FETCH LAYER (lib/serverAge via api()), so this also proves that one mechanism
+// reaches a screen that does nothing special — iteration 217 deleted the duplicate that only this
+// panel had.
 labelsAnswer = { status: 404, body: { error: 'not found', detail: 'no endpoint at /api/datasets/labels' } }
 await local.click(); await p.waitForTimeout(400); await local.click(); await p.waitForTimeout(900)
 {
   const text = (await rowOf('me/pick-cube').locator('.ds-labels').innerText()).replace(/\s+/g, ' ')
-  if (!/newer than the dashboard process/i.test(text)) failures.push(`skew is not explained on the page: ${text.slice(0, 200)}`)
+  if (!/does not have \/api\/datasets\/labels/i.test(text)) failures.push(`staleness is not explained on the page: ${text.slice(0, 200)}`)
+  if (!/running code from before this feature existed/i.test(text)) failures.push('the page does not say the server is old')
   if (!/restart the dashboard from a terminal/i.test(text)) failures.push('the page does not name the action that fixes it')
+  if (!/no camera access/i.test(text)) failures.push('the page does not warn that a daemon restart comes back blind')
   if (/^HTTP 404$/.test(text.trim())) failures.push('the raw HTTP text survived to the screen')
 }
 
