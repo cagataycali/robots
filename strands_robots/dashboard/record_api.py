@@ -27,12 +27,14 @@ from __future__ import annotations
 import logging
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from strands_robots.dashboard import camera_liveness
 from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend
 
 logger = logging.getLogger(__name__)
@@ -71,8 +73,15 @@ class RecordController:
         backend_factory: Callable[..., Any] | None = None,
         recorder_factory_factory: Callable[[Any], Callable[..., Any]] | None = None,
         thumb_root: str | None = None,
+        bridge: Any | None = None,
     ) -> None:
         self._devices = devices
+        # Where the live per-camera frame evidence comes from. Optional and
+        # late-bound: an older caller (and every existing test) constructs this
+        # controller with devices alone, and a controller with no bridge simply
+        # has no evidence - which must mean "do not refuse", never "everything
+        # is dead".
+        self._bridge = bridge
         self._backend_factory = backend_factory or hardware_backend
         self._recorder_factory_factory = (
             recorder_factory_factory or _default_recorder_factory
@@ -111,6 +120,21 @@ class RecordController:
 
             leader = self._managed(leader_id, role="leader")
             follower = self._managed(follower_id, role="follower")
+
+            # A dataset is the expensive artifact here: an hour of hand-guiding an
+            # arm, discovered to be useless at training time. A camera whose last
+            # capture is hours old (measured: arm-1's wrist, 10.4h) would record a
+            # frozen or missing image stream, so it is worth one check now. Only
+            # POSITIVE evidence of death refuses - a camera with no frame history
+            # may simply never have been subscribed to (camera_liveness).
+            if not body.get("ignore_dead_cameras"):
+                dead = camera_liveness.dead_cameras(
+                    follower.cameras, self._camera_meta(follower_id), now=time.time()
+                )
+                if dead:
+                    raise HTTPException(
+                        409, camera_liveness.refusal(dead, peer_id=follower_id)
+                    )
 
             leader_type = str(
                 body.get("leader_type")
@@ -166,6 +190,24 @@ class RecordController:
                 self._unpark_locked()
                 raise HTTPException(500, f"could not open the arms: {exc}") from exc
             return self._worker.session()
+
+    def _camera_meta(self, peer_id: str) -> dict[str, Any]:
+        """What the fleet snapshot last saw from this peer's cameras.
+
+        Never raises and never guesses: a missing bridge, a peer the bridge has
+        not heard of, or a snapshot shaped differently all read as "no evidence",
+        and no evidence must not be able to refuse a recording.
+        """
+        bridge = self._bridge
+        if bridge is None:
+            return {}
+        try:
+            peers = bridge.snapshot().get("peers") or {}
+            cams = (peers.get(peer_id) or {}).get("cameras") or {}
+            return dict(cams) if isinstance(cams, dict) else {}
+        except Exception:  # noqa: BLE001 - a probe must not break the session
+            logger.debug("[record] could not read camera evidence for %s", peer_id)
+            return {}
 
     def _managed(self, peer_id: str, *, role: str) -> Any:
         if not peer_id:

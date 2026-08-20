@@ -293,7 +293,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     # parks the arms' fleet peers around a session; see record_api.py.
     from strands_robots.dashboard import record_api
 
-    app.state.record = record_api.RecordController(app.state.devices)
+    app.state.record = record_api.RecordController(
+        app.state.devices, bridge=app.state.bridge
+    )
     # Late-bound on purpose: capturing the bound method here would pin the
     # router to THIS bridge instance forever (tests swap it, restart_mesh may).
     app.include_router(record_api.build_router(
