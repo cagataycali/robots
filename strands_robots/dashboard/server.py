@@ -50,10 +50,14 @@ from strands_robots.dashboard import arm_roles, config_api, consent, deploy, set
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
+from strands_robots.dashboard.ws_observability import CloseLogThrottle, close_line, close_verdict
 
 logger = logging.getLogger(__name__)
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
+
+#: Module-level: the throttle has to outlive individual sockets to be able to count them.
+_CAMERA_CLOSE_LOG = CloseLogThrottle()
 
 #: Reachable without a token: liveness (so a client can discover that auth is
 #: required at all), the WebAuthn ceremony endpoints (you cannot log in from
@@ -1584,6 +1588,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         bridge: MeshBridge = app.state.bridge
         last_t: Any = None
         reported: str | None = None
+        # The close path used to be `except: pass`, which is why Q40 could produce 63,906
+        # opens and zero closes: a reconnect storm looked exactly like 63,906 happy
+        # viewers, and "did any of these sockets ever send a frame?" was unanswerable.
+        frames_sent = 0
+        started_at = time.monotonic()
         try:
             while True:
                 f = bridge.latest_frame(peer_id, cam)
@@ -1591,6 +1600,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     last_t = f.get("t")
                     if f.get("jpeg"):
                         await ws.send_bytes(f["jpeg"])
+                        frames_sent += 1
                     elif f.get("error") and f["error"] != reported:
                         # One text frame per distinct problem: the tile can then
                         # say "raw frames, cannot decode" instead of going black.
@@ -1602,6 +1612,18 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 await asyncio.sleep(1 / 15)
         except (WebSocketDisconnect, RuntimeError):
             pass
+        finally:
+            # Rate-limited per peer/camera, with the suppressed count carried forward, so
+            # a storm reads as a storm instead of drowning the log it would explain.
+            log_now, suppressed = _CAMERA_CLOSE_LOG.should_log(f"{peer_id}/{cam}")
+            if log_now:
+                verdict = close_verdict(
+                    frames_sent=frames_sent,
+                    lifetime_s=time.monotonic() - started_at,
+                    publishing=bridge.latest_frame(peer_id, cam) is not None,
+                )
+                line = close_line(peer_id=peer_id, cam=cam, verdict=verdict, suppressed=suppressed)
+                (logger.info if frames_sent else logger.warning)(line)
 
     @app.websocket("/ws/chat")
     async def ws_chat(ws: WebSocket) -> None:

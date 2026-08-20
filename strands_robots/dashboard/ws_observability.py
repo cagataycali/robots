@@ -1,0 +1,95 @@
+"""Make a socket's DEATH visible — the missing half of the camera stream's story.
+
+Q40 (a phone reopening the same camera socket 63,906 times in ten hours) hid for a full
+day because of one absence: the log contained 63,906 ``connection open`` lines and
+**zero** closes. ws_camera accepts, loops at 15fps, and its ``except
+(WebSocketDisconnect, RuntimeError): pass`` swallows the end of every stream. So a
+reconnect storm was indistinguishable from 63,906 healthy viewers arriving, and the one
+question that would have solved it in a second — "did these sockets ever send a frame?"
+— had no answer anywhere on the machine.
+
+The fix is not "log every close": at the rate of the incident that IS the incident,
+amplified. It is to log the close with the facts that distinguish the cases (frames
+sent, how long it lived, and a verdict in words), rate-limited per socket identity, with
+the suppressed count carried into the next line so a storm shows up as a storm rather
+than as silence.
+
+Deliberately a plain counter + timestamp rather than anything cleverer: this runs in the
+close path of a socket that may be dying because the process is under load.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from dataclasses import dataclass
+from typing import Callable
+
+
+def close_verdict(*, frames_sent: int, lifetime_s: float, publishing: bool) -> str:
+    """One sentence naming what this closed socket actually was.
+
+    The three cases an operator needs told apart, because the tile looks identical in
+    all of them: a stream that worked, a viewer who left immediately, and a camera that
+    has nothing to give.
+    """
+    if frames_sent > 0:
+        return f"streamed {frames_sent} frames over {lifetime_s:.0f}s"
+    if not publishing:
+        return (
+            f"sent nothing in {lifetime_s:.1f}s - that camera is not publishing to the mesh; "
+            "the robot may not be running, or it could not open the device"
+        )
+    if lifetime_s < 2.0:
+        return (
+            f"sent nothing and closed after {lifetime_s:.1f}s - the client hung up before a "
+            "frame was due (a page reload, or a retry loop with no backoff)"
+        )
+    return f"sent nothing in {lifetime_s:.0f}s although the camera is publishing - frames are not reaching this socket"
+
+
+@dataclass
+class _Seen:
+    last_logged_at: float
+    suppressed: int = 0
+
+
+class CloseLogThrottle:
+    """Log the first close for a key, then at most one per ``window_s``.
+
+    The suppressed count rides the next line it lets through, so the log never quietly
+    drops the fact that something happened 4,000 times.
+    """
+
+    def __init__(self, window_s: float = 60.0, clock: Callable[[], float] = time.monotonic) -> None:
+        self._window_s = float(window_s)
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._seen: dict[str, _Seen] = {}
+        # a bound, for the same reason ttl_cache exists: keys are peer/camera pairs and
+        # a spawn loop can invent them
+        self._max_keys = 256
+
+    def should_log(self, key: str) -> tuple[bool, int]:
+        """Return (log_now, suppressed_since_last_line)."""
+        now = self._clock()
+        with self._lock:
+            entry = self._seen.get(key)
+            if entry is None:
+                if len(self._seen) >= self._max_keys:
+                    self._seen.pop(next(iter(self._seen)))
+                self._seen[key] = _Seen(last_logged_at=now)
+                return True, 0
+            if now - entry.last_logged_at >= self._window_s:
+                suppressed = entry.suppressed
+                entry.last_logged_at = now
+                entry.suppressed = 0
+                return True, suppressed
+            entry.suppressed += 1
+            return False, entry.suppressed
+
+
+def close_line(*, peer_id: str, cam: str, verdict: str, suppressed: int) -> str:
+    """The log line itself, with the storm count when there is one."""
+    tail = f" [+{suppressed} more closes suppressed in the last minute]" if suppressed else ""
+    return f"camera socket {peer_id}/{cam} closed: {verdict}{tail}"
