@@ -1503,6 +1503,23 @@ which side the enum is on.
 - **A selection widened to everything can also reach past the call.** `detach_teleop` stops
   the local loop once nothing is left to drive, so a detach widened from one stream to all
   of them ended a running session as a side effect of the misread.
+- **A surface that resolves the names by membership takes only the emptiness verdict.**
+  Where the selector is resolved into a dict rather than bound by position, a repeat
+  resolves to its first occurrence and a mapping and a one-shot iterator are each read
+  exactly once, so routing the shape through `name_list_error` would refuse calls that
+  are honored as written today - the same carve-out that keeps the WBC and MotionBricks
+  providers out of that domain. `download_robots(names=...)` is that case, and the
+  membership read is still owed: read by truthiness, `names=[]` downloaded 56 robots on
+  the shipped registry, and 13 - a whole category - when a `category` was also passed,
+  reporting either count as the caller's own request. Nothing had to write `[]` to get
+  there, which is what made it reachable rather than theoretical: the `download_assets`
+  tool builds the list from a comma-separated string through its own blank-field filter,
+  so the NON-empty `robots=","`, `" "` and `",,,"` each parse to zero names. Refuse the
+  empty selection ahead of the call that creates the asset cache directory, so a refused
+  selection leaves nothing behind - and refuse it again in the tool's own vocabulary, so
+  the remedy names the `robots=` that caller passed rather than the `names=` it never
+  did. Pinned by `tests/test_asset_download_selection_domain.py`, whose controls pin the
+  three tolerated spellings so the narrowing stays deliberate rather than incidental.
 - Pinned by `tests/test_teleop_device_selection_domain.py`, whose controls assert that the
   documented spellings (`names=None`, a real subset, `detach_teleop(None)`) are unchanged,
   and by the render path's `cameras` resolution, which has read the same kind of selector
