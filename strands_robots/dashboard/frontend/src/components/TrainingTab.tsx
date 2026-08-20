@@ -3,6 +3,7 @@ import { useDialogFocus } from '../lib/useDialogFocus'
 import { numField } from '../lib/numField'
 import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post, HttpError } from '../lib/endpoints'
+import { extraFields, missingForProvider } from '../lib/providerFields'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
@@ -65,7 +66,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [pollFail, setPollFail] = useState<Record<string, { n: number; msg: string }>>({})
   const [nowS, setNowS] = useState(() => Date.now() / 1000)
   const [traces, setTraces] = useState<Record<string, LossPoint[]>>({})
-  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora' })
+  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora', embodiment: '' })
   // R6: the picker searches the Hub as you type. `dsProblem` is the HUB half's
   // verdict only — "no matches" is a real answer and must not wear an outage's
   // clothes, so an empty list with problem===null says something different from
@@ -243,6 +244,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       output_dir: form.output_dir || undefined,
       steps: wantedSteps.value,
       method: form.method || undefined,
+      // Q49: sent only when the chosen provider asks for it. An empty string would reach
+      // train_policy as a real value and GR00T would tag the dataset with "".
+      ...(extraFields(form.provider).some(f => f.key === 'embodiment') && form.embodiment.trim()
+        ? { embodiment: form.embodiment.trim() } : {}),
     }
     try {
       const j = await post(validateOnly ? '/api/training/validate' : '/api/training/submit', body)
@@ -385,8 +390,13 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // The plan sentence reads back what WILL run, so with an unusable step count it must say that
   // rather than quietly print the 0 the parse produced — it used to print 10,000, the old fallback.
   const stepsPhrase = wantedSteps.problem ? `an unset number of` : fmtStep(wantedSteps.value)
+  // Q49: a certain refusal belongs in the read-back, not in the response to a click. The plan
+  // sentence is what people check before a multi-hour job, so if the provider will refuse for a
+  // missing field it says so here too, next to the promise.
+  const missingExtra = missingForProvider(form.provider, form as Record<string, string>)
   const story = datasetPicked
     ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? datasetPicked} for ${stepsPhrase} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.`
+      + (missingExtra ? ` This will be refused until you fill it in: ${missingExtra}.` : '')
     : 'Pick a dataset to begin — the plan reads back here before anything runs.'
 
   return (
@@ -479,6 +489,19 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <label className="field"><span>output dir</span>
           <input value={form.output_dir} onChange={e => set('output_dir', e.target.value)} disabled={busy} placeholder="/tmp/my_policy_ckpt" />
         </label>
+        {/* Q49: appears only for the provider that needs it. GR00T's validate() refuses without
+            an embodiment tag; before this the form had no field for it at all, so `groot` was a
+            selectable option that could not be submitted whatever you typed. */}
+        {extraFields(form.provider).map(f => (
+          <label className="field" key={f.key}><span>{f.label}</span>
+            <input value={form[f.key]} onChange={e => set(f.key, e.target.value)} disabled={busy}
+                   placeholder={f.placeholder} aria-describedby={`train-${f.key}-say`}
+                   aria-invalid={f.required && !form[f.key].trim()} />
+            <span id={`train-${f.key}-say`} className={`fieldsay${f.required && !form[f.key].trim() ? ' bad' : ''}`}>
+              {f.say}
+            </span>
+          </label>
+        ))}
         <div className="train-row">
           <label className="field"><span>steps</span>
             <input type="number" value={form.steps} onChange={e => set('steps', e.target.value)} disabled={busy}

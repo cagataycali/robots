@@ -28,8 +28,10 @@ def test_rl_providers_are_marked_unsupported_for_the_form():
 
 
 def test_supervised_providers_stay_offered():
+    """cosmos3 is excluded on purpose: Q49 refuses it for a different reason (a recipe TOML the
+    form has no field for). groot stays because `embodiment` IS expressible."""
     out = training.form_unsupported()
-    for provider in ("lerobot_local", "mock", "groot", "cosmos3"):
+    for provider in ("lerobot_local", "mock", "groot"):
         assert provider not in out, (
             f"{provider} trains from a dataset - refusing it here would hide a working backend"
         )
@@ -65,3 +67,41 @@ def test_a_malformed_registry_entry_cannot_blank_the_form(monkeypatch):
     monkeypatch.setattr("strands_robots.registry.policies.get_policy_provider", explode, raising=False)
     # ppo is still classified; the broken entry is skipped rather than taking the route down.
     assert training.form_unsupported() == {"ppo": training._RL_REASON}
+
+
+# --- Q49: the mirror must not rot -------------------------------------------------------
+# _FORM_CANNOT_EXPRESS mirrors a requirement the SDK declares only inside a trainer's
+# validate(). These tests ASK validate, so the day cosmos3 grows a default recipe (or
+# lerobot starts demanding one) the mirror fails loudly instead of lying quietly.
+
+_MINIMAL = {"dataset_root": "/tmp/does-not-exist", "output_dir": "/tmp/out", "steps": 10}
+
+
+def _problems(provider: str) -> str:
+    return str(training.validate({"provider": provider, **_MINIMAL}).get("text", ""))
+
+
+def test_cosmos3_really_demands_something_the_form_cannot_send():
+    text = _problems("cosmos3")
+    assert "sft_toml" in text or "recipe TOML" in text, text
+    # And the field it wants is genuinely absent from the form's vocabulary - that is WHY
+    # this one is refused up front instead of getting a new input.
+    assert not any("toml" in key.lower() for key in training.SPEC_KEYS)
+    assert training.form_unsupported()["cosmos3"] == training._FORM_CANNOT_EXPRESS["cosmos3"]
+
+
+def test_a_dataset_trainer_demands_nothing_the_form_lacks():
+    """lerobot_local's complaints must all be about things the operator can supply here."""
+    text = _problems("lerobot_local")
+    assert "sft_toml" not in text
+    assert "RLTrainSpec" not in text
+    assert "lerobot_local" not in training.form_unsupported()
+
+
+def test_groot_wants_an_embodiment_and_the_form_can_express_it():
+    """GR00T is NOT refused: `embodiment` is a real spec key, so the form grows a field
+    instead (providerFields.ts). This pins the requirement the field exists for."""
+    text = _problems("groot")
+    assert "embodiment" in text
+    assert "embodiment" in training.SPEC_KEYS
+    assert "groot" not in training.form_unsupported()

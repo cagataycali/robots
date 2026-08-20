@@ -234,6 +234,23 @@ def _declared_trainer_module(provider: str) -> str:
     return ""
 
 
+#: Q49: providers whose validate() demands something this form has NO FIELD FOR, and cannot
+#: grow one, because the key is not in SPEC_KEYS at all. cosmos3 needs a recipe TOML passed as
+#: extra['sft_toml'] - the form can express provider, dataset, base model, output dir, steps,
+#: method, embodiment and the LoRA knobs, and none of those is a recipe. Left selectable, it
+#: promised a run that every attempt refuses.
+#:
+#: This list MIRRORS a requirement that the SDK declares only inside a trainer's validate(),
+#: so tests/test_dashboard_trainer_form_support.py ASKS validate whether the mirror still
+#: holds rather than trusting this constant.
+_FORM_CANNOT_EXPRESS: dict[str, str] = {
+    "cosmos3": (
+        "needs a training recipe TOML (extra['sft_toml']) that selects the registered "
+        "experiment, and this form has no field for it - run cosmos3 from a script"
+    ),
+}
+
+
 def form_unsupported() -> dict[str, str]:
     """Providers that cannot be trained FROM THIS FORM, mapped to why.
 
@@ -248,6 +265,8 @@ def form_unsupported() -> dict[str, str]:
             continue
         if module.startswith(_RL_TRAINER_MODULE_PREFIX):
             out[provider] = _RL_REASON
+        elif provider in _FORM_CANNOT_EXPRESS:
+            out[provider] = _FORM_CANNOT_EXPRESS[provider]
     return out
 
 
