@@ -8,6 +8,8 @@ export interface ApplyResult {
   ignored?: string[]
   applied: string[]
   restart_required: string[]
+  /** Q51: saved and inherited by the next spawned robot — a mesh restart cannot deliver these. */
+  respawn_required?: string[]
   env_written: string[]
   skipped_masked: string[]
   agent_reset: boolean

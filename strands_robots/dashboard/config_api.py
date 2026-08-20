@@ -399,7 +399,15 @@ def snapshot(*, bridge: Any = None, agent_status: dict[str, Any] | None = None) 
 #: Settings keys that only take effect on a new mesh session. Everything else
 #: is hot-applied, and the response says which is which per field rather than
 #: making the operator guess.
-_RESTART_KEYS = {"mesh.connect", "mesh.listen", "mesh.port", "mesh.backend", "mesh.camera_hz"}
+_RESTART_KEYS = {"mesh.connect", "mesh.listen", "mesh.port", "mesh.backend"}
+
+#: Q51: keys a MESH RESTART cannot deliver, because nothing in this process reads them - the
+#: robot child processes do, once, at their own Mesh.start(). camera_hz resolves inside
+#: ``Mesh._resolve_camera_hz()`` when a robot starts its camera loop; the dashboard has no robot
+#: and publishes no frames, so re-pointing its session changes nothing at all. The remedy is a
+#: RESPAWN of the robots, and saying "needs a mesh restart" sent operators to a button that
+#: could only ever appear to work.
+_RESPAWN_KEYS = {"mesh.camera_hz"}
 
 #: Body fields of ``POST /api/config`` that are NOT settings sections: the
 #: caller's own vocabulary, so they must never be reported as unknown settings.
@@ -509,10 +517,16 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
         agent_reset = True
 
     restart_required = sorted(k for k in changed if k in _RESTART_KEYS)
+    respawn_required = sorted(k for k in changed if k in _RESPAWN_KEYS)
     return {
         "ignored": ignored,
-        "applied": sorted(k for k in changed if k not in _RESTART_KEYS),
+        # Stored, and inherited by the NEXT child - but not applied to anything running, so it
+        # does not belong in `applied` either.
+        "applied": sorted(
+            k for k in changed if k not in _RESTART_KEYS and k not in _RESPAWN_KEYS
+        ),
         "restart_required": restart_required,
+        "respawn_required": respawn_required,
         "env_written": env_written,
         "skipped_masked": skipped_masked,
         "agent_reset": agent_reset,

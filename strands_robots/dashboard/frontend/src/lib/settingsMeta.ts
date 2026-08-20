@@ -9,12 +9,15 @@
  */
 
 /** When does a change actually take effect? Shown as a chip next to the field. */
-export type ApplyMode = 'live' | 'next-turn' | 'mesh-restart' | 'startup'
+export type ApplyMode = 'live' | 'next-turn' | 'mesh-restart' | 'respawn' | 'startup'
 
 export const APPLY_LABEL: Record<ApplyMode, string> = {
   live: 'applies immediately',
   'next-turn': 'applies on the next agent turn',
   'mesh-restart': 'needs a mesh restart',
+  // Q51: a mesh restart CANNOT deliver this one — the value is read inside each robot's own
+  // process when it starts its camera loop, and the dashboard publishes no frames at all.
+  respawn: 'applies to robots spawned from now on',
   startup: 'applies at next server start',
 }
 
@@ -99,10 +102,11 @@ export const SETTINGS: SettingMeta[] = [
   {
     key: 'mesh.camera_hz',
     label: 'Camera rate',
-    effect: 'How many frames per second each robot publishes. Higher is smoother but costs LAN bandwidth.',
+    effect: 'How many frames per second each robot publishes. Higher is smoother but costs LAN bandwidth. '
+      + 'Each robot reads it when IT starts, so a running robot keeps its rate until you respawn it.',
     unit: 'Hz',
     safeDefault: '5',
-    apply: 'mesh-restart',
+    apply: 'respawn',
     validate: raw => finiteNumber(raw, { min: 0.1, max: 60, name: 'camera rate' }),
   },
   {

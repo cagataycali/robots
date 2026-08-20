@@ -127,6 +127,14 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
     if (r.agent_reset) parts.push('agent will rebuild on the next turn')
     if (r.skipped_masked.length) parts.push(`skipped unchanged secrets: ${r.skipped_masked.join(', ')}`)
     if (r.restart_required.length) parts.push(`needs a mesh restart: ${r.restart_required.join(', ')}`)
+    // Q51: saved, inherited by the next child, and NOT in effect for anything running. Saying
+    // "mesh re-pointed" alone let an operator believe a rate change had landed.
+    if (r.respawn_required?.length) {
+      parts.push(
+        `saved for robots spawned from now on: ${r.respawn_required.join(', ')} `
+        + '(respawn a robot to change its rate)',
+      )
+    }
     if (r.mesh_restart) {
       parts.push(r.mesh_restart.mesh_online ? 'mesh re-pointed' : 'mesh re-point FAILED (offline)')
       if (r.mesh_restart.orphaned?.length) parts.push(`orphaned local robots: ${r.mesh_restart.orphaned.join(', ')}`)
