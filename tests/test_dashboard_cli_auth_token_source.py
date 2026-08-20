@@ -2,7 +2,7 @@
 
 JOURNEYS #15 (the last open row of the end-to-end journey audit): a token passed
 as ``--auth-token`` is readable by every local user for the whole life of the
-process — this machine's own audit lifted one out of ``ps eww``. The file form
+process - this machine's own audit lifted one out of ``ps eww``. The file form
 exists and ``restart_dashboard.sh`` uses it, but nothing on the code side ever
 *said* so at runtime: startup printed ``auth: bearer token required``, which
 reads like the security question is settled.
@@ -12,7 +12,7 @@ These tests pin the three things that make the difference honest:
 * the argv form works AND is warned about, with the fix named;
 * the file form works and is NOT warned about (a warning that fires either way
   teaches the operator to ignore it);
-* a missing or empty token file REFUSES to start rather than starting open —
+* a missing or empty token file REFUSES to start rather than starting open -
   the operator asked for auth and silence would hand them the opposite.
 
 The token VALUE must never be printed by any of it, which is asserted

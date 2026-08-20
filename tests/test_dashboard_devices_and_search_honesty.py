@@ -1,8 +1,8 @@
-"""Q8 / Q22 / Q23 — three small honesty defects on the devices + checkpoints APIs.
+"""Q8 / Q22 / Q23 - three small honesty defects on the devices + checkpoints APIs.
 
 * **Q8**: `GET /api/devices → managed` never carried the child's OS pid, so nothing
   in the UI could show or match the process it had just started. The loop variable
-  in that comprehension was itself named ``pid`` while holding a *peer id* — the
+  in that comprehension was itself named ``pid`` while holding a *peer id* - the
   name was taken, which is very likely why the real one never appeared.
 * **Q22**: ``rows[: max(limit, len(local))]`` kept every local cache row regardless
   of the requested limit, so a type-ahead asking for 1 row got 16; 0 and -5 also

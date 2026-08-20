@@ -1,7 +1,7 @@
 """A log that leaks a working credential is a vulnerability, not a log.
 
 Measured on the live dashboard: 63,000 access-log lines, each carrying a complete valid
-JWT in a WebSocket query string, in a 21 MB world-readable file in /tmp — for a
+JWT in a WebSocket query string, in a 21 MB world-readable file in /tmp - for a
 dashboard published through a public tunnel that can drive real arms.
 """
 

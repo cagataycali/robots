@@ -304,7 +304,7 @@ class RecordWorker:
             missing = ", ".join(notice.get("missing") or ())
             result["camera_notice"] = notice
             result["detail"] = (
-                f"{detail} — WITHOUT camera(s) {missing}: "
+                f"{detail} - WITHOUT camera(s) {missing}: "
                 + ("no image channel at all, so this dataset cannot train a visual policy"
                    if not notice.get("present")
                    else "those image channels are missing from every episode")
@@ -360,7 +360,7 @@ def camera_verdict(requested, present) -> dict[str, Any] | None:
 
     ``camera_keys`` is derived from the follower's first observation, so a
     camera the machine refuses to open (macOS TCC denies the daemon, a cable
-    is out, another process holds it) is simply ABSENT — and lerobot's schema
+    is out, another process holds it) is simply ABSENT - and lerobot's schema
     is then built from what is present. The session records happily, every
     episode reports success, and the dataset that comes out has no image
     channel at all: it cannot train the visual policy it was collected for,
@@ -386,7 +386,7 @@ def camera_verdict(requested, present) -> dict[str, Any] | None:
         "missing": missing,
         "message": (
             f"{len(missing)} of {len(req)} requested cameras did not open "
-            f"({', '.join(missing)}) — {consequence}. The follower's own log says "
+            f"({', '.join(missing)}) - {consequence}. The follower's own log says "
             "why it dropped them; on macOS a server started by a background "
             "daemon can never be granted camera access."
         ),
@@ -424,7 +424,7 @@ def hardware_backend(
                 inner.connect(False)
             self._leader = Teleoperator(leader_type, port=leader_port)
             if hasattr(self._leader, "connect"):
-                # calibrate=False, same reason as the follower above — and
+                # calibrate=False, same reason as the follower above - and
                 # doubly so here: lerobot's calibrate() talks to a HUMAN via
                 # input(), which in this stdin-less server dies as
                 # "EOF when reading a line" (cagatay hit exactly that from
@@ -442,7 +442,7 @@ def hardware_backend(
                         f"({fpath} is missing or does not match the motors). "
                         "Calibrate it once from a terminal (lerobot-calibrate "
                         f"--teleop.type={leader_type} --teleop.port={leader_port}) "
-                        "or copy an existing calibration json to that path — "
+                        "or copy an existing calibration json to that path - "
                         "a headless server cannot run the interactive wizard."
                     )
             obs = self._robot.get_observation()

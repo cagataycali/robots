@@ -2,7 +2,7 @@
 
 `init_mesh` has always honoured the kill switch, but `robot_mesh._gateway_mesh()`
 built a `Mesh` directly, so a robot-less process joined the live fleet on the
-first `robot_mesh` call — publishing presence and declaring subscribers whose
+first `robot_mesh` call - publishing presence and declaring subscribers whose
 non-daemon pyo3 callback threads then hung interpreter shutdown. That is how a
 test run became a live `gateway-*` peer on the operator's fleet screen.
 """
@@ -24,7 +24,7 @@ def test_switch_engaged_for_every_documented_off_value(value: str) -> None:
 
 @pytest.mark.parametrize("value", ["true", "1", "yes", "", "maybe"])
 def test_switch_only_ever_forces_off(value: str) -> None:
-    # An unset or affirmative value must not be read as "disabled" — the switch
+    # An unset or affirmative value must not be read as "disabled" - the switch
     # is one-directional by design.
     assert mesh_kill_switch_engaged({"STRANDS_MESH": value}) is False
     assert mesh_kill_switch_engaged({}) is False

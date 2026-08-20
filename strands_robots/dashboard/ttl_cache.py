@@ -1,9 +1,9 @@
-"""A small bounded TTL cache — the type-ahead's memory, with an actual end to it.
+"""A small bounded TTL cache - the type-ahead's memory, with an actual end to it.
 
 Both Hub searches (checkpoints and datasets) memoised their answers in a plain dict
 keyed by the query, with a TTL checked on read. That TTL made an entry USELESS but
 never collected it: nothing in either module ever removed a key. A type-ahead writes
-one entry per keystroke — "s", "so", "so1", "so10", "so101" — each holding up to 50
+one entry per keystroke - "s", "so", "so1", "so10", "so101" - each holding up to 50
 rows, and a dashboard left open for days keeps every prefix anyone ever typed, expired
 or not.
 
@@ -50,7 +50,7 @@ class TTLCache(Generic[V]):
         self._data: dict[str, tuple[float, V]] = {}
 
     def get(self, key: str) -> V | None:
-        """The value if it is still fresh, else None — and an expired entry is dropped."""
+        """The value if it is still fresh, else None - and an expired entry is dropped."""
         with self._lock:
             hit = self._data.get(key)
             if hit is None:

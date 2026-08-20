@@ -2,7 +2,7 @@
 
 ``hf_auth_state()`` answers "can this machine reach gated repos, and as whom".
 That answer is a property of the token on disk, but the cache used to be keyed on
-nothing at all — a bare ``{at, value}`` — so for ten minutes after a token changed
+nothing at all - a bare ``{at, value}`` - so for ten minutes after a token changed
 the dashboard kept reporting the previous verdict: the wrong username, or "token
 present but rejected" for a token that had just been fixed.
 

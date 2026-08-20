@@ -1,11 +1,11 @@
 """Q5: a replay that cannot start must be refused before it has a pid.
 
 ``/api/replay`` answered ``200 {"pid": ...}`` for a negative episode and a
-nonexistent dataset root — the truth arrived seconds later as a dead child in a
+nonexistent dataset root - the truth arrived seconds later as a dead child in a
 log nobody was reading. Everything knowable without a network call is now judged
 by ``validate_replay()`` BEFORE Popen. Hub existence is deliberately not probed
 (a network round-trip in a request path; an offline dashboard must still replay
-from cache), so a bogus-but-well-formed hub id still spawns — the fleet card and
+from cache), so a bogus-but-well-formed hub id still spawns - the fleet card and
 child log stay the honest surface for that case, and these tests pin the line.
 """
 

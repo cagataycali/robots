@@ -24,7 +24,7 @@ from tests.device_connect_env import skip_reason_if_sdk_missing  # noqa: E402
 # These tests drive the genuine Device Connect edge SDK. When it is not installed
 # they used to fail/error in bulk (12 failures + 52 errors on this machine, the same
 # on upstream main) and, in a sweep, sometimes PASS by borrowing a sibling module's
-# MagicMock — a security suite proving nothing while looking green. Skipping with the
+# MagicMock - a security suite proving nothing while looking green. Skipping with the
 # reason is the honest third option; the gate reads the filesystem, so a mock in
 # ``sys.modules`` cannot switch these back on.
 pytestmark = pytest.mark.skipif(bool(skip_reason_if_sdk_missing()), reason=skip_reason_if_sdk_missing())

@@ -24,7 +24,7 @@ def _text(res):
 def _json(res):
     """Extract the structured ``{"json": ...}`` content block.
 
-    The tool returns the canonical ``{status, content:[...]}`` only — structured
+    The tool returns the canonical ``{status, content:[...]}`` only - structured
     fields (job_id / checkpoint_dir / metrics / exported_model) live in a json
     content block, NOT as sibling keys of the result dict.
     """

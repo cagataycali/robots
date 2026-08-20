@@ -2,7 +2,7 @@
 
 Covers the AutoSpawnWatcher + ProfileStore pair in
 strands_robots.dashboard.device_manager with a fake serial bus and a fake
-manager — no real hardware, no real subprocesses.
+manager - no real hardware, no real subprocesses.
 """
 
 from __future__ import annotations
@@ -168,8 +168,8 @@ def test_unplug_despawns_after_consecutive_misses(store):
     assert w.poll()["spawned"] == ["so101-arm-1"]
 
     bus["ports"] = []  # unplugged
-    assert w.poll()["despawned"] == []          # miss 1 of 2 — debounce
-    assert w.poll()["despawned"] == ["so101-arm-1"]  # miss 2 — stopped
+    assert w.poll()["despawned"] == []          # miss 1 of 2 - debounce
+    assert w.poll()["despawned"] == ["so101-arm-1"]  # miss 2 - stopped
     assert mgr.despawn_calls == ["so101-arm-1"]
     assert w.adopted == {}
 

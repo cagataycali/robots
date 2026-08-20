@@ -1,16 +1,16 @@
-"""Edge-path tests for strands_robots.dashboard.auth — the branches the main
+"""Edge-path tests for strands_robots.dashboard.auth - the branches the main
 suite never reached (measured at 95% with 15 lines dark; these pin the four
 that are security behaviour rather than IO error tolerance).
 
 1. A challenge that survived eviction but aged past _CHAL_TTL is still refused
-   at pop time — eviction is housekeeping, the TTL is the guarantee.
+   at pop time - eviction is housekeeping, the TTL is the guarantee.
 2. begin_authentication refuses to run a ceremony whose rp_id is a raw IP,
-   even when the operator pinned that IP — browsers reject an IP rpId before
+   even when the operator pinned that IP - browsers reject an IP rpId before
    the ceremony starts, so proceeding would mint challenges nothing can answer.
 3. STRANDS_DASH_AUTH_ORIGIN outranks every header (tunnel installs where the
    proxy rewrites Host/Origin).
 4. Without the pin, the Origin header wins over Host reconstruction, and a
-   trailing slash is normalised — WebAuthn compares origins byte-for-byte.
+   trailing slash is normalised - WebAuthn compares origins byte-for-byte.
 """
 
 from __future__ import annotations

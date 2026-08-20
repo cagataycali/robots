@@ -2,7 +2,7 @@
 
 The bug this module exists to kill: ``scan_cameras`` dropped every index it
 could not open, so a camera that is *present but unavailable* looked exactly
-like a camera that does not exist — it simply vanished from the devices screen.
+like a camera that does not exist - it simply vanished from the devices screen.
 Live on this machine that meant six real cameras showed up as two bare indices,
 and the operator's own words were "our cameras are not visible in the list of
 cameras at the moment, they are so critical".
@@ -10,10 +10,10 @@ cameras at the moment, they are so critical".
 Three separate facts get conflated by a bare probe, and an operator needs all
 three separated because the remedy differs:
 
-* **absent** — no such device. Nothing to do.
-* **in use** — a running robot (or another app) holds it. Frames exist, they
+* **absent** - no such device. Nothing to do.
+* **in use** - a running robot (or another app) holds it. Frames exist, they
   just belong to someone else; the fix is to stop that owner, not to replug.
-* **blocked** — macOS has not granted camera access to the process running the
+* **blocked** - macOS has not granted camera access to the process running the
   dashboard. This one is invisible in the probe result and lethal: EVERY camera
   fails, and without the reason the natural conclusion is broken hardware.
 
@@ -59,7 +59,7 @@ def classify_probe_stderr(text: str) -> tuple[str, str, str | None]:
         OpenCV: not authorized to capture video (status 0), requesting...
         OpenCV: camera failed to properly initialize!
 
-    Matching is substring-based and lower-cased on purpose — the exact wording
+    Matching is substring-based and lower-cased on purpose - the exact wording
     varies between OpenCV builds, and a stricter parser would silently fall
     back to "absent", which is the misdiagnosis this whole module exists to
     prevent.
@@ -104,7 +104,7 @@ def roster_name(index: int, roster: Sequence[Mapping[str, Any]]) -> str | None:
 
     A GUESS, and labelled as such by the caller: the OS listing order is not
     OpenCV's enumeration order (Continuity cameras renumber themselves, and a
-    duplicate model name — this machine has two ``USB2.0_CAM1`` — cannot be
+    duplicate model name - this machine has two ``USB2.0_CAM1`` - cannot be
     told apart by name at all). The preview endpoint stays the authority,
     because a picture cannot lie.
     """
@@ -130,7 +130,7 @@ def merge_cameras(
     ``probed`` is what opened and read *now*; ``claimed`` maps an index to the
     live peer holding it; ``failures`` maps an index to the stderr its probe
     produced; ``remembered`` is what we last measured for an index while it was
-    free. Every index in any of those sources — plus the roster's own indices —
+    free. Every index in any of those sources - plus the roster's own indices -
     gets a row, so the count on screen stops depending on who happens to be
     running.
 
@@ -220,7 +220,7 @@ def probe_needed(
     """Should THIS request run the camera probe, having waited for the lock?
 
     Opening every camera index takes seconds, and each /api/devices request is
-    handed to a worker thread — so a rescan from the operator's phone, the 5s
+    handed to a worker thread - so a rescan from the operator's phone, the 5s
     poll in a browser tab and a second tab all probe CONCURRENTLY. Two probes at
     once is not merely wasted work on this hardware:
 
@@ -234,7 +234,7 @@ def probe_needed(
     its turn should do. `requested_at` is when the request ARRIVED, before the
     wait: if the probe that just finished completed after that instant, its
     result is at least as new as the question, and re-probing would only add the
-    contention above. A refresh whose answer predates the request still probes —
+    contention above. A refresh whose answer predates the request still probes -
     the operator pressed rescan to learn about a cable they just plugged in.
     """
     if cache_t >= requested_at:

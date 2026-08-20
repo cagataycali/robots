@@ -325,7 +325,7 @@ def _capturing_bus(monkeypatch):
     Q30: patching the legacy ``mesh_core.put`` alone is NOT isolation.
     ``emergency_stop()`` prefers the Zenoh-native publisher on the
     process-global session (``_current_zenoh_session_directly``) and
-    ``broadcast()`` uses ``current_session()`` — so when any earlier test
+    ``broadcast()`` uses ``current_session()`` - so when any earlier test
     in the same pytest process left a session open, the "captured" estop
     envelope went out on the REAL fleet namespace instead (it locked out
     a live arm), the capture list stayed empty, and the test died with a
@@ -350,7 +350,7 @@ def _live_unstarted_mesh(peer_id: str) -> mesh_core.Mesh:
     """A real Mesh peer minus the Zenoh transport (see the failover test).
 
     Q30 fuse: a safety test that cannot PROVE it is disconnected from the
-    fleet must refuse to run. Call ``_capturing_bus(monkeypatch)`` first —
+    fleet must refuse to run. Call ``_capturing_bus(monkeypatch)`` first -
     it severs the process-global session rails this assert checks.
     """
     assert mesh_core.current_session() is None and mesh_session._current_zenoh_session_directly() is None, (
@@ -474,7 +474,7 @@ def test_q30_estop_cannot_escape_to_a_live_global_session(example, monkeypatch):
     the patched legacy ``put()``, so the drill's envelope reached a live arm
     (lockout engaged, telemetry dead) while the capture list stayed empty and
     the failure masqueraded as a harness flake. This test plants exactly that
-    trap — a reachable "open session" — and proves the harness never touches
+    trap - a reachable "open session" - and proves the harness never touches
     it: the envelope must land in the capture list, the session must see no
     declare_publisher, no put, no queries.
     """

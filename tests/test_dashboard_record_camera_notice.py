@@ -1,7 +1,7 @@
 """A requested camera that never opened must be visible BEFORE collection.
 
 The record worker derives ``camera_keys`` from the follower's first observation,
-so a camera the machine refuses to open is merely absent — lerobot then builds
+so a camera the machine refuses to open is merely absent - lerobot then builds
 the dataset schema from what is present, every episode reports success, and the
 dataset has no image channel to train on. This file pins the verdict that says
 so, and pins that it stays silent when there is nothing to report (a false

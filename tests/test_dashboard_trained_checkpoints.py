@@ -1,7 +1,7 @@
 """U20 seam: a policy trained BY the dashboard must be findable IN the dashboard.
 
 submit() records every run's output_dir in the jobs ledger, but the picker
-searched only the HF cache and the hub — the user could train a policy here
+searched only the HF cache and the hub - the user could train a policy here
 and then be unable to select it here. trained_checkpoints() closes the loop
 via the ledger. Run with --no-cov.
 """
@@ -104,7 +104,7 @@ def test_newest_job_first_and_query_filters(tmp_path, jobs):
     rows = trained_checkpoints()
     assert [r["job_id"] for r in rows] == ["new", "old"]
     assert [r["job_id"] for r in trained_checkpoints("act-sort")] == ["old"]
-    # the dataset name is searchable too — "what did I train on X" is a real query
+    # the dataset name is searchable too - "what did I train on X" is a real query
     assert [r["job_id"] for r in trained_checkpoints("local/collected")] == ["new", "old"]
 
 

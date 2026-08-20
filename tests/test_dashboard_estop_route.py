@@ -1,12 +1,12 @@
 """Route-level tests for POST /api/safety/estop and /api/safety/resume.
 
-The fleet's most safety-critical route had NO dashboard-level test — every
+The fleet's most safety-critical route had NO dashboard-level test - every
 existing e-stop test lives at the fleet/mesh layer. These pin the route's
 promises:
 
 * BOTH rails fire: per-peer broadcast stop AND the signed lockout envelope,
   and a signed-rail failure must not degrade the broadcast's report.
-* stale peers are SKIPPED and named — never counted as "stopped" (a stale
+* stale peers are SKIPPED and named - never counted as "stopped" (a stale
   peer counted stopped is exactly the lie an e-stop must never tell).
 * ``all_stopped`` only on unanimity of LIVE peers, and never for an empty
   fleet (nothing was stopped, so nothing may claim it was).

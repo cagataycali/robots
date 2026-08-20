@@ -9,7 +9,7 @@ checkpoints invisible to /api/checkpoints/search).
 
 Heavy machinery is stubbed at the SUBPROCESS boundary and nowhere shallower:
 the collect backend writes a real dataset tree, the trainer writes a real
-LeRobot checkpoint tree — every discovery walk, ledger write and route in
+LeRobot checkpoint tree - every discovery walk, ledger write and route in
 between is the production code. Run with --no-cov.
 """
 
@@ -50,7 +50,7 @@ def _isolate(monkeypatch, tmp_path):
 
 def _write_dataset(root: Path, episodes: int = 3) -> None:
     """What a finished collect leaves on disk. GROUND TRUTH (run_policy.py:83):
-    dataset_root IS the dataset directory — meta/info.json sits directly under
+    dataset_root IS the dataset directory - meta/info.json sits directly under
     it, not under a repo_id subfolder."""
     (root / "meta").mkdir(parents=True)
     (root / "meta" / "info.json").write_text(json.dumps({
@@ -133,7 +133,7 @@ def test_collect_train_deploy_chain(tmp_path):
 
 def test_chain_survives_a_training_that_produced_nothing(tmp_path):
     """A submitted job whose output never materialised must not poison the
-    picker with an unloadable row — the chain degrades link by link."""
+    picker with an unloadable row - the chain degrades link by link."""
     from strands_robots.dashboard.server import create_app
 
     app = create_app()

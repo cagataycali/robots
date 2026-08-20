@@ -2,7 +2,7 @@
 
 ``POST /api/policies/validate`` answered ``{"ok": true, "stage": "preflight"}``
 for ``lerobot_local`` with an EMPTY config, and the run form rendered that as a
-green "✓ lerobot_local resolves". Nothing about a model had been resolved: the
+a green "lerobot_local resolves". Nothing about a model had been resolved: the
 provider declares no required fields (``requires: []``,
 ``pretrained_name_or_path`` required *false*), ``policy_provider_error`` has
 nothing to complain about, and ``preflight_policy``'s useful check - comparing a

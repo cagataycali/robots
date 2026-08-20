@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
-#: These two have to outlive individual SOCKETS to be able to count them — that is the whole
+#: These two have to outlive individual SOCKETS to be able to count them - that is the whole
 #: requirement, and app.state satisfies it. Module level made them outlive the APP as well, which
 #: nothing asked for and which cost a day of confusion (Q63): one test's deliberate reopen storm
 #: exhausted the close-log budget for a peer/camera name, so a LATER test in the same process saw
@@ -927,13 +927,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 cmd[opt] = body[opt]
         # Child sim peers can't execute themselves:
         # route "<parent>__<robot>" to the parent with robot_name here, so
-        # the card ▶ button and every API caller get the fix - not just the
+        # the card's Run button and every API caller get the fix - not just the
         # agent's fleet tool.
         from strands_robots.dashboard.mesh_bridge import route_task_target
 
         target, cmd = route_task_target(peer_id, cmd)
         # Two different waits: "start" is answered by an immediate ack (so waiting
-        # duration+10 meant a 1-hour run held ▶ in "starting" for 3610s if the peer
+        # duration+10 meant a 1-hour run held Run in "starting" for 3610s if the peer
         # never answered), while "execute" blocks until the rollout ends. The ack
         # budget is still generous, because a cold checkpoint download happens
         # BEFORE the ack and a premature "failed" on a policy that then loads and
@@ -997,7 +997,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         Rail 1: broadcast {action: stop} to every live peer (works even for
         peers that ignore the signed envelope). Rail 2: the signed
         strands/safety/estop envelope, which engages the fleet-wide LOCKOUT
-        on every listening peer — they refuse all further commands until a
+        on every listening peer - they refuse all further commands until a
         proofed resume (/api/safety/resume with the override code).
 
         Only *live* peers are addressed, and every peer is classified
@@ -1093,7 +1093,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/consent")
     async def post_consent(body: dict[str, Any]) -> dict[str, Any]:
-        """Approve one refusal, by kind + subject — nothing else is settable.
+        """Approve one refusal, by kind + subject - nothing else is settable.
 
         The browser never sends the variable or the value: the request is
         REBUILT here from ``kind``/``subject`` so an approval can only ever
@@ -1150,7 +1150,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/consent/revoke")
     async def revoke_consent(body: dict[str, Any]) -> dict[str, Any]:
-        """Take one grant back — the other half of a promise the dialog makes.
+        """Take one grant back - the other half of a promise the dialog makes.
 
         Narrow in the same way the grant was: revoking one repository leaves the
         rest of the allowlist untouched. Already-running children keep the
@@ -1440,7 +1440,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         ``{"payload": {...}}`` for live form state (the U4 form can offer the
         snippet before the rig was ever spawned). Optional ``hub_host``
         overrides the address edge devices reach this dashboard's zenoh hub on;
-        it defaults to the host the caller used to reach us, minus the port —
+        it defaults to the host the caller used to reach us, minus the port -
         loopback is withheld (an edge device's "localhost" is itself).
         """
         payload = body.get("payload")
@@ -1704,7 +1704,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if churn.reason:
             # Say it on the tile, not only in the log: a silent throttle is
             # indistinguishable from a slow camera, and old bundles already render
-            # `camera_error` text — so even the tab that caused this can explain itself.
+            # `camera_error` text - so even the tab that caused this can explain itself.
             with contextlib.suppress(Exception):
                 await ws.send_text(json.dumps({
                     "type": "camera_error", "peer_id": peer_id, "cam": cam,

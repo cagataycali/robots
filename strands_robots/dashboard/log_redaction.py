@@ -1,12 +1,12 @@
 """Keep credentials out of the log file.
 
 A browser cannot set headers on a WebSocket handshake, so every camera and mesh socket
-carries its JWT in the QUERY STRING — and uvicorn's access log writes the request line
+carries its JWT in the QUERY STRING - and uvicorn's access log writes the request line
 verbatim. Measured on this Mac after ten hours of uptime: 63,000 lines of
 ``"WebSocket /ws/camera/so101-arm-1/top?token=eyJhbGciOi…" [accepted]``, each one a
 complete, still-valid bearer token, in a 21 MB file in /tmp with mode 0644. Anything
-that can read that file — any local process, any log shipper, a pasted tail in a bug
-report, this agent's own transcripts — holds a working credential for a dashboard that
+that can read that file - any local process, any log shipper, a pasted tail in a bug
+report, this agent's own transcripts - holds a working credential for a dashboard that
 is published through a public tunnel and can drive real robot arms.
 
 The token is not the leak; logging it is. So the log line is redacted at the logging
@@ -16,7 +16,7 @@ URL. ``redact_secrets`` is pure and takes the whole formatted message, because t
 secret can be anywhere in it.
 
 What is deliberately kept: the parameter NAME, the path, the peer, the status. A
-redacted log must still be a usable log — "which socket did this phone open 63,000
+redacted log must still be a usable log - "which socket did this phone open 63,000
 times" has to remain answerable, and the fingerprint (length + last 4) is enough to
 tell two tokens apart without being enough to use one.
 """
@@ -42,8 +42,8 @@ _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{
 def fingerprint(secret: str) -> str:
     """A stable, non-usable label for a credential: its length and last 4 characters.
 
-    Two sockets opened by two different phones must remain distinguishable in a log —
-    that is most of what the log is FOR — and 4 characters of a 200-character JWT is
+    Two sockets opened by two different phones must remain distinguishable in a log -
+    that is most of what the log is FOR - and 4 characters of a 200-character JWT is
     not a credential.
     """
     tail = secret[-4:] if len(secret) >= 8 else ""

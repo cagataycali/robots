@@ -1,8 +1,8 @@
-"""Which arm is the leader and which is the follower — measured, not labelled (U2).
+"""Which arm is the leader and which is the follower - measured, not labelled (U2).
 
 The operator's report: "as I see the leader arm is follower, follower is leader on
 the dashboard at the moment". Today nothing in the dashboard *measures* the
-difference — the role comes from whatever name a profile was given, so a swap is
+difference - the role comes from whatever name a profile was given, so a swap is
 invisible and silently wrong in exactly the place it hurts (a record session
 drives the follower).
 
@@ -12,7 +12,7 @@ on the read-only ``Present_Voltage`` register, so the role can be read off the
 hardware in a few milliseconds without moving anything.
 
 This module is pure: it decides what a set of voltage readings MEANS. The bus
-access lives in device_manager, and it is register reads only — never a torque
+access lives in device_manager, and it is register reads only - never a torque
 or position write.
 """
 
@@ -44,19 +44,19 @@ def classify_role(volts: float | None) -> tuple[str, str]:
     if volts is None:
         return "unknown", "no voltage could be read from the bus"
     if volts >= FOLLOWER_MIN_V:
-        return "follower", f"{volts:.1f}V bus — the 12V supply, which is the follower arm"
+        return "follower", f"{volts:.1f}V bus - the 12V supply, which is the follower arm"
     if volts >= POWERED_MIN_V:
-        return "leader", f"{volts:.1f}V bus — the 7.4V supply, which is the leader arm"
+        return "leader", f"{volts:.1f}V bus - the 7.4V supply, which is the leader arm"
     if volts >= USB_RAIL_V - 0.5:
         return (
             "unpowered",
-            f"{volts:.1f}V — that is the USB logic rail, not a supply: this arm's power "
+            f"{volts:.1f}V - that is the USB logic rail, not a supply: this arm's power "
             f"is off. A leader's 7.4V pack reads 6.6-8.4V and a follower's 12V reads "
             f"10.5-12.7V, so the role cannot be read until it is powered",
         )
     return (
         "unpowered",
-        f"{volts:.1f}V — this arm is not on its power supply, so its role cannot be read "
+        f"{volts:.1f}V - this arm is not on its power supply, so its role cannot be read "
         f"(an unpowered arm reads like nothing at all, not like a leader)",
     )
 
@@ -65,7 +65,7 @@ def role_verdict(readings: Mapping[Any, float | None]) -> dict[str, Any]:
     """Several servos on one bus → one verdict, or an honest refusal.
 
     The median is used rather than the mean because a single servo that answers
-    0.0 (or 25.5 — a byte read that went wrong) would otherwise drag a 12V bus
+    0.0 (or 25.5 - a byte read that went wrong) would otherwise drag a 12V bus
     below the threshold and rename the arm.
 
     A spread wider than SPREAD_MAX_V is reported as ``mixed`` instead of being
@@ -90,7 +90,7 @@ def role_verdict(readings: Mapping[Any, float | None]) -> dict[str, Any]:
             "role": "mixed",
             "reason": (
                 f"servos on this bus report different supplies ({values[0]:.1f}V to "
-                f"{values[-1]:.1f}V) — they share one supply, so this is a fault, not a role"
+                f"{values[-1]:.1f}V) - they share one supply, so this is a fault, not a role"
             ),
             "remedy": "check the power wiring / daisy-chain, then retry before trusting any role",
             "volts": mid,
@@ -115,7 +115,7 @@ def disagreement(profile_role: str | None, measured: Mapping[str, Any]) -> dict[
     """The point of the whole exercise: does the label match the hardware?
 
     Returns None when there is nothing to say (no label, or an unusable
-    measurement — a fault must not be reported as "your label is wrong").
+    measurement - a fault must not be reported as "your label is wrong").
     """
     measured_role = measured.get("role")
     if not profile_role or measured_role not in ("leader", "follower"):
@@ -129,6 +129,6 @@ def disagreement(profile_role: str | None, measured: Mapping[str, Any]) -> dict[
             f"this arm is labelled {profile_role} but its bus reads "
             f"{measured.get('volts')}V, which is the {measured_role} arm"
         ),
-        "remedy": f"relabel it {measured_role} before teleop or recording — "
+        "remedy": f"relabel it {measured_role} before teleop or recording - "
                   f"the roles decide which arm is driven",
     }

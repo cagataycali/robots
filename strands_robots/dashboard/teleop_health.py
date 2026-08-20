@@ -1,4 +1,4 @@
-"""Is teleop actually working? — the verdict, from the counters.
+"""Is teleop actually working? - the verdict, from the counters.
 
 Measured on real hardware (2026-08-19): a real SO-101 leader published 176 frames
 to a follower that accepted NONE of them. Everything the dashboard could see said
@@ -105,7 +105,7 @@ def diagnose_receiver(
         if refusal:
             out["detail"] = (
                 f"{detail} The mesh's teleop envelope is {refusal['bound']:g} units, and this leader "
-                f"reported {refusal['joint']} at {refusal['value']:g} — the arm reports DEGREES while "
+                f"reported {refusal['joint']} at {refusal['value']:g} - the arm reports DEGREES while "
                 f"the envelope assumes radians (4·pi)."
             )
         return out
@@ -120,7 +120,7 @@ def diagnose_receiver(
                 "headline": f"{source} is publishing, but nothing reaches this follower",
                 "detail": (
                     f"the leader has published {source_frames} frames and this follower has "
-                    "received none — they are not meeting on the mesh (a subscription bound to a "
+                    "received none - they are not meeting on the mesh (a subscription bound to a "
                     "session that has since died does this). Restart the follower, then subscribe "
                     "again."
                 ),
@@ -129,7 +129,7 @@ def diagnose_receiver(
         return {
             "state": "silent",
             "headline": f"subscribed to {source}, but no frames are arriving",
-            "detail": "the leader is not publishing — start its stream first "
+            "detail": "the leader is not publishing - start its stream first "
                       "(POST /api/robots/{leader}/teleop/publish)"
                       + ("" if source_frames is None else " (its publisher reports 0 frames)"),
         }
@@ -213,7 +213,7 @@ def teleop_health(
         # and the camera publisher get their turns too. Say so, so nobody reads
         # it as a bug and "fixes" it by asking for more.
         if state == "publishing" and target and hz < target * 0.6:
-            detail = (f"{hz:.1f}Hz of the {target:g}Hz requested — the servo bus is shared with "
+            detail = (f"{hz:.1f}Hz of the {target:g}Hz requested - the servo bus is shared with "
                       "this arm's state and camera reads")
         publishers[name] = {"state": state, "headline": f"{frames} frames at {hz:.1f}Hz",
                             "detail": detail}

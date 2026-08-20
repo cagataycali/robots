@@ -1,7 +1,7 @@
 """The Hub type-ahead's cache has to end somewhere.
 
 A TTL that only stops SERVING an entry is not a bound: the dict keeps every key ever
-written. This is the test that the store prunes itself — by age when read, by age and
+written. This is the test that the store prunes itself - by age when read, by age and
 then by insertion order when written.
 """
 

@@ -3,7 +3,7 @@
 The generated file is the contract that the dashboard's spawn form and a
 plain `python robot.py` on an edge device describe the same object. The
 strongest test therefore EXECUTES the generated source (with strands_robots
-stubbed) and asserts the factory receives exactly the profile's arguments —
+stubbed) and asserts the factory receives exactly the profile's arguments -
 string comparison on generated code rots; a call-capture does not.
 
 Run with --no-cov.
@@ -185,7 +185,7 @@ def test_route_404s_unknown_serial_and_422s_no_payload():
 
 
 def test_route_withholds_loopback_hub_host():
-    # TestClient reaches the app on http://testserver — a real hostname, so it
+    # TestClient reaches the app on http://testserver - a real hostname, so it
     # IS offered; loopback must not be.
     body = _client().post("/api/deploy/snippet", json={"serial": "5AB0181806"}).json()
     assert "tcp/testserver:7447" in body["snippet"]

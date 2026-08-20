@@ -257,7 +257,7 @@ def scan_cameras_with_failures(
     """Like :func:`scan_cameras`, but also says WHY each index failed.
 
     ``isOpened() == False`` is returned for a missing camera, a busy camera and
-    a camera macOS is refusing to let us touch — the difference is only on
+    a camera macOS is refusing to let us touch - the difference is only on
     OpenCV's stderr, which a library write goes straight past the logging
     module (it is printed by C++ code on fd 2). The failing indices are
     therefore re-probed in a CHILD process, whose stderr is ours to read
@@ -959,7 +959,7 @@ def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, st
 def validate_replay(
     repo_id: Any, episode: Any, root: Any = None, speed: Any = 1.0
 ) -> dict[str, str] | None:
-    """Refusal reason for a replay request, or None — judged BEFORE any process.
+    """Refusal reason for a replay request, or None - judged BEFORE any process.
 
     Q5: a negative episode and a nonexistent dataset both answered 200 + pid,
     and the truth arrived seconds later as a dead child in the log. Everything
@@ -968,11 +968,11 @@ def validate_replay(
     * ``episode`` must be a non-negative integer. An episode index is a list
       position; ``-5`` is not "the fifth from the end" anywhere downstream, it
       is a KeyError wearing a pid.
-    * ``speed`` must be a finite positive number — 0 is a replay that never
+    * ``speed`` must be a finite positive number - 0 is a replay that never
       advances (a live-looking card forever), and a negative speed is not
       rewind, it is undefined.
     * ``repo_id`` must look like a HuggingFace id (``org/name``) or name a
-      local dataset. When ``root`` is given it must EXIST — that is a
+      local dataset. When ``root`` is given it must EXIST - that is a
       filesystem stat, not a network call, and a typo'd root is the most
       common way "dataset not found" happens.
 
@@ -1014,7 +1014,7 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
     process exists.
 
     Shape is lerobot's: ``{name: {index_or_path: int|str, fps?, width?,
-    height?, type?}}``. Bounds are deliberately generous — they refuse only
+    height?, type?}}``. Bounds are deliberately generous - they refuse only
     what no driver can mean (fps 0 divides a sleep, a 100000-pixel width is a
     typo), not what a given camera happens to support: the probe-vs-fantasy
     line belongs to the UI's mode discovery, and a camera that rejects a legal
@@ -1913,7 +1913,7 @@ class DeviceManager:
         """Respawn a managed peer with a new camera config (U19 v1).
 
         Peers take cameras only at spawn, so "change the wrist camera's fps"
-        is honestly a RESPAWN — this makes it one atomic, named operation
+        is honestly a RESPAWN - this makes it one atomic, named operation
         instead of a despawn the operator must remember to follow up. The
         streams the peer was publishing DO drop for the settle window; the
         route's confirm dialog is where that is consented to, not here.

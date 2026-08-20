@@ -30,7 +30,7 @@ def leak_report(*, session_open: bool, threads: Iterable[str]) -> list[str]:
     lines = ["", "=" * 72, "LEAK: this pytest process is not ready to exit (BUGS.md Q32)"]
     if session_open:
         lines += [
-            "  * a global mesh session is STILL OPEN — while it is, this process is a",
+            "  * a global mesh session is STILL OPEN - while it is, this process is a",
             "    peer on the live fleet and anything it publishes reaches real hardware.",
             "    Closing it now; the test that opened it should close it itself.",
         ]

@@ -3,7 +3,7 @@
 Modules in this directory install ``MagicMock``s for ``device_connect_edge`` in
 ``sys.modules``. If the gate consulted ``sys.modules`` (as ``importlib.util.find_spec``
 does), a sweep would run the SDK-backed security tests against mocks and report
-green — the worst possible outcome for a test whose whole job is proving a guard.
+green - the worst possible outcome for a test whose whole job is proving a guard.
 """
 
 from __future__ import annotations

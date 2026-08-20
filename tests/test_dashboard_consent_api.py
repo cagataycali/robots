@@ -21,7 +21,7 @@ HF_REFUSAL = (
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
     """Temp auth store (an enrolled passkey on this machine would 401 us), temp
-    settings, temp .env — a test must never write the operator's real grants."""
+    settings, temp .env - a test must never write the operator's real grants."""
     from strands_robots.dashboard import auth, config_api
     from strands_robots.dashboard import settings as dsettings
 

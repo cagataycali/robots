@@ -1,12 +1,12 @@
-"""Make a socket's DEATH visible — the missing half of the camera stream's story.
+"""Make a socket's DEATH visible - the missing half of the camera stream's story.
 
 Q40 (a phone reopening the same camera socket 63,906 times in ten hours) hid for a full
 day because of one absence: the log contained 63,906 ``connection open`` lines and
 **zero** closes. ws_camera accepts, loops at 15fps, and its ``except
 (WebSocketDisconnect, RuntimeError): pass`` swallows the end of every stream. So a
 reconnect storm was indistinguishable from 63,906 healthy viewers arriving, and the one
-question that would have solved it in a second — "did these sockets ever send a frame?"
-— had no answer anywhere on the machine.
+question that would have solved it in a second - "did these sockets ever send a frame?"
+- had no answer anywhere on the machine.
 
 The fix is not "log every close": at the rate of the incident that IS the incident,
 amplified. It is to log the close with the facts that distinguish the cases (frames

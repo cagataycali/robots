@@ -58,7 +58,7 @@ class TestTheVerdict:
         assert g.note_open("storm", now=1000.0 + 400.0).cap_fps is None
 
     def test_it_never_refuses_the_connection(self) -> None:
-        """A refusal would blank the tile and hide the robot — and a storming client
+        """A refusal would blank the tile and hide the robot - and a storming client
         would simply reconnect. The verdict only ever carries a RATE."""
         g = ChurnGuard()
         for i in range(200):
@@ -74,7 +74,7 @@ class TestItCannotBecomeTheLeakItPrevents:
         assert len(g._seen) <= 9  # the cap, plus the entry being noted right now
 
     def test_a_flooder_cannot_evict_the_operator_to_get_a_clean_slate(self) -> None:
-        """Eviction drops the QUIETEST identities, and never the one being judged — so a
+        """Eviction drops the QUIETEST identities, and never the one being judged - so a
         flood cannot buy itself a fresh window, which is Q11's lesson one layer down."""
         g = ChurnGuard(max_tracked=4)
         for i in range(CHURN_OPENS_PER_MIN + 3):

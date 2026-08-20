@@ -167,7 +167,7 @@ def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, 
     execute tasks themselves (upstream mesh._dispatch has no execute path on
     SimRobot children). The parent's _dispatch_sim_policy
     honors cmd["robot_name"], so we rewrite the target here. This is THE
-    choke point: the REST API, the card ▶ button, and the
+    choke point: the REST API, the card's Run button, and the
     fleet agent tool all go through it.
     """
     if "__" in target and not cmd.get("robot_name"):
@@ -186,7 +186,7 @@ def command_succeeded(response: dict[str, Any] | None) -> bool:
     and a *successful* response can still carry ``result.ok == False`` (e.g.
     "peer exposes no stop_task; nothing was stopped"). Callers that only check
     for transport errors therefore report success while nothing stopped, which
-    is how the ■ button came to lie.
+    is how the Stop button came to lie.
     """
     if not isinstance(response, dict):
         return False

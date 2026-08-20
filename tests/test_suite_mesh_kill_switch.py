@@ -2,7 +2,7 @@
 
 Q30 was a full pytest sweep that E-STOPPED cagatay's live arms for three hours; Q32
 was a test run that joined the fleet as a `gateway-*` peer and hung on shutdown.
-Both needed the same precondition — a process that could open a real mesh session —
+Both needed the same precondition - a process that could open a real mesh session -
 and the only thing standing between the suite and that precondition is the kill
 switch conftest sets. So assert it, here, as a test: if someone loosens conftest
 again (it used to be `setdefault`, which any ambient `STRANDS_MESH=true` disarmed),
@@ -33,7 +33,7 @@ def test_the_mesh_kill_switch_is_engaged_for_this_whole_run() -> None:
 def test_an_ambient_mesh_true_cannot_disarm_the_switch(monkeypatch: pytest.MonkeyPatch) -> None:
     """The pin that matters: the OLD conftest (setdefault) would have left this 'true'."""
     monkeypatch.setenv("STRANDS_MESH", "true")
-    # A test may of course opt itself back in — that is monkeypatch's job and it is
+    # A test may of course opt itself back in - that is monkeypatch's job and it is
     # undone at teardown. What must never happen is the SUITE starting out that way,
     # which the test above pins. Here we only prove the predicate reads the live env,
     # so the check above is a real observation rather than a constant.

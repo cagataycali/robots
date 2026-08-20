@@ -1,7 +1,7 @@
 """What address and what patience a single-node elastic launch gets.
 
 Pure tests: they never construct a store, so they run in milliseconds and are safe to
-keep in a sweep — unlike the launch tests in test_inproc.py, which drive a real torch
+keep in a sweep - unlike the launch tests in test_inproc.py, which drive a real torch
 rendezvous and are the subject of BUGS.md Q37.
 """
 
@@ -64,12 +64,12 @@ class TestRdzvTimeout:
 
 
 class TestLocalAddr:
-    """MASTER_ADDR — the actual Q37 root cause.
+    """MASTER_ADDR - the actual Q37 root cause.
 
     Left to torch, this address is ``socket.getfqdn()``, which on this Mac returns the
     reverse-DNS PTR name of ``::1`` (``1.0.0.0...ip6.arpa``). Nothing can resolve that
     forwards, so the worker store's client dials it forever inside libtorch's C++
-    retry loop — a run parked on "Rendezvous'ing worker group" with no error and no
+    retry loop - a run parked on "Rendezvous'ing worker group" with no error and no
     timeout that can reach it.
     """
 

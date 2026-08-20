@@ -1,4 +1,4 @@
-"""The churn guard is actually WIRED to /ws/camera — not merely importable (Q53).
+"""The churn guard is actually WIRED to /ws/camera - not merely importable (Q53).
 
 The pure guard has its own unit tests; this one exists because of a lesson from this
 project's own history (U2 piece 3): I once enriched a ROUTE and proved it with curl while
@@ -6,7 +6,7 @@ the screen kept rendering from a different code path. A defence nobody reaches i
 defence, so the acceptance test here is the socket's own behaviour: open a camera faster
 than a human ever would and require the server to SAY it is pacing us.
 
-Aimed at a peer/camera that publishes nothing, exactly like the live storm — the guard
+Aimed at a peer/camera that publishes nothing, exactly like the live storm - the guard
 counts ACCEPTED sockets, which is what a storm is made of.
 """
 

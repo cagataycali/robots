@@ -144,7 +144,7 @@ def _edge_mocks_are_installed_while_this_module_runs():
     module first and runs ``teardown_module`` after each FILE, so a sibling that
     mocks the same package (``test_device_connect_all_robots`` /
     ``test_device_connect_drivers`` mock each other's) tears the mocks out of
-    ``sys.modules`` — and purges ``strands_robots.device_connect.*`` with them —
+    ``sys.modules`` - and purges ``strands_robots.device_connect.*`` with them -
     while this module is still waiting its turn. The next import inside a test
     then hits the REAL name, which is not installed here, and 30 tests fail with
     ``ModuleNotFoundError: No module named 'device_connect_edge'`` in a file that

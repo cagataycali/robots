@@ -1,6 +1,6 @@
 """Smoke tests for :class:`strands_robots.policies.moveit2.MoveIt2Policy`.
 
-Runs in-process against a stubbed ZMQ socket — no ROS 2, no live network.
+Runs in-process against a stubbed ZMQ socket - no ROS 2, no live network.
 Mirrors the pattern used by ``tests/policies/groot/test_zmq_wire_roundtrip.py``:
 override ``client.socket.send`` / ``recv`` and msgpack-encode a fake
 sidecar response.
@@ -211,7 +211,7 @@ class TestMoveIt2InferenceClient:
 
     def test_plan_helper_omits_optional_fields_when_unset(self):
         """plan() should not send ``target_pose`` / ``world_update`` keys when
-        those are None — keeps the wire payload minimal and lets the
+        those are None - keeps the wire payload minimal and lets the
         sidecar use its own defaults."""
         client = MoveIt2InferenceClient(host="127.0.0.1", port=9999)
         sent: list[dict] = []
@@ -450,7 +450,7 @@ class TestMoveIt2PolicyWireRoundTrip:
 
     def test_trajectory_unpacks_to_per_step_dicts(self):
         """The sidecar's ``[[t, q0, q1, ...], ...]`` rows unpack into a
-        list of per-step joint dicts. Time column is dropped — the
+        list of per-step joint dicts. Time column is dropped - the
         runner schedules the timing."""
         p = self._make_policy()
         p.set_robot_state_keys(["j0", "j1", "j2", "j3", "j4", "j5"])
@@ -533,7 +533,7 @@ class TestMoveIt2PolicyWireRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Policy ABC contract — same shape as MockPolicy
+# Policy ABC contract - same shape as MockPolicy
 # ---------------------------------------------------------------------------
 
 

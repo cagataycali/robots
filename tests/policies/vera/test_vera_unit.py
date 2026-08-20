@@ -1,4 +1,4 @@
-"""Unit tests for the VERA policy provider (offline — no server, no GPU, no vera pkg).
+"""Unit tests for the VERA policy provider (offline - no server, no GPU, no vera pkg).
 
 Covers: config defaults + env overrides, factory registration/resolution, the
 wire client's msgpack roundtrip + error sentinel, the server runner's list-arg
@@ -156,7 +156,7 @@ class TestMsgpackNumpy:
 
 
 # --------------------------------------------------------------------------- #
-# Server runner — list-arg command construction (no shell strings, PR #621)
+# Server runner - list-arg command construction (no shell strings, PR #621)
 # --------------------------------------------------------------------------- #
 class TestServerRunner:
     def test_command_is_list_args(self):
@@ -334,7 +334,7 @@ class TestGetActionsRoundtrip:
 
 
 # --------------------------------------------------------------------------- #
-# Docker server runner — list-arg `docker run` construction (no shell strings)
+# Docker server runner - list-arg `docker run` construction (no shell strings)
 # --------------------------------------------------------------------------- #
 class TestDockerServerRunner:
     def test_server_mode_selects_docker_runner(self):

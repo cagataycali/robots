@@ -312,7 +312,7 @@ def _normalize_max_relative_target(value: Any, robot_type: str) -> float | dict[
 def _degraded_notes(host: Any) -> dict[str, str]:
     """The ``{camera: reason}`` book of a host, created on demand.
 
-    ``Robot.__init__`` sets ``_degraded_cameras``, so this is belt and braces —
+    ``Robot.__init__`` sets ``_degraded_cameras``, so this is belt and braces -
     but the write it guards is the LAST step of a recovery that has already
     succeeded: the camera was dropped, the motors are up, the arm is usable. An
     AttributeError there is swallowed by the caller's ``except Exception`` and

@@ -3,7 +3,7 @@
 The defect: the route sends ``action: "start"``, which mesh core answers with an
 immediate ack, but the wait was ``max(timeout, duration + 10)`` - sized for the
 blocking ``execute`` variant. A 1-hour run therefore meant the dashboard would sit
-on the ack for 3610s, leaving ▶ spinning in "starting" with nothing on screen if
+on the ack for 3610s, leaving the Run button spinning in "starting" with nothing on screen if
 the peer never answered: wedged serial, dead child, lost response.
 """
 

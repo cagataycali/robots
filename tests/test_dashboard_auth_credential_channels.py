@@ -1,10 +1,10 @@
-"""The credential CHANNELS the guard accepts — one test per way in.
+"""The credential CHANNELS the guard accepts - one test per way in.
 
 ``TokenAuthMiddleware._presented`` reads a credential from three places:
 ``Authorization: Bearer``, the ``X-Dashboard-Token`` header, and a ``?token=``
 query parameter. The bearer and query-string channels were already pinned by
 tests/test_dashboard_auth_guard.py; ``X-Dashboard-Token`` had **zero** test hits
-anywhere in the suite despite being a full credential — a refactor of
+anywhere in the suite despite being a full credential - a refactor of
 ``_presented`` could have dropped or loosened it silently, and the thing it
 guards moves real motors.
 
@@ -12,10 +12,10 @@ What is pinned here, and why each one is a security statement rather than a
 coverage exercise:
 
 * the header works, for BOTH credential kinds (static token and the WebAuthn
-  session JWT that is the login escape hatch) — a channel that only half works
+  session JWT that is the login escape hatch) - a channel that only half works
   is worse than one that does not exist, because the operator locked out of a
   passkey would find their token rejected with the same 401;
-* a token that is a PREFIX (or an extension) of the real one is refused — the
+* a token that is a PREFIX (or an extension) of the real one is refused - the
   comparison must stay whole-value and constant-time, not ``startswith``;
 * when two channels disagree the request is refused rather than searched for a
   credential that happens to work: ``Authorization`` decides, and a wrong
@@ -23,10 +23,10 @@ coverage exercise:
   One request presents ONE credential; "try them all" turns every extra header
   into an oracle;
 * ``?token=`` on plain HTTP is accepted, which is REAL EXPOSURE (access logs,
-  proxy logs, browser history) — pinned as current behaviour with the reason it
+  proxy logs, browser history) - pinned as current behaviour with the reason it
   has not simply been removed, because the tightening is the owner's call.
 
-Raw ASGI, no lifespan, no zenoh — the same harness shape as the guard tests,
+Raw ASGI, no lifespan, no zenoh - the same harness shape as the guard tests,
 because building the app opens a mesh session and a suite joined to the live
 fleet is its own incident (BUGS.md Q30/Q32).
 """

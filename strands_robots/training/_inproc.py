@@ -188,7 +188,7 @@ def free_local_port() -> int:
 def rendezvous_endpoint(rdzv_endpoint: str, nnodes: int, *, port_picker: Callable[[], int] = free_local_port) -> str:
     """The ``host:port`` torch should rendezvous on.
 
-    An explicit endpoint always wins — that is the multi-node case, where the
+    An explicit endpoint always wins - that is the multi-node case, where the
     address has to be one every node can reach.
 
     For a single-node launch we now pick a CONCRETE free port on ``127.0.0.1``
@@ -203,7 +203,7 @@ def rendezvous_endpoint(rdzv_endpoint: str, nnodes: int, *, port_picker: Callabl
       stacks. ``127.0.0.1`` cannot.
 
     A multi-node launch with no endpoint used to fall back to ``localhost:0`` too,
-    which can never rendezvous across machines — it is refused now, with the reason.
+    which can never rendezvous across machines - it is refused now, with the reason.
     """
     if rdzv_endpoint:
         return rdzv_endpoint
@@ -255,7 +255,7 @@ def launch_local_addr(
     THIS IS THE ROOT CAUSE OF Q37, and it is worth spelling out because the failure is
     invisible from Python. When ``local_addr`` is None, torch's
     ``RendezvousStoreInfo.build`` falls back to ``socket.getfqdn()``. On this Mac that
-    returns ``1.0.0.0...ip6.arpa`` — the reverse-DNS PTR name of ``::1`` — which no
+    returns ``1.0.0.0...ip6.arpa`` - the reverse-DNS PTR name of ``::1`` - which no
     forward lookup can resolve. The agent then publishes that as MASTER_ADDR, the
     worker store's client dials a name that will never resolve, and libtorch retries
     with backoff *inside its C++ socket code*: no Python timeout, no pytest-timeout

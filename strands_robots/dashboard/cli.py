@@ -328,13 +328,13 @@ def main() -> None:
     mesh_cfg = resolved["mesh"]
     local_dev = os.getenv("STRANDS_MESH_LOCAL_DEV", "") not in ("", "0", "false")
 
-    print(f"🤖 strands-robots dashboard → http://{args.host}:{args.port}")
+    print(f"strands-robots dashboard on http://{args.host}:{args.port}")
     print(f"   mesh: backend={mesh_cfg.get('backend') or 'zenoh'} "
           f"port={mesh_cfg.get('port') or 7447} "
           f"connect={mesh_cfg.get('connect') or ['<multicast/local>']} "
           f"listen={mesh_cfg.get('listen') or ['<default>']}")
     if local_dev:
-        print("   ⚠️  STRANDS_MESH_LOCAL_DEV=1 - WIRE SECURITY DISABLED (no TLS, no auth)")
+        print("   WARNING: STRANDS_MESH_LOCAL_DEV=1 - WIRE SECURITY DISABLED (no TLS, no auth)")
     if resolved["security"].get("auth_token"):
         print("   auth: bearer token required on /api and /ws")
         if args.auth_token is not None:
@@ -346,15 +346,15 @@ def main() -> None:
             # way, so the risk is measured, not theoretical. Printed even
             # though the token IS working, because "auth: required" reads like
             # the security question is settled.
-            print("   ⚠️  the token came from the command line, so every local "
+            print("   WARNING: the token came from the command line, so every local "
                   "user can read it: ps -eww | grep auth-token")
             print("      fix (next start): put it in a 0600 file and pass "
                   "--auth-token-file PATH instead")
         if token_only_this_run:
-            print("   ℹ️  this token applies to THIS run only - a different one is "
+            print("   note: this token applies to THIS run only - a different one is "
                   "saved in settings and was left untouched")
     else:
-        print("   ⚠️  no auth token - anyone who can reach this port can move motors "
+        print("   WARNING: no auth token - anyone who can reach this port can move motors "
               "(--auth-token to require one)")
     if changed:
         print(f"   saved to {settings.SETTINGS_FILE}: {', '.join(changed)}")

@@ -52,7 +52,7 @@ def test_the_leaker_and_its_victim_pass_in_that_order():
 def test_two_apps_in_one_process_do_not_share_the_camera_close_log_budget(monkeypatch, tmp_path):
     """Q63: the second leak of this class was a PRODUCT global, not a test's mistake.
 
-    The close-log throttle and the churn guard must outlive individual SOCKETS — that is the whole
+    The close-log throttle and the churn guard must outlive individual SOCKETS - that is the whole
     requirement. At module level they also outlived the APP, so a reopen storm against one app
     silenced close lines for another (and a later test read that silence as "the verdict never
     reached the log"). A dashboard process serves one app, so per-app state is identical in

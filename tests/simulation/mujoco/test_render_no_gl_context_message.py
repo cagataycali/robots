@@ -220,7 +220,7 @@ class TestTheFixIsPlatformCorrect:
 
     macOS ships neither EGL nor OSMesa (MuJoCo renders through CGL there), so
     the old single-sentence advice sent a Mac operator to install a package that
-    does not exist for their machine — and while they chased it, the real cause
+    does not exist for their machine - and while they chased it, the real cause
     kept its cover. This pins both halves: Linux keeps the packages, darwin gets
     a cause it can actually act on.
     """

@@ -159,7 +159,7 @@ def test_derive_image_keys_from_embodiment():
 
 class TestReadConfigJsonLocal:
     """``_read_config_json`` / ``is_molmoact2`` reading a local ``config.json``
-    (no Hub call) — the on-disk checkpoint path."""
+    (no Hub call) - the on-disk checkpoint path."""
 
     def test_reads_local_config_json(self, tmp_path):
         """A local dir with a valid config.json is parsed without hitting the Hub."""

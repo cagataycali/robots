@@ -1,8 +1,8 @@
 """A defence against a viewer that reopens the same camera forever.
 
 MEASURED, TWICE, ON THE LIVE DASHBOARD (BUGS.md Q40/Q46/Q52): one browser tab opened
-``/ws/camera/so101-arm-1/top`` **1.53 times per second for twelve hours** — 75,489 sockets,
-21.4 GB out of the house at 441 KB/s — and it was still doing it after both client-side
+``/ws/camera/so101-arm-1/top`` **1.53 times per second for twelve hours** - 75,489 sockets,
+21.4 GB out of the house at 441 KB/s - and it was still doing it after both client-side
 cures landed, because a cockpit tab left open for a day never fetches a new bundle. Its
 last asset request was an hour before the measurement while the churn continued unbroken.
 
@@ -10,7 +10,7 @@ That is the lesson this module exists for: **the client-side fix protected only 
 that reload.** A server whose only defence lives in the page it served cannot defend
 itself against yesterday's page, a paused tab, a phone in someone's pocket, or a script.
 The rate was a flat 1.53/s across the whole incident, which is what "backoff reset by a
-handshake" looks like from the outside — no decay, no recovery, forever.
+handshake" looks like from the outside - no decay, no recovery, forever.
 
 So the server now applies its OWN cap when it sees churn, and the rules are deliberately
 conservative:
@@ -45,7 +45,7 @@ MAX_TRACKED = 512
 
 @dataclass(frozen=True)
 class ChurnVerdict:
-    """What the server decided about this socket, and why — in words."""
+    """What the server decided about this socket, and why - in words."""
 
     opens_in_window: int
     cap_fps: float | None
@@ -96,7 +96,7 @@ class ChurnGuard:
             cap_fps=self._cap_fps,
             reason=(
                 f"this viewer opened this camera {count} times in the last minute, so the "
-                f"server is pacing it at {self._cap_fps:g} fps until that settles — the "
+                f"server is pacing it at {self._cap_fps:g} fps until that settles - the "
                 f"tile keeps updating, it just stops saturating the link. Reload the page "
                 f"to pick up the client-side fix for the reconnect loop."
             ),
@@ -108,7 +108,7 @@ class ChurnGuard:
 
 
 def viewer_identity(*, subject: str | None, host: str | None, peer_id: str, cam: str) -> str:
-    """Who is watching what — the key the guard counts.
+    """Who is watching what - the key the guard counts.
 
     The auth subject comes FIRST and the host second, because behind the Cloudflare
     tunnel every remote viewer arrives as 127.0.0.1: keying on the address alone would
@@ -122,7 +122,7 @@ def viewer_identity(*, subject: str | None, host: str | None, peer_id: str, cam:
 def effective_cap(requested: float | None, churn: float | None) -> float | None:
     """The rate actually served: the LOWER of what the viewer asked for and what the
     server will give a storm. A viewer asking for more than it is being throttled to
-    cannot talk its way out, and a viewer asking for less is honoured — it knows its own
+    cannot talk its way out, and a viewer asking for less is honoured - it knows its own
     link better than this guard does."""
     caps = [c for c in (requested, churn) if c is not None]
     return min(caps) if caps else None

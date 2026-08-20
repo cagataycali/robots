@@ -2,10 +2,10 @@
 
 MEASURED on the live dashboard: 71,798 "connection open" lines in 11.5 hours and not one
 close verdict. A handler that only ever SENDS learns about a disconnect from a failing
-send, so a camera that publishes nothing never learns at all — the loop spun at 15Hz for
+send, so a camera that publishes nothing never learns at all - the loop spun at 15Hz for
 the life of the process and the `finally` block never ran. That is a leaked coroutine per
 socket, and it is also why Q42's close verdict could not fire for the very failure it was
-written to explain ("sent nothing — that camera is not publishing").
+written to explain ("sent nothing - that camera is not publishing").
 """
 from __future__ import annotations
 

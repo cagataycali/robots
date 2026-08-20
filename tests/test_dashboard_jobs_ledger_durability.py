@@ -7,7 +7,7 @@ burning GPU hours with nothing on screen that knows about it.
 
 Two ways it used to disappear, both silent:
 * ``Path.write_text`` truncates and then writes, so a kill in that window left a half
-  file — and the next submit wrote a one-entry list over it, making the loss permanent;
+  file - and the next submit wrote a one-entry list over it, making the loss permanent;
 * an unreadable ledger returned ``[]``, which renders exactly like "no jobs yet".
 """
 

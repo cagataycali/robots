@@ -158,7 +158,7 @@ def test_end_to_end_policy_to_hardware_action():
     """The full KimodoPolicy → hardware-bridge → send_action-ready dict flow.
 
     Uses a stub motion agent (no diffusers/CUDA/checkpoints) so this test
-    runs in CI on any machine — the point is to prove the shapes line up,
+    runs in CI on any machine - the point is to prove the shapes line up,
     not to sample real motion.
     """
     import asyncio

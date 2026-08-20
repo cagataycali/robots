@@ -114,7 +114,7 @@ def _remembered_roots() -> list[Path]:
 
 
 def _load_jobs() -> list[dict[str, Any]]:
-    """The job ledger, or an empty list — with ``_JOBS_PROBLEM`` set if it was lost.
+    """The job ledger, or an empty list - with ``_JOBS_PROBLEM`` set if it was lost.
 
     A ledger that cannot be parsed is quarantined rather than overwritten, because
     the alternative is silent and permanent: the loader returns [], the UI says "No
@@ -134,13 +134,13 @@ def _load_jobs() -> list[dict[str, Any]]:
             kept = _quarantine(JOBS_FILE)
             _JOBS_PROBLEM = (
                 f"the training job history could not be read ({detail}) and was moved to "
-                f"{kept} — runs started before now have no card here, but any that are still "
+                f"{kept} - runs started before now have no card here, but any that are still "
                 f"running are unaffected"
             )
         except OSError as move_err:
             _JOBS_PROBLEM = (
                 f"the training job history could not be read ({detail}) and could not be moved "
-                f"aside ({move_err}); refusing to overwrite it — runs started before now have "
+                f"aside ({move_err}); refusing to overwrite it - runs started before now have "
                 f"no card here"
             )
         return []
@@ -189,7 +189,7 @@ def list_trainers() -> list[str]:
 
 #: The full set of fields a training spec accepts. submit() and validate()
 #: share it so the two can never drift: a field the form sends either reaches
-#: train_policy or is refused BY NAME — silently dropping a typo'd "step"
+#: train_policy or is refused BY NAME - silently dropping a typo'd "step"
 #: would train 10k default steps and call it success.
 SPEC_KEYS = (
     "provider", "dataset_root", "dataset_repo_id", "base_model",

@@ -1,10 +1,10 @@
 """The ceremony FINISH paths of strands_robots.dashboard.auth.
 
-These were the untested 17% of the module — and they are exactly the lines
+These were the untested 17% of the module - and they are exactly the lines
 that mint sessions. No authenticator exists in CI, so the webauthn library's
 verify_* calls are monkeypatched to succeed (or we hand them garbage and
 expect OUR refusal first): what these tests pin is the orchestration around
-the library — single-use challenges, the duplicate-credential 409, the
+the library - single-use challenges, the duplicate-credential 409, the
 rp_id binding recorded at enrollment, the self-healing back-fill for
 credentials that predate rp_id recording, sign_count persistence, and that
 the token handed back is a session verify_token() actually accepts.

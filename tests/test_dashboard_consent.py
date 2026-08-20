@@ -12,7 +12,9 @@ from strands_robots.dashboard.consent import (
 )
 
 TRUST_REFUSAL = (
-    "✗ trust: Policy provider 'lerobot_local' loads HuggingFace models with "
+    # The glyph is written as an escape on purpose: this string has to stay byte-exact
+    # (it is what the product actually prints), and the repo forbids the literal in source.
+    "\u2717 trust: Policy provider 'lerobot_local' loads HuggingFace models with "
     "trust_remote_code=True, which allows arbitrary code execution from the model "
     "repository. Only load models from organisations you trust.\n\n"
     "To acknowledge this risk and proceed, set the environment variable:\n"

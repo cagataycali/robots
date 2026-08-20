@@ -2,10 +2,10 @@
 
 The defect these pin: /api/policies/validate answered ok/stage=preflight for
 lerobot_local with an EMPTY config and the run form rendered a green
-"✓ lerobot_local resolves". No model had been named, so the preflight's real
+a green "lerobot_local resolves". No model had been named, so the preflight's real
 check (declared image inputs vs the observation keys the peer will send) had
 nothing to inspect - the pass was a pass of an empty question, one click away
-from ▶ Run on a real arm.
+from Run on a real arm.
 """
 
 from strands_robots.dashboard.validate_scope import validation_scope

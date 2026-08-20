@@ -157,7 +157,7 @@ def hub_search(query: str, limit: int = 12) -> tuple[list[dict[str, Any]], str |
 _WHOAMI: dict[str, Any] = {"at": 0.0, "value": None, "token": None}
 _WHOAMI_TTL_S = 600.0
 #: A REJECTED token is cached far more briefly than a good one. The user who just
-#: read "token present but rejected" is, right then, going to go and fix it — and a
+#: read "token present but rejected" is, right then, going to go and fix it - and a
 #: 10-minute memory of the rejection would tell them their fix did not work.
 _WHOAMI_REJECTED_TTL_S = 20.0
 
@@ -187,7 +187,7 @@ def whoami_cache_verdict(
     Pure, because the three ways a cache lies here are all about *identity and
     time* rather than about the network:
 
-    * a DIFFERENT token — ``hf auth login`` as someone else, or a rotated key —
+    * a DIFFERENT token - ``hf auth login`` as someone else, or a rotated key -
       previously reused the old verdict for up to ten minutes, so the dashboard
       would name the wrong user, or call a working token rejected;
     * a rejected verdict held as long as a good one, which hides the user's own fix;
@@ -209,7 +209,7 @@ def hf_auth_state() -> dict[str, Any]:
     """Whether this machine can reach gated/private HF repos, and as whom.
 
     Token discovery is local + instant (env or ~/.cache/huggingface/token).
-    whoami() is a network call, so its answer is cached — but keyed to the token it
+    whoami() is a network call, so its answer is cached - but keyed to the token it
     was measured for (see :func:`whoami_cache_verdict`). A token that fails whoami
     is reported as invalid rather than silently treated like anonymity: a revoked
     token behaves differently from no token (401 vs public-only), and the UI should
@@ -266,7 +266,7 @@ def _artifact_dir(output_dir: Path) -> Path | None:
 
     Two shapes are real: the export path writes ``config.json`` /
     ``train_config.json`` directly into the directory, and a LeRobot training
-    run writes ``checkpoints/<step>/pretrained_model/`` — prefer the ``last``
+    run writes ``checkpoints/<step>/pretrained_model/`` - prefer the ``last``
     symlink, else the highest step, because the picker should offer the most
     trained weights, not the first save.
     """
@@ -294,7 +294,7 @@ def _artifact_dir(output_dir: Path) -> Path | None:
         return None
     for cand in candidates:
         if cand.name == "last":
-            # lerobot's own pointer — but resolve it: a picker row must name
+            # lerobot's own pointer - but resolve it: a picker row must name
             # the concrete weights, not a path whose contents silently change
             # when training resumes.
             try:
@@ -311,7 +311,7 @@ def trained_checkpoints(query: str = "") -> list[dict[str, Any]]:
     """Checkpoints THIS dashboard trained, discovered via the jobs ledger.
 
     U20's broken link: submit() records every run's output_dir, but the
-    picker only searched the HF cache and the hub — so the user could train
+    picker only searched the HF cache and the hub - so the user could train
     a policy here and then be unable to find it here, reduced to typing the
     raw path from memory. Every job output that holds a loadable artifact is
     a picker row; ``repo_id`` is the PATH (which is exactly what
@@ -331,7 +331,7 @@ def trained_checkpoints(query: str = "") -> list[dict[str, Any]]:
         except OSError:
             continue
         if artifact is None:
-            continue  # still training, failed, or cleaned up — not loadable, not listed
+            continue  # still training, failed, or cleaned up - not loadable, not listed
         path = str(artifact)
         if path in seen:
             continue

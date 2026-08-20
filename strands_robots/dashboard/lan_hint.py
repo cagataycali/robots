@@ -1,10 +1,10 @@
-"""Is this viewer on the same network as the dashboard — and should it stop leaving it?
+"""Is this viewer on the same network as the dashboard - and should it stop leaving it?
 
 MEASURED INCIDENT (BUGS.md Q52). A browser tab reached this dashboard through the
 Cloudflare tunnel and streamed one camera at 0.45 MB/s: 20.7 GB out in 21 hours, 1.6
 socket reopens a second, the stream dying and reconnecting forever. The viewer turned out
 to be a device in the SAME HOUSE as the Mac serving it, so every JPEG went out of the
-home upstream to Cloudflare and came straight back in — paying twice for the round trip
+home upstream to Cloudflare and came straight back in - paying twice for the round trip
 on the exact link that then could not sustain it.
 
 The honest fix is not more compression: it is to tell that viewer the local address, which
@@ -15,7 +15,7 @@ Two design decisions worth keeping:
 1. THE COMPARISON NEEDS NO EXTERNAL LOOKUP. A SLAAC host holds its own GLOBAL IPv6
    address on the interface, so "same /64 as one of my own global addresses" is decidable
    from local facts alone. Asking an echo service for "my public IP" would add a network
-   dependency to a diagnostic — and it is exactly the kind of call that fails on the
+   dependency to a diagnostic - and it is exactly the kind of call that fails on the
    network you are trying to diagnose.
 2. IT MUST BE ALLOWED TO SAY IT DOES NOT KNOW. Behind IPv4 NAT the server sees only its
    private address, and a shared public address is not evidence of a shared LAN; so an

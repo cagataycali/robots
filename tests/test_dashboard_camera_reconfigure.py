@@ -1,10 +1,10 @@
-"""U19 v1: changing a robot's cameras is a respawn — one named, refuse-first operation.
+"""U19 v1: changing a robot's cameras is a respawn - one named, refuse-first operation.
 
 Peers take cameras only at spawn. Before this, "change the wrist camera's fps"
 meant despawn + re-type the whole spawn form; and a camera entry of ``3`` instead
-of ``{"index_or_path": 3}`` was first judged by the CHILD — a ValueError after
+of ``{"index_or_path": 3}`` was first judged by the CHILD - a ValueError after
 the route had answered 200 + pid (cagatay hit exactly this live). The law here:
-an invalid config is refused BEFORE the running peer is touched — a refusal must
+an invalid config is refused BEFORE the running peer is touched - a refusal must
 never cost the operator the process they already had.
 """
 

@@ -3,13 +3,13 @@
 982f4df6 made temperature/camera_hz/port/max_tokens strict; three families were
 still silently transformed on the UI/API path:
 
-* ``cors_origins: 5`` became ``[]`` — silently REPLACING a security posture,
-* ``trust_remote_code: "banana"`` became ``False`` — an operator who believed
+* ``cors_origins: 5`` became ``[]`` - silently REPLACING a security posture,
+* ``trust_remote_code: "banana"`` became ``False`` - an operator who believed
   they enabled something got it disabled with a success toast,
-* ``auth_token: {"a": 1}`` became the literal string ``"{'a': 1}"`` — which is
+* ``auth_token: {"a": 1}`` became the literal string ``"{'a': 1}"`` - which is
   then REQUIRED on every request, locking the operator out of the UI that set it.
 
-The strict path (update_strict — what /api/config uses) now refuses each with a
+The strict path (update_strict - what /api/config uses) now refuses each with a
 reason naming the key; the lenient path (env/CLI/file) still degrades, but to
 the key's own SHAPE (a list key falls back to [], never to a scalar).
 """

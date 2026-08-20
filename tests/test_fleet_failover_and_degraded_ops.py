@@ -304,7 +304,7 @@ class _StoppableRobot:
 def _capturing_bus(monkeypatch):
     """Capture every payload the mesh publishes, keyed by topic.
 
-    Q30: patching legacy ``mesh_core.put`` alone is NOT isolation —
+    Q30: patching legacy ``mesh_core.put`` alone is NOT isolation -
     ``emergency_stop()`` prefers the Zenoh-native publisher on the
     process-global session and ``broadcast()`` uses ``current_session()``.
     Sever every global-session rail first (see

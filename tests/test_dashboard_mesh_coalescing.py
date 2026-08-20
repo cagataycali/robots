@@ -1,4 +1,4 @@
-"""Q12 — `/ws/mesh` re-sent unchanged events at ~35 Hz for a fleet of one.
+"""Q12 - `/ws/mesh` re-sent unchanged events at ~35 Hz for a fleet of one.
 
 Measured: 176 msgs / 5.1s = 34.7 Hz for ONE arm and ONE client, of which `presence`
 re-sent ~6 Hz and `camera_meta` ~10 Hz although neither changes at that rate. With
@@ -6,7 +6,7 @@ re-sent ~6 Hz and `camera_meta` ~10 Hz although neither changes at that rate. Wi
 
 The trap that shapes the fix: `useMesh.ts` sets ``last_seen: Date.now(), stale:
 false`` on EVERY event, so the client's liveness comes from event *arrival*. Plain
-dedupe would paint an idle peer — one that only publishes presence — as dead while
+dedupe would paint an idle peer - one that only publishes presence - as dead while
 it is alive. So unchanged events are COALESCED to a low rate (still a liveness
 tick), and any real content change is forwarded immediately.
 """

@@ -7,7 +7,7 @@ rollout ends). But the wait was sized for the blocking one:
     timeout_s = max(float(body.get("timeout", 60.0)), duration + 10.0)
 
 so a 1-hour run meant the dashboard would sit on the ack for 3610 seconds. A peer
-that never acks - wedged serial, dead child, a lost response - therefore left ▶
+that never acks - wedged serial, dead child, a lost response - therefore left the Run button
 spinning in "starting" for the whole nominal run length with nothing on screen,
 which is the exact state where an operator starts clicking things.
 

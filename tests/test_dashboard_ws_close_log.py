@@ -2,8 +2,8 @@
 
 Q40 produced 63,906 `connection open` lines and ZERO closes, because ws_camera's
 `except (WebSocketDisconnect, RuntimeError): pass` swallowed the end of every stream.
-The question that would have solved it in one grep — did these sockets ever send a
-frame? — had no answer on the machine.
+The question that would have solved it in one grep - did these sockets ever send a
+frame? - had no answer on the machine.
 """
 
 from __future__ import annotations
@@ -151,13 +151,13 @@ class TestTheLineActuallyReachesTheLog:
 
     The two strings both come from the `websockets` library (server.py logs the open,
     protocol.discard() logs the close), and the close only fires when the sans-io close
-    path reaches EOF — which in this deployment it never did, not once in 75k sockets.
+    path reaches EOF - which in this deployment it never did, not once in 75k sockets.
     That asymmetry is exactly why a storm burning 20.7 GB stayed invisible for 12 hours:
     the log recorded every socket's birth and no socket's death, so churn, lifetime and
     cause were all unanswerable from it.
 
     So our close verdict must NOT depend on the library's logging. It is emitted from the
-    handler's own `finally`, and this test pins that — including the abrupt-disconnect case,
+    handler's own `finally`, and this test pins that - including the abrupt-disconnect case,
     which is the only case the live rig has ever actually produced.
     """
 

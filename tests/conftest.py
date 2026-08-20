@@ -132,7 +132,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ANN001, ARG001
             closed = f"close FAILED: {type(exc).__name__}: {exc}"
         # Closing the handle does not clear the module's global, so
         # current_session() would keep handing out a DEAD session to whatever
-        # imported it next — a failure that looks like a transport fault rather
+        # imported it next - a failure that looks like a transport fault rather
         # than a leak. Reset the global too, and say so.
         try:
             _mesh_session._SESSION = None  # noqa: SLF001 - test-only hygiene
@@ -150,7 +150,7 @@ def _restore_dashboard_settings_overrides():
 
     Bisected 2026-08-20 (BUGS.md Q62): tests/test_dashboard_ws_chat_frames.py failed in every
     sweep and passed alone. The leaker was tests/test_dashboard_lan_hint.py, whose fixture calls
-    ``settings.override("security", "auth_token", "test-token")`` — an override deliberately sits
+    ``settings.override("security", "auth_token", "test-token")`` - an override deliberately sits
     ABOVE the file layer and lives in a module global, and monkeypatch cannot revert a call it
     never made. So every dashboard app built LATER in that process demanded a bearer token, and
     the victim's websocket handshake was rejected: ``WebSocketDisconnect``, a symptom that reads

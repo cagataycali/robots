@@ -2,9 +2,9 @@
 
 The SDK refuses two classes of request on purpose:
 
-* ``UntrustedRemoteCodeError`` — the provider would run code from a HuggingFace
+* ``UntrustedRemoteCodeError`` - the provider would run code from a HuggingFace
   repo (``trust_remote_code=True``), so it demands ``STRANDS_TRUST_REMOTE_CODE=1``.
-* the mesh command validator — ``pretrained_name_or_path`` is not covered by
+* the mesh command validator - ``pretrained_name_or_path`` is not covered by
   ``STRANDS_MESH_HF_REPO_ALLOW``.
 
 Both are correct refusals and both arrive at the dashboard as *prose in an error
@@ -15,7 +15,7 @@ quote the risk and offer "Approve & retry" (U18).
 
 Everything here is pure: no env mutation, no I/O. The caller decides whether the
 human said yes, and :func:`env_patch` computes the *minimum* environment change
-that grants exactly what was asked for — never a wildcard.
+that grants exactly what was asked for - never a wildcard.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ _TELEOP_DEGREE_VALUE = "400"
 _TELEOP_DEGREE_SLEW = "800"
 
 _PROVIDER_RE = re.compile(r"provider '([^']{1,120})'")
-#: Read the value WHOLE — up to the closing quote, or to whitespace when bare —
+#: Read the value WHOLE - up to the closing quote, or to whitespace when bare -
 #: and validate afterwards. A charset-limited capture would silently truncate
 #: ``'org/repo;rm -rf /'`` to ``org/repo``, i.e. grant a repository the operator
 #: never asked for, which is the opposite of what a consent dialog is for.
@@ -84,7 +84,7 @@ class ConsentRequest:
 
 
 #: The only things an operator can be asked to approve. A client posting an
-#: approval names one of these and (at most) a subject — never an env var and
+#: approval names one of these and (at most) a subject - never an env var and
 #: never a value, because "which variable does this grant touch" is a decision
 #: this module owns.
 KINDS: tuple[str, ...] = ("trust_remote_code", "hf_repo_allow", "teleop_degree_units")
@@ -138,7 +138,7 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
                 f"assumes RADIANS (4·pi ≈ 12.57) and the arm reports DEGREES (a wrist at 170). "
                 f"Approving widens the envelope to {_TELEOP_DEGREE_VALUE} units and the per-joint "
                 f"speed bound to {_TELEOP_DEGREE_SLEW} units/s for every teleop stream on this "
-                "machine — a wider envelope means a single frame may command a longer reach, so a "
+                "machine - a wider envelope means a single frame may command a longer reach, so a "
                 "faulty leader can ask for a bigger move before the bound stops it. It stays an "
                 "envelope: a runaway three orders of magnitude out is still refused."
             ),
@@ -160,12 +160,12 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
         title=f"Allow the model {shown}?",
         risk=(
             f"{shown} is not in this machine's HuggingFace allowlist, so the mesh refused "
-            "to load it. Approving adds exactly this repository — no other org, no wildcard."
+            "to load it. Approving adds exactly this repository - no other org, no wildcard."
         ),
         env_var=_HF_ENV,
         subject=name,
         message=text,
-        grants=(f"load {name}" if name else "nothing yet — the repository name could not be read",),
+        grants=(f"load {name}" if name else "nothing yet - the repository name could not be read",),
     )
 
 
@@ -173,7 +173,7 @@ def classify_refusal(text: object) -> ConsentRequest | None:
     """Recognise a *continuable* refusal in ``text``, else ``None``.
 
     Detection keys off the env var the SDK itself names, because that string is
-    the refusal's contract with the operator — the surrounding wording changes
+    the refusal's contract with the operator - the surrounding wording changes
     between versions, the variable does not.
     """
     if not isinstance(text, str) or not text.strip():
@@ -205,7 +205,7 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
     """The smallest env change that grants ``request``, given the current ``env``.
 
     Returns ``{}`` when there is nothing safe to grant (an unparseable repo) or
-    when the grant is already in place — an empty patch is the caller's signal
+    when the grant is already in place - an empty patch is the caller's signal
     that approving would change nothing, which usually means the refusal came
     from a process started before the last approval.
     """
@@ -239,12 +239,12 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
 
 
 def granted_state(env: Mapping[str, str] | None = None) -> dict:
-    """What this machine currently grants — every kind, in one place.
+    """What this machine currently grants - every kind, in one place.
 
     GET /api/consent used to build this inline and covered only two of the three kinds, so the
     teleop envelope widening (the grant with actual physical reach: it raises how far a single
     teleop frame may command an arm) was invisible on the permissions screen and therefore could
-    not be revoked there — while the consent dialog promised it could. A grant with no surface is
+    not be revoked there - while the consent dialog promised it could. A grant with no surface is
     a grant nobody can take back.
 
     ``teleop_degree_units`` reports what the environment ACTUALLY holds, not merely whether it
@@ -275,7 +275,7 @@ def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) 
     """The env change that takes a grant BACK, given the current ``env``.
 
     A promise the UI makes ("you can revoke this") has to be executable, so
-    revocation is computed by the same module that computes the grant — and it
+    revocation is computed by the same module that computes the grant - and it
     is narrow in the same way: revoking one repository leaves the rest of the
     allowlist exactly as it was. ``{}`` means there was nothing to take back.
 
