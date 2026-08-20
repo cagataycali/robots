@@ -108,11 +108,17 @@ class TestStopIsTerminalWhateverTheConnectionState:
         assert hw._shutdown_event.is_set()
         assert _executor_accepts_work(hw) is False
 
-    def test_a_robot_left_disconnected_by_a_failed_bring_up_is_still_shut_down(self) -> None:
+    def test_a_robot_left_disconnected_by_a_failed_bring_up_is_still_shut_down(self, monkeypatch) -> None:
         """A failed connect rolls its devices back, so the robot reports
         ``is_connected`` False -- exactly the state the driver's disconnect
         refuses. Stopping such a robot is the documented recovery, and it has
         to reach the teardown."""
+        # This fork's camera-degrade would answer the failing camera FIRST -
+        # dropping it and reporting a connected, usable arm - so the state this
+        # test needs (a robot left NOT fully connected by its own bring-up) could
+        # never be reached. Ask for the strict upstream contract explicitly; the
+        # switch and the reasoning live in test_hardware_camera_degrade_switch.py.
+        monkeypatch.setenv("STRANDS_ROBOT_CAMERA_DEGRADE", "0")
         fake = _FakeCameraRobot({"wrist": _FakeCamera("wrist_cam"), "top": _FakeCamera("top_cam", fails=True)})
         hw = _make_robot(fake)
 
@@ -125,11 +131,17 @@ class TestStopIsTerminalWhateverTheConnectionState:
         assert hw._shutdown_event.is_set()
         assert _executor_accepts_work(hw) is False
 
-    def test_a_device_a_failed_close_left_open_is_closed(self) -> None:
+    def test_a_device_a_failed_close_left_open_is_closed(self, monkeypatch) -> None:
         """The bring-up rollback is best-effort per device, so a close that
         raises leaves that camera streaming. ``stop()`` is the last chance to
         get the node released, and it only gets one if it reaches the
         teardown."""
+        # This fork's camera-degrade would answer the failing camera FIRST -
+        # dropping it and reporting a connected, usable arm - so the state this
+        # test needs (a robot left NOT fully connected by its own bring-up) could
+        # never be reached. Ask for the strict upstream contract explicitly; the
+        # switch and the reasoning live in test_hardware_camera_degrade_switch.py.
+        monkeypatch.setenv("STRANDS_ROBOT_CAMERA_DEGRADE", "0")
 
         class _StickyOnce(_FakeCamera):
             """Refuses its first close, accepts the next -- a transient fault."""
