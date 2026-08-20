@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { validationScope, type ValidatedInput } from '../lib/validationScope'
 import { numField } from '../lib/numField'
 import type { PolicyProvider } from '../types'
-import { post } from '../lib/endpoints'
+import { post, api as httpGet } from '../lib/endpoints'
 import CheckpointPicker from './CheckpointPicker'
 import { useConfig } from '../lib/useConfig'
 import { peekDeployIntent, clearDeployIntent, type DeployIntent } from '../lib/deployIntent'
@@ -48,6 +48,20 @@ interface ValidateResult {
   error?: string
   note?: string
   observation_keys?: string[]
+  /** Q79: the checkpoint-vs-robot comparison, when it could be made. */
+  fit?: PolicyFit
+}
+
+/** Q79: what the checkpoint says it was trained on, against what this robot announces. */
+export interface PolicyFit {
+  ok: boolean
+  /** true = this policy cannot drive this robot; no field correction changes that */
+  blocking: boolean
+  problems: { kind: string; detail: string }[]
+  /** which axes were actually compared — so quiet reads as "verified", not "never looked" */
+  checked: string[]
+  /** false = nothing could be compared (unknown checkpoint, or a peer that announced nothing yet) */
+  evidence?: boolean
 }
 
 /**
@@ -125,6 +139,29 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
     if (raw !== undefined) return raw
     return fallback === null || fallback === undefined ? '' : String(fallback)
   }
+
+  /* Q79: a checkpoint states its own state/action dims and camera names, and until now nothing
+     compared them with the robot. ▶ parks and TORQUES the arm first, so the mismatch arrived as a
+     tensor error with metal already energised — or never arrived, and the policy acted on a blank
+     frame for a camera this robot does not have. Asked as the field is typed, not at submit. */
+  const [fit, setFit] = useState<PolicyFit | null>(null)
+  const checkpointField = wireFields.find(
+    f => f.key === 'pretrained_name_or_path' || f.key === 'model_path')?.key
+  const checkpoint = checkpointField ? String(value(checkpointField, '')).trim() : ''
+  useEffect(() => {
+    if (!checkpoint || !peerId) { setFit(null); return }
+    let alive = true
+    const t = setTimeout(() => {
+      void httpGet<PolicyFit>(
+        `/api/robots/${encodeURIComponent(peerId)}/policy-fit?repo_id=${encodeURIComponent(checkpoint)}`)
+        .then(v => { if (alive) setFit(v) })
+        // A failed lookup is not evidence of a mismatch: stay silent rather than cry wolf.
+        .catch(() => { if (alive) setFit(null) })
+    }, 400)
+    return () => { alive = false; clearTimeout(t) }
+  }, [checkpoint, peerId])
+  // Refused, and deliberately not forceable: no tick makes a 2-value action drive 6 joints.
+  const fitBlocked = !!fit?.blocking
 
   const missing = wireFields
     .filter(f => f.required && !String(value(f.key, f.default)).trim())
@@ -271,7 +308,8 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
             <button
               className="btn go"
               onClick={submit}
-              disabled={blocked || !instruction.trim() || missing.length > 0 || !!locked || !!wantedDuration.problem}
+              disabled={blocked || !instruction.trim() || missing.length > 0 || !!locked || !!wantedDuration.problem || fitBlocked}
+              {...(fitBlocked ? { title: fit!.problems.map(p => p.detail).join(' — ') } : {})}
               title={locked
                 ? `${providerName} is not in the mesh policy allowlist`
                 : wantedDuration.problem ? `duration: ${wantedDuration.problem}`
@@ -384,6 +422,21 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
         </div>
       )}
 
+      {fit && (fit.blocking || fit.evidence) && (
+        /* Q79: the physical consequence, not "invalid configuration" — and a quiet PASS says what was
+           compared, because silence that could mean "never looked" is what made the camera tiles lie. */
+        <div className={fit.blocking ? 'validation bad' : 'validation ok'} role={fit.blocking ? 'alert' : undefined}>
+          {fit.blocking
+            ? <>
+                <div>✗ this policy does not fit this robot</div>
+                {fit.problems.map(p => <div className="hint" key={p.kind}>{p.detail}</div>)}
+                <div className="hint">
+                  Nothing on this form fixes that — pick a checkpoint trained on this robot, or run it in sim.
+                </div>
+              </>
+            : <>✓ checkpoint matches this robot ({fit.checked.join(', ')})</>}
+        </div>
+      )}
       {validation && (() => {
         // A verdict describes the input it was taken on. Once a field moves it
         // stops describing the form, and saying so beats a stale green tick.

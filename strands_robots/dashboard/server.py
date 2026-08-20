@@ -966,7 +966,83 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 "no live observation keys for that peer - camera/joint routing "
                 "was not checked"
             )
+
+        # Q79: the provider preflight is a CLASS hook about camera routing, and only when the
+        # provider overrides it. It never reads what the CHECKPOINT says it was trained on - so a
+        # policy with a 2-value action passed this validate and then energised a 6-joint arm. The
+        # checkpoint declares its own features on disk; compare them with what this peer announces.
+        try:
+            from strands_robots.dashboard.checkpoints import declared_features
+            from strands_robots.dashboard.policy_fit import policy_fit
+
+            ckpt = next(
+                (
+                    str(config[k])
+                    for k in ("pretrained_name_or_path", "model_path", "checkpoint")
+                    if isinstance(config.get(k), str) and config.get(k, "").strip()
+                ),
+                "",
+            )
+            if ckpt:
+                feats = await asyncio.to_thread(declared_features, ckpt)
+                if feats:
+                    fit = policy_fit(
+                        input_features=feats.get("input_features"),
+                        output_features=feats.get("output_features"),
+                        joints=list((peer.get("state") or {}).get("joints") or {}),
+                        cameras=list(peer.get("cameras") or {}),
+                        # runRisk's server-side twin: `hw` exists only when a real device object is
+                        # attached, and an unknown peer is treated as metal.
+                        physical=bool(peer.get("presence", {}).get("hw")) or not peer,
+                    )
+                    result["fit"] = fit
+                    if fit.get("blocking"):
+                        # A fit problem is not a config typo: it is the wrong policy for this robot,
+                        # and no amount of correcting fields makes it run. It overrides `ok`, because
+                        # the form arms ▶ on that flag.
+                        result["ok"] = False
+                        result["stage"] = "fit"
+                        result["error"] = "; ".join(
+                            p.get("detail", "") for p in fit.get("problems", [])
+                        )
+        except Exception:  # noqa: BLE001 - a fit hint must never break validate
+            logger.debug("policy fit check failed", exc_info=True)
+
         return result
+
+    @app.get("/api/robots/{peer_id}/policy-fit")
+    async def policy_fit_route(peer_id: str, repo_id: str = "") -> dict[str, Any]:
+        """Q79: does this checkpoint fit THIS robot? Asked while the form is being filled in.
+
+        Read-only and local: the checkpoint's own declared features (disk) against what the peer
+        announces on the mesh (its joints and camera names). Cheap enough for the run form to ask on
+        every checkpoint change, which is the point - the alternative is discovering that a 2-value
+        action cannot drive 6 joints after ▶ has parked and torqued the arm.
+
+        `evidence: false` means the comparison could not be made (unknown checkpoint, or a peer that
+        has announced nothing yet). It is never a refusal: absence of evidence must not block a run
+        that has always been allowed.
+        """
+        require_peer(peer_id)
+        from strands_robots.dashboard.checkpoints import declared_features
+        from strands_robots.dashboard.policy_fit import policy_fit
+
+        peer = app.state.bridge.peers.get(peer_id) or {}
+        joints = list((peer.get("state") or {}).get("joints") or {})
+        cameras = list(peer.get("cameras") or {})
+        feats = await asyncio.to_thread(declared_features, repo_id) if repo_id.strip() else {}
+        verdict = policy_fit(
+            input_features=feats.get("input_features"),
+            output_features=feats.get("output_features"),
+            joints=joints,
+            cameras=cameras,
+            physical=bool((peer.get("presence") or {}).get("hw")) or not peer,
+        )
+        verdict["evidence"] = bool(feats) and bool(verdict["checked"])
+        verdict["repo_id"] = repo_id
+        verdict["policy_type"] = feats.get("policy_type")
+        verdict["robot"] = {"joints": joints, "cameras": cameras}
+        return verdict
 
     @app.post("/api/robots/{peer_id}/task")
     async def start_task(peer_id: str, body: dict[str, Any]) -> dict[str, Any]:
