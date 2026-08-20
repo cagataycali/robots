@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..utils import non_negative_whole_number_error
 from . import arm_roles
 from . import cameras as camera_facts
 
@@ -980,10 +981,17 @@ def validate_replay(
     in a request path, and an offline dashboard must still replay from cache.
     The child's log + the fleet card stay the honest surface for that case.
     """
-    if isinstance(episode, bool) or not isinstance(episode, int):
-        return {"error": f"episode must be an integer, got {type(episode).__name__}"}
-    if episode < 0:
-        return {"error": f"episode must be >= 0 (an episode index is a list position, got {episode})"}
+    # The episode domain is the SHARED rule, not a second copy of it. This
+    # function used to hand-roll `isinstance(episode, int)`, which refused
+    # values the surfaces it hands them to accept: measured, PolicyRunner.replay
+    # and load_lerobot_episode take 3.0, np.int64(4) and np.float64(4.0) (any
+    # real scalar with an integral value - a length or index that came from
+    # arithmetic), while this returned "episode must be an integer" for a number
+    # that is one. A dashboard that refuses what its own runner accepts is the
+    # drift tests/simulation/test_replay_episode_index_domain.py exists to stop.
+    episode_error = non_negative_whole_number_error(episode, "episode", "replay")
+    if episode_error:
+        return {"error": episode_error}
     try:
         speed_f = float(speed)
     except (TypeError, ValueError):
@@ -1794,6 +1802,14 @@ class DeviceManager:
         bad = validate_replay(repo_id, episode, root, speed)
         if bad:
             return bad
+        # Now that the shared rule is the judge, an accepted `episode` may be a
+        # float or a numpy scalar with an integral value. Coerce ONCE here, at
+        # the boundary where it stops being a number and becomes config: the cfg
+        # dict below is json.dumps'd for the child (which cannot serialise
+        # np.int64 at all) and the value is compared against running jobs, where
+        # 3 and 3.0 must not read as two different episodes. Safe precisely
+        # because the guard above already compared int(value) back to value.
+        episode = int(episode)
 
         with self._lock:
             # Clicking Run twice is one click too many: a second sim of the same

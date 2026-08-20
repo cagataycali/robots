@@ -434,6 +434,28 @@ _REPLAY_EPISODE_SURFACES = {
     ("strands_robots/simulation/policy_runner.py", "replay"),
     ("strands_robots/simulation/base.py", "replay_episode"),
     ("strands_robots/dataset_recorder.py", "load_lerobot_episode"),
+    # The dashboard's pre-spawn judge and the spawn itself. validate_replay used
+    # to hand-roll `isinstance(episode, int)` and so refused 3.0 / np.int64(4) /
+    # np.float64(4.0) - values the runner and load_lerobot_episode accept - which
+    # is exactly the divergence this sweep exists to catch. It now applies the
+    # shared rule, and DeviceManager.replay forwards to it.
+    ("strands_robots/dashboard/device_manager.py", "validate_replay"),
+    ("strands_robots/dashboard/device_manager.py", "replay"),
+}
+
+# Surfaces that take an ``episode`` but are NOT part of the domain, each with the
+# reason stated. A silent omission and a considered exemption look identical in a
+# passing test suite, so they are listed rather than filtered out by a pattern -
+# and the test below asserts each one is still DISCOVERED, so a rename or a
+# deletion here fails loudly instead of quietly shrinking the sweep.
+_OUT_OF_SCOPE_EPISODE_SURFACES = {
+    # A FastAPI GET route: `episode: int` is coerced (and 422'd) by the framework
+    # before the body runs, and the handler only reads
+    # ``{int(episode)}_{camera}.jpg`` from the thumbnail dir. A negative or absent
+    # index is a 404 with no process, no dataset and nothing written - there is no
+    # refusal to keep consistent with the runner's, so applying the shared rule
+    # here would add a second answer to a question already answered.
+    ("strands_robots/dashboard/record_api.py", "thumb"),
 }
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -464,6 +486,10 @@ def _validates_or_forwards(node: ast.AST) -> bool:
         # Forwarding verbatim to a surface that does validate.
         if ("replay" in src or "load_lerobot_episode" in src) and "episode=episode" in src:
             return True
+        # Delegating the judgement to a validator that applies the shared rule
+        # (the dashboard's pre-spawn judge, called positionally).
+        if "validate_replay" in src and "episode" in src:
+            return True
     return False
 
 
@@ -474,7 +500,19 @@ class TestNoEpisodeIndexSurfaceDrifts:
         for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
             for node in _public_episode_surfaces(path.read_text()):
                 discovered.add((str(path.relative_to(_REPO_ROOT)), node.name))
-        assert discovered == _REPLAY_EPISODE_SURFACES
+        assert discovered == _REPLAY_EPISODE_SURFACES | _OUT_OF_SCOPE_EPISODE_SURFACES
+
+    def test_the_out_of_scope_surfaces_still_exist(self):
+        """An exemption must name a real surface, or the sweep quietly shrinks."""
+        discovered = set()
+        for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
+            for node in _public_episode_surfaces(path.read_text()):
+                discovered.add((str(path.relative_to(_REPO_ROOT)), node.name))
+        missing = _OUT_OF_SCOPE_EPISODE_SURFACES - discovered
+        assert not missing, f"exempted surfaces that no longer exist (drop the exemption): {missing}"
+        assert not (_OUT_OF_SCOPE_EPISODE_SURFACES & _REPLAY_EPISODE_SURFACES), (
+            "a surface cannot be both in the domain and exempt from it"
+        )
 
     @pytest.mark.parametrize("rel_path,func_name", sorted(_REPLAY_EPISODE_SURFACES))
     def test_every_surface_validates_or_forwards(self, rel_path, func_name):

@@ -11,8 +11,10 @@ child log stay the honest surface for that case, and these tests pin the line.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+from strands_robots.utils import non_negative_whole_number_error
 from strands_robots.dashboard.device_manager import DeviceManager, validate_replay
 
 
@@ -26,15 +28,40 @@ class TestValidateReplay:
     @pytest.mark.parametrize("episode", [-1, -5])
     def test_a_negative_episode_is_refused_as_a_list_position(self, episode: int) -> None:
         bad = validate_replay("lerobot/pusht", episode)
-        assert bad is not None and ">= 0" in bad["error"]
+        assert bad is not None and "non-negative" in bad["error"]
 
     @pytest.mark.parametrize("episode", ["3", 2.5, None, True, [1]])
-    def test_a_non_integer_episode_is_refused_by_type_not_coerced(self, episode: object) -> None:
+    def test_a_non_whole_number_episode_is_refused_not_coerced(self, episode: object) -> None:
         # int("3") would work and int(2.5) would silently floor - both hide
         # what the client actually sent. bool is an int in Python; an episode
         # of True is a client bug, not episode 1.
         bad = validate_replay("lerobot/pusht", episode)
-        assert bad is not None and "integer" in bad["error"]
+        assert bad is not None and "whole number" in bad["error"]
+
+    @pytest.mark.parametrize("episode", [3.0, np.int64(4), np.float64(4.0)])
+    def test_an_integral_number_from_arithmetic_is_accepted(self, episode: object) -> None:
+        """A number whose VALUE is a whole index is honoured, whatever its type.
+
+        This surface used to hand-roll ``isinstance(episode, int)`` and refused
+        these three - while PolicyRunner.replay and load_lerobot_episode, the very
+        things it spawns, accept them. ``len(ds) - 1`` promoted to np.int64 by
+        NumPy, or a 3.0 read from JSON, is an episode index; refusing it with
+        "must be an integer" told the operator their integer was not one.
+        """
+        assert validate_replay("lerobot/pusht", episode) is None
+
+    @pytest.mark.parametrize("episode", ["3", 2.5, None, True, -1])
+    def test_the_refusal_is_the_shared_rule_word_for_word(self, episode: object) -> None:
+        """One rule, one sentence: the dashboard must not paraphrase the domain.
+
+        Two copies of "an episode index is a non-negative whole number" drift in
+        both directions - which values they refuse, and what they tell the
+        operator. Pinning the text keeps the dashboard's 400 and the runner's
+        ValueError the same sentence about the same value.
+        """
+        bad = validate_replay("lerobot/pusht", episode)
+        assert bad is not None
+        assert bad["error"] == non_negative_whole_number_error(episode, "episode", "replay")
 
     @pytest.mark.parametrize("speed", [0, -1.0, float("inf"), float("nan")])
     def test_speed_must_be_finite_and_positive(self, speed: float) -> None:
