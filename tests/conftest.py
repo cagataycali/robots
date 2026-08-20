@@ -190,9 +190,23 @@ def pytest_report_header(config) -> str | None:  # noqa: ANN001 - pytest's own s
     failed with ``--cov``, and the failures name lighting bounds and colour ranges: every one of them reads
     as a product regression in the simulator. Not one of them is real.
 
-    (Ruled out: a double-imported ``numpy._globals`` — ``np._NoValue is numpy._globals._NoValue`` and
-    ``_methods._NoValue is np._NoValue`` both hold, and only one ``_globals`` module is in sys.modules.
-    Root cause still open; this header exists so nobody spends a night on a fake failure meanwhile.)
+    ROOT CAUSE (found 2026-08-20, one iteration later): there are TWO ``_NoValueType`` instances in the
+    process, and the C reduce identity-checks ``initial`` against the one it captured at extension init.
+    ``gc`` finds both; the first is accepted, ``np._NoValue`` points at the second. The second is created
+    because coverage, resolving a ``--cov=<dotted.sub.module>`` spec, calls ``find_spec`` on it inside
+    ``coverage/inorout.py``'s ``sys_modules_saved()`` — importing the PARENT package (which imports numpy)
+    and then stripping numpy back out of ``sys.modules``. numpy's C extension cannot be unloaded, so it
+    keeps the original sentinel while the test's later ``import numpy`` re-executes ``numpy/__init__.py``
+    and mints a new one. (The earlier "identity holds" check was not wrong, just blind: both names point
+    at the SECOND object.)
+
+    THE TRIGGER IS A DOTTED SUBMODULE, not coverage as such. ``--cov=strands_robots`` — this repo's
+    configured default — is safe, because a top-level package spec is resolved without executing it. So
+    plain ``pytest`` here is fine, and it was MY measuring command (``--cov=strands_robots.dashboard.auth``)
+    that broke the tests I was reading. To scope coverage to one module, give coverage a PATH:
+    ``--cov=strands_robots/dashboard/auth.py`` (verified: one sentinel, reductions fine, coverage still
+    reports). Pre-importing numpy from a ``-p`` plugin also works, but it makes coverage under-report the
+    package it imports, so the path form is the one to use.
 
     A header rather than a hard error: the run must still be allowed (most tests never touch a reduction),
     but the operator has to SEE that a red result in this configuration may belong to the environment.
