@@ -69,7 +69,14 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
-#: Module-level: the throttle has to outlive individual sockets to be able to count them.
+#: These two have to outlive individual SOCKETS to be able to count them — that is the whole
+#: requirement, and app.state satisfies it. Module level made them outlive the APP as well, which
+#: nothing asked for and which cost a day of confusion (Q63): one test's deliberate reopen storm
+#: exhausted the close-log budget for a peer/camera name, so a LATER test in the same process saw
+#: its close line silently suppressed and reported "the verdict never reached the log". A dashboard
+#: process serves one app, so per-app state is identical in production and honest under test.
+#: Kept as module attributes too: create_app() rebinds fresh instances onto app.state, and the
+#: fallbacks below mean a caller holding an app built elsewhere still gets a working throttle.
 _CAMERA_CLOSE_LOG = CloseLogThrottle()
 # Q46: the client-side churn cure only reaches clients that RELOAD. Measured: a tab kept
 # reopening one camera 1.53x/s for twelve hours after both cures landed, last asset request
@@ -326,6 +333,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app.add_middleware(TokenAuthMiddleware)
 
     app.state.bridge = bridge or MeshBridge()
+    # Per-app, not per-process: see the note on _CAMERA_CLOSE_LOG (Q63).
+    app.state.camera_close_log = CloseLogThrottle()
+    app.state.camera_churn = ChurnGuard()
     app.state.mesh_online = False
     app.state.devices = DeviceManager()
     # /api/record - teleop episode recording (record screen). The controller
@@ -1674,7 +1684,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # Q46: what the viewer ASKED for, and what the server will give a viewer that has
         # been reopening this camera in a loop. The lower of the two wins, so a stale
         # bundle cannot talk its way back up to full rate.
-        churn = _CAMERA_CHURN.note_open(
+        churn = getattr(ws.app.state, "camera_churn", _CAMERA_CHURN).note_open(
             viewer_identity(
                 # A JWT is per-login, so its digest identifies the viewer without the
                 # token ever entering a key or a log line. Behind the tunnel the address
@@ -1738,7 +1748,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             gone.cancel()
             # Rate-limited per peer/camera, with the suppressed count carried forward, so
             # a storm reads as a storm instead of drowning the log it would explain.
-            log_now, suppressed = _CAMERA_CLOSE_LOG.should_log(f"{peer_id}/{cam}")
+            log_now, suppressed = getattr(
+                ws.app.state, "camera_close_log", _CAMERA_CLOSE_LOG
+            ).should_log(f"{peer_id}/{cam}")
             if log_now:
                 verdict = close_verdict(
                     frames_sent=frames_sent,
