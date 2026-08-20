@@ -91,4 +91,15 @@ for (const t of tests) {
 console.log(failed
   ? `\n  ${failed} of ${tests.length} lib test file(s) FAILED${orphans.length ? `\n  orphaned: ${orphans.join('; ')}` : ''}`
   : `\n  PASS  ${tests.length} lib test files, every pure rule still holds`)
-process.exit(failed ? 1 : 0)
+
+// A green rule that reaches no screen is the failure mode this project keeps paying for (three times
+// in two days). These tests prove each rule is RIGHT; check-lib-wired proves it is REACHED. Skipped
+// when a filter was given, because then only part of lib/ was under test and the graph is not the
+// subject. It runs LAST so its verdict is the final line, and a dead module fails `npm test`.
+let unwired = 0
+if (!filter) {
+  const w = spawnSync(process.execPath, [new URL('check-lib-wired.mjs', import.meta.url).pathname], { encoding: 'utf8' })
+  process.stdout.write(w.stdout || '')
+  if (w.status !== 0) unwired = 1
+}
+process.exit(failed || unwired ? 1 : 0)
