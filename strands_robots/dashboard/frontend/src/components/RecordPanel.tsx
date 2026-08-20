@@ -3,7 +3,8 @@ import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordApi'
 import { openActionCopy } from '../lib/recordAction'
 import { sessionFreshness, staleSuffix } from '../lib/sessionFreshness'
-import { api as httpGet } from '../lib/endpoints'
+import { api as httpGet, HttpError } from '../lib/endpoints'
+import { recordFailure, type RecordActionKind } from '../lib/recordOutcome'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
@@ -123,12 +124,29 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
     return () => { alive = false; clearInterval(t) }
   }, [api, s?.dataset])
 
-  const run = async (fn: () => Promise<RecordSession>) => {
+  const run = async (fn: () => Promise<RecordSession>, kind: RecordActionKind) => {
     if (busy) return
     setBusy(true); setErr(null)
     // An action's own answer is a fresh read of the session: it counts.
     try { setS(await fn()); setLastOkAt(Date.now()); setPollErr(null) }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
+    catch (e) {
+      // A thrown record action is NOT proof it did not happen: the request may
+      // have reached the recorder, acted, and lost its answer (lib/recordOutcome).
+      const v = recordFailure({
+        kind,
+        status: e instanceof HttpError ? e.status : 0,
+        message: e instanceof Error ? e.message : String(e),
+      })
+      setErr(v.text)
+      // Hand off to the observer that knows. The 1s poll only runs once a session
+      // exists, so an `open` that MAY have landed would otherwise leave nothing
+      // watching at all - the one case that most needs a read.
+      if (v.ambiguous && api) {
+        try {
+          setS(await api.session()); setLastOkAt(Date.now()); setPollErr(null)
+        } catch { /* the message already says the read is what to watch */ }
+      }
+    }
     setBusy(false)
   }
 
@@ -146,11 +164,15 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return
       if (e.code === 'Space') {
         e.preventDefault()
-        void runRef.current(() => (cur.phase === 'recording' ? a.stopEpisode() : a.startEpisode()))
+        // The key does two different things, so it must report two different
+        // consequences: a lost stop may have saved the take, a lost start may
+        // already be recording.
+        const recording = cur.phase === 'recording'
+        void runRef.current(() => (recording ? a.stopEpisode() : a.startEpisode()), recording ? 'stop' : 'start')
       } else if (e.key === 'x' || e.key === 'X') {
         if (cur.phase !== 'recording') return
         e.preventDefault()
-        void runRef.current(() => a.redoEpisode())
+        void runRef.current(() => a.redoEpisode(), 'redo')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -200,7 +222,7 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
             dataset: form.dataset.trim(), task: form.task.trim(),
             leader: form.leader, follower: form.follower,
             target_episodes: Math.max(1, Number(form.target_episodes) || 20),
-          }))
+          }), 'open')
         }}>
           <label className="field"><span>dataset (name or hf repo id)</span>
             <input value={form.dataset} placeholder="cagatay/so101-pick-cube"
@@ -298,15 +320,15 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
           </div>
           <div className="train-actions">
             {!recording ? (
-              <button className="btn go wide" onClick={() => void run(() => api!.startEpisode())} disabled={busy}>
+              <button className="btn go wide" onClick={() => void run(() => api!.startEpisode(), 'start')} disabled={busy}>
                 ⏺ start episode {kept + 1}
               </button>
             ) : (
               <>
-                <button className="btn wide" onClick={() => void run(() => api!.redoEpisode())} disabled={busy}>
+                <button className="btn wide" onClick={() => void run(() => api!.redoEpisode(), 'redo')} disabled={busy}>
                   ↺ redo
                 </button>
-                <button className="btn go wide rec-live" onClick={() => void run(() => api!.stopEpisode())} disabled={busy}>
+                <button className="btn go wide rec-live" onClick={() => void run(() => api!.stopEpisode(), 'stop')} disabled={busy}>
                   ⏹ stop &amp; keep{liveFrames !== null ? ` · ${liveFrames}f${staleSuffix(fresh)}` : ''}
                 </button>
               </>
@@ -345,7 +367,7 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
               )}
               {ep.discarded
                 ? <span className="rec-ep-gone">discarded</span>
-                : <button className="btn ghost" onClick={() => void run(() => api!.discard(ep.index))} disabled={busy}>
+                : <button className="btn ghost" onClick={() => void run(() => api!.discard(ep.index), 'discard')} disabled={busy}>
                     ✕ discard
                   </button>}
             </div>
@@ -372,7 +394,19 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
                   const r = await api!.close(upload ? { upload, repo_id: repoId.trim() || s.dataset || undefined } : {})
                   setClosed(r.detail ?? (r.ok ? `dataset finished with ${kept} episode(s)` : 'close failed'))
                   setS(await api!.session())
-                } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
+                } catch (e) {
+                  // Finishing reaches outside this machine when upload is ticked:
+                  // a lost answer may mean the dataset is already on the Hub.
+                  const v = recordFailure({
+                    kind: 'close',
+                    status: e instanceof HttpError ? e.status : 0,
+                    message: e instanceof Error ? e.message : String(e),
+                  })
+                  setErr(v.text)
+                  if (v.ambiguous) {
+                    try { setS(await api!.session()); setLastOkAt(Date.now()); setPollErr(null) } catch { /* the message says what to watch */ }
+                  }
+                }
                 setBusy(false)
               })()
             }}>
