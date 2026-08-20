@@ -8,6 +8,7 @@ import { setDeployIntent } from '../lib/deployIntent'
 import { datasetKey as dsKey, selectDataset, selectionKey, replayable, type DatasetRow } from '../lib/datasetSelection'
 import { datasetHint, isCurrentResponse } from '../lib/datasetHint'
 import { jobsLedgerNotice } from '../lib/jobsLedger'
+import { orderJobsNewestFirst } from '../lib/orderJobs'
 import { newerThanApplied } from '../lib/requestOrder'
 
 // One row is either LOCAL (has a `root` path, trains offline) or from the HUB
@@ -77,7 +78,10 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         api('/api/training/jobs'),
       ])
       setTrainers(t.trainers ?? [])
-      setJobs((j.jobs ?? []).slice().reverse())
+      // Newest first from the DATA, not from the file's shape: the next effect polls
+      // only the first five, so an out-of-order ledger used to give status to the
+      // finished runs and none to the one just started.
+      setJobs(orderJobsNewestFirst(j.jobs ?? []))
       setJobsProblem(j.problem ?? null)
       // A keystroke may have fired a newer dataset search while this was in
       // flight; the newer question owns the list.
@@ -128,6 +132,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       tickBusy.current = true
       const round = ++tick.current
       try {
+      // the five NEWEST (orderJobsNewestFirst put them there) - a finished run's
+      // status cannot change, and the poll budget belongs to the live ones
       for (const job of jobs.slice(0, 5)) {
         if (!job.job_id) continue
         try {
