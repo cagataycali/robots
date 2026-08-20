@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from strands_robots.policies import create_policy
 from strands_robots.policies.vera.config import VeraConfig
 
@@ -81,6 +83,46 @@ def test_pusht_embodiment_config_still_valid() -> None:
     assert cfg.embodiment == "pusht"
     # default ports preserved for the running server
     assert (cfg.server_port, cfg.vis_port) == (8820, 8821)
-    # provider still builds for pusht without launching a server
-    policy = create_policy("vera", embodiment="pusht", auto_launch_server=False)
+
+
+def test_the_pusht_provider_builds_or_says_what_to_install() -> None:
+    """Building the provider either works or REFUSES ACTIONABLY.
+
+    ``create_policy("vera", ...)`` constructs the websocket client, which needs
+    ``msgpack`` + ``websockets`` - deliberately not installed by a plain
+    ``pip install strands-robots`` (there is no ``vera`` extra; VERA itself is
+    git-only). This test used to assert the build unconditionally, so on a machine
+    without those two it failed with a bare ``ModuleNotFoundError: No module named
+    'msgpack'`` and read like the pusht embodiment had rotted. Both outcomes are
+    correct behaviour - what is NOT correct is a naked import traceback, so the
+    absent-dependency branch asserts the install line is in the message.
+    """
+    try:
+        policy = create_policy("vera", embodiment="pusht", auto_launch_server=False)
+    except ImportError as e:
+        text = str(e)
+        assert "pip install websockets msgpack" in text, f"unhelpful refusal: {text}"
+        assert isinstance(e.__cause__, ImportError), "the original import error must stay attached"
+        pytest.skip(f"VERA client wire dependencies absent, refused actionably: {text.splitlines()[0]}")
     assert policy is not None
+
+
+def test_a_missing_wire_dependency_names_the_install_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The actionable refusal is pinned on EVERY machine, installed or not.
+
+    A skip on the absent-dependency branch above would leave the message
+    unguarded exactly where it is read, so force the failure: ``None`` in
+    ``sys.modules`` makes ``import msgpack`` raise, the same class the codec
+    raises when the package is genuinely absent.
+    """
+    import sys
+
+    from strands_robots.policies.vera import client as vera_client
+
+    monkeypatch.setitem(sys.modules, "msgpack", None)
+    monkeypatch.delitem(sys.modules, "strands_robots.policies.vera._msgpack_numpy", raising=False)
+    with pytest.raises(ImportError) as excinfo:
+        vera_client.VeraWebsocketClient()
+    text = str(excinfo.value)
+    assert "msgpack" in text and "pip install websockets msgpack" in text
+    assert "git+https://github.com/sizhe-li/VERA.git" in text, "server install stays distinct from client deps"
