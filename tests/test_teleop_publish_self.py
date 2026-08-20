@@ -74,7 +74,7 @@ def test_the_read_takes_the_SAME_bus_lock_as_every_other_reader(monkeypatch):
     src = RobotAsTeleoperator(_Host(inner))
 
     seen = []
-    real = bus_access.read_observation
+    real = bus_access.read_joints
 
     def spy(device):
         seen.append(device)
@@ -82,7 +82,7 @@ def test_the_read_takes_the_SAME_bus_lock_as_every_other_reader(monkeypatch):
         assert lock._is_owned() or lock.acquire(blocking=False) and (lock.release() or True)
         return real(device)
 
-    monkeypatch.setattr("strands_robots.teleop_source.read_observation", spy)
+    monkeypatch.setattr("strands_robots.teleop_source.read_joints", spy)
     assert src.get_action() == {"shoulder_pan.pos": 2.0}
     assert seen == [inner], "the inner driver is the device whose lock is shared"
 

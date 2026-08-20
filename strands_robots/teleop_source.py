@@ -29,7 +29,7 @@ import logging
 import math
 from typing import Any
 
-from strands_robots.bus_access import read_observation
+from strands_robots.bus_access import read_joints
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,10 @@ class RobotAsTeleoperator:
             self.read_errors += 1
             return {}
         try:
-            obs = read_observation(device)
+            # Joints only. A leader arm with a broken camera must still be able to
+            # drive a follower: get_observation() would have discarded the joint
+            # positions it had already read the moment a frame grab raised.
+            obs = read_joints(device)
         except Exception as exc:  # noqa: BLE001 - one bad frame is not a session
             self.read_errors += 1
             logger.debug("[teleop] leader read failed: %r", exc)

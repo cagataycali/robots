@@ -120,3 +120,68 @@ def write_action(device: Any, action: Any) -> Any:
     """
     with bus_lock(device):
         return device.send_action(action)
+
+#: Register every SO-101-family bus reports positions from. Named here so the
+#: joints-only read is one obvious call and not a string buried in a probe.
+_POSITION_REGISTER = "Present_Position"
+
+
+def _num_read_retries(device: Any) -> int | None:
+    cfg = getattr(device, "config", None)
+    n = getattr(cfg, "num_read_retries", None)
+    return n if isinstance(n, int) else None
+
+
+def read_joints(device: Any) -> Any:
+    """Read ONLY the joint positions, so a broken camera cannot hide them.
+
+    MEASURED 2026-08-20 on cagatay's fleet: ``so101-arm-1`` published ZERO joints
+    for eleven hours while its card looked healthy and non-stale. One line at
+    startup explained it -- ``state probe 'hw_joints' failed ...
+    RuntimeError('OpenCVCamera(1) read failed')`` -- and then the log went quiet
+    ("further failures logged at debug").
+
+    The cause is in lerobot's ``get_observation()``: it sync-reads the motors
+    FIRST, then loops over the cameras calling ``read_latest()``. A camera that
+    raises therefore throws away the joint positions ALREADY IN HAND. Every
+    joints consumer went through that call -- the fleet snapshot, the joint
+    history traces, motion detection, and teleop's 30Hz publisher -- so a single
+    dead USB camera silently disarmed an entire arm.
+
+    Joints and frames are independent facts about a robot and must fail
+    independently. When the driver exposes its motor bus we read that directly
+    (under the SAME lock as everything else, or this reintroduces the collision
+    this module exists to prevent). When it does not, we fall back to the full
+    observation: a driver whose only reader is ``get_observation`` cannot be
+    asked for less, and pretending otherwise would return nothing at all.
+
+    Args:
+        device: The robot to read. ``device.bus.sync_read`` is used when present.
+
+    Returns:
+        A mapping of ``"<motor>.pos"`` -> position, shaped exactly like the joint
+        half of ``get_observation()`` so callers need no new branch. On the
+        fallback path, whatever ``get_observation()`` returns (frames included).
+
+    Raises:
+        Exception: Anything the driver raises, unchanged.
+    """
+    bus = getattr(device, "bus", None)
+    if bus is None or not hasattr(bus, "sync_read"):
+        return read_observation(device)
+    retries = _num_read_retries(device)
+    with bus_lock(device):
+        if retries is None:
+            raw = bus.sync_read(_POSITION_REGISTER)
+        else:
+            try:
+                raw = bus.sync_read(_POSITION_REGISTER, num_retry=retries)
+            except TypeError:
+                # A bus implementation without the retry keyword: the read still
+                # matters more than the retry policy.
+                raw = bus.sync_read(_POSITION_REGISTER)
+    if not isinstance(raw, dict):
+        return raw
+    # ``.pos`` is lerobot's own suffix (see SOFollower.get_observation) and the
+    # shape the rest of this codebase already parses.
+    return {f"{motor}.pos": value for motor, value in raw.items()}
