@@ -21,8 +21,16 @@ export interface RunBody {
 
 interface Props {
   peerId: string
-  /** Used only to judge whether ▶ moves metal - see lib/runRisk.ts. */
-  presence?: Presence | null
+  /** Judges whether ▶ moves metal - see lib/runRisk.ts.
+   *
+   * REQUIRED, and deliberately not optional (Q60): RobotDetail rendered this form without it for as
+   * long as the form has existed, so the detail screen's motion warning was blind. runRisk() errs
+   * toward "physical", so nothing unsafe happened - but the confirm sheet said "this peer did not
+   * say whether it is real" about a peer that HAD said, and it appeared for SIM runs too. A safety
+   * dialog that cries wolf gets clicked through, and then it is not protecting the real arm either.
+   * Pass `null` only when the presence is genuinely unknown; tsc now refuses silence.
+   */
+  presence: Presence | null | undefined
   running: boolean
   busy: boolean
   disabled?: boolean

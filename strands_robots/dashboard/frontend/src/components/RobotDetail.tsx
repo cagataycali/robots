@@ -142,6 +142,9 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
             <TelemetryStrip peer={peer} />
             <RunForm
               peerId={peer.peer_id}
+              // Q60: without this the detail screen's confirm sheet could not name the hardware it
+              // was warning about, and showed a physical-motion warning for sim peers.
+              presence={p}
               running={running}
               busy={busy}
               disabled={offline}
