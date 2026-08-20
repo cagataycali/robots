@@ -12,7 +12,9 @@
     "audit:actions": "node scripts/audit-primary-actions.mjs",
     "audit": "npm run audit:screens && npm run audit:touch && npm run audit:keyboard && npm run audit:age",
     "audit:keyboard": "node scripts/audit-keyboard-path.mjs",
-    "audit:age": "node scripts/audit-server-age.mjs"
+    "audit:age": "node scripts/audit-server-age.mjs",
+    "test:lib": "node scripts/run-lib-tests.mjs",
+    "test": "node scripts/run-lib-tests.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
