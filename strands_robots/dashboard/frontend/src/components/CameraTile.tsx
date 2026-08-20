@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { wsUrl } from '../lib/endpoints'
 import { classifyCamera, type CamStatus } from '../lib/cameraState'
 import { planRetry, CHURN_OPENS_PER_MIN } from '../lib/cameraRetry'
+import { pacingFromNotice, nextRequestedFps } from '../lib/cameraPacing'
 
 interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: boolean; error?: string }
 
@@ -47,6 +48,10 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
   const openLog = useRef<number[]>([])
   /** the reduced rate this tile is currently asking for, or null at full rate */
   const degraded = useRef<number | null>(null)
+  // Q53: the rate the SERVER told us it is serving this viewer at, and the note the
+  // operator reads. Kept apart from `error` on purpose - a paced stream is working.
+  const pacedFps = useRef<number | null>(null)
+  const [pacedNote, setPacedNote] = useState<string | null>(null)
   // Attempts survive a re-run of the effect: peerId/cam churn must not hand a dead
   // endpoint a fresh 1s retry budget.
   const tries = useRef(0)
@@ -93,9 +98,13 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
       // actually carry instead of the same firehose again. Only the churning tile is
       // degraded, and only while it churns - a LAN operator never sees this.
       const capped = openLog.current.length >= CHURN_OPENS_PER_MIN
-      degraded.current = capped ? DEGRADED_FPS : null
+      // Q53: agree with the server. If it has already told us it is pacing this viewer,
+      // asking for the firehose again is an argument we lose anyway - and the LOWER of the
+      // two rates wins, so our own degradation is never talked back up by its cap.
+      degraded.current = nextRequestedFps(capped ? DEGRADED_FPS : null, pacedFps.current)
       const path = `/ws/camera/${encodeURIComponent(peerId)}/${encodeURIComponent(cam)}`
-      ws = new WebSocket(wsUrl(capped ? `${path}?max_fps=${DEGRADED_FPS}` : path))
+      const rate = degraded.current
+      ws = new WebSocket(wsUrl(rate === null ? path : `${path}?max_fps=${rate}`))
       ws.binaryType = 'blob'
       // NOT a reset: this handshake succeeding says nothing about whether frames exist.
       ws.onopen = () => {
@@ -111,7 +120,14 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
           // publishing raw frames it could not transcode).
           try {
             const ev = JSON.parse(msg.data)
-            if (ev.type === 'camera_error') error.current = ev.error
+            const pacing = pacingFromNotice(ev)
+            if (pacing) {
+              // NOT an error: the pictures keep coming, slower. Routing this into
+              // `error` would paint a red "camera error" over a working tile and send
+              // the operator hunting a USB cable that is fine.
+              pacedFps.current = pacing.fps
+              setPacedNote(pacing.note)
+            } else if (ev.type === 'camera_error') error.current = ev.error
           } catch { /* ignore */ }
           return
         }
@@ -178,6 +194,11 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
         {status.live && fps > 0 && <em> {fps.toFixed(0)}fps</em>}
         {shape && <em> {shape}</em>}
       </span>
+      {pacedNote && (
+        // Subdued, and NOT in the error overlay: the tile is alive. Announced politely
+        // because a rate change explains a jerky picture a sighted user can see.
+        <span className="campaced" role="status" aria-live="polite">{pacedNote}</span>
+      )}
     </div>
   )
 }
