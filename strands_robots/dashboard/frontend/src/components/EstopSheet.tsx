@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { EstopResult } from '../types'
-import { post } from '../lib/endpoints'
+import { post, HttpError } from '../lib/endpoints'
+import { estopFailureVerdict, resumeFailureVerdict, type FailureVerdict } from '../lib/estopOutcome'
 
 /**
  * Fleet-wide stop, with a per-peer answer.
@@ -23,7 +24,9 @@ export default function EstopSheet({
 }) {
   const [firing, setFiring] = useState(false)
   const [result, setResult] = useState<EstopResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // The VERDICT, not the message: whether the stop may have fired is the thing
+  // the operator has to act on, and only the status can answer that.
+  const [error, setError] = useState<FailureVerdict | null>(null)
   const [code, setCode] = useState('')
   const [resuming, setResuming] = useState(false)
   const [resumeMsg, setResumeMsg] = useState<string | null>(null)
@@ -36,7 +39,12 @@ export default function EstopSheet({
       if (r.status === 'ok') { setResumeMsg('✓ lockout cleared — fleet accepting commands again'); setCode('') }
       else setResumeMsg(`✗ ${r.error ?? 'resume rejected'} (wrong code? brute-force cooldown?)`)
     } catch (e: any) {
-      setResumeMsg(`⚠ ${e?.message ?? String(e)}`)
+      // A resume whose answer never came back MAY have cleared the lockout;
+      // reporting "still locked" would be a guess about the fleet's state.
+      setResumeMsg(resumeFailureVerdict({
+        status: e instanceof HttpError ? e.status : 0,
+        message: e?.message ?? String(e),
+      }).text)
     } finally {
       setResuming(false)
     }
@@ -47,7 +55,10 @@ export default function EstopSheet({
     try {
       setResult(await post<EstopResult>('/api/safety/estop'))
     } catch (e: any) {
-      setError(e?.message ?? String(e))
+      setError(estopFailureVerdict({
+        status: e instanceof HttpError ? e.status : 0,
+        message: e?.message ?? String(e),
+      }))
     } finally {
       setFiring(false)
     }
@@ -99,10 +110,15 @@ export default function EstopSheet({
 
         {error && (
           <>
-            <div className="result bad">⚠ the stop request itself failed: {error}</div>
-            <p className="hint">Nothing was sent. Use the hardware e-stop.</p>
+            {/* "Nothing was sent" was the old line for EVERY failure — including a
+                lost answer, where the stop may well have landed. The verdict
+                distinguishes them, because the two demand different next moves. */}
+            <div className="result bad">{error.headline}</div>
+            <p className="hint warn">{error.advice}</p>
             <div className="sheet-actions">
-              <button className="btn danger" onClick={fire}>retry</button>
+              <button className="btn danger" onClick={fire}>
+                {error.retryRepeats ? 'send the stop again' : 'retry'}
+              </button>
               <button className="btn ghost" onClick={onClose}>close</button>
             </div>
           </>
