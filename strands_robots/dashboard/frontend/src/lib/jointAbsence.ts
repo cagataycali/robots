@@ -17,10 +17,17 @@
  *                                          read, a robot that has none)
  *   - state has gone quiet             -> the peer or the mesh, not the bus
  *
- * What this must NOT do is name the cause. A lockout and a wedged serial bus look
+ * What this must NOT do is GUESS the cause. A lockout and a wedged serial bus look
  * identical from here, and a confident wrong diagnosis costs more than an honest
  * "here is what I can see, here is where the answer is" — so it says which of the
  * three situations it is, and points at the log for the rest.
+ *
+ * SINCE Q80 (2026-08-20) the cause sometimes arrives WITH the peer: the backend reads the child's
+ * own log and annotates `joint_problem` when its `hw_joints` probe failed — a held serial port and
+ * an uncalibrated board are different faults with opposite remedies, and both used to render as
+ * this module's honest shrug. When that verdict is present it is used verbatim, because it is
+ * evidence rather than inference; when it is absent NOTHING changes, so a fleet whose backend
+ * cannot tell still gets the pointer-at-the-log wording instead of a fabricated reason.
  */
 
 /** State frames older than this are not "current" any more. */
@@ -34,6 +41,8 @@ export interface AbsenceInput {
     hw?: string | null
     action_keys?: string[] | null
   } | null
+  /** The backend's own verdict on WHY joints are missing (peer annotation `joint_problem`, Q80). */
+  problem?: { kind?: string | null; headline?: string | null; remedy?: string | null; detail?: string | null } | null
   nowS: number
 }
 
@@ -44,6 +53,8 @@ export interface AbsenceNote {
   tone: 'waiting' | 'attention' | 'none'
   /** where the answer actually is, when we cannot know it from here */
   hint: string | null
+  /** the raw exception behind a backend verdict, for a title/tooltip — never the whole sentence */
+  detail?: string | null
 }
 
 /** Does this peer look like something that HAS joints? */
@@ -57,7 +68,8 @@ export function expectsJoints(presence: AbsenceInput['presence']): number | 'yes
 }
 
 export function jointAbsence(input: AbsenceInput): AbsenceNote {
-  const { state, presence, nowS } = input
+  const { state, presence, problem, nowS } = input
+  const verdict = problem?.headline ? problem : null
   const expects = expectsJoints(presence)
   const ageS = typeof state?.t === 'number' && state.t > 0 ? nowS - state.t : null
   // A NEGATIVE age is clock skew between two machines, and it counts as arriving:
@@ -83,7 +95,16 @@ export function jointAbsence(input: AbsenceInput): AbsenceNote {
   }
 
   // The interesting case, and the one that was reading as "no joint data": the
-  // process is alive and publishing, and the JOINTS are what is missing.
+  // process is alive and publishing, and the JOINTS are what is missing. When the backend read the
+  // reason out of the child's log, say IT — this is the one branch where the shrug used to live.
+  if (verdict) {
+    return {
+      text: `no joint positions — ${verdict.headline}`,
+      tone: 'attention',
+      hint: verdict.remedy ?? 'check its log (devices → logs)',
+      detail: verdict.detail ?? null,
+    }
+  }
   if (expects === 'unknown') {
     return { text: 'this peer publishes state without joint positions', tone: 'none', hint: null }
   }

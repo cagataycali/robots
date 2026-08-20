@@ -25,8 +25,12 @@ function readValue(v: unknown): number {
 }
 
 export default function JointStrip({
-  state, presence, history: showHistory = true,
-}: { state?: PeerState; presence?: Presence; history?: boolean }) {
+  state, presence, problem, history: showHistory = true,
+}: {
+  state?: PeerState; presence?: Presence; history?: boolean
+  /** the backend's `joint_problem` verdict for this peer (Q80) — absent means nothing is known */
+  problem?: { kind?: string | null; headline?: string | null; remedy?: string | null; detail?: string | null } | null
+}) {
   const memo = useRef<ScaleMemo | undefined>(undefined)
   const hist = useRef(createHistory())
   const [frame, setFrame] = useState(0)
@@ -60,9 +64,11 @@ export default function JointStrip({
     // hours while it published state 0.3s old: alive, talking, and only the joints
     // missing. lib/jointAbsence separates the three situations the operator has to
     // act on differently, and points at the log rather than guessing the cause.
-    const note = jointAbsence({ state, presence, nowS: nowMs / 1000 })
+    // Since Q80 the backend may KNOW the reason (it reads the child's log): a held serial port and
+    // an uncalibrated board are opposite remedies that both used to render as the same shrug.
+    const note = jointAbsence({ state, presence, problem, nowS: nowMs / 1000 })
     return (
-      <div className="joints empty" data-tone={note.tone}>
+      <div className="joints empty" data-tone={note.tone} title={note.detail ?? undefined}>
         {note.tone === 'attention' ? '⚠ ' : ''}{note.text}
         {note.hint && <span className="hint">{note.hint}</span>}
       </div>

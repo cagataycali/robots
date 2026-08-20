@@ -715,7 +715,7 @@ function FollowerLive({ peer, recording }: { peer?: Peer; recording: boolean }) 
           ⚠ {evidence.kind === 'ok' ? '' : evidence.message}
         </div>
       )}
-      <JointStrip state={peer.state} presence={peer.presence} />
+      <JointStrip state={peer.state} presence={peer.presence} problem={peer.joint_problem} />
     </div>
   )
 }

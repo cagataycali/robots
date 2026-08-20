@@ -63,3 +63,54 @@ assert.equal(expectsJoints(null), 'unknown')
 }
 
 console.log('jointAbsence: all assertions passed')
+
+// ------------------------------------------------------------------ Q80: the backend knows now
+// The module's own docstring says it must not GUESS the cause. Since Q80 the cause can arrive with
+// the peer (annotation `joint_problem`, read from the child's log server-side), and then withholding
+// it would be the dishonest choice: a held serial port and an uncalibrated board are opposite
+// remedies that both used to render as the same "check its log" shrug.
+{
+  const arriving = { state: { t: 1000 }, presence: { hw: 'so_follower', action_keys: ['a', 'b'] }, nowS: 1000.3 }
+
+  const held = jointAbsence({
+    ...arriving,
+    problem: {
+      kind: 'port_in_use',
+      headline: "another process is holding this arm's serial port",
+      remedy: 'Find the other owner and stop it - `/usr/sbin/lsof -n | grep usbmodem` names every holder.',
+      detail: 'ConnectionError("... [TxRxResult] Port is in use!")',
+    },
+  })
+  assert.equal(held.tone, 'attention')
+  assert.match(held.text, /holding this arm's serial port/)
+  assert.match(held.hint, /lsof/)
+  assert.match(held.detail, /Port is in use/)
+  assert.ok(!/both look like this/.test(held.hint), 'the shrug must be gone when evidence exists')
+
+  const uncal = jointAbsence({
+    ...arriving,
+    problem: { kind: 'uncalibrated', headline: 'this board has no calibration', remedy: 'Calibrate this arm.' },
+  })
+  assert.match(uncal.text, /no calibration/)
+  assert.ok(!/lsof/.test(uncal.hint), 'opposite remedy: never conflate the two')
+  assert.equal(uncal.detail, null, 'a missing detail is null, not "undefined" text')
+
+  // Absent verdict => the old honest wording, unchanged. A backend that cannot tell must not make
+  // this module quieter than it was.
+  const blind = jointAbsence(arriving)
+  assert.match(blind.text, /carries no joint positions/)
+  assert.match(blind.hint, /check its log/)
+
+  // A verdict with no headline is not a verdict.
+  const empty = jointAbsence({ ...arriving, problem: { kind: 'probe_failed' } })
+  assert.match(empty.text, /carries no joint positions/)
+
+  // Joints ARRIVING is the bridge's job to gate, but a quiet peer must still be reported as quiet:
+  // the process being gone is not a bus fault, whatever the log once said.
+  const quiet = jointAbsence({
+    state: { t: 1000 }, presence: { hw: 'so_follower' }, nowS: 1120,
+    problem: { kind: 'port_in_use', headline: "another process is holding this arm's serial port" },
+  })
+  assert.match(quiet.text, /went quiet/)
+  console.log('  ✓ Q80 backend verdict is used when present, and only when it applies')
+}
