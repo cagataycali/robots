@@ -91,3 +91,77 @@ def test_devices_payload_carries_it_per_board(tmp_path) -> None:
     # The unknown board must carry NO key at all, so a screen never has to special-case an empty
     # object that means the same as absence.
     assert "remembered" not in rows["/dev/cu.unknown"]
+
+
+# ---------------------------------------------------------------------------
+# Bringing it back up (Q41 part 2)
+# ---------------------------------------------------------------------------
+
+
+def test_nothing_remembered_is_a_sentence_not_a_spawn() -> None:
+    from strands_robots.dashboard.device_manager import respawn_payload
+
+    r = respawn_payload(None, "/dev/cu.x")
+    assert "error" in r and "nothing to bring back" in r["error"]
+    # It says how the memory gets made, because "no profile" is a state the operator can leave.
+    assert "spawn it once" in r["error"]
+    assert "robot_name" not in r, "half a memory must never become a process"
+
+
+def test_an_incomplete_profile_names_what_is_missing() -> None:
+    from strands_robots.dashboard.device_manager import respawn_payload
+
+    assert "peer name" in respawn_payload({"robot_name": "so101"}, "/dev/cu.x")["error"]
+    assert "robot family" in respawn_payload({"peer_id": "arm-1"}, "/dev/cu.x")["error"]
+
+
+def test_the_payload_is_the_remembered_one() -> None:
+    from strands_robots.dashboard.device_manager import respawn_payload
+
+    cams = {"top": {"index_or_path": 2}, "wrist": {"index_or_path": 1}}
+    r = respawn_payload({
+        "peer_id": "so101-arm-1", "robot_name": "so101", "mode": "real",
+        "port": "/dev/cu.usbmodem5AB01818061", "cameras": cams, "robot_id": "arm_1",
+    }, "/dev/cu.usbmodem5AB01818061")
+    assert r == {
+        "robot_name": "so101", "mode": "real", "peer_id": "so101-arm-1",
+        "port": "/dev/cu.usbmodem5AB01818061", "cameras": cams, "robot_id": "arm_1",
+    }
+    # A two-camera config is exactly what a client could not re-type, which is why the payload is
+    # assembled server-side.
+    assert len(r["cameras"]) == 2
+
+
+def test_the_port_is_where_the_board_is_now_not_where_it_was() -> None:
+    from strands_robots.dashboard.device_manager import respawn_payload
+
+    # THE POINT OF THE WHOLE FEATURE: profiles are keyed by USB serial because /dev names move.
+    # Re-using the remembered path would either find nothing, or open a DIFFERENT board with this
+    # arm's calibration id.
+    r = respawn_payload({
+        "peer_id": "so101-arm-1", "robot_name": "so101",
+        "port": "/dev/cu.usbmodem5AB01818061", "robot_id": "arm_1",
+    }, "/dev/cu.usbmodem5AB01818062")
+    assert r["port"] == "/dev/cu.usbmodem5AB01818062"
+    # ...and the move is stated, so the operator can see the board they are looking at is the one
+    # that came up: same serial, new path.
+    assert r["port_moved"] == {"was": "/dev/cu.usbmodem5AB01818061", "now": "/dev/cu.usbmodem5AB01818062"}
+
+
+def test_a_profile_without_a_saved_port_says_nothing_about_moving() -> None:
+    from strands_robots.dashboard.device_manager import respawn_payload
+
+    r = respawn_payload({"peer_id": "arm-1", "robot_name": "so101"}, "/dev/cu.x")
+    assert "port_moved" not in r
+    # An absent mode means the board is real hardware on a real port - the sim default of the form
+    # would be wrong here, and a sim spawn on a remembered arm is a silently different robot.
+    assert r["mode"] == "real"
+    assert r["cameras"] is None and r["robot_id"] is None
+
+
+def test_a_non_mapping_camera_memory_is_dropped_not_forwarded() -> None:
+    from strands_robots.dashboard.device_manager import respawn_payload
+
+    # hardware_robot raises "Camera 'main' config must be a mapping ... got int: 3" on this shape -
+    # a live failure once. A junk memory must not be handed to Popen.
+    assert respawn_payload({"peer_id": "a", "robot_name": "so101", "cameras": 3}, "/dev/x")["cameras"] is None

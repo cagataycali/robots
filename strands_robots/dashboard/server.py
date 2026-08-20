@@ -1299,6 +1299,39 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # streaming, and the difference is what the operator has to act on.
         return await asyncio.to_thread(app.state.devices.devices, refresh, _live_camera_names())
 
+    @app.post("/api/devices/spawn-remembered")
+    async def spawn_remembered(body: dict[str, Any]) -> dict[str, Any]:
+        """Bring a board back up exactly as it was last spawned (Q41).
+
+        `managed` lives in memory, so after a restart the devices screen knows nothing about the two
+        arms it was driving an hour ago - while profiles.json holds their whole payload. The payload
+        stays SERVER-SIDE: a client that re-typed it could not reproduce a two-camera config, and a
+        client that guessed one would open the wrong device.
+
+        The port is taken from the request (where the board is now), never from the memory: profiles
+        are keyed by USB serial because /dev names move, and re-using a stale path either finds
+        nothing or opens a different board with this arm's calibration id.
+        """
+        from strands_robots.dashboard.device_manager import respawn_payload
+
+        port = str(body.get("port") or "").strip()
+        if not port:
+            raise HTTPException(422, "port required")
+        profile = await asyncio.to_thread(app.state.devices.profile_for_port, port)
+        payload = respawn_payload(profile, port)
+        if payload.get("error"):
+            raise HTTPException(404, payload["error"])
+        moved = payload.pop("port_moved", None)
+        # One spawn path, not two: the settle window, the consent attachment and the audit trail all
+        # live in the route above, and a second copy of them is a second thing to forget to fix.
+        result = await spawn(payload)
+        result["respawned_from_profile"] = True
+        if moved:
+            # Said out loud because it is the operator's evidence that the board they are looking at
+            # is the board that came up: same serial, new /dev path.
+            result["port_moved"] = moved
+        return result
+
     @app.get("/api/devices/camera/{index}/preview")
     async def camera_preview(index: int) -> Response:
         """One JPEG frame from an unclaimed camera index.

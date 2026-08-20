@@ -655,6 +655,45 @@ def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def respawn_payload(profile: Mapping[str, Any] | None, port: str) -> dict[str, Any]:
+    """Turn a remembered profile into a spawn payload for the board at ``port`` NOW (Q41).
+
+    Returns ``{"error": ...}`` instead of a payload when there is nothing to spawn, so the caller
+    answers with a sentence rather than starting a process out of half a memory.
+
+    THE PORT IS ALWAYS THE CURRENT ONE. Profiles are keyed by USB serial precisely because /dev
+    names move: arm-1's saved payload says /dev/cu.usbmodem5AB01818061, and after a replug that same
+    board can be ...2. Re-using the remembered path would open a DIFFERENT board's bus with this
+    arm's calibration id - the one failure mode this whole feature exists to avoid - or, more often,
+    fail on a path nothing is behind. ``port_moved`` records the change so the screen can say it.
+    """
+    if not profile:
+        return {"error": (
+            "no saved profile for this board, so there is nothing to bring back - spawn it once "
+            "with the form above and it will be remembered by its USB serial"
+        )}
+    peer_id = str(profile.get("peer_id") or profile.get("name") or "").strip()
+    robot_name = str(profile.get("robot_name") or "").strip()
+    if not peer_id or not robot_name:
+        return {"error": (
+            "the saved profile for this board is incomplete (no "
+            + ("peer name" if not peer_id else "robot family")
+            + "), so it cannot be spawned as it stands - use the form above"
+        )}
+    payload: dict[str, Any] = {
+        "robot_name": robot_name,
+        "mode": str(profile.get("mode") or "real"),
+        "peer_id": peer_id,
+        "port": port,
+        "cameras": profile.get("cameras") if isinstance(profile.get("cameras"), Mapping) else None,
+        "robot_id": profile.get("robot_id") or None,
+    }
+    saved_port = str(profile.get("port") or "")
+    if saved_port and saved_port != port:
+        payload["port_moved"] = {"was": saved_port, "now": port}
+    return payload
+
+
 class ProfileStore:
     """USB device profiles on disk: serial number -> saved spawn payload.
 
