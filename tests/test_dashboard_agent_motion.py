@@ -1,6 +1,6 @@
-"""Q80: the chat box must not be a way around every motion gate on the ▶ button.
+"""Q80: the chat box must not be a way around every motion gate on the play button.
 
-The agent's fleet tool makes the SAME send_cmd as ▶ ({"action": "execute"}) on the SAME peer. ▶ has a
+The agent's fleet tool makes the SAME send_cmd as play ({"action": "execute"}) on the SAME peer. play has a
 confirm sheet naming "physical" (JOURNEYS #3) and, since Q79, refuses a policy that cannot drive that
 robot. Typing a sentence into the dock had neither.
 """
@@ -39,7 +39,7 @@ def test_a_task_on_a_real_arm_is_refused_and_nothing_is_sent():
     assert "so101-arm-1" in r
     assert "so_follower" in r  # the evidence, not an assertion
     # Every refusal in this dashboard names the next step that needs no permission.
-    assert "press ▶" in r and "simulated peer" in r
+    assert "press play" in r and "simulated peer" in r
     assert MOTION_ENV in r
     # And it must promise the one thing an operator will need in a hurry.
     assert "everyone stop" in r
@@ -76,7 +76,7 @@ def test_an_unclassifiable_peer_counts_as_metal():
 
 
 def test_the_tool_actually_consults_it_before_building_a_command(monkeypatch):
-    """The gate is worthless if the wiring skips it — this pins the call site."""
+    """The gate is worthless if the wiring skips it -- this pins the call site."""
     from strands_robots.dashboard import agent_bridge
 
     sent: list = []

@@ -48,7 +48,7 @@ class FakeRecorder:
         self.finalized = False
         self.pushed = None
 
-    # Q56 guard: the real parameter is `observation`, not `obs` — a fake that renames it
+    # Q56 guard: the real parameter is `observation`, not `obs` -- a fake that renames it
     # teaches readers a keyword the real recorder would reject.
     def add_frame(self, observation, action, task=None):
         self.frames.append((observation, action, task))
@@ -65,7 +65,7 @@ class FakeRecorder:
         self.finalized = True
 
     def push_to_hub(self, tags=None, private=False):
-        """Q56: this fake used to accept ``repo_id=None`` — a kwarg the REAL
+        """Q56: this fake used to accept ``repo_id=None`` -- a kwarg the REAL
         ``DatasetRecorder.push_to_hub`` has never had. That is what hid a branch
         which could only ever raise TypeError in production. A fake's signature
         is a claim about the real thing, so it now mirrors it exactly, and the
@@ -247,7 +247,7 @@ def test_a_working_upload_reports_the_repo_it_published_to():
     w.stop_episode()
     r = w.close(upload=True)
     assert r["ok"] is True and "pushed to cagatay/so101-pick" in r["detail"]
-    # Q56: no repo_id kwarg reaches the recorder — the real one has no such parameter.
+    # Q56: no repo_id kwarg reaches the recorder -- the real one has no such parameter.
     assert recorder.pushed == (None, False)
 
 

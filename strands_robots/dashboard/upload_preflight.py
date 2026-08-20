@@ -1,10 +1,10 @@
-"""Q72: can this machine actually publish that dataset — asked BEFORE the recording, not after it.
+"""Q72: can this machine actually publish that dataset -- asked BEFORE the recording, not after it.
 
 The record screen's "upload to the Hugging Face Hub after finishing" tick is judged at the END of a
 session: `RecordWorker.close(upload=True)` calls push_to_hub and reports whatever comes back. Every way
 it can fail is knowable in advance, and every one of them costs the operator the same thing when it is
 not: a finished session (minutes of teleop, sometimes an hour), a "saved locally, upload FAILED" line,
-and no retry — closing the session destroys the recorder, so a second attempt is a huggingface-cli job.
+and no retry -- closing the session destroys the recorder, so a second attempt is a huggingface-cli job.
 
 What this decides, from facts already on hand (checkpoints.hf_auth_state() + the session's dataset name):
 

@@ -48,11 +48,11 @@ class _StubBridge:
 
 
 #: The JSON 404 this file grades is emitted by the SPA catch-all, and create_app only registers that
-#: route when the built frontend exists. Without it FastAPI answers its own {"detail":"Not Found"} —
+#: route when the built frontend exists. Without it FastAPI answers its own {"detail":"Not Found"} --
 #: still a 404, so the first assertion passes and the test fails one line later on a missing "error"
 #: key, which reads like the handler regressed. It has not: the handler was never mounted. A fresh
 #: clone and CI without a frontend build are both in that state, so say so instead of failing
-#: mysteriously — a test that grades a different code path depending on whether someone ran
+#: mysteriously -- a test that grades a different code path depending on whether someone ran
 #: `npm run build` is not measuring what its name claims.
 _DIST = pathlib.Path(srv.__file__).parent / "frontend" / "dist"
 _needs_dist = pytest.mark.skipif(

@@ -1,7 +1,7 @@
 """Q75: removing an env var is a REMOVAL, not "set it to empty".
 
 The Env tab had no delete button, so the only gesture available for "take this key out" was clearing
-the field — which wrote ``KEY=`` and exported ``""`` into the live process. Set-and-empty is not
+the field -- which wrote ``KEY=`` and exported ``""`` into the live process. Set-and-empty is not
 absent: ``os.getenv("X", default)`` returns ``""``, an empty token authenticates as an empty token
 instead of falling back to anonymous, and the operator who did it believes the variable is gone.
 """
@@ -67,7 +67,7 @@ def test_delete_removes_the_line_and_keeps_everything_else(env_file):
 
 def test_delete_refuses_keys_it_could_not_have_written(env_file):
     # Same allowlist as the write path: a caller who cannot SET a variable must not be able to
-    # delete one either — otherwise this is a hole for removing someone else's PATH or HOME.
+    # delete one either -- otherwise this is a hole for removing someone else's PATH or HOME.
     env_file.write_text("PATH=/usr/bin\nSTRANDS_OK=1\n")
     assert config_api.delete_env_keys(["PATH"]) == []
     assert "PATH=/usr/bin" in env_file.read_text()
@@ -101,7 +101,7 @@ def test_apply_reports_removal_separately_from_writes(env_file, monkeypatch):
 
 
 def test_apply_still_writes_an_explicit_empty_string(env_file):
-    # Empty remains a legitimate VALUE — some tools want KEY= to mean "configured, blank".
+    # Empty remains a legitimate VALUE -- some tools want KEY= to mean "configured, blank".
     config_api.apply({"env": {"STRANDS_BLANK": ""}})
     assert "STRANDS_BLANK=" in env_file.read_text()
 

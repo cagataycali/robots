@@ -1,6 +1,6 @@
 """The Q56 audit, run as a test so it cannot rot in a scripts/ directory nobody executes.
 
-Q56 was a call to `DatasetRecorder.push_to_hub(repo_id=...)` — a parameter that class has never had.
+Q56 was a call to `DatasetRecorder.push_to_hub(repo_id=...)` -- a parameter that class has never had.
 It survived because every dashboard test injects a FAKE recorder: the only thing that could have
 caught it was comparing the call site to the REAL signature, which is what this does.
 

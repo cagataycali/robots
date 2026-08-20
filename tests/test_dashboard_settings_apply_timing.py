@@ -3,7 +3,7 @@
 Auditing the timing claims one field at a time. mesh.camera_hz said "needs a mesh restart",
 and a mesh restart cannot deliver it: the rate is resolved inside Mesh._resolve_camera_hz()
 when a ROBOT starts its camera loop, in the robot's own process. The dashboard has no robot
-and publishes no frames, so re-pointing its session changes nothing whatsoever — the operator
+and publishes no frames, so re-pointing its session changes nothing whatsoever -- the operator
 who lowered the rate to save bandwidth, clicked the restart button and saw "mesh re-pointed"
 had been told the job was done by both the field and the result line.
 """
@@ -29,7 +29,7 @@ def test_camera_hz_asks_for_a_respawn_not_a_mesh_restart(monkeypatch):
 
 
 def test_endpoints_still_ask_for_a_mesh_restart(monkeypatch):
-    """The keys the dashboard's OWN session reads keep their claim — over-correcting here would
+    """The keys the dashboard's OWN session reads keep their claim -- over-correcting here would
     hide a real restart requirement."""
     monkeypatch.setattr(settings, "update_strict", lambda patch: (["mesh.port"], []))
     res = _apply({"mesh": {"port": 7448}})
@@ -78,7 +78,7 @@ def test_cors_has_two_readers_with_different_lifetimes():
 
     create_app() bakes the origin list into CORSMiddleware (browser header, startup-only);
     TokenAuthMiddleware re-reads settings per request (the write/websocket gate). So removing an
-    origin tightens immediately while adding one needs a restart — the safe asymmetry, and the
+    origin tightens immediately while adding one needs a restart -- the safe asymmetry, and the
     reason the field cannot simply say "applies immediately".
     """
     import inspect
@@ -92,7 +92,7 @@ def test_cors_has_two_readers_with_different_lifetimes():
 
 
 def test_the_agent_keys_really_do_apply_on_the_next_turn(monkeypatch):
-    """Checked with the same method and found HONEST — recorded so nobody re-audits it blind.
+    """Checked with the same method and found HONEST -- recorded so nobody re-audits it blind.
 
     reset_agent() drops the cached agent; the next get_agent() calls _build_agent(), which reads
     settings.load()["agent"] then. Nothing captures the model id earlier.

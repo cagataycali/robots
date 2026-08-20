@@ -188,7 +188,7 @@ def _load() -> Dict[str, Any]:
                 return _cache
             except (OSError, ValueError) as exc:
                 # A half-written or unreadable store used to fall straight through to a fresh
-                # default one — which OVERWROTE the file. Two consequences, neither obvious from
+                # default one -- which OVERWROTE the file. Two consequences, neither obvious from
                 # here: auth_enabled() IS has_credentials(), so zero credentials silently
                 # unseals every /api and /ws route (through the tunnel, that is the public
                 # internet); and the operator's only passkey record was destroyed by the same

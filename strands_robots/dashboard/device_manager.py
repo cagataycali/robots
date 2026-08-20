@@ -622,14 +622,14 @@ def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
     """What this board was last brought up as, in the shape a screen can show (Q41).
 
     The devices screen is where the record screen sends an operator after an interrupted session
-    ("respawn them from devices"), and where an operator lands after any restart — but ``managed``
+    ("respawn them from devices"), and where an operator lands after any restart -- but ``managed``
     is in-memory, so after a restart it is EMPTY and the two boards read as never-configured
     hardware. Everything needed to bring them back is already on disk in profiles.json; it was
     simply never sent to the screen.
 
     Only fields that describe how the board comes UP, and only when the profile can actually be
     respawned: a payload without a peer_id is not a spawn recipe, and pretending otherwise offers a
-    button that cannot work. ``{}`` means "nothing remembered" and must render as nothing — a board
+    button that cannot work. ``{}`` means "nothing remembered" and must render as nothing -- a board
     nobody has configured is a normal, honest state.
 
     Camera names are listed rather than their config: the operator recognises "top, wrist", and the
@@ -1246,7 +1246,7 @@ def validate_replay(
 #: The camera options lerobot's OpenCVCameraConfig declares, as a fallback for when lerobot cannot be
 #: imported (the dashboard must validate a config on a machine with no robot stack installed). A test
 #: asserts this matches the real dataclass wherever lerobot IS importable, so drift is caught rather
-#: than assumed — a stale list here would refuse an option the child accepts perfectly well.
+#: than assumed -- a stale list here would refuse an option the child accepts perfectly well.
 _CAMERA_OPTION_FIELDS = (
     "backend", "color_mode", "fourcc", "fps", "height", "index_or_path", "rotation", "warmup_s", "width",
 )
@@ -1267,7 +1267,7 @@ def requested_camera_names(cameras: Any) -> list[str]:
 
     The dashboard knows something the mesh snapshot does not: what it requested when it started a child.
     A robot that was spawned with ``{"top": ..., "wrist": ...}`` and now announces no cameras did not
-    "publish none" — hardware_robot DROPS a camera it cannot open at connect, so those two names are the
+    "publish none" -- hardware_robot DROPS a camera it cannot open at connect, so those two names are the
     difference between "a joints-only robot" and "two cameras failed to open", which is the question an
     operator actually has (BUGS.md Q25: on this Mac macOS refused capture and both arms dropped both
     cameras, reporting it only in a child log).
@@ -1289,11 +1289,11 @@ def indices_beyond_roster(cameras: Any, roster_size: int) -> dict[str, int]:
 
     Deliberately uses only the COUNT of the enumerated roster, never its order. scan_camera_names' own
     docstring warns that the listing order does not match OpenCV's index order (Continuity cameras
-    renumber), so "roster[3] is named X" proves nothing about index 3 — but renumbering is a PERMUTATION,
+    renumber), so "roster[3] is named X" proves nothing about index 3 -- but renumbering is a PERMUTATION,
     and no permutation of N devices produces a valid index >= N. That makes this the strongest claim
     available without opening a device, which the supervisor law forbids for streaming indices.
 
-    ``roster_size <= 0`` returns {} — an empty roster means enumeration did not work (no ffmpeg, an
+    ``roster_size <= 0`` returns {} -- an empty roster means enumeration did not work (no ffmpeg, an
     unsupported platform), and absence of evidence must not become a refusal. Non-integer entries
     (a path like /dev/video0, a string) are not judged here either: only an index can be compared to a
     count, and validate_cameras has already refused the shapes that are simply wrong.
@@ -1355,7 +1355,7 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
                 return {"error": f"camera {name!r}: {field} must be an integer, got {type(v).__name__}"}
             if not lo <= v <= hi:
                 return {"error": f"camera {name!r}: {field}={v} is outside {lo}..{hi}"}
-        # An UNKNOWN option is refused HERE, because the child refuses it too — and by the time the
+        # An UNKNOWN option is refused HERE, because the child refuses it too -- and by the time the
         # child speaks, reconfigure_cameras has already despawned the arm that was working. A typo
         # ("framerate" for "fps") therefore cost the operator a live robot and left the respawn dead
         # with a ValueError buried in a log ring. This function's docstring promises "everything the
@@ -2012,8 +2012,8 @@ class DeviceManager:
         with self._lock:
             if peer_id in self.robots and self.robots[peer_id].alive():
                 return {"error": f"peer {peer_id} already running"}
-            # Q84: the check above is blind to every process that is not ours. It has to be — it reads
-            # self.robots — and that blindness cost ten hours of a fleet with no arms in it, because 185
+            # Q84: the check above is blind to every process that is not ours. It has to be -- it reads
+            # self.robots -- and that blindness cost ten hours of a fleet with no arms in it, because 185
             # parentless holders were reading both buses while this dict was empty. Ask the machine
             # instead, and refuse before Popen: a second owner on a half-duplex bus corrupts both
             # conversations, and a child started blind reports a pid and then dies in the settle window.

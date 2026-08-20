@@ -1,7 +1,7 @@
 """The voice surface: the gate covers it, and a spoken refusal can still become a decision.
 
 Voice forwards audio and transcript ONLY, so a refusal raised inside the fleet tool is spoken once and
-gone — and the operator cannot grant a permission by talking. So the refusal is also pushed to the
+gone -- and the operator cannot grant a permission by talking. So the refusal is also pushed to the
 browser as a needs_consent frame, and the grant stays a deliberate tap on the same ConsentSheet.
 """
 
@@ -32,7 +32,7 @@ def _call(fleet):
 
 
 def test_voice_uses_the_same_gated_fleet_tool():
-    """A future refactor giving voice its own copy of the tool would silently unguard it — the voice
+    """A future refactor giving voice its own copy of the tool would silently unguard it -- the voice
     session is the surface where nobody would notice, because there is no error bubble to read."""
     src = inspect.getsource(voice.build_voice_agent)
     assert "_make_fleet_tool" in src
@@ -106,7 +106,7 @@ def test_the_session_drops_its_listener_on_every_exit_path():
 
 
 def test_the_voice_prompt_tells_the_model_the_refusal_is_final():
-    """Otherwise the model reroutes: rewording, retrying, or picking a different arm — which is the
+    """Otherwise the model reroutes: rewording, retrying, or picking a different arm -- which is the
     one failure mode of a gate that only says no to a tool call."""
     # Normalised: the prompt is a wrapped literal, so pinning line breaks would fail on a reflow
     # that changed nothing about what the model is told.

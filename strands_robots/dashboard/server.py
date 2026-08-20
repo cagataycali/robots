@@ -885,7 +885,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/training/output-dir")
     async def training_output_dir(path: str = "") -> dict[str, Any]:
-        """Q58: what would a run DO to this directory — before the operator presses train.
+        """Q58: what would a run DO to this directory -- before the operator presses train.
 
         A GET so the form can ask while typing. Read-only: it lists and classifies, it never
         creates or clears anything (the delete itself lives in the trainer and is gated in
@@ -947,8 +947,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/checkpoints/features")
     async def checkpoint_features(repo_id: str = "") -> dict[str, Any]:
-        """Q79: what a checkpoint declares it was trained on — so the run form can compare it with
-        the robot BEFORE ▶ energises one.
+        """Q79: what a checkpoint declares it was trained on -- so the run form can compare it with
+        the robot BEFORE play energises one.
 
         Read-only, local only (the HF cache and local training outputs), no model load and no
         network: a run form must never wait on the Hub. An unknown or unreadable checkpoint answers
@@ -1068,7 +1068,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     if fit.get("blocking"):
                         # A fit problem is not a config typo: it is the wrong policy for this robot,
                         # and no amount of correcting fields makes it run. It overrides `ok`, because
-                        # the form arms ▶ on that flag.
+                        # the form arms play on that flag.
                         result["ok"] = False
                         result["stage"] = "fit"
                         result["error"] = "; ".join(
@@ -1086,7 +1086,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         Read-only and local: the checkpoint's own declared features (disk) against what the peer
         announces on the mesh (its joints and camera names). Cheap enough for the run form to ask on
         every checkpoint change, which is the point - the alternative is discovering that a 2-value
-        action cannot drive 6 joints after ▶ has parked and torqued the arm.
+        action cannot drive 6 joints after play has parked and torqued the arm.
 
         `evidence: false` means the comparison could not be made (unknown checkpoint, or a peer that
         has announced nothing yet). It is never a refusal: absence of evidence must not block a run
@@ -1120,7 +1120,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if not instruction:
             raise HTTPException(422, "instruction required")
         # An opt-in anti-accident lock (off unless the operator set it): a task POST that would start
-        # REAL motion must carry the browser's confirmation. ▶ sends it; a curl against the public
+        # REAL motion must carry the browser's confirmation. play sends it; a curl against the public
         # tunnel does not. Checked BEFORE the command is built, so a refusal cannot half-send.
         from strands_robots.dashboard.agent_motion import task_post_allowed
 

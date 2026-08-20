@@ -5,7 +5,7 @@ ran one hook fewer than an open one, and React refuses that:
 
     Rendered more hooks than during the previous render.
 
-Effect: the settings screen was DEAD — every open hit the error boundary ("settings stopped working"),
+Effect: the settings screen was DEAD -- every open hit the error boundary ("settings stopped working"),
 and because the boundary stays crashed, the audit then reported help, robot detail and train as broken
 too. It shipped because nothing in this repo checks the Rules of Hooks: eslint-plugin-react-hooks is not
 wired into a run anybody makes, the pure .test.mjs files test lib/ (no hooks), and the python suite never
@@ -13,7 +13,7 @@ looked at .tsx. A rule with no runner is a comment.
 
 So this is a static scan in the suite everyone runs: for each component file, find the first
 component-level early return and refuse any hook call after it. It is deliberately dumb (regex, one
-indentation level, generics included — `useMemo<Drafts>(` is why the first hand-grep missed Q77) and it
+indentation level, generics included -- `useMemo<Drafts>(` is why the first hand-grep missed Q77) and it
 reports the file and line rather than pretending to be a type checker.
 """
 
@@ -24,7 +24,7 @@ from pathlib import Path
 
 COMPONENTS = Path(__file__).resolve().parents[1] / "strands_robots" / "dashboard" / "frontend" / "src"
 
-#: `useThing(` or `useThing<T>(` — the generic form is the one a hand-written grep loses.
+#: `useThing(` or `useThing<T>(` -- the generic form is the one a hand-written grep loses.
 HOOK = re.compile(r"\buse[A-Z][A-Za-z0-9]*\s*(?:<[^;]*?>)?\s*\(")
 #: a return at component-body indentation: `  return …` or `  if (…) return …`
 EARLY_RETURN = re.compile(r"^ {2}(?:if\s*\(.*\)\s*)?return\b")
@@ -41,7 +41,7 @@ def _hooks_after_early_return(source: str) -> list[tuple[int, str]]:
     for i, line in enumerate(lines, 1):
         # Any top-level declaration ENDS the previous component's hook region. Without this, a
         # module-level one-liner like `export const useConfig = () => useContext(CTX)` inherited the
-        # region of the component above it and was reported as a late hook — a false positive, and a
+        # region of the component above it and was reported as a late hook -- a false positive, and a
         # guard that cries wolf is a guard somebody deletes.
         if re.match(r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|const|let|class)\b", line):
             is_component = bool(
@@ -113,7 +113,7 @@ def test_a_helper_functions_return_is_not_the_anchor() -> None:
     """Helpers above a component return early all the time; that says nothing about its hooks."""
     assert not _hooks_after_early_return(
         "function fmt(v: number | null) {\n"
-        "  if (v === null) return '—'\n"
+        "  if (v === null) return '--'\n"
         "  return v.toFixed(2)\n"
         "}\n"
         "export default function Panel() {\n"

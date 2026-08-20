@@ -1,7 +1,7 @@
 """A connected arm with no joints must say WHY (Q80).
 
 Live on 2026-08-20 both of cagatay's arms reported `hardware connected`, kept a fresh heartbeat,
-listed cameras — and omitted every joint from every snapshot for hours. The reason sat in each
+listed cameras -- and omitted every joint from every snapshot for hours. The reason sat in each
 child's log, in words, where the fleet view never looks: one arm's serial port was held by another
 process (179 orphaned children from earlier spawns), the other board had no calibration at all.
 From outside the two are identical; their remedies are opposite.
@@ -40,7 +40,7 @@ def test_an_uncalibrated_board_is_not_reported_as_contention():
     v = joint_silence.classify([UNCALIBRATED])
     assert v["kind"] == "uncalibrated"
     assert "calibrat" in v["remedy"].lower()
-    assert "lsof" not in v["remedy"], "opposite remedy — the two must never be conflated"
+    assert "lsof" not in v["remedy"], "opposite remedy -- the two must never be conflated"
 
 
 def test_the_motor_dump_is_trimmed_to_something_readable():
@@ -70,7 +70,7 @@ def test_silence_stays_silent():
 
 def test_live_joints_beat_a_past_complaint():
     # mesh.core logs a degraded probe once and NEVER logs the recovery, so the line outlives the
-    # fault. Without this gate the badge would be permanent — and then ignored.
+    # fault. Without this gate the badge would be permanent -- and then ignored.
     peer = {"state": {"shoulder_pan.pos": 12.0, "gripper.pos": 3.0}}
     fields = {"role": "follower", "joint_problem": {"kind": "port_in_use"}}
     out = joint_silence.merge(peer, fields)
@@ -91,7 +91,7 @@ def test_no_joints_means_no_joints(state):
 
 # --------------------------------------------------------------- wiring (Q80)
 # The U2 lesson: a claim about the fleet view must be proven where the view reads from, not on the
-# route that happens to be easiest to call. Both halves are checked here — the annotation the
+# route that happens to be easiest to call. Both halves are checked here -- the annotation the
 # DeviceManager contributes, and the gate MeshBridge applies to it.
 
 def test_the_device_manager_contributes_the_verdict_from_the_childs_own_log():

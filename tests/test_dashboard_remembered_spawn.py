@@ -1,7 +1,7 @@
 """A board the dashboard already knows how to spawn says so (Q41).
 
-`managed` is in-memory: after a restart — or after a recording session parked both arms and the
-dashboard died (Q40) — the devices screen shows "Managed robots (0)" and two boards that read as
+`managed` is in-memory: after a restart -- or after a recording session parked both arms and the
+dashboard died (Q40) -- the devices screen shows "Managed robots (0)" and two boards that read as
 never-configured hardware, even though profiles.json holds the exact payload that brought them up.
 """
 

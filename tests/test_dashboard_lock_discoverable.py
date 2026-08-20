@@ -1,8 +1,8 @@
 """Q81 follow-through: a guard nobody can find is a guard nobody uses.
 
 The lock shipped as an env var only, which means it existed for whoever read the commit. These tests pin
-that it is discoverable in the two places an operator actually looks — the permissions screen and the env
-list — and that flipping it from the UI really lands.
+that it is discoverable in the two places an operator actually looks -- the permissions screen and the env
+list -- and that flipping it from the UI really lands.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def _client():
 
 
 def test_the_lock_is_reported_in_both_states_not_only_when_on():
-    """A grant can be listed only when granted — there is nothing to say otherwise. A LOCK is the
+    """A grant can be listed only when granted -- there is nothing to say otherwise. A LOCK is the
     opposite: the operator has to be told it exists before they can choose it."""
     assert granted_state({})["locks"]["task_requires_confirm"] is False
     assert granted_state({TASK_CONFIRM_ENV: "on"})["locks"]["task_requires_confirm"] is True
@@ -80,14 +80,14 @@ def test_turning_it_on_from_the_ui_actually_locks_the_route():
     assert r.status_code == 200
     assert task_confirm_required() is True
     assert client.post("/api/robots/so101-arm-1/task", json={"instruction": "go"}).status_code == 403
-    # and the ▶ path still works, which is what makes turning it on cheap
+    # and the play path still works, which is what makes turning it on cheap
     assert client.post(
         "/api/robots/so101-arm-1/task", json={"instruction": "go", "confirmed": True}
     ).status_code == 200
 
 
 def test_turning_it_off_clears_rather_than_deletes():
-    """An absent line lets a stale value from a shell profile or a launchd plist win the next restart —
+    """An absent line lets a stale value from a shell profile or a launchd plist win the next restart --
     a change that silently does not hold."""
     from strands_robots.dashboard.config_api import ENV_FILE
 

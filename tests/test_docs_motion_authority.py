@@ -1,7 +1,7 @@
 """Documentation must state the two motion switches, with the DEFAULTS the code implements.
 
 A permissions page and an env row tell an operator a variable exists. Neither tells them which way it
-points when unset — and the two point OPPOSITE ways, on purpose:
+points when unset -- and the two point OPPOSITE ways, on purpose:
 
 * ``STRANDS_DASH_AGENT_PHYSICAL_MOTION`` unset means REFUSE (the agent may not start a real arm).
 * ``STRANDS_DASH_TASK_REQUIRES_CONFIRM`` unset means ALLOW (any token holder may POST a real task).
@@ -54,7 +54,7 @@ def test_the_documented_defaults_are_the_implemented_ones(text: str):
 
 def test_the_page_does_not_oversell_the_lock(text: str):
     """It is defeatable by any client willing to send the marker. Calling it security would earn it a
-    trust it cannot carry — and would make a leaked token feel handled when it is not."""
+    trust it cannot carry -- and would make a leaked token feel handled when it is not."""
     low = text.lower()
     assert "anti-accident" in low
     assert "not a security boundary" in low or "not the fix" in low

@@ -3,7 +3,7 @@
 U19 asks whether a respawn honours the camera fps/resolution someone chose. The plumbing does:
 the profile carries the full lerobot camera mapping and AutoSpawnWatcher respawns from it. But
 `ProfileStore.save()` protected only the MEASURED role fields, while every spawn writes
-`"cameras": cameras` — so a camera-less spawn (the watcher on a replug, a joints-only spawn from
+`"cameras": cameras` -- so a camera-less spawn (the watcher on a replug, a joints-only spawn from
 the run form, a CLI spawn) stored None over the mapping. The next automatic respawn then brought
 the arm up BLIND, and the U19 reconfigure editor opened blank, with nothing saying a choice had
 been dropped. Same trap that once ate a measured role, different victim.

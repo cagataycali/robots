@@ -404,7 +404,7 @@ def build_router(
 
     @r.get("/upload-preflight")
     async def upload_preflight_route() -> dict[str, Any]:
-        """Q72: can this machine publish THIS session's dataset — asked before the work, not after.
+        """Q72: can this machine publish THIS session's dataset -- asked before the work, not after.
 
         Read-only. Every failure `close(upload=True)` can report is knowable now, and knowing it
         later costs a finished session that cannot be re-pushed from here. hf_auth_state() is

@@ -1,6 +1,6 @@
 """Every frame type the server can emit must be handled by the frontend (Q80).
 
-The UI renders from the STREAM, not from the routes — that is the lesson the U2 role badge taught the
+The UI renders from the STREAM, not from the routes -- that is the lesson the U2 role badge taught the
 hard way (a route enriched, proved with curl, and the card still blank because the card reads the
 websocket snapshot). Q79 gave the HTTP half a way to notice a server older than the bundle. The websocket
 half has no status code at all: a frame type the bundle does not handle is simply dropped, in silence, at
@@ -8,7 +8,7 @@ whatever rate the server sends it. Nothing fails, nothing logs, the feature is j
 
 Measured against the live dashboard 2026-08-20 (probe on /ws/mesh, 12 frames): types snapshot/state/
 presence arrive, and every type the source can emit IS handled today. `response` looked like a hole and
-is not — it appears only inside a docstring describing the mesh RPC wire. Hence the AST: a regex over
+is not -- it appears only inside a docstring describing the mesh RPC wire. Hence the AST: a regex over
 these files reads prose as code and would have failed on that sentence.
 
 Direction pinned here: server -> client. A type added to the backend with no reader lands as invisible
@@ -43,7 +43,7 @@ def _emitted_types() -> dict[str, set[str]]:
 
     ast, deliberately: the first version of this test grepped, and matched a docstring that spells out
     ``{"type": "response", ...}`` as documentation of the mesh RPC layering. It then demanded a frontend
-    reader for a frame nothing ever sends — a test failing on prose is worse than no test.
+    reader for a frame nothing ever sends -- a test failing on prose is worse than no test.
     """
     out: dict[str, set[str]] = {}
     for path in _EMITTERS:
@@ -86,7 +86,7 @@ def test_every_emitted_frame_type_has_a_reader(frontend_text: str) -> None:
         if missing:
             unread[filename] = missing
     assert not unread, (
-        "frame types the backend can send that no frontend source mentions — a websocket frame has no "
+        "frame types the backend can send that no frontend source mentions -- a websocket frame has no "
         f"status code, so these are dropped silently at their send rate: {unread}"
     )
 
@@ -108,7 +108,7 @@ def test_the_ignore_list_only_holds_types_that_are_really_emitted() -> None:
 # --- the other direction: frames the BUNDLE sends must be implemented (Q81) ----
 
 #: Every ``{type: '...'}`` the frontend sends on a websocket, and where the server implements it. A new
-#: entry belongs here in the same commit as the UI that sends it — the pointer is the point, because the
+#: entry belongs here in the same commit as the UI that sends it -- the pointer is the point, because the
 #: failure this guards is "the button does nothing and no log mentions it".
 _CLIENT_FRAMES = {
     "chat": ("server.py", "_CHAT_FRAME_TYPES"),
@@ -133,7 +133,7 @@ def _frames_the_bundle_sends() -> set[str]:
 
 def test_every_frame_the_bundle_sends_is_implemented_server_side() -> None:
     sent = _frames_the_bundle_sends()
-    assert sent, "the scan found no client frames at all — the pattern it looks for must have changed"
+    assert sent, "the scan found no client frames at all -- the pattern it looks for must have changed"
     unimplemented = sorted(sent - set(_CLIENT_FRAMES))
     assert not unimplemented, (
         "the UI sends these websocket frames and this test cannot see where the server handles them; "

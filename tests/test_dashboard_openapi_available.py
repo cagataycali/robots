@@ -1,4 +1,4 @@
-"""The app must keep publishing /openapi.json — a UI feature now depends on it (Q79).
+"""The app must keep publishing /openapi.json -- a UI feature now depends on it (Q79).
 
 The frontend tells "this server has no such route" apart from "this server has no such camera" by asking
 the server for its own route list. Measured on this Mac 2026-08-20: the running dashboard was missing

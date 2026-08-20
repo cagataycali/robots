@@ -1,6 +1,6 @@
 """Q79: a checkpoint states what it was trained on; the run form never read it.
 
-Ground truth these cases are built from — two real configs in this machine's HF cache:
+Ground truth these cases are built from -- two real configs in this machine's HF cache:
   cagataydev/scout-act-sim-v0     state [5],  action [2], camera "front"
   ncavallo/act_so100_lerobot2_block state [6], action [6], camera "robot"
 cagatay's SO-101 announces 6 joints and cameras top + wrist.

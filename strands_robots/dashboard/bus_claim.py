@@ -1,6 +1,6 @@
 """Does another PROCESS already hold this arm's serial bus? (BUGS.md Q84)
 
-The dashboard has always refused to spawn a peer_id it is already running — an in-process check
+The dashboard has always refused to spawn a peer_id it is already running -- an in-process check
 against ``self.robots``. That check is structurally blind to the failure that actually happened:
 185 parentless processes, arriving in triples every ~5 minutes for 10 hours, each holding
 /dev/cu.usbmodem* and reading registers, ~50 concurrent readers per Feetech bus. Every one of them
@@ -12,7 +12,7 @@ again and leaks three more holders. The fleet simply had no arms in it, and 39 c
 runs called that healthy.
 
 So the question this module asks is the one no in-process lock can: who else, in the whole machine,
-has this device open right now? It is deliberately a REFUSAL and not a consent gate — a second owner
+has this device open right now? It is deliberately a REFUSAL and not a consent gate -- a second owner
 on a half-duplex serial bus corrupts both conversations, so there is nothing for the operator to
 agree to. What it owes them instead is the cure, named in the message.
 """
@@ -42,7 +42,7 @@ def bus_holders(port: str, *, _run=None) -> list[int]:
     """Pids with this bus (or its sibling device) open, excluding ourselves.
 
     lsof is not on the agent shell's PATH on this Mac, hence the explicit /usr/sbin probe. A missing
-    lsof returns [] — no evidence is not evidence of a conflict, and refusing a spawn because we
+    lsof returns [] -- no evidence is not evidence of a conflict, and refusing a spawn because we
     could not look would break the machine we are trying to protect.
     """
     run = _run or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=8))
@@ -63,7 +63,7 @@ def bus_holders(port: str, *, _run=None) -> list[int]:
 
 
 def bus_conflict(port: str, holders: list[int], tracked: dict[int, str]) -> str | None:
-    """The refusal text, or None when the bus is ours to take. Pure — the whole judgement is here.
+    """The refusal text, or None when the bus is ours to take. Pure -- the whole judgement is here.
 
     ``tracked`` maps pid -> peer_id for the children THIS dashboard is running, because the two cases
     need opposite advice: our own child means "despawn it or use another name" (a normal, expected
@@ -89,7 +89,7 @@ def bus_conflict(port: str, holders: list[int], tracked: dict[int, str]) -> str 
         f"{port} is held by {len(strangers)} process(es) this dashboard does not manage "
         f"(pid {listed}).{extra} A second owner on a half-duplex serial bus corrupts both "
         f"conversations, so the spawn is refused rather than started blind. If those are leftovers "
-        f"(BUGS.md Q84 — parentless spawn children pile up unnoticed and the only symptom is an arm "
+        f"(BUGS.md Q84 -- parentless spawn children pile up unnoticed and the only symptom is an arm "
         f"missing from the fleet), run reap_orphan_buses.sh; it kills only parentless holders and "
         f"moves no arm. If a holder survives that, unplug and replug the arm."
     )

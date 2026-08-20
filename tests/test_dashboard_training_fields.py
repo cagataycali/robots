@@ -7,7 +7,7 @@ server answered
 
     unknown field(s): val_episodes. Valid fields: provider, dataset_root, ...
 
-a true sentence no operator can act on — the actual remedy is "restart the dashboard", and nothing in
+a true sentence no operator can act on -- the actual remedy is "restart the dashboard", and nothing in
 that refusal says so. So the form asks the server what it takes rather than assuming its own age.
 
 `fields` is a NEW key next to `unsupported`: `trainers` keeps its shape forever, because a cached older

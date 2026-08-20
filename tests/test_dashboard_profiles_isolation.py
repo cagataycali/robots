@@ -1,7 +1,7 @@
 """The suite must not share a profiles file with the operator's live dashboard (Q84 fallout).
 
 Found in the wild: ~/.strands_dashboard/profiles.json carried an entry named "q1-bad" whose camera
-config is the invalid {"main": 3} from a regression fixture — a test had written a robot definition
+config is the invalid {"main": 3} from a regression fixture -- a test had written a robot definition
 into the production file. Those entries are exactly what autospawn spawns from on real hardware.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ def test_the_app_state_manager_is_isolated_too():
 
 
 def test_the_constant_itself_is_untouched():
-    # The redirect must come from the environment, not from patching the default — the running
+    # The redirect must come from the environment, not from patching the default -- the running
     # dashboard has to keep resolving to the operator's real file.
     assert dm.DEFAULT_PROFILES_PATH == _real_path()
 
@@ -82,7 +82,7 @@ def test_the_record_crumb_and_settings_file_are_redirected_too():
 def test_saving_config_cannot_drop_a_dotenv_into_the_repo(tmp_path, monkeypatch):
     """The fifth store, and the odd one out: .env resolves against the CURRENT DIRECTORY.
 
-    A test that saves config would write .env into whatever tree pytest ran from — the repo root — and
+    A test that saves config would write .env into whatever tree pytest ran from -- the repo root -- and
     that file is not inert: the dashboard reads .env at startup, so test values for the trust and
     allowlist flags (the ones gating remote code execution) could become his live configuration.
     """

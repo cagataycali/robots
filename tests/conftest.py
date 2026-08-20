@@ -246,7 +246,7 @@ def pytest_report_header(config) -> str | None:  # noqa: ANN001 - pytest's own s
     """Say so at the TOP of the run when numpy reductions are broken in this interpreter (Q83).
 
     Measured 2026-08-20 on this Mac: with ``--cov`` enabled, a plain ``np.array([[0.1,0.2,0.3]]).max()``
-    raises ``TypeError: float() argument must be a string or a real number, not '_NoValueType'`` — numpy's
+    raises ``TypeError: float() argument must be a string or a real number, not '_NoValueType'`` -- numpy's
     ``_amax`` passes its ``initial=_NoValue`` sentinel into the C reduce, which no longer recognises it.
     Without coverage the same call is fine. So the SAME test file is 10 passed with ``--no-cov`` and 6
     failed with ``--cov``, and the failures name lighting bounds and colour ranges: every one of them reads
@@ -256,14 +256,14 @@ def pytest_report_header(config) -> str | None:  # noqa: ANN001 - pytest's own s
     process, and the C reduce identity-checks ``initial`` against the one it captured at extension init.
     ``gc`` finds both; the first is accepted, ``np._NoValue`` points at the second. The second is created
     because coverage, resolving a ``--cov=<dotted.sub.module>`` spec, calls ``find_spec`` on it inside
-    ``coverage/inorout.py``'s ``sys_modules_saved()`` — importing the PARENT package (which imports numpy)
+    ``coverage/inorout.py``'s ``sys_modules_saved()`` -- importing the PARENT package (which imports numpy)
     and then stripping numpy back out of ``sys.modules``. numpy's C extension cannot be unloaded, so it
     keeps the original sentinel while the test's later ``import numpy`` re-executes ``numpy/__init__.py``
     and mints a new one. (The earlier "identity holds" check was not wrong, just blind: both names point
     at the SECOND object.)
 
-    THE TRIGGER IS A DOTTED SUBMODULE, not coverage as such. ``--cov=strands_robots`` — this repo's
-    configured default — is safe, because a top-level package spec is resolved without executing it. So
+    THE TRIGGER IS A DOTTED SUBMODULE, not coverage as such. ``--cov=strands_robots`` -- this repo's
+    configured default -- is safe, because a top-level package spec is resolved without executing it. So
     plain ``pytest`` here is fine, and it was MY measuring command (``--cov=strands_robots.dashboard.auth``)
     that broke the tests I was reading. To scope coverage to one module, give coverage a PATH:
     ``--cov=strands_robots/dashboard/auth.py`` (verified: one sentinel, reductions fine, coverage still
@@ -306,7 +306,7 @@ def _never_touch_the_real_dashboard_state(request, tmp_path_factory, monkeypatch
     credentials, and it will look like an unrelated test.
 
     Two mechanisms, because the modules resolve their paths differently: auth and the crumb read their env
-    var per call, while settings.SETTINGS_FILE is a module CONSTANT evaluated at import — an env var set in
+    var per call, while settings.SETTINGS_FILE is a module CONSTANT evaluated at import -- an env var set in
     a fixture arrives far too late for it, so that one is patched as an attribute.
 
     Opt out with @pytest.mark.real_dashboard_state when a test genuinely asserts the default location.
@@ -318,7 +318,7 @@ def _never_touch_the_real_dashboard_state(request, tmp_path_factory, monkeypatch
     monkeypatch.setenv("STRANDS_DASH_RECORD_CRUMB", str(home / "record_session.json"))
     monkeypatch.setenv("DASHBOARD_SETTINGS_FILE", str(home / "settings.json"))
     # The .env writer is the FIFTH store and the odd one out: its default is relative to the CURRENT
-    # DIRECTORY, so a test that saves config drops a .env into whatever tree pytest was run from — the
+    # DIRECTORY, so a test that saves config drops a .env into whatever tree pytest was run from -- the
     # repository root, in practice. That file is not inert: the running dashboard reads .env on start,
     # so test-written values (model id, tokens, the trust and allowlist flags that exist to gate remote
     # code execution) would become his live configuration at the next restart. No test redirects it today.
@@ -339,12 +339,12 @@ def _never_touch_the_real_profiles(request, tmp_path_factory, monkeypatch):
     """No test may read or write the operator's OWN device profiles (Q84 fallout).
 
     DeviceManager() and create_app() both fall back to ~/.strands_dashboard/profiles.json, and nothing
-    in this suite redirected them — so every test that built an app was sharing a file with the live
+    in this suite redirected them -- so every test that built an app was sharing a file with the live
     dashboard. That is not hypothetical: the operator's real profiles.json was found carrying an entry
     named "q1-bad" whose camera config is the invalid ``{"main": 3}`` from a regression fixture, i.e. a
     test wrote a robot definition into the production file. Those entries are what autospawn spawns
     from, and ProfileStore has already had one bug (MEASURED_FIELDS) where a save rebuilt an entry and
-    silently dropped a measured arm role — a test that can reach this file can rename his arms, drop a
+    silently dropped a measured arm role -- a test that can reach this file can rename his arms, drop a
     measurement, or hand autospawn a config that crashes the child on the real bus.
 
     The env var is what both construction paths consult, so redirecting it covers the ones that pass no

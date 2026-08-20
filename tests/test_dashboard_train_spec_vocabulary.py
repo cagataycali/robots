@@ -3,7 +3,7 @@
 SPEC_KEYS is the set of fields the dashboard will forward to train_policy; anything else is
 refused BY NAME (Q6). That makes it a whitelist, and a whitelist silently rots: `val_episodes`
 had been absent for as long as the field existed, so a policy trained from this dashboard could
-never hold out a validation set — the operator got a loss curve that cannot distinguish learning
+never hold out a validation set -- the operator got a loss curve that cannot distinguish learning
 from memorising, and no message ever mentioned it. Asking a client for it answered:
 
     unknown field(s): val_episodes. Valid fields: provider, dataset_root, ...
@@ -29,7 +29,7 @@ def test_every_train_policy_parameter_is_either_sendable_or_explained() -> None:
     missing = sorted(_PARAMS - accounted)
     assert not missing, (
         f"train_policy accepts {missing} but the form neither sends nor explains them. Add each to "
-        "SPEC_KEYS (if an operator can answer it here) or to _NOT_IN_FORM with the reason — an "
+        "SPEC_KEYS (if an operator can answer it here) or to _NOT_IN_FORM with the reason -- an "
         "unlisted field is refused by name, which reads to the user like a bug in their request."
     )
 
@@ -82,7 +82,7 @@ def test_a_holdout_adds_no_complaint_of_its_own() -> None:
     """val_episodes must not make validate() refuse something it otherwise accepts.
 
     The bound is the dataset's episode count from meta/info.json, so a bad value is the trainer's
-    to refuse (_validation_episodes_problems) — this pins that a *good* value is silent, which is
+    to refuse (_validation_episodes_problems) -- this pins that a *good* value is silent, which is
     what makes the new field safe to offer.
     """
     base = {"provider": "mock", "dataset_root": "/tmp/x", "output_dir": "/tmp/o", "steps": 10}

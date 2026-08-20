@@ -289,21 +289,21 @@ SPEC_KEYS = (
 #: omission and a considered exemption look identical in a passing test suite, so the missing
 #: half of the vocabulary is written down and graded: tests assert SPEC_KEYS + these = every
 #: train_policy parameter, so an upstream field addition cannot slip past unnoticed (it did once
-#: already — `val_episodes` had been missing since the field existed, which meant a policy trained
+#: already -- `val_episodes` had been missing since the field existed, which meant a policy trained
 #: from this dashboard could never hold out a validation set, i.e. the operator could not tell
 #: learning from memorising).
 _NOT_IN_FORM: dict[str, str] = {
     "action": "the verb, chosen by the endpoint rather than the operator",
     "job_id": "assigned by the job store; a client-chosen id could collide with a running job",
     "streaming": "mutually exclusive with val_episodes on the lerobot backend, and it is the "
-                 "wrong default for a first dataset — a Hub stream cannot be resumed offline",
+                 "wrong default for a first dataset -- a Hub stream cannot be resumed offline",
     "num_gpus": "this dashboard drives ONE host; a multi-GPU/multi-node launch is a cluster "
                 "decision, and torch elastic rendezvous on this Mac needed a fix (Q37) before "
                 "it would even start",
     "num_nodes": "same: multi-node belongs to a script that knows the cluster's addresses",
     "resume": "resuming needs the previous run's output_dir to still hold its checkpoints; "
               "offering a tick box that silently starts fresh would be worse than not offering it",
-    "lora_target_modules": "a list of model-internal module names — unanswerable without the "
+    "lora_target_modules": "a list of model-internal module names -- unanswerable without the "
                            "architecture in front of you",
     "tune": "a per-backend dict of component toggles (GR00T llm/visual/projector/diffusion)",
     "augmentation": "a per-backend dict of augmentation parameters",

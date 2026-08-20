@@ -54,7 +54,7 @@ def test_classification_reads_the_full_text_not_the_300_char_preview():
     WSStreamHandler(q)(**_tool_result(refusal))
     (ev,) = _drain(q)
     assert "needs_consent" in ev
-    # The preview stays bounded — the transcript must not grow a wall of text.
+    # The preview stays bounded -- the transcript must not grow a wall of text.
     assert len(ev["result_preview"]) == 300
 
 

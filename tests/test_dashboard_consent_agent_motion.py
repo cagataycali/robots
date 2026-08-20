@@ -1,7 +1,7 @@
 """Q80 follow-up: the agent-motion grant is a first-class consent, not a hidden env var.
 
 Q80 put the gate in agent_motion.py; this pins the other half of the promise the dashboard makes about
-every guard — that a refusal is recognisable, grantable in one place, VISIBLE afterwards, and revocable.
+every guard -- that a refusal is recognisable, grantable in one place, VISIBLE afterwards, and revocable.
 granted_state exists because a grant with no surface is a grant nobody can take back (see its docstring).
 """
 

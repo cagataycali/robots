@@ -1,4 +1,4 @@
-"""#2486: the dashboard can SHOW what an episode was judged to be — and says when it cannot label.
+"""#2486: the dashboard can SHOW what an episode was judged to be -- and says when it cannot label.
 
 The trap this pins: `episode_labels.annotate_episode` refuses an episode with no deterministic
 verdict ("an annotation layered on nothing would be a verdict in disguise"), and a REAL-ARM

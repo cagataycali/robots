@@ -1,7 +1,7 @@
-"""Q79, the wiring: the run form can ASK whether a checkpoint fits the robot, before ▶ torques it.
+"""Q79, the wiring: the run form can ASK whether a checkpoint fits the robot, before play torques it.
 
 GET /api/robots/{peer}/policy-fit compares the checkpoint's declared features (read from disk) with
-what the peer announces on the mesh. Kept on the server so the rule has exactly one implementation —
+what the peer announces on the mesh. Kept on the server so the rule has exactly one implementation --
 the frontend renders the sentence, it does not re-derive it.
 """
 
@@ -41,7 +41,7 @@ class _Bridge:
                 "state": {"joints": {j: 0.0 for j in SO101}},
                 "cameras": {"top": {}, "wrist": {}},
             },
-            # A peer that has announced nothing yet — the timing case.
+            # A peer that has announced nothing yet -- the timing case.
             "just-joined": {"presence": {}},
         }
 
@@ -126,7 +126,7 @@ def test_an_unknown_peer_is_refused_by_the_usual_gate():
 
 def test_validate_also_carries_the_fit_and_flips_ok(tmp_path):
     """The form's existing validate call must not answer a green tick about a policy that cannot
-    drive this robot — the fit overrides `ok`, because that flag is what arms the button."""
+    drive this robot -- the fit overrides `ok`, because that flag is what arms the button."""
     _cache(
         tmp_path, "org/scout2",
         {"observation.state": {"shape": [5]}}, {"action": {"shape": [2]}},

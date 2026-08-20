@@ -207,7 +207,7 @@ def delete_env_keys(keys: Sequence[str]) -> list[str]:
 
     Only dashboard-managed keys, by the same allowlist that guards writing: a
     caller who cannot set a variable must not be able to delete one either.
-    Comments and blank lines are kept — this file is edited by hand too.
+    Comments and blank lines are kept -- this file is edited by hand too.
     """
     wanted = [str(k).strip() for k in keys]
     allowed = [k for k in wanted if not env_entry_error(k, "")]

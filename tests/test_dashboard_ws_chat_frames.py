@@ -164,7 +164,7 @@ def test_queued_notice_when_turn_lock_is_held(monkeypatch, tmp_path):
 # --- an unrecognised type is refused, not dropped (Q81) ------------------------
 #
 # The send direction of the websocket contract, audited 2026-08-20: this bundle sends {"type":"chat"}
-# here and {"type":"stop"} on /ws/voice, and both are implemented — so this is a guard against the next
+# here and {"type":"stop"} on /ws/voice, and both are implemented -- so this is a guard against the next
 # frame type, which will be added to the UI before the server learns it. A websocket has no status code:
 # without this the operator taps a button, the socket stays healthily open, and nothing happens anywhere.
 
@@ -189,7 +189,7 @@ def test_a_frame_with_no_type_but_text_still_works():
 
 
 def test_known_types_keep_their_silence():
-    """An empty submit stays silent — it must not be billed, and it must not scold either."""
+    """An empty submit stays silent -- it must not be billed, and it must not scold either."""
     for payload in ({"type": "chat"}, {"type": "chat", "text": "   "}):
         prompt, reply = parse_chat_frame(_text(json.dumps(payload)))
         assert prompt is None and reply is None, payload

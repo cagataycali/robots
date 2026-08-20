@@ -1,7 +1,7 @@
-"""A fake's signature is a CLAIM about the real class — this pins the claim (Q56 follow-up).
+"""A fake's signature is a CLAIM about the real class -- this pins the claim (Q56 follow-up).
 
 Q56 was not found by a test. It was found by reading production code, because the test that
-covered the broken branch used a fake declaring ``push_to_hub(self, repo_id=None)`` — a parameter
+covered the broken branch used a fake declaring ``push_to_hub(self, repo_id=None)`` -- a parameter
 ``DatasetRecorder`` has never had. The dashboard called it that way, the fake accepted it, the
 suite went green, and the feature ("upload to the Hugging Face Hub after finishing") had never
 published anything in its life.
@@ -14,7 +14,7 @@ The rule enforced here is deliberately one-directional:
 * a fake may accept FEWER parameters than the real method (optional knobs the dashboard never
   passes are not worth mirroring);
 * a fake may NEVER accept a parameter name the real method does not have. That is the exact shape
-  of the lie — it teaches the suite that a call the real object would reject is fine.
+  of the lie -- it teaches the suite that a call the real object would reject is fine.
 
 An audit of every ``Fake*``/``Stub*`` class in the tree found this class of divergence only among
 recorder-shaped and transport-shaped fakes; the transport ones are stand-ins for MQTT clients,
@@ -58,7 +58,7 @@ def test_no_recorder_fake_invents_a_parameter_the_real_recorder_lacks(fake):
             invented[name] = extra
     assert not invented, (
         f"{fake.__module__}.{fake.__qualname__} accepts parameters DatasetRecorder does not: "
-        f"{invented}. A test using this fake would pass while the real recorder raised TypeError — "
+        f"{invented}. A test using this fake would pass while the real recorder raised TypeError -- "
         "that is how Q56 (the Hub upload that never worked) survived."
     )
 

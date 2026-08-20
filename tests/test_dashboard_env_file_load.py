@@ -1,7 +1,7 @@
 """Q50: the Env tab wrote a file nothing ever read.
 
 Saving a key exported it into os.environ AND wrote .env, so it worked for the life of that
-process — and vanished on the next start, while the settings screen kept listing it as set
+process -- and vanished on the next start, while the settings screen kept listing it as set
 because the screen reads the FILE. That is the worst shape a settings screen can have: it
 agrees with you about a credential the process does not have.
 """
@@ -19,7 +19,7 @@ def test_a_file_key_the_process_lacks_is_exported():
 
 def test_the_launch_environment_wins_and_is_reported():
     """`HF_TOKEN=other ./restart_dashboard.sh` is a deliberate statement about THIS run;
-    a file written weeks ago must not overrule it — but the operator must be told."""
+    a file written weeks ago must not overrule it -- but the operator must be told."""
     to_set, shadowed = config_api.bootstrap_env({"HF_TOKEN": "from_file"}, {"HF_TOKEN": "from_shell"})
     assert to_set == {}
     assert shadowed == ["HF_TOKEN"]

@@ -1,7 +1,7 @@
 """A credential store that cannot be parsed must not quietly unseal the dashboard.
 
 `auth_enabled()` IS `has_credentials()`, and `_load()` used to answer an unreadable store by
-writing a fresh default one over it. So one truncated write — a crash mid-save, a full disk —
+writing a fresh default one over it. So one truncated write -- a crash mid-save, a full disk --
 did two things nobody would see: it dropped auth on every /api and /ws route (through the
 tunnel: the public internet), and it destroyed the only record of the operator's passkey, so
 even repairing the JSON by hand could not bring it back.
@@ -50,7 +50,7 @@ def test_the_unreadable_bytes_are_kept_not_clobbered(tmp_path):
 
     backups = list(tmp_path.glob("auth.json.corrupt-*"))
     assert len(backups) == 1, "the operator's only credential record must survive"
-    assert backups[0].read_text() == original, "kept verbatim — it may hold the credential id"
+    assert backups[0].read_text() == original, "kept verbatim -- it may hold the credential id"
     # And the working store is valid again, so the dashboard still comes up.
     assert json.loads(path.read_text())["credentials"] == []
 
@@ -78,7 +78,7 @@ def test_a_stranger_cannot_seize_the_dashboard_through_a_disk_error(tmp_path):
     with pytest.raises(HTTPException) as e:
         auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="attacker")
     assert e.value.status_code == 403
-    # The refusal must say what happened and where the bytes went — an operator reading only
+    # The refusal must say what happened and where the bytes went -- an operator reading only
     # this message has to be able to recover.
     assert "unreadable" in e.value.detail and "corrupt-" in e.value.detail
     assert "BOOTSTRAP_TOKEN" in e.value.detail

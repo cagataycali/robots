@@ -1,7 +1,7 @@
 """A taken dataset name is refused BEFORE the arms are touched (Q39).
 
 Every failure after the parking step in RecordController.open reports through
-``could not open the arms: {exc}`` — so a dataset whose directory already exists sent the operator
+``could not open the arms: {exc}`` -- so a dataset whose directory already exists sent the operator
 to check cables and USB ports for what is a one-word rename, after both arms had been despawned and
 respawned for nothing.
 """

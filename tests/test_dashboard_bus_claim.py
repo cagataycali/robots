@@ -43,7 +43,7 @@ def test_a_stranger_wins_even_when_one_holder_is_ours():
 
 
 def test_the_tty_sibling_of_a_cu_device_is_checked_too():
-    # A holder of /dev/tty.usbmodemX blocks /dev/cu.usbmodemX — same UART, two device files. Checking
+    # A holder of /dev/tty.usbmodemX blocks /dev/cu.usbmodemX -- same UART, two device files. Checking
     # only the path we were handed is how a probe reports a free bus that is not free.
     assert bus_claim.sibling_devices(PORT) == [PORT, "/dev/tty.usbmodem5AB0181806"]
 

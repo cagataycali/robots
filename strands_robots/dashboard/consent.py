@@ -156,7 +156,7 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
                 f"The fleet agent asked to run a task on {shown}, which is real hardware. Approving "
                 "lets it start physical motion on ANY real robot on this mesh from now on - by itself, "
                 "from a chat sentence or a voice command, with no confirmation step and without the "
-                "check that the policy fits the robot that the ▶ button performs. It cannot see your "
+                "check that the policy fits the robot that the play button performs. It cannot see your "
                 "room. Stopping is never gated either way, so 'everyone stop' works regardless."
             ),
             env_var=_AGENT_MOTION_ENV,

@@ -7,11 +7,11 @@ A lerobot checkpoint states exactly what it was trained on, in its own ``config.
     "output_features": {"action": {"type": "ACTION", "shape": [2]}}
 
 The run form never read it. Every field on that form is generated from the policy registry, so it
-validates the SHAPE OF THE REQUEST and nothing about the pairing — which means the highest-stakes
-button in the dashboard (▶ energises a real arm) could start a policy trained for a 5-DoF base with a
+validates the SHAPE OF THE REQUEST and nothing about the pairing -- which means the highest-stakes
+button in the dashboard (play energises a real arm) could start a policy trained for a 5-DoF base with a
 2-dim action on cagatay's 6-joint SO-101, or one expecting a camera named ``front`` on a robot that
 announces ``top`` and ``wrist``. The arm is parked and torqued FIRST; the mismatch then surfaces as a
-tensor error inside the run process, or — worse — does not surface at all and the policy acts on zeros.
+tensor error inside the run process, or -- worse -- does not surface at all and the policy acts on zeros.
 
 What is knowable here, from facts already on both sides: the checkpoint's declared features, and what
 the peer announces on the mesh (its joints and camera names). This module compares them.
@@ -88,7 +88,7 @@ def policy_fit(
 
     Returns ``{ok, blocking, problems, checked}``. ``ok`` False with ``blocking`` True means the run
     should be refused: nothing about it can succeed. ``checked`` lists what could actually be
-    compared, so a quiet answer can be read as "verified" rather than "not looked at" — the
+    compared, so a quiet answer can be read as "verified" rather than "not looked at" -- the
     difference the camera work (Q25) taught this dashboard to make explicit.
     """
     joint_names = [j for j in (joints or []) if isinstance(j, str)]

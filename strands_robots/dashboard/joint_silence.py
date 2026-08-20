@@ -1,16 +1,16 @@
 """Why a CONNECTED arm publishes no joints (Q80).
 
 The fleet view can show an arm with ``connected: true``, a fresh heartbeat, cameras listed and
-**not one joint position** — and say nothing at all about why. That is what happened on cagatay's
+**not one joint position** -- and say nothing at all about why. That is what happened on cagatay's
 rig on 2026-08-20: both arms logged ``hardware connected`` and then omitted the whole joints
 section of every snapshot for hours. The reason existed, precisely and in words, in each child's
 log ring buffer, where the fleet view never looks:
 
 * ``ConnectionError("Failed to sync read 'Present_Position' ... [TxRxResult] Port is in use!")``
-  — another process holds the serial port. On that day 179 ORPHANED robot children (ppid=1, from
+  -- another process holds the serial port. On that day 179 ORPHANED robot children (ppid=1, from
   earlier spawn generations) still held both arm ports, so the live child could not read a byte.
   The remedy is to find the other owner, NOT to replug or recalibrate.
-* ``RuntimeError(FeetechMotorsBus(...) has no calibration registered.)`` — nothing is contended;
+* ``RuntimeError(FeetechMotorsBus(...) has no calibration registered.)`` -- nothing is contended;
   the board simply has no calibration, so positions cannot be expressed in degrees. The remedy is
   to calibrate that arm, and no amount of restarting will help.
 
@@ -19,12 +19,12 @@ exactly the conflation :mod:`cameras` exists to kill on the camera side (U14/Q44
 the joints half.
 
 Everything here is pure: it reads log LINES that were already captured and a snapshot dict that
-was already received. It opens no port, spawns nothing, and never decides to act — a diagnosis
+was already received. It opens no port, spawns nothing, and never decides to act -- a diagnosis
 whose own gathering can disturb the bus would be part of the problem it describes.
 
 The gate in :func:`merge` matters as much as the classification. ``mesh.core`` logs a degraded
 probe ONCE per category (a warning every tick at STATE_HZ would be unreadable), and it never logs
-a RECOVERY — so a log line stays in the buffer long after the fault is gone. A badge driven by the
+a RECOVERY -- so a log line stays in the buffer long after the fault is gone. A badge driven by the
 log alone would therefore become permanent and start lying. Live joints in the snapshot win over
 any past complaint.
 """

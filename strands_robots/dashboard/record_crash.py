@@ -1,13 +1,13 @@
 """What a recording session leaves behind when the dashboard dies mid-take (Q40).
 
 A RecordController lives in memory: when the process is killed, ``session()`` answers
-``EMPTY_SESSION`` and the record screen says "no session" — while on disk there is a dataset
+``EMPTY_SESSION`` and the record screen says "no session" -- while on disk there is a dataset
 directory the operator spent an hour filling, its arms are still despawned, and the only trace is a
 Q37-shaped "0 episodes" row in the training picker two screens away.
 
 So the session writes a BREADCRUMB when it opens and removes it when it closes. What the breadcrumb
 proves is narrow and worth stating: *this* dashboard opened *that* dataset and never closed it. It
-is our own record, not a guess about the filesystem — which is why the notice can be specific about
+is our own record, not a guess about the filesystem -- which is why the notice can be specific about
 the arms and the dataset name without inventing a diagnosis.
 """
 

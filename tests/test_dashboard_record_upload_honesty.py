@@ -1,7 +1,7 @@
 """Q56: the record panel's "upload to the Hugging Face Hub" tick had never published anything.
 
 ``RecordWorker.close()`` called ``self._recorder.push_to_hub(repo_id=...)`` and
-``DatasetRecorder.push_to_hub`` accepts ``(tags, private)`` only — so every upload raised TypeError,
+``DatasetRecorder.push_to_hub`` accepts ``(tags, private)`` only -- so every upload raised TypeError,
 was swallowed by a bare ``except``, and surfaced at the END of a recording session as "dataset saved
 but upload failed: …", wording an operator reads as a Hub outage rather than a dashboard defect. The
 tick was reachable, the field beside it was inert, and the failure arrived after the episodes existed.
@@ -103,6 +103,6 @@ def test_the_recorder_is_still_called_with_no_repo_id_kwarg():
 
     params = inspect.signature(DatasetRecorder.push_to_hub).parameters
     assert "repo_id" not in params, (
-        "push_to_hub gained a repo_id argument — upload_verdict's refusal is now wrong and the "
+        "push_to_hub gained a repo_id argument -- upload_verdict's refusal is now wrong and the "
         "record panel could honour a different name"
     )

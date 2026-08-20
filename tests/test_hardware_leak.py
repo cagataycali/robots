@@ -2,7 +2,7 @@
 from tests.hardware_leak import hardware_leak_report, robot_children
 
 BOOTSTRAP = (
-    "/Users/cagatay/strands-robots-dashboard/robots/.venv/bin/python -c import os, sys, time, json "
+    "<repo>/.venv/bin/python -c import os, sys, time, json "
     "cfg = json.loads(sys.argv[1]) {\"peer_id\": \"so101-arm-2\", \"port\": "
     "\"/dev/cu.usbmodem5AB01584281\", \"mode\": \"real\"}"
 )

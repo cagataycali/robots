@@ -63,7 +63,7 @@ class FakeRecorder:
     def push_to_hub(self, tags=None, private=False):
         """Q56: mirrors the REAL signature (tags, private) and returns the real answer SHAPE.
 
-        This fake used to declare ``repo_id=None`` — a parameter DatasetRecorder has never had —
+        This fake used to declare ``repo_id=None`` -- a parameter DatasetRecorder has never had --
         which is how a production branch that could only raise TypeError kept a green suite.
         """
         return {"status": "success", "repo_id": "cagatay/so101-pick"}

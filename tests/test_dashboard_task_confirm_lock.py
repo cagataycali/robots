@@ -1,7 +1,7 @@
 """The other half of the motion asymmetry: POST /api/robots/{peer}/task itself.
 
-agent_motion_allowed guards the in-process fleet tool. The ▶ button's confirmation lives in the BROWSER,
-so the route was guarded by nothing — anything holding the API token (a script, a shell, an LLM handed the
+agent_motion_allowed guards the in-process fleet tool. The play button's confirmation lives in the BROWSER,
+so the route was guarded by nothing -- anything holding the API token (a script, a shell, an LLM handed the
 token, whoever finds it after the public tunnel leaks it) could start real motion with one curl.
 
 That stays the default on purpose: the token is the operator, and enforcing a claim a client can simply
@@ -61,7 +61,7 @@ def test_on_refuses_an_unconfirmed_real_motion_post():
     v = task_post_allowed(peer=ARM, confirmed=False, target="so101-arm-1", env=ON)
     assert v["allowed"] is False
     # The refusal has to say all three exits, or it is a wall with no door.
-    assert "Press ▶" in v["reason"]
+    assert "Press play" in v["reason"]
     assert '"confirmed": true' in v["reason"]
     assert TASK_CONFIRM_ENV in v["reason"]
     assert "Nothing was sent" in v["reason"]
@@ -76,7 +76,7 @@ def test_a_peer_with_no_presence_yet_is_treated_as_real():
     """peer_is_physical's silence rule, and this lock must not invent a softer one: a peer that cannot
     be SHOWN to be a sim counts as real, so the unconfirmed POST is refused. That is the fail-safe
     direction for a motion guard, and the route has already 404'd a genuinely unknown id via
-    require_peer — peer=None here means a known peer whose presence has not arrived yet.
+    require_peer -- peer=None here means a known peer whose presence has not arrived yet.
 
     (I wrote this test the other way round first and the code was right: worth keeping as the pin.)"""
     v = task_post_allowed(peer=None, confirmed=False, target="?", env=ON)
@@ -113,7 +113,7 @@ def test_the_confirmed_marker_gets_through_but_never_onto_the_wire(monkeypatch):
 
 
 def test_the_lock_does_not_touch_stopping(monkeypatch):
-    """Stopping is never gated anywhere in this dashboard — the one invariant that must survive every
+    """Stopping is never gated anywhere in this dashboard -- the one invariant that must survive every
     new guard, because a lock that can trap a moving arm is worse than no lock."""
     monkeypatch.setenv(TASK_CONFIRM_ENV, "1")
     client, app = _client({"so101-arm-1": ARM})
@@ -122,7 +122,7 @@ def test_the_lock_does_not_touch_stopping(monkeypatch):
 
 
 def test_the_browser_sends_the_marker():
-    """If ▶ ever stops sending it, the lock turns into 'the dashboard cannot run anything' — the
+    """If play ever stops sending it, the lock turns into 'the dashboard cannot run anything' -- the
     failure an operator would report as the feature being broken."""
     from pathlib import Path
 

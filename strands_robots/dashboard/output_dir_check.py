@@ -9,8 +9,8 @@ The training form's ``output_dir`` is free text with placeholder ``/tmp/my_polic
 
 So typing a path that already exists and holds no resumable checkpoint makes the dashboard
 **recursively delete that directory**, with nothing on screen saying so and no way to undo it. A
-mistyped or reused path — a dataset dir, a notes folder, a previous run whose checkpoint was already
-exported and moved away — is wiped by pressing "train".
+mistyped or reused path -- a dataset dir, a notes folder, a previous run whose checkpoint was already
+exported and moved away -- is wiped by pressing "train".
 
 The opposite case fails differently and just as quietly: a directory that DOES hold a checkpoint is
 kept, and lerobot's own validate then refuses a non-resume run into an existing output_dir. The
@@ -45,18 +45,18 @@ def classify_output_dir(
     ``state`` is one of:
 
     ``free``
-        nothing there (or an empty directory) — the run creates it.
+        nothing there (or an empty directory) -- the run creates it.
     ``resumable``
         a checkpoint lives there. NOT destructive, but this dashboard cannot resume, so the run
         will be refused by lerobot itself. Needs a different directory, not a confirmation.
     ``occupied``
-        real files with no checkpoint — pressing train DELETES them. ``destructive`` is True and
+        real files with no checkpoint -- pressing train DELETES them. ``destructive`` is True and
         ``needs_confirm`` is True: the operator must say yes to a named loss, not to a shrug.
     ``not_a_dir``
         the path is a FILE. Refused outright rather than confirmed: nothing in the training flow
         wants to write a run into a file's name, so this is a typo, not a decision.
     ``unknown``
-        the path could not be read. Never treated as ``free`` — "I could not look" and "there is
+        the path could not be read. Never treated as ``free`` -- "I could not look" and "there is
         nothing there" lead to opposite advice, and guessing the friendly one here is guessing
         about a delete.
     """
@@ -66,7 +66,7 @@ def classify_output_dir(
             "destructive": False,
             "needs_confirm": False,
             "detail": (
-                f"cannot read that path ({unreadable}), so what a run would do to it is unknown — "
+                f"cannot read that path ({unreadable}), so what a run would do to it is unknown -- "
                 "fix the path or the permissions before training"
             ),
         }
@@ -75,14 +75,14 @@ def classify_output_dir(
             "state": "free",
             "destructive": False,
             "needs_confirm": False,
-            "detail": "does not exist yet — the run creates it",
+            "detail": "does not exist yet -- the run creates it",
         }
     if not is_dir:
         return {
             "state": "not_a_dir",
             "destructive": False,
             "needs_confirm": False,
-            "detail": "that path is a FILE, not a directory — a run cannot be written there",
+            "detail": "that path is a FILE, not a directory -- a run cannot be written there",
         }
     if has_checkpoint:
         return {
@@ -92,7 +92,7 @@ def classify_output_dir(
             "detail": (
                 "already holds a training checkpoint. It will NOT be deleted, but this dashboard "
                 "cannot resume a run, and lerobot refuses a fresh run into an existing run's "
-                "directory — pick a new directory (the failure would otherwise appear only in "
+                "directory -- pick a new directory (the failure would otherwise appear only in "
                 "the run's log, after the job says it started)"
             ),
         }
@@ -102,7 +102,7 @@ def classify_output_dir(
             "state": "free",
             "destructive": False,
             "needs_confirm": False,
-            "detail": "exists but is empty — the run uses it as it is",
+            "detail": "exists but is empty -- the run uses it as it is",
         }
     more = max(0, total - len(shown))
     listing = ", ".join(shown) + (f" and {more} more" if more else "")
@@ -123,7 +123,7 @@ def inspect_output_dir(path: str, *, has_checkpoint: Any = None) -> dict[str, An
     """Read the path and classify it. ``has_checkpoint`` may be a callable(path) -> bool.
 
     The checkpoint test is injected because the authority on "is this resumable" is the trainer
-    (``LerobotTrainer.latest_checkpoint``, which recognises a checkpoint BY ITS CONFIG FILE) — this
+    (``LerobotTrainer.latest_checkpoint``, which recognises a checkpoint BY ITS CONFIG FILE) -- this
     module must not grow a second, disagreeing definition of the thing that decides whether a
     delete happens.
     """

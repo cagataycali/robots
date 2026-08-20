@@ -253,7 +253,7 @@ _SIM_PAYLOAD = {"robot_name": "so101", "mode": "sim", "peer_id": "sim-1"}
 
 
 def test_configured_mesh_port_reaches_the_snippet():
-    """The Mesh tab says "every robot on the desk must agree on it" — and then the generated
+    """The Mesh tab says "every robot on the desk must agree on it" -- and then the generated
     file said 7447 regardless. A peer pointed at the wrong port starts, logs nothing wrong and
     never appears in the fleet."""
     out = deploy.render_snippet(_SIM_PAYLOAD, hub_host="10.0.0.5", hub_port=7448)
@@ -281,7 +281,7 @@ def test_camera_rate_mirrors_the_desk():
 
 def test_wire_security_is_never_disabled_by_a_hardcoded_default():
     """STRANDS_MESH_LOCAL_DEV=1 disables mesh wire security. It was in the frozen table, so
-    every generated file turned it off on a machine the operator never chose to expose — and a
+    every generated file turned it off on a machine the operator never chose to expose -- and a
     peer with security off cannot join a secured desk either."""
     out = deploy.render_snippet(_SIM_PAYLOAD, mesh_env={})
     assert "STRANDS_MESH_LOCAL_DEV" not in out["snippet"]

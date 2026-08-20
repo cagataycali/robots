@@ -1,10 +1,10 @@
 """Q55: the spawn form's Name field must reach the peer, and both halves must judge it alike.
 
-``/api/devices/spawn`` and ``DeviceManager.spawn`` have always accepted ``peer_id`` — it is validated
+``/api/devices/spawn`` and ``DeviceManager.spawn`` have always accepted ``peer_id`` -- it is validated
 (``validate_peer_id``), remembered in the board's profile, and used as a zenoh key segment, i.e. it is
 the name on the card, in the teleop pair, in every log line. No UI ever sent one, so every arm on the
 desk was called ``so101-real-<clock%10000>``: a name the operator did not choose, cannot read as "the
-left arm", and cannot change afterwards (a peer id is a live key — renaming means a respawn).
+left arm", and cannot change afterwards (a peer id is a live key -- renaming means a respawn).
 
 Pinned here, backend side:
 

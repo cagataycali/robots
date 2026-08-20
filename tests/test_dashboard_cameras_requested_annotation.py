@@ -1,7 +1,7 @@
 """The dashboard tells the fleet view which cameras a spawn ASKED for.
 
 An empty `cameras` in the snapshot means "no frames have arrived" and presence means "the robot announces
-these". Neither can distinguish a deliberately joints-only robot from cameras that failed to open — and
+these". Neither can distinguish a deliberately joints-only robot from cameras that failed to open -- and
 hardware_robot DROPS a camera it cannot open at connect, so a blocked camera erases its own evidence
 (BUGS.md Q25: macOS refused capture on this Mac and both arms silently became joints-only). The dashboard
 is the only party that remembers what it requested, so that memory belongs in the snapshot.

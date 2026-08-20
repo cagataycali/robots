@@ -1,13 +1,13 @@
 """Q80: the chat box could move a real arm with no confirmation of any kind.
 
-Every motion gate this dashboard has grew on the ▶ BUTTON. JOURNEYS #3 gave it a confirm sheet naming
+Every motion gate this dashboard has grew on the play BUTTON. JOURNEYS #3 gave it a confirm sheet naming
 the word "physical" (runRisk), Q79 made it refuse a policy that cannot drive the robot. None of that
 touched the AGENT, whose ``fleet`` tool does this::
 
     fleet(action="task", target="so101-arm-1", instruction="pick up the red cube")
     -> send_cmd(target, {"action": "execute", ...})
 
-Same command, same peer, same metal — reached by typing a sentence into a chat box, with no dialog, no
+Same command, same peer, same metal -- reached by typing a sentence into a chat box, with no dialog, no
 physicality warning and no fit check. The dock's own placeholder even teaches it ("It can start and stop
 real robots"), so this is not a hypothetical path: it is the advertised one. And an agent is precisely
 the caller most likely to pick a target from a list and get it wrong, because it cannot see the room.
@@ -16,7 +16,7 @@ So the gate belongs on the CAPABILITY, not on one screen's button. This module d
 
 The rules, and why each one is shaped this way:
 
-* STOPPING IS NEVER GATED. ``stop`` / ``stop_all`` / ``peers`` / ``status`` pass unconditionally —
+* STOPPING IS NEVER GATED. ``stop`` / ``stop_all`` / ``peers`` / ``status`` pass unconditionally --
   a safety brake that asks permission is not a safety brake, and "everyone stop" is the one sentence
   the operator most needs to work on the first try.
 * only ``task`` on a PHYSICAL peer needs the grant. A sim peer moves pixels; refusing there would
@@ -25,7 +25,7 @@ The rules, and why each one is shaped this way:
   click, a missing one costs a collision.
 * the grant is an ENV VAR, like every other consent in this dashboard, so it is visible on the
   permissions screen and revocable there rather than being a per-turn habit nobody can audit.
-* the refusal NAMES the alternative that needs no permission (ask the agent for a sim peer, or press ▶
+* the refusal NAMES the alternative that needs no permission (ask the agent for a sim peer, or press play
   yourself, where the confirm sheet and the Q79 fit check already live). A refusal without a next step
   is where an operator starts inventing workarounds.
 """
@@ -41,8 +41,8 @@ __all__ = ["MOTION_ENV", "GATED_ACTIONS", "agent_motion_allowed", "peer_is_physi
 #: physical tasks by itself.
 MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
 
-#: Actions that can put a real robot in motion. Everything else — including every way of STOPPING
-#: one — is deliberately outside this set.
+#: Actions that can put a real robot in motion. Everything else -- including every way of STOPPING
+#: one -- is deliberately outside this set.
 GATED_ACTIONS: frozenset[str] = frozenset({"task"})
 
 _TRUE = ("1", "true", "yes", "on")
@@ -54,7 +54,7 @@ def _granted(env: Mapping[str, str] | None) -> bool:
 
 
 def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
-    """Is this peer metal? Returns (physical, why) — the server-side twin of lib/runRisk.ts.
+    """Is this peer metal? Returns (physical, why) -- the server-side twin of lib/runRisk.ts.
 
     ``hw`` is set by mesh/core.py to the inner lerobot device's name and exists only when a real
     device object is attached, so its presence is positive evidence. Its ABSENCE is only evidence
@@ -87,7 +87,7 @@ def agent_motion_allowed(
     """May the agent perform ``action`` on ``target`` by itself?
 
     Returns ``{"allowed": bool, "physical": bool, "reason": str}``. ``reason`` on a refusal is the
-    text handed to the model verbatim, so it must read as an instruction to the HUMAN — the model
+    text handed to the model verbatim, so it must read as an instruction to the HUMAN -- the model
     relays it, and a refusal the operator cannot act on becomes "the dashboard is broken".
     """
     act = (action or "").strip()
@@ -115,7 +115,7 @@ def agent_motion_allowed(
         "reason": (
             f"refused: starting a task on {shown} would MOVE REAL HARDWARE ({why}), and this "
             f"dashboard does not let the agent start physical motion on its own. Nothing was sent. "
-            f"The human can press ▶ on {shown}'s card, which confirms the motion and checks that "
+            f"The human can press play on {shown}'s card, which confirms the motion and checks that "
             f"the policy fits that robot, or ask for a simulated peer instead. To let the agent do "
             f"it unattended, grant it once: set {MOTION_ENV}=1 for the dashboard. Stopping robots "
             f"is never gated - 'everyone stop' always works."
@@ -126,7 +126,7 @@ def agent_motion_allowed(
 # --- the OTHER half of the same asymmetry: the HTTP route ------------------------------------------
 #
 # agent_motion_allowed() guards the in-process fleet tool. POST /api/robots/{peer}/task is guarded by
-# nothing: the ▶ button's confirmation lives in the browser, so anything holding the API token - a
+# nothing: the play button's confirmation lives in the browser, so anything holding the API token - a
 # script, a shell, an LLM handed the token, or whoever finds it after the public tunnel leaks it -
 # can start real motion with one curl and no confirmation step at all.
 #
@@ -173,7 +173,7 @@ def task_post_allowed(
         "confirmed": False,
         "reason": (
             f"refused: this dashboard is set to require a confirmation before a task starts real "
-            f"motion, and this request did not carry one ({shown}: {why}). Nothing was sent. Press ▶ "
+            f"motion, and this request did not carry one ({shown}: {why}). Nothing was sent. Press play "
             f"on {shown}'s card - the browser confirms there - or, for a script you trust, send "
             f'"confirmed": true in the body. Turn the requirement off by clearing '
             f"{TASK_CONFIRM_ENV}. Stopping is never gated."

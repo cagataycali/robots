@@ -1,7 +1,7 @@
 """Q54: the record form's fps must actually reach the session (backend half of the fix).
 
 /api/record/open has always read `fps`; nothing sent it, so every dataset was stamped 30 while an
-SO-101 captures nearer 4 — and LeRobot derives each frame's timestamp from the declaration, so the
+SO-101 captures nearer 4 -- and LeRobot derives each frame's timestamp from the declaration, so the
 artifact claimed the motion happened ~7x faster than it did. This pins the wire contract the form
 now depends on: the declared rate is honoured, a missing one still means 30, and junk cannot make
 a session with a nonsense rate.
@@ -19,7 +19,7 @@ from strands_robots.dashboard.record_worker import RecordWorker
 
 def _worker(**kw):
     class _Backend:
-        """Only what the worker touches to report a session — no arm, no frames."""
+        """Only what the worker touches to report a session -- no arm, no frames."""
 
         cameras: dict = {}
 

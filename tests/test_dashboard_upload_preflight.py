@@ -123,7 +123,7 @@ def test_the_route_survives_a_session_with_no_dataset(monkeypatch):
 
 # --- Q78: the destination already exists on the Hub -------------------------------------------
 #
-# push_to_hub does not create a second repo and does not refuse — it uploads INTO the existing one.
+# push_to_hub does not create a second repo and does not refuse -- it uploads INTO the existing one.
 # Recording refuses to reuse a local dataset dir (Q39), so what is being finished is always a NEW,
 # shorter dataset: publishing rewrites meta over a longer published history while the old episode
 # files stay behind. Nothing warned about that anywhere.
@@ -137,7 +137,7 @@ def test_existing_destination_refuses_but_stays_the_operators_call():
     )
     assert r["ok"] is False
     assert r["state"] == "destination_exists"
-    # Replacing their own earlier take deliberately is legitimate — only they know if that is this.
+    # Replacing their own earlier take deliberately is legitimate -- only they know if that is this.
     assert r["needs_force"] is True
     assert r["destination"] == "cagatay/so101-cubes"
     assert "40 episode" in r["detail"]

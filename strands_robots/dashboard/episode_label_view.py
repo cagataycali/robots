@@ -1,17 +1,17 @@
-"""Reading a dataset's episode labels for the dashboard — and saying honestly when it cannot label.
+"""Reading a dataset's episode labels for the dashboard -- and saying honestly when it cannot label.
 
 #2486. ``strands_robots.episode_labels`` is a deliberate TWO-STAGE verdict: deterministic benchmark
 predicates are authoritative, and a judge (VLM or human) annotates ON TOP of one. That doctrine is
-structural, not advisory — ``annotate_episode`` refuses an episode with no ``deterministic`` block
+structural, not advisory -- ``annotate_episode`` refuses an episode with no ``deterministic`` block
 because "an annotation layered on nothing would be a verdict in disguise".
 
 The consequence for this dashboard is sharp and easy to get wrong: a REAL-ARM recording has no
 predicate verdict (there is no simulator state to measure), so its episodes cannot be annotated at
 all. Two wrong ways to "fix" that in a dashboard, both of which I am refusing here:
 
-  * write the ``judge`` block ourselves and skip the check — that is the exact verdict-in-disguise
+  * write the ``judge`` block ourselves and skip the check -- that is the exact verdict-in-disguise
     the source refuses, and it would poison ``filter_episodes`` for training;
-  * synthesise a deterministic verdict (``success: true``) for a real recording — a fabricated
+  * synthesise a deterministic verdict (``success: true``) for a real recording -- a fabricated
     measurement, which is worse than none: it reads as ground truth forever after.
 
 So this module reads what exists and reports the CAPABILITY truthfully, in the same posture as the
@@ -39,7 +39,7 @@ def label_view(
     Args:
         document: the parsed ``episode_labels.json`` sidecar, or None when there is none.
         total_episodes: from ``meta/info.json``, so "0 of 12 labelled" is possible.
-        sidecar_error: the read failure, when the file exists but could not be parsed — a corrupt
+        sidecar_error: the read failure, when the file exists but could not be parsed -- a corrupt
             sidecar must not read as "no labels yet", which is the difference between "record
             verdicts" and "your labels may be damaged".
     """
@@ -96,14 +96,14 @@ def _capability(
             "no episode_labels.json in this dataset: labels start with the deterministic benchmark "
             "verdicts (record_deterministic_verdicts), and a judge annotates on top of one. A "
             "real-arm recording has no predicate verdict to annotate, so there is nothing to label "
-            "yet — this is a gap in the label rail, not a permission problem"
+            "yet -- this is a gap in the label rail, not a permission problem"
         )
     if not rows:
         return False, "the sidecar exists but records no episodes yet"
     if not any(r["annotatable"] for r in rows):
         return False, (
             "every episode here is missing its deterministic verdict, and annotate_episode refuses "
-            "to layer a judgement on nothing — record the benchmark verdicts first"
+            "to layer a judgement on nothing -- record the benchmark verdicts first"
         )
     unjudged = [r["episode_index"] for r in rows if r["annotatable"] and not r["quality"]]
     if unjudged:

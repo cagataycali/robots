@@ -131,7 +131,7 @@ class TestUnknownOptionsAreRefusedBeforeAnythingStops:
     """An unknown camera option cost the operator a WORKING arm (U19 backend verify, 2026-08-20).
 
     validate_cameras bounds-checked index_or_path/fps/width/height and let every other key through.
-    hardware_robot._build_camera_config refuses unknown keys (deliberately — a silently dropped option
+    hardware_robot._build_camera_config refuses unknown keys (deliberately -- a silently dropped option
     reports success while the camera streams at the default), but it only speaks inside the CHILD, and
     reconfigure_cameras despawns the running robot BEFORE spawning the replacement. So "framerate" instead
     of "fps" meant: arm killed, respawn dead with a ValueError in a log ring, and a 200 from the route.
@@ -151,7 +151,7 @@ class TestUnknownOptionsAreRefusedBeforeAnythingStops:
         # suggestion the code cannot make. The accepted list carries the answer instead.
 
     def test_a_near_miss_does_get_a_suggestion(self) -> None:
-        """Where difflib CAN help, it should — a one-character slip is the common case."""
+        """Where difflib CAN help, it should -- a one-character slip is the common case."""
         bad = validate_cameras({"wrist": {"index_or_path": 1, "widht": 640}})
         assert bad is not None and "Did you mean" in bad["error"] and "'width'" in bad["error"]
 

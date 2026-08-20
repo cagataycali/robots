@@ -3,7 +3,7 @@
 MEASURED 2026-08-20. ``tests/test_dashboard_datasets_route_recording.py`` built the dashboard app
 with ``with TestClient(app)``; the startup hook started USB auto-spawn; auto-spawn scanned the real
 serial bus and brought cagatay's two SO-101 arms up as real robot children. Every one of those runs
-passed, printed a green summary, and exited — orphaning its children (ppid=1) with the arm ports
+passed, printed a green summary, and exited -- orphaning its children (ppid=1) with the arm ports
 still open. 185 of them accumulated from ~30 runs of that single file, and the consequence was
 invisible in the suite and brutal on the rig: the live arm child could not read one byte
 (``[TxRxResult] Port is in use!``) and the dashboard showed a connected arm with zero joints.
@@ -11,7 +11,7 @@ invisible in the suite and brutal on the rig: the live arm child could not read 
 ``device_manager.autospawn_veto`` now refuses that door (a pytest process may not take a serial
 port). This module is the tripwire behind the fix, because the next way in will not be auto-spawn:
 any test that reaches ``spawn`` with a real port, or a future startup hook, lands here. A green run
-that leaked a hardware holder must SAY so — the whole cost of Q81 was that thirty runs looked
+that leaked a hardware holder must SAY so -- the whole cost of Q81 was that thirty runs looked
 perfect while a rig quietly became unusable.
 
 Deliberately it reports and does not kill. A robot child may hold TORQUE, and killing it can let a

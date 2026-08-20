@@ -2,8 +2,8 @@
 
 ``LerobotTrainer.start()`` clears a pre-existing ``output_dir`` that holds no resumable checkpoint
 with ``shutil.rmtree(..., ignore_errors=True)``. The training form's output_dir is FREE TEXT, so a
-reused or mistyped path — a dataset dir, a notes folder, a finished run whose checkpoint was already
-exported and moved — was deleted by pressing a button labelled "train", with nothing on screen
+reused or mistyped path -- a dataset dir, a notes folder, a finished run whose checkpoint was already
+exported and moved -- was deleted by pressing a button labelled "train", with nothing on screen
 saying so and no undo.
 """
 
