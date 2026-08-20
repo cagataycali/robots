@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { validationScope, type ValidatedInput } from '../lib/validationScope'
+import { numField } from '../lib/numField'
 import type { PolicyProvider } from '../types'
 import { post } from '../lib/endpoints'
 import CheckpointPicker from './CheckpointPicker'
@@ -59,7 +60,15 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
   const { policies } = useConfig()
   const [providerName, setProviderName] = useState('mock')
   const [instruction, setInstruction] = useState('')
-  const [duration, setDuration] = useState(15)
+  /* Q60's class, last instance: this held a NUMBER and coerced on every keystroke
+     (Math.max(1, Number(raw) || 1)), so the box could not be cleared — it snapped to 1 mid-typing,
+     and "0.5" became "1" before the decimal point was even typed. Math.max also clamps the low side
+     only, so max={600} (an attribute the browser enforces in a form submit, and this is a button)
+     let duration: 9999 through: a run 16x longer than this screen claims to allow. Raw text now,
+     parsed once, refused out loud. */
+  const [durationText, setDurationText] = useState('15')
+  const wantedDuration = numField(durationText, { what: 'seconds', min: 1, max: 600, remedy: 'run it again to go longer' })
+  const duration = wantedDuration.value
   const [advanced, setAdvanced] = useState(false)
   const [fields, setFields] = useState<Record<string, string>>({})
   const [validating, setValidating] = useState(false)
@@ -133,7 +142,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
   }
 
   const submit = () => {
-    if (!instruction.trim() || missing.length) return
+    if (!instruction.trim() || missing.length || wantedDuration.problem) return
     const body: RunBody = {
       instruction: instruction.trim(),
       policy_provider: providerName,
@@ -254,9 +263,10 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
             <button
               className="btn go"
               onClick={submit}
-              disabled={blocked || !instruction.trim() || missing.length > 0 || !!locked}
+              disabled={blocked || !instruction.trim() || missing.length > 0 || !!locked || !!wantedDuration.problem}
               title={locked
                 ? `${providerName} is not in the mesh policy allowlist`
+                : wantedDuration.problem ? `duration: ${wantedDuration.problem}`
                 : missing.length ? `missing: ${missingSummary(missing)}` : 'Run'}
             >▶</button>
           )}
@@ -273,15 +283,27 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
         </button>
       )}
 
+      {/* The duration box only exists inside options, so a bad value there would otherwise disable
+          ▶ with its reason hidden in a tooltip — which a touch screen never shows. */}
+      {wantedDuration.problem && !advanced && (
+        <button className="needs" onClick={() => setAdvanced(true)}>
+          duration: {wantedDuration.problem} → open options
+        </button>
+      )}
+
       {advanced && (
         <div className="advanced">
           <label className="field">
             <span>duration (s)</span>
             <input
-              type="number" min={1} max={600} value={duration}
-              onChange={e => setDuration(Math.max(1, Number(e.target.value) || 1))}
+              type="number" min={1} max={600} value={durationText}
+              onChange={e => setDurationText(e.target.value)}
               disabled={blocked}
+              aria-invalid={!!wantedDuration.problem} aria-describedby="run-duration-say"
             />
+            <span id="run-duration-say" className={`fieldsay${wantedDuration.problem ? ' bad' : ''}`}>
+              {wantedDuration.problem ?? wantedDuration.note ?? ''}
+            </span>
           </label>
 
           {wireFields.map(f => (
