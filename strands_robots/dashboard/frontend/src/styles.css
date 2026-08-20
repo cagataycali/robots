@@ -329,6 +329,9 @@ body {
   border-radius: var(--r3); font-size: var(--fs-small); box-shadow: var(--shadow1);
 }
 .toast.warn { border-color: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--warn); }
+/* A frozen frame counter mid-take is not a warning, it is a fault: the number
+   the operator is reading as proof of capture has stopped meaning anything. */
+.toast.bad { border-color: color-mix(in srgb, var(--danger) 55%, transparent); color: var(--danger); }
 .toast .btn.go { padding: 5px 12px; font-size: var(--fs-small); }
 
 /* ── grid layout ───────────────────────────────────── */

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession } from '../lib/recordApi'
 import { openActionCopy } from '../lib/recordAction'
+import { sessionFreshness, staleSuffix } from '../lib/sessionFreshness'
 import { api as httpGet } from '../lib/endpoints'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
 import CameraTile from './CameraTile'
@@ -50,6 +51,14 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   const [upload, setUpload] = useState(false)
   const [repoId, setRepoId] = useState('')
   const [closed, setClosed] = useState<string | null>(null)
+  // When did a session read last ARRIVE (not: last get attempted)? A hung
+  // request would otherwise keep this screen looking live forever.
+  const [lastOkAt, setLastOkAt] = useState<number | null>(null)
+  const [pollErr, setPollErr] = useState<string | null>(null)
+  // Ticks once a second so the age on screen keeps growing even while a request
+  // is stuck and no other state changes - the freeze is exactly the case where
+  // the display must not sit still and look current.
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   // The measured roles. Managed children carry them keyed by peer id, so this is
   // one request, not one per arm. A failure here is not worth a banner: the
@@ -84,7 +93,9 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
     getRecordApi().then(a => {
       if (!alive) return
       setApi(a)
-      a.session().then(sess => alive && setS(sess)).catch(e => alive && setErr(String(e)))
+      a.session()
+        .then(sess => { if (alive) { setS(sess); setLastOkAt(Date.now()) } })
+        .catch(e => alive && setErr(String(e)))
     })
     return () => { alive = false }
   }, [])
@@ -98,11 +109,15 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
     let alive = true
     let pending = false
     const t = setInterval(() => {
+      setNowMs(Date.now())
       if (pending) return
       pending = true
       api.session()
-        .then(sess => { if (alive) setS(sess) })
-        .catch(() => { /* a blip; the next tick retries */ })
+        .then(sess => { if (alive) { setS(sess); setLastOkAt(Date.now()); setPollErr(null) } })
+        // One lost tick IS a blip. Several in a row means the numbers on screen
+        // are a photograph, and the frame count - the only proof an episode is
+        // being captured - has quietly stopped meaning anything.
+        .catch(e => { if (alive) setPollErr(e instanceof Error ? e.message : String(e)) })
         .finally(() => { pending = false })
     }, 1000)
     return () => { alive = false; clearInterval(t) }
@@ -111,7 +126,9 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   const run = async (fn: () => Promise<RecordSession>) => {
     if (busy) return
     setBusy(true); setErr(null)
-    try { setS(await fn()) } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
+    // An action's own answer is a fresh read of the session: it counts.
+    try { setS(await fn()); setLastOkAt(Date.now()); setPollErr(null) }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
     setBusy(false)
   }
 
@@ -156,6 +173,9 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   const liveFrames = recording && episodes.length > 0
     ? episodes[episodes.length - 1]?.frames ?? null
     : null
+  // Are those numbers still live? The poller used to swallow its failures, so a
+  // frozen frame count read exactly like a ticking one.
+  const fresh = sessionFreshness({ lastOkAtMs: lastOkAt, nowMs, lastError: pollErr, recording })
 
   // R1: the button's words depend on which recorder answered the probe.
   const openCopy = openActionCopy(api ? api.mock : null)
@@ -287,11 +307,12 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
                   ↺ redo
                 </button>
                 <button className="btn go wide rec-live" onClick={() => void run(() => api!.stopEpisode())} disabled={busy}>
-                  ⏹ stop &amp; keep{liveFrames !== null ? ` · ${liveFrames}f` : ''}
+                  ⏹ stop &amp; keep{liveFrames !== null ? ` · ${liveFrames}f${staleSuffix(fresh)}` : ''}
                 </button>
               </>
             )}
           </div>
+          {fresh.text && <div className={`toast ${fresh.tone === 'bad' ? 'bad' : 'warn'}`}>{fresh.text}</div>}
           <div className="train-msg">
             {recording
               ? `recording — drive ${s.follower} with ${s.leader}, then stop (or redo to throw this one away)`
