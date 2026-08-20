@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { boardListEmptyLine } from '../lib/boardList'
+import { boardListEmptyLine, managedListEmptyLine } from '../lib/boardList'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { numField } from '../lib/numField'
 import { findConsent, type ConsentNeed } from '../lib/consent'
@@ -446,13 +446,16 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
           )}
 
           <section>
-            <h3>Managed robots ({managed.length})</h3>
-            {managed.length === 0 && (
-              <p className="hint">
-                None. Spawning one starts a child process that joins the mesh as its own peer —
-                use it for a MuJoCo sim, or to drive a real arm from this machine.
-              </p>
-            )}
+            {/* No count before the scan answers: `(0)` is a claim, and an unanswered request
+                would make the heading agree with the empty list about a fleet that may be running. */}
+            <h3>Managed robots{doc !== null ? ` (${managed.length})` : ''}</h3>
+            {/* `None.` used to render from `doc?.managed ?? {}`, so a failed /api/devices reported
+                zero children while children were running, publishing to the mesh and holding serial
+                ports — and the (0) in the heading agreed with it. */}
+            {managed.length === 0 && (() => {
+              const line = managedListEmptyLine({ scanned: doc !== null, error })
+              return <p className="hint" role="status">{line.message}</p>
+            })()}
             <ul className="devlist">
               {managed.map(m => (
                 <li key={m.peer_id} className={m.alive ? '' : 'dead'}>
@@ -630,7 +633,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
           <section>
             <h3>Cameras</h3>
             <CameraGallery cameras={doc?.cameras ?? []} names={doc?.camera_names ?? []}
-                           problem={doc?.camera_problem ?? null} />
+                           problem={doc?.camera_problem ?? null}
+                           scanned={doc !== null} error={error} />
             <p className="hint">
               Camera indices owned by a running robot are never re-probed — opening one steals
               frames from its capture thread mid-episode.

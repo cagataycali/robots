@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { cameraGridEmptyLine } from '../lib/boardList'
 import { apiBlob } from '../lib/endpoints'
 
 export interface CameraInfo {
@@ -43,7 +44,12 @@ const STATE_LABEL: Record<string, string> = {
  * a roster rather than pretending name[i] belongs to index i.
  */
 export default function CameraGallery(
-  { cameras, names, problem }: { cameras: CameraInfo[]; names: CameraName[]; problem?: CameraProblem | null },
+  { cameras, names, problem, scanned = true, error = null }:
+    { cameras: CameraInfo[]; names: CameraName[]; problem?: CameraProblem | null
+      /* Whether /api/devices has ANSWERED. Defaults to true so an existing caller keeps its
+         behaviour, but DevicePanel passes the real fact: an empty grid from a failed request
+         must not be reported as an empty machine. */
+      scanned?: boolean; error?: string | null },
 ) {
   const [previews, setPreviews] = useState<Record<number, string>>({})
   const [errors, setErrors] = useState<Record<number, string>>({})
@@ -81,9 +87,10 @@ export default function CameraGallery(
         </div>
       )}
       <div className="camgrid">
-        {cameras.length === 0 && (
-          <p className="hint">No cameras probed — plug one in and rescan.</p>
-        )}
+        {cameras.length === 0 && (() => {
+          const line = cameraGridEmptyLine({ scanned, error })
+          return <p className="hint" role="status">{line.message}</p>
+        })()}
         {cameras.map(c => (
           <div key={c.index} className={`camcard cam-${c.state ?? 'ready'}${c.claimed_by ? ' claimed' : ''}`}>
             <div className="camcard-head">
