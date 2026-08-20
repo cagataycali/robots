@@ -36,6 +36,7 @@ import inspect
 import math
 from typing import Any
 
+import numpy as np
 import pytest
 
 from strands_robots.simulation.predicates import (
@@ -222,6 +223,62 @@ class TestTheDomainComposesWithTheFinitenessGuard:
             assert callable(make_predicate("probe_tolerance_domain", body="cube", tol=0.1))
         finally:
             PREDICATE_REGISTRY.pop("probe_tolerance_domain", None)
+
+
+class TestABooleanIsAnsweredBeforeTheCoercion:
+    """A boolean numeric kwarg is refused by the finiteness guard, not coerced.
+
+    The sign check reads ``float(value)``, which it may only do because
+    :func:`~strands_robots.utils.finite_number_error` ran first and refuses
+    ``bool`` and ``numpy.bool_`` explicitly. Without that ordering ``tol=True``
+    would be written as a tolerance of ``1.0`` under ``status="success"`` - a
+    ``bool`` is an ``int`` subclass, so ``float(True)`` is not an error.
+
+    That delegation is the premise ``_kwarg_domain_error``'s entry in
+    ``tests/simulation/test_input_validators_refuse_a_boolean.py`` states in
+    prose, and nothing there checks it. It is pinned here instead, so the
+    exemption rests on a measurement: deleting the ``finite_number_error`` call
+    makes 26 of the 30 cases below report ``DID NOT RAISE`` - ``tol=True``
+    accepted as a tolerance of ``1.0`` - while the four ``still accepted`` cases
+    keep passing.
+
+    What these deliberately do *not* claim is an ordering. Moving the sign check
+    above the finiteness guard changes no verdict here, because the sign check
+    only refuses a *negative* value and ``float(True)`` is ``1.0``: a boolean
+    falls through it either way and is answered by the shared domain. The
+    substantive premise is that the delegation happens at all.
+
+    They pass on both trees, and that is the point. The refusal is not new -
+    ``finite_number_error`` has always held this domain - but a coercion now sits
+    behind it, so the refusal has to stay.
+    """
+
+    @pytest.mark.parametrize("value", [True, False, np.True_, np.False_])
+    @pytest.mark.parametrize(("name", "param"), _tolerance_cases())
+    def test_a_boolean_tolerance_is_refused(self, name, param, value):
+        kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
+        kwargs[param] = value
+        with pytest.raises(ValueError, match="finite") as excinfo:
+            make_predicate(name, **kwargs)
+        # Answered by the finiteness reason, not the sign reason: the coercion the
+        # sign check performs is never reached.
+        assert ">= 0" not in str(excinfo.value)
+        assert param in str(excinfo.value)
+
+    @pytest.mark.parametrize("value", [True, np.True_])
+    def test_a_boolean_signed_param_is_refused_too(self, value):
+        """The domain is the whole numeric kwarg set, not just the tolerances."""
+        with pytest.raises(ValueError, match="finite"):
+            make_predicate("body_below_z", body="cube", z=value)
+
+    @pytest.mark.parametrize("value", [1, np.int64(1), 1.0, 0])
+    def test_a_value_equal_to_a_boolean_is_still_accepted(self, value):
+        """The gate keys on the type, not the value.
+
+        ``1`` coerces to the same ``1.0`` ``True`` would have written, so this
+        separates "refuses a boolean" from "refuses anything equal to one".
+        """
+        assert callable(make_predicate("body_upright", body="cube", tol=value))
 
 
 class TestTheRuleIsMatchedOnAWholeNameNotASubstring:
