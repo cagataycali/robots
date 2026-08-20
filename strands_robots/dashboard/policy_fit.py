@@ -110,11 +110,12 @@ def policy_fit(
     if wanted and tags:
         if wanted not in tags:
             problems.append({
-                "field": "norm_tag",
-                "text": f"this checkpoint declares no normalisation stats for {wanted!r} "
-                        f"(it declares {', '.join(tags)}), so its inputs would be scaled by the "
-                        f"wrong statistics and its actions would drive {metal} to the wrong places",
-                "remedy": f"Pick one of the tags the checkpoint declares: {', '.join(tags)}.",
+                "kind": "norm_tag",
+                "detail": (
+                    f"this checkpoint declares no normalisation stats for {wanted!r}, so its inputs "
+                    f"would be scaled by the wrong statistics and its actions would drive {metal} to "
+                    f"the wrong places - pick one of the tags it does declare: {', '.join(tags)}"
+                ),
             })
         else:
             checked.append("norm_tag")
