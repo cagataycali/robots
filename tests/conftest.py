@@ -286,3 +286,27 @@ def pytest_report_header(config) -> str | None:  # noqa: ANN001 - pytest's own s
             "before believing a failure."
         )
     return None
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_profiles(request, tmp_path_factory, monkeypatch):
+    """No test may read or write the operator's OWN device profiles (Q84 fallout).
+
+    DeviceManager() and create_app() both fall back to ~/.strands_dashboard/profiles.json, and nothing
+    in this suite redirected them — so every test that built an app was sharing a file with the live
+    dashboard. That is not hypothetical: the operator's real profiles.json was found carrying an entry
+    named "q1-bad" whose camera config is the invalid ``{"main": 3}`` from a regression fixture, i.e. a
+    test wrote a robot definition into the production file. Those entries are what autospawn spawns
+    from, and ProfileStore has already had one bug (MEASURED_FIELDS) where a save rebuilt an entry and
+    silently dropped a measured arm role — a test that can reach this file can rename his arms, drop a
+    measurement, or hand autospawn a config that crashes the child on the real bus.
+
+    The env var is what both construction paths consult, so redirecting it covers the ones that pass no
+    argument at all. A test that genuinely wants the operator's file can ask with @pytest.mark.real_profiles.
+    """
+    if request.node.get_closest_marker("real_profiles"):
+        return
+    monkeypatch.setenv(
+        "STRANDS_DASHBOARD_PROFILES",
+        str(tmp_path_factory.mktemp("profiles") / "profiles.json"),
+    )
