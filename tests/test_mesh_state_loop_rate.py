@@ -59,11 +59,13 @@ def _run_state_loop_for(seconds: float) -> tuple[int, float]:
         thread.start()
         started.wait(2.0)
         start = time.perf_counter()
-        # Busy-wait the window: time.sleep here would itself be taxed by the very
-        # penalty under test, making the window longer than asked and the
-        # measured rate look better than it is.
-        while time.perf_counter() - start < seconds:
-            pass
+        # SLEEP the window, do not spin it. A Python busy-wait holds the GIL and
+        # starves the loop thread whose rate is being measured -- measured: a
+        # 30Hz camera loop read as 21.0fps against a spinning main thread. The
+        # sleep being inflated by the penalty under test is harmless here because
+        # the rate is computed against the MEASURED elapsed time, not the
+        # requested window.
+        time.sleep(seconds)
         elapsed = time.perf_counter() - start
         ticks = len([t for t in published if t.endswith("/state")])
         mesh._running = False
@@ -71,6 +73,71 @@ def _run_state_loop_for(seconds: float) -> tuple[int, float]:
         thread.join(timeout=5.0)
     assert not thread.is_alive(), "the state loop did not stop within 5s of the stop event"
     return ticks, elapsed
+
+
+class TestTheCameraLoopHitsItsNominalRate:
+    """The camera loop is where the old pacing cost the most.
+
+    Grabbing a frame is slow and the penalty was added on top of it, so a
+    nominal 30Hz ran at about 6Hz -- and that is the rate a recorded dataset's
+    video was actually captured at while the run reported 30.
+    """
+
+    def test_thirty_hz_of_cheap_frames_is_thirty_hz(self) -> None:
+        mesh = Mesh(_StatefulRobot(), peer_id="pace-cam", peer_type="sim")
+        mesh._running = True
+        frames: list[float] = []
+        with (
+            patch("strands_robots.mesh.core.put"),
+            patch.object(mesh, "_publish_cameras_once", side_effect=lambda: frames.append(time.perf_counter())),
+        ):
+            thread = threading.Thread(target=mesh._camera_loop, args=(30.0,), daemon=True)
+            thread.start()
+            start = time.perf_counter()
+            time.sleep(1.0)  # sleep, never spin: a spinning main thread starves the loop (GIL)
+            elapsed = time.perf_counter() - start
+            mesh._running = False
+            mesh._stop_event.set()
+            thread.join(timeout=5.0)
+        assert not thread.is_alive(), "the camera loop did not stop within 5s"
+        achieved = len(frames) / elapsed
+        assert achieved > 21.0, (
+            f"camera loop achieved {achieved:.1f}fps asking for 30 "
+            f"(sleep penalty here {sleep_penalty_s() * 1000:.0f}ms) - see BUGS.md Q69"
+        )
+
+    def test_a_dropped_deadline_does_not_publish_a_burst_of_near_identical_frames(self) -> None:
+        """A gap is a better lie about a camera than a burst.
+
+        Frames stamped microseconds apart tell a consumer the camera sped up,
+        when what actually happened is that it stalled.
+        """
+        mesh = Mesh(_StatefulRobot(), peer_id="pace-cam2", peer_type="sim")
+        mesh._running = True
+        stamps: list[float] = []
+        calls = {"n": 0}
+
+        def grab() -> None:
+            calls["n"] += 1
+            if calls["n"] == 2:  # one slow frame worth ~7 periods
+                deadline = time.perf_counter() + 0.15
+                while time.perf_counter() < deadline:
+                    pass
+            stamps.append(time.perf_counter())
+
+        with patch("strands_robots.mesh.core.put"), patch.object(mesh, "_publish_cameras_once", side_effect=grab):
+            thread = threading.Thread(target=mesh._camera_loop, args=(50.0,), daemon=True)
+            thread.start()
+            time.sleep(0.6)
+            mesh._running = False
+            mesh._stop_event.set()
+            thread.join(timeout=5.0)
+        gaps = [b - a for a, b in zip(stamps, stamps[1:], strict=False)]
+        instant = [g for g in gaps if g < 0.002]
+        assert len(instant) <= 1, (
+            f"{len(instant)} of {len(gaps)} frame gaps were under 2ms at a nominal 20ms period - "
+            "the loop is chasing the deadlines it missed during the slow frame"
+        )
 
 
 class TestTheStateLoopHitsItsNominalRate:
@@ -136,9 +203,7 @@ class TestTheStateLoopHitsItsNominalRate:
         with patch("strands_robots.mesh.core.put"), patch.object(mesh, "_read_state", side_effect=slow_read):
             thread = threading.Thread(target=mesh._state_loop, daemon=True)
             thread.start()
-            start = time.perf_counter()
-            while time.perf_counter() - start < 1.0:
-                pass
+            time.sleep(1.0)
             mesh._running = False
             mesh._stop_event.set()
             thread.join(timeout=5.0)
@@ -152,7 +217,7 @@ class TestTheStateLoopHitsItsNominalRate:
         )
 
 
-@pytest.mark.parametrize("attr", ["_state_loop"])
+@pytest.mark.parametrize("attr", ["_state_loop", "_heartbeat_loop", "_camera_loop"])
 def test_the_converted_loop_no_longer_paces_on_the_stop_event(attr: str) -> None:
     """Pin the conversion in source, so a later edit cannot quietly revert it.
 

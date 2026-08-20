@@ -999,15 +999,29 @@ class Mesh(SensorLoopsMixin):
         return payload
 
     def _heartbeat_loop(self) -> None:
-        period = 1.0 / HEARTBEAT_HZ
-        while self._running:
-            try:
-                self.publish(f"strands/{self.peer_id}/presence", self._build_presence())
-                prune_peers()
-            except Exception as exc:
-                logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
+        """Announce this peer and prune stale ones at ``HEARTBEAT_HZ``.
+
+        Ticker-paced for the reason in BUGS.md Q69, though the stakes here are
+        the smallest of the converted loops and it is worth saying so rather than
+        borrowing the camera loop's severity: HEARTBEAT_HZ is 2.0, so the ~145ms
+        daemon-tree wait penalty turned a 500ms interval into ~645ms (1.55Hz).
+        PEER_TIMEOUT is 10s, so staleness was never at risk -- what suffered was
+        freshness: how fast a newly started robot appears in the fleet view, how
+        recent "last seen" really is, and how promptly the pruning that shares
+        this tick notices a peer that went away.
+        """
+        ticker = Ticker(1.0 / HEARTBEAT_HZ, self._stop_event)
+        try:
+            while self._running:
+                try:
+                    self.publish(f"strands/{self.peer_id}/presence", self._build_presence())
+                    prune_peers()
+                except Exception as exc:
+                    logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
+                if ticker.wait():
+                    break
+        finally:
+            ticker.close()
 
     def _on_presence(self, sample: Any) -> None:
         """Handle a peer's presence broadcast.
@@ -1240,14 +1254,32 @@ class Mesh(SensorLoopsMixin):
         return hz if hz > 0 else 0.0
 
     def _camera_loop(self, hz: float) -> None:
-        period = 1.0 / hz
-        while self._running:
-            try:
-                self._publish_cameras_once()
-            except Exception as exc:
-                logger.debug("[mesh] %s: camera tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
+        """Publish camera frames at ``hz``.
+
+        Ticker-paced (BUGS.md Q69): this is the loop where the old
+        ``Event.wait`` pacing hurt most, because grabbing a frame is slow AND
+        the penalty was added on top of it -- a nominal 30Hz became about 6Hz in
+        a daemon-hosted robot, and that is the rate a recorded dataset's video
+        was captured at while the run reported 30. The ticker treats the period
+        as a deadline, so the time spent in :meth:`_publish_cameras_once` is
+        subtracted from the wait, and it DROPS missed deadlines rather than
+        chasing them: a burst of frames stamped microseconds apart is a worse
+        lie about a camera than a gap.
+
+        ``hz`` is resolved by :meth:`_resolve_camera_hz`, which returns 0.0 for
+        anything unusable and disables the loop, so the division is safe.
+        """
+        ticker = Ticker(1.0 / hz, self._stop_event)
+        try:
+            while self._running:
+                try:
+                    self._publish_cameras_once()
+                except Exception as exc:
+                    logger.debug("[mesh] %s: camera tick error: %s", self.peer_id, exc)
+                if ticker.wait():
+                    break
+        finally:
+            ticker.close()
 
     def _publish_cameras_once(self) -> None:
         # Privacy kill switch. Operators on sensitive deployments set
