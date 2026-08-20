@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Range } from '../lib/jointScale'
-import { traceFor, type Sample, HISTORY_WINDOW_MS } from '../lib/jointHistory'
+import { traceFor, stalled, type Sample, HISTORY_WINDOW_MS } from '../lib/jointHistory'
 
 /**
  * One joint's recent past, drawn on a canvas (U6).
@@ -102,10 +102,21 @@ export default function JointSpark({
 
     raf = requestAnimationFrame(draw)
     // Idle robots still need the window to scroll; 4Hz is invisible work.
-    // Under prefers-reduced-motion the trace only advances when new state
-    // arrives: the data is still complete, it just stops crawling on its own.
-    const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    if (live && !calm) timer = window.setInterval(() => { raf = requestAnimationFrame(draw) }, 250)
+    //
+    // Under prefers-reduced-motion the ticker used to be OFF entirely, and the
+    // old comment ("the data is still complete") missed the point: x is TIME
+    // with now at the right edge, so with no redraw the last sample stays pinned
+    // to now and a dead stream draws itself as a still arm. Completeness was
+    // never the issue; the axis was. So calm mode keeps a slow ticker but only
+    // redraws while the stream has actually stalled - motion appears exactly
+    // where it carries information, and a healthy stream stays as calm as before.
+    const calm = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (live) {
+      timer = window.setInterval(() => {
+        if (calm && !stalled(track, Date.now())) return
+        raf = requestAnimationFrame(draw)
+      }, calm ? 1000 : 250)
+    }
     return () => {
       cancelAnimationFrame(raf)
       if (timer) window.clearInterval(timer)

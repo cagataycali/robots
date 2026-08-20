@@ -465,6 +465,16 @@ body {
 .joints.empty { color: var(--dim); font-size: 11px; padding: var(--s1) 2px; }
 .joint { display: flex; align-items: center; gap: var(--s3); }
 .jname { font-size: 10px; font-family: var(--mono); color: var(--dim); width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+/* Joint-strip freshness (lib/jointFreshness.ts). A frozen stream must not keep
+   presenting the last frame as the arm's position: the values fade and the note
+   says what they actually are. `lagging` stays fully legible - it is probably
+   still roughly right, and dimming it would cry wolf. */
+.jstale { font-size: 9.5px; color: var(--warn, #ffb454); padding: 2px 0 0 2px; line-height: 1.3; }
+.jstale.frozen { color: var(--bad, #ff6b6b); font-weight: 600; }
+.joints[data-fresh="frozen"] .jval,
+.joints[data-fresh="frozen"] .jbar { opacity: .42; }
+.joints[data-fresh="frozen"] .jfill { filter: saturate(.35); }
+@media (max-width: 480px) { .jstale { font-size: 9px; } }
 .jlegend { font-size: 9px; color: var(--dim); opacity: .75; letter-spacing: .01em; padding: 2px 0 0 2px; line-height: 1.3; }
 @media (max-width: 480px) { .jlegend { font-size: 8.5px; } }
 .jval { font-size: 10px; font-family: var(--mono); color: var(--text); width: 44px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }

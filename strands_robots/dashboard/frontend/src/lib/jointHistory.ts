@@ -115,3 +115,15 @@ export function heldSeconds(track: Sample[] | undefined, now: number): number {
   if (!track || track.length < 2) return 0
   return Math.max(0, (now - track[0].t) / 1000)
 }
+
+/**
+ * Has this track stopped receiving frames? Used by the sparkline to decide when
+ * a redraw carries information: while data flows the parent's frame counter
+ * drives the canvas, and only a stall needs the clock to keep sliding the window
+ * (a reduced-motion reader must still see the gap open at the right edge).
+ * An empty track is not stalled - it never started.
+ */
+export function stalled(track: Sample[] | undefined, now: number, gapMs = GAP_MS * 2): boolean {
+  if (!track || track.length === 0) return false
+  return now - track[track.length - 1].t > gapMs
+}

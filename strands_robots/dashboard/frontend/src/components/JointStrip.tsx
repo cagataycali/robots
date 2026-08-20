@@ -4,6 +4,7 @@ import { decideStripScale, fillPercent, type ScaleMemo } from '../lib/jointScale
 import { createHistory, pushFrame, HISTORY_WINDOW_MS } from '../lib/jointHistory'
 import JointSpark from './JointSpark'
 import { humanJointNames, stripLegend } from '../lib/jointLabels'
+import { jointAgeNote } from '../lib/jointFreshness'
 
 /**
  * One scale per strip, learned from the stream.
@@ -29,14 +30,28 @@ export default function JointStrip({
   const hist = useRef(createHistory())
   const [frame, setFrame] = useState(0)
   const pending = useRef<Array<[string, number]> | null>(null)
+  // When the newest frame arrived. The strip's values are only "the arm's
+  // position" for as long as this is recent - see lib/jointFreshness.ts.
+  const lastAt = useRef<number | null>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   // History is appended in an effect, never during render: React may render the
   // same state twice and a double-appended frame would be a fabricated sample.
   useEffect(() => {
-    if (!showHistory || !pending.current) return
-    pushFrame(hist.current, pending.current, Date.now())
+    if (!pending.current) return
+    lastAt.current = Date.now()
+    setNowMs(lastAt.current)
+    if (!showHistory) return
+    pushFrame(hist.current, pending.current, lastAt.current)
     setFrame((f) => f + 1)
   }, [state, showHistory])
+
+  // An age that only updates when new data arrives can never say "no new data".
+  // 1Hz is enough to cross both thresholds visibly and costs nothing.
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   const joints = state?.joints
   if (!joints || Object.keys(joints).length === 0) {
@@ -68,8 +83,14 @@ export default function JointStrip({
   // back to raw keys if humanising two rows would read the same.
   const labels = humanJointNames(entries.map(([name]) => name))
 
+  // The strip carries its own freshness because it is rendered ALONE in the
+  // collect panel, where the operator is hand-guiding the leader and reading
+  // these very numbers to see the follower track. A neighbour's "stale" chip
+  // (TelemetryStrip, on the cards) cannot cover that screen.
+  const fresh = jointAgeNote(lastAt.current === null ? null : nowMs - lastAt.current)
+
   return (
-    <div className="joints" data-unit={unit}>
+    <div className="joints" data-unit={unit} data-fresh={fresh.level}>
       {entries.map(([name, v], i) => {
         const pos = samples[i][1]
         const range = ranges[name]
@@ -97,6 +118,13 @@ export default function JointStrip({
           </div>
         )
       })}
+      {/* role=status, not alert: it is a degradation to notice, not a modal
+          interruption - and it must be announced when it appears. */}
+      {fresh.text && (
+        <div className={`jstale${fresh.dim ? ' frozen' : ''}`} role="status" aria-live="polite">
+          {fresh.text}
+        </div>
+      )}
       <div className="jlegend">{stripLegend(unit, HISTORY_WINDOW_MS, entries.map(([n]) => n))}</div>
     </div>
   )
