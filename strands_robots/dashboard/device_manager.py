@@ -898,6 +898,56 @@ class ProfileStore:
             logger.warning("could not persist device profile %s to %s: %r", key, self.path, e)
 
 
+
+def autospawn_veto(env: Mapping[str, str]) -> str | None:
+    """Why USB auto-spawn must NOT bring boards up in this process, or None when it may.
+
+    Auto-spawn is the one dashboard feature that starts a REAL robot process, holding a REAL
+    serial port, without anybody clicking anything. That is right for the operator's dashboard and
+    catastrophic anywhere else, which Q81 measured the hard way:
+
+    ``tests/test_dashboard_datasets_route_recording.py`` builds the app with
+    ``with TestClient(app)``, which fires the startup hook, which starts the watcher, which scans
+    the real USB bus and spawns the saved profiles. The test then passes and the pytest process
+    exits -- leaving its children orphaned (ppid=1) and still holding the arm ports. By 2026-08-20
+    **185 such orphans from ~30 runs of that one file** held cagatay's two SO-101 ports, and the
+    live arm child could no longer read a byte: ``[TxRxResult] Port is in use!``. The dashboard
+    reported a healthy connected arm with zero joints for hours (Q80 is that symptom's cure; this
+    is the cause's).
+
+    Two signals in those orphans' own environment said plainly that they should never have existed:
+
+    * ``PYTEST_CURRENT_TEST`` / ``PYTEST_VERSION`` -- this is a test run. A test may exercise the
+      watcher's LOGIC all it likes (``tests/test_dashboard_usb_autospawn.py`` drives a fake
+      manager, and still does), but it must never take a physical port. The suite cannot be trusted
+      to remember an env var it does not know it needs, so the refusal lives here, once.
+    * ``STRANDS_MESH=false`` -- the documented HARD kill switch. Q32 fixed the same class for the
+      mesh gateway: a process with the mesh switched off had still joined the fleet because one
+      code path constructed it directly instead of asking. Spawning a robot child while the mesh is
+      off is that bug wearing overalls.
+
+    ``STRANDS_DASHBOARD_AUTOSPAWN`` is still the operator's own switch, and an explicit truthy
+    value is an OVERRIDE: someone who deliberately wants boards to come up inside a test process
+    can say so, because a refusal with no way past it just gets patched out downstream.
+    """
+    raw = str(env.get("STRANDS_DASHBOARD_AUTOSPAWN", "")).strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return "STRANDS_DASHBOARD_AUTOSPAWN is off"
+    override = raw in ("1", "true", "yes", "on", "force")
+    if override:
+        return None
+    test_marker = env.get("PYTEST_CURRENT_TEST") or env.get("PYTEST_VERSION")
+    if test_marker:
+        return (
+            "this process is a pytest run (%s): a test must never take a real serial port. "
+            "Set STRANDS_DASHBOARD_AUTOSPAWN=1 if you truly mean to spawn hardware from a test."
+            % str(test_marker).split("::")[0]
+        )
+    if str(env.get("STRANDS_MESH", "")).strip().lower() in ("0", "false", "no", "off"):
+        return "STRANDS_MESH is off (the hard kill switch): a robot child must not be started"
+    return None
+
+
 class AutoSpawnWatcher:
     """Brings known USB boards up (and unplugged ones down) on its own.
 
@@ -944,7 +994,14 @@ class AutoSpawnWatcher:
 
     @staticmethod
     def enabled() -> bool:
-        """False when STRANDS_DASHBOARD_AUTOSPAWN is set to a falsey value."""
+        """False when STRANDS_DASHBOARD_AUTOSPAWN is set to a falsey value.
+
+        Deliberately NOT the Q81 veto: this is the polling logic's own switch, and a test that
+        drives a watcher over a FAKE manager is exercising logic, not taking a serial port. The
+        veto guards the door to real hardware -- :meth:`DeviceManager.start_autospawn` -- so a
+        refusal there cannot be worked around by constructing a watcher directly, and the pure
+        tests keep testing the pure thing.
+        """
         raw = os.environ.get("STRANDS_DASHBOARD_AUTOSPAWN", "1").strip().lower()
         return raw not in ("0", "false", "no", "off")
 
@@ -2088,9 +2145,17 @@ class DeviceManager:
         list_ports: Callable[[], list[dict[str, Any]]] | None = None,
         peer_ids: Callable[[], Iterable[str]] | None = None,
     ) -> AutoSpawnWatcher | None:
-        """Create the USB auto-spawn watcher, or None when disabled by env."""
-        if not AutoSpawnWatcher.enabled():
-            logger.info("USB auto-spawn disabled (STRANDS_DASHBOARD_AUTOSPAWN=0)")
+        """Create the USB auto-spawn watcher, or None when the environment forbids it.
+
+        This is the only path that points the watcher at the REAL serial scan, so it is where the
+        Q81 veto belongs: a pytest process, or one with the mesh kill switch engaged, must not
+        bring physical boards up. See :func:`autospawn_veto`.
+        """
+        veto = autospawn_veto(os.environ)
+        if veto is not None:
+            # Say WHY, loudly enough to find in a log: "auto-spawn disabled" next to an arm that
+            # never came up is the kind of line that costs an hour (Q81).
+            logger.warning("USB auto-spawn refused: %s", veto)
             return None
         self.autospawn = AutoSpawnWatcher(self, list_ports=list_ports, peer_ids=peer_ids)
         return self.autospawn
