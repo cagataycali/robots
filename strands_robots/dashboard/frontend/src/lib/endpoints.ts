@@ -11,6 +11,8 @@
  * expects.
  */
 
+import { routeKnown, staleRouteMessage } from './serverAge'
+
 const BASE_KEY = 'strands.backend'
 const TOKEN_KEY = 'strands.token'
 
@@ -129,6 +131,42 @@ export class HttpError extends Error {
  * when the command never landed. Everything here throws an `HttpError` carrying
  * the server's own message so callers can show it.
  */
+/**
+ * The running server's own route list, fetched at most once per page (Q79). It exists to tell a 404
+ * "this feature is not in this server" apart from a 404 "that camera/peer/dataset is not here" — the
+ * first is fixed by restarting the dashboard, the second is real news about the resource.
+ *
+ * Deliberately lazy and best-effort: the fetch happens on the FIRST 404 only (never on the happy path,
+ * where it would cost every page load a request for nothing), it carries no auth requirement of its own,
+ * and any failure leaves the value null, which routeKnown() reports as "unknown" and nobody renders.
+ */
+let _liveRoutes: string[] | null = null
+let _liveRoutesTried = false
+
+async function liveRoutes(): Promise<string[] | null> {
+  if (_liveRoutesTried) return _liveRoutes
+  _liveRoutesTried = true
+  try {
+    const token = authToken()
+    const res = await fetch(apiUrl('/openapi.json'), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) return null
+    const doc = await res.json()
+    const paths = doc && doc.paths && typeof doc.paths === 'object' ? Object.keys(doc.paths) : []
+    _liveRoutes = paths.length ? paths : null
+  } catch {
+    _liveRoutes = null // a server without /openapi.json, or no network: stay silent
+  }
+  return _liveRoutes
+}
+
+/** Test seam + a place for a reconnect to forget what the OLD backend routed. */
+export function forgetLiveRoutes(): void {
+  _liveRoutes = null
+  _liveRoutesTried = false
+}
+
 export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const token = authToken()
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) }
@@ -146,7 +184,14 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   try { body = text ? JSON.parse(text) : null } catch { /* keep raw text */ }
   if (!res.ok) {
     const detail = (body && (body.detail ?? body.error)) || text || res.statusText
-    throw new HttpError(res.status, typeof detail === 'string' ? detail : JSON.stringify(detail), body)
+    let message = typeof detail === 'string' ? detail : JSON.stringify(detail)
+    // Q79: a 404 on a route this server does not have at all is the server being older than the
+    // bundle, not the resource being absent. Only ever ADDS an explanation - the server's own words
+    // stay, because when the route does exist they are the truth.
+    if (res.status === 404 && routeKnown(await liveRoutes(), path) === false) {
+      message = staleRouteMessage(path)
+    }
+    throw new HttpError(res.status, message, body)
   }
   return body as T
 }
