@@ -83,6 +83,8 @@ def policy_fit(
     joints: Iterable[str] | None = None,
     cameras: Iterable[str] | None = None,
     physical: bool = True,
+    norm_tag: str | None = None,
+    declared_norm_tags: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Compare a checkpoint's declared features with what the target peer announces.
 
@@ -97,6 +99,26 @@ def policy_fit(
     checked: list[str] = []
 
     metal = "a real arm" if physical else "the simulated robot"
+
+    # A norm_tag the checkpoint does not declare (upstream #2543). Knowable here from two facts
+    # already in hand, so it is refused while the form is open rather than inside the run process
+    # after the arm has been parked and torqued. Both "no tag requested" and "no declared tags" are
+    # the no-evidence case: an older checkpoint ships no norm_stats.json at all, and treating that
+    # silence as a mismatch would block runs that have always worked.
+    tags = [t for t in (declared_norm_tags or []) if isinstance(t, str)]
+    wanted = (norm_tag or "").strip()
+    if wanted and tags:
+        if wanted not in tags:
+            problems.append({
+                "field": "norm_tag",
+                "text": f"this checkpoint declares no normalisation stats for {wanted!r} "
+                        f"(it declares {', '.join(tags)}), so its inputs would be scaled by the "
+                        f"wrong statistics and its actions would drive {metal} to the wrong places",
+                "remedy": f"Pick one of the tags the checkpoint declares: {', '.join(tags)}.",
+            })
+        else:
+            checked.append("norm_tag")
+
 
     sd = state_dim(input_features)
     ad = action_dim(output_features)

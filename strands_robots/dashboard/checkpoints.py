@@ -469,5 +469,28 @@ def declared_features(repo_id: str) -> dict[str, Any]:
                     "input_features": inp if isinstance(inp, dict) else {},
                     "output_features": out if isinstance(out, dict) else {},
                     "policy_type": block.get("type"),
+                    # Upstream #2543 made a norm_tag the checkpoint's stats do not declare a refusal
+                    # instead of a silent fallback -- correct, but it lands INSIDE the run process,
+                    # after this dashboard has parked and torqued the arm. The declaring file sits in
+                    # the same directory we just read, so the answer is available while the form is
+                    # still open. An absent or unreadable norm_stats.json yields [] = no evidence,
+                    # never a refusal (the rule this whole module is built on).
+                    "norm_tags": _declared_norm_tags(d),
                 }
     return {}
+
+
+def _declared_norm_tags(d: Path) -> list[str]:
+    """The normalisation tags ``norm_stats.json`` declares in ``d``, or [] when unknowable."""
+    import json
+
+    f = d / "norm_stats.json"
+    try:
+        if not f.exists():
+            return []
+        data = json.loads(f.read_text())
+    except Exception:  # noqa: BLE001 - unreadable stats = no evidence, same as an absent config
+        return []
+    if not isinstance(data, dict):
+        return []
+    return sorted(k for k in data if isinstance(k, str))

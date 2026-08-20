@@ -1060,6 +1060,10 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                         output_features=feats.get("output_features"),
                         joints=list((peer.get("state") or {}).get("joints") or {}),
                         cameras=list(peer.get("cameras") or {}),
+                        # The operator's own choice, checked against what the checkpoint declares
+                        # (upstream #2543 refuses it, but only after this arm is torqued).
+                        norm_tag=config.get("norm_tag") if isinstance(config.get("norm_tag"), str) else None,
+                        declared_norm_tags=feats.get("norm_tags"),
                         # runRisk's server-side twin: `hw` exists only when a real device object is
                         # attached, and an unknown peer is treated as metal.
                         physical=bool(peer.get("presence", {}).get("hw")) or not peer,
@@ -1080,7 +1084,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         return result
 
     @app.get("/api/robots/{peer_id}/policy-fit")
-    async def policy_fit_route(peer_id: str, repo_id: str = "") -> dict[str, Any]:
+    async def policy_fit_route(peer_id: str, repo_id: str = "", norm_tag: str = "") -> dict[str, Any]:
         """Q79: does this checkpoint fit THIS robot? Asked while the form is being filled in.
 
         Read-only and local: the checkpoint's own declared features (disk) against what the peer
@@ -1106,6 +1110,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             joints=joints,
             cameras=cameras,
             physical=bool((peer.get("presence") or {}).get("hw")) or not peer,
+            norm_tag=norm_tag,
+            declared_norm_tags=feats.get("norm_tags"),
         )
         verdict["evidence"] = bool(feats) and bool(verdict["checked"])
         verdict["repo_id"] = repo_id
