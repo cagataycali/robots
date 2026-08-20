@@ -444,6 +444,22 @@ class MeshBridge:
         settings.apply_mesh_env()
 
         self._loop = loop
+        # STRANDS_MESH=false is documented as a HARD kill switch, and this bridge used
+        # to ignore it: it called get_session() unconditionally, so the dashboard joined
+        # the live fleet with the mesh explicitly OFF. Same class as BUGS.md Q32, which
+        # fixed robot_mesh._gateway_mesh() and left the biggest session-opener in the
+        # tree unasked. Found by rehearsing a restart with the switch set, where it
+        # surfaced as a startup CRASH rather than a quiet violation (mTLS is the default
+        # auth mode, so building a config for a session nobody wanted raised
+        # "STRANDS_MESH_AUTH_MODE=mtls requires ..." and uvicorn exited).
+        from strands_robots.mesh.core import mesh_kill_switch_engaged
+
+        if mesh_kill_switch_engaged():
+            logger.warning(
+                "STRANDS_MESH=false - not joining the mesh; the dashboard serves "
+                "settings, devices and cameras but shows no peers",
+            )
+            return False
         session = get_session()
         if session is None:
             logger.warning("Mesh session unavailable (is eclipse-zenoh installed?) - dashboard runs offline")
