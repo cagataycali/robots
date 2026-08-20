@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMesh } from './lib/useMesh'
 import { usePwa } from './lib/usePwa'
 import { linkHealth, estopPosture } from './lib/linkHealth'
+import LanHint from './components/LanHint'
 import { lockoutBanner } from './lib/lockoutBadge'
 import { ConfigProvider } from './lib/useConfig'
 import { backendKey, backendLabel, setAuthToken } from './lib/endpoints'
@@ -246,6 +247,9 @@ function Dashboard() {
               ten hours while their cards looked healthy, so the per-card badge is not
               enough: an operator arriving at this screen must be told before they reach
               for a control. Silent unless a safety event actually happened. */}
+          {/* Q52: local viewers should not stream camera frames out to the internet and
+              back. Silent unless the server can prove it. */}
+          <LanHint />
           {(() => {
             const lb = lockoutBanner(list)
             return lb ? (

@@ -1552,3 +1552,24 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   border: 1px dashed var(--warn); color: var(--fg);
 }
+
+/* ---- Q52 local-address hint: quiet, dismissible, never alarming ---- */
+.lan-hint {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; margin-bottom: 6px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6ea8fe) 34%, transparent);
+  background: color-mix(in srgb, var(--accent, #6ea8fe) 9%, transparent);
+  font-size: 13px; line-height: 1.4;
+}
+.lan-hint-text { flex: 1; min-width: 0; opacity: .92; }
+.lan-hint-go { white-space: nowrap; font-weight: 600; }
+.lan-hint-dismiss {
+  background: none; border: 0; cursor: pointer; font-size: 17px;
+  line-height: 1; padding: 2px 4px; opacity: .6;
+}
+.lan-hint-dismiss:hover { opacity: 1; }
+@media (max-width: 640px) {
+  .lan-hint { flex-wrap: wrap; }
+  .lan-hint-text { flex-basis: 100%; }
+}
