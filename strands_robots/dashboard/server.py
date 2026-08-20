@@ -227,6 +227,11 @@ class TokenAuthMiddleware:
         await response(scope, receive, send)
 
 
+#: The frame types /ws/chat implements. A type outside this set is answered with a typed error rather
+#: than dropped (Q81); a frame with NO type at all stays acceptable, because "text" alone is what the
+#: oldest clients send and refusing it would break a working path to fix a silent one.
+_CHAT_FRAME_TYPES = frozenset({"chat", "ping"})
+
 CHAT_MAX_FRAME_BYTES = 32 * 1024  # a generous chat turn; 2 MB frames ran real model turns
 
 
@@ -259,6 +264,21 @@ def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any
         return None, {"type": "error", "error": "frame must be a JSON object"}
     if msg.get("type") == "ping":
         return None, {"type": "pong"}
+    # An UNRECOGNISED type is refused out loud (Q81). A websocket frame has no status code, so a type
+    # this server does not implement is otherwise dropped in perfect silence: the operator taps a
+    # button, the socket stays open, nothing happens, and no surface anywhere says why. Measured on
+    # this bundle: it sends only 'chat' here and 'stop' on /ws/voice, so nothing legitimate lands in
+    # this branch today - it is the NEXT frame type, added to the UI before the server learns it, that
+    # this sentence is for. Naming the accepted set turns "the button is broken" into a one-line fix.
+    ftype = msg.get("type")
+    if ftype is not None and ftype not in _CHAT_FRAME_TYPES:
+        return None, {
+            "type": "error",
+            "error": (
+                f"unknown frame type {ftype!r} on /ws/chat - nothing was done. "
+                f"This server accepts: {', '.join(sorted(_CHAT_FRAME_TYPES))}."
+            ),
+        }
     text = msg.get("text")
     if text is None:
         return None, None

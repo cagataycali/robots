@@ -159,3 +159,37 @@ def test_queued_notice_when_turn_lock_is_held(monkeypatch, tmp_path):
             assert ev["type"] == "notice" and "queued" in ev["text"]
     finally:
         agent_bridge._turn_lock.release()
+
+
+# --- an unrecognised type is refused, not dropped (Q81) ------------------------
+#
+# The send direction of the websocket contract, audited 2026-08-20: this bundle sends {"type":"chat"}
+# here and {"type":"stop"} on /ws/voice, and both are implemented — so this is a guard against the next
+# frame type, which will be added to the UI before the server learns it. A websocket has no status code:
+# without this the operator taps a button, the socket stays healthily open, and nothing happens anywhere.
+
+def test_unknown_frame_type_is_answered_by_name():
+    prompt, reply = parse_chat_frame(_text(json.dumps({"type": "cancel", "run": 3})))
+    assert prompt is None, "an unimplemented verb must never be promoted to a billed model turn (Q18)"
+    assert reply is not None and reply["type"] == "error"
+    assert "cancel" in reply["error"], "the operator needs the type named to report it"
+    assert "chat" in reply["error"] and "ping" in reply["error"], "and what this server does accept"
+
+
+def test_an_unknown_type_carrying_text_is_still_refused():
+    """The type IS the contract: a confused client's text must not become an instruction."""
+    prompt, reply = parse_chat_frame(_text(json.dumps({"type": "stop", "text": "move the arm"})))
+    assert prompt is None and reply is not None and reply["type"] == "error"
+
+
+def test_a_frame_with_no_type_but_text_still_works():
+    """Compatibility: refusing this would break a working path in order to fix a silent one."""
+    prompt, reply = parse_chat_frame(_text(json.dumps({"text": "hello"})))
+    assert prompt == "hello" and reply is None
+
+
+def test_known_types_keep_their_silence():
+    """An empty submit stays silent — it must not be billed, and it must not scold either."""
+    for payload in ({"type": "chat"}, {"type": "chat", "text": "   "}):
+        prompt, reply = parse_chat_frame(_text(json.dumps(payload)))
+        assert prompt is None and reply is None, payload
