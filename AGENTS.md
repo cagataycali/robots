@@ -749,6 +749,93 @@ hatch run format            # ruff check --fix, ruff format
      `require_last_push_approval` then disqualifies the pushing account from
      re-supplying it, turning a one-approval merge into one that needs a second
      reviewer.
+   - *And that the head it names is the branch's tip.* A pull request has two
+     answers to "what is the head commit" and they can disagree for hours.
+     `headRefOid` is the value the pull request *records*; the tip of the branch
+     in the head repository is the value that exists. GitHub normally reconciles
+     them within a second of a push, and when it does not, nothing on the pull
+     request says so - because every gate this step tells you to poll resolves
+     the head *through the pull request's own view of it*, so they all agree
+     with each other and all of them are answering about a commit that is no
+     longer the tip.
+
+     #2508 sat approved, green and unmergeable for over five hours that way:
+
+     | | commit | pushed | check suites |
+     |---|---|---|---|
+     | `headRefOid` as reported | `21ea097e` | 07:56:47 | 8, all green |
+     | actual tip of the head branch | `271ec912` | 13:58:16 | **0** |
+
+     What that costs is the diagnosis, because the refusal names a gate this
+     repository does not have:
+
+     ```
+     mergePullRequest       ->  Head branch is out of date. Review and try the merge again.
+     PUT /pulls/2508/merge  ->  409  Head branch is out of date. ...
+     ```
+
+     There is no staleness requirement here to satisfy. The `default` ruleset
+     sets `strict_required_status_checks_policy: false` and `main` has no
+     classic protection (`GET /branches/main/protection` -> `404 Branch not
+     protected`), and the branch was not in conflict either -
+     `git merge-tree --write-tree --messages main <head>` returned a tree and
+     zero conflict messages. So the message invites the one action that makes
+     things worse: pushing a refresh onto a contributor's branch consumes the
+     approval of whoever owns the pushing token under
+     `require_last_push_approval`, which is the state #1035 cannot leave. On
+     #2508 the branch needed nothing - the author had already merged the base
+     cleanly.
+
+     `mergeable` / `mergeStateStatus` pinned at `UNKNOWN` is the only anomaly,
+     and it is the weakest signal available, because this step already documents
+     `mergeable` as lazily computed - it "reads `unknown` first and the settled
+     value second". A single `UNKNOWN` is therefore both expected and benign,
+     and "read it once more" is indistinguishable from that benign case for as
+     long as you are willing to keep reading. Five consecutive reads on #2508
+     returned `UNKNOWN` across both the GraphQL and REST shapes; every other
+     signal - `reviewDecision: APPROVED`, `call-test-lint` `SUCCESS`, no
+     unresolved thread, and *both* `--all-open` sweeps below - read ready.
+
+     Ask the head repository, which is the one side not under suspicion:
+
+     ```graphql
+     repository(owner: $headOwner, name: $headName) {
+       ref(qualifiedName: "refs/heads/<headRefName>") { target { oid } }
+     }
+     ```
+
+     resolved from `pullRequest { headRepository { nameWithOwner } headRefName }`
+     and compared against `headRefOid`. Reading the tip through the pull request
+     cannot work by construction - that is the field being checked.
+
+     **Reopen it; do not push it.** A close/reopen reconciles the record without
+     touching the branch, and on #2508 it moved `headRefOid` to `271ec912` and
+     queued the nine check suites that commit had never had. Same remedy and
+     nearly the same reason as the no-check-suite case above (#1987):
+     `reopened` recomputes with no commit, therefore no push, therefore neither
+     `dismiss_stale_reviews_on_push` nor a new last pusher. Read the flip
+     history first and count `nodes`, per the *Before* bullet - #2508 had zero.
+
+     Expect `reviewDecision` to move to `REVIEW_REQUIRED` once the record
+     catches up, and read that as bookkeeping rather than lost review: the
+     approval was already attributed to a commit that was not the tip. Check
+     whether the new head moved the pull request's *own* diff before asking for
+     a re-review - `271ec912` was a clean base merge, `git show --cc` 0 lines,
+     old head an ancestor of the new one, diff against the merge base
+     byte-identical at `3 files, +438`, which is the #1821 shape.
+
+     The lag is not only a merge blocker. It is also a window in which
+     `APPROVED` names the wrong commit, so a record reconciled while the head
+     carries *new* content leaves an approval covering a tree nobody read.
+     Sweep it when reporting repository health, alongside the two `--all-open`
+     checks above:
+
+     ```
+     python3 scripts/check_pr_head_is_current.py --repo <owner/name> --all-open
+     ```
+
+     It agreed with `git ls-remote` on all 10 open pull requests, so it needs no
+     clone. Pinned by tests/test_pr_head_is_current.py. See #2538.
    And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
    the **required** contexts' own conclusions and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
