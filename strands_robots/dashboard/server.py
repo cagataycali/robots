@@ -244,6 +244,28 @@ def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any
     return (prompt or None), None
 
 
+async def _client_gone(ws: WebSocket) -> None:
+    """Park on the socket's inbound channel until the client actually leaves.
+
+    Q50. A send-only websocket handler learns about a disconnect ONLY from a failing
+    send, so a handler that has nothing to send never learns at all: measured on the
+    live dashboard, 71,798 "connection open" lines and zero closes in 11.5 hours,
+    every one of those coroutines still parked in its loop. A camera with no frames
+    is precisely that case - and precisely the case Q42's close verdict was written
+    to explain, so the diagnostic could never fire for the failure it was for.
+
+    Reading the channel is also what makes the ASGI disconnect message get consumed,
+    which is how the server side of the socket is torn down at all.
+    """
+    try:
+        while True:
+            message = await ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
 def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
     """Land the auto-spawn watcher's poll results in the activity trail.
 
@@ -1572,14 +1594,24 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         await ws.accept()
         bridge: MeshBridge = app.state.bridge
         q = bridge.attach_queue()
+        gone = asyncio.create_task(_client_gone(ws))
         try:
             await ws.send_text(json.dumps(bridge.snapshot()))
             while True:
-                event = await q.get()
-                await ws.send_text(json.dumps(event))
+                # Q50: `await q.get()` alone parks forever when the mesh is quiet (no
+                # peers, or STRANDS_MESH=false), so the handler outlived the client and
+                # its queue was never detached - the bridge then serialised every event
+                # into queues nobody reads.
+                getter = asyncio.create_task(q.get())
+                done, _ = await asyncio.wait({getter, gone}, return_when=asyncio.FIRST_COMPLETED)
+                if gone in done:
+                    getter.cancel()
+                    break
+                await ws.send_text(json.dumps(getter.result()))
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            gone.cancel()
             bridge.detach_queue(q)
 
     @app.websocket("/ws/camera/{peer_id}/{cam}")
@@ -1595,8 +1627,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # viewers, and "did any of these sockets ever send a frame?" was unanswerable.
         frames_sent = 0
         started_at = time.monotonic()
+        # Q50: this loop sends only when a frame exists, so on a camera that publishes
+        # NOTHING there is no failing send to reveal that the viewer left - the handler
+        # spun at 15Hz forever and the close verdict below never ran. Watching the
+        # inbound channel is the only signal a send-only socket has.
+        gone = asyncio.create_task(_client_gone(ws))
         try:
-            while True:
+            while not gone.done():
                 f = bridge.latest_frame(peer_id, cam)
                 if f is not None and f.get("t") != last_t:
                     last_t = f.get("t")
@@ -1615,6 +1652,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            gone.cancel()
             # Rate-limited per peer/camera, with the suppressed count carried forward, so
             # a storm reads as a storm instead of drowning the log it would explain.
             log_now, suppressed = _CAMERA_CLOSE_LOG.should_log(f"{peer_id}/{cam}")
