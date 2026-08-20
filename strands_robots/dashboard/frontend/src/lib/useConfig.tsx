@@ -10,6 +10,8 @@ export interface ApplyResult {
   restart_required: string[]
   /** Q51: saved and inherited by the next spawned robot — a mesh restart cannot deliver these. */
   respawn_required?: string[]
+  /** Q52: stored, and only a server start can put it into effect. */
+  startup_required?: string[]
   env_written: string[]
   skipped_masked: string[]
   agent_reset: boolean

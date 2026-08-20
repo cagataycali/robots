@@ -409,6 +409,16 @@ _RESTART_KEYS = {"mesh.connect", "mesh.listen", "mesh.port", "mesh.backend"}
 #: could only ever appear to work.
 _RESPAWN_KEYS = {"mesh.camera_hz"}
 
+#: Q52: keys only a SERVER START can deliver. security.cors_origins has TWO readers with
+#: different lifetimes: the CORSMiddleware is constructed in ``create_app()`` with the origin
+#: list baked in (so the browser-facing Access-Control-Allow-Origin header cannot change until
+#: a restart), while ``TokenAuthMiddleware._cross_origin_refused`` re-reads settings on every
+#: request. The asymmetry is worth stating because it runs the safe way: REMOVING an origin
+#: tightens the write/websocket gate immediately, ADDING one does nothing a browser can use
+#: until the process restarts. Reporting it as "applied" - which is what happened before -
+#: promised the half that does not work.
+_STARTUP_KEYS = {"security.cors_origins"}
+
 #: Body fields of ``POST /api/config`` that are NOT settings sections: the
 #: caller's own vocabulary, so they must never be reported as unknown settings.
 _BODY_NON_SECTION_KEYS = frozenset(
@@ -518,15 +528,19 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
 
     restart_required = sorted(k for k in changed if k in _RESTART_KEYS)
     respawn_required = sorted(k for k in changed if k in _RESPAWN_KEYS)
+    startup_required = sorted(k for k in changed if k in _STARTUP_KEYS)
     return {
         "ignored": ignored,
         # Stored, and inherited by the NEXT child - but not applied to anything running, so it
         # does not belong in `applied` either.
         "applied": sorted(
-            k for k in changed if k not in _RESTART_KEYS and k not in _RESPAWN_KEYS
+            k
+            for k in changed
+            if k not in _RESTART_KEYS and k not in _RESPAWN_KEYS and k not in _STARTUP_KEYS
         ),
         "restart_required": restart_required,
         "respawn_required": respawn_required,
+        "startup_required": startup_required,
         "env_written": env_written,
         "skipped_masked": skipped_masked,
         "agent_reset": agent_reset,

@@ -129,6 +129,15 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
     if (r.restart_required.length) parts.push(`needs a mesh restart: ${r.restart_required.join(', ')}`)
     // Q51: saved, inherited by the next child, and NOT in effect for anything running. Saying
     // "mesh re-pointed" alone let an operator believe a rate change had landed.
+    // Q52: cors_origins used to be announced as "applied". Adding an origin cannot work until
+    // the process restarts (the browser header is baked at startup); removing one tightens the
+    // write/websocket gate immediately, so the two directions are stated separately.
+    if (r.startup_required?.length) {
+      parts.push(
+        `saved, takes effect at the next server start: ${r.startup_required.join(', ')} `
+        + '(a removed origin is already refused for writes and websockets)',
+      )
+    }
     if (r.respawn_required?.length) {
       parts.push(
         `saved for robots spawned from now on: ${r.respawn_required.join(', ')} `

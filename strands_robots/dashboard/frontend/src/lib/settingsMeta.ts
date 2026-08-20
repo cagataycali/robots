@@ -18,6 +18,7 @@ export const APPLY_LABEL: Record<ApplyMode, string> = {
   // Q51: a mesh restart CANNOT deliver this one — the value is read inside each robot's own
   // process when it starts its camera loop, and the dashboard publishes no frames at all.
   respawn: 'applies to robots spawned from now on',
+  // Q52: verified — the CORS response header is baked into CORSMiddleware in create_app().
   startup: 'applies at next server start',
 }
 
@@ -211,7 +212,7 @@ const EXTRA_ENTRIES: SearchEntry[] = [
   { key: 'env.vars', label: 'Environment variables', tab: 'env', keywords: 'api key secret credential openai huggingface hf token .env', effect: 'Credentials and flags written to the server .env file.' },
   { key: 'env.trust_remote_code', label: 'HuggingFace trust_remote_code', tab: 'env', keywords: 'lerobot kimodo model repo security allow', effect: 'Allows model repos to execute their own code when loaded.' },
   { key: 'security.auth_token', label: 'Server auth token', tab: 'security', keywords: 'password protect lock api', effect: 'Token every client must present on /api and /ws.' },
-  { key: 'security.cors_origins', label: 'CORS origins', tab: 'security', keywords: 'browser cross origin websites', effect: 'Which websites a browser may call this API from.' },
+  { key: 'security.cors_origins', label: 'CORS origins', tab: 'security', keywords: 'browser cross origin websites', effect: 'Which websites a browser may call this API from. Adding one needs a server restart; removing one is refused for writes and websockets straight away.' },
   { key: 'mesh.restart', label: 'Restart mesh', tab: 'mesh', keywords: 're-point reconnect zenoh session', effect: 'Re-opens the shared mesh session.' },
 ]
 

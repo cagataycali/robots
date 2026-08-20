@@ -60,3 +60,58 @@ def test_the_claim_matches_where_the_value_is_actually_read():
 
 def test_respawn_and_restart_key_sets_are_disjoint():
     assert not (config_api._RESTART_KEYS & config_api._RESPAWN_KEYS)
+
+
+# --- Q52: the startup-only key, and the agent claim that turned out TRUE -----------------
+
+
+def test_cors_origins_is_reported_as_startup_not_applied(monkeypatch):
+    monkeypatch.setattr(settings, "update_strict", lambda patch: (["security.cors_origins"], []))
+    res = _apply({"security": {"cors_origins": ["https://lab.example"]}})
+    assert res["startup_required"] == ["security.cors_origins"]
+    assert res["applied"] == []
+    assert res["restart_required"] == res["respawn_required"] == []
+
+
+def test_cors_has_two_readers_with_different_lifetimes():
+    """The evidence for that wording, pinned.
+
+    create_app() bakes the origin list into CORSMiddleware (browser header, startup-only);
+    TokenAuthMiddleware re-reads settings per request (the write/websocket gate). So removing an
+    origin tightens immediately while adding one needs a restart — the safe asymmetry, and the
+    reason the field cannot simply say "applies immediately".
+    """
+    import inspect
+
+    from strands_robots.dashboard import server
+
+    app_src = inspect.getsource(server.create_app)
+    assert "cors_origins" in app_src and "CORSMiddleware" in app_src
+    gate_src = inspect.getsource(server.TokenAuthMiddleware._cross_origin_refused)
+    assert 'settings.get("security", "cors_origins"' in gate_src, "the gate must read live"
+
+
+def test_the_agent_keys_really_do_apply_on_the_next_turn(monkeypatch):
+    """Checked with the same method and found HONEST — recorded so nobody re-audits it blind.
+
+    reset_agent() drops the cached agent; the next get_agent() calls _build_agent(), which reads
+    settings.load()["agent"] then. Nothing captures the model id earlier.
+    """
+    import inspect
+
+    from strands_robots.dashboard import agent_bridge
+
+    assert "settings.load()" in inspect.getsource(agent_bridge._build_agent)
+    assert "_build_agent()" in inspect.getsource(agent_bridge.get_agent)
+    assert "_agent = None" in inspect.getsource(agent_bridge.reset_agent)
+
+    calls: list[bool] = []
+    monkeypatch.setattr(settings, "update_strict", lambda patch: (["agent.model_id"], []))
+    monkeypatch.setattr(
+        "strands_robots.dashboard.agent_bridge.reset_agent",
+        lambda clear_history=False: calls.append(True),
+    )
+    res = _apply({"agent": {"model_id": "anthropic.claude"}})
+    assert calls == [True], "a model change must drop the cached agent"
+    assert res["agent_reset"] is True
+    assert res["applied"] == ["agent.model_id"]
