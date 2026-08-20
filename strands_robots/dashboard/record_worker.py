@@ -36,6 +36,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from strands_robots.dashboard import record_motion
+
 logger = logging.getLogger(__name__)
 
 THUMB_MAX_WIDTH = 160
@@ -243,6 +245,14 @@ class RecordWorker:
         self._current: EpisodeState | None = None
         self._closed = False
         self._last_error: str | None = None
+        # One (timestamp, joint positions) sample per RECORDED frame, pruned to
+        # record_motion's window. Bounded by time, not by count: at 30fps a count
+        # bound would mean a different number of seconds than at 5fps.
+        self._motion: list[tuple[float, dict[str, float]]] = []
+        # The verdict for the episode in flight, kept after it stops so the panel
+        # can still say "that one never moved" while the operator reads it in
+        # ``idle`` - the same reason _measured_fps falls back to the last episode.
+        self._motion_notice: dict[str, Any] | None = None
 
         self._stop_evt = threading.Event()
         self._thread: threading.Thread | None = None
@@ -272,6 +282,11 @@ class RecordWorker:
                 # between them is invisible in the artifact.
                 "fps_achieved": self._measured_fps(),
                 "fps_notice": fps_verdict(self.fps, self._measured_fps()),
+                # None unless the follower has held one pose for the whole
+                # window: a tripped 12V supply still answers position reads off
+                # the logic rail, so a still life records at full fps with every
+                # counter perfect (record_motion / BUGS.md Q35).
+                "motion_notice": self._motion_verdict_locked(),
                 # None unless a requested camera is missing: absent cameras
                 # must be visible BEFORE 10 episodes are collected blind.
                 "camera_notice": getattr(self._backend, "camera_notice", None),
@@ -287,6 +302,12 @@ class RecordWorker:
             self._current = EpisodeState(index=self._next_index())
             self._current.started_at = self._clock()
             self._last_error = None
+            # A fresh episode starts with no motion history: carrying the previous
+            # one's samples over would let a long pause between episodes - which is
+            # exactly when the operator lines the arms up - be reported as this
+            # episode holding still.
+            self._motion = []
+            self._motion_notice = None
             self._phase = "recording"
         return self.session()
 
@@ -296,6 +317,16 @@ class RecordWorker:
             if self._phase != "recording" or self._current is None:
                 return self.session()
             ep = self._current
+            # Judge the episode ON STOP, not only when someone polls: computing this
+            # solely in session() made the verdict depend on whether anyone was
+            # WATCHING - an unattended collection run would keep the frames and lose
+            # the finding. Its own test caught that.
+            self._motion_notice = (
+                record_motion.motion_verdict(
+                    self._motion, now=self._clock(), frames=ep.frames
+                )
+                or self._motion_notice
+            )
             self._phase = "idle"
             self._current = None
             if ep.frames == 0:
@@ -426,6 +457,22 @@ class RecordWorker:
         finally:
             ticker.close()
 
+    def _motion_verdict_locked(self) -> dict[str, Any] | None:
+        """Whether the follower is holding one pose. Caller holds ``self._lock``.
+
+        Recomputed while recording and REMEMBERED afterwards: the operator reads this
+        panel between episodes, and a notice that vanished the instant they pressed
+        stop would only ever be seen by someone watching the screen at the time.
+        """
+        if self._phase == "recording" and self._current is not None:
+            verdict = record_motion.motion_verdict(
+                self._motion, now=self._clock(), frames=self._current.frames
+            )
+            if verdict is not None:
+                self._motion_notice = verdict
+            return verdict or self._motion_notice
+        return self._motion_notice
+
     def _measured_fps(self) -> float | None:
         """Capture rate of the episode in flight, else the last real one.
 
@@ -459,7 +506,15 @@ class RecordWorker:
             self._recorder.add_frame(obs, sent, task=self.task)
             ep = self._current
             ep.frames += 1
-            ep.duration_s = self._clock() - ep.started_at
+            now = self._clock()
+            ep.duration_s = now - ep.started_at
+            self._motion.append((now, record_motion.joint_positions(obs)))
+            # Kept WIDER than record_motion's window on purpose: the verdict needs a
+            # sample older than the window to know it has a full window of history at
+            # all (see record_motion.motion_verdict). Still bounded by time.
+            self._motion = record_motion.prune(  # type: ignore[assignment]
+                self._motion, now, record_motion.WINDOW_S * 2
+            )
             if ep.frames == 1:
                 for cam in self._backend.camera_keys:
                     if cam in obs:

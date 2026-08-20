@@ -128,18 +128,23 @@ def motion_verdict(
     covered, or observations that carried no joint positions at all (a sim backend, or a
     schema this rule does not understand -- silence beats guessing).
     """
+    # COVERAGE is judged on the whole history handed over, TRAVEL only on the window.
+    # Doing both on the pruned window cannot work at any fps: pruning at ``now - window_s``
+    # leaves the oldest kept sample just INSIDE the cutoff, so its span is always about one
+    # sample interval short of the threshold and the verdict stays silent forever. I fixed
+    # that once by measuring against ``now`` and it was still short - because the reach has
+    # to come from a sample OLDER than the window, which pruning is exactly what removes.
+    # Hence ``prune_window`` below, and the worker keeping a ring wider than the window.
+    if not samples:
+        return None
+    reach_s = now - samples[0][0]
+    if reach_s < window_s:
+        # Less history than the window: a hold this short is ordinary.
+        return None
     window = prune(samples, now, window_s)
     if len(window) < max(2, int(min_samples)):
         return None
-    # Coverage is measured against NOW, not against the newest sample. Pruning at
-    # ``now - window_s`` leaves a span one sample-interval short of the window, so
-    # comparing sample-to-sample never reached the threshold at any fps - the first
-    # version of this file was silent about a frozen arm forever, and its own tests
-    # caught it. What it costs to get wrong: nothing warns, which is the defect.
     span_s = now - window[0][0]
-    if span_s < window_s:
-        # The episode is younger than the window: a hold this short is ordinary.
-        return None
     # A stream that STOPPED is a different defect (frames are not being recorded at all,
     # and the fps panel already says so). Reporting it as a motionless arm would send the
     # operator to check a power supply that is fine.

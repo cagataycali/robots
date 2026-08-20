@@ -103,6 +103,21 @@ class TestAFrozenArmIsReportedWithItsConsequence:
         assert isinstance(rm.motion_verdict(_still(60), now=112.0), dict)
 
 
+class TestCoverageComesFromHistoryNotFromThePrunedWindow:
+    """The bug that bit twice: a window pruned at ``now - window_s`` has a span about one
+    sample interval SHORT of the window at any fps, so judging coverage on it is silent
+    about a frozen arm forever. Coverage is therefore read off the whole history."""
+
+    def test_samples_on_a_grid_that_never_lands_exactly_on_the_cutoff(self) -> None:
+        # 5Hz starting at 100.2: pruning at 104.0 keeps 104.2 onwards - 7.8s, not 8.0.
+        samples = [(100.2 + i * 0.2, {"a.pos": 12.0}) for i in range(60)]
+        assert rm.motion_verdict(samples, now=112.0) is not None
+
+    def test_history_shorter_than_the_window_still_says_nothing(self) -> None:
+        samples = [(100.2 + i * 0.2, {"a.pos": 12.0}) for i in range(30)]
+        assert rm.motion_verdict(samples, now=106.2) is None
+
+
 class TestAStalledStreamIsNotAFrozenArm:
     """Two different defects; sending the operator to the wrong one wastes the episode."""
 
