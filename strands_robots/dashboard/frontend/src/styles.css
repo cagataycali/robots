@@ -1677,3 +1677,18 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   background: color-mix(in srgb, var(--bad, #ff6b6b) 8%, transparent);
 }
 .field.check.consent-clear span { color: var(--bad, #ff6b6b); font-weight: 600; }
+
+/* Episode box beside "replay in sim": narrow, because it holds an index and not a name. Sized in ch so
+   it never becomes a tap target too small to hit on the phone (the touch-target audit owns that rule). */
+.ep-box {
+  width: 5.5ch;
+  min-height: 44px;
+  padding: 0 0.4rem;
+  text-align: center;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.14));
+  background: var(--glass-bg, rgba(255, 255, 255, 0.06));
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.ep-box:disabled { opacity: 0.45; }

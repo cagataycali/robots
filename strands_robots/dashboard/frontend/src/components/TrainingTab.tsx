@@ -11,7 +11,7 @@ import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
 import { setDeployIntent } from '../lib/deployIntent'
-import { datasetKey as dsKey, selectDataset, selectionKey, replayable, trainable, selectedRow, datasetMark, type DatasetRow } from '../lib/datasetSelection'
+import { datasetKey as dsKey, selectDataset, selectionKey, replayable, trainable, selectedRow, datasetMark, episodeChoice, type DatasetRow } from '../lib/datasetSelection'
 import { datasetHint, isCurrentResponse } from '../lib/datasetHint'
 import { jobsLedgerNotice } from '../lib/jobsLedger'
 import { orderJobsNewestFirst } from '../lib/orderJobs'
@@ -98,6 +98,9 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [jobsProblem, setJobsProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  // Which episode each row's replay should ask for. Keyed per dataset, because the operator
+  // comparing two recordings must not have one box silently follow them between rows.
+  const [episodeBox, setEpisodeBox] = useState<Record<string, string>>({})
 
   const refresh = async () => {
     const seq = ++dsSeq.current
@@ -384,9 +387,13 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     }
     setBusy(true); setMsg(null)
     try {
-      const j = await post('/api/replay', { repo_id: d.repo_id, root: d.root, episode: 0 })
+      // The index used to be hardcoded 0 here while the server accepted any episode, so a 40-episode
+      // dataset could only ever be watched at its first one. The refusal is rendered next to the box.
+      const choice = episodeChoice(d, episodeBox[dsKey(d)])
+      if (!choice.ok) { setMsg(`⚠ ${choice.reason}`); return }
+      const j = await post('/api/replay', { repo_id: d.repo_id, root: d.root, episode: choice.episode })
       setMsg(j.peer_id
-        ? `▶ replaying ${d.repo_id} ep0 as ${j.peer_id} — watch it in the fleet grid`
+        ? `▶ replaying ${d.repo_id} ep${choice.episode} as ${j.peer_id} — watch it in the fleet grid`
         : `⚠ ${JSON.stringify(j).slice(0, 200)}`)
     } catch (e) { failed('replay', e) }
     setBusy(false)
@@ -744,8 +751,19 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               {/* Replay reads episode 0 off this disk, so it is offered only for
                   what is actually here — a disabled button with the reason beats
                   a click that dies inside a dataset loader. */}
+              <input className="ep-box" type="number" min={0} inputMode="numeric"
+                value={episodeBox[dsKey(d)] ?? ''}
+                placeholder={typeof d.total_episodes === 'number' && d.total_episodes > 0 ? `0–${d.total_episodes - 1}` : '0'}
+                aria-label={`episode to replay from ${d.repo_id}`}
+                title={typeof d.total_episodes === 'number' && d.total_episodes > 0
+                  ? `This dataset has ${d.total_episodes} episode${d.total_episodes === 1 ? '' : 's'} — blank replays episode 0`
+                  : 'Episode index — blank replays episode 0'}
+                disabled={busy || !replayable(d).ok}
+                onChange={e => setEpisodeBox(prev => ({ ...prev, [dsKey(d)]: e.target.value }))} />
               <button className="btn ghost" onClick={() => replay(d)} disabled={busy || !replayable(d).ok}
-                title={replayable(d).reason}>
+                title={episodeChoice(d, episodeBox[dsKey(d)]).ok
+                  ? `${replayable(d).reason} — ${episodeChoice(d, episodeBox[dsKey(d)]).reason}`
+                  : episodeChoice(d, episodeBox[dsKey(d)]).reason}>
                 🎬 replay in sim
               </button>
               {/* #2486: what was each episode judged to be? Read-only — annotate_episode refuses an

@@ -128,3 +128,56 @@ export function trainable(d: DatasetRow | null): { ok: boolean; reason: string }
 export function selectedRow(rows: DatasetRow[], sel: { dataset_root: string; dataset_repo_id: string }): DatasetRow | null {
   return rows.find(r => datasetKey(r) === selectionKey(sel)) ?? null
 }
+
+/**
+ * Which episode a replay click should ask for — and whether the number the operator typed exists.
+ *
+ * Until now the replay button sent `episode: 0`, hardcoded, while the backend has always validated and
+ * accepted any index. So a dataset of 40 episodes could only ever be watched at its first one, and the
+ * operator had no way to see that: the button said "replay in sim", not "replay the first of 40". That is
+ * a plausible reading of the report that replay "is not working properly" — a second recording attempt
+ * replays the FIRST attempt, forever.
+ *
+ * Rules, in the order a human would apply them:
+ *  - a blank box means episode 0, because that is the old behaviour and the least surprising default;
+ *  - a non-integer or negative index is refused here rather than by the server, so the operator gets the
+ *    sentence next to the box they typed in;
+ *  - `total_episodes` is the server's own count: index >= N is refused NAMING N and the last valid index,
+ *    which is the mistake this box will actually produce (off-by-one on a 1-based mental model);
+ *  - an ABSENT count is not zero episodes. Older servers and Hub rows do not carry it, so the index is
+ *    passed through unchecked and the caller is told the count is unknown — a missing fact must not
+ *    become a refusal (the same law as `usable` above).
+ */
+export function episodeChoice(
+  d: DatasetRow,
+  requested?: number | string | null,
+): { ok: boolean; episode: number; reason: string; countKnown: boolean } {
+  const total = typeof d.total_episodes === 'number' && Number.isFinite(d.total_episodes) ? d.total_episodes : null
+  const countKnown = total !== null && total > 0
+  const raw = typeof requested === 'string' ? requested.trim() : requested
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, episode: 0, reason: countKnown ? `episode 0 of ${total}` : 'episode 0', countKnown }
+  }
+  const n = Number(raw)
+  if (!Number.isInteger(n)) {
+    return { ok: false, episode: 0, reason: `“${raw}” is not a whole episode number`, countKnown }
+  }
+  if (n < 0) return { ok: false, episode: 0, reason: 'episode numbers start at 0', countKnown }
+  if (total !== null && total <= 0) {
+    return { ok: false, episode: 0, reason: 'this dataset records no episodes yet', countKnown }
+  }
+  if (total !== null && n >= total) {
+    return {
+      ok: false,
+      episode: 0,
+      reason: `this dataset has ${total} episode${total === 1 ? '' : 's'}, numbered 0–${total - 1}`,
+      countKnown,
+    }
+  }
+  return {
+    ok: true,
+    episode: n,
+    reason: countKnown ? `episode ${n} of ${total}` : `episode ${n} (this server does not report a count)`,
+    countKnown,
+  }
+}
