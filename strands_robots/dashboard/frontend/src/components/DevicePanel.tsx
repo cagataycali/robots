@@ -15,6 +15,7 @@ import { calibrationVerdict } from '../lib/calibrationMatch'
 import { rescanReport, hardwareKey, type RescanReport } from '../lib/rescanReport'
 import { isLatestRequest } from '../lib/requestOrder'
 import { peerNameField } from '../lib/peerName'
+import { portChoice, blocksSpawn } from '../lib/portChoice'
 
 interface SerialPort {
   device: string
@@ -362,6 +363,17 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const managed = Object.values(doc?.managed ?? {})
   const freePorts = doc?.serial_ports ?? []
   const claimedPorts = new Set(managed.filter(m => m.alive && m.port).map(m => m.port as string))
+
+  /* Q77: the picked bus can go stale after it is picked — unplugged, re-enumerated under a new /dev
+     path, or claimed by another child. The <select> is only correct at render time; this judges the
+     value actually held in state. */
+  const portVerdict = portChoice({
+    chosen: port,
+    known: freePorts.map(p => p.device),
+    claimed: [...claimedPorts],
+    scanned: doc !== null,
+  })
+
   // The servo-board rows shadow `busy` with a per-row "this bus is claimed" flag, so an action in
   // flight has to be captured under its own name or every button in that list stays live during it.
   const acting = busy
@@ -518,6 +530,13 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                         </option>
                       ))}
                     </select>
+                    {/* Q77: said where the choice was made, instead of arriving from a serial driver
+                        inside a child process minutes later. */}
+                    {(portVerdict.kind === 'vanished' || portVerdict.kind === 'claimed') && (
+                      <em className="field-err" role="alert">
+                        ⚠ {portVerdict.detail} — {portVerdict.remedy}
+                      </em>
+                    )}
                   </label>
                   <label className="field">
                     <span>Calibration id</span>
@@ -599,7 +618,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
             )}
             <div className="sheet-actions">
               <button className="btn go"
-                      disabled={busy || !robotName || (mode === 'real' && !port) || !!camProblem || !!nameVerdict.problem}
+                      disabled={busy || !robotName || (mode === 'real' && !port) || !!camProblem || !!nameVerdict.problem
+                                || (mode === 'real' && blocksSpawn(portVerdict))}
                       onClick={spawn}>
                 spawn
               </button>
