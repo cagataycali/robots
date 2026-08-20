@@ -1074,15 +1074,12 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/consent")
     async def get_consent() -> dict[str, Any]:
-        """What this machine currently grants, and what can be asked for (U18)."""
-        allow = [e.strip() for e in os.environ.get("STRANDS_MESH_HF_REPO_ALLOW", "").split(",") if e.strip()]
-        return {
-            "kinds": list(consent.KINDS),
-            "trust_remote_code": os.environ.get("STRANDS_TRUST_REMOTE_CODE", "").strip().lower()
-            in ("1", "true", "yes"),
-            "hf_repo_allow": allow,
-            "env_file": str(config_api.ENV_FILE),
-        }
+        """What this machine currently grants, and what can be asked for (U18).
+
+        Built by consent.granted_state so it cannot drift from the guard again: this handler
+        listed two of the three kinds, which left the teleop envelope widening ungrantable-back.
+        """
+        return {**consent.granted_state(os.environ), "env_file": str(config_api.ENV_FILE)}
 
     @app.post("/api/consent")
     async def post_consent(body: dict[str, Any]) -> dict[str, Any]:

@@ -9,9 +9,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
 
+type TeleopEnvelope = {
+  granted: boolean
+  value_abs: string | null
+  slew_abs: string | null
+  is_degree_preset: boolean
+}
+
 type ConsentState = {
   trust_remote_code: boolean
   hf_repo_allow: string[]
+  /* Absent from an older server: this screen listed two of the three kinds and the teleop envelope
+     widening — the grant with physical reach — could not be seen or revoked here. */
+  teleop_degree_units?: TeleopEnvelope
   env_file?: string
 }
 
@@ -47,7 +57,8 @@ export default function ConsentSettings() {
 
   if (error && !state) return <p className="hint">could not read permissions: {error}</p>
 
-  const nothing = state && !state.trust_remote_code && state.hf_repo_allow.length === 0
+  const envelope = state?.teleop_degree_units
+  const nothing = state && !state.trust_remote_code && state.hf_repo_allow.length === 0 && !envelope?.granted
 
   return (
     <div className="consent-settings">
@@ -71,6 +82,26 @@ export default function ConsentSettings() {
           <button className="btn ghost danger" disabled={busy === 'trust'}
                   onClick={() => revoke('trust_remote_code', null, 'trust')}>
             {busy === 'trust' ? '…' : 'revoke'}
+          </button>
+        </div>
+      ) : null}
+
+      {envelope?.granted ? (
+        <div className="cg-row">
+          <div>
+            <b>Teleop envelope widened{envelope.is_degree_preset ? ' to degrees' : ''}</b>
+            <div className="hint">
+              Every teleop stream on this machine, not one arm: a single frame may command a reach
+              of {envelope.value_abs ?? 'the default'} units
+              {envelope.slew_abs ? ` at up to ${envelope.slew_abs} units/s` : ' (speed bound left at the default)'}.
+              {envelope.is_degree_preset
+                ? ' This is the degrees preset, which an SO-101 needs — a runaway far outside it is still refused.'
+                : ' This is a hand-set bound, not the degrees preset — check it is the one you meant.'}
+            </div>
+          </div>
+          <button className="btn ghost danger" disabled={busy === 'teleop'}
+                  onClick={() => revoke('teleop_degree_units', null, 'the teleop envelope')}>
+            {busy === 'teleop' ? '…' : 'revoke'}
           </button>
         </div>
       ) : null}

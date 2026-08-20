@@ -20,6 +20,7 @@ that grants exactly what was asked for — never a wildcard.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Mapping
@@ -235,6 +236,39 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
         return {_HF_ENV: ",".join(merged)}
 
     return {}
+
+
+def granted_state(env: Mapping[str, str] | None = None) -> dict:
+    """What this machine currently grants — every kind, in one place.
+
+    GET /api/consent used to build this inline and covered only two of the three kinds, so the
+    teleop envelope widening (the grant with actual physical reach: it raises how far a single
+    teleop frame may command an arm) was invisible on the permissions screen and therefore could
+    not be revoked there — while the consent dialog promised it could. A grant with no surface is
+    a grant nobody can take back.
+
+    ``teleop_degree_units`` reports what the environment ACTUALLY holds, not merely whether it
+    equals the value this module would have written: an operator who set a wider bound by hand
+    must see that, and a half-set pair (reach widened, speed bound untouched) is reported as
+    granted rather than hidden, because the widened half is already in force.
+    """
+    env = os.environ if env is None else env
+    allow = [e.strip() for e in str(env.get(_HF_ENV, "")).split(",") if e.strip()]
+    value_abs = str(env.get(_TELEOP_VALUE_ENV, "")).strip()
+    slew_abs = str(env.get(_TELEOP_SLEW_ENV, "")).strip()
+    return {
+        "kinds": list(KINDS),
+        "trust_remote_code": str(env.get(_TRUST_ENV, "")).strip().lower() in ("1", "true", "yes"),
+        "hf_repo_allow": allow,
+        "teleop_degree_units": {
+            "granted": bool(value_abs or slew_abs),
+            "value_abs": value_abs or None,
+            "slew_abs": slew_abs or None,
+            # True only when it is exactly the pair this module grants; a hand-tuned wider bound
+            # must not be described to the operator as "the degrees preset".
+            "is_degree_preset": value_abs == _TELEOP_DEGREE_VALUE and slew_abs == _TELEOP_DEGREE_SLEW,
+        },
+    }
 
 
 def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> dict[str, str]:
