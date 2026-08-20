@@ -51,6 +51,9 @@ _registry_guard = threading.Lock()
 _fallback_lock = threading.RLock()
 
 
+_log = logging.getLogger(__name__)
+
+
 def bus_lock(device: Any) -> threading.RLock:
     """Return the one lock guarding ``device``'s bus, creating it on first use.
 
@@ -170,18 +173,88 @@ def read_joints(device: Any) -> Any:
     if bus is None or not hasattr(bus, "sync_read"):
         return read_observation(device)
     retries = _num_read_retries(device)
-    with bus_lock(device):
+
+    def _sync_read() -> Any:
         if retries is None:
-            raw = bus.sync_read(_POSITION_REGISTER)
-        else:
+            return bus.sync_read(_POSITION_REGISTER)
+        try:
+            return bus.sync_read(_POSITION_REGISTER, num_retry=retries)
+        except TypeError:
+            # A bus implementation without the retry keyword: the read still
+            # matters more than the retry policy.
+            return bus.sync_read(_POSITION_REGISTER)
+
+    with bus_lock(device):
+        try:
+            raw = _sync_read()
+        except Exception as exc:  # noqa: BLE001 - re-raised unless provably recoverable
+            if port_busy_action(exc, already_recovered=False) != "clear_and_retry":
+                raise
+            if not clear_stale_port_busy(bus):
+                raise
+            _log.warning(
+                "%s: the motor bus was left marked in-use by an exchange that never finished; "
+                "cleared that flag while holding this arm's bus lock and read again. Nothing else "
+                "can recover it, and every later read would have failed the same way.",
+                getattr(device, "name", None) or type(device).__name__,
+            )
             try:
-                raw = bus.sync_read(_POSITION_REGISTER, num_retry=retries)
-            except TypeError:
-                # A bus implementation without the retry keyword: the read still
-                # matters more than the retry policy.
-                raw = bus.sync_read(_POSITION_REGISTER)
+                raw = _sync_read()
+            except Exception as second:  # noqa: BLE001
+                if port_busy_action(second, already_recovered=True) == "report_real_owner":
+                    raise ConnectionError(
+                        "the motor bus reports in-use again immediately after that flag was "
+                        "cleared, while this process holds the bus lock - so the port has a REAL "
+                        "owner outside bus_access (another process, or a reader that skips the "
+                        f"lock). Ask the OS who holds it: /usr/sbin/lsof {getattr(bus, 'port', '')} "
+                        f"({second})"
+                    ) from second
+                raise
     if not isinstance(raw, dict):
         return raw
     # ``.pos`` is lerobot's own suffix (see SOFollower.get_observation) and the
     # shape the rest of this codebase already parses.
     return {f"{motor}.pos": value for motor, value in raw.items()}
+
+_PORT_BUSY_SIGNATURE = "Port is in use!"
+
+
+def port_busy_action(error: Any, already_recovered: bool) -> str:
+    """Decide what a port-busy failure means, given whether we already recovered once.
+
+    MEASURED 2026-08-20 on cagatay's rig (BUGS.md Q81): both arms published ZERO joints for hours
+    with healthy presence, because one read had failed with ``[TxRxResult] Port is in use!`` and
+    every read after it failed identically. The mechanism is in the vendored SDK: ``txPacket`` sets
+    ``port.is_using = True``, and the callers clear it with a bare ``port.is_using = False`` AFTER
+    the call - there is no ``try``/``finally`` anywhere in that file. So an exception, a timeout or a
+    cancellation between those two lines leaves the flag set for the LIFE OF THE PROCESS, and the
+    arm is mute until someone notices and respawns it. Retrying cannot help: the flag is checked
+    before the port is touched.
+
+    Clearing that flag is safe only under a proof, never on a hunch, because clearing a flag a
+    concurrent exchange genuinely holds would interleave two conversations on one UART and hand back
+    positions that were never measured. The proof this module can offer is its own lock: every read
+    and write here happens inside :func:`bus_lock`, so while we hold it a port that still claims to
+    be in use is either stale (its owner died mid-exchange) or held by a reader that bypasses the
+    lock. The first is recoverable; the second is a bug that must be SAID OUT LOUD, not smoothed
+    over. Hence: clear once, and if the very next read is busy again, report a real owner - the
+    second failure is the evidence that distinguishes them.
+    """
+    if _PORT_BUSY_SIGNATURE not in str(error):
+        return "reraise"
+    return "report_real_owner" if already_recovered else "clear_and_retry"
+
+
+def clear_stale_port_busy(bus: Any) -> bool:
+    """Clear the SDK's in-use flag, only if it is actually set. Returns whether it was.
+
+    Deliberately narrow: it touches one boolean on the port handler and nothing else - no reopen, no
+    reconnect, no write to a motor. A bus that does not expose a port handler (a stub, a sim, a
+    future driver) is left alone and reported as unrecovered, so the caller re-raises the original
+    error rather than claiming a repair it did not make.
+    """
+    handler = getattr(bus, "port_handler", None)
+    if handler is None or not getattr(handler, "is_using", False):
+        return False
+    handler.is_using = False
+    return True

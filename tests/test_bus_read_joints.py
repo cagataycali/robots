@@ -19,6 +19,7 @@ import threading
 
 import pytest
 
+from strands_robots import bus_access
 from strands_robots.bus_access import bus_lock, read_joints
 
 
@@ -171,3 +172,102 @@ class TestDriverVariations:
                 return ["not", "a", "mapping"]
 
         assert read_joints(_Arm(_Weird({}))) == ["not", "a", "mapping"]
+
+
+# ---------------------------------------------------------------------------
+# Q81: a port left marked in-use by an exchange that never finished
+# ---------------------------------------------------------------------------
+
+_BUSY = "Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 3 tries. [TxRxResult] Port is in use!"
+
+
+class _Handler:
+    def __init__(self, is_using: bool = True) -> None:
+        self.is_using = is_using
+
+
+class _StuckBus:
+    """A bus whose first read fails port-busy, and whose later reads depend on the flag."""
+
+    def __init__(self, handler: object | None, heals: bool = True) -> None:
+        self.port_handler = handler
+        self.port = "/dev/cu.usbmodemTEST"
+        self.heals = heals
+        self.calls = 0
+
+    def sync_read(self, register, num_retry=0):  # noqa: ANN001, ANN201
+        self.calls += 1
+        if self.calls == 1 or not self.heals:
+            raise ConnectionError(_BUSY)
+        return {"shoulder_pan": 1.0, "wrist_roll": 170.0}
+
+
+class _Device:
+    def __init__(self, bus: object) -> None:
+        self.bus = bus
+        self.name = "so101-follower"
+
+
+def test_a_stale_in_use_flag_is_cleared_once_and_the_joints_come_back() -> None:
+    """The measured Q81 case: the flag outlives the exchange that set it, so nothing else recovers.
+
+    The vendored SDK sets ``port.is_using = True`` inside ``txPacket`` and clears it with a bare
+    assignment AFTER the call, with no try/finally, so an exception in between strands the flag for
+    the life of the process and every later read fails before the port is even touched. Both of
+    cagatay's arms sat mute for hours that way with healthy presence.
+    """
+    handler = _Handler(is_using=True)
+    bus = _StuckBus(handler)
+    out = read_joints(_Device(bus))
+    assert out == {"shoulder_pan.pos": 1.0, "wrist_roll.pos": 170.0}
+    assert handler.is_using is False, "the stale flag must be cleared, not worked around"
+    assert bus.calls == 2, "exactly one retry - recovery is not a retry loop"
+
+
+def test_a_port_busy_again_right_after_clearing_is_reported_as_a_REAL_owner() -> None:
+    """The case that must never be smoothed over.
+
+    We only clear the flag because holding :func:`bus_lock` proves no reader of ours is mid-exchange.
+    If the very next read is busy again, that proof has failed: something outside this module owns the
+    port - another process, or a reader that skips the lock. Clearing repeatedly would interleave two
+    conversations on one UART and hand back positions that were never measured, so the error names the
+    situation and the command that identifies the holder.
+    """
+    bus = _StuckBus(_Handler(is_using=True), heals=False)
+    with pytest.raises(ConnectionError) as caught:
+        read_joints(_Device(bus))
+    msg = str(caught.value)
+    assert "REAL owner" in msg
+    assert "lsof /dev/cu.usbmodemTEST" in msg, "name the port, so the operator can ask the OS"
+    assert bus.calls == 2, "one clear, one retry, then the truth - never a clearing loop"
+
+
+def test_an_unrelated_read_failure_never_touches_the_flag() -> None:
+    """Only the port-busy signature is recoverable; everything else propagates untouched."""
+
+    class _Broken(_StuckBus):
+        def sync_read(self, register, num_retry=0):  # noqa: ANN001, ANN201
+            self.calls += 1
+            raise ConnectionError("Failed to sync read 'Present_Position' ... after 3 tries.")
+
+    handler = _Handler(is_using=True)
+    bus = _Broken(handler)
+    with pytest.raises(ConnectionError):
+        read_joints(_Device(bus))
+    assert handler.is_using is True, "a no-response failure is not a stale flag - leave it alone"
+    assert bus.calls == 1, "no retry for a failure we cannot explain"
+
+
+def test_a_bus_with_no_port_handler_reports_the_original_error() -> None:
+    """A stub, a sim or a future driver must not see an invented repair."""
+    bus = _StuckBus(None, heals=False)
+    with pytest.raises(ConnectionError) as caught:
+        read_joints(_Device(bus))
+    assert "Port is in use!" in str(caught.value), "the driver's own error, unchanged"
+    assert "REAL owner" not in str(caught.value), "we cannot claim a proof we never made"
+
+
+def test_clear_stale_port_busy_does_not_touch_a_flag_that_is_already_clear() -> None:
+    handler = _Handler(is_using=False)
+    assert bus_access.clear_stale_port_busy(_StuckBus(handler)) is False
+    assert bus_access.clear_stale_port_busy(_StuckBus(None)) is False
