@@ -23,6 +23,15 @@ export interface DatasetRow {
   total_episodes?: number
   robot_type?: string
   fps?: number
+  /**
+   * Q37: what the server could see of this dataset WITHOUT loading it. `usable === false` means
+   * the metadata itself says nothing was recorded, or the frames are not there. Absent means an
+   * older server — and a MISSING verdict is not a bad verdict, so the old behaviour must stand.
+   * Hub rows never carry one: nothing on this machine can inspect a dataset that is not here yet.
+   */
+  usable?: boolean
+  reason?: string
+  problem?: string
 }
 
 export interface DatasetSelection {
@@ -79,7 +88,28 @@ export function selectionKey(sel: { dataset_root: string; dataset_repo_id: strin
  * inside a dataset loader.
  */
 export function replayable(d: DatasetRow): { ok: boolean; reason: string } {
-  return d.root
-    ? { ok: true, reason: 'Replay episode 0 in a live mesh sim — appears in the fleet grid' }
-    : { ok: false, reason: 'on the Hub, not on this machine — training downloads it; replay needs it local' }
+  if (!d.root) return { ok: false, reason: 'on the Hub, not on this machine — training downloads it; replay needs it local' }
+  // Q37: replay reads EPISODE 0. A dataset whose metadata says zero episodes has no episode 0,
+  // so the click cannot do anything but fail deep inside a loader — and this row exists at all
+  // only because meta/info.json is written when a recording OPENS. The server's sentence is used
+  // verbatim: it knows which of the failure modes this is, and re-wording it here would let the
+  // two disagree.
+  if (d.usable === false) return { ok: false, reason: d.problem ?? 'this dataset has no episodes to replay' }
+  return { ok: true, reason: 'Replay episode 0 in a live mesh sim — appears in the fleet grid' }
+}
+
+/**
+ * Q37: may training start on this row, and if not, why. Separate from `replayable` because the
+ * two verbs fail differently — replay dies in seconds on episode 0, training dies after the
+ * environment setup, the model download and the dataset scan it charged you for.
+ */
+export function trainable(d: DatasetRow | null): { ok: boolean; reason: string } {
+  if (!d) return { ok: true, reason: '' }
+  if (d.usable === false) return { ok: false, reason: d.problem ?? 'this dataset has no episodes to train on' }
+  return { ok: true, reason: '' }
+}
+
+/** The picked row, or null when the form's selection is not in the current list. */
+export function selectedRow(rows: DatasetRow[], sel: { dataset_root: string; dataset_repo_id: string }): DatasetRow | null {
+  return rows.find(r => datasetKey(r) === selectionKey(sel)) ?? null
 }
