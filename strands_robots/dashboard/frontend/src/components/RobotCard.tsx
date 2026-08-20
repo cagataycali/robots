@@ -5,7 +5,7 @@ import { lockoutBadge } from '../lib/lockoutBadge'
 import { useTelemetry } from '../lib/useTelemetry'
 import { ribbonDetail, statusSentence } from '../lib/statusSentence'
 import { twinButtonCopy } from '../lib/twinButton'
-import { agoText, stoppedCameras } from '../lib/cameraFreshness'
+import { deadCameraNote, stoppedCameras } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
@@ -129,13 +129,8 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
           an operator arriving at this screen must be told before they act. Silent unless
           there is positive evidence of death (no history is not death). */}
       {(() => {
-        const stopped = stoppedCameras(peer.cameras ?? {}, Date.now() / 1000)
-        return stopped.length ? (
-          <div className="cam-dead-note" role="status">
-            {stopped.length} of {cams.length} camera{cams.length > 1 ? 's' : ''} stopped —{' '}
-            {stopped.map(c => `${c.camera} ${agoText(c.ageS)} ago`).join(', ')}
-          </div>
-        ) : null
+        const note = deadCameraNote(stoppedCameras(peer.cameras ?? {}, Date.now() / 1000), cams.length)
+        return note ? <div className="cam-dead-note" role="status">{note}</div> : null
       })()}
 
       {cams.length > 0 && (

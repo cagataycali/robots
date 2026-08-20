@@ -53,6 +53,11 @@ export function stoppedCameras(
   return out.sort((a, b) => b.ageS - a.ageS)
 }
 
+/**
+ * A duration with its own "ago" ALREADY IN IT — `12.3h ago`. Documented loudly because a
+ * caller that appends one produces "12.3h ago ago", which is exactly what shipped on the
+ * card note in fd01a7bd and what an operator saw on the live dashboard for half a day.
+ */
 export function agoText(seconds: number): string {
   if (seconds < 90) return `${Math.round(seconds)}s ago`
   if (seconds < 5400) return `${Math.round(seconds / 60)}m ago`
@@ -78,4 +83,20 @@ export function cameraWarning(
     `Recording now writes episodes with a frozen or missing image stream, ` +
     `which you would only notice at training time.`
   )
+}
+
+
+/**
+ * The card's own line about cameras that have stopped — a pure function so the wording is
+ * testable, and so the ONE mistake this line has already made cannot come back: agoText()
+ * carries its own "ago", and the first version of this note appended another one.
+ *
+ * Says the count against the total (1 of 2 reads differently from "a camera stopped"), then
+ * names each dead camera with its age, worst first.
+ */
+export function deadCameraNote(stopped: StoppedCamera[], totalCameras: number): string | null {
+  if (stopped.length === 0 || totalCameras === 0) return null
+  const which = stopped.map(c => `${c.camera} ${agoText(c.ageS)}`).join(', ')
+  const noun = totalCameras > 1 ? 'cameras' : 'camera'
+  return `${stopped.length} of ${totalCameras} ${noun} stopped — ${which}`
 }

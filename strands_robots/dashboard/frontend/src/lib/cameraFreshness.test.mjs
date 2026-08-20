@@ -55,3 +55,22 @@ assert.equal(agoText(600), '10m ago')
 assert.equal(agoText(37327), '10.4h ago')
 
 console.log('cameraFreshness: all assertions passed')
+
+// --- the card's dead-camera note --------------------------------------------------
+{
+  const { deadCameraNote } = await import('./cameraFreshness.ts')
+  const note = deadCameraNote([{ camera: 'wrist', ageS: 44_280 }], 2)
+  assert.equal(note, '1 of 2 cameras stopped — wrist 12.3h ago')
+  // THE REGRESSION THIS FILE EXISTS FOR: agoText already ends in "ago", and the first
+  // version of this note appended another one. "12.3h ago ago" was live for half a day.
+  assert.ok(!/ago ago/.test(note), note)
+  assert.equal(deadCameraNote([], 2), null, 'nothing wrong = nothing said')
+  assert.equal(deadCameraNote([{ camera: 'top', ageS: 100 }], 0), null,
+    'a peer with no cameras cannot have a dead one')
+  assert.equal(deadCameraNote([{ camera: 'top', ageS: 100 }], 1), '1 of 1 camera stopped — top 2m ago',
+    'singular when there is one camera')
+  const two = deadCameraNote([{ camera: 'wrist', ageS: 7200 }, { camera: 'top', ageS: 120 }], 2)
+  assert.equal(two, '2 of 2 cameras stopped — wrist 2.0h ago, top 2m ago')
+  assert.ok(!/ago ago/.test(two), two)
+}
+console.log('cameraFreshness: dead-camera note assertions passed')
