@@ -57,10 +57,12 @@ _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
     (
         "port_in_use",
         "Port is in use!",
-        "another process is holding this arm's serial port",
-        "Find the other owner and stop it - `/usr/sbin/lsof -n | grep usbmodem` names every "
-        "holder. Orphaned robot children from an earlier spawn keep a port open; replugging and "
-        "recalibrating both change nothing while one is alive.",
+        "this arm's serial port is held - by another process, or by its own aborted read",
+        "Ask the OS who holds it first: `/usr/sbin/lsof /dev/cu.usbmodem*` names every holder. "
+        "TWO holders means an orphaned child from an earlier spawn - stop that one. ONE holder, "
+        "this arm's own process, means the port is busy INSIDE it (a read that died mid-exchange "
+        "leaves the motor bus marked in-use and nothing clears it) - respawn this arm from devices; "
+        "there is no other owner to hunt. Replugging and recalibrating change nothing either way.",
     ),
     (
         "uncalibrated",

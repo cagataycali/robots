@@ -32,7 +32,9 @@ ODD = (
 def test_a_contended_port_is_named_as_such():
     v = joint_silence.classify(["hardware connected", IN_USE])
     assert v["kind"] == "port_in_use"
-    assert "holding this arm's serial port" in v["headline"]
+    # Wording covers both measured cases: another process (179 orphaned children, 2026-08-19) and
+    # the owning child's own aborted read (single holder, measured 2026-08-20).
+    assert "serial port is held" in v["headline"]
     assert "lsof" in v["remedy"] and "recalibrat" in v["remedy"]  # says what NOT to try
 
 
@@ -233,3 +235,36 @@ def test_a_recovery_line_is_never_read_as_a_failure() -> None:
     # It says "state probe 'hw_joints'" like a failure does; the failure pattern requires
     # failed/still failing, and this pins that so a future wording change cannot invert the meaning.
     assert joint_silence.classify(["14:02 state probe 'hw_joints' recovered after 1 failures over 3.0s"]) is None
+
+
+def test_port_in_use_does_not_send_the_operator_hunting_a_process_that_does_not_exist() -> None:
+    """MEASURED 2026-08-20 on cagatay's rig, and it contradicted this module's own advice.
+
+    Both real arms had published ZERO joints for 5.5 hours while presence, heartbeat and cameras all
+    looked healthy. The child's log carried exactly this line, and ``classify`` named it correctly::
+
+        state probe 'hw_joints' failed ... ConnectionError("Failed to sync read 'Present_Position'
+        on ids=[1, 2, 3, 4, 5, 6] after 3 tries. [TxRxResult] Port is in use!")
+
+    But ``/usr/sbin/lsof`` on both ttys showed exactly ONE holder each - the arm's own child process.
+    The old remedy said "find the other owner and stop it", so the operator would go looking for a
+    second process that does not exist, find nothing, and be left with a silent arm and no next step.
+    The port is busy INSIDE the owning process (a read that died mid-exchange leaves the Feetech bus
+    marked in-use, and nothing in this codebase clears that flag), so the cure is respawning that same
+    child. Both cases stay possible, so the remedy now tells the operator how to TELL THEM APART.
+    """
+    verdict = joint_silence.classify([
+        "13:58:52 WARNING:strands_robots.mesh.core:[mesh] so101-follower: state probe 'hw_joints' "
+        "failed, that section of the snapshot is omitted (further failures logged at debug): "
+        "ConnectionError(\"Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 3 "
+        "tries. [TxRxResult] Port is in use!\")",
+    ])
+    assert verdict is not None, "the real measured line must still be classified"
+    assert verdict["kind"] == "port_in_use"
+    remedy = verdict["remedy"]
+    assert "lsof" in remedy, "the operator needs the command that decides which case this is"
+    assert "ONE holder" in remedy and "TWO holders" in remedy, (
+        "a single-holder port is the case measured on real hardware; a remedy that assumes a second "
+        "process sends the operator hunting something that does not exist"
+    )
+    assert "respawn" in remedy.lower(), "the single-holder cure is a respawn of this same child"
