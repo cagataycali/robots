@@ -30,6 +30,7 @@ import math
 from typing import Any
 
 from strands_robots.bus_access import read_joints
+from strands_robots.utils import partial_construction_repr
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,15 @@ class RobotAsTeleoperator:
         self.empty_reads = 0
 
     def __repr__(self) -> str:
-        return f"RobotAsTeleoperator(host={type(self.host).__name__}, robot_name={self.robot_name!r})"
+        # A publisher is constructed on the refusal path as often as the happy
+        # one - start_teleop_publish_self probes the host and raises when it has
+        # no joints - so this repr is read from a traceback holding a half-built
+        # instance. Reading self.host there would raise a SECOND AttributeError
+        # that names an attribute unrelated to the refusal being investigated.
+        try:
+            return f"RobotAsTeleoperator(host={type(self.host).__name__}, robot_name={self.robot_name!r})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     # The device whose bus lock protects this read. Hardware hosts wrap a lerobot
     # driver in .robot; a sim host is its own device.

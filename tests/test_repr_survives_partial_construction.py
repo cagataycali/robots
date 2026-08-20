@@ -80,6 +80,7 @@ EXPECTED_REPR_CLASSES = frozenset(
         "mesh/session::PeerInfo",
         "policies/lerobot_local/processor::ProcessorBridge",
         "simulation/isaac/simulation::IsaacSimulation",
+        "teleop_source::RobotAsTeleoperator",
     }
 )
 
