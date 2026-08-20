@@ -23,6 +23,8 @@ import math
 import os
 import re
 import subprocess
+
+from strands_robots.dashboard import bus_claim
 import sys
 import threading
 import uuid
@@ -2010,6 +2012,20 @@ class DeviceManager:
         with self._lock:
             if peer_id in self.robots and self.robots[peer_id].alive():
                 return {"error": f"peer {peer_id} already running"}
+            # Q84: the check above is blind to every process that is not ours. It has to be — it reads
+            # self.robots — and that blindness cost ten hours of a fleet with no arms in it, because 185
+            # parentless holders were reading both buses while this dict was empty. Ask the machine
+            # instead, and refuse before Popen: a second owner on a half-duplex bus corrupts both
+            # conversations, and a child started blind reports a pid and then dies in the settle window.
+            if mode == "real" and port:
+                tracked = {
+                    r.process.pid: pid_key
+                    for pid_key, r in self.robots.items()
+                    if r.process is not None and r.alive()
+                }
+                conflict = bus_claim.bus_conflict(port, bus_claim.bus_holders(port), tracked)
+                if conflict:
+                    return {"error": conflict}
             cfg = {"robot_name": robot_name, "mode": mode, "peer_id": peer_id, "port": port, "cameras": cameras, "robot_id": robot_id}
             proc = subprocess.Popen(
                 [sys.executable, "-c", _SPAWNER, _json.dumps(cfg)],
