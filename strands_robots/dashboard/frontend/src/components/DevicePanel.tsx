@@ -27,6 +27,18 @@ interface SerialPort {
   role_volts?: number | null
   role_source?: string | null
   role_measured_at?: number | null
+  /**
+   * Q41: how this board was last brought up (profiles.json, keyed by USB serial). ABSENT means
+   * nobody has configured it — a normal state, and NOT the same as an empty config.
+   */
+  remembered?: {
+    peer_id: string
+    robot_name?: string | null
+    mode?: string | null
+    cameras: string[]
+    robot_id?: string
+    saved_at?: number | null
+  } | null
 }
 
 interface RoleVerdict {
@@ -296,6 +308,17 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     }
   }
 
+  /**
+   * Bring a remembered board back up. This is a REAL spawn — it energises an arm — so the button
+   * names the peer it will start rather than saying "restore", and the payload is never assembled
+   * here: the server holds it (a two-camera config cannot be re-typed by a client, and a guessed
+   * one opens the wrong device). The port travels because it is where the board is NOW; the server
+   * re-reads the profile by serial and reports if the /dev path moved.
+   */
+  const respawnRemembered = (p: SerialPort) =>
+    act(() => post('/api/devices/spawn-remembered', { port: p.device }),
+        `spawned ${p.remembered?.peer_id ?? 'it'} from its saved profile`)
+
   const measureRole = async (port: string) => {
     setMeasuring(port)
     try {
@@ -317,6 +340,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const managed = Object.values(doc?.managed ?? {})
   const freePorts = doc?.serial_ports ?? []
   const claimedPorts = new Set(managed.filter(m => m.alive && m.port).map(m => m.port as string))
+  // The servo-board rows shadow `busy` with a per-row "this bus is claimed" flag, so an action in
+  // flight has to be captured under its own name or every button in that list stays live during it.
+  const acting = busy
 
   /**
    * Which robot family this board is, and HOW we know — the model name in the
@@ -601,6 +627,34 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                         {calibFor === p.device ? 'hide calibrate command' : 'calibrate…'}
                       </button>
                     </div>
+                    {/* Q41: after a restart `managed` is empty and this board reads as unknown
+                        hardware, though its whole spawn payload is on disk. Say what it was, and
+                        offer exactly one click to bring it back — but never while something is
+                        already driving that bus. */}
+                    {p.remembered && (
+                      <div className="row between remembered">
+                        <span className="muted small">
+                          last spawned as <b>{p.remembered.peer_id}</b>
+                          {p.remembered.robot_name ? ` — ${p.remembered.robot_name}` : ''}
+                          {p.remembered.mode ? `, ${p.remembered.mode}` : ''}
+                          {/* Camera NAMES: the saved indices are exactly what macOS renumbers, so
+                              showing them would be confidently stale. */}
+                          {p.remembered.cameras.length
+                            ? `, cameras ${p.remembered.cameras.join(' + ')}`
+                            : ', no cameras'}
+                          {p.remembered.robot_id ? ` · calibration id ${p.remembered.robot_id}` : ''}
+                        </span>
+                        <button className="btn ghost" disabled={acting || claimedPorts.has(p.device)}
+                                title={claimedPorts.has(p.device)
+                                  ? 'something is already running on this bus — despawn it first'
+                                  : 'starts a child process with the saved payload; a real arm will be energised'}
+                                onClick={() => void respawnRemembered(p)}>
+                          {claimedPorts.has(p.device)
+                            ? 'already running'
+                            : `spawn ${p.remembered.peer_id} again`}
+                        </button>
+                      </div>
+                    )}
                     {calibFor === p.device && (() => {
                       const { family, source } = familyFor(p)
                       const plan = calibratePlan({ ...p, robot_id: knownCalibrationId(profiles, p) }, family)

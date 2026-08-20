@@ -1,0 +1,133 @@
+/**
+ * The spawn memory reaches the devices screen — and its button cannot fire on a busy bus (Q41).
+ *
+ * After a restart `managed` is empty, so two configured arms read as unknown hardware while their
+ * whole spawn payload sits in profiles.json. The backend halves are unit-tested; this is the part
+ * only a browser can answer, and one assertion here guards a PHYSICAL action: the "spawn again"
+ * button must be disabled while something already drives that bus, because two processes on one
+ * servo bus is the Q26 collision class with a real arm attached.
+ *
+ * /api/devices is INJECTED and the spawn route is intercepted (recorded, never forwarded), so this
+ * audit cannot start a child process or energise an arm.
+ *
+ * Run: node scripts/audit-devices-remembered.mjs   (running dashboard on :8090 + node playwright)
+ */
+import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import fs from 'node:fs'
+
+const TOKEN = fs.readFileSync(
+  process.env.STRANDS_DASH_TOKEN_FILE ?? `${process.env.HOME}/.strands_dashboard/local_api_token.txt`, 'utf8').trim()
+const BASE = process.env.STRANDS_DASH_URL ?? 'http://127.0.0.1:8090'
+const failures = []
+
+const FREE = '/dev/cu.usbmodemFREE1'
+const BUSY = '/dev/cu.usbmodemBUSY1'
+
+const doc = {
+  serial_ports: [
+    { device: FREE, serial_number: 'SERIALFREE', likely_robot: 'so101',
+      role: 'follower', role_volts: 12.6, role_source: 'measured',
+      remembered: { peer_id: 'so101-arm-1', robot_name: 'so101', mode: 'real',
+                    cameras: ['top', 'wrist'], robot_id: 'arm_1', saved_at: 1787115801 } },
+    { device: BUSY, serial_number: 'SERIALBUSY',
+      remembered: { peer_id: 'so101-arm-2', robot_name: 'so101', mode: 'real', cameras: [] } },
+    // A board nobody configured: no `remembered` key at all, and the screen must invent nothing.
+    { device: '/dev/cu.usbmodemNEW1', serial_number: 'SERIALNEW' },
+  ],
+  cameras: [], camera_names: [], camera_problem: null,
+  managed: {
+    'so101-arm-2': { peer_id: 'so101-arm-2', alive: true, port: BUSY, robot_name: 'so101', pid: 4242 },
+  },
+}
+
+const browser = await chromium.launch()
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' })
+const page = await ctx.newPage()
+const thrown = []
+const spawns = []
+page.on('pageerror', e => thrown.push(String(e.message).slice(0, 160)))
+// ORDER MATTERS, and it cost this script its first run: playwright tries the LAST registered
+// matching handler first, so the broad "nothing else may reach the machine" guard goes FIRST and the
+// specific routes after it. Registered the other way round, the catch-all swallowed the respawn POST
+// and the audit reported "the button did nothing" - blaming the UI for its own plumbing.
+await page.route('**/api/devices/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }))
+await page.route('**/api/devices?**', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(doc) }))
+await page.route('**/api/devices', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(doc) }))
+await page.route('**/api/devices/spawn-remembered', async r => {
+  spawns.push(JSON.parse(r.request().postData() ?? '{}'))
+  await r.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ peer_id: 'so101-arm-1', status: 'running', respawned_from_profile: true }) })
+})
+
+await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' })
+await page.waitForTimeout(6000)
+await page.locator('button.chip:has-text("devices")').first().click()
+await page.waitForTimeout(2500)
+
+// Scoped to the "Servo boards" list: the MANAGED list also names the busy port in its meta line, and
+// an unscoped `li` matched that one first - so a passing assertion would have been about the wrong
+// element entirely.
+const ports = page.locator('section', { has: page.locator('h3:has-text("Servo boards")') }).first()
+const rows = (await ports.count()) ? ports.locator('li') : page.locator('li')
+const rowFor = (dev) => rows.filter({ hasText: dev }).first()
+const freeRow = rowFor(FREE)
+const busyRow = rowFor(BUSY)
+const newRow = rowFor('/dev/cu.usbmodemNEW1')
+
+// ---- the free board: what it was, in words the operator recognises
+if (!(await freeRow.locator('.remembered').count())) {
+  failures.push('a board with a saved profile shows no memory of it — the operator is asked to re-type a config that is on disk')
+} else {
+  const text = await freeRow.locator('.remembered').innerText()
+  for (const needle of ['so101-arm-1', 'so101', 'real', 'top + wrist', 'arm_1']) {
+    if (!text.includes(needle)) failures.push(`the memory line omits "${needle}"`)
+  }
+  // Camera INDICES must not appear: macOS renumbers them, so they would be confidently stale.
+  if (/index|\b2\b/.test(text.replace('arm_1', ''))) failures.push(`the memory line prints camera indices: ${text}`)
+  const btn = freeRow.locator('.remembered button')
+  const label = await btn.innerText()
+  if (!label.includes('so101-arm-1')) failures.push(`the button does not name the peer it will start: "${label}"`)
+  if (await btn.isDisabled()) failures.push('the free board\'s respawn button is disabled')
+}
+
+// ---- THE DANGEROUS ONE: a bus something already drives must not be spawnable again
+if (await busyRow.locator('.remembered').count()) {
+  const btn = busyRow.locator('.remembered button')
+  if (!(await btn.isDisabled())) {
+    failures.push('THE DANGEROUS ONE: the respawn button is live on a bus a running child already owns — two processes on one servo bus')
+  }
+  if (!(await btn.innerText()).includes('already running')) {
+    failures.push('the busy row does not say why its button is dead')
+  }
+} else {
+  failures.push('the running board lost its memory line entirely')
+}
+
+// ---- a board nobody configured invents nothing
+if (await newRow.locator('.remembered').count()) {
+  failures.push('an unconfigured board shows a spawn memory — absence must render as nothing')
+}
+
+// ---- the click sends the PORT and nothing else: the payload lives server-side
+await freeRow.locator('.remembered button').click()
+await page.waitForTimeout(1200)
+if (spawns.length !== 1) {
+  failures.push(`expected exactly one respawn request, got ${spawns.length}`)
+} else {
+  const body = spawns[0]
+  if (body.port !== FREE) failures.push(`the request carries the wrong port: ${JSON.stringify(body)}`)
+  if (Object.keys(body).length !== 1) {
+    failures.push(`the client re-sent the payload instead of letting the server hold it: ${JSON.stringify(body)}`)
+  }
+}
+if (await page.locator('.crashcard').count()) failures.push('the devices screen crashed')
+if (thrown.length) failures.push(`page threw: ${thrown.join(' ; ')}`)
+
+await ctx.close()
+await browser.close()
+
+if (failures.length) {
+  console.error('FAIL\n' + failures.map(f => ` - ${f}`).join('\n'))
+  process.exit(1)
+}
+console.log('devices remembered: the memory names peer/family/mode/cameras (names, not indices), the button names the peer it starts, a busy bus refuses, an unconfigured board shows nothing, and the click sends only the port')

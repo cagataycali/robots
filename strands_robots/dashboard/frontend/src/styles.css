@@ -1658,3 +1658,7 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
    eventually delete an hour of hand-guiding by accident. */
 .hold-next { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
 .hold-next li { font-size: 12px; opacity: .8; line-height: 1.45; }
+
+/* Q41: the spawn memory line on a serial-port row. Quiet — it is a fact about the past, sitting
+   next to a button that starts a real robot. */
+.remembered { margin-top: 4px; gap: 8px; align-items: center; }
