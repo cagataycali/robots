@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { cameraEvidence } from '../lib/cameraEvidence'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession, type UploadPreflight } from '../lib/recordApi'
@@ -687,7 +688,15 @@ function FollowerLive({ peer, recording }: { peer?: Peer; recording: boolean }) 
   if (!peer) {
     return <div className="toast warn">The follower is not on the mesh — its card left the fleet. Recording would capture nothing.</div>
   }
-  const cams = Object.keys(peer.cameras ?? {})
+  // Frames vs announcement are DIFFERENT facts (see lib/cameraEvidence): saying
+  // "no cameras announced" when presence announced two is the snapshot
+  // contradicting itself, and it blamed the robot for a macOS permission.
+  const evidence = cameraEvidence(
+    peer.peer_id,
+    peer.presence?.cameras,
+    Object.keys(peer.cameras ?? {}),
+  )
+  const cams = evidence.kind === 'ok' ? evidence.cams : []
   return (
     <div className={`train-form rec-live-view${recording ? ' armed' : ''}`}>
       <div className="rec-live-head">
@@ -701,7 +710,9 @@ function FollowerLive({ peer, recording }: { peer?: Peer; recording: boolean }) 
           ))}
         </div>
       ) : (
-        <div className="train-msg">⚠ no cameras announced by this peer — the dataset will have joints only</div>
+        <div className="train-msg" title={evidence.kind === 'mute' ? 'presence lists cameras; no frames have arrived' : undefined}>
+          ⚠ {evidence.kind === 'ok' ? '' : evidence.message}
+        </div>
       )}
       <JointStrip state={peer.state} presence={peer.presence} />
     </div>
