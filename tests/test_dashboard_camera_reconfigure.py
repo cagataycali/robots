@@ -125,3 +125,60 @@ class TestReconfigureCameras:
             "the identity of the spawn must be the OLD peer's, only the cameras change, "
             "and remember=True so the profile keeps the change across replugs"
         )
+
+
+class TestUnknownOptionsAreRefusedBeforeAnythingStops:
+    """An unknown camera option cost the operator a WORKING arm (U19 backend verify, 2026-08-20).
+
+    validate_cameras bounds-checked index_or_path/fps/width/height and let every other key through.
+    hardware_robot._build_camera_config refuses unknown keys (deliberately — a silently dropped option
+    reports success while the camera streams at the default), but it only speaks inside the CHILD, and
+    reconfigure_cameras despawns the running robot BEFORE spawning the replacement. So "framerate" instead
+    of "fps" meant: arm killed, respawn dead with a ValueError in a log ring, and a 200 from the route.
+
+    This class pins the promise validate_cameras' own docstring makes: everything the child would refuse
+    is refused here, before a process exists.
+    """
+
+    def test_a_wrong_option_name_is_refused_and_named(self) -> None:
+        bad = validate_cameras({"wrist": {"index_or_path": 1, "framerate": 60}})
+        assert bad is not None
+        assert "framerate" in bad["error"], "name the option the operator actually typed"
+        assert "fps" in bad["error"], "and the accepted set, which is what tells them the right word"
+        assert "despawn" in bad["error"], "say why refusing early matters: a reconfigure stops the robot first"
+        # Deliberately NOT asserting a "did you mean 'fps'" here: difflib does not consider 'framerate'
+        # close to 'fps' (measured), and writing the assertion first is what caught me claiming a
+        # suggestion the code cannot make. The accepted list carries the answer instead.
+
+    def test_a_near_miss_does_get_a_suggestion(self) -> None:
+        """Where difflib CAN help, it should — a one-character slip is the common case."""
+        bad = validate_cameras({"wrist": {"index_or_path": 1, "widht": 640}})
+        assert bad is not None and "Did you mean" in bad["error"] and "'width'" in bad["error"]
+
+    def test_an_unknown_option_with_no_near_match_still_names_the_accepted_set(self) -> None:
+        bad = validate_cameras({"top": {"index_or_path": 0, "zoom_factor": 3}})
+        assert bad is not None and "zoom_factor" in bad["error"]
+        for field in ("fps", "width", "height", "index_or_path"):
+            assert field in bad["error"]
+
+    def test_every_real_lerobot_option_is_accepted(self) -> None:
+        """The refusal must not become a whitelist that fights the driver it wraps."""
+        full = {
+            "top": {
+                "index_or_path": 0, "fps": 30, "width": 640, "height": 480,
+                "color_mode": "rgb", "rotation": 90, "warmup_s": 1, "backend": "any", "type": "opencv",
+            }
+        }
+        assert validate_cameras(full) is None
+
+    def test_the_frozen_fallback_field_list_matches_lerobot(self) -> None:
+        """The fallback exists for a machine with no robot stack; a stale list would refuse a legal option."""
+        dataclasses = pytest.importorskip("dataclasses")
+        cfgmod = pytest.importorskip("lerobot.cameras.opencv.configuration_opencv")
+        real = tuple(sorted(f.name for f in dataclasses.fields(cfgmod.OpenCVCameraConfig)))
+        from strands_robots.dashboard.device_manager import _CAMERA_OPTION_FIELDS
+
+        assert tuple(sorted(_CAMERA_OPTION_FIELDS)) == real, (
+            "lerobot's camera options changed: update _CAMERA_OPTION_FIELDS, the list used when "
+            "lerobot is not importable"
+        )

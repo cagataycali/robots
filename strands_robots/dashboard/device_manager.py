@@ -16,6 +16,7 @@ click from the UI.
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import math
@@ -1165,6 +1166,25 @@ def validate_replay(
 
 
 
+#: The camera options lerobot's OpenCVCameraConfig declares, as a fallback for when lerobot cannot be
+#: imported (the dashboard must validate a config on a machine with no robot stack installed). A test
+#: asserts this matches the real dataclass wherever lerobot IS importable, so drift is caught rather
+#: than assumed — a stale list here would refuse an option the child accepts perfectly well.
+_CAMERA_OPTION_FIELDS = (
+    "backend", "color_mode", "fourcc", "fps", "height", "index_or_path", "rotation", "warmup_s", "width",
+)
+
+
+def _camera_option_names() -> tuple[str, ...]:
+    try:
+        import dataclasses
+
+        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+    except Exception:  # noqa: BLE001 - no lerobot here: the frozen list is the best truth available
+        return _CAMERA_OPTION_FIELDS
+    return tuple(sorted(f.name for f in dataclasses.fields(OpenCVCameraConfig)))
+
+
 def validate_cameras(cameras: Any) -> dict[str, str] | None:
     """Refusal reason for a spawn/reconfigure camera config, or None.
 
@@ -1210,6 +1230,29 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
                 return {"error": f"camera {name!r}: {field} must be an integer, got {type(v).__name__}"}
             if not lo <= v <= hi:
                 return {"error": f"camera {name!r}: {field}={v} is outside {lo}..{hi}"}
+        # An UNKNOWN option is refused HERE, because the child refuses it too — and by the time the
+        # child speaks, reconfigure_cameras has already despawned the arm that was working. A typo
+        # ("framerate" for "fps") therefore cost the operator a live robot and left the respawn dead
+        # with a ValueError buried in a log ring. This function's docstring promises "everything the
+        # child would refuse is refused here, before a process exists"; unknown keys broke that promise.
+        # Not dropped silently either: a discarded option reports success while the camera streams at
+        # the default (AGENTS.md > Review Learnings #86, the same rule hardware_robot follows).
+        accepted = _camera_option_names()
+        unknown = sorted(k for k in cfg if k not in accepted and k != "type")
+        if unknown:
+            hints = []
+            for key in unknown:
+                close = difflib.get_close_matches(str(key), list(accepted), n=1, cutoff=0.7)
+                if close:
+                    hints.append(f"{key!r} -> {close[0]!r}")
+            hint = f" Did you mean {', '.join(hints)}?" if hints else ""
+            return {
+                "error": (
+                    f"camera {name!r}: unknown option(s) {unknown}.{hint} "
+                    f"Accepted: {', '.join(accepted)} (plus 'type' to choose the backend). "
+                    f"Refused before anything is stopped - a reconfigure despawns the robot first."
+                )
+            }
     return None
 
 
