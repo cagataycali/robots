@@ -21,6 +21,7 @@ import difflib
 import functools
 import importlib
 import logging
+import os
 import pkgutil
 import shutil
 import threading
@@ -367,6 +368,15 @@ def _degrade_to_available_cameras(robot: Any) -> dict[str, str]:
         was nothing to drop or dropping did not help, in which case the
         caller's original error stands.
     """
+    # This DIVERGES from upstream's connect contract, which fails the whole
+    # bring-up and rolls every device back so the retry keeps naming the camera
+    # that broke (tests/test_hardware_camera_rollback.py pins that). Degrading is
+    # right for this fleet - on a Mac whose TCC grant is missing NO arm could ever
+    # come up otherwise - but a divergence nobody can switch off is a fork, so the
+    # strict behaviour stays reachable by env and both contracts stay tested.
+    if os.getenv("STRANDS_ROBOT_CAMERA_DEGRADE", "1").strip().lower() in ("0", "false", "no", "off"):
+        return {}
+
     cameras = getattr(robot, "cameras", None)
     if not isinstance(cameras, MutableMapping) or not cameras:
         return {}
