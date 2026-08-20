@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit:screens": "node scripts/audit-screens-render.mjs",
+    "audit:touch": "node scripts/audit-touch-targets.mjs",
+    "audit:actions": "node scripts/audit-primary-actions.mjs",
+    "audit": "npm run audit:screens && npm run audit:touch"
   },
   "dependencies": {
     "react": "^18.3.1",
