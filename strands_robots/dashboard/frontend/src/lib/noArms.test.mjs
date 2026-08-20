@@ -47,4 +47,13 @@ assert.equal(noArmsVerdict(1, null), null)
   assert.equal(v.offerDevices, true)
 }
 
+// --- Q45: `route` is the same words without the "no arms" prefix, for a screen whose heading
+// already said it. Two screens, one vocabulary.
+for (const arg of [[{ peer_id: 'a' }], [{ peer_id: 'a', claimed: true }], [], null]) {
+  const v = noArmsVerdict(0, arg)
+  assert.doesNotMatch(v.route, /no arms/, 'the route must not repeat the absence')
+  assert.ok(v.text.endsWith(v.route), 'text and route must be the same words, not two phrasings')
+  assert.match(v.text, /^no arms are on the mesh/)
+}
+
 console.log('noArms: ok')

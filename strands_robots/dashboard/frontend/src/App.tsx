@@ -14,6 +14,8 @@ import AgentDock from './components/AgentDock'
 import SettingsDrawer from './components/SettingsDrawer'
 import ActivityLog from './components/ActivityLog'
 import DevicePanel from './components/DevicePanel'
+import { noArmsVerdict, type RememberedBoard } from './lib/noArms'
+import { api as httpGet } from './lib/endpoints'
 import EstopSheet from './components/EstopSheet'
 import HelpSheet from './components/HelpSheet'
 import EstopButton from './components/EstopButton'
@@ -39,6 +41,15 @@ function Dashboard() {
   const { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded, lastEventAt, everOpen } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
+  /**
+   * Q45: what this machine REMEMBERS, for the empty fleet. The home screen used to answer an empty
+   * mesh with a python snippet only — after a restart the arms are not unplugged, they are simply
+   * not running, and their configs are already here keyed by USB serial. Asked only while the fleet
+   * is empty (one request, no polling): with robots on screen there is nothing to route anyone to.
+   * null = the lookup failed, which lib/noArms.ts is careful never to turn into "nothing is
+   * configured".
+   */
+  const [boards, setBoards] = useState<RememberedBoard[] | null | undefined>(undefined)
   const [settingsTab, setSettingsTab] = useState<'mesh' | undefined>(undefined)
   const [detail, setDetail] = useState<string | null>(null)
   const [busyPeers, setBusyPeers] = useState<Record<string, boolean>>({})
@@ -79,6 +90,29 @@ function Dashboard() {
 
   // A phone that sleeps mid-task drops the camera sockets, exactly when the
   // operator most needs to see a moving arm.
+  const fleetEmpty = loaded && list.length === 0
+  // undefined (not asked yet) is passed as a failed lookup: while the request is in flight, "could
+  // not be reached" is the honest reading and never becomes "nothing is configured".
+  const homeRoute = fleetEmpty
+    ? noArmsVerdict(0, boards === undefined ? null : boards)?.route ?? null
+    : null
+  useEffect(() => {
+    if (!fleetEmpty || boards !== undefined) return
+    let alive = true
+    httpGet<{ serial_ports?: { device: string; remembered?: { peer_id: string } | null }[]
+              managed?: Record<string, { alive?: boolean; port?: string }> }>('/api/devices')
+      .then((doc) => {
+        if (!alive) return
+        const claimed = new Set(Object.values(doc.managed ?? {})
+          .filter((m) => m?.alive && m?.port).map((m) => m.port as string))
+        setBoards((doc.serial_ports ?? [])
+          .filter(p => p.remembered?.peer_id)
+          .map(p => ({ peer_id: p.remembered!.peer_id, claimed: claimed.has(p.device) })))
+      })
+      .catch(() => { if (alive) setBoards(null) })
+    return () => { alive = false }
+  }, [fleetEmpty, boards])
+
   useEffect(() => { void pwa.keepAwake(anyRunning) }, [anyRunning])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let live = true
@@ -232,6 +266,14 @@ function Dashboard() {
           ) : (
             <>
               <h2>{loaded ? 'No robots on the mesh yet' : 'Loading the fleet…'}</h2>
+              {/* Q45: the same sentence the record screen learned, from the same module — after a
+                  restart the arms are not unplugged, just not running, and this machine remembers
+                  them by USB serial. It goes ABOVE the snippet because "bring your own arm back" beats
+                  "here is how to write a new one" for someone who already has two, and it uses
+                  `route` rather than `text` because the heading above just said the mesh is empty. */}
+              {loaded && homeRoute && (
+                <p className="hint" role="status">{homeRoute}</p>
+              )}
               <p>Start one anywhere on your network:</p>
               <pre>{`from strands_robots import Robot\nRobot("so101").run()   # sim\nRobot("so101", mode="real", port="/dev/ttyACM0").run()`}</pre>
               <p className="hint">

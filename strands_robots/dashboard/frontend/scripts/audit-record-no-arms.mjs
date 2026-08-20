@@ -47,6 +47,21 @@ await page.route('**/api/training/datasets**', r => r.fulfill({
 
 await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(5000)
+
+// ---- Q45: the HOME screen, before any panel is opened, must already name the route. This is the
+// first thing an operator sees after a restart, and it used to offer only a python snippet.
+{
+  const home = await page.locator('body').innerText()
+  if (!/devices screen remembers so101-arm-1 and so101-arm-2/.test(home)) {
+    failures.push(`the home empty state does not name the remembered boards: ${home.slice(0, 400).replace(/\n+/g, ' | ')}`)
+  }
+  // The heading already says the mesh is empty - saying it twice reads like a stutter.
+  if ((home.match(/no arms are on the mesh/gi) ?? []).length) {
+    failures.push('the home screen repeats the absence its own heading states')
+  }
+  // The snippet stays: someone with no board at all still needs it. It just is not the only answer.
+  if (!/from strands_robots import Robot/.test(home)) failures.push('the home screen lost the start snippet')
+}
 await page.locator('button.chip:has-text("record")').first().click()
 await page.waitForTimeout(2500)
 
@@ -94,4 +109,4 @@ if (failures.length) {
   console.error('FAIL\n' + failures.map(f => ` - ${f}`).join('\n'))
   process.exit(1)
 }
-console.log('record no-arms: an empty fleet reads "no arms are on the mesh, but the devices screen remembers so101-arm-1 and so101-arm-2 — one click there…", and the offered button really opens that screen')
+console.log('no-arms route: the HOME screen names the remembered boards without repeating its own heading, and the record screen reads "no arms are on the mesh, but the devices screen remembers so101-arm-1 and so101-arm-2 — one click there…", and the offered button really opens that screen')
