@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Peer } from '../types'
 import { useTask } from '../lib/useTask'
+import { lockoutBadge } from '../lib/lockoutBadge'
 import { useTelemetry } from '../lib/useTelemetry'
 import { ribbonDetail, statusSentence } from '../lib/statusSentence'
 import { twinButtonCopy } from '../lib/twinButton'
@@ -69,6 +70,17 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
             {peer.role}
           </span>
         )}
+        {/* The e-stop lockout (Q43). Loud when locked - a locked arm used to render
+            as a healthy green card with live joints, and the operator only found out
+            when a command was refused. Quiet 'e-stop?' when the dashboard genuinely
+            cannot tell, and NOTHING when it has simply seen no safety event: a badge on
+            every card at every startup is how a safety marker becomes decoration. */}
+        {(() => {
+          const lb = lockoutBadge(peer.lockout)
+          return lb.label ? (
+            <span className={`lockbadge ${lb.tone}`} title={lb.title}>{lb.label}</span>
+          ) : null
+        })()}
         {/* U15: a robot the user started from their own script is a full
             citizen here - same card, same telemetry, same commands. The one
             thing it cannot have is a local child process, so this marker

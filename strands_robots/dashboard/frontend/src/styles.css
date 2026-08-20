@@ -1517,3 +1517,33 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
    quiet confirmation - green enough to be evidence, never louder than a warning. */
 .hint.ok { color: color-mix(in srgb, var(--ok, #4ade80) 80%, var(--muted)); }
 .btn.tiny { padding: 1px 7px; font-size: 11px; line-height: 1.6; }
+
+/* E-stop lockout badge (Q43). Loud for a real lockout — this is the state that had a
+   locked arm rendering as a healthy green card for ten hours — and deliberately quiet
+   (dashed, dim) for honest doubt, so the two are never confused at a glance. */
+.lockbadge {
+  font-size: var(--fs-micro); letter-spacing: .05em; text-transform: uppercase;
+  padding: 2px var(--s3); border-radius: var(--rpill); flex-shrink: 0;
+  font-family: var(--mono); white-space: nowrap;
+}
+.lockbadge.locked {
+  /* Opaque fill, like the e-stop itself: it is read on top of cards and drawers. */
+  background: var(--danger); color: var(--bg); border: 1px solid var(--danger);
+  font-weight: 600;
+}
+.lockbadge.doubt { border: 1px dashed var(--warn); color: var(--warn); background: none; }
+.card-head .lockbadge { flex-shrink: 0; }
+/* The fleet-wide line. Sits with the other page banners, above the grid. */
+.lockout-banner {
+  display: flex; gap: var(--s3); align-items: flex-start;
+  padding: var(--s3) var(--s4); border-radius: var(--r2);
+  font-size: var(--fs-small); line-height: 1.4;
+}
+.lockout-banner.bad {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid var(--danger); color: var(--fg);
+}
+.lockout-banner.warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px dashed var(--warn); color: var(--fg);
+}

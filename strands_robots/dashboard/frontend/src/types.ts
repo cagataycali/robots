@@ -53,6 +53,14 @@ export interface Peer {
    *  U15: this is the ONLY thing that may differ. It says nothing about the
    *  robot's health and gates no control. */
   origin?: 'managed' | 'external' | string | null
+  /** E-stop lockout as the SERVER understands it (Q43): 'locked' (an e-stop it
+   *  saw), 'clear' (proved by this peer accepting a command a lockout would
+   *  refuse), 'unknown' (say so - the mesh deliberately does not advertise
+   *  lockout state, so silence is not safety). `since` set on an 'unknown'
+   *  means a safety event DID happen and the landing is genuinely unclear;
+   *  without it, this dashboard has simply seen nothing. Absent on an older
+   *  server - render nothing rather than implying safety. */
+  lockout?: { state?: string | null; reason?: string | null; since?: number | null; by?: string | null } | null
   presence?: Presence
   state?: PeerState
   stream?: StreamStep

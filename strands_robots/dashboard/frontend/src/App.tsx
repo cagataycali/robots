@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMesh } from './lib/useMesh'
 import { usePwa } from './lib/usePwa'
 import { linkHealth, estopPosture } from './lib/linkHealth'
+import { lockoutBanner } from './lib/lockoutBadge'
 import { ConfigProvider } from './lib/useConfig'
 import { backendKey, backendLabel, setAuthToken } from './lib/endpoints'
 import FleetBar from './components/FleetBar'
@@ -238,6 +239,18 @@ function Dashboard() {
         </div>
       ) : (
         <main className="grid">
+          {/* Q43: the fleet-wide lockout line. Measured - both arms sat e-stop locked for
+              ten hours while their cards looked healthy, so the per-card badge is not
+              enough: an operator arriving at this screen must be told before they reach
+              for a control. Silent unless a safety event actually happened. */}
+          {(() => {
+            const lb = lockoutBanner(list)
+            return lb ? (
+              <div className={`lockout-banner ${lb.severity}`} role="status" style={{ gridColumn: '1 / -1' }}>
+                <span aria-hidden="true">&#128721;</span><span>{lb.text}</span>
+              </div>
+            ) : null
+          })()}
           {list.map(p => (
             <ErrorBoundary key={p.peer_id} label={`the card for ${p.peer_id}`}>
             <RobotCard
