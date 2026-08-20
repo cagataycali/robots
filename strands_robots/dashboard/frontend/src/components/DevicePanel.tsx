@@ -8,7 +8,7 @@ import { deviceActionFailure, type DeviceAction } from '../lib/deviceOutcome'
 import CalibrationSection from './CalibrationSection'
 import CameraGallery, { type CameraInfo, type CameraName, type CameraProblem } from './CameraGallery'
 import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
-import { calibratePlan } from '../lib/calibrateCommand'
+import { calibratePlan, knownCalibrationId, type SpawnProfile } from '../lib/calibrateCommand'
 import { parseCalibrationList, type CalibrationEntry } from '../lib/calibration'
 import { calibrationVerdict } from '../lib/calibrationMatch'
 import { rescanReport, hardwareKey, type RescanReport } from '../lib/rescanReport'
@@ -97,6 +97,15 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   // The real calibration ids on this machine. `null` = not read yet / failed,
   // which the verdict deliberately treats as "say nothing" rather than a guess.
   const [calibIds, setCalibIds] = useState<CalibrationEntry[] | null>(null)
+  /**
+   * The remembered spawn profiles, keyed by serial. Needed for ONE reason: a
+   * profile's `robot_id` is the calibration id the arm actually loads, so the
+   * calibrate command must carry it rather than invent one (see
+   * lib/calibrateCommand.ts). null = not loaded, and the command builder treats
+   * that as "no profile to honour" - it degrades to a safe invented id instead
+   * of blocking.
+   */
+  const [profiles, setProfiles] = useState<Record<string, SpawnProfile> | null>(null)
   // Measured servo-bus roles, keyed by port. Declared here with the other hooks
   // on purpose: this component returns null when closed, so a useState below
   // that bail-out changes the hook count between renders (React #310).
@@ -208,6 +217,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     api<{ status?: string; text?: string }>('/api/calibration')
       .then(r => { if (alive && r?.text) setCalibIds(parseCalibrationList(r.text).entries) })
       .catch(() => { /* unchecked is a state the verdict handles */ })
+    api<{ profiles?: Record<string, SpawnProfile> }>('/api/devices/profiles')
+      .then(r => { if (alive) setProfiles(r?.profiles ?? {}) })
+      .catch(() => { /* stays null: the command falls back to an invented id and says so */ })
     return () => { alive = false }
   }, [open])
 
@@ -591,7 +603,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                     </div>
                     {calibFor === p.device && (() => {
                       const { family, source } = familyFor(p)
-                      const plan = calibratePlan(p, family)
+                      const plan = calibratePlan({ ...p, robot_id: knownCalibrationId(profiles, p) }, family)
                       const verdict = copied?.startsWith(p.device + '\u0000') ? copied.split('\u0000')[1] : null
                       return (
                         <div className="calibcmd">
@@ -603,6 +615,11 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                               </p>
                               {/* Selectable text first: the copy button is a convenience, not the only route. */}
                               <code className="cmdline">{plan.command}</code>
+                              {plan.idNote && (
+                                <p className={plan.idWarn ? 'hint warn' : 'hint'}>
+                                  {plan.idWarn ? '⚠ ' : ''}{plan.idNote}
+                                </p>
+                              )}
                               <div className="row">
                                 <button className="btn ghost" onClick={() => void copyCommand(p.device, plan.command!)}>
                                   copy

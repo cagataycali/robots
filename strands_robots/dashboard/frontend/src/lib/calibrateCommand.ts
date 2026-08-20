@@ -58,6 +58,12 @@ export interface CalibratePlan {
    * role. Never a refusal - the id is still correct.
    */
   idNote?: string
+  /**
+   * True only for the case that can mislead a human: the id is correct but its
+   * NAME says the other role. A boolean, so the UI never has to pattern-match
+   * on prose to decide whether to warn.
+   */
+  idWarn?: boolean
 }
 
 /** lerobot's device_type is a function of the ROLE, not of the arm. */
@@ -111,6 +117,11 @@ export function deviceId(facts: PortFacts, role: 'follower' | 'leader'): string 
  * concludes they are calibrating the other arm. That mislabel is the same one
  * cagatay originally reported on the record screen, one surface over.
  */
+export function idNameContradictsRole(id: string, role: 'follower' | 'leader'): boolean {
+  const other = role === 'follower' ? 'leader' : 'follower'
+  return id.trim().toLowerCase().includes(other)
+}
+
 export function idNote(facts: PortFacts, role: 'follower' | 'leader'): string | undefined {
   const known = (facts.robot_id ?? '').trim();
   if (!known) {
@@ -121,8 +132,7 @@ export function idNote(facts: PortFacts, role: 'follower' | 'leader'): string | 
       : 'this port has no spawn profile and reports no serial, so the id is just the role — ' +
         'two arms of the same role on one machine would overwrite each other';
   }
-  const other = role === 'follower' ? 'leader' : 'follower';
-  const contradicts = known.toLowerCase().includes(other);
+  const contradicts = idNameContradictsRole(known, role);
   const base = `this is the id the arm already runs with (${known}), so the calibration lands where it will be read`;
   if (!contradicts) return base;
   const volts = facts.role_volts != null ? `${facts.role_volts}V` : 'its measured voltage';
@@ -210,8 +220,47 @@ export function calibratePlan(facts: PortFacts, family: string | null | undefine
     deviceModel: model,
     deviceId: id,
     idNote: idNote(facts, role),
+    idWarn: idNameContradictsRole(id, role),
     reason:
       `${measured}, so this arm is the ${role} — a ${role} is a lerobot "${deviceType}" device. ` +
       'Run this in a terminal: it will ask you to move the arm through its range by hand.',
   }
+}
+
+/** One entry of `GET /api/devices/profiles` — only the fields this file needs. */
+export interface SpawnProfile {
+  robot_id?: string | null
+  port?: string | null
+  serial_number?: string | null
+}
+
+/**
+ * The calibration id remembered for this physical port, or undefined.
+ *
+ * The profile store is keyed by SERIAL, which is the identity that survives
+ * re-plugging (a `/dev/cu.usbmodem…` path can change, and on this machine one
+ * legacy entry is keyed by the port string itself). So: serial first, then a
+ * port match, and nothing at all rather than a guess — `deviceId` invents a
+ * safe id when there is nothing to honour, and inventing is better than
+ * honouring the WRONG arm's id, which would write one arm's limits under the
+ * other's name.
+ */
+export function knownCalibrationId(
+  profiles: Record<string, SpawnProfile> | null | undefined,
+  facts: { device: string; serial_number?: string | null },
+): string | undefined {
+  if (!profiles) return undefined
+  const serial = (facts.serial_number ?? '').trim()
+  const bySerial = serial ? profiles[serial] : undefined
+  const id = (bySerial?.robot_id ?? '').trim()
+  if (id) return id
+  // No serial-keyed entry: accept a port match, but only an EXACT one. A prefix
+  // match would pair /dev/cu.usbmodem5AB01818061 with a different arm's port.
+  for (const entry of Object.values(profiles)) {
+    if ((entry?.port ?? '').trim() === facts.device) {
+      const pid = (entry?.robot_id ?? '').trim()
+      if (pid) return pid
+    }
+  }
+  return undefined
 }
