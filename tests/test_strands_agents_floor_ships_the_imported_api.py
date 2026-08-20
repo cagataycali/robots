@@ -61,6 +61,20 @@ _STRANDS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
     ("strands.types.tools", "ToolUse"): "1.0.0",
     ("strands.types.tools", "ToolContext"): "1.5.0",
     ("strands.types._events", "ToolResultEvent"): "1.7.0",
+    ("strands", "Agent"): "1.0.0",
+    # The bidirectional (voice) API. strands/experimental/bidi/ first appears in
+    # 1.19.0 -- measured by bisecting the released wheels, not by reading a
+    # changelog: absent in 1.18.0, present in 1.19.0. The two non-Nova model
+    # backends landed three releases later, and they are what actually sets this
+    # package's floor.
+    ("strands.experimental.bidi", "BidiAgent"): "1.19.0",
+    ("strands.experimental.bidi.tools", "stop_conversation"): "1.19.0",
+    ("strands.experimental.bidi.models", "BidiNovaSonicModel"): "1.19.0",
+    ("strands.experimental.bidi.models", "BidiOpenAIRealtimeModel"): "1.22.0",
+    ("strands.experimental.bidi.models", "BidiGeminiLiveModel"): "1.22.0",
+    ("strands.experimental.bidi.types.events", "BidiAudioInputEvent"): "1.19.0",
+    ("strands.experimental.bidi.types.events", "BidiAudioStreamEvent"): "1.19.0",
+    ("strands.experimental.bidi.types.events", "BidiTranscriptStreamEvent"): "1.19.0",
 }
 
 
@@ -158,12 +172,53 @@ class TestTheFloorIsSelfMaintaining:
         assert not stale, f"_STRANDS_SYMBOL_FLOORS records symbols the package no longer imports: {stale}"
 
 
+def _installed_source_defines(module: str, symbol: str) -> bool:
+    """Whether the INSTALLED strands source exports ``symbol``, without executing it.
+
+    Reached only when a module refuses to import because a third-party backend
+    SDK is absent. The file is located from the imported ``strands`` package, not
+    from a path literal, so it is the same install the floor is being checked
+    against.
+    """
+    import strands
+
+    base = Path(strands.__file__).resolve().parent.parent / Path(module.replace(".", "/"))
+    for candidate in (base / "__init__.py", base.with_suffix(".py")):
+        if not candidate.exists():
+            continue
+        tree = ast.parse(candidate.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == symbol:
+                return True
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+                (alias.asname or alias.name.split(".")[-1]) == symbol for alias in node.names
+            ):
+                return True
+        return False
+    return False
+
+
 class TestTheRecordedSymbolsExistInTheInstalledStrands:
     """Guard the table against strands removing or moving a symbol."""
 
     @pytest.mark.parametrize(("module", "symbol"), sorted(_STRANDS_SYMBOL_FLOORS))
     def test_symbol_is_importable(self, module: str, symbol: str) -> None:
-        imported = pytest.importorskip(module)
+        try:
+            imported = __import__(module, fromlist=[symbol])
+        except ImportError as exc:
+            missing = getattr(exc, "name", "") or ""
+            # A strands module that cannot import is a real regression in the
+            # floor; a THIRD-PARTY backend SDK that is not installed is not. The
+            # bidi model package imports every backend eagerly (Bedrock, Google,
+            # OpenAI), so an install without those SDKs cannot execute it at all
+            # -- which says nothing about whether strands still ships the class.
+            assert not missing.startswith("strands"), f"{module} is unimportable: {exc}"
+            assert _installed_source_defines(module, symbol), (
+                f"{module}.{symbol} is recorded in _STRANDS_SYMBOL_FLOORS and imported by the "
+                f"package, and the installed strands-agents does not define it (its module needs "
+                f"the missing {missing!r} SDK to execute, so this was checked against its source)"
+            )
+            return
         assert hasattr(imported, symbol), (
             f"{module}.{symbol} is recorded in _STRANDS_SYMBOL_FLOORS and imported by the "
             "package, but the installed strands-agents does not provide it"

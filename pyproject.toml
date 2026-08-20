@@ -46,7 +46,15 @@ dependencies = [
     # ``strands_robots.Simulation`` simply does not exist. See
     # tests/test_strands_agents_floor_ships_the_imported_api.py, which fails
     # the moment a newer strands symbol is imported without raising this floor.
-    "strands-agents>=1.7.0,<2.0.0",
+    #
+    # Raised to 1.22.0 by the dashboard's voice bridge, which imports
+    # ``strands.experimental.bidi``: the package first appears in 1.19.0 and
+    # ``BidiOpenAIRealtimeModel``/``BidiGeminiLiveModel`` in 1.22.0 (bisected
+    # across the released wheels). Below that the voice screen raises
+    # ImportError at connect time -- a runtime failure in an install that
+    # resolved successfully, which is the whole class of bug this floor exists
+    # to prevent.
+    "strands-agents>=1.22.0,<2.0.0",
     "numpy>=1.21.0,<3.0.0",
     "opencv-python-headless>=4.5.0,<5.0.0",
     "Pillow>=8.0.0,<13.0.0",
@@ -491,7 +499,7 @@ vera-sim = [
 # Delegate to strands-agents' own [ollama] extra (bounded pin, ollama>=0.4.8,<1.0.0)
 # so the client version stays in sync with the code that imports it.
 ollama = [
-    "strands-agents[ollama]>=1.7.0,<2.0.0",
+    "strands-agents[ollama]>=1.22.0,<2.0.0",
 ]
 # Remote policy inference (client/server split): stream observations from a
 # CPU/edge robot host to a remote GPU PolicyServer and receive action chunks
