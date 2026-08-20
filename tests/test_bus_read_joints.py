@@ -271,3 +271,62 @@ def test_clear_stale_port_busy_does_not_touch_a_flag_that_is_already_clear() -> 
     handler = _Handler(is_using=False)
     assert bus_access.clear_stale_port_busy(_StuckBus(handler)) is False
     assert bus_access.clear_stale_port_busy(_StuckBus(None)) is False
+
+
+class _ObsDevice:
+    """A driver whose only reader is get_observation (no direct bus read)."""
+
+    def __init__(self, bus: object, heals: bool = True) -> None:
+        self.bus = bus
+        self.name = "so101-leader"
+        self.heals = heals
+        self.calls = 0
+
+    def get_observation(self):  # noqa: ANN201
+        self.calls += 1
+        if self.calls == 1 or not self.heals:
+            raise ConnectionError(_BUSY)
+        return {"shoulder_pan.pos": 2.0}
+
+    def send_action(self, action):  # noqa: ANN001, ANN201
+        raise ConnectionError(_BUSY)
+
+
+def test_the_other_read_path_recovers_too_so_a_stale_flag_cannot_mute_one_caller_only() -> None:
+    """read_observation is the path a driver with no exposed bus must use - it gets the same cure.
+
+    A stranded flag is a property of the PORT, not of one call site, so recovering it in read_joints
+    alone would leave every get_observation-only driver mute for the life of the process.
+    """
+    handler = _Handler(is_using=True)
+    dev = _ObsDevice(_StuckBus(handler))
+    assert bus_access.read_observation(dev) == {"shoulder_pan.pos": 2.0}
+    assert handler.is_using is False
+    assert dev.calls == 2
+
+
+def test_a_write_REFUSES_and_never_clears_the_flag_itself() -> None:
+    """The asymmetry is deliberate: a read may clear it, a write may not.
+
+    The exchange that stranded the flag may itself have been a write, so the arm's commanded target is
+    unknown - and the answer to an unknown commanded state is to READ the arm, never to send it
+    another target. Re-sending is motion, and a stale teleop frame replayed as a fresh command is
+    exactly how an arm jumps. So the write explains itself and points at the read that recovers the
+    port (the state probe does one every cycle, so telemetry alone fixes it within about a second).
+    """
+    handler = _Handler(is_using=True)
+    dev = _ObsDevice(_StuckBus(handler))
+    with pytest.raises(ConnectionError) as caught:
+        bus_access.write_action(dev, {"shoulder_pan.pos": 5.0})
+    msg = str(caught.value)
+    assert handler.is_using is True, "a write must NOT clear the flag - only a read may"
+    assert "refusing to re-send this action" in msg
+    assert "READ clears that flag" in msg, "the refusal must name the way out"
+    assert "commanded position is unknown" in msg, "say why re-sending is not safe"
+    assert "Port is in use!" in msg, "the driver's original error stays visible"
+
+
+def test_write_refusal_names_the_device_and_keeps_the_original_error() -> None:
+    text = bus_access.write_refusal(_ObsDevice(_StuckBus(_Handler())), ConnectionError(_BUSY))
+    assert text.startswith("so101-leader:")
+    assert "Present_Position" in text

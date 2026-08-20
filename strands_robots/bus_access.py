@@ -104,7 +104,9 @@ def read_observation(device: Any) -> Any:
             handle hardware errors, and the lock is released either way.
     """
     with bus_lock(device):
-        return device.get_observation()
+        return _read_recovering_a_stale_flag(
+            device, getattr(device, "bus", None), lambda: device.get_observation()
+        )
 
 
 def write_action(device: Any, action: Any) -> Any:
@@ -122,7 +124,12 @@ def write_action(device: Any, action: Any) -> Any:
         Whatever the driver's ``send_action()`` returns.
     """
     with bus_lock(device):
-        return device.send_action(action)
+        try:
+            return device.send_action(action)
+        except Exception as exc:  # noqa: BLE001 - re-raised, only better explained
+            if port_busy_action(exc, already_recovered=False) != "clear_and_retry":
+                raise
+            raise ConnectionError(write_refusal(device, exc)) from exc
 
 #: Register every SO-101-family bus reports positions from. Named here so the
 #: joints-only read is one obvious call and not a string buried in a probe.
@@ -185,31 +192,7 @@ def read_joints(device: Any) -> Any:
             return bus.sync_read(_POSITION_REGISTER)
 
     with bus_lock(device):
-        try:
-            raw = _sync_read()
-        except Exception as exc:  # noqa: BLE001 - re-raised unless provably recoverable
-            if port_busy_action(exc, already_recovered=False) != "clear_and_retry":
-                raise
-            if not clear_stale_port_busy(bus):
-                raise
-            _log.warning(
-                "%s: the motor bus was left marked in-use by an exchange that never finished; "
-                "cleared that flag while holding this arm's bus lock and read again. Nothing else "
-                "can recover it, and every later read would have failed the same way.",
-                getattr(device, "name", None) or type(device).__name__,
-            )
-            try:
-                raw = _sync_read()
-            except Exception as second:  # noqa: BLE001
-                if port_busy_action(second, already_recovered=True) == "report_real_owner":
-                    raise ConnectionError(
-                        "the motor bus reports in-use again immediately after that flag was "
-                        "cleared, while this process holds the bus lock - so the port has a REAL "
-                        "owner outside bus_access (another process, or a reader that skips the "
-                        f"lock). Ask the OS who holds it: /usr/sbin/lsof {getattr(bus, 'port', '')} "
-                        f"({second})"
-                    ) from second
-                raise
+        raw = _read_recovering_a_stale_flag(device, bus, _sync_read)
     if not isinstance(raw, dict):
         return raw
     # ``.pos`` is lerobot's own suffix (see SOFollower.get_observation) and the
@@ -258,3 +241,64 @@ def clear_stale_port_busy(bus: Any) -> bool:
         return False
     handler.is_using = False
     return True
+
+def _read_recovering_a_stale_flag(device: Any, bus: Any, do_read: Any) -> Any:
+    """Run a READ, and if the port is merely marked in-use by a dead exchange, clear it once.
+
+    Must be called with :func:`bus_lock` already held - that lock IS the proof (see
+    :func:`port_busy_action`). Shared by every read path here so a stranded flag cannot mute one
+    caller while another recovers; a read is the only operation that can do this safely, because
+    re-reading a position changes nothing in the world.
+    """
+    try:
+        return do_read()
+    except Exception as exc:  # noqa: BLE001 - re-raised unless provably recoverable
+        if port_busy_action(exc, already_recovered=False) != "clear_and_retry":
+            raise
+        if not clear_stale_port_busy(bus):
+            raise
+        _log.warning(
+            "%s: the motor bus was left marked in-use by an exchange that never finished; cleared "
+            "that flag while holding this arm's bus lock and read again. Nothing else can recover "
+            "it, and every later read would have failed the same way.",
+            getattr(device, "name", None) or type(device).__name__,
+        )
+        try:
+            return do_read()
+        except Exception as second:  # noqa: BLE001
+            if port_busy_action(second, already_recovered=True) == "report_real_owner":
+                raise ConnectionError(
+                    "the motor bus reports in-use again immediately after that flag was cleared, "
+                    "while this process holds the bus lock - so the port has a REAL owner outside "
+                    "bus_access (another process, or a reader that skips the lock). Ask the OS who "
+                    f"holds it: /usr/sbin/lsof {getattr(bus, 'port', '')} ({second})"
+                ) from second
+            raise
+
+
+def write_refusal(device: Any, error: Any) -> str:
+    """Explain a port-busy WRITE, which this module deliberately does not recover.
+
+    A read may clear a stranded in-use flag (see :func:`port_busy_action`): re-reading a position
+    changes nothing in the world, so the worst case of being wrong is a bad number, and the retry is
+    bounded at one. A WRITE is not symmetrical, and the asymmetry is the point:
+
+    * The exchange that stranded the flag may itself have been a write. Part of a goal-position packet
+      may already be on the wire, so the motors' commanded target is UNKNOWN - and the first thing to
+      do with an arm in an unknown commanded state is READ it, not send it another target.
+    * Re-sending an action is motion. This module cannot know whether the action in hand is still the
+      one the operator wants, or a frame from a teleop stream that has since moved on; replaying a
+      stale target is exactly how an arm jumps.
+
+    So the write says what happened, and points at the operation that legitimately clears the flag -
+    any read, which the state probe performs every cycle anyway. That makes recovery automatic within
+    about a second of telemetry WITHOUT this module ever choosing to move a real arm.
+    """
+    name = getattr(device, "name", None) or type(device).__name__
+    return (
+        f"{name}: refusing to re-send this action. The motor bus is marked in-use by an exchange "
+        "that never finished, so the arm's commanded position is unknown, and re-sending motion "
+        "after an aborted write is not a decision this layer makes. A READ clears that flag safely "
+        "(the state probe does it every cycle, so telemetry alone recovers it in about a second) - "
+        f"then command the arm again. Original error: {error}"
+    )
