@@ -753,12 +753,30 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         not touch the network.
         """
         from strands_robots.dashboard import training
+        from strands_robots.dashboard.dataset_check import mark_live_recording
+
+        # Q38: a dataset in MID-RECORDING is indistinguishable from an abandoned one by metadata
+        # alone (episode 0 is not in meta/info.json until it is flushed), and Q37's advice for an
+        # empty folder is "delete it" - the one action that would destroy the session. Only this
+        # route can tell the difference, because only the server knows what the recorder is doing.
+        # Read defensively: a listing must not 500 because the record controller is mid-transition.
+        active, captured = None, None
+        try:
+            session = getattr(app.state, "record", None)
+            live = session.session() if session is not None else {}
+            active = live.get("dataset") or None
+            episodes = live.get("episodes")
+            captured = len(episodes) if isinstance(episodes, list) else None
+        except Exception:  # noqa: BLE001 - the picker is worth more than this annotation
+            active, captured = None, None
 
         if not hub:
-            return {"datasets": await asyncio.to_thread(training.local_datasets, q)}
+            rows = await asyncio.to_thread(training.local_datasets, q)
+            return {"datasets": mark_live_recording(rows, active, episodes_so_far=captured)}
         from strands_robots.dashboard import checkpoints
 
-        return await asyncio.to_thread(training.search_datasets, q, checkpoints.clamp_limit(limit, 12, 50))
+        found = await asyncio.to_thread(training.search_datasets, q, checkpoints.clamp_limit(limit, 12, 50))
+        return {**found, "datasets": mark_live_recording(found.get("datasets", []), active, episodes_so_far=captured)}
 
     @app.get("/api/training/jobs")
     async def training_jobs() -> dict[str, Any]:

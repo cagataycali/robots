@@ -110,3 +110,71 @@ def dataset_verdict(
     if has_data_files is None:
         verdict["note"] += "; data/ was not checked"
     return verdict
+
+
+#: A row that a recorder is writing into right now. NOT the same claim as "broken": the folder is
+#: mid-flight, and the advice for an abandoned one ("delete it") would destroy a session in
+#: progress. Reported as its own reason so the UI can say so.
+RECORDING_REASON = "recording_in_progress"
+
+
+def _same_dataset(row: Mapping[str, Any], active: str) -> bool:
+    """Is this listing row the dataset the recorder named?
+
+    A recorder names a ``repo_id`` ("local/sim_recording"); a listing row carries both a
+    ``repo_id`` (relative to whichever root the scan walked) and an absolute ``root``. The two can
+    disagree - a dataset discovered under a remembered collect root lists as "sim_recording" while
+    the recorder calls it "local/sim_recording" - so a repo_id-only comparison would silently miss
+    the very session it exists to notice. The path tail is checked as well, with a separator
+    guard so "local/sim_recording" cannot match ".../not_sim_recording".
+    """
+    if not active:
+        return False
+    repo = str(row.get("repo_id") or "")
+    if repo and repo == active:
+        return True
+    root = str(row.get("root") or "")
+    if root:
+        return root == active or root.endswith("/" + active.strip("/"))
+    return False
+
+
+def mark_live_recording(
+    rows: list[dict[str, Any]],
+    active_dataset: str | None,
+    *,
+    episodes_so_far: int | None = None,
+) -> list[dict[str, Any]]:
+    """Re-judge the row a recording session is writing into (Q38).
+
+    A dataset in mid-recording looks EXACTLY like an abandoned one to a metadata check: episode 0
+    is not in ``meta/info.json`` until it is flushed, so a session that opened a minute ago reads
+    as "0 episodes - an abandoned session, record into it or delete it". That advice is not merely
+    unhelpful, it names the one action that would destroy the recording in progress.
+
+    Rows are returned as new dicts (the caller's cache is not mutated), and only the matching row
+    is touched. ``usable`` stays False for it: training would read a dataset that is still growing
+    and a replay would race the writer - but the REASON, and therefore the sentence the operator
+    reads, is now the true one.
+    """
+    if not active_dataset:
+        return rows
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not _same_dataset(row, active_dataset):
+            out.append(row)
+            continue
+        n = episodes_so_far if isinstance(episodes_so_far, int) else None
+        so_far = f"{n} episode(s) captured so far" if n is not None else "episodes are being written"
+        out.append({
+            **row,
+            "usable": False,
+            "recording": True,
+            "reason": RECORDING_REASON,
+            "problem": (
+                f"a recording session is writing into this dataset right now - {so_far}. "
+                "Training would read a dataset that is still growing, and a replay would race the "
+                "writer. Wait for the session to close; do NOT delete the folder."
+            ),
+        })
+    return out

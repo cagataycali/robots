@@ -130,3 +130,66 @@ class TestTheListingCarriesIt:
         row = training.local_datasets()[0]
         assert row["usable"] is False and row["reason"] == "missing_data"
         assert "12 episodes" in row["problem"]
+
+
+class TestALiveRecordingIsNotAnAbandonedOne:
+    """Q38: the dataset being recorded into RIGHT NOW must not be told to delete itself."""
+
+    def test_the_live_row_is_re_judged_with_the_true_reason(self) -> None:
+        from strands_robots.dashboard.dataset_check import mark_live_recording
+
+        rows = [
+            {"root": "/data/local/sim_recording", "repo_id": "local/sim_recording",
+             "usable": False, "reason": "no_episodes", "problem": "0 episodes ... Record into it, or delete it."},
+            {"root": "/data/org/other", "repo_id": "org/other", "usable": True, "total_episodes": 9},
+        ]
+        out = mark_live_recording(rows, "local/sim_recording", episodes_so_far=2)
+        live, other = out[0], out[1]
+        assert live["recording"] is True
+        assert live["reason"] == "recording_in_progress"
+        assert "2 episode(s) captured so far" in live["problem"]
+        assert "do NOT delete the folder" in live["problem"], (
+            "the abandoned-session advice would destroy a session in progress"
+        )
+        # Still not trainable - it is growing under the trainer's feet - but for the TRUE reason.
+        assert live["usable"] is False
+        # Every other row is untouched, including the healthy one.
+        assert other == rows[1]
+
+    def test_the_caller_s_rows_are_not_mutated(self) -> None:
+        # local_datasets results are handed straight to a cached response elsewhere; a mutation
+        # here would make one recording session poison the listing for ever.
+        from strands_robots.dashboard.dataset_check import mark_live_recording
+
+        rows = [{"root": "/d", "repo_id": "a/b", "usable": False, "reason": "no_episodes"}]
+        mark_live_recording(rows, "a/b", episodes_so_far=1)
+        assert rows[0]["reason"] == "no_episodes"
+
+    def test_it_matches_a_row_listed_under_a_different_root(self) -> None:
+        # A dataset discovered under a remembered collect root lists as "sim_recording" while the
+        # recorder calls it "local/sim_recording": a repo_id-only comparison would miss the very
+        # session this exists to notice.
+        from strands_robots.dashboard.dataset_check import mark_live_recording
+
+        rows = [{"root": "/data/local/sim_recording", "repo_id": "sim_recording", "usable": False}]
+        assert mark_live_recording(rows, "local/sim_recording")[0]["recording"] is True
+
+    def test_a_path_tail_must_end_on_a_separator(self) -> None:
+        from strands_robots.dashboard.dataset_check import mark_live_recording
+
+        rows = [{"root": "/data/local/not_sim_recording", "repo_id": "local/not_sim_recording", "usable": False}]
+        assert "recording" not in mark_live_recording(rows, "local/sim_recording")[0]
+
+    def test_no_session_changes_nothing(self) -> None:
+        from strands_robots.dashboard.dataset_check import mark_live_recording
+
+        rows = [{"root": "/d", "repo_id": "a/b", "usable": True}]
+        for empty in (None, ""):
+            assert mark_live_recording(rows, empty) == rows
+
+    def test_unknown_episode_count_says_so_rather_than_zero(self) -> None:
+        from strands_robots.dashboard.dataset_check import mark_live_recording
+
+        rows = [{"root": "/d", "repo_id": "a/b", "usable": False}]
+        p = mark_live_recording(rows, "a/b")[0]["problem"]
+        assert "episodes are being written" in p and "0 episode" not in p
