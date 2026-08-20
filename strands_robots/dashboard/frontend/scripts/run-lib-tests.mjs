@@ -96,10 +96,19 @@ console.log(failed
 // in two days). These tests prove each rule is RIGHT; check-lib-wired proves it is REACHED. Skipped
 // when a filter was given, because then only part of lib/ was under test and the graph is not the
 // subject. It runs LAST so its verdict is the final line, and a dead module fails `npm test`.
-let unwired = 0
+let structural = 0
 if (!filter) {
-  const w = spawnSync(process.execPath, [new URL('check-lib-wired.mjs', import.meta.url).pathname], { encoding: 'utf8' })
-  process.stdout.write(w.stdout || '')
-  if (w.status !== 0) unwired = 1
+  // Two structural rules, run last so their verdict is the final line. Neither can be expressed as a
+  // unit test, because both are about the SHAPE of the codebase rather than the behaviour of a function:
+  //   check-lib-wired  — a rule that reaches no screen (paid for three times in two days);
+  //   check-one-fetcher — a request that skips lib/endpoints, and with it the bearer token and the
+  //                       server-age explanation that makes all 10 currently-dark routes degrade
+  //                       honestly without a line of per-route code.
+  for (const guard of ['check-lib-wired.mjs', 'check-one-fetcher.mjs']) {
+    const w = spawnSync(process.execPath, [new URL(guard, import.meta.url).pathname], { encoding: 'utf8' })
+    process.stdout.write(w.stdout || '')
+    process.stderr.write(w.stderr || '')
+    if (w.status !== 0) structural = 1
+  }
 }
-process.exit(failed || unwired ? 1 : 0)
+process.exit(failed || structural ? 1 : 0)
