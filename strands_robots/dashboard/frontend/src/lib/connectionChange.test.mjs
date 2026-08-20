@@ -1,7 +1,7 @@
 // Q74: a token belongs to a host. Run:
-//   npx esbuild src/lib/connectionChange.ts --bundle --format=esm --outfile=/tmp/cc.mjs && node src/lib/connectionChange.test.mjs
+//   npx esbuild src/lib/connectionChange.ts --bundle --format=esm --outfile=/tmp/connectionChange.mjs && node src/lib/connectionChange.test.mjs
 import assert from 'node:assert/strict'
-const { connectionChange, needsConfirm } = await import('/tmp/cc.mjs')
+const { connectionChange, needsConfirm } = await import('/tmp/connectionChange.mjs')
 
 const P = { pageHost: 'robots.cagatay.my' }
 

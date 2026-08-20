@@ -1,7 +1,8 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { authRemovalWarning } from '../lib/authRemoval'
 import { connectionChange, needsConfirm, type ConnectionVerdict } from '../lib/connectionChange'
+import { syncDrafts, dirtyFields, unsavedSummary, type Drafts } from '../lib/draftSync'
 import type { MeshInfo } from '../types'
 import {
   authToken, backendBase, backendLabel, normalize, post,
@@ -29,6 +30,22 @@ function FieldMeta({ k, raw }: { k: string; raw: string }) {
 }
 
 type Tab = 'connection' | 'agent' | 'voice' | 'mesh' | 'env' | 'security'
+
+/** Q76: field keys in the operator's words, for the "unsaved changes" sentence. */
+const DRAFT_LABELS: Record<string, string> = {
+  modelId: 'the model id', prompt: 'the system prompt', temperature: 'temperature',
+  maxTokens: 'max tokens', voiceProvider: 'the voice provider', voiceName: 'the voice',
+  connect: 'mesh connect', listen: 'mesh listen', meshPort: 'the mesh port',
+  meshBackend: 'the mesh transport', cameraHz: 'camera Hz', corsOrigins: 'CORS origins',
+}
+
+/** Which tab each draft field lives on — for the unsaved-work dot. */
+const TAB_OF_FIELD: Record<string, string> = {
+  modelId: 'agent', prompt: 'agent', temperature: 'agent', maxTokens: 'agent',
+  voiceProvider: 'voice', voiceName: 'voice',
+  connect: 'mesh', listen: 'mesh', meshPort: 'mesh', meshBackend: 'mesh', cameraHz: 'mesh',
+  corsOrigins: 'security',
+}
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'connection', label: 'Connection' },
@@ -88,29 +105,75 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   // Q75: keys the operator marked for REMOVAL (null in the patch), distinct from an emptied value.
   const [envUnset, setEnvUnset] = useState<string[]>([])
   const [removeArmed, setRemoveArmed] = useState(false)
+  // Q76: closing with unsaved edits asks instead of discarding a 10-row prompt silently.
+  const [discardArmed, setDiscardArmed] = useState(false)
   const [corsOrigins, setCorsOrigins] = useState('')
+
+  // Q76: what the server says each draft field should be. Every save calls reload(), so this used to
+  // be blindly written back over whatever the operator was typing in ANOTHER tab.
+  const serverDrafts: Drafts = useMemo<Drafts>(() => {
+    if (!config) return {} as Drafts
+    const ms = (config.mesh.settings ?? {}) as Record<string, any>
+    const out: Drafts = {
+      modelId: config.agent.model_id ?? '',
+      prompt: config.agent.system_prompt ?? '',
+      temperature: config.agent.temperature === null ? '' : String(config.agent.temperature),
+      maxTokens: config.agent.max_tokens === null ? '' : String(config.agent.max_tokens),
+      voiceProvider: config.voice.provider,
+      voiceName: config.voice.voice_name ?? '',
+      connect: (ms.connect ?? []).join(', '),
+      listen: (ms.listen ?? []).join(', '),
+      meshPort: ms.port ? String(ms.port) : '',
+      meshBackend: ms.backend ?? '',
+      cameraHz: ms.camera_hz ? String(ms.camera_hz) : '',
+      corsOrigins: (config.security.cors_origins ?? []).join(', '),
+    }
+    return out
+  }, [config])
+
+  const SETTERS: Record<string, (v: string) => void> = {
+    modelId: setModelId, prompt: setPrompt, temperature: setTemperature, maxTokens: setMaxTokens,
+    voiceProvider: setVoiceProvider, voiceName: setVoiceName, connect: setConnect, listen: setListen,
+    meshPort: setMeshPort, meshBackend: setMeshBackend, cameraHz: setCameraHz, corsOrigins: setCorsOrigins,
+  }
+  const currentDrafts: Drafts = {
+    modelId, prompt, temperature, maxTokens, voiceProvider, voiceName,
+    connect, listen, meshPort, meshBackend, cameraHz, corsOrigins,
+  }
+  /* The snapshot the fields were seeded from — what "the operator has not touched it" means. */
+  const seededRef = useRef<Drafts>({})
+  const currentRef = useRef<Drafts>(currentDrafts)
+  currentRef.current = currentDrafts
 
   useEffect(() => {
     if (!config) return
-    setModelId(config.agent.model_id ?? '')
-    setPrompt(config.agent.system_prompt ?? '')
-    setTemperature(config.agent.temperature === null ? '' : String(config.agent.temperature))
-    setMaxTokens(config.agent.max_tokens === null ? '' : String(config.agent.max_tokens))
-    setVoiceProvider(config.voice.provider)
-    setVoiceName(config.voice.voice_name ?? '')
-    const ms = (config.mesh.settings ?? {}) as Record<string, any>
-    setConnect((ms.connect ?? []).join(', '))
-    setListen((ms.listen ?? []).join(', '))
-    setMeshPort(ms.port ? String(ms.port) : '')
-    setMeshBackend(ms.backend ?? '')
-    setCameraHz(ms.camera_hz ? String(ms.camera_hz) : '')
+    const r = syncDrafts(currentRef.current, seededRef.current, serverDrafts)
+    for (const [key, value] of Object.entries(r.next)) {
+      if (currentRef.current[key] !== value) SETTERS[key]?.(value)
+    }
+    seededRef.current = serverDrafts
+    if (r.conflicts.length) {
+      // Never overwrite typing — but a draft pending against a value that MOVED is something only
+      // the human can resolve, so it is said out loud instead of discovered on the next save.
+      setStatus(
+        `⚠ changed on the server while you were editing: ${r.conflicts.join(', ')} `
+        + '— your version is still in the field, saving will overwrite theirs',
+      )
+    }
     setTrustRemote(config.runtime.trust_remote_code)
-    setCorsOrigins((config.security.cors_origins ?? []).join(', '))
     setEnvDraft({})
     setServerToken('')
-  }, [config])
+  }, [config, serverDrafts])
 
   if (!open) return null
+
+  // Q76: what would be thrown away by closing right now.
+  const dirty = dirtyFields(currentDrafts, serverDrafts)
+  const unsaved = unsavedSummary(dirty, DRAFT_LABELS)
+  const requestClose = () => {
+    if (dirty.length) { setDiscardArmed(true); return }
+    onClose()
+  }
 
   // Live validation: a field that cannot be parsed never reaches the server
   // (Q14: temperature "NaN" used to be written into settings.json verbatim).
@@ -221,12 +284,27 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   }
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
+    <div className="drawer-backdrop" onClick={requestClose}>
       <aside ref={sheetRef} className="drawer" onClick={e => e.stopPropagation()}>
         <header className="drawer-head">
           <h2>Settings</h2>
-          <button className="btn ghost" onClick={onClose} aria-label="close settings" title="Escape">✕</button>
+          <button className="btn ghost" onClick={requestClose} aria-label="close settings" title="Escape">✕</button>
         </header>
+
+        {discardArmed && (
+          /* Q76: the drawer holds the longest text in the app. Closing it used to be one stray click
+             on the backdrop, and every draft went back to the server's value with no message. */
+          <div className="result bad" role="alert">
+            <b>{unsaved}</b>
+            <p>Closing now discards {dirty.length === 1 ? 'it' : 'them'}. Save the tab you were editing first, or discard.</p>
+            <div className="sheet-actions">
+              <button className="btn go" onClick={() => setDiscardArmed(false)}>keep editing</button>
+              <button className="btn ghost danger" onClick={() => { setDiscardArmed(false); onClose() }}>
+                discard and close
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="settings-search">
           <input
@@ -257,12 +335,17 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
         </div>
 
         <nav className="tabs">
-          {TABS.map(t => (
-            <button key={t.id} className={tab === t.id ? 'tab on' : 'tab'} aria-pressed={tab === t.id}
-                    onClick={() => setTab(t.id)}>
-              {t.label}
-            </button>
-          ))}
+          {TABS.map(t => {
+            /* Q76: which tab is holding unsaved work, so it is visible from any other tab. */
+            const tabDirty = dirty.some(k => (TAB_OF_FIELD[k] ?? '') === t.id)
+            return (
+              <button key={t.id} className={tab === t.id ? 'tab on' : 'tab'} aria-pressed={tab === t.id}
+                      onClick={() => setTab(t.id)}
+                      title={tabDirty ? 'unsaved changes on this tab' : undefined}>
+                {t.label}{tabDirty && <em className="warn" aria-label="unsaved changes"> •</em>}
+              </button>
+            )
+          })}
         </nav>
 
         {loading && !config && <div className="drawer-body"><p className="hint">loading…</p></div>}
