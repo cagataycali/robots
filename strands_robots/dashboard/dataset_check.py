@@ -178,3 +178,56 @@ def mark_live_recording(
             ),
         })
     return out
+
+
+def record_target_verdict(
+    dataset: str,
+    *,
+    exists: bool = False,
+    has_meta: bool = False,
+    episodes: int | None = None,
+    non_empty: bool = False,
+) -> str | None:
+    """Can a NEW recording session write into this dataset name? (Q39)
+
+    Returned as a sentence to refuse with, or None to proceed. Called BEFORE the session parks the
+    arms, because everything after that point reports through ``could not open the arms: {exc}`` -
+    and a dataset name that is already taken is not a hardware fault. The operator was told to
+    check cables for what is a one-word rename.
+
+    The three real cases, kept apart because the right next action differs:
+      - the name is EMPTY: nothing downstream can resolve a path from it;
+      - the directory is a DATASET already (it has ``meta/``): ``LeRobotDataset.create`` raises
+        ``FileExistsError``, and the episode count is what decides whether the operator is about to
+        overwrite an hour of work or re-use a folder an abandoned session left behind (Q37);
+      - the directory exists but is NOT a dataset: recording there raises too, and the fix is a
+        different one (pick another name, or clear that directory yourself - this refuses rather
+        than deleting anything).
+    """
+    name = (dataset or "").strip()
+    if not name:
+        return (
+            "a dataset name is required - it becomes the dataset's repo_id "
+            "(e.g. 'local/pick-place' or 'cagataydev/so101-cubes')."
+        )
+    if exists and has_meta:
+        n = episodes if isinstance(episodes, int) else None
+        if n:
+            return (
+                f"'{name}' already exists with {n} recorded episode(s). Recording would refuse "
+                "rather than append (LeRobotDataset.create will not open an existing dataset), and "
+                "overwriting it would destroy those episodes. Pick another name - or delete that "
+                "dataset deliberately first."
+            )
+        return (
+            f"'{name}' already exists on disk with no recorded episodes - what an interrupted "
+            "session leaves behind. Recording still refuses to reuse the directory, so pick "
+            "another name, or remove that empty dataset first."
+        )
+    if exists and non_empty:
+        return (
+            f"'{name}' resolves to a directory that already has files in it but is not a dataset "
+            "(no meta/). Recording into it would fail; pick another name, or clear that directory "
+            "yourself - nothing here will delete files for you."
+        )
+    return None

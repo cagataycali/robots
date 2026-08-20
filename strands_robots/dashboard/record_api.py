@@ -24,6 +24,7 @@ defaults are :func:`record_worker.hardware_backend` and
 
 from __future__ import annotations
 
+import json
 import logging
 import tempfile
 import threading
@@ -35,6 +36,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from strands_robots.dashboard import camera_liveness
+from strands_robots.dashboard.dataset_check import _as_int, record_target_verdict
 from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,39 @@ EMPTY_SESSION: dict[str, Any] = {
     "target_episodes": 10, "fps": 30, "phase": "idle", "episodes": [],
     "error": None,
 }
+
+
+def _target_facts(dataset: str) -> dict[str, Any]:
+    """What is on disk where this dataset would be written.
+
+    Read here rather than inside the verdict so the judgment stays pure and testable, and read
+    DEFENSIVELY: an unreadable dataset home must not stop a recording from opening. Silence here
+    means "no evidence of a collision", which is exactly what the old behaviour assumed - the
+    check can only ever add refusals it can prove.
+    """
+    name = (dataset or "").strip()
+    if not name:
+        return {}
+    try:
+        from strands_robots.dataset_recorder import resolve_dataset_dir
+
+        d = resolve_dataset_dir(name)
+        if not d.exists():
+            return {"exists": False}
+        meta = (d / "meta" / "info.json").exists()
+        episodes = None
+        if meta:
+            episodes = _as_int(
+                json.loads((d / "meta" / "info.json").read_text()).get("total_episodes")
+            )
+        return {
+            "exists": True,
+            "has_meta": meta,
+            "episodes": episodes,
+            "non_empty": any(d.iterdir()),
+        }
+    except Exception:  # noqa: BLE001 - a blind check must never block a recording
+        return {}
 
 
 def _default_recorder_factory(backend: Any) -> Callable[..., Any]:
@@ -117,6 +152,14 @@ class RecordController:
             task = str(body.get("task", "")).strip()
             leader_id = str(body.get("leader", "")).strip()
             follower_id = str(body.get("follower", "")).strip()
+
+            # Q39: judge the dataset NAME first. Every failure after the parking step below
+            # reports through "could not open the arms: {exc}", so a name that is already taken
+            # sent the operator to check cables for what is a one-word rename - and by then both
+            # arms have been despawned and respawned for nothing.
+            bad = record_target_verdict(dataset, **_target_facts(dataset))
+            if bad:
+                raise HTTPException(409 if dataset.strip() else 422, bad)
 
             leader = self._managed(leader_id, role="leader")
             follower = self._managed(follower_id, role="follower")
