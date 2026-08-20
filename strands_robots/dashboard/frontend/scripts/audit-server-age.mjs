@@ -39,8 +39,10 @@ console.log(`  server at ${BASE} publishes ${live.length} paths; this source dec
 if (missing.length === 0) {
   console.log('  PASS  the running server has every route this source calls')
 } else {
-  console.log(`  OLD   ${missing.length} route(s) this bundle calls are NOT on the running server:`)
-  for (const p of missing) console.log(`          ${p}`)
+  // Prefixed NEWS so a full sweep surfaces it: this audit's whole output IS its value, and exiting
+  // 0 previously made the runner swallow every line of it.
+  console.log(`  NEWS  ${missing.length} route(s) this bundle calls are NOT on the running server — restart to light them up:`)
+  for (const p of missing) console.log(`  note    ${p}`)
   console.log('        → the UI explains these as "restart the dashboard to pick it up" (lib/serverAge.ts).')
   console.log('        → an owner-run restart from a terminal makes them live (never restart from a daemon:')
   console.log('          a launchd-descended process can never be granted camera access on macOS).')

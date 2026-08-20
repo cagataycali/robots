@@ -41,7 +41,7 @@ try {
   process.exit(2)
 }
 
-const scripts = fs.readdirSync(HERE)
+let scripts = fs.readdirSync(HERE)
   .filter(f => /^audit-.*\.mjs$/.test(f))
   .filter(f => f.includes(filter))
   .sort()
@@ -52,6 +52,17 @@ const purpose = (f) => {
   const line = head.split('\n').map(l => l.replace(/^\s*(\/\*+|\*+\/?)\s?/, '').trim())
     .find(l => l.length > 20 && !l.startsWith('Run:') && !/^import/.test(l))
   return (line ?? '').replace(/\s+$/, '').slice(0, 96)
+}
+
+// An optional substring filter: `node scripts/run-audits.mjs server-age` re-runs one audit instead of
+// the whole 4.5-minute sweep. Without it, a loop verifying a one-line fix either waits out every
+// browser launch or (worse) runs the audit by hand and forgets to re-run the suite.
+const only = process.argv.slice(2).filter(a => !a.startsWith('-'))
+if (only.length) {
+  const before = scripts.length
+  scripts = scripts.filter(f => only.some(o => f.includes(o)))
+  console.log(`  filter ${only.join(', ')} — running ${scripts.length} of ${before} audit(s)`)
+  if (!scripts.length) { console.log('  nothing matched that filter'); process.exit(1) }
 }
 
 let failed = 0, timedOut = 0
@@ -70,6 +81,13 @@ for (const f of scripts) {
   }
   if (r.status === 0) {
     console.log(`  ok    ${name} (${secs}s) — ${purpose(f)}`)
+    // NEWS FROM A PASSING AUDIT. Not every audit produces a verdict: audit-server-age exists to
+    // REPORT which routes the shipped bundle calls that the running server lacks, and an old server
+    // is news for the operator, not a broken build — so it exits 0 by design. This runner printed
+    // only "ok" and threw the finding away, which is how a sweep reported "ok server-age (0s)" while
+    // NINE routes were dark on the live dashboard. A line starting NEWS/OLD/note now survives.
+    for (const line of (r.stdout || '').split('\n').filter(l => /^\s*(NEWS|OLD|note)\b/.test(l)).slice(0, 12))
+      console.log(`          ${line.trim()}`)
   } else {
     failed += 1
     console.log(`  FAIL  ${name} (${secs}s) — ${purpose(f)}`)
