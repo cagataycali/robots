@@ -35,6 +35,7 @@ import contextlib
 import io
 import logging
 import os
+import socket
 import sys
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
@@ -229,6 +230,68 @@ def rdzv_timeout_s(env: Mapping[str, str] | None = None) -> int:
     return value if value > 0 else DEFAULT_RDZV_TIMEOUT_S
 
 
+#: Operator override for the address the elastic agent publishes as MASTER_ADDR.
+LOCAL_ADDR_ENV = "STRANDS_TRAIN_LOCAL_ADDR"
+
+#: Reverse-DNS zones. A name in one of these is a PTR record, not a hostname: it
+#: answers "what is called this address" and cannot be looked up forwards.
+_REVERSE_DNS_SUFFIXES = (".ip6.arpa", ".in-addr.arpa")
+
+
+def looks_like_reverse_dns(name: str) -> bool:
+    """Is this "hostname" actually a reverse-DNS pointer name?"""
+    return name.strip(".").lower().endswith(tuple(s.strip(".") for s in _REVERSE_DNS_SUFFIXES))
+
+
+def launch_local_addr(
+    nnodes: int,
+    explicit: str = "",
+    *,
+    env: Mapping[str, str] | None = None,
+    fqdn: Callable[[], str] = socket.getfqdn,
+) -> str | None:
+    """The address the agent should publish as ``MASTER_ADDR``, or None to let torch guess.
+
+    THIS IS THE ROOT CAUSE OF Q37, and it is worth spelling out because the failure is
+    invisible from Python. When ``local_addr`` is None, torch's
+    ``RendezvousStoreInfo.build`` falls back to ``socket.getfqdn()``. On this Mac that
+    returns ``1.0.0.0...ip6.arpa`` — the reverse-DNS PTR name of ``::1`` — which no
+    forward lookup can resolve. The agent then publishes that as MASTER_ADDR, the
+    worker store's client dials a name that will never resolve, and libtorch retries
+    with backoff *inside its C++ socket code*: no Python timeout, no pytest-timeout
+    signal and no rendezvous budget can end that wait. The visible symptom is a run
+    parked forever on "Rendezvous'ing worker group" with no error at all.
+
+    So: a SINGLE-NODE launch is pinned to ``127.0.0.1``. Nothing outside this machine
+    needs to reach it, and a loopback literal cannot be mis-resolved.
+
+    A multi-node launch keeps torch's own resolution (the address really must be
+    reachable from the other nodes, and guessing one here would be worse), but if the
+    fqdn is a reverse-DNS artifact we say so loudly rather than letting the operator
+    watch a silent hang.
+    """
+    override = (explicit or (env if env is not None else os.environ).get(LOCAL_ADDR_ENV, "")).strip()
+    if override:
+        return override
+    if nnodes <= 1:
+        return "127.0.0.1"
+    resolved = ""
+    try:
+        resolved = fqdn()
+    except Exception as exc:  # noqa: BLE001 - resolution failures are the point here
+        logger.warning("could not resolve this host's name for MASTER_ADDR (%r)", exc)
+    if resolved and looks_like_reverse_dns(resolved):
+        logger.warning(
+            "this host's fqdn resolves to the reverse-DNS name %r, which cannot be looked up "
+            "forwards; a %d-node launch will hang waiting on it. Set %s to an address the other "
+            "nodes can reach.",
+            resolved,
+            nnodes,
+            LOCAL_ADDR_ENV,
+        )
+    return None
+
+
 def elastic_launch_callable(
     fn: Callable[..., Any],
     *,
@@ -237,6 +300,7 @@ def elastic_launch_callable(
     rdzv_endpoint: str = "",
     rdzv_backend: str = "c10d",
     run_id: str = "",
+    local_addr: str = "",
     fn_args: tuple[Any, ...] = (),
 ) -> Any:
     """Multi-process launch via torch's programmatic elastic launcher (no torchrun).
@@ -261,6 +325,10 @@ def elastic_launch_callable(
         # reached waits inside libtorch's C++ socket code, where pytest-timeout's
         # signal and any caller-side timeout are both powerless (Q37).
         rdzv_configs={"timeout": timeout_s, "read_timeout": timeout_s, "join_timeout": timeout_s},
+        # The address published to workers as MASTER_ADDR. Left to torch it becomes
+        # socket.getfqdn(), which on this machine is a reverse-DNS name nothing can
+        # resolve - the actual Q37 hang. See launch_local_addr.
+        local_addr=launch_local_addr(nnodes, local_addr),
         max_restarts=0,
         start_method="spawn",
     )
