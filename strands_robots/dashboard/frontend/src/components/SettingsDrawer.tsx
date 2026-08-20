@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { authRemovalWarning } from '../lib/authRemoval'
+import { connectionChange, needsConfirm, type ConnectionVerdict } from '../lib/connectionChange'
 import type { MeshInfo } from '../types'
 import {
   authToken, backendBase, backendLabel, normalize, post,
@@ -171,12 +172,29 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
     }
   }
 
-  const applyConnection = () => {
+  // Q74: the token is ONE global slot attached to whatever base is current, so re-pointing the
+  // backend used to hand the old host's credential to the new one silently. The verdict is computed
+  // when the button is pressed, and only two situations stop it — see connectionChange.
+  const [connVerdict, setConnVerdict] = useState<ConnectionVerdict | null>(null)
+
+  const goConnect = (tokenToSend: string) => {
     setBackendBase(base)
-    setAuthToken(token)
+    setAuthToken(tokenToSend)
     // Remounting the app is the point: sockets, peer map and frame buffers all
     // belong to the backend we were talking to.
     location.reload()
+  }
+
+  const applyConnection = () => {
+    const v = connectionChange({
+      currentBase: backendBase(),
+      currentToken: authToken(),
+      nextBase: normalize(base) || base,
+      nextToken: token,
+      pageHost: typeof location !== 'undefined' ? location.host : '',
+    })
+    if (v.kind === 'ok') { setConnVerdict(null); goConnect(token); return }
+    setConnVerdict(v)  // unparseable = a refusal; the other two are questions
   }
 
   const restartMesh = async (force = false) => {
@@ -265,9 +283,30 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
               <div className="sheet-actions">
                 <button className="btn go" onClick={applyConnection}>connect &amp; reload</button>
                 {(base || token) && (
-                  <button className="btn ghost" onClick={() => { setBase(''); setToken('') }}>clear</button>
+                  <button className="btn ghost" onClick={() => { setBase(''); setToken(''); setConnVerdict(null) }}>clear</button>
                 )}
               </div>
+              {/* Q74: a credential belongs to a host. This is the one moment the pairing changes, so
+                  it is the only honest place to say so — and it offers the alternative rather than
+                  making "OK" the only way forward. */}
+              {connVerdict && connVerdict.kind !== 'ok' && (
+                <div className="result bad" role="alert">
+                  <b>{connVerdict.kind === 'unparseable' ? 'That address cannot be dialled' : 'Send this token there?'}</b>
+                  <p>{connVerdict.detail}</p>
+                  {needsConfirm(connVerdict) && (
+                    <div className="sheet-actions">
+                      <button className="btn ghost danger" onClick={() => { setConnVerdict(null); goConnect(token) }}>
+                        send it anyway
+                      </button>
+                      <button className="btn go" onClick={() => {
+                        // The safe path must be one click too, or nobody takes it.
+                        setToken(''); setConnVerdict(null); goConnect('')
+                      }}>{'alternative' in connVerdict ? connVerdict.alternative : 'connect without a token'}</button>
+                      <button className="btn ghost" onClick={() => setConnVerdict(null)}>cancel</button>
+                    </div>
+                  )}
+                </div>
+              )}
               <p className="hint">
                 Tip: <code>?backend=https://robot.lan:8080&amp;token=…</code> in the URL sets both,
                 so a bookmark or QR code points a phone straight at one robot.
