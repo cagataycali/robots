@@ -61,6 +61,12 @@ await page.waitForTimeout(5000)
   }
   // The snippet stays: someone with no board at all still needs it. It just is not the only answer.
   if (!/from strands_robots import Robot/.test(home)) failures.push('the home screen lost the start snippet')
+  // Q46: and the port in it must be a port THIS machine has. The fixture's boards are at
+  // /dev/cu.usbmodem*, so a snippet still offering the Linux example is handing out code that cannot
+  // run where it was copied from.
+  if (/ttyACM0/.test(home)) failures.push('the start snippet still hardcodes the linux example port')
+  if (!/port="\/dev\/cu\.usbmodemAAA1"/.test(home)) failures.push('the start snippet does not name the detected port')
+  if (!/detected on this machine right now/.test(home)) failures.push('the snippet does not say where its port came from')
 }
 await page.locator('button.chip:has-text("record")').first().click()
 await page.waitForTimeout(2500)

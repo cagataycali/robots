@@ -15,6 +15,7 @@ import SettingsDrawer from './components/SettingsDrawer'
 import ActivityLog from './components/ActivityLog'
 import DevicePanel from './components/DevicePanel'
 import { noArmsVerdict, type RememberedBoard } from './lib/noArms'
+import { startSnippet, type DetectedBoard } from './lib/startSnippet'
 import { api as httpGet } from './lib/endpoints'
 import EstopSheet from './components/EstopSheet'
 import HelpSheet from './components/HelpSheet'
@@ -49,7 +50,7 @@ function Dashboard() {
    * null = the lookup failed, which lib/noArms.ts is careful never to turn into "nothing is
    * configured".
    */
-  const [boards, setBoards] = useState<RememberedBoard[] | null | undefined>(undefined)
+  const [boards, setBoards] = useState<(RememberedBoard & DetectedBoard)[] | null | undefined>(undefined)
   const [settingsTab, setSettingsTab] = useState<'mesh' | undefined>(undefined)
   const [detail, setDetail] = useState<string | null>(null)
   const [busyPeers, setBusyPeers] = useState<Record<string, boolean>>({})
@@ -93,21 +94,32 @@ function Dashboard() {
   const fleetEmpty = loaded && list.length === 0
   // undefined (not asked yet) is passed as a failed lookup: while the request is in flight, "could
   // not be reached" is the honest reading and never becomes "nothing is configured".
+  // The snippet is derived, not stored: whatever the last devices lookup saw. undefined (in flight)
+  // and null (failed) both read as "no board detected", which is the placeholder branch and says so.
+  const snippet = startSnippet(boards ?? null)
   const homeRoute = fleetEmpty
     ? noArmsVerdict(0, boards === undefined ? null : boards)?.route ?? null
     : null
   useEffect(() => {
     if (!fleetEmpty || boards !== undefined) return
     let alive = true
-    httpGet<{ serial_ports?: { device: string; remembered?: { peer_id: string } | null }[]
-              managed?: Record<string, { alive?: boolean; port?: string }> }>('/api/devices')
+    httpGet<{
+      serial_ports?: { device: string; remembered?: { peer_id: string; robot_name?: string | null } | null }[]
+      managed?: Record<string, { alive?: boolean; port?: string }>
+    }>('/api/devices')
       .then((doc) => {
         if (!alive) return
         const claimed = new Set(Object.values(doc.managed ?? {})
           .filter((m) => m?.alive && m?.port).map((m) => m.port as string))
-        setBoards((doc.serial_ports ?? [])
-          .filter(p => p.remembered?.peer_id)
-          .map(p => ({ peer_id: p.remembered!.peer_id, claimed: claimed.has(p.device) })))
+        // EVERY detected board, not only the remembered ones: an unconfigured board still has a
+        // real port, and that port is the whole point of the snippet (Q46). noArmsVerdict does its
+        // own filtering on peer_id, so the two questions stay independent.
+        setBoards((doc.serial_ports ?? []).map(p => ({
+          peer_id: p.remembered?.peer_id ?? '',
+          claimed: claimed.has(p.device),
+          device: p.device,
+          robot_name: p.remembered?.robot_name ?? null,
+        })))
       })
       .catch(() => { if (alive) setBoards(null) })
     return () => { alive = false }
@@ -275,7 +287,12 @@ function Dashboard() {
                 <p className="hint" role="status">{homeRoute}</p>
               )}
               <p>Start one anywhere on your network:</p>
-              <pre>{`from strands_robots import Robot\nRobot("so101").run()   # sim\nRobot("so101", mode="real", port="/dev/ttyACM0").run()`}</pre>
+              {/* Q46: this used to hardcode port="/dev/ttyACM0" — a Linux path, on a Mac whose arms
+                  live at /dev/cu.usbmodem*. The one piece of code the dashboard hands you could not
+                  run on the machine you copied it from. Now it names a detected port when there is
+                  one, and admits the placeholder when there is not. */}
+              <pre>{snippet.code}</pre>
+              <p className="hint">{snippet.provenance}</p>
               <p className="hint">
                 Set <code>STRANDS_MESH_LOCAL_DEV=1</code> + <code>STRANDS_MESH_MULTICAST=true</code> for local dev.
               </p>
