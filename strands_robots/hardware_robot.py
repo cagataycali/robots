@@ -368,12 +368,18 @@ def _degrade_to_available_cameras(robot: Any) -> dict[str, str]:
         was nothing to drop or dropping did not help, in which case the
         caller's original error stands.
     """
-    # This DIVERGES from upstream's connect contract, which fails the whole
-    # bring-up and rolls every device back so the retry keeps naming the camera
-    # that broke (tests/test_hardware_camera_rollback.py pins that). Degrading is
-    # right for this fleet - on a Mac whose TCC grant is missing NO arm could ever
-    # come up otherwise - but a divergence nobody can switch off is a fork, so the
-    # strict behaviour stays reachable by env and both contracts stay tested.
+    # Degrading DIVERGES from the strict connect contract this class otherwise
+    # keeps: a bring-up that fails partway rolls every device back, so the retry
+    # keeps naming the camera that actually broke instead of raising
+    # "already connected" on a healthy one. Dropping the blind camera answers that
+    # same failure earlier, which is right for a host whose OS never granted
+    # camera access - without it NO arm could come up at all - but it does hide
+    # the diagnosis, so the strict behaviour stays reachable:
+    #   STRANDS_ROBOT_CAMERA_DEGRADE=0  -> nothing is dropped, the original error
+    #                                      stands and the caller rolls back.
+    # Read at call time, so one arm can be debugged without a restart. A
+    # divergence nobody can switch off is a fork; one behind a documented flag is
+    # a decision.
     if os.getenv("STRANDS_ROBOT_CAMERA_DEGRADE", "1").strip().lower() in ("0", "false", "no", "off"):
         return {}
 
