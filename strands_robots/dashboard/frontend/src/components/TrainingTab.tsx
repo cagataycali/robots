@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post, HttpError } from '../lib/endpoints'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
@@ -6,6 +6,7 @@ import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
 import { setDeployIntent } from '../lib/deployIntent'
 import { datasetKey as dsKey, selectDataset, selectionKey, replayable, type DatasetRow } from '../lib/datasetSelection'
+import { datasetHint, isCurrentResponse } from '../lib/datasetHint'
 
 // One row is either LOCAL (has a `root` path, trains offline) or from the HUB
 // (no root, trains from repo_id after a download). lib/datasetSelection owns
@@ -47,11 +48,17 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // an empty list with a reason.
   const [dsQuery, setDsQuery] = useState('')
   const [dsProblem, setDsProblem] = useState<string | null>(null)
+  // WHICH query the rows and the verdict on screen were measured for. Hub round
+  // trips are not ordered, so "the last response" is not "the current answer" -
+  // see lib/datasetHint.ts.
+  const [dsShownQuery, setDsShownQuery] = useState<string | null>(null)
+  const dsSeq = useRef(0)
   const [dsAuth, setDsAuth] = useState<{ authenticated?: boolean; user?: string | null; detail?: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
   const refresh = async () => {
+    const seq = ++dsSeq.current
     try {
       const [t, d, j] = await Promise.all([
         api('/api/training/trainers'),
@@ -59,10 +66,15 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         api('/api/training/jobs'),
       ])
       setTrainers(t.trainers ?? [])
-      setDatasets(d.datasets ?? [])
-      setDsProblem(d.problem ?? null)
-      setDsAuth(d.hf_auth ?? null)
       setJobs((j.jobs ?? []).slice().reverse())
+      // A keystroke may have fired a newer dataset search while this was in
+      // flight; the newer question owns the list.
+      if (isCurrentResponse(seq, dsSeq.current)) {
+        setDatasets(d.datasets ?? [])
+        setDsProblem(d.problem ?? null)
+        setDsAuth(d.hf_auth ?? null)
+        setDsShownQuery(dsQuery)
+      }
     } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
   }
   useEffect(() => { refresh() }, [])
@@ -72,12 +84,22 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // round trip; the backend caches a hit for 5 minutes, never a failure.
   useEffect(() => {
     const t = setTimeout(async () => {
+      const seq = ++dsSeq.current
+      const asked = dsQuery
       try {
-        const d = await api(`/api/training/datasets?q=${encodeURIComponent(dsQuery)}`)
+        const d = await api(`/api/training/datasets?q=${encodeURIComponent(asked)}`)
+        // Out-of-order Hub answers: a slow reply for "so" must not overwrite the
+        // rows for "so101" that the user is about to pick from.
+        if (!isCurrentResponse(seq, dsSeq.current)) return
         setDatasets(d.datasets ?? [])
         setDsProblem(d.problem ?? null)
         setDsAuth(d.hf_auth ?? null)
-      } catch (e) { setDsProblem(`search failed: ${(e as any)?.message ?? e}`) }
+        setDsShownQuery(asked)
+      } catch (e) {
+        if (!isCurrentResponse(seq, dsSeq.current)) return
+        setDsProblem(`search failed: ${(e as any)?.message ?? e}`)
+        setDsShownQuery(asked)
+      }
     }, 250)
     return () => clearTimeout(t)
   }, [dsQuery])
@@ -286,11 +308,21 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               </optgroup>
             )}
           </select>
-          {dsProblem && <span className="hint warn">⚠ {dsProblem}</span>}
-          {!dsProblem && datasets.length === 0 && dsQuery &&
-            <span className="hint">nothing here or on the Hub matches “{dsQuery}” — the Hub answered, it simply has no match.</span>}
-          {dsAuth && dsAuth.authenticated === false && dsQuery &&
-            <span className="hint">Hub results are public only ({dsAuth.detail}) — a private or gated dataset will look like “no match”.</span>}
+          {/* ONE verdict, so the rows, the failure and the sentence cannot
+              describe three different moments (lib/datasetHint.ts). */}
+          {(() => {
+            const h = datasetHint({
+              query: dsQuery, shownQuery: dsShownQuery, count: datasets.length,
+              problem: dsProblem, anonymous: dsAuth?.authenticated === false,
+              authDetail: dsAuth?.detail ?? null,
+            })
+            return (
+              <>
+                {h.text && <span className={`hint${h.tone === 'warn' ? ' warn' : ''}`} role="status" aria-live="polite">{h.text}</span>}
+                {h.auth && <span className="hint">{h.auth}</span>}
+              </>
+            )
+          })()}
         </label>
         <label className="field"><span>base model</span>
           <input value={form.base_model} onChange={e => set('base_model', e.target.value)} disabled={busy} placeholder="lerobot/smolvla_base" />
@@ -357,11 +389,13 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <h3>Datasets</h3>
         {datasets.length === 0 && (
           <div className="dock-hint">
-            {dsProblem
-              ? `No local LeRobotDatasets, and the Hub could not be searched — ${dsProblem}`
-              : dsQuery
-                ? `Nothing matches “${dsQuery}” here or on the Hub.`
-                : 'No LeRobotDatasets on this machine — type above to search the Hub, or record one in Collect.'}
+            {dsShownQuery !== null && dsShownQuery.trim() !== dsQuery.trim()
+              ? `Searching for “${dsQuery.trim()}”…`
+              : dsProblem
+                ? `No local LeRobotDatasets, and the Hub could not be searched — ${dsProblem}`
+                : dsQuery
+                  ? `Nothing matches “${dsQuery}” here or on the Hub.`
+                  : 'No LeRobotDatasets on this machine — type above to search the Hub, or record one in Collect.'}
           </div>
         )}
         {datasets.map(d => (
