@@ -7,6 +7,7 @@ import { sessionFreshness, staleSuffix } from '../lib/sessionFreshness'
 import { api as httpGet, HttpError } from '../lib/endpoints'
 import { recordFailure, type RecordActionKind } from '../lib/recordOutcome'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
+import { episodeTarget } from '../lib/episodeTarget'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
@@ -43,6 +44,8 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
     dataset: '', task: '', leader: '', follower: '', target_episodes: '20',
   })
   const [touched, setTouched] = useState({ leader: false, follower: false })
+  // What the operator asked for, and whether we understood it — never a silent correction.
+  const wanted = episodeTarget(form.target_episodes)
   // A pair the hardware contradicts is not forbidden - a bench rig can be wired
   // in a way we cannot see - but it is not a silent default either. This follows
   // the same posture as the other safety refusals in this dashboard: state the
@@ -241,7 +244,7 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
           void run(() => api!.open({
             dataset: form.dataset.trim(), task: form.task.trim(),
             leader: form.leader, follower: form.follower,
-            target_episodes: Math.max(1, Number(form.target_episodes) || 20),
+            target_episodes: wanted.value,
             // Only ever sent when the operator ticked the box in front of the
             // named camera and its age - never a default, never remembered.
             ...(camWarning && camAck ? { ignore_dead_cameras: true } : {}),
@@ -276,7 +279,14 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
             </label>
             <label className="field"><span>episodes</span>
               <input inputMode="numeric" value={form.target_episodes}
+                     aria-invalid={!!wanted.problem} aria-describedby="rec-episodes-say"
                      onChange={e => set('target_episodes', e.target.value)} />
+              {/* The old expression was Math.max(1, Number(raw) || 20): a typo like "3o" opened a
+                  TWENTY-episode session, "0" and "-5" became 1, and nothing said so — while the
+                  arms had already left the fleet and the follower was energised. */}
+              <span id="rec-episodes-say" className={`fieldsay${wanted.problem ? ' bad' : ''}`}>
+                {wanted.problem ?? wanted.note ?? ''}
+              </span>
             </label>
           </div>
           {suggestion.basis === 'measured' && !suggestion.note && (
@@ -322,6 +332,7 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
                     aria-label={openCopy.aria}
                     disabled={busy || !api || !form.dataset.trim() || !form.task.trim()
                               || !form.leader || !form.follower || form.leader === form.follower
+                              || !!wanted.problem
                               || (problems.length > 0 && !ack)
                               || (!!camWarning && !camAck)}>
               {openCopy.label}
