@@ -62,7 +62,10 @@ export interface Peer {
   /** WHY this arm publishes no joints, decided server-side from the child's own log (Q80).
    *  Absent means "nothing known" — the fleet must never invent a fault. The bridge removes it
    *  as soon as the arm publishes positions again, because mesh.core never logs a recovery. */
-  joint_problem?: { kind?: string; headline?: string; remedy?: string; detail?: string } | null
+  joint_problem?: { kind?: string; headline?: string; remedy?: string; detail?: string
+    /** 'peer' = the robot reported it in its own state snapshot (clears on recovery);
+     *  absent = derived from its log, which never records a recovery. */
+    source?: string; failures?: number; for_seconds?: number } | null
   /** E-stop lockout as the SERVER understands it (Q43): 'locked' (an e-stop it
    *  saw), 'clear' (proved by this peer accepting a command a lockout would
    *  refuse), 'unknown' (say so - the mesh deliberately does not advertise

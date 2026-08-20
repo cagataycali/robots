@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { jointAbsence, expectsJoints, STATE_QUIET_S } from '/tmp/jointAbsence.mjs'
+import { jointAbsence, expectsJoints, failingForText, STATE_QUIET_S } from '/tmp/jointAbsence.mjs'
 
 // The REAL so101-arm-1 document, copied from /api/fleet on 2026-08-20.
 const NOW = 1787195402.7
@@ -113,4 +113,61 @@ console.log('jointAbsence: all assertions passed')
   })
   assert.match(quiet.text, /went quiet/)
   console.log('  ✓ Q80 backend verdict is used when present, and only when it applies')
+}
+
+// --- the fault's AGE and its provenance (Q85/Q86) -------------------------------------------------
+// Two of cagatay's arms sat silent for 3.5 hours while their cards said only "no joints". The
+// backend now publishes how long and how often, from the robot itself.
+
+assert.equal(failingForText(3), null, 'a 3s-old fault is as likely a transient: say nothing')
+assert.equal(failingForText(45), 'for 45s')
+assert.equal(failingForText(600), 'for 10m')
+assert.equal(failingForText(12600), 'for 3.5h')
+assert.equal(failingForText(null), null)
+assert.equal(failingForText(Number.NaN), null, 'NaN must not render as "for NaNs"')
+
+const UNCAL = {
+  kind: 'uncalibrated',
+  headline: 'this board has no calibration, so its positions cannot be read in degrees',
+  remedy: 'Calibrate this arm (devices > calibrate).',
+  detail: 'RuntimeError: has no calibration registered.',
+  source: 'peer',
+  failures: 900,
+  for_seconds: 12600,
+}
+
+{
+  const note = jointAbsence({ ...ARM1, problem: UNCAL, nowS: ARM1.state.t + 1 })
+  assert.equal(note.text, 'no joint positions for 3.5h — this board has no calibration, so its positions cannot be read in degrees')
+  assert.equal(note.tone, 'attention')
+  assert.match(note.hint, /Calibrate this arm/)
+  // The tooltip carries what the one-line sentence cannot.
+  assert.match(note.detail, /900 consecutive failed reads/)
+  assert.match(note.detail, /reported by the robot itself/)
+  assert.match(note.detail, /RuntimeError: has no calibration registered/)
+}
+
+{
+  // A log-derived verdict says so, because it CANNOT clear itself: mesh.core logs a failure once
+  // and never a recovery, so it may describe a fault that is already over.
+  const note = jointAbsence({ ...ARM1, problem: { ...UNCAL, source: undefined, for_seconds: undefined, failures: undefined }, nowS: ARM1.state.t + 1 })
+  assert.equal(note.text, 'no joint positions — this board has no calibration, so its positions cannot be read in degrees')
+  assert.match(note.detail, /never a recovery/)
+  assert.doesNotMatch(note.detail, /consecutive failed reads/, 'a count nobody reported must not be invented')
+}
+
+{
+  // One failure is not "1 consecutive failed reads".
+  const note = jointAbsence({ ...ARM1, problem: { ...UNCAL, failures: 1, for_seconds: 2 }, nowS: ARM1.state.t + 1 })
+  assert.doesNotMatch(note.detail, /consecutive failed reads/)
+  assert.equal(note.text, 'no joint positions — this board has no calibration, so its positions cannot be read in degrees')
+}
+
+{
+  // A verdict with a headline but NOTHING to show keeps detail null: an existing contract in this
+  // file, and it caught the first version of the provenance clause, which would have rendered a
+  // tooltip made only of "read from its log" -- no fact for the operator to weigh.
+  const note = jointAbsence({ ...ARM1, problem: { kind: 'probe_failed', headline: 'the joint read failed' }, nowS: ARM1.state.t + 1 })
+  assert.equal(note.detail, null)
+  assert.equal(note.text, 'no joint positions — the joint read failed')
 }

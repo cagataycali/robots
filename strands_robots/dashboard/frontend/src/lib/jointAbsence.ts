@@ -42,7 +42,18 @@ export interface AbsenceInput {
     action_keys?: string[] | null
   } | null
   /** The backend's own verdict on WHY joints are missing (peer annotation `joint_problem`, Q80). */
-  problem?: { kind?: string | null; headline?: string | null; remedy?: string | null; detail?: string | null } | null
+  problem?: {
+    kind?: string | null
+    headline?: string | null
+    remedy?: string | null
+    detail?: string | null
+    /** 'peer' when the robot itself reported the fault (mesh `degraded`), absent for a log-derived verdict. */
+    source?: string | null
+    /** How many consecutive reads have failed, when the peer reports it. */
+    failures?: number | null
+    /** How long it has been failing, in seconds, when the peer reports it. */
+    for_seconds?: number | null
+  } | null
   nowS: number
 }
 
@@ -55,6 +66,22 @@ export interface AbsenceNote {
   hint: string | null
   /** the raw exception behind a backend verdict, for a title/tooltip — never the whole sentence */
   detail?: string | null
+}
+
+/**
+ * "for 3.5h" -- how long a fault has lasted, in the same brackets agoText uses.
+ *
+ * Duration is not decoration here: a probe that failed once and a probe that has been failing since
+ * before lunch call for different responses (retry versus go and look at the arm), and it is the
+ * difference cagatay hit -- two arms silent for 3.5 hours while their cards said only "no joints".
+ * Under 10s nothing is said: a fault that young is as likely to be a transient as a condition, and
+ * naming it would invite chasing noise.
+ */
+export function failingForText(seconds: number | null | undefined): string | null {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 10) return null
+  if (seconds < 90) return `for ${Math.round(seconds)}s`
+  if (seconds < 5400) return `for ${Math.round(seconds / 60)}m`
+  return `for ${(seconds / 3600).toFixed(1)}h`
 }
 
 /** Does this peer look like something that HAS joints? */
@@ -98,11 +125,30 @@ export function jointAbsence(input: AbsenceInput): AbsenceNote {
   // process is alive and publishing, and the JOINTS are what is missing. When the backend read the
   // reason out of the child's log, say IT — this is the one branch where the shrug used to live.
   if (verdict) {
+    const lasting = failingForText(verdict.for_seconds)
+    // The count and the provenance go in the TOOLTIP, not the sentence: the card must stay one
+    // readable line, and the fact that decides what to do (the headline) is already in it.
+    const extras: string[] = []
+    if (verdict.detail) extras.push(verdict.detail)
+    if (typeof verdict.failures === 'number' && verdict.failures > 1) {
+      extras.push(`${verdict.failures} consecutive failed reads`)
+    }
+    // Provenance QUALIFIES the evidence, so it is only added when there IS evidence: a tooltip
+    // consisting of nothing but "read from its log" would give an operator no fact to weigh, and an
+    // existing contract in this file says a verdict with nothing to show keeps detail null rather
+    // than rendering an attribute made of filler.
+    if (extras.length > 0) {
+      extras.push(verdict.source === 'peer'
+        // A peer-reported fault disappears the moment the probe recovers, so its presence means NOW.
+        ? 'reported by the robot itself, and it clears when the read works again'
+        // A log-derived one cannot clear itself: mesh.core logs a failure once and never a recovery.
+        : 'read from this robot\'s log, which records a failure once and never a recovery')
+    }
     return {
-      text: `no joint positions — ${verdict.headline}`,
+      text: lasting ? `no joint positions ${lasting} — ${verdict.headline}` : `no joint positions — ${verdict.headline}`,
       tone: 'attention',
       hint: verdict.remedy ?? 'check its log (devices → logs)',
-      detail: verdict.detail ?? null,
+      detail: extras.length > 0 ? extras.join(' \u00b7 ') : null,
     }
   }
   if (expects === 'unknown') {
