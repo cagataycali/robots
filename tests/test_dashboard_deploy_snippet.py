@@ -194,3 +194,52 @@ def test_route_withholds_loopback_hub_host():
         json={"serial": "5AB0181806", "hub_host": "robots.example.com"},
     ).json()
     assert "tcp/robots.example.com:7447" in body2["snippet"]
+
+
+def test_real_snippet_warns_the_port_is_per_machine():
+    """Q47: a generated file whose port cannot exist on the target is a silent failure.
+
+    The docstring already said camera indices are per-machine. The PORT is the same class of
+    identifier and the more certain to be wrong - this dashboard runs on macOS
+    (/dev/cu.usbmodem...) and edge devices are Linux (/dev/ttyACM0) - so the file must say so
+    itself, where the person reading it is.
+    """
+    out = render_snippet(
+        {
+            "robot_name": "so101",
+            "mode": "real",
+            "port": "/dev/cu.usbmodem5AB0181806",
+            "serial_number": "5AB0181806",
+            "peer_id": "so101-arm-1",
+        },
+        now=0,
+    )
+    src = out["snippet"]
+    assert "/dev/cu.usbmodem5AB0181806) is how THIS machine names" in src
+    assert "/dev/ttyACM0" in src, "name the Linux form: that is where these files get deployed"
+    assert "lerobot-find-port" in src
+    # The serial is the identity that survives the move - the dashboard keys profiles by it.
+    assert "USB serial 5AB0181806" in src
+    assert "does not" in src and "replugged" in src
+    # It stays a comment in the docstring: the code itself must still be runnable as-is.
+    body = src.split('"""')[2]
+    assert "ttyACM0" not in body, "the advice must not leak into executable code"
+
+
+def test_sim_snippet_says_nothing_about_ports():
+    """A sim rig has no port, so port advice would be noise that trains people to skim."""
+    out = render_snippet(
+        {"robot_name": "so101", "mode": "sim", "peer_id": "sim-a"}, now=0,
+    )
+    assert "ttyACM0" not in out["snippet"]
+    assert "per-machine" not in out["snippet"].lower()
+
+
+def test_port_advice_without_a_serial_stays_silent_about_serials():
+    """Never claim a stable identity we were not given."""
+    out = render_snippet(
+        {"robot_name": "so101", "mode": "real", "port": "/dev/ttyUSB0", "peer_id": "p"}, now=0,
+    )
+    src = out["snippet"]
+    assert "how THIS machine names" in src
+    assert "USB serial" not in src

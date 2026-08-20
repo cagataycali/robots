@@ -104,6 +104,24 @@ def render_snippet(
         lines.append("Camera indices are PER-MACHINE: index 1 here may be index 0 on the")
         lines.append("edge device. Re-check them there (lerobot-find-cameras opencv).")
         lines.append("")
+    if mode == "real":
+        # Q47: the file warned that camera INDICES are per-machine and said nothing about the
+        # port, which is the same class of identifier and the more certain to be wrong: this
+        # dashboard runs on macOS, where the arm is /dev/cu.usbmodem5AB0181806, and the edge
+        # device it is being deployed to is almost always Linux, where the same arm is
+        # /dev/ttyACM0. Left unsaid, the generated file fails on an open() of a path that never
+        # existed there - the exact failure Q46 removed from the home screen's snippet.
+        serial = payload.get("serial_number")
+        lines.append(f"The port below ({port}) is how THIS machine names that USB device.")
+        lines.append("On Linux the same arm is usually /dev/ttyACM0 - check with")
+        lines.append("`lerobot-find-port`, or list /dev/serial/by-id/ where the name is stable.")
+        if serial and serial != port:
+            # The serial IS the identity the dashboard itself keys profiles by, so it is the one
+            # string that survives the move. Saying so turns a reboot-shuffled port from a
+            # mystery into a lookup.
+            lines.append(f"That device's USB serial is {serial} - unlike the port, it does not")
+            lines.append("change when the device is replugged or the machine reboots.")
+        lines.append("")
     lines[-1] = lines[-1] if lines[-1] else '"""'
     if lines[-1] != '"""':
         lines.append('"""')
