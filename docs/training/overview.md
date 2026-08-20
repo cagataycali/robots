@@ -33,6 +33,16 @@ and a single `--policy.type` flag can't express them:
 | `lerobot_local` | `lerobot.scripts.lerobot_train` | draccus `--dotted.flags` | `python` / `accelerate launch` | CPU for a toy run; 1 consumer GPU in practice |
 | `groot` | Isaac-GR00T `launch_finetune.py` | `FinetuneConfig` (tyro) + `tune_*` flags | `python` / `torchrun` | 1 modern GPU |
 | `cosmos3` | `cosmos_framework.scripts.train` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | `torchrun` (HSDP) | 8×H100 80GB |
+| `sagemaker` | none - the container image's own trainer | the same `TrainSpec`, as job hyperparameters | `CreateTrainingJob` (managed) | none locally; the job brings its own |
+
+Those three local backends import a training library and drive it in-process.
+`sagemaker` is the other shape: pure transport, importing no training library and
+submitting the spec to a managed runner whose image packages one of the local
+paths. The difference is visible in one place a caller has to handle - a local
+`train()` blocks and returns a terminal result, while a submitted run can outlive
+the call and come back as `running` with a `job_id` to poll via `status()`, and
+no checkpoint yet. Branch on all three `TrainResult.status` values, not on
+"not `error`".
 
 The `Trainer` ABC hides all of that behind one lifecycle:
 
