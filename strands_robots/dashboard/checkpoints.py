@@ -20,6 +20,7 @@ gets back ``{repo_id, downloads, local, policy_type?, tags}`` rows ready for
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
@@ -153,18 +154,66 @@ def hub_search(query: str, limit: int = 12) -> tuple[list[dict[str, Any]], str |
     return rows, None
 
 
-_WHOAMI: dict[str, Any] = {"at": 0.0, "value": None}
+_WHOAMI: dict[str, Any] = {"at": 0.0, "value": None, "token": None}
 _WHOAMI_TTL_S = 600.0
+#: A REJECTED token is cached far more briefly than a good one. The user who just
+#: read "token present but rejected" is, right then, going to go and fix it — and a
+#: 10-minute memory of the rejection would tell them their fix did not work.
+_WHOAMI_REJECTED_TTL_S = 20.0
+
+
+def _token_fingerprint(token: str | None) -> str | None:
+    """A stable, non-secret id for a token, for cache keying only.
+
+    The verdict is about a SPECIFIC token, so the cache has to be able to notice a
+    different one. It must not hold the token itself: this dict is module state that
+    ends up in tracebacks, debuggers and reprs, and a secret has no business there.
+    """
+    if not token:
+        return None
+    return hashlib.sha256(token.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def whoami_cache_verdict(
+    entry: dict[str, Any],
+    fingerprint: str | None,
+    now: float,
+    *,
+    ttl_s: float = _WHOAMI_TTL_S,
+    rejected_ttl_s: float = _WHOAMI_REJECTED_TTL_S,
+) -> dict[str, Any] | None:
+    """The cached answer that is still true, or None to go and ask the Hub.
+
+    Pure, because the three ways a cache lies here are all about *identity and
+    time* rather than about the network:
+
+    * a DIFFERENT token — ``hf auth login`` as someone else, or a rotated key —
+      previously reused the old verdict for up to ten minutes, so the dashboard
+      would name the wrong user, or call a working token rejected;
+    * a rejected verdict held as long as a good one, which hides the user's own fix;
+    * an entry with no recorded token at all (an older process, or a test that
+      poked the dict), which cannot be attributed to anything and so is not
+      trusted.
+    """
+    value = entry.get("value")
+    if not isinstance(value, dict):
+        return None
+    if entry.get("token") is None or entry.get("token") != fingerprint:
+        return None
+    age = now - float(entry.get("at") or 0.0)
+    budget = ttl_s if value.get("authenticated") else rejected_ttl_s
+    return value if 0.0 <= age < budget else None
 
 
 def hf_auth_state() -> dict[str, Any]:
     """Whether this machine can reach gated/private HF repos, and as whom.
 
     Token discovery is local + instant (env or ~/.cache/huggingface/token).
-    whoami() is a network call, so its answer is cached 10 minutes; a token
-    that fails whoami is reported as invalid rather than silently treated
-    like anonymity - a revoked token behaves differently from no token
-    (401 vs public-only), and the UI should say which one the user has.
+    whoami() is a network call, so its answer is cached — but keyed to the token it
+    was measured for (see :func:`whoami_cache_verdict`). A token that fails whoami
+    is reported as invalid rather than silently treated like anonymity: a revoked
+    token behaves differently from no token (401 vs public-only), and the UI should
+    say which one the user has.
     """
     try:
         from huggingface_hub import get_token
@@ -173,9 +222,11 @@ def hf_auth_state() -> dict[str, Any]:
         token = None
     if not token:
         return {"authenticated": False, "user": None, "detail": "no HF token on this machine"}
+    fingerprint = _token_fingerprint(token)
     now = time.time()
-    if now - _WHOAMI["at"] < _WHOAMI_TTL_S and _WHOAMI["value"] is not None:
-        return _WHOAMI["value"]
+    cached = whoami_cache_verdict(_WHOAMI, fingerprint, now)
+    if cached is not None:
+        return cached
     try:
         from huggingface_hub import HfApi
         user = HfApi().whoami(token=token).get("name")
@@ -186,7 +237,7 @@ def hf_auth_state() -> dict[str, Any]:
             "user": None,
             "detail": f"HF token present but rejected ({type(exc).__name__})",
         }
-    _WHOAMI.update(at=now, value=value)
+    _WHOAMI.update(at=now, value=value, token=fingerprint)
     return value
 
 
