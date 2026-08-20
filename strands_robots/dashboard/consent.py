@@ -40,6 +40,10 @@ _HF_ENV = "STRANDS_MESH_HF_REPO_ALLOW"
 # Q80: the agent's own permission to START physical motion (dashboard/agent_motion.py owns the gate;
 # this module owns the grant, so it is revocable on the permissions screen like everything else).
 _AGENT_MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
+#: Q81: the one entry here that is a LOCK, not a grant - a task POST must carry the browser's
+#: confirmation. Surfaced on the permissions screen because that is where an operator goes to ask
+#: what is different about this machine, and because a lock nobody can find is a lock nobody uses.
+_TASK_CONFIRM_ENV = "STRANDS_DASH_TASK_REQUIRES_CONFIRM"
 _TELEOP_VALUE_ENV = "STRANDS_MESH_INPUT_VALUE_ABS"
 _TELEOP_SLEW_ENV = "STRANDS_MESH_INPUT_SLEW_ABS"
 #: Degrees plus a percent gripper: 400 covers a multi-turn wrist with headroom
@@ -322,6 +326,16 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
             # True only when it is exactly the pair this module grants; a hand-tuned wider bound
             # must not be described to the operator as "the degrees preset".
             "is_degree_preset": value_abs == _TELEOP_DEGREE_VALUE and slew_abs == _TELEOP_DEGREE_SLEW,
+        },
+        # Reported next to the grants but NOT as one: every other key here loosens something, this
+        # tightens it. Kept in the same payload because the operator's question is one question -
+        # "what is different about this machine?" - and answering half of it from another endpoint is
+        # how the teleop envelope stayed invisible (see this function's own history).
+        "locks": {
+            "task_requires_confirm": (
+                str(env.get(_TASK_CONFIRM_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
+            ),
+            "task_requires_confirm_env": _TASK_CONFIRM_ENV,
         },
     }
 

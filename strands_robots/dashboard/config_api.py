@@ -62,6 +62,11 @@ INTERESTING_ENV = [
     "STRANDS_MESH_MULTICAST",
     "STRANDS_ROBOTS_VIDEO_ROOT",
     "STRANDS_ROBOTS_NO_DYLD_SHIM",
+    # Q81's opt-in lock: a guard nobody can find is a guard nobody uses. It is writable already (the
+    # STRANDS_ prefix), so listing it here is the difference between existing and being discoverable.
+    # The agent-motion GRANT is deliberately not listed: it has a real row with a revoke button on the
+    # permissions screen, and a second editable copy of it invites a hand-edit that screen cannot undo.
+    "STRANDS_DASH_TASK_REQUIRES_CONFIRM",
 ]
 
 

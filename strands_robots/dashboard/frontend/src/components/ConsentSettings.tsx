@@ -24,6 +24,8 @@ type ConsentState = {
   teleop_degree_units?: TeleopEnvelope
   /* Q80: the agent's permission to START physical motion by itself. Absent from an older server. */
   agent_physical_motion?: boolean
+  /* Q81: the one entry that TIGHTENS instead of loosening. Absent from an older server. */
+  locks?: { task_requires_confirm: boolean; task_requires_confirm_env: string }
   env_file?: string
 }
 
@@ -43,6 +45,27 @@ export default function ConsentSettings() {
   }, [])
 
   useEffect(() => { void load() }, [load])
+
+  /* The lock is a plain env var the dashboard reads per request, so flipping it goes through the
+     existing config rail rather than the consent endpoints — /api/consent grants and revokes
+     PERMISSIONS, and pushing a restriction through it would make "revoke" mean two opposite things. */
+  const setLock = async (on: boolean) => {
+    const key = state?.locks?.task_requires_confirm_env ?? 'STRANDS_DASH_TASK_REQUIRES_CONFIRM'
+    setBusy('lock'); setNote(null); setError(null)
+    try {
+      await post('/api/config', { env: { [key]: on ? '1' : '' } })
+      /* Cleared, not deleted: an absent line lets a stale value from a shell profile or a launchd
+         plist win the next restart — a change that silently does not hold. */
+      setNote(on
+        ? 'on — a task that would move a real robot now needs the ▶ confirmation'
+        : 'off — any caller with the API token can start a real task again')
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
 
   const revoke = async (kind: string, subject: string | null, label: string) => {
     setBusy(label); setNote(null); setError(null)
@@ -103,6 +126,27 @@ export default function ConsentSettings() {
           <button className="btn ghost danger" disabled={busy === 'agent motion'}
                   onClick={() => revoke('agent_physical_motion', null, 'agent motion')}>
             {busy === 'agent motion' ? '…' : 'revoke'}
+          </button>
+        </div>
+      ) : null}
+
+      {/* Not a grant — the only row here that makes this machine stricter, which is why it is shown
+          in BOTH states: an operator cannot choose a lock they have never been told exists, and the
+          ▶ button already sends the confirmation, so turning it on costs them nothing. */}
+      {state?.locks ? (
+        <div className="cg-row">
+          <div>
+            <b>Require the ▶ confirmation before real motion</b>
+            <div className="hint">
+              {state.locks.task_requires_confirm
+                ? 'On. A task that would move a real robot is refused unless it comes from the ▶ button (or a script that says so explicitly). Simulated robots and stopping are never affected.'
+                : 'Off. Anything holding this dashboard\u2019s API token — a script, a terminal, whoever finds the token if this dashboard is reachable from the internet — can start a real robot with one request and no confirmation. Turning this on does not change the ▶ button.'}
+            </div>
+          </div>
+          <button className={`btn ghost${state.locks.task_requires_confirm ? '' : ' danger'}`}
+                  disabled={busy === 'lock'}
+                  onClick={() => void setLock(!state.locks!.task_requires_confirm)}>
+            {busy === 'lock' ? '…' : state.locks.task_requires_confirm ? 'turn off' : 'turn on'}
           </button>
         </div>
       ) : null}
