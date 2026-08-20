@@ -418,6 +418,32 @@ def test_telemetry_fields_present_on_both_paths() -> None:
         assert telem["rtc_async_enabled"] is async_rtc
 
 
+def _sleep_cost(seconds: float, samples: int = 3) -> float:
+    """What ``time.sleep(seconds)`` actually costs HERE, median of a few samples.
+
+    The wall-clock ceilings below express a property of the runner -- each chunk's
+    inference is paid once, not twice -- by counting the stub policy's sleeps. That
+    only holds if a sleep costs what it asks for, and on some hosts it does not: on
+    this project's macOS CI box every nanosleep/select wait carries a fixed ~145ms
+    floor (measured: sleep(0.02) -> 165ms, sleep(0.1) -> 247ms, while a busy-wait of
+    0.1s takes exactly 100.0ms and an asyncio/kqueue sleep is accurate), so a
+    nominal ceiling of 2 x 0.1 x 4 = 0.8s was compared against a rollout whose eight
+    real sleeps alone cost ~1.9s. The test then failed for a property of the host's
+    timers, naming the pipeline.
+
+    Calibrating turns the ceiling into a MULTIPLE OF THE SAME QUANTITY the rollout
+    spends, so it still fails if the runner starts paying inference twice - it just
+    stops failing when the platform is slow at waiting.
+    """
+    costs = []
+    for _ in range(samples):
+        t0 = time.perf_counter()
+        time.sleep(seconds)
+        costs.append(time.perf_counter() - t0)
+    costs.sort()
+    return costs[len(costs) // 2]
+
+
 def test_async_rtc_prefetch_blocks_when_inference_slow() -> None:
     """Fake-slow policy: inference > chunk exec -> prefetch blocks at every seam,
     and total wall time tracks inference x n_chunks (not x 2 - no double pay)."""
@@ -445,7 +471,10 @@ def test_async_rtc_prefetch_blocks_when_inference_slow() -> None:
     assert telem["rtc_prefetch_blocks"] > 0, telem
     # Each chunk's inference is paid ONCE (serialized behind the next), never
     # twice: wall time stays under the 2x-per-chunk ceiling the issue calls out.
-    assert elapsed < 2 * infer * n_chunks, (elapsed, infer, n_chunks)
+    # Measured against what a sleep of that length really costs on this host, so
+    # the assertion keeps testing the pipeline rather than the platform's timers.
+    ceiling = 2 * _sleep_cost(infer) * n_chunks
+    assert elapsed < ceiling, (elapsed, ceiling, infer, n_chunks)
 
 
 def test_async_rtc_prefetch_hits_when_inference_fast() -> None:
@@ -570,5 +599,5 @@ def test_async_rtc_prefetch_timeout_errors_cleanly() -> None:
     # The rollout aborts after the cold-start query plus the single in-flight
     # inference the executor joins on shutdown - bounded by ~2 inferences, NOT
     # the full 16-chunk rollout it would otherwise run.
-    assert elapsed < 4 * infer, elapsed
+    assert elapsed < 4 * _sleep_cost(infer), elapsed
     assert _RTC_KEYS <= set(result["content"][1]["json"])
