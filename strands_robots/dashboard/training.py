@@ -241,8 +241,8 @@ def _declared_trainer_module(provider: str) -> str:
 #: promised a run that every attempt refuses.
 #:
 #: This list MIRRORS a requirement that the SDK declares only inside a trainer's validate(),
-#: so tests/test_dashboard_trainer_form_support.py ASKS validate whether the mirror still
-#: holds rather than trusting this constant.
+#: so the test guarding it ASKS validate whether the mirror still holds rather than trusting
+#: this constant - if the SDK stops needing a recipe, that guard fails and this entry goes.
 _FORM_CANNOT_EXPRESS: dict[str, str] = {
     "cosmos3": (
         "needs a training recipe TOML (extra['sft_toml']) that selects the registered "

@@ -150,3 +150,37 @@ Order of operations, and the reason for it:
 - A session lasts `STRANDS_DASH_AUTH_TOKEN_TTL` seconds (default 86400).
   `GET /api/auth/credentials` lists enrolled passkeys and
   `DELETE /api/auth/credentials/{id}` revokes a lost phone.
+
+## Who may start real motion, once the dashboard is on the internet
+
+The web guard decides who gets *in*. It says nothing about what a caller who is
+in may do, and the loudest thing in this system is an arm that starts moving in
+a room nobody is standing in. Two separate switches, deliberately separate:
+
+| variable | default | what it changes |
+|---|---|---|
+| `STRANDS_DASH_AGENT_PHYSICAL_MOTION` | unset (refuse) | Lets the **agent** start a task on a real robot by itself — from a chat sentence or a voice command. Unset, it refuses and offers you the ▶ button instead. |
+| `STRANDS_DASH_TASK_REQUIRES_CONFIRM` | unset (allow) | Set it, and `POST /api/robots/{peer}/task` refuses a real-motion request that does not carry the browser's confirmation. The ▶ button sends it; `curl` does not. |
+
+Both are visible on **Settings → permissions**, the second one with a one-tap
+toggle, so neither has to be flipped by hand.
+
+Read the defaults honestly:
+
+- The **agent** is refused by default, because a sentence is easy to say by
+  accident and a policy that does not fit the arm it is pointed at is a
+  collision, not an error message.
+- **You** are not, because the API token *is* the operator: the deploy snippet,
+  your own scripts and every test post to that route. Enforcing a confirmation
+  that a client can simply assert would not stop an attacker — it would only
+  break the callers you meant to keep.
+
+So `STRANDS_DASH_TASK_REQUIRES_CONFIRM` is an **anti-accident** lock, not a
+security boundary. It is worth turning on once the dashboard is tunnelled,
+because that is the moment the token stops living only on your desk: after a
+leak, a single `curl` is real motion. If the token *has* leaked, this lock is
+not the fix — rotate the token and re-enroll the passkey.
+
+Stopping is never gated by either variable. A guard that can trap a moving arm
+would be worse than no guard, so `stop`, `stop_all` and the e-stop path ignore
+both.
