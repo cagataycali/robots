@@ -22,6 +22,7 @@ import math
 import os
 import threading
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
 from strands_robots.bus_access import read_observation
 from strands_robots.mesh.audit import log_safety_event
+from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.session import (
     HAND_HZ,
     HEALTH_HZ,
@@ -160,6 +162,38 @@ class SensorLoopsMixin:
         """
         raise NotImplementedError("SensorLoopsMixin.publish must be provided by a host class")
 
+    def _paced(self, period: float) -> Iterator[None]:
+        """Yield once per ``period`` seconds until the host stops.
+
+        Every sensor loop in this mixin used to end with
+        ``if self._stop_event.wait(period): break``. Measured (BUGS.md Q69): in a
+        process tree descended from a daemon or launchd agent that wait is
+        inflated by ~145ms, so a 10Hz pose stream ran at ~4Hz and a 1Hz health
+        stream at ~0.87Hz -- while every consumer read the achieved rate as the
+        sensor's own limit. :class:`~strands_robots.mesh.pacing.Ticker` paces on
+        the selector timer instead, which carries no such penalty, treats the
+        period as a DEADLINE (so the time a read spends on a bus or a driver is
+        subtracted rather than added) and still notices a stop within 10ms.
+
+        Written as one generator rather than seven conversions on purpose: these
+        loops differ only in what they read, so the pacing belongs in a single
+        place where its ownership rules -- construct one ticker per loop, close it
+        even when the body raises -- cannot be got right in six loops and wrong in
+        the seventh.
+
+        Yields:
+            Once per tick. The ticker is closed when the caller's ``for`` ends,
+            breaks, or unwinds on an exception.
+        """
+        ticker = Ticker(period, self._stop_event)
+        try:
+            while self._running:
+                yield
+                if ticker.wait():
+                    break
+        finally:
+            ticker.close()
+
     # Pose
 
     def _pose_loop(self) -> None:
@@ -167,7 +201,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 pose = self._read_pose()
                 if pose:
@@ -178,8 +212,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: pose tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_pose(self) -> dict[str, Any] | None:
         r = self.robot
@@ -240,7 +272,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 health = self._read_health()
                 if health:
@@ -251,8 +283,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: health tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_health(self) -> dict[str, Any] | None:
         r = self.robot
@@ -326,7 +356,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 imu = self._read_imu()
                 if imu:
@@ -337,8 +367,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: imu tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_imu(self) -> dict[str, Any] | None:
         r = self.robot
@@ -381,7 +409,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 odom = self._read_odom()
                 if odom:
@@ -392,8 +420,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: odom tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_odom(self) -> dict[str, Any] | None:
         r = self.robot
@@ -422,7 +448,7 @@ class SensorLoopsMixin:
         # wherever a platform's monotonic epoch happens to sit.
         last_state_publish_mono = -math.inf
 
-        while self._running:
+        for _ in self._paced(summary_period):
             try:
                 now = time.monotonic()
                 summary = self._read_lidar_summary()
@@ -440,8 +466,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: lidar tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(summary_period):
-                break
 
     def _read_lidar_summary(self) -> dict[str, Any] | None:
         r = self.robot
@@ -474,7 +498,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 hands = self._read_hands()
                 if hands:
@@ -486,8 +510,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: hand tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_hands(self) -> dict[str, dict[str, Any]] | None:
         r = self.robot
@@ -512,7 +534,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 info = self._read_map_info()
                 if info:
@@ -523,8 +545,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: map_info tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_map_info(self) -> dict[str, Any] | None:
         r = self.robot

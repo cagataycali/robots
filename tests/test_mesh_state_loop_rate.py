@@ -241,3 +241,47 @@ def test_the_converted_loop_no_longer_paces_on_the_stop_event(attr: str) -> None
         "daemon-descended process tree (BUGS.md Q69); use mesh.pacing.Ticker"
     )
     assert "Ticker(" in source, f"Mesh.{attr} should pace on a Ticker"
+
+
+@pytest.mark.parametrize(
+    "loop",
+    ["_pose_loop", "_health_loop", "_imu_loop", "_odom_loop", "_lidar_loop", "_hand_loop", "_map_info_loop"],
+)
+def test_every_sensor_loop_paces_through_the_shared_ticker_generator(loop: str) -> None:
+    """All seven sensor loops must pace in ONE place.
+
+    They differ only in what they read, so pacing them individually is how six
+    get the ownership rules right and the seventh leaks a selector. The generator
+    also has to be the ONLY pacing wait in the module: a loop that quietly kept
+    ``_stop_event.wait(period)`` would run at 40% of its rate in a daemon-hosted
+    robot while the other six were fixed, which is harder to notice than all
+    seven being slow.
+    """
+    import inspect
+
+    from strands_robots.mesh import sensors as mesh_sensors
+
+    func = getattr(mesh_sensors.SensorLoopsMixin, loop)
+    source = inspect.getsource(func)
+    assert "self._paced(" in source, f"{loop} does not pace through SensorLoopsMixin._paced"
+    assert "_stop_event.wait(" not in source, (
+        f"{loop} paces on the inflated Event.wait again - see BUGS.md Q69"
+    )
+
+
+def test_only_the_shared_generator_owns_a_ticker_in_the_sensors_module() -> None:
+    import inspect
+
+    from strands_robots.mesh import sensors as mesh_sensors
+
+    module_source = inspect.getsource(mesh_sensors)
+    # Strip docstrings' mention of the old call by counting real code lines only.
+    code_hits = [
+        line
+        for line in module_source.splitlines()
+        if "_stop_event.wait(" in line and not line.lstrip().startswith(("#", '"', "`"))
+    ]
+    assert not code_hits, f"pacing waits left in sensors.py: {code_hits}"
+    assert module_source.count("Ticker(") == 1, (
+        "exactly one Ticker construction belongs in this module - the one inside _paced"
+    )

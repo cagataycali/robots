@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import threading
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -215,13 +216,20 @@ def test_the_peer_cap_evicts_the_oldest_peer_across_a_wall_clock_step(
 # LiDAR state throttle
 
 
-class _ScriptedStopEvent:
-    """Stands in for the loop's stop event, advancing the clock per tick.
+class _ScriptedTicker:
+    """Stands in for the loop's pacing ticker, advancing the clock per tick.
 
-    The loop's own ``_stop_event.wait(period)`` is where a real run spends its
-    time, so driving it is what makes the cadence deterministic: each call
-    advances the double by exactly one period, applies any scripted wall-clock
-    step, and stops the loop after ``ticks`` iterations.
+    The pacing wait is where a real run spends its time, so driving it is what
+    makes the cadence deterministic: each :meth:`wait` advances the clock double
+    by exactly one period, applies any scripted wall-clock step, and stops the
+    loop after ``ticks`` iterations.
+
+    This used to script ``_stop_event.wait(period)`` directly. The loops now pace
+    on :class:`strands_robots.mesh.pacing.Ticker` (BUGS.md Q69 - an inflated
+    ``Event.wait`` made a 5Hz lidar summary run at ~2.9Hz in a daemon-hosted
+    robot), so the double moved to that seam. What the tests assert is untouched:
+    the state throttle is a DURATION, measured on a monotonic clock, and no wall
+    step may move it.
     """
 
     def __init__(self, clock: SteppableClock, ticks: int, step_at: int | None, step: float) -> None:
@@ -230,16 +238,24 @@ class _ScriptedStopEvent:
         self._step_at = step_at
         self._step = step
         self.count = 0
+        self.period: float | None = None
+        self.closed = False
 
-    def wait(self, period: float) -> bool:
+    def __call__(self, period: float, _stop_event: Any = None, **_kw: Any) -> "_ScriptedTicker":
+        """Construction seam: the loop builds its ticker, we hand back ourself."""
+        self.period = period
+        return self
+
+    def wait(self) -> bool:
         self.count += 1
-        self._clock.advance(period)
+        assert self.period is not None, "the loop must construct its ticker before waiting"
+        self._clock.advance(self.period)
         if self._step_at is not None and self.count == self._step_at:
             self._clock.step_wall(self._step)
         return self.count >= self._ticks
 
-    def set(self) -> None:  # pragma: no cover - the loop exits via wait()
-        self._ticks = 0
+    def close(self) -> None:
+        self.closed = True
 
 
 class _LidarHost:
@@ -250,7 +266,7 @@ class _LidarHost:
     state was published rather than only how often.
     """
 
-    def __init__(self, clock: SteppableClock, stop_event: _ScriptedStopEvent) -> None:
+    def __init__(self, clock: SteppableClock, stop_event: threading.Event) -> None:
         self.peer_id = "test-peer"
         self.robot = None
         self._running = True
@@ -259,6 +275,10 @@ class _LidarHost:
         self._origin = clock.monotonic()
         self.state_at: list[float] = []
         self.summary_at: list[float] = []
+
+    # The pacing generator is part of the mixin's contract now, so a duck-typed
+    # host has to borrow it exactly as it borrows the loop under test.
+    _paced = mesh_sensors.SensorLoopsMixin._paced
 
     def publish(self, topic: str, payload: dict[str, Any]) -> None:
         elapsed = round(self._clock.monotonic() - self._origin, 6)
@@ -276,9 +296,12 @@ class _LidarHost:
 
 def _run_lidar(clock: SteppableClock, ticks: int, step_at: int | None = None, step: float = 0.0) -> _LidarHost:
     """Run the real loop for *ticks* summary ticks against the clock double."""
-    stop_event = _ScriptedStopEvent(clock, ticks, step_at, step)
-    host = _LidarHost(clock, stop_event)
-    mesh_sensors.SensorLoopsMixin._lidar_loop(host)  # type: ignore[arg-type]
+    ticker = _ScriptedTicker(clock, ticks, step_at, step)
+    host = _LidarHost(clock, threading.Event())
+    with patch.object(mesh_sensors, "Ticker", ticker):
+        mesh_sensors.SensorLoopsMixin._lidar_loop(host)  # type: ignore[arg-type]
+    assert ticker.closed, "the loop must close its ticker (it owns a pipe and a selector)"
+    assert ticker.period == pytest.approx(1.0 / 5.0), "lidar summary must still pace at LIDAR_SUMMARY_HZ"
     return host
 
 
