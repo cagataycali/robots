@@ -6,6 +6,7 @@ import { api, post, HttpError } from '../lib/endpoints'
 import { extraFields, missingForProvider } from '../lib/providerFields'
 import { holdout } from '../lib/holdout'
 import { labelsGate, labelSummary, labelRowLine, type LabelView } from '../lib/episodeLabels'
+import { failureText, probeFromError } from '../lib/serverSkew'
 import { fieldSupport } from '../lib/serverFields'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
@@ -340,10 +341,14 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     const key = dsKey(d)
     if (labelsFor === key) { setLabelsFor(null); return }
     setLabelsFor(key); setLabelData(null); setLabelErr(null)
+    const path = '/api/datasets/labels'
     try {
-      setLabelData(await api<LabelView>(`/api/datasets/labels?root=${encodeURIComponent(d.root || '')}`))
+      setLabelData(await api<LabelView>(`${path}?root=${encodeURIComponent(d.root || '')}`))
     } catch (e) {
-      setLabelErr(e instanceof HttpError ? e.message : String(e))
+      // A dashboard process older than this bundle has never heard of the route, and "HTTP 404"
+      // reads as a broken feature. failureText names the real action instead: restart from a
+      // terminal. A route's own 404 (no such dataset directory) keeps its own message.
+      setLabelErr(failureText(probeFromError(e, path), e instanceof HttpError ? e.message : String(e)))
     }
   }
 
