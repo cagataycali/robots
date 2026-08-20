@@ -815,6 +815,12 @@ body {
   padding: 3px 12px;
 }
 .dock-notice.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); align-self: stretch; text-align: center; border-radius: var(--r2); }
+/* A message that never left the browser must not look like a delivered one. */
+.bubble.user.undelivered {
+  border: 1px dashed color-mix(in srgb, var(--warn) 55%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+.bubble-foot { display: flex; align-items: center; gap: var(--s2); margin-top: var(--s2); }
 .bubble { max-width: 86%; border-radius: var(--r4); padding: 9px 13px; font-size: var(--fs-body); line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .bubble.user {
   align-self: flex-end; color: #fff;

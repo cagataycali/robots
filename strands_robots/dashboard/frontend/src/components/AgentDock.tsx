@@ -2,12 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import { useVoice } from '../lib/useVoice'
 import { post, wsUrl } from '../lib/endpoints'
 import { useConfig } from '../lib/useConfig'
+import { sendFailureVerdict, interruptionNotice, bubbleLabel } from '../lib/chatDelivery'
 
 interface ChatMsg {
   role: 'user' | 'agent' | 'notice'
   text: string
   reasoning?: string
   tools?: { name: string; status: string }[]
+  /** user bubbles only: false = it provably never left the browser. ABSENT
+   *  means delivered, which is the normal case and needs no decoration. */
+  delivered?: boolean
+  /** notice bubbles: render as a failure, not as information. */
+  bad?: boolean
 }
 
 /** Bottom-docked fleet agent: text chat + speech-to-speech toggle. */
@@ -26,6 +32,12 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
   const [busy, setBusy] = useState(false)
   const [connError, setConnError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  // onclose fires from a closure that captured `busy` at socket-open time, so the
+  // "was a turn in flight?" question has to be asked of a ref, not of the state.
+  const busyRef = useRef(false)
+  // The trailing agent bubble as it stands right now, for the same reason: a
+  // close handler must judge the answer it actually interrupted.
+  const lastAgentRef = useRef<{ chars: number; running: string[] }>({ chars: 0, running: [] })
   const scrollRef = useRef<HTMLDivElement>(null)
   const voice = useVoice()
   const { config, reload } = useConfig()
@@ -33,7 +45,13 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+    const last = msgs[msgs.length - 1]
+    lastAgentRef.current = last?.role === 'agent'
+      ? { chars: last.text.length, running: (last.tools ?? []).filter(t => t.status === 'running').map(t => t.name) }
+      : { chars: 0, running: [] }
   }, [msgs])
+
+  useEffect(() => { busyRef.current = busy }, [busy])
 
   /** Append to the trailing agent bubble, creating one if the last is not ours. */
   const patchAgent = (fn: (m: ChatMsg) => void) => {
@@ -87,22 +105,45 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
     ws.onclose = (e) => {
       wsRef.current = null
       setBusy(false)
-      if (e.code === 1008) setConnError('the server rejected this token — set it in Settings')
+      // A drop mid-turn used to be silent unless it was 1008: the half-streamed
+      // answer just stopped and read as finished — and if a tool had started,
+      // "no answer" was a claim about the FLEET that nobody had checked.
+      const verdict = interruptionNotice({
+        code: e.code,
+        wasBusy: busyRef.current,
+        partialChars: lastAgentRef.current.chars,
+        runningTools: lastAgentRef.current.running,
+      })
+      if (!verdict) return
+      if (busyRef.current) {
+        setMsgs(prev => [...prev, { role: 'notice', text: verdict.text, bad: true }])
+        setOpen(true)
+      } else {
+        setConnError(verdict.text.replace(/^⚠ /, ''))
+      }
     }
   })
 
-  const send = async () => {
-    const text = input.trim()
+  const send = async (retryText?: string) => {
+    const text = (retryText ?? input).trim()
     if (!text || busy) return
-    setInput('')
+    if (!retryText) setInput('')
     setMsgs(prev => [...prev, { role: 'user', text }])
     setBusy(true)
+    setConnError(null)
     try {
       const ws = await ensureWs()
       ws.send(JSON.stringify({ type: 'chat', text }))
     } catch (e: any) {
       setBusy(false)
-      setConnError(e?.message ?? String(e))
+      const verdict = sendFailureVerdict({ error: e?.message ?? String(e) })
+      // The message never left the browser: mark THAT bubble (it must not read
+      // as delivered) and give the operator their text back rather than making
+      // them retype a sentence the UI silently swallowed.
+      setMsgs(prev => prev.map((m, i) =>
+        i === prev.length - 1 && m.role === 'user' ? { ...m, delivered: false } : m))
+      if (verdict.retrySafe) setInput(text)
+      setConnError(verdict.text.replace(/^⚠ /, ''))
     }
   }
 
@@ -149,9 +190,9 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
             )}
             {msgs.map((m, i) => (
               m.role === 'notice' ? (
-                <div key={i} className="dock-notice">ⓘ {m.text}</div>
+                <div key={i} className={m.bad ? 'dock-notice bad' : 'dock-notice'}>{m.bad ? '' : 'ⓘ '}{m.text}</div>
               ) : (
-                <div key={i} className={`bubble ${m.role}`}>
+                <div key={i} className={`bubble ${m.role}${m.delivered === false ? ' undelivered' : ''}`}>
                   {m.tools?.map((t, j) => (
                     <span key={j} className={`toolchip ${t.status}`}>⚙ {t.name}</span>
                   ))}
@@ -159,6 +200,14 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
                     <details className="reasoning"><summary>thinking</summary><pre>{m.reasoning}</pre></details>
                   )}
                   <div className="bubble-text">{m.text || (busy && i === msgs.length - 1 ? '…' : '')}</div>
+                  {bubbleLabel(m.delivered) && (
+                    <div className="bubble-foot">
+                      <span className="badge warn">{bubbleLabel(m.delivered)}</span>
+                      <button className="btn tiny" onClick={() => void send(m.text)} disabled={busy}>
+                        send again
+                      </button>
+                    </div>
+                  )}
                 </div>
               )
             ))}
@@ -181,10 +230,10 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
           value={input}
           onFocus={() => setOpen(true)}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && send()}
+          onKeyDown={e => { if (e.key === 'Enter') void send() }}
           disabled={busy}
         />
-        <button className="dock-send" onClick={send} disabled={busy || !input.trim()}>↑</button>
+        <button className="dock-send" onClick={() => void send()} disabled={busy || !input.trim()}>↑</button>
         <button className="dock-min" onClick={() => setOpen(o => !o)}
                 aria-label={open ? 'hide the conversation' : 'show the conversation'}
                 title={open ? 'hide the conversation' : 'show the conversation'}>
