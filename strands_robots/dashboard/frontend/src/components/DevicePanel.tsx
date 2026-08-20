@@ -10,6 +10,7 @@ import { calibratePlan } from '../lib/calibrateCommand'
 import { parseCalibrationList, type CalibrationEntry } from '../lib/calibration'
 import { calibrationVerdict } from '../lib/calibrationMatch'
 import { rescanReport, hardwareKey, type RescanReport } from '../lib/rescanReport'
+import { isLatestRequest } from '../lib/requestOrder'
 
 interface SerialPort {
   device: string
@@ -107,10 +108,27 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   // What the last verdict described. A background poll that finds different
   // hardware retires it: a verdict must never outlive its evidence.
   const scanKey = useRef<string | null>(null)
+  // A rescan (`?refresh=1`) re-probes serial AND every camera index, which takes
+  // seconds, while the 5s background poll reads the CACHED enumeration. Without
+  // ordering, the cached answer lands after the fresh one and overwrites it:
+  // the list loses the hardware the operator just plugged in, and - worse - the
+  // changed hardwareKey retires the very verdict that reported it ("2 cameras
+  // appeared" vanishes, or reads against a list that no longer contains them).
+  // Newest REQUEST wins (lib/requestOrder.ts), and the poll yields while any
+  // load is in flight rather than queueing a probe behind a probe.
+  const loadSeq = useRef(0)
+  const inFlight = useRef(0)
 
   const load = useCallback(async (refresh = false) => {
+    const mine = ++loadSeq.current
+    inFlight.current += 1
     try {
       const next = await api<DeviceDoc>(`/api/devices${refresh ? '?refresh=1' : ''}`)
+      // A newer load owns the screen. The caller still receives this doc, so a
+      // rescan can see what its OWN scan found, but it must not paint it.
+      if (!isLatestRequest(mine, loadSeq.current)) {
+        return { ok: true as const, after: next, superseded: true }
+      }
       setDoc(next)
       scannedAt.current = Date.now()
       setError(null)
@@ -126,7 +144,12 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       // On a rescan the failure is reported BY the verdict (which also says the
       // visible list is now stale); a second red line would say half of it.
       if (!refresh) setError(msg)
+      if (!isLatestRequest(mine, loadSeq.current)) {
+        return { ok: false as const, error: msg, superseded: true }
+      }
       return { ok: false as const, error: msg }
+    } finally {
+      inFlight.current -= 1
     }
   }, [])
 
@@ -136,6 +159,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     const before = doc
     const beforeAtMs = scannedAt.current
     const outcome = await load(true)
+    // Superseded by a newer load: the rows on screen are not this scan's result,
+    // so a verdict about them would be a claim about a list nobody is looking at.
+    if ((outcome as { superseded?: boolean }).superseded) { setScanning(false); return }
     const verdict = rescanReport(before, outcome, { beforeAtMs, nowMs: Date.now() })
     scanKey.current = outcome.ok ? hardwareKey(outcome.after) : null
     setScan(verdict)
@@ -151,7 +177,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       .catch(() => setRobots([]))
     // Managed children die on their own (import errors, unplugged bus); poll so
     // an `alive: false` row does not sit there looking healthy.
-    const id = setInterval(() => void load(), 5000)
+    // Yield while a load (especially the operator's rescan) is in flight: a
+    // cached poll stacked on a live probe adds nothing and its older evidence
+    // would only have to be discarded.
+    const id = setInterval(() => { if (inFlight.current === 0) void load() }, 5000)
     return () => clearInterval(id)
   }, [open, load])
 
