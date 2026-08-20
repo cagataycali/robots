@@ -444,11 +444,26 @@ def export(
     """
     from strands_robots.tools.train_policy import train_policy
 
-    return _tool_result(train_policy(
+    from strands_robots.dashboard.artifact_check import artifact_verdict
+
+    res = _tool_result(train_policy(
         action="export", provider=provider, output_dir=output_dir,
         dataset_root=dataset_root or None, dataset_repo_id=dataset_repo_id,
         base_model=base_model or "",
     ))
+    # The trainer's "success" is a report about its own run, not about the artifact:
+    # latest_checkpoint() discovers a checkpoint dir BY ITS CONFIG FILE and the default
+    # export() returns that path unchanged, so a run killed between the config write and
+    # the weights write exports successfully and only fails when a policy is loaded on a
+    # robot (BUGS.md Q36). Answer with BOTH verdicts and never overwrite theirs: an export
+    # that ran fine and produced half a checkpoint is a different event from one that
+    # refused, and the operator needs to be able to tell them apart.
+    exported = res.get("data", {}).get("exported_model")
+    if res["status"] == "success":
+        res["artifact"] = artifact_verdict(exported)
+        # One boolean for the caller that only decides "may this be handed to an arm".
+        res["deployable"] = bool(res["artifact"].get("ok"))
+    return res
 
 
 def jobs() -> list[dict[str, Any]]:
