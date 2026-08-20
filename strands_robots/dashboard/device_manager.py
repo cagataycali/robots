@@ -842,6 +842,16 @@ class ProfileStore:
     #: survive being re-saved. Without this, one spawn wipes a measured role.
     MEASURED_FIELDS = ("role", "role_volts", "role_source", "role_measured_at")
 
+    #: Things the OPERATOR chose, which a spawn payload may simply not mention. Same trap as
+    #: MEASURED_FIELDS, different victim: every spawn writes ``"cameras": cameras`` (device_manager
+    #: ~1930), so a camera-less spawn - the auto-spawn watcher on a replug, a joints-only spawn from
+    #: the run form, a CLI spawn - stored ``None`` and silently forgot the indices, fps and resolution
+    #: the operator had tuned in the U19 sheet. The next automatic respawn then brought the arm up
+    #: BLIND and the reconfigure editor opened blank, with nothing anywhere saying a choice had been
+    #: dropped. Absent or None means "not stated" and keeps the memory; an explicit ``{}`` forgets,
+    #: because going back to joints-only has to remain expressible.
+    REMEMBERED_FIELDS = ("cameras",)
+
     def save(self, key: str, payload: dict[str, Any], name: str | None = None) -> dict[str, Any]:
         """Remember ``payload`` as the way to spawn the board at ``key``.
 
@@ -849,13 +859,20 @@ class ProfileStore:
         describes what the board IS. This used to replace the whole entry, so
         the first spawn after a role measurement silently deleted it - the
         measurement would have appeared to work and then evaporated. Measured
-        fields are carried over unless the caller states them explicitly.
+        fields are carried over unless the caller states them explicitly, and so are the
+        operator's remembered cameras (see REMEMBERED_FIELDS - an explicit ``{}`` still forgets
+        them, because a deliberate joints-only spawn must remain sayable).
         """
         entry = dict(payload)
         with self._lock:
             previous = dict(self._data.get(key) or {})
         for field in self.MEASURED_FIELDS:
             if field not in entry and field in previous:
+                entry[field] = previous[field]
+        for field in self.REMEMBERED_FIELDS:
+            # None counts as unstated here (unlike MEASURED_FIELDS): the spawn payload always
+            # carries the key, so "absent" alone would never fire and the memory would still be lost.
+            if entry.get(field) is None and previous.get(field) is not None:
                 entry[field] = previous[field]
         entry["name"] = name or entry.get("name") or entry.get("peer_id") or key
         entry["serial_number"] = key
