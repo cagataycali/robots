@@ -490,15 +490,29 @@ class WSStreamHandler:
             for c in message.get("content", []):
                 if isinstance(c, dict) and "toolResult" in c:
                     tr = c["toolResult"]
-                    preview = ""
+                    full = ""
                     for blk in tr.get("content", []):
                         if isinstance(blk, dict) and blk.get("text"):
-                            preview = blk["text"][:300]
+                            full = blk["text"]
                             break
-                    self.q.put({
+                    event = {
                         "type": "tool", "status": tr.get("status", "done"),
-                        "id": tr.get("toolUseId", ""), "result_preview": preview,
-                    })
+                        "id": tr.get("toolUseId", ""), "result_preview": full[:300],
+                    }
+                    # A continuable refusal must be clickable WHERE IT HAPPENED. Every other seam
+                    # that turns a refusal into a decision (spawn, task) calls attach_consent on
+                    # its error payload; the chat box had no such seam, so the one guard whose
+                    # refusal only ever appears here (Q80 agent motion) could be granted solely by
+                    # hunting through Settings. Classify against the FULL text, never the 300-char
+                    # preview: the env var that identifies a refusal sits at the END of the
+                    # sentence, so classifying the truncation would silently recognise nothing.
+                    if tr.get("status") == "error":
+                        from strands_robots.dashboard.consent import classify_refusal
+
+                        need = classify_refusal(full)
+                        if need is not None:
+                            event["needs_consent"] = need.as_dict()
+                    self.q.put(event)
 
 
 def _is_history_poisoned(exc: Exception) -> bool:

@@ -3,6 +3,8 @@ import { useVoice } from '../lib/useVoice'
 import { post, wsUrl } from '../lib/endpoints'
 import { useConfig } from '../lib/useConfig'
 import { sendFailureVerdict, interruptionNotice, bubbleLabel } from '../lib/chatDelivery'
+import ConsentSheet from './ConsentSheet'
+import { type ConsentNeed } from '../lib/consent'
 
 interface ChatMsg {
   role: 'user' | 'agent' | 'notice'
@@ -39,6 +41,11 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
   // close handler must judge the answer it actually interrupted.
   const lastAgentRef = useRef<{ chars: number; running: string[] }>({ chars: 0, running: [] })
   const scrollRef = useRef<HTMLDivElement>(null)
+  // A refused turn: the guard's decision, plus the sentence to re-send if it is granted. Without
+  // this the chat box was the ONE surface where a continuable refusal was not continuable — the
+  // operator had to go hunting through Settings for a permission the agent had just named.
+  const [need, setNeed] = useState<ConsentNeed | null>(null)
+  const refusedPrompt = useRef<string>('')
   const voice = useVoice()
   const { config, reload } = useConfig()
   const agent = config?.agent
@@ -86,6 +93,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
         return
       }
       if (ev.type === 'pong') return
+      if (ev.type === 'tool' && ev.needs_consent) setNeed(ev.needs_consent as ConsentNeed)
       patchAgent(last => {
         if (ev.type === 'token') last.text += ev.data
         else if (ev.type === 'reasoning') last.reasoning = (last.reasoning ?? '') + ev.data
@@ -128,6 +136,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
     const text = (retryText ?? input).trim()
     if (!text || busy) return
     if (!retryText) setInput('')
+    refusedPrompt.current = text
     setMsgs(prev => [...prev, { role: 'user', text }])
     setBusy(true)
     setConnError(null)
@@ -249,6 +258,19 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
           {open ? '▾ hide' : `▴ chat${msgs.length ? ` (${msgs.length})` : ''}`}
         </button>
       </div>
+
+      {/* The refusal names a permission; this makes it a decision, in the place the operator was
+          already looking. target='spawn' because a chat turn CAN simply be re-sent once the grant
+          lands — no process holds a stale env (the fleet tool reads it per call), unlike a running
+          peer that needs a respawn. */}
+      {need ? (
+        <ConsentSheet
+          need={need}
+          target="spawn"
+          onCancel={() => setNeed(null)}
+          onRetry={() => { const again = refusedPrompt.current; setNeed(null); void send(again) }}
+        />
+      ) : null}
     </>
   )
 }
