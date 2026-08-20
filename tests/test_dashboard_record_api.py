@@ -47,7 +47,8 @@ class FakeRecorder:
         self.saved = 0
         self.finalized = False
 
-    def add_frame(self, obs, action, task=None): ...
+    # Q56 guard: the real parameter is `observation`, not `obs`.
+    def add_frame(self, observation, action, task=None): ...
 
     def save_episode(self):
         self.saved += 1
@@ -59,7 +60,13 @@ class FakeRecorder:
     def finalize(self):
         self.finalized = True
 
-    def push_to_hub(self, repo_id=None): ...
+    def push_to_hub(self, tags=None, private=False):
+        """Q56: mirrors the REAL signature (tags, private) and returns the real answer SHAPE.
+
+        This fake used to declare ``repo_id=None`` — a parameter DatasetRecorder has never had —
+        which is how a production branch that could only raise TypeError kept a green suite.
+        """
+        return {"status": "success", "repo_id": "cagatay/so101-pick"}
 
 
 class FakeDevices:

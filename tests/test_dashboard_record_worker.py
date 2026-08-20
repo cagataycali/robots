@@ -48,8 +48,10 @@ class FakeRecorder:
         self.finalized = False
         self.pushed = None
 
-    def add_frame(self, obs, action, task=None):
-        self.frames.append((obs, action, task))
+    # Q56 guard: the real parameter is `observation`, not `obs` — a fake that renames it
+    # teaches readers a keyword the real recorder would reject.
+    def add_frame(self, observation, action, task=None):
+        self.frames.append((observation, action, task))
 
     def save_episode(self):
         self.saved += 1
