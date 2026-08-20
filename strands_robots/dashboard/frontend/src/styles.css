@@ -1143,14 +1143,30 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 /* Touch: the predicate is the POINTER, not the screen width - an iPad in
  * landscape is wide and still has fingers. 40px is the floor for anything that
  * commands a robot; the dock's mic/send are already 44px. */
+/* Touch targets. Measured on a 390x844 phone against the live dashboard: the nav chips and
+   card controls were already 40px, but `.peername` — THE way into a robot's detail screen —
+   was 25px, and the "MESH UNENCRYPTED" security chip was 24px. A security explanation nobody
+   can reliably hit is not an explanation. 44px is the platform minimum on both iOS and
+   Android; verify_touch_targets.mjs measures it in a real browser so a later layout change
+   cannot quietly walk it back. */
 @media (pointer: coarse) {
   .btn, .gbtn, .chip, .tab, .dock-min, .camswitch .chip, .twinbtn, .drawer-body button,
-  .controls select, .controls input, .field input, .field select {
-    min-height: 40px;
+  .controls select, .controls input, .field input, .field select,
+  .peername, .badge.warnchip {
+    min-height: 44px;
   }
+  /* A glyph-only control needs the width too: ▶ (run) and ⚙ (configure) measured 42px wide,
+     and a mis-tap between "run this arm" and "open settings" is not a cosmetic problem. */
+  .btn.go, .btn.ghost, .dock-min { min-width: 44px; }
+  /* Growing the name button must not re-centre the robot's name. */
+  .peername { display: inline-flex; align-items: center; text-align: left; }
   .chip, .tab, .camswitch .chip { padding-left: var(--s4); padding-right: var(--s4); }
   /* iOS zooms the whole page when a focused input is under 16px */
   input, select, textarea { font-size: max(16px, var(--fs-body)); }
+  /* Any text field, not only the ones inside .controls/.field: the chat dock's input sat at
+     40px because it belonged to neither. Checkboxes and radios keep their own size — a 44px
+     tick box is a different bug. */
+  input:not([type=checkbox]):not([type=radio]), select, textarea { min-height: 44px; }
 }
 
 /* A screen reader needs the words a sighted user gets from colour and motion. */
