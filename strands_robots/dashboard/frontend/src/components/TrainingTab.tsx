@@ -7,6 +7,7 @@ import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
 import { setDeployIntent } from '../lib/deployIntent'
 import { datasetKey as dsKey, selectDataset, selectionKey, replayable, type DatasetRow } from '../lib/datasetSelection'
 import { datasetHint, isCurrentResponse } from '../lib/datasetHint'
+import { newerThanApplied } from '../lib/requestOrder'
 
 // One row is either LOCAL (has a `root` path, trains offline) or from the HUB
 // (no root, trains from repo_id after a download). lib/datasetSelection owns
@@ -53,6 +54,13 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // see lib/datasetHint.ts.
   const [dsShownQuery, setDsShownQuery] = useState<string | null>(null)
   const dsSeq = useRef(0)
+  // The status poll's own ordering: `tick` counts polling rounds, `applied` is the
+  // round whose answer is on screen for each job. A round is skipped while the
+  // previous one is still in flight - see lib/requestOrder.ts for why a late
+  // answer is worse than no answer here (it wipes the loss curve).
+  const tick = useRef(0)
+  const tickBusy = useRef(false)
+  const applied = useRef<Record<string, number>>({})
   const [dsAuth, setDsAuth] = useState<{ authenticated?: boolean; user?: string | null; detail?: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -107,10 +115,24 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // poll running job statuses every 5s
   useEffect(() => {
     const id = setInterval(async () => {
+      // A round that takes longer than the interval used to have the next round
+      // start on top of it: overlapping rounds pile up into a request storm
+      // against a provider that is already slow, and their answers arrive out of
+      // order. One round at a time; a skipped tick costs 5s of freshness, which
+      // the age readout reports honestly.
+      if (tickBusy.current) return
+      tickBusy.current = true
+      const round = ++tick.current
+      try {
       for (const job of jobs.slice(0, 5)) {
         if (!job.job_id) continue
         try {
           const s = await api(`/api/training/status?provider=${job.provider}&job_id=${encodeURIComponent(job.job_id)}`)
+          // Only a newer round may speak for this job. An older answer landing
+          // late is not merely stale: pushLoss reads its lower step as a RESTART
+          // and drops the whole curve, while polledAt would stamp it as fresh.
+          if (!newerThanApplied(round, applied.current[job.job_id])) continue
+          applied.current[job.job_id] = round
           setStatuses(prev => ({ ...prev, [job.job_id]: s }))
           setPolledAt(prev => ({ ...prev, [job.job_id]: Date.now() / 1000 }))
           setPollFail(prev => (prev[job.job_id] ? { ...prev, [job.job_id]: { n: 0, msg: '' } } : prev))
@@ -127,6 +149,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
           setPollFail(prev => ({ ...prev, [job.job_id]: { n: (prev[job.job_id]?.n ?? 0) + 1, msg } }))
         }
       }
+      } finally { tickBusy.current = false }
     }, 5000)
     return () => clearInterval(id)
   }, [jobs])

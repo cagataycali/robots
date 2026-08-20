@@ -78,12 +78,8 @@ export function datasetHint(input: DatasetHintInput): DatasetHint {
 }
 
 /**
- * Should this response be applied to the screen?
- *
- * The last request WINS, not the last response. Anything else is the out-of-order
- * bug above, and it is invisible in testing because a fast local search always
- * answers before a slow Hub one.
+ * Should this response be applied to the screen? The last request WINS, not the
+ * last response — invisible in testing, because a fast local search always
+ * answers before a slow Hub one. One definition, in lib/requestOrder.ts.
  */
-export function isCurrentResponse(seq: number, latest: number): boolean {
-  return seq === latest
-}
+export { isLatestRequest as isCurrentResponse } from './requestOrder'

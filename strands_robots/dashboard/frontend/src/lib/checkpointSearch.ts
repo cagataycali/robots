@@ -45,6 +45,4 @@ export function emptyNote({ query, hubProblem }: EmptyNoteInput): string {
  * numbers, not timestamps — two responses in the same millisecond still have an
  * order, and a clock that jumps cannot reorder them.
  */
-export function isCurrent(responseSeq: number, latestSeq: number): boolean {
-  return Number.isFinite(responseSeq) && responseSeq === latestSeq
-}
+export { isLatestRequest as isCurrent } from './requestOrder'
