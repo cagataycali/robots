@@ -6,6 +6,7 @@ import { sessionFreshness, staleSuffix } from '../lib/sessionFreshness'
 import { api as httpGet, HttpError } from '../lib/endpoints'
 import { recordFailure, type RecordActionKind } from '../lib/recordOutcome'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
+import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 
@@ -60,6 +61,21 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   // is stuck and no other state changes - the freeze is exactly the case where
   // the display must not sit still and look current.
   const [nowMs, setNowMs] = useState(() => Date.now())
+
+  // The follower's cameras are what gets WRITTEN INTO THE DATASET, so a camera
+  // that stopped publishing is a defect in the recording, not a cosmetic issue.
+  // Measured on this fleet: arm-1's wrist last captured a frame 10.4 hours before
+  // the record screen would have happily used it. The backend refuses this too
+  // (409 + ignore_dead_cameras); asking here means the operator finds out before
+  // they set up the scene, not after. Its own tick, separate from the wiring
+  // acknowledgement: two different admissions must not share one checkbox.
+  // Date.now() rather than the `nowMs` ticker: that one only runs while a session
+  // is OPEN, and this question is asked on the form before it. Every peer event
+  // re-renders this component, so the age stays current on its own.
+  const followerPeer = peers.find(p => p.peer_id === form.follower)
+  const deadCams = stoppedCameras(followerPeer?.cameras, Date.now() / 1000)
+  const camWarning = cameraWarning(deadCams, { peerId: form.follower })
+  const [camAck, setCamAck] = useState(false)
 
   // The measured roles. Managed children carry them keyed by peer id, so this is
   // one request, not one per arm. A failure here is not worth a banner: the
@@ -222,6 +238,9 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
             dataset: form.dataset.trim(), task: form.task.trim(),
             leader: form.leader, follower: form.follower,
             target_episodes: Math.max(1, Number(form.target_episodes) || 20),
+            // Only ever sent when the operator ticked the box in front of the
+            // named camera and its age - never a default, never remembered.
+            ...(camWarning && camAck ? { ignore_dead_cameras: true } : {}),
           }), 'open')
         }}>
           <label className="field"><span>dataset (name or hf repo id)</span>
@@ -276,6 +295,17 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
               </span>
             </label>
           )}
+          {camWarning && (
+            <div className="train-msg warn">⚠ {camWarning}</div>
+          )}
+          {camWarning && (
+            <label className="ackrow">
+              <input type="checkbox" checked={camAck} onChange={e => setCamAck(e.target.checked)} />
+              <span>
+                record without {deadCams.length > 1 ? 'those cameras' : `the ${deadCams[0].camera} camera`} anyway
+              </span>
+            </label>
+          )}
           <div className="train-msg rec-hint">
             not sure which is which? the leader is the lighter 7.4V arm (no gearbox load —
             easy to move by hand); the follower is the stronger 12V arm that mirrors it.
@@ -288,7 +318,8 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
                     aria-label={openCopy.aria}
                     disabled={busy || !api || !form.dataset.trim() || !form.task.trim()
                               || !form.leader || !form.follower || form.leader === form.follower
-                              || (problems.length > 0 && !ack)}>
+                              || (problems.length > 0 && !ack)
+                              || (!!camWarning && !camAck)}>
               {openCopy.label}
             </button>
           </div>

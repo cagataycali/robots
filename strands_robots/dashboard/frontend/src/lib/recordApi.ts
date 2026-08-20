@@ -51,7 +51,12 @@ export interface RecordApi {
   mock: boolean
   session(): Promise<RecordSession>
   /** open a session (creates/appends the dataset) */
-  open(opts: { dataset: string; task: string; leader: string; follower: string; target_episodes: number }): Promise<RecordSession>
+  /**
+   * `ignore_dead_cameras` is the operator's deliberate override of the server's
+   * refusal when a configured camera has stopped publishing (Q45). Optional and
+   * never defaulted: its absence means "let the server decide".
+   */
+  open(opts: { dataset: string; task: string; leader: string; follower: string; target_episodes: number; ignore_dead_cameras?: boolean }): Promise<RecordSession>
   startEpisode(): Promise<RecordSession>
   /** stop and keep the in-flight episode */
   stopEpisode(): Promise<RecordSession>
