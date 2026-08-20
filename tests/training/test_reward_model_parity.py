@@ -290,6 +290,12 @@ class TestRewardModelConfigParity:
         is a property of the host, not of strands.
         """
         pytest.importorskip("lerobot.rewards")
+        # robometer's __post_init__ needs transformers to read its backbone. An
+        # absent optional extra is a property of the host, exactly like a cold
+        # cache below - and its own sibling test_construction_needs_no_backbone_fetch
+        # already skips on it. Without this guard the test failed on every host
+        # that has the cache warm but not lerobot[robometer].
+        pytest.importorskip("transformers")
         if not _backbone_is_cached("robometer"):
             pytest.skip("robometer's backbone config is not in the local Hugging Face cache")
 
@@ -376,3 +382,63 @@ class TestRewardModelConfigParity:
         msg = str(excinfo.value)
         assert "reward_output" in msg
         assert "could not be constructed" not in msg
+
+
+class TestMissingExtraIsActionable:
+    """A reward type whose optional package is absent must say so, not raise ImportError.
+
+    ``build_config`` already translates the two other ways construction can fail
+    (a rejected field -> ValueError naming the fields, an unobtainable asset ->
+    ValueError naming the remedy). A missing optional extra was the third way and
+    the only one that still leaked its raw exception class: on this very machine,
+    robometer's ``__post_init__`` raises ``ImportError`` because ``transformers``
+    is not installed, and the dashboard's start-training path would surface that
+    as an unhandled error rather than a sentence the operator can act on.
+    """
+
+    def test_a_missing_package_names_the_type_and_clears_the_spec(self, dataset_root, tmp_path, monkeypatch):
+        pytest.importorskip("lerobot.rewards")
+        import lerobot.rewards as lr
+
+        def _missing(rtype, **kwargs):
+            raise ImportError("'transformers' is required but not installed. Install it with: "
+                              "pip install 'lerobot[robometer]'")
+
+        monkeypatch.setattr(lr, "make_reward_model_config", _missing)
+
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "robometer_out"),
+            steps=100,
+            extra={"reward_model": {"type": "robometer"}},
+        )
+        with pytest.raises(ValueError) as excinfo:
+            LerobotTrainer(device="cpu").build_config(spec)
+
+        msg = str(excinfo.value)
+        assert "reward_model type 'robometer' could not be constructed" in msg
+        # lerobot's own message already names the package AND the install command -
+        # it is kept verbatim rather than paraphrased.
+        assert "pip install 'lerobot[robometer]'" in msg
+        # validate() accepted the spec, so the operator is told where not to look.
+        assert "validate()" in msg
+        assert isinstance(excinfo.value.__cause__, ImportError)
+
+    def test_an_asset_failure_is_still_reported_as_one(self, dataset_root, tmp_path, monkeypatch):
+        # the new ImportError arm must not swallow the OSError arm's wording: a
+        # cold cache and a missing package need different remedies
+        pytest.importorskip("lerobot.rewards")
+        import lerobot.rewards as lr
+
+        monkeypatch.setattr(lr, "make_reward_model_config",
+                            lambda rtype, **kw: (_ for _ in ()).throw(OSError("couldn't connect to huggingface.co")))
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "robometer_out2"),
+            steps=100,
+            extra={"reward_model": {"type": "robometer"}},
+        )
+        with pytest.raises(ValueError, match="pretrained asset"):
+            LerobotTrainer(device="cpu").build_config(spec)
