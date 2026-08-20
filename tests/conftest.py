@@ -15,6 +15,8 @@ opt-in, which is the only kind that cannot leak into the rest of the run.
 
 import os
 
+import pytest
+
 # Disable mesh BEFORE any strands_robots import below pulls in robot.py.
 #
 # This is FORCED, not setdefault. setdefault meant that an ambient
@@ -140,3 +142,39 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ANN001, ARG001
         if reporter is not None:
             reporter.write_line(f"  -> leaked mesh session: {closed}, module global reset")
 
+
+
+@pytest.fixture(autouse=True)
+def _restore_dashboard_settings_overrides():
+    """No test may leave a process-global settings override behind.
+
+    Bisected 2026-08-20 (BUGS.md Q62): tests/test_dashboard_ws_chat_frames.py failed in every
+    sweep and passed alone. The leaker was tests/test_dashboard_lan_hint.py, whose fixture calls
+    ``settings.override("security", "auth_token", "test-token")`` — an override deliberately sits
+    ABOVE the file layer and lives in a module global, and monkeypatch cannot revert a call it
+    never made. So every dashboard app built LATER in that process demanded a bearer token, and
+    the victim's websocket handshake was rejected: ``WebSocketDisconnect``, a symptom that reads
+    like a transport bug in a file that never touched auth.
+
+    Same shape as the MUJOCO_GL race (Q34): process-global state set by one test module, whose
+    loser is a different file entirely. The cure belongs here rather than in each test's teardown,
+    because the next author of a dashboard test cannot be expected to know it.
+
+    Restores by SNAPSHOT rather than clear_overrides(), so a fixture that legitimately sets an
+    override for the whole session (there is none today) would survive rather than be silently
+    dropped.
+    """
+    try:
+        from strands_robots.dashboard import settings as _dsettings
+    except Exception:  # a repo checkout without the dashboard extra installed
+        yield
+        return
+    with _dsettings._lock:  # noqa: SLF001 - test-only hygiene
+        before = {sec: dict(vals) for sec, vals in _dsettings._overrides.items()}  # noqa: SLF001
+    try:
+        yield
+    finally:
+        with _dsettings._lock:  # noqa: SLF001
+            _dsettings._overrides.clear()  # noqa: SLF001
+            _dsettings._overrides.update(before)  # noqa: SLF001
+            _dsettings.__dict__["_cache"] = None
