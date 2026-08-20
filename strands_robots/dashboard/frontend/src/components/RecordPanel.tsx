@@ -9,6 +9,7 @@ import { recordFailure, type RecordActionKind } from '../lib/recordOutcome'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
 import { noArmsVerdict, type RememberedBoard } from '../lib/noArms'
 import { episodeTarget } from '../lib/episodeTarget'
+import { fpsField, fpsSuggestion } from '../lib/recordFps'
 import { nameVerdict, type KnownDataset } from '../lib/datasetName'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
@@ -54,11 +55,15 @@ export default function RecordPanel(
   // "nothing configured" - the honest reading while the request is in flight.
   const noArms = noArmsVerdict(peerIds.length, boards === undefined ? null : boards)
   const [form, setForm] = useState({
-    dataset: '', task: '', leader: '', follower: '', target_episodes: '20',
+    dataset: '', task: '', leader: '', follower: '', target_episodes: '20', fps: '',
   })
   const [touched, setTouched] = useState({ leader: false, follower: false })
   // What the operator asked for, and whether we understood it — never a silent correction.
   const wanted = episodeTarget(form.target_episodes)
+  // Q54: /api/record/open has always taken `fps` and this form never sent it, so every dataset
+  // was stamped 30 while an SO-101 captures nearer 4 — and LeRobot derives timestamps from the
+  // declaration, so the artifact claims the motion happened 7x faster than it did.
+  const rate = fpsField(form.fps)
   // A pair the hardware contradicts is not forbidden - a bench rig can be wired
   // in a way we cannot see - but it is not a silent default either. This follows
   // the same posture as the other safety refusals in this dashboard: state the
@@ -294,6 +299,7 @@ export default function RecordPanel(
             dataset: form.dataset.trim(), task: form.task.trim(),
             leader: form.leader, follower: form.follower,
             target_episodes: wanted.value,
+            fps: rate.value,
             // Only ever sent when the operator ticked the box in front of the
             // named camera and its age - never a default, never remembered.
             ...(camWarning && camAck ? { ignore_dead_cameras: true } : {}),
@@ -339,6 +345,16 @@ export default function RecordPanel(
                   <option key={c.peer_id} value={c.peer_id}>{roleLabel(c)}</option>
                 ))}
               </select>
+            </label>
+            <label className="field"><span>fps</span>
+              <input inputMode="numeric" value={form.fps} placeholder="30"
+                     aria-invalid={!!rate.problem} aria-describedby="rec-fps-say"
+                     onChange={e => set('fps', e.target.value)} />
+              {/* The rate the dataset DECLARES. Empty = the backend's 30, said out loud rather
+                  than left as a hidden default nobody could see or change. */}
+              <span id="rec-fps-say" className={`fieldsay${rate.problem ? ' bad' : ''}`}>
+                {rate.problem ?? rate.note ?? 'timestamps are derived from this — match your real capture rate'}
+              </span>
             </label>
             <label className="field"><span>episodes</span>
               <input inputMode="numeric" value={form.target_episodes}
@@ -408,7 +424,7 @@ export default function RecordPanel(
                     aria-label={openCopy.aria}
                     disabled={busy || !api || !form.dataset.trim() || !form.task.trim()
                               || !form.leader || !form.follower || form.leader === form.follower
-                              || !!wanted.problem
+                              || !!wanted.problem || !!rate.problem
                               || (problems.length > 0 && !ack)
                               || (!!camWarning && !camAck)}>
               {openCopy.label}
@@ -442,6 +458,20 @@ export default function RecordPanel(
       {open && s?.fps_notice && (
         <div className="train-msg warn rec-fps-notice" role="alert">
           ⚠ {s.fps_notice.detail}
+          {/* Q54: the notice used to end here — a warning about a number no screen could change.
+              The remedy is future-tense on purpose: this session's episodes are already stamped,
+              and offering to "fix" them would be one lie deeper. */}
+          {(() => {
+            const sug = fpsSuggestion(s.fps_notice)
+            if (!sug) return null
+            return (
+              <div className="rec-fps-fix">
+                <button className="btn ghost" type="button"
+                        onClick={() => set('fps', sug.fps)}>{sug.label}</button>
+                <span className="fieldsay">{sug.why}</span>
+              </div>
+            )
+          })()}
         </div>
       )}
 

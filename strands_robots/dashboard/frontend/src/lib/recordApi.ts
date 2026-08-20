@@ -116,7 +116,12 @@ export interface RecordApi {
    * refusal when a configured camera has stopped publishing (Q45). Optional and
    * never defaulted: its absence means "let the server decide".
    */
-  open(opts: { dataset: string; task: string; leader: string; follower: string; target_episodes: number; ignore_dead_cameras?: boolean }): Promise<RecordSession>
+  /**
+   * Q54: `fps` is the rate the DATASET DECLARES, and the backend has always accepted it
+   * (`fps=int(body.get("fps", 30) or 30)`) — this type simply never named it, so the form could
+   * not send it and every dataset was stamped 30 regardless of what the bus could deliver.
+   */
+  open(opts: { dataset: string; task: string; leader: string; follower: string; target_episodes: number; fps?: number; ignore_dead_cameras?: boolean }): Promise<RecordSession>
   startEpisode(): Promise<RecordSession>
   /** stop and keep the in-flight episode */
   stopEpisode(): Promise<RecordSession>
@@ -150,7 +155,10 @@ function makeMock(): RecordApi {
       return clone()
     },
     async open(opts) {
-      s = { ...EMPTY, ...opts, episodes: [], phase: 'idle' }
+      // `...opts` would write fps: undefined when the caller omits it, and the mock's frame tick
+      // multiplies by it - so the rehearsal would count NaN frames. Absent means the backend's
+      // default, the same reading the real route applies.
+      s = { ...EMPTY, ...opts, fps: opts.fps ?? EMPTY.fps, episodes: [], phase: 'idle' }
       return clone()
     },
     async startEpisode() {
