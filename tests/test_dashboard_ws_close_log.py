@@ -143,3 +143,72 @@ def test_the_verdict_says_which_rate_the_socket_agreed_to():
 
     assert cap_note(None) == ""
     assert "1 fps" in cap_note(1.0) and "2.5 fps" in cap_note(2.5)
+
+
+class TestTheLineActuallyReachesTheLog:
+    """MEASURED 2026-08-20 on the live dashboard: 75,489 `connection open` lines and
+    ZERO `connection closed` lines in one process lifetime.
+
+    The two strings both come from the `websockets` library (server.py logs the open,
+    protocol.discard() logs the close), and the close only fires when the sans-io close
+    path reaches EOF — which in this deployment it never did, not once in 75k sockets.
+    That asymmetry is exactly why a storm burning 20.7 GB stayed invisible for 12 hours:
+    the log recorded every socket's birth and no socket's death, so churn, lifetime and
+    cause were all unanswerable from it.
+
+    So our close verdict must NOT depend on the library's logging. It is emitted from the
+    handler's own `finally`, and this test pins that — including the abrupt-disconnect case,
+    which is the only case the live rig has ever actually produced.
+    """
+
+    def _app(self, monkeypatch, tmp_path):
+        from strands_robots.dashboard import auth
+        from strands_robots.dashboard import settings as dsettings
+        from strands_robots.dashboard.server import create_app
+
+        monkeypatch.setenv("STRANDS_MESH", "false")
+        monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
+        monkeypatch.setattr(dsettings, "SETTINGS_FILE", tmp_path / "settings.json")
+        dsettings._cache = None
+        auth._cache_key = None
+        auth._cache = {}
+        app = create_app()
+        return app
+
+    def test_an_abrupt_disconnect_still_logs_a_verdict(self, monkeypatch, tmp_path, caplog):
+        import logging
+
+        from fastapi.testclient import TestClient
+
+        app = self._app(monkeypatch, tmp_path)
+        # A camera that publishes nothing: the Q50 shape, and the one where the handler
+        # has no failing send to notice the client left.
+        monkeypatch.setattr(app.state.bridge, "latest_frame", lambda *a, **k: None)
+        client = TestClient(app)
+        with caplog.at_level(logging.INFO):
+            with client.websocket_connect("/ws/camera/so101-arm-1/top"):
+                pass  # closes immediately - the abrupt case
+        lines = [r.getMessage() for r in caplog.records]
+        assert any("camera socket so101-arm-1/top closed" in m for m in lines), lines[-6:]
+
+    def test_a_socket_that_sent_nothing_is_logged_as_a_WARNING(self, monkeypatch, tmp_path, caplog):
+        """Severity is the whole point: a storm of zero-frame sockets must be visible at
+        the level an operator actually reads, not buried in INFO next to 75k opens.
+
+        Uses a DIFFERENT camera than the test above on purpose: the per-identity rate
+        limiter suppressed this close when both tests shared `arm-1/top`, which is the
+        limiter doing exactly its job (one storm, one line) - and is worth stating, since
+        a future reader will otherwise 'fix' the flake by weakening it.
+        """
+        import logging
+
+        from fastapi.testclient import TestClient
+
+        app = self._app(monkeypatch, tmp_path)
+        monkeypatch.setattr(app.state.bridge, "latest_frame", lambda *a, **k: None)
+        client = TestClient(app)
+        with caplog.at_level(logging.INFO):
+            with client.websocket_connect("/ws/camera/so101-arm-2/wrist"):
+                pass
+        closes = [r for r in caplog.records if "closed" in r.getMessage()]
+        assert closes and closes[-1].levelno == logging.WARNING
