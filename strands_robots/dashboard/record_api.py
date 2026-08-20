@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import tempfile
 import threading
 import time
@@ -36,6 +37,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from strands_robots.dashboard import camera_liveness
+from strands_robots.dashboard import record_crash
 from strands_robots.dashboard.dataset_check import _as_int, record_target_verdict
 from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend
 
@@ -126,6 +128,8 @@ class RecordController:
         )
         self._lock = threading.Lock()
         self._worker: RecordWorker | None = None
+        #: Q40: proof that a session was open, for the next process to read.
+        self._crumb = record_crash.crumb_path()
         self._parked: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------- session
@@ -133,7 +137,18 @@ class RecordController:
     def session(self) -> dict[str, Any]:
         with self._lock:
             if self._worker is None:
-                return dict(EMPTY_SESSION)
+                # Q40: "no session" is true but not the whole truth. A breadcrumb this dashboard
+                # wrote and never removed proves a session was open and did not close - so the
+                # screen can name the dataset and the arms instead of showing an empty form over a
+                # half-written take.
+                idle = dict(EMPTY_SESSION)
+                crumb = record_crash.read_crumb(self._crumb)
+                notice = record_crash.interrupted_notice(
+                    crumb, same_process=bool(crumb) and crumb.get("pid") == os.getpid()
+                )
+                if notice:
+                    idle["interrupted"] = notice
+                return idle
             return self._worker.session()
 
     @property
@@ -232,7 +247,9 @@ class RecordController:
                 # a failed open must leave the fleet exactly as it found it
                 self._unpark_locked()
                 raise HTTPException(500, f"could not open the arms: {exc}") from exc
-            return self._worker.session()
+            opened = self._worker.session()
+            record_crash.write_crumb(opened, path=self._crumb)
+            return opened
 
     def _camera_meta(self, peer_id: str) -> dict[str, Any]:
         """What the fleet snapshot last saw from this peer's cameras.
@@ -318,6 +335,9 @@ class RecordController:
                 # the fleet comes back whether or not finalize/upload worked -
                 # a hub hiccup must not leave the desk armless
                 self._worker = None
+                # Q40: cleared even if finalize threw. The breadcrumb answers "was a session left
+                # open when this process died", and a close that reached the worker answers it: no.
+                record_crash.clear_crumb(self._crumb)
                 self._unpark_locked()
             return result
 
