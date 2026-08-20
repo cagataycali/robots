@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { trainingFreshness } from '../lib/trainingFreshness'
-import { api, post } from '../lib/endpoints'
+import { api, post, HttpError } from '../lib/endpoints'
+import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
 import { setDeployIntent } from '../lib/deployIntent'
@@ -117,6 +118,24 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
+  /**
+   * A failed request that STARTS something is not the same as one that did not
+   * happen: a rejected fetch covers "never left this machine" and "ran, then
+   * lost the answer". Saying `⚠ <message>` invited a second press — a second
+   * multi-hour run, a second recorder on one dataset, a second peer driving the
+   * same arm. `refresh()` runs on the ambiguous branch so the list that KNOWS
+   * gets a chance to answer.
+   */
+  const failed = (kind: SideEffectKind, e: unknown) => {
+    const v = sideEffectVerdict({
+      kind,
+      status: e instanceof HttpError ? e.status : 0,
+      message: (e as any)?.message ?? String(e),
+    })
+    setMsg(v.text)
+    if (v.delivered === 'unknown') refresh()
+  }
+
   const submit = async (validateOnly: boolean) => {
     setBusy(true); setMsg(null)
     const body = {
@@ -132,7 +151,11 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       const j = await post(validateOnly ? '/api/training/validate' : '/api/training/submit', body)
       setMsg(j.status === 'success' ? `✓ ${j.text?.slice(0, 200)}` : `✗ ${j.text?.slice(0, 300)}`)
       if (!validateOnly && j.status === 'success') refresh()
-    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
+    } catch (e) {
+      // A validate is read-only: it cannot leave a run behind, so it must not
+      // claim it might have.
+      failed(validateOnly ? 'export' : 'training', e)
+    }
     setBusy(false)
   }
 
@@ -154,7 +177,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         ? `▶ collecting ${j.n_episodes} episodes as ${j.peer_id} — watch it in the fleet grid; dataset appears below when done`
         : `⚠ ${JSON.stringify(j).slice(0, 200)}`)
       if (j.peer_id) setTimeout(refresh, 15000)
-    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
+    } catch (e) { failed('collect', e) }
     setBusy(false)
   }
 
@@ -171,7 +194,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       setMsg(j.peer_id
         ? `▶ replaying ${d.repo_id} ep0 as ${j.peer_id} — watch it in the fleet grid`
         : `⚠ ${JSON.stringify(j).slice(0, 200)}`)
-    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
+    } catch (e) { failed('replay', e) }
     setBusy(false)
   }
 
@@ -180,7 +203,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     try {
       const j = await post('/api/training/export', { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset, base_model: job.base_model })
       setMsg(j.status === 'success' ? `✓ ${j.text?.slice(0, 250)}` : `✗ ${j.text?.slice(0, 250)}`)
-    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
+    } catch (e) { failed('export', e) }
     setBusy(false)
   }
 
@@ -204,7 +227,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         })
         setMsg('🚀 checkpoint staged — close this sheet and open a robot\u2019s run form: it will be prefilled, and nothing runs until you press Run there')
       }
-    } catch (e) { setMsg(`⚠ ${(e as any)?.message ?? e}`) }
+    } catch (e) { failed('export', e) }
     setBusy(false)
   }
 
