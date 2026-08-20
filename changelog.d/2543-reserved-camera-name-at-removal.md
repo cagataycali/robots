@@ -1,3 +1,0 @@
-### Fixed
-
-- **simulation**: `remove_camera` refuses a reserved free-view routing token (`default`, `free`, `""`) instead of deleting it. `create_world` both registers `default` and bakes a compiled MJCF camera of that name, while the render path resolves the token to the built-in free view without consulting either, so removing it reported success, permanently deleted a compiled camera the scene ships with, and left `list_cameras` still advertising the name. `start_recording(cameras=["default"])` then refused, and its remedy - `add_camera("default", ...)` - is itself refused as reserved, so nothing could restore it. Both backends now read the rule from the same `reserved_camera_name_error` owner that already guards creation.
