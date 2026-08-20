@@ -39,6 +39,9 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
   const conn = useRef<'connecting' | 'open' | 'closed'>('connecting')
   const error = useRef<string | null>(null)
   const retryAt = useRef<number | undefined>(undefined)
+  // Q51: opens in the last 60s. A tile that keeps reopening is churning even when each
+  // socket carried a frame - the count is what lets planRetry tell those apart.
+  const openLog = useRef<number[]>([])
   // Attempts survive a re-run of the effect: peerId/cam churn must not hand a dead
   // endpoint a fresh 1s retry budget.
   const tries = useRef(0)
@@ -82,7 +85,13 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
       ws = new WebSocket(wsUrl(`/ws/camera/${encodeURIComponent(peerId)}/${encodeURIComponent(cam)}`))
       ws.binaryType = 'blob'
       // NOT a reset: this handshake succeeding says nothing about whether frames exist.
-      ws.onopen = () => { conn.current = 'open'; openedAt = Date.now(); retryAt.current = undefined }
+      ws.onopen = () => {
+        conn.current = 'open'
+        openedAt = Date.now()
+        retryAt.current = undefined
+        openLog.current.push(openedAt)
+        while (openLog.current.length && openedAt - openLog.current[0] > 60_000) openLog.current.shift()
+      }
       ws.onmessage = (msg) => {
         if (typeof msg.data === 'string') {
           // The server tells us *why* there are no pixels (e.g. the peer is
@@ -111,6 +120,7 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
           frames: framesThisSocket,
           openMs: openedAt !== undefined ? Date.now() - openedAt : undefined,
           code: ev.code,
+          recentOpens: openLog.current.length,
         })
         tries.current = plan.attempt
         if (plan.delayMs === null) {
