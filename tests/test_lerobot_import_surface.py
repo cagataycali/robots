@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+from typing import Any
 import importlib.util
 from pathlib import Path
 
@@ -195,24 +196,19 @@ def test_forward_compat_allowlist_entries_are_actually_imported() -> None:
     )
 
 
-def test_submodule_imports_are_not_flagged_as_drift(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A ``from pkg import submodule`` import must not be reported as API drift.
+def _lerobot_transport_or_skip() -> Any:
+    """Import ``lerobot.transport``, or skip on POSITIVE evidence of a missing extra.
 
-    ``strands_robots`` imports ``services_pb2`` / ``services_pb2_grpc`` as
-    submodules of ``lerobot.transport``. A submodule is absent from its parent
-    package namespace until something imports it, so an attribute-only drift
-    check (``hasattr``) both false-positives on these valid imports and makes
-    the guard order-dependent -- green only after an earlier test happens to
-    import the submodule and bind it on the parent, red when run in isolation.
-
-    This forces the cold state (submodule not yet imported, attribute unbound)
-    so the assertion holds regardless of collection order: the drift guard must
-    resolve the submodule via ``find_spec`` and report no drift. On the
-    attribute-only implementation this fails; with submodule-aware resolution it
-    passes deterministically.
+    Extracted from the test body so the module is bound unconditionally: a name bound
+    inside a try whose handler calls ``pytest.skip`` is, to any analysis of the enclosing
+    function, bound only on the success path - what
+    tests/test_optional_dependency_skips_bind_their_names.py refuses. The judgement is
+    unchanged and still strict, because that is the whole point of it living here:
+    ``lerobot.transport`` needs grpcio, an OPTIONAL lerobot extra strands_robots
+    deliberately does not require, but a BROKEN lerobot must never hide behind that skip.
     """
     try:
-        transport = importlib.import_module("lerobot.transport")
+        return importlib.import_module("lerobot.transport")
     except ImportError as exc:
         # lerobot.transport needs grpcio, an OPTIONAL lerobot extra
         # (lerobot[grpcio-dep]) that strands_robots deliberately does not
@@ -236,6 +232,24 @@ def test_submodule_imports_are_not_flagged_as_drift(monkeypatch: pytest.MonkeyPa
         assert looks_optional, f"lerobot.transport is broken, not merely missing an extra: {exc}"
         importlib.import_module("lerobot")  # a broken lerobot must not hide behind this skip
         pytest.skip(f"lerobot.transport needs an optional dependency ({missing or 'grpcio'}): {exc}")
+
+def test_submodule_imports_are_not_flagged_as_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ``from pkg import submodule`` import must not be reported as API drift.
+
+    ``strands_robots`` imports ``services_pb2`` / ``services_pb2_grpc`` as
+    submodules of ``lerobot.transport``. A submodule is absent from its parent
+    package namespace until something imports it, so an attribute-only drift
+    check (``hasattr``) both false-positives on these valid imports and makes
+    the guard order-dependent -- green only after an earlier test happens to
+    import the submodule and bind it on the parent, red when run in isolation.
+
+    This forces the cold state (submodule not yet imported, attribute unbound)
+    so the assertion holds regardless of collection order: the drift guard must
+    resolve the submodule via ``find_spec`` and report no drift. On the
+    attribute-only implementation this fails; with submodule-aware resolution it
+    passes deterministically.
+    """
+    transport = _lerobot_transport_or_skip()
     submods = ("services_pb2", "services_pb2_grpc")
     imports = _collect_lerobot_imports()
     present = {sym for mod, sym, _f, _ln in imports if mod == "lerobot.transport" and sym in submods}

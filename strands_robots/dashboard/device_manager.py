@@ -988,7 +988,8 @@ def validate_replay(
     # real scalar with an integral value - a length or index that came from
     # arithmetic), while this returned "episode must be an integer" for a number
     # that is one. A dashboard that refuses what its own runner accepts is the
-    # drift tests/simulation/test_replay_episode_index_domain.py exists to stop.
+    # exact drift this shared helper exists to stop: the accepting surface
+    # defines the type, and this validator must not be narrower than it.
     episode_error = non_negative_whole_number_error(episode, "episode", "replay")
     if episode_error:
         return {"error": episode_error}

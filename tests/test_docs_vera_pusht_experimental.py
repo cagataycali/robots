@@ -85,6 +85,25 @@ def test_pusht_embodiment_config_still_valid() -> None:
     assert (cfg.server_port, cfg.vis_port) == (8820, 8821)
 
 
+def _pusht_provider_or_skip() -> object:
+    """Build the pusht provider, or skip once its refusal has been judged.
+
+    A helper rather than a try/except in the test body: a name bound inside a try
+    whose handler skips is bound only on the success path as far as any analysis of
+    the enclosing function can tell, which is what
+    tests/test_optional_dependency_skips_bind_their_names.py refuses. Returning the
+    value keeps the assertion unconditional AND keeps the refusal under assertion -
+    the install line and the preserved __cause__ are checked here, not waved past.
+    """
+    try:
+        return create_policy("vera", embodiment="pusht", auto_launch_server=False)
+    except ImportError as e:
+        text = str(e)
+        assert "pip install websockets msgpack" in text, f"unhelpful refusal: {text}"
+        assert isinstance(e.__cause__, ImportError), "the original import error must stay attached"
+        pytest.skip(f"VERA client wire dependencies absent, refused actionably: {text.splitlines()[0]}")
+
+
 def test_the_pusht_provider_builds_or_says_what_to_install() -> None:
     """Building the provider either works or REFUSES ACTIONABLY.
 
@@ -97,13 +116,7 @@ def test_the_pusht_provider_builds_or_says_what_to_install() -> None:
     correct behaviour - what is NOT correct is a naked import traceback, so the
     absent-dependency branch asserts the install line is in the message.
     """
-    try:
-        policy = create_policy("vera", embodiment="pusht", auto_launch_server=False)
-    except ImportError as e:
-        text = str(e)
-        assert "pip install websockets msgpack" in text, f"unhelpful refusal: {text}"
-        assert isinstance(e.__cause__, ImportError), "the original import error must stay attached"
-        pytest.skip(f"VERA client wire dependencies absent, refused actionably: {text.splitlines()[0]}")
+    policy = _pusht_provider_or_skip()
     assert policy is not None
 
 
