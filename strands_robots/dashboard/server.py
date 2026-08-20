@@ -50,6 +50,7 @@ from strands_robots.dashboard import arm_roles, config_api, consent, deploy, set
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
+from strands_robots.dashboard import lan_hint
 from strands_robots.dashboard.ws_observability import (
     CloseLogThrottle,
     cap_note,
@@ -382,6 +383,31 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     # ------------------------------------------------------------------
     # REST
     # ------------------------------------------------------------------
+
+    @app.get("/api/network/hint")
+    async def network_hint(request: Request) -> dict[str, Any]:
+        """Q52: tell a viewer in the same house to stop streaming through Cloudflare.
+
+        The client address must come from the tunnel's forwarded header - every socket
+        this process sees is 127.0.0.1 (cloudflared), so trusting request.client here
+        would report "local" for every remote viewer on earth. CF-Connecting-IP is set by
+        Cloudflare itself and is the address the access log already shows; a direct LAN
+        visitor has no such header and falls back to the peer address, which for them IS
+        the truth.
+        """
+        fwd = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for")
+        client_ip = (fwd.split(",")[0].strip() if fwd else None) or (
+            request.client.host if request.client else None
+        )
+        own: list[str] = []
+        try:  # psutil is already a dashboard dependency; a failure here is not fatal
+            import psutil
+
+            for addrs in psutil.net_if_addrs().values():
+                own.extend(a.address for a in addrs if a.address)
+        except Exception:  # pragma: no cover - platform specific
+            pass
+        return lan_hint.hint(client_ip, own, int(getattr(app.state, "port", None) or 8090))
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
