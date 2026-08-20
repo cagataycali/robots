@@ -1167,6 +1167,11 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
      40px because it belonged to neither. Checkboxes and radios keep their own size — a 44px
      tick box is a different bug. */
   input:not([type=checkbox]):not([type=radio]), select, textarea { min-height: 44px; }
+  /* A link is a tap target too: the help screen's two external links measured 24px tall.
+     inline-flex so the minimum actually applies to an inline element. */
+  .help-links a[href], .panel a[href], .helpcard a[href], .drawer-body a[href] {
+    min-height: 44px; display: inline-flex; align-items: center;
+  }
 }
 
 /* A screen reader needs the words a sighted user gets from colour and motion. */

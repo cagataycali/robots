@@ -184,6 +184,24 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     return () => clearInterval(id)
   }, [open, load])
 
+  // Read the calibration ids once the panel opens: the spawn form's id field is checked
+  // against them, so a typo is caught before an arm runs on raw servo counts.
+  //
+  // THIS HOOK MUST STAY ABOVE `if (!open) return null`. It used to live 100 lines further
+  // down, after that early return, so a closed panel rendered one hook fewer than an open
+  // one — React #310, "rendered more hooks than during the previous render". The whole
+  // devices screen crashed to its error boundary the instant it was opened, live, with the
+  // honest crash card explaining that the rest of the dashboard still worked. The fetch is
+  // still gated on `open`, so a closed panel asks the server for nothing.
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    api<{ status?: string; text?: string }>('/api/calibration')
+      .then(r => { if (alive && r?.text) setCalibIds(parseCalibrationList(r.text).entries) })
+      .catch(() => { /* unchecked is a state the verdict handles */ })
+    return () => { alive = false }
+  }, [open])
+
   if (!open) return null
 
   /**
@@ -279,16 +297,6 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
    * PREFILL the picker; it must never quietly become the model name, which is
    * why the source is rendered next to it.
    */
-  // Read the calibration ids once: the spawn form's id field is checked against
-  // them, so a typo is caught before an arm runs on raw servo counts.
-  useEffect(() => {
-    let alive = true
-    api<{ status?: string; text?: string }>('/api/calibration')
-      .then(r => { if (alive && r?.text) setCalibIds(parseCalibrationList(r.text).entries) })
-      .catch(() => { /* unchecked is a state the verdict handles */ })
-    return () => { alive = false }
-  }, [])
-
   const familyFor = (p: SerialPort): { family: string; source: string } => {
     const running = managed.find(m => m.alive && m.port === p.device)
     if (running?.robot_name) return { family: running.robot_name, source: 'the arm running on this port' }
