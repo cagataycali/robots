@@ -212,10 +212,18 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     // written by something else, metadata about to be rebuilt) can insist once.
     const picked = selectedRow(datasets, form)
     const can = trainable(picked)
-    if (!can.ok && dsOverride !== selectionKey(form)) {
-      setDsWarn({ key: selectionKey(form), reason: can.reason })
-      setMsg(null)
-      return
+    if (!can.ok) {
+      if (dsOverride !== selectionKey(form)) {
+        setDsWarn({ key: selectionKey(form), reason: can.reason })
+        setMsg(null)
+        return
+      }
+      // CONSUMED BY THE RUN IT AUTHORISED. Found by scripts/audit-dataset-abandoned-hold.mjs:
+      // a sticky override meant the FIRST insistence silenced the check for that dataset for the
+      // rest of the session, so a second job hours later - by which time the operator may have
+      // deleted the folder, or a recording may have half-filled it - started on a stale decision
+      // nobody re-made. Same rule as deployIntent: one click authorises one action.
+      setDsOverride(null)
     }
     setBusy(true); setMsg(null)
     const body = {
