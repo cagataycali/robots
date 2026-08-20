@@ -2,7 +2,7 @@
 // Run: npx esbuild src/lib/calibrateCommand.ts --bundle --format=esm --outfile=/tmp/calibrateCommand.mjs && node src/lib/calibrateCommand.test.mjs
 import assert from 'node:assert/strict'
 
-const { calibratePlan, deviceModel, deviceId } = await import('/tmp/calibrateCommand.mjs')
+const { calibratePlan, deviceModel, deviceId, idNote } = await import('/tmp/calibrateCommand.mjs')
 
 const FOLLOWER = { device: '/dev/cu.usbmodem5AB01584281', serial_number: '5AB0158428', role: 'follower', role_volts: 12.6 }
 const LEADER = { device: '/dev/cu.usbmodem5AB01818061', serial_number: '5AB0181806', role: 'leader', role_volts: 7.4 }
@@ -104,6 +104,46 @@ for (const facts of [
     assert.ok(!p.command.includes(forbidden), `the command must not contain "${forbidden}"`)
   }
   assert.match(p.reason, /Run this in a terminal/, 'the human is the executor, and the copy says so')
+}
+
+// --- THE ID THE ARM ACTUALLY LOADS BEATS ANY ID WE COULD INVENT ---
+// A profile's robot_id is the file name the spawned robot reads its limits
+// from. Inventing a different one sends the operator through the whole
+// hand-moving ceremony and writes a file the arm never opens: the calibration
+// "succeeds", the arm keeps its old limits, and the only symptom is a real arm
+// still reaching where it should not.
+{
+  const withProfile = { ...FOLLOWER, robot_id: 'leader_arm' }
+  assert.equal(deviceId(withProfile, 'follower'), 'leader_arm', 'the known id wins')
+  const p = calibratePlan(withProfile, 'so101')
+  assert.ok(p.command.includes('--device_id=leader_arm'), 'the command carries the id the arm loads')
+  assert.ok(!p.command.includes('follower_5AB0158428'), 'and never the invented one')
+
+  // Measured on this machine: arm-2 is a 12.6V FOLLOWER whose id is named
+  // `leader_arm`. Correct to pass, and dangerous to read - so it is said.
+  assert.match(p.idNote, /leader_arm/)
+  assert.match(p.idNote, /12\.6V/, 'the contradiction is stated with the evidence')
+  assert.match(p.idNote, /only a file name/, 'and with the reason it is still right')
+  assert.ok(p.command, 'a name that contradicts the role is never a refusal')
+}
+
+// A role-agreeing id needs no warning - a notice that fires on every arm is noise.
+{
+  const p = calibratePlan({ ...FOLLOWER, robot_id: 'follower_arm' }, 'so101')
+  assert.match(p.idNote, /already runs with/)
+  assert.ok(!/do not let it convince you/.test(p.idNote), 'no contradiction, no scolding')
+}
+
+// No profile: the invented id must be SERIAL-qualified (two same-role arms on
+// one machine would otherwise overwrite each other's calibration) and the note
+// must tell the operator to spawn with that same id, or lerobot finds nothing.
+{
+  const p = calibratePlan(FOLLOWER, 'so101')
+  assert.ok(p.command.includes('--device_id=follower_5AB0158428'))
+  assert.match(p.idNote, /no spawn profile/)
+  assert.match(p.idNote, /5AB0158428/)
+  assert.match(p.idNote, /will not find the calibration/)
+  assert.match(idNote({ device: '/dev/x', role: 'leader' }, 'leader'), /overwrite each other/)
 }
 
 console.log('calibrateCommand: all assertions passed')

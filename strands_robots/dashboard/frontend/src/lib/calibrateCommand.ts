@@ -31,6 +31,13 @@ export interface PortFacts {
   role?: string | null
   role_volts?: number | null
   role_source?: string | null
+  /**
+   * The calibration id this port's SPAWN PROFILE already carries
+   * (`/api/devices/profiles` -> `robot_id`). Absent when the port has never
+   * been spawned. When present it is the id the running robot actually LOADS,
+   * so it outranks anything this module could invent - see `deviceId`.
+   */
+  robot_id?: string | null
 }
 
 /** What the UI should render for one port. */
@@ -45,6 +52,12 @@ export interface CalibratePlan {
   deviceId?: string
   /** true when the operator must measure the bus first (offer that button) */
   needsMeasurement?: boolean
+  /**
+   * Present when the id in the command deserves a sentence of its own: it came
+   * from the arm's profile, or it is new, or its NAME contradicts the measured
+   * role. Never a refusal - the id is still correct.
+   */
+  idNote?: string
 }
 
 /** lerobot's device_type is a function of the ROLE, not of the arm. */
@@ -66,14 +79,58 @@ export function deviceModel(family: string, role: 'follower' | 'leader'): string
 }
 
 /**
- * The id the calibration file is saved under. lerobot uses it as a FILE NAME,
- * so a serial is the stable choice (two so101 followers on one machine would
- * otherwise overwrite each other's calibration — the exact bug that makes an
- * arm move to another arm's limits).
+ * The id the calibration file is saved under. lerobot uses it as a FILE NAME.
+ *
+ * A PROFILE'S `robot_id` WINS whenever the port has one, and that is the whole
+ * point: the spawned robot loads its calibration by that id, so a command that
+ * invents a different one sends the operator through the full ceremony - moving
+ * every joint to its limits by hand - and writes a file the arm will never
+ * read. Nothing would report a failure: the calibration succeeds, the arm keeps
+ * running on its old limits, and the only symptom is an arm still reaching
+ * where it should not. Measured on this machine: so101-arm-2's profile carries
+ * `leader_arm`, so the invented `follower_5AB0158428` would have been exactly
+ * that dead end.
+ *
+ * With no profile there is nothing to honour, and then a serial-qualified name
+ * is the safe invention: two so101 followers on one machine would otherwise
+ * both be `follower` and overwrite each other's calibration.
  */
 export function deviceId(facts: PortFacts, role: 'follower' | 'leader'): string {
+  const known = (facts.robot_id ?? '').trim()
+  if (known) return known
   const serial = (facts.serial_number ?? '').trim()
   return serial ? `${role}_${serial}` : role
+}
+
+/**
+ * Why the command carries THIS id — and the trap worth naming out loud.
+ *
+ * An id is a file name, not a claim about the hardware, so an id named
+ * `leader_arm` on a bus measured at 12.6V (a follower) is CORRECT to pass and
+ * still worth a sentence: an operator who reads the name instead of the flags
+ * concludes they are calibrating the other arm. That mislabel is the same one
+ * cagatay originally reported on the record screen, one surface over.
+ */
+export function idNote(facts: PortFacts, role: 'follower' | 'leader'): string | undefined {
+  const known = (facts.robot_id ?? '').trim();
+  if (!known) {
+    const serial = (facts.serial_number ?? '').trim();
+    return serial
+      ? `this port has no spawn profile yet, so the id is built from its serial (${serial}) — ` +
+        'spawn the arm with this same id afterwards, or lerobot will not find the calibration'
+      : 'this port has no spawn profile and reports no serial, so the id is just the role — ' +
+        'two arms of the same role on one machine would overwrite each other';
+  }
+  const other = role === 'follower' ? 'leader' : 'follower';
+  const contradicts = known.toLowerCase().includes(other);
+  const base = `this is the id the arm already runs with (${known}), so the calibration lands where it will be read`;
+  if (!contradicts) return base;
+  const volts = facts.role_volts != null ? `${facts.role_volts}V` : 'its measured voltage';
+  return (
+    `${base} — note the id is NAMED "${known}" while this bus measures ${volts} = ${role}. ` +
+    'The id is only a file name and is still the right one to pass; the name is what is wrong, ' +
+    'so do not let it convince you this is the other arm'
+  );
 }
 
 /** Shell-quote a value only when it needs it — a path with no spaces reads better bare. */
@@ -152,6 +209,7 @@ export function calibratePlan(facts: PortFacts, family: string | null | undefine
     deviceType,
     deviceModel: model,
     deviceId: id,
+    idNote: idNote(facts, role),
     reason:
       `${measured}, so this arm is the ${role} — a ${role} is a lerobot "${deviceType}" device. ` +
       'Run this in a terminal: it will ask you to move the arm through its range by hand.',
