@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useDialogFocus } from '../lib/useDialogFocus'
+import { authRemovalWarning } from '../lib/authRemoval'
 import type { MeshInfo } from '../types'
 import {
   authToken, backendBase, backendLabel, normalize, post,
@@ -81,6 +82,9 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   const [newKey, setNewKey] = useState('')
   const [newValue, setNewValue] = useState('')
   const [serverToken, setServerToken] = useState('')
+  // Q73: removing the token unlocks every motor on the fleet — two steps, and the second one
+  // states what it exposes. Reset whenever the drawer's tab changes so it cannot stay armed.
+  const [removeArmed, setRemoveArmed] = useState(false)
   const [corsOrigins, setCorsOrigins] = useState('')
 
   useEffect(() => {
@@ -575,13 +579,38 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                   // every subsequent request must carry.
                   if (serverToken) { setAuthToken(serverToken); setToken(serverToken) }
                 }}>save</button>
-                {config.security.auth_enabled && (
+                {config.security.auth_enabled && !removeArmed && (
                   <button className="btn ghost danger" disabled={saving}
-                          onClick={() => apply({ security: { auth_token: null } })}>
+                          onClick={() => setRemoveArmed(true)}>
                     remove token
                   </button>
                 )}
               </div>
+              {config.security.auth_enabled && removeArmed && (() => {
+                /* Q73: this used to be one click. Every other control here that can move metal asks
+                   first; the one that removes the lock on all of them did not — and an unlocked
+                   dashboard stays unlocked silently, for as long as nobody notices. */
+                const w = authRemovalWarning({
+                  host: typeof location !== 'undefined' ? location.hostname : '',
+                  corsOrigins,
+                  // the mesh panel's own number: live peers, not merely remembered ones
+                  peerCount: mesh.live_peers ?? mesh.peers ?? 0,
+                })
+                return (
+                  <div className={w.severity === 'exposed' ? 'result bad' : 'result'} role="alert">
+                    <b>Remove the token?</b>
+                    <ul>{w.lines.map(l => <li key={l}>{l}</li>)}</ul>
+                    <div className="sheet-actions">
+                      <button className="btn ghost danger" disabled={saving} onClick={() => {
+                        setRemoveArmed(false)
+                        void apply({ security: { auth_token: null } })
+                      }}>{w.confirmLabel}</button>
+                      <button className="btn ghost" disabled={saving}
+                              onClick={() => setRemoveArmed(false)}>keep it</button>
+                    </div>
+                  </div>
+                )
+              })()}
               <p className="hint">
                 CORS origins apply at startup; the token applies immediately (and is saved into this
                 browser so you are not locked out). <code>STRANDS_MESH_LOCAL_DEV=1</code> is separate
