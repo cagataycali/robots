@@ -136,6 +136,39 @@ def _default_store() -> Dict[str, Any]:
     }
 
 
+# Set when a store on disk could not be parsed: the backup path plus why. Read via
+# store_corruption(); begin_registration consults it, because the credential-less window it
+# opens must not be usable by a stranger who merely benefited from a disk error.
+_corrupt: Optional[Dict[str, str]] = None
+
+
+def store_corruption() -> Optional[Dict[str, str]]:
+    """The unreadable store this process rescued, if any: {'backup': path, 'reason': str}."""
+    return dict(_corrupt) if _corrupt else None
+
+
+def _preserve_corrupt(path: Path, exc: Exception) -> None:
+    """Move an unparseable store aside instead of clobbering it, and remember that we did.
+
+    The bytes may still hold the operator's credential id and public key, so they are kept
+    verbatim under a timestamped name. Failing to move it must not stop the dashboard from
+    coming up, but it MUST still be recorded - the flag is what re-seals enrollment.
+    """
+    global _corrupt
+    backup = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+    try:
+        os.replace(path, backup)
+        where = str(backup)
+    except OSError:
+        where = ""
+    _corrupt = {"backup": where, "reason": f"{type(exc).__name__}: {exc}"}
+    logging.getLogger(__name__).warning(
+        "dashboard auth store at %s is unreadable (%s); kept as %s. Enrollment is limited to "
+        "this machine until a passkey exists again.",
+        path, _corrupt["reason"], where or "<could not move it>",
+    )
+
+
 def _load() -> Dict[str, Any]:
     """Read the store, re-reading the file whenever it changes on disk."""
     global _cache, _cache_key
@@ -153,8 +186,15 @@ def _load() -> Dict[str, Any]:
                 _cache = json.loads(path.read_text())
                 _cache_key = key
                 return _cache
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as exc:
+                # A half-written or unreadable store used to fall straight through to a fresh
+                # default one — which OVERWROTE the file. Two consequences, neither obvious from
+                # here: auth_enabled() IS has_credentials(), so zero credentials silently
+                # unseals every /api and /ws route (through the tunnel, that is the public
+                # internet); and the operator's only passkey record was destroyed by the same
+                # line, so even fixing the JSON by hand could not bring it back. One truncated
+                # write - a crash mid-save, a full disk - was enough.
+                _preserve_corrupt(path, exc)
         store = _default_store()
         _save_locked(store)
         return store
@@ -470,6 +510,22 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
     if first_time and required:
         if not secrets.compare_digest(bootstrap or "", required):
             raise HTTPException(403, "bootstrap token required for first enrollment")
+
+    # A first enrollment that exists only because the store was unreadable is a DIFFERENT event
+    # from a genuinely new dashboard: nobody chose it, and a stranger must not be able to seize
+    # the dashboard on the strength of a disk error. The person at the machine still can, and a
+    # bootstrap token still works from anywhere - this narrows the accident, it does not add a
+    # dead end.
+    damage = store_corruption()
+    if first_time and damage and not required:
+        if not client_is_loopback(_client_ip(request)):
+            raise HTTPException(
+                403,
+                "the credential store was unreadable and has been kept as "
+                f"{damage['backup'] or 'a backup'} ({damage['reason']}). Enrolling a new passkey "
+                "is limited to the machine itself until one exists again - open the dashboard on "
+                "that machine, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN and pass it.",
+            )
 
     rp_id = _derive_rp_id(request)
     if not rpid_is_usable(rp_id):
