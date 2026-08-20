@@ -15,7 +15,8 @@
     "audit:age": "node scripts/audit-server-age.mjs",
     "test:lib": "node scripts/run-lib-tests.mjs",
     "test": "node scripts/run-lib-tests.mjs",
-    "audit:all": "node scripts/run-audits.mjs"
+    "audit:all": "node scripts/run-audits.mjs",
+    "verify": "npm run test:lib && npm run build && npm run audit:all"
   },
   "dependencies": {
     "react": "^18.3.1",
