@@ -50,7 +50,13 @@ from strands_robots.dashboard import arm_roles, config_api, consent, deploy, set
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
-from strands_robots.dashboard.ws_observability import CloseLogThrottle, close_line, close_verdict
+from strands_robots.dashboard.ws_observability import (
+    CloseLogThrottle,
+    cap_note,
+    close_line,
+    close_verdict,
+    fps_cap,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1628,6 +1634,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         frames_sent = 0
         bytes_sent = 0
         started_at = time.monotonic()
+        # Q52: measured 467 KB/s sustained (20.5 GB in 21h) to one phone on cellular,
+        # because 15 fps of full-size JPEG was the only thing on offer. A viewer that
+        # knows its link is failing can now ask for less - the server never guesses a
+        # cap, it only honours one, so a LAN operator is unaffected.
+        cap = fps_cap(ws.query_params.get("max_fps"))
+        min_interval = None if cap is None else 1.0 / cap
+        last_sent_at: float | None = None
         # Q50: this loop sends only when a frame exists, so on a camera that publishes
         # NOTHING there is no failing send to reveal that the viewer left - the handler
         # spun at 15Hz forever and the close verdict below never ran. Watching the
@@ -1635,6 +1648,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         gone = asyncio.create_task(_client_gone(ws))
         try:
             while not gone.done():
+                if min_interval is not None and last_sent_at is not None:
+                    waited = time.monotonic() - last_sent_at
+                    if waited < min_interval:
+                        # Skip WITHOUT consuming the frame: the newest one at the end of
+                        # the wait is what the viewer wants, not this stale one.
+                        await asyncio.sleep(min(min_interval - waited, 1 / 15))
+                        continue
                 f = bridge.latest_frame(peer_id, cam)
                 if f is not None and f.get("t") != last_t:
                     last_t = f.get("t")
@@ -1642,6 +1662,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                         await ws.send_bytes(f["jpeg"])
                         frames_sent += 1
                         bytes_sent += len(f["jpeg"])
+                        last_sent_at = time.monotonic()
                     elif f.get("error") and f["error"] != reported:
                         # One text frame per distinct problem: the tile can then
                         # say "raw frames, cannot decode" instead of going black.
@@ -1665,7 +1686,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     publishing=bridge.latest_frame(peer_id, cam) is not None,
                     bytes_sent=bytes_sent,
                 )
-                line = close_line(peer_id=peer_id, cam=cam, verdict=verdict, suppressed=suppressed)
+                line = close_line(
+                    peer_id=peer_id, cam=cam, verdict=verdict + cap_note(cap), suppressed=suppressed,
+                )
                 (logger.info if frames_sent else logger.warning)(line)
 
     @app.websocket("/ws/chat")

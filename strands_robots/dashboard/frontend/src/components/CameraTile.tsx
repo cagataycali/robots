@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { wsUrl } from '../lib/endpoints'
 import { classifyCamera, type CamStatus } from '../lib/cameraState'
-import { planRetry } from '../lib/cameraRetry'
+import { planRetry, CHURN_OPENS_PER_MIN } from '../lib/cameraRetry'
 
 interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: boolean; error?: string }
 
@@ -23,6 +23,9 @@ interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: 
  * turned ten hours of a missing arm into 63,906 sockets from a phone on cellular
  * data (BUGS.md Q40) - see lib/cameraRetry.
  */
+/** What a struggling viewer asks for: one frame a second still shows a moving arm. */
+const DEGRADED_FPS = 1
+
 export default function CameraTile({ peerId, cam, big = false, meta }: {
   peerId: string; cam: string; big?: boolean; meta?: Meta
 }) {
@@ -42,6 +45,8 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
   // Q51: opens in the last 60s. A tile that keeps reopening is churning even when each
   // socket carried a frame - the count is what lets planRetry tell those apart.
   const openLog = useRef<number[]>([])
+  /** the reduced rate this tile is currently asking for, or null at full rate */
+  const degraded = useRef<number | null>(null)
   // Attempts survive a re-run of the effect: peerId/cam churn must not hand a dead
   // endpoint a fresh 1s retry budget.
   const tries = useRef(0)
@@ -82,7 +87,15 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
       // openMs and clear the failure history it is supposed to be proving.
       framesThisSocket = 0
       openedAt = undefined
-      ws = new WebSocket(wsUrl(`/ws/camera/${encodeURIComponent(peerId)}/${encodeURIComponent(cam)}`))
+      // Q52: a tile that is demonstrably churning ASKS THE SERVER FOR LESS. One tile at
+      // 4.6 fps x ~97 KB measured 467 KB/s sustained (20.5 GB in 21h to a phone on
+      // cellular), so a link that keeps dropping the stream is offered a rate it can
+      // actually carry instead of the same firehose again. Only the churning tile is
+      // degraded, and only while it churns - a LAN operator never sees this.
+      const capped = openLog.current.length >= CHURN_OPENS_PER_MIN
+      degraded.current = capped ? DEGRADED_FPS : null
+      const path = `/ws/camera/${encodeURIComponent(peerId)}/${encodeURIComponent(cam)}`
+      ws = new WebSocket(wsUrl(capped ? `${path}?max_fps=${DEGRADED_FPS}` : path))
       ws.binaryType = 'blob'
       // NOT a reset: this handshake succeeding says nothing about whether frames exist.
       ws.onopen = () => {

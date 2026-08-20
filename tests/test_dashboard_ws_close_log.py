@@ -117,3 +117,29 @@ def test_volume_is_optional_and_never_divides_by_a_zero_lifetime():
     assert close_verdict(frames_sent=3, lifetime_s=2.0, publishing=True) == "streamed 3 frames over 2.0s (1.5 fps)"
     instant = close_verdict(frames_sent=1, lifetime_s=0.0, publishing=True, bytes_sent=1000)
     assert "streamed 1 frames" in instant and "fps" not in instant and "MB/s" not in instant
+
+
+# --- Q52: a viewer may ask for fewer frames; it may never ask for more -------------
+def test_a_cap_is_honoured_within_sane_bounds():
+    from strands_robots.dashboard.ws_observability import MAX_CAP_FPS, MIN_CAP_FPS, fps_cap
+
+    assert fps_cap("1") == 1.0
+    assert fps_cap("0.5") == 0.5
+    assert fps_cap("1000") == MAX_CAP_FPS, "an absurd number is clamped, not trusted"
+    assert fps_cap("0.0001") == MIN_CAP_FPS, "a 'cap' that freezes the tile helps nobody"
+
+
+def test_nonsense_never_becomes_a_request_for_more():
+    """The failure mode that matters: a bad value must fall back to today's behaviour."""
+    from strands_robots.dashboard.ws_observability import fps_cap
+
+    for raw in (None, "", "abc", "-5", "0", "nan", "1e400x"):
+        assert fps_cap(raw) is None, raw
+    assert fps_cap("inf") == 30.0, "infinity clamps to the ceiling rather than dividing by nothing"
+
+
+def test_the_verdict_says_which_rate_the_socket_agreed_to():
+    from strands_robots.dashboard.ws_observability import cap_note
+
+    assert cap_note(None) == ""
+    assert "1 fps" in cap_note(1.0) and "2.5 fps" in cap_note(2.5)

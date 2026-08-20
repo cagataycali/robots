@@ -112,3 +112,36 @@ def close_line(*, peer_id: str, cam: str, verdict: str, suppressed: int) -> str:
     """The log line itself, with the storm count when there is one."""
     tail = f" [+{suppressed} more closes suppressed in the last minute]" if suppressed else ""
     return f"camera socket {peer_id}/{cam} closed: {verdict}{tail}"
+
+
+# --- Q52: a viewer that cannot drink the firehose must be able to ask for less -----
+
+#: The tile's own pacing (server side sends at most this) - 15 fps was the only rate on
+#: offer, and one tile at 4.6 fps x ~97 KB measured 0.45 MB/s, ~1.7 GB/h to a phone.
+MAX_CAP_FPS = 30.0
+MIN_CAP_FPS = 0.1
+
+
+def fps_cap(raw: str | None) -> float | None:
+    """Parse a viewer's requested frame rate. ``None`` means "as fast as frames arrive".
+
+    A cap is a REQUEST FOR LESS, so a nonsense value must never become a request for
+    more: anything unparseable, zero, negative or NaN is ignored (no cap, today's
+    behaviour) rather than guessed at, and an absurdly high number is clamped instead of
+    trusted. Below MIN_CAP_FPS a "cap" would freeze the tile, which no viewer wants and
+    an attacker might: it clamps up.
+    """
+    if raw is None or raw == "":
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if v != v or v <= 0:  # NaN or nonsense
+        return None
+    return max(MIN_CAP_FPS, min(MAX_CAP_FPS, v))
+
+
+def cap_note(cap: float | None) -> str:
+    """What the close verdict says about the rate this socket agreed to."""
+    return "" if cap is None else f" [viewer capped at {cap:g} fps]"
