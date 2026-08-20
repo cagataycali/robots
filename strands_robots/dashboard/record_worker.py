@@ -62,6 +62,75 @@ class TeleopBackend(Protocol):
     def close(self) -> None: ...
 
 
+def achieved_fps(frames: int, duration_s: float) -> float | None:
+    """The rate frames were REALLY captured at, or None when unknowable.
+
+    ``duration_s`` is measured from when the episode OPENED, which precedes the
+    first frame by one loop period (the loop waits, then ticks), so the span
+    already contains one interval per frame and ``frames / duration`` is the
+    cadence. Dividing by ``frames - 1`` instead - the arithmetic that fits a
+    span between first and last timestamp - understates a short episode badly:
+    6 frames over 1.2s of a 5Hz loop reads as 4.17.
+
+    A single frame is refused: one tick inside an interval-long window says only
+    that the rate is at most one per window. Two frames are reported, because a
+    5x error is obvious immediately and the operator deserves it early.
+    """
+    if frames < 2 or duration_s <= 0:
+        return None
+    return round(frames / duration_s, 2)
+
+
+#: How far the captured rate may drift from the declared one before the
+#: operator is told. 10% covers scheduler jitter and a slow serial read; the
+#: failure this exists for (BUGS.md Q69/Q70) was 440% off.
+FPS_DRIFT_TOLERANCE = 0.10
+
+
+def fps_verdict(declared: int, measured: float | None) -> dict[str, Any] | None:
+    """What the operator must know when the dataset's fps is not its rate.
+
+    A LeRobotDataset timestamps every frame positionally as
+    ``frame_index / fps``, so the declared rate is written into the artifact and
+    the captured rate is written NOWHERE - there is no wall-clock column that
+    could later contradict it. A session that steps slower than its declared
+    fps therefore produces a dataset that silently claims frames are closer
+    together than they were: a policy trains on a control period it is told is
+    ``1/fps`` when it really was ``1/measured``, and ``replay_episode`` derives
+    its per-frame budget from the same declared number and moves at the wrong
+    speed. Every existing surface reports success throughout.
+
+    Deliberately a NOTICE and not a refusal. The operator is holding a leader
+    arm mid-session; aborting their episode over a rate they cannot change from
+    that position destroys work to prevent a mislabel. Telling them while they
+    can still stop, lower the fps and re-open is the honest trade - the same
+    posture as ``camera_verdict`` one field over.
+
+    Returns None while nothing can be said (no measurement yet) or while the
+    captured rate is within :data:`FPS_DRIFT_TOLERANCE` of the declared one.
+    """
+    if measured is None or declared <= 0:
+        return None
+    if abs(measured - declared) <= FPS_DRIFT_TOLERANCE * declared:
+        return None
+    slower = measured < declared
+    ratio = (declared / measured) if slower else (measured / declared)
+    return {
+        "declared_fps": declared,
+        "measured_fps": measured,
+        "ratio": round(ratio, 2),
+        "slower": slower,
+        "detail": (
+            f"frames are being captured at {measured:g}/s but this dataset declares "
+            f"{declared}/s, so every timestamp in it will be {round(ratio, 2)}x "
+            + ("closer together than reality" if slower else "further apart than reality")
+            + ". A policy trained on it learns the wrong control period, and replay runs "
+            "at the wrong speed. Stop, re-open the session at "
+            f"{max(1, int(measured))} fps, and the episodes will be honest."
+        ),
+    }
+
+
 class EpisodeState:
     """Bookkeeping for one episode; ``to_dict`` speaks the wire contract."""
 
@@ -78,6 +147,10 @@ class EpisodeState:
             "index": self.index,
             "frames": self.frames,
             "duration_s": round(self.duration_s, 1),
+            # The rate this episode was really captured at, next to the frame
+            # count it is derived from - so a short episode's rate can be judged
+            # by the reader instead of trusted.
+            "fps_achieved": achieved_fps(self.frames, self.duration_s),
             "thumbnails": dict(self.thumbnails),
             "discarded": self.discarded,
         }
@@ -194,6 +267,11 @@ class RecordWorker:
                 "episodes": [e.to_dict() for e in self._episodes]
                 + ([self._current.to_dict()] if self._current else []),
                 "error": self._last_error,
+                # The DECLARED fps above is what lands in the dataset; this is
+                # what the loop actually managed. Both, always, because the gap
+                # between them is invisible in the artifact.
+                "fps_achieved": self._measured_fps(),
+                "fps_notice": fps_verdict(self.fps, self._measured_fps()),
                 # None unless a requested camera is missing: absent cameras
                 # must be visible BEFORE 10 episodes are collected blind.
                 "camera_notice": getattr(self._backend, "camera_notice", None),
@@ -347,6 +425,26 @@ class RecordWorker:
                     logger.warning("record tick failed: %r", exc)
         finally:
             ticker.close()
+
+    def _measured_fps(self) -> float | None:
+        """Capture rate of the episode in flight, else the last real one.
+
+        Caller holds ``self._lock``. Falls back to the most recent kept episode
+        so the number does not vanish between episodes - the operator lines the
+        arms up in ``paused`` and that is exactly when they read the panel. A
+        discarded episode is skipped: its frames were thrown away, so its rate
+        describes nothing that will be trained on.
+        """
+        if self._current is not None:
+            live = achieved_fps(self._current.frames, self._current.duration_s)
+            if live is not None:
+                return live
+        for ep in reversed(self._episodes):
+            if not ep.discarded:
+                measured = achieved_fps(ep.frames, ep.duration_s)
+                if measured is not None:
+                    return measured
+        return None
 
     def tick(self) -> bool:
         """One control step. Teleop runs in EVERY phase (the operator lines

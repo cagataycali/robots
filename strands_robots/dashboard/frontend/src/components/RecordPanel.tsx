@@ -358,11 +358,31 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
         </div>
       )}
 
+      {/* The captured rate, when it disagrees with the rate this dataset
+          DECLARES. LeRobot timestamps a frame as frame_index/fps, so the gap
+          leaves no trace in the artifact — if it is not said here, while the
+          operator can still stop and re-open, it is never said at all. A
+          notice, never a block: they are holding a leader arm. */}
+      {open && s?.fps_notice && (
+        <div className="train-msg warn rec-fps-notice" role="alert">
+          ⚠ {s.fps_notice.detail}
+        </div>
+      )}
+
       {open && s && (
         <div className="train-form">
           <div className="rec-counter" aria-live="polite">
             <b>{kept}</b><span> / {s.target_episodes} episodes</span>
             <span className="rec-task">{s.dataset} — “{s.task}”</span>
+            {/* declared → measured, side by side: the pair is the point */}
+            <span className="rec-rate" title="declared fps vs the rate actually captured">
+              {s.fps} fps
+              {s.fps_achieved != null && (
+                <span className={s.fps_notice ? 'rec-rate-bad' : 'rec-rate-ok'}>
+                  {' '}· {s.fps_achieved} captured
+                </span>
+              )}
+            </span>
           </div>
           <div className="train-actions">
             {!recording ? (

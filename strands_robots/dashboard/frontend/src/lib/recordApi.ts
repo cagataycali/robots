@@ -32,7 +32,29 @@ export interface RecordSession {
   episodes: EpisodeSummary[]
   /** 'idle' = between episodes, 'recording' = frames being captured */
   phase: 'idle' | 'recording'
+  /** The rate written into the dataset - a DECLARATION, not a measurement. */
   fps: number
+  /**
+   * The rate frames were really captured at, or null before two frames exist.
+   * LeRobot timestamps a frame positionally as `frame_index / fps`, so this
+   * number is nowhere in the artifact: if the pair disagrees, only the session
+   * knows (BUGS.md Q70).
+   */
+  fps_achieved?: number | null
+  /**
+   * Present ONLY when `fps_achieved` differs from `fps` by more than 10%. A
+   * notice and never a block - the operator is holding a leader arm mid-session,
+   * and the rate is not something they can change from that position.
+   */
+  fps_notice?: {
+    declared_fps: number
+    measured_fps: number
+    /** how many times the timestamps are off, e.g. 5.36 */
+    ratio: number
+    /** true = captured slower than declared (timestamps squeezed together) */
+    slower: boolean
+    detail: string
+  } | null
   /**
    * Present ONLY when a camera the session asked for never opened. The dataset
    * schema is built from the follower's first observation, so a missing camera
