@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots.bus_access import read_joints, read_observation
+from strands_robots.bus_access import recovery_count as read_joints_recovery_count
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.pacing import Ticker
@@ -1369,6 +1370,11 @@ class Mesh(SensorLoopsMixin):
                         joints[key] = value
                 if joints:
                     snapshot["joints"] = joints
+                    # A stranded in-use flag now heals inside one telemetry cycle (bus_access), so
+                    # without this count a degrading cable hides behind healthy-looking joints.
+                    recoveries = read_joints_recovery_count(inner)
+                    if recoveries:
+                        snapshot["bus_recoveries"] = recoveries
                     self._clear_probe_failure("hw_joints")
                 else:
                     # The read SUCCEEDED and carried no scalar joint value. Counting what came back

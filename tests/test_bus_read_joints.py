@@ -330,3 +330,51 @@ def test_write_refusal_names_the_device_and_keeps_the_original_error() -> None:
     text = bus_access.write_refusal(_ObsDevice(_StuckBus(_Handler())), ConnectionError(_BUSY))
     assert text.startswith("so101-leader:")
     assert "Present_Position" in text
+
+
+def test_a_silent_recovery_is_counted_per_port_so_a_failing_cable_cannot_hide() -> None:
+    """The cure is silent, and that is the danger: a flag strands when an exchange dies mid-word.
+
+    The usual reasons are physical - a marginal USB cable, a hub browning out, a connector working
+    loose as the arm moves - so an arm that heals itself every cycle would hide a degrading rig behind
+    healthy-looking joints until the recovery itself failed. Once is a hiccup; dozens is hardware to
+    replace, and only a count can tell those apart.
+    """
+    handler = _Handler(is_using=True)
+    bus = _StuckBus(handler)
+    bus.port = "/dev/cu.usbmodemCOUNT1"
+    dev = _Device(bus)
+    before = bus_access.recovery_count(dev)
+    read_joints(dev)
+    assert bus_access.recovery_count(dev) == before + 1
+
+    # A second stranding on the SAME port accumulates - that rising number is the evidence.
+    handler.is_using = True
+    bus.calls = 0
+    read_joints(dev)
+    assert bus_access.recovery_count(dev) == before + 2
+
+    # A different port keeps its own score: one bad cable must not smear across a healthy arm.
+    other_bus = _StuckBus(_Handler(is_using=True))
+    other_bus.port = "/dev/cu.usbmodemCOUNT2"
+    other = _Device(other_bus)
+    assert bus_access.recovery_count(other) == 0
+    read_joints(other)
+    assert bus_access.recovery_count(other) == 1
+    assert bus_access.recovery_count(dev) == before + 2, "the other port's count is untouched"
+
+
+def test_a_read_that_never_stranded_reports_zero_recoveries() -> None:
+    """Zero must mean zero: the count only rises on a flag we actually cleared."""
+
+    class _Fine:
+        bus = None
+        port = "/dev/cu.usbmodemFINE"
+        name = "healthy"
+
+        def get_observation(self):  # noqa: ANN201
+            return {"shoulder_pan.pos": 0.0}
+
+    dev = _Fine()
+    bus_access.read_observation(dev)
+    assert bus_access.recovery_count(dev) == 0

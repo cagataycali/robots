@@ -257,11 +257,13 @@ def _read_recovering_a_stale_flag(device: Any, bus: Any, do_read: Any) -> Any:
             raise
         if not clear_stale_port_busy(bus):
             raise
+        count = _record_recovery(device, bus)
         _log.warning(
             "%s: the motor bus was left marked in-use by an exchange that never finished; cleared "
-            "that flag while holding this arm's bus lock and read again. Nothing else can recover "
-            "it, and every later read would have failed the same way.",
+            "that flag while holding this arm's bus lock and read again (%d time(s) this session). "
+            "Nothing else can recover it, and every later read would have failed the same way.",
             getattr(device, "name", None) or type(device).__name__,
+            count,
         )
         try:
             return do_read()
@@ -302,3 +304,42 @@ def write_refusal(device: Any, error: Any) -> str:
         "(the state probe does it every cycle, so telemetry alone recovers it in about a second) - "
         f"then command the arm again. Original error: {error}"
     )
+
+#: How many stranded in-use flags each port has needed cleared, this process's lifetime.
+_RECOVERIES: dict[str, int] = {}
+_RECOVERIES_LOCK = threading.Lock()
+
+
+def _recovery_key(device: Any, bus: Any) -> str:
+    """Identify the PORT, because that is what strands - falling back to the device's name."""
+    port = getattr(bus, "port", None) or getattr(device, "port", None)
+    return str(port or getattr(device, "name", None) or type(device).__name__)
+
+
+def _record_recovery(device: Any, bus: Any) -> int:
+    key = _recovery_key(device, bus)
+    with _RECOVERIES_LOCK:
+        count = _RECOVERIES.get(key, 0) + 1
+        _RECOVERIES[key] = count
+    return count
+
+
+def recovery_count(device: Any, bus: Any = None) -> int:
+    """How many times a stranded in-use flag has been cleared for this device's port.
+
+    Exists because the cure is SILENT: from the moment :func:`read_joints` learned to clear a stranded
+    flag, an arm that would have gone mute for hours now heals inside one telemetry cycle - which is
+    the right behaviour and the wrong amount of information. A flag gets stranded when an exchange
+    dies mid-conversation, and the usual reasons for that are physical: a marginal USB cable, a hub
+    browning out under load, a connector working loose as the arm moves. Recovering silently would
+    hide a degrading rig behind healthy-looking telemetry until the day the recovery itself fails.
+
+    So the count is kept per PORT (what actually strands) and published with the arm's state, where a
+    rising number is the evidence a human needs: once is a hiccup, dozens is hardware to replace. It
+    is a session counter, not a total - it resets with the process that owns the port, and that is
+    honest, because a fresh process cannot know what happened before it.
+    """
+    if bus is None:
+        bus = getattr(device, "bus", None)
+    with _RECOVERIES_LOCK:
+        return _RECOVERIES.get(_recovery_key(device, bus), 0)
