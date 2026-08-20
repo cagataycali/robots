@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from strands_robots.dashboard.dataset_check import dataset_verdict
 from strands_robots.dashboard.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
@@ -219,6 +220,26 @@ def _spec_kwargs(body: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str,
     return {k: body[k] for k in SPEC_KEYS if body.get(k) is not None}, None
 
 
+def _has_data_files(dataset_dir: Path) -> bool | None:
+    """Does ``data/`` hold at least one file? ``None`` when it cannot be looked at.
+
+    Stops at the FIRST file found: a chunked v3 dataset can hold thousands, and this runs once
+    per listed dataset on a request thread. ``None`` (not False) when the directory is
+    unreadable, because "I could not look" and "there is nothing there" lead to different
+    advice - and the verdict reports the difference instead of guessing.
+    """
+    data = dataset_dir / "data"
+    if not data.is_dir():
+        return False
+    try:
+        for _, _, files in os.walk(data):
+            if files:
+                return True
+        return False
+    except OSError:
+        return None
+
+
 def local_datasets(query: str = "") -> list[dict[str, Any]]:
     """LeRobotDataset roots on disk (meta/info.json present).
 
@@ -270,7 +291,13 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
                     }
                 except Exception:  # noqa: BLE001
                     pass
-                out.append({"root": str(d), "repo_id": rel, **meta})
+                # Q37: meta/info.json exists from the moment a recording session OPENS, so
+                # its presence is not evidence that anything was recorded. One cheap probe
+                # (does data/ hold any file) turns "a directory with a config" into a row
+                # that says whether it can be trained on. No shard is opened: listing 50
+                # datasets must not become 50 dataset loads.
+                verdict = dataset_verdict(meta, has_data_files=_has_data_files(d))
+                out.append({"root": str(d), "repo_id": rel, **meta, **verdict})
             elif depth < 2:
                 try:
                     stack.extend((c, depth + 1) for c in d.iterdir() if c.is_dir())
