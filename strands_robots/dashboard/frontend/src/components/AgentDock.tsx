@@ -263,12 +263,19 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
           already looking. target='spawn' because a chat turn CAN simply be re-sent once the grant
           lands — no process holds a stale env (the fleet tool reads it per call), unlike a running
           peer that needs a respawn. */}
-      {need ? (
+      {(need ?? voice.need) ? (
         <ConsentSheet
-          need={need}
+          need={(need ?? voice.need) as ConsentNeed}
           target="spawn"
-          onCancel={() => setNeed(null)}
-          onRetry={() => { const again = refusedPrompt.current; setNeed(null); void send(again) }}
+          onCancel={() => { setNeed(null); voice.clearNeed() }}
+          onRetry={() => {
+            const again = refusedPrompt.current
+            setNeed(null)
+            /* A voice refusal has no sentence to re-send — the operator is mid-conversation and can
+               simply say it again, now that it is allowed. Only a typed turn is replayed. */
+            if (voice.need) voice.clearNeed()
+            else void send(again)
+          }}
         />
       ) : null}
     </>

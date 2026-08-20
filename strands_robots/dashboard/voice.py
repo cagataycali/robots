@@ -23,7 +23,13 @@ two sentences. Confirm before actuating real hardware (peer ids without 'sim'
 in them). fleet(action='peers') shows who's online; fleet(action='task',
 target=..., instruction=..., duration=...) runs a task;
 fleet(action='stop_all') stops everything - use it immediately when asked to
-stop."""
+stop.
+Starting a task on a REAL robot may be refused because this dashboard does not
+let an agent start physical motion on its own. That refusal is final for you:
+say in one sentence that the operator has to allow it on screen (a card just
+appeared) or press play themselves, and do NOT retry, reword or pick another
+robot. A spoken yes cannot grant it - only their tap can. Stopping is never
+refused, so always act on a stop request immediately."""
 
 _DEFAULT_VOICES = {"openai": "marin", "nova_sonic": "tiffany", "gemini": "Kore"}
 
@@ -94,6 +100,7 @@ async def run_voice_session(ws: Any) -> None:
     """
     import asyncio
     import json
+    import queue as _queue
 
     from starlette.websockets import WebSocketDisconnect
 
@@ -112,6 +119,36 @@ async def run_voice_session(ws: Any) -> None:
 
     in_q: asyncio.Queue[bytes] = asyncio.Queue()
     stop_evt = asyncio.Event()
+
+    # A refusal raised inside the fleet tool is spoken once and gone: no transcript rail carries a
+    # decision, and the operator cannot grant a permission by talking. The listener hands the
+    # refusal text to the same classifier the chat box uses, so the browser can raise the SAME
+    # ConsentSheet and the grant stays a deliberate tap on a screen. The tool runs in whatever task
+    # or thread the bidi agent uses, so the hand-off is a thread-safe queue drained on this loop -
+    # never an await from inside the tool.
+    from strands_robots.dashboard.agent_bridge import add_refusal_listener
+    from strands_robots.dashboard.consent import classify_refusal
+
+    need_q: "_queue.Queue[dict]" = _queue.Queue()
+
+    def _on_refusal(text: str) -> None:
+        need = classify_refusal(text)
+        if need is not None:
+            need_q.put({"type": "needs_consent", "need": need.as_dict(), "spoken": text[:400]})
+
+    drop_listener = add_refusal_listener(_on_refusal)
+
+    async def _drain_needs() -> None:
+        while not stop_evt.is_set():
+            try:
+                frame = need_q.get_nowait()
+            except _queue.Empty:
+                await asyncio.sleep(0.2)
+                continue
+            try:
+                await ws.send_text(json.dumps(frame))
+            except Exception:  # noqa: BLE001 - the session is going away; the refusal still held
+                break
 
     class _BrowserInput:
         async def start(self, agent: Any) -> None:
@@ -153,6 +190,10 @@ async def run_voice_session(ws: Any) -> None:
     try:
         agent = build_voice_agent()
     except Exception as e:
+        # This return happens BEFORE the finally below exists, so the listener has to be dropped
+        # here too: one left behind would outlive the session, push into a queue nobody drains and
+        # pin this closure for every later turn on the machine.
+        drop_listener()
         await ws.send_text(json.dumps({"type": "error", "error": f"voice agent: {e}"}))
         return
 
@@ -175,9 +216,14 @@ async def run_voice_session(ws: Any) -> None:
     import asyncio as _a
 
     reader_task = _a.create_task(_reader())
+    needs_task = _a.create_task(_drain_needs())
     runner = _a.create_task(agent.run(inputs=[_BrowserInput()], outputs=[_BrowserOutput()]))
     try:
         await stop_evt.wait()
     finally:
+        # Unregister FIRST: a listener left behind would keep pushing into a queue nobody drains and
+        # would hold this session's closure alive for every later turn on the machine.
+        drop_listener()
         runner.cancel()
         reader_task.cancel()
+        needs_task.cancel()

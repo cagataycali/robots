@@ -7,6 +7,10 @@ export type VoiceState = 'idle' | 'connecting' | 'live' | 'error'
 export function useVoice() {
   const [state, setState] = useState<VoiceState>('idle')
   const [transcript, setTranscript] = useState('')
+  /* A refusal raised inside a voice turn is spoken once and gone. The session pushes it here as a
+     needs_consent frame so the dock can raise the same ConsentSheet — the grant must be a tap, never
+     a spoken yes. */
+  const [need, setNeed] = useState<unknown | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const ctxRef = useRef<AudioContext | null>(null)
   const nodesRef = useRef<{ src?: MediaStreamAudioSourceNode; proc?: ScriptProcessorNode; stream?: MediaStream }>({})
@@ -42,6 +46,12 @@ export function useVoice() {
           if (ev.type === 'voice_meta') { playRef.current.rate = ev.rate || 24000 }
           else if (ev.type === 'audio') playPcm(ev.data)
           else if (ev.type === 'transcript' && ev.text) setTranscript(`${ev.role === 'user' ? '🎙' : '🤖'} ${ev.text}`)
+          else if (ev.type === 'needs_consent') {
+            setNeed(ev.need)
+            /* Say it in the transcript too: the sheet may be behind a collapsed dock, and a spoken
+               sentence the operator half-heard is not a record of what was refused. */
+            if (ev.spoken) setTranscript(`⚠ ${String(ev.spoken).slice(0, 200)}`)
+          }
           else if (ev.type === 'error') { setTranscript(`⚠ ${ev.error}`); setState('error') }
         } catch { /* ignore */ }
       }
@@ -100,5 +110,5 @@ export function useVoice() {
     p.nextT = t + buf.duration
   }
 
-  return { state, transcript, toggle: start, stop }
+  return { state, transcript, toggle: start, stop, need, clearNeed: () => setNeed(null) }
 }

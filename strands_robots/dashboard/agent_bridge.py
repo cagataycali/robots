@@ -234,6 +234,35 @@ def clear_history() -> bool:
 _bridge: Any = None
 
 
+# Q80/voice: surfaces that cannot see a toolResult still have to be able to OFFER the grant.
+# The chat box reads refusals off the tool event (WSStreamHandler); the voice session forwards only
+# audio and transcript, so a refusal there is spoken once and gone - unactionable, and a spoken "yes"
+# must never be what grants a permission. Listeners get the refusal TEXT and decide for themselves;
+# the fleet tool's behaviour does not change and a listener that raises cannot break a turn.
+_refusal_listeners: list[Any] = []
+
+
+def add_refusal_listener(cb: Any) -> Any:
+    """Register ``cb(text)`` for continuable refusals raised inside the fleet tool. Returns a remover."""
+    _refusal_listeners.append(cb)
+
+    def _remove() -> None:
+        try:
+            _refusal_listeners.remove(cb)
+        except ValueError:
+            pass
+
+    return _remove
+
+
+def _notify_refusal(text: str) -> None:
+    for cb in list(_refusal_listeners):
+        try:
+            cb(text)
+        except Exception:  # noqa: BLE001 - a listener is a notification, never a gate
+            logger.debug("refusal listener failed", exc_info=True)
+
+
 def set_bridge(bridge: Any) -> None:
     global _bridge
     _bridge = bridge
@@ -309,6 +338,7 @@ def _make_fleet_tool() -> Any:
                 "task", peer=snap_peers.get(target), target=target,
             )
             if not verdict["allowed"]:
+                _notify_refusal(verdict["reason"])
                 return {"status": "error", "content": [{"text": verdict["reason"]}]}
             cmd = {
                 "action": "execute", "instruction": instruction,
