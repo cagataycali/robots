@@ -31,6 +31,8 @@ from collections import deque
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from strands_robots.dashboard import safety_state
+
 logger = logging.getLogger(__name__)
 
 PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
@@ -374,6 +376,11 @@ class MeshBridge:
         self._coalesce_lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
 
+        # What we are entitled to SAY about the e-stop lockout (Q43). The mesh
+        # deliberately does not advertise lockout state, so this is memory of the
+        # events we saw plus per-peer proof from commands that were accepted.
+        self._lockout = safety_state.Lockout()
+        self._lockout_proof: dict[str, float] = {}
         # Signed safety rail (lazy - see _safety_mesh)
         self._safety: Any | None = None
         self._safety_lock = threading.Lock()
@@ -600,7 +607,11 @@ class MeshBridge:
     def _touch_peer(self, peer_id: str) -> dict[str, Any]:
         with self._peers_lock:
             entry = self.peers.setdefault(peer_id, {"peer_id": peer_id})
-            entry["last_seen"] = time.time()
+            now = time.time()
+            # When this dashboard first saw the peer: a peer that appeared AFTER an
+            # e-stop is a process that never received it (safety_state.peer_lockout).
+            entry.setdefault("first_seen", now)
+            entry["last_seen"] = now
             return entry
 
     def _on_presence(self, sample: Any) -> None:
@@ -680,6 +691,14 @@ class MeshBridge:
             return
         key = str(getattr(sample, "key_expr", ""))
         kind = "estop" if key.endswith("estop") else "resume"
+        # A five-second flash in the header was the ONLY representation of a lockout in
+        # this product, so a reload erased it while two arms stayed locked for ten hours.
+        with self._peers_lock:
+            self._lockout = safety_state.apply_event(
+                self._lockout, kind=kind, data=data, now=time.time()
+            )
+            if kind == "estop":
+                self._lockout_proof.clear()
         self.record_activity("safety", kind, detail=data, ok=True)
         self._emit({"type": "safety", "kind": kind, "data": data})
 
@@ -804,6 +823,12 @@ class MeshBridge:
             else:
                 with self._rpc_lock:
                     result = self._responses.pop(turn, {"error": "response lost", "ok": False})
+            # A peer that ACCEPTED an action a lockout would have refused has proved its
+            # own lockout is not engaged - the only proof available, since the mesh
+            # answers a rejected command generically on purpose (Q43).
+            if not result.get("error") and safety_state.proves_clear(str(cmd.get("action", ""))):
+                with self._peers_lock:
+                    self._lockout_proof[target] = time.time()
             self.record_activity(
                 source,
                 cmd.get("action", "?"),
@@ -894,6 +919,24 @@ class MeshBridge:
         # off a local arm's servo bus). Copied onto the peer dict so both the WS
         # snapshot and /api/fleet carry it, and only for peers already present -
         # an annotation must never conjure a peer into the fleet.
+        # The e-stop lockout, per peer (Q43). Every peer gets the field: an ABSENT
+        # lockout reads as "fine", which is exactly the bug - a locked arm rendered as a
+        # healthy green card with six live joints for ten hours.
+        try:
+            with self._peers_lock:
+                fleet_lockout = getattr(self, "_lockout", None) or safety_state.Lockout()
+                proofs = dict(getattr(self, "_lockout_proof", None) or {})
+            for pid, peer in list(peers.items()):
+                if not isinstance(peer, dict):
+                    continue
+                verdict = safety_state.resolve_peer(
+                    fleet_lockout,
+                    first_seen=peer.get("first_seen"),
+                    proof_at=proofs.get(pid),
+                )
+                peers[pid] = {**peer, "lockout": verdict.as_fields()}
+        except Exception as exc:  # pragma: no cover - an annotation must never break the fleet view
+            logger.debug("lockout annotation skipped: %s", exc)
         for pid, fields in self._peer_annotations().items():
             peer = peers.get(pid)
             if isinstance(peer, dict) and isinstance(fields, dict):
