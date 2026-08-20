@@ -8,6 +8,7 @@ import { api as httpGet, HttpError } from '../lib/endpoints'
 import { recordFailure, type RecordActionKind } from '../lib/recordOutcome'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
 import { episodeTarget } from '../lib/episodeTarget'
+import { nameVerdict, type KnownDataset } from '../lib/datasetName'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
@@ -58,6 +59,20 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
     .filter((x): x is { slot: 'leader' | 'follower'; msg: string } => !!x.msg)
 
   const [upload, setUpload] = useState(false)
+
+  // Q39: the backend refuses a taken dataset name before it parks the arms - but by then the
+  // operator has picked a pair, aimed two cameras and pressed the button. The training picker's own
+  // listing answers the question, so ask it once while the form is open and warn while there is
+  // nothing at stake. Failure is silence: no evidence is not evidence of a problem.
+  const [known, setKnown] = useState<KnownDataset[] | null>(null)
+  useEffect(() => {
+    let alive = true
+    httpGet<{ datasets?: KnownDataset[] }>('/api/training/datasets?hub=false')
+      .then(r => { if (alive) setKnown(r.datasets ?? []) })
+      .catch(() => { if (alive) setKnown(null) })
+    return () => { alive = false }
+  }, [])
+  const nameWarn = nameVerdict(form.dataset, known)
   const [repoId, setRepoId] = useState('')
   const [closed, setClosed] = useState<string | null>(null)
   // When did a session read last ARRIVE (not: last get attempted)? A hung
@@ -254,6 +269,20 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
             <input value={form.dataset} placeholder="cagatay/so101-pick-cube"
                    onChange={e => set('dataset', e.target.value)} />
           </label>
+          {/* Not a validator: it never blocks the submit and never rewrites the field. The
+              suggestion is one tap because someone naming a dataset twice usually wants "-2",
+              not a lecture. */}
+          {nameWarn && (
+            <div className="train-msg" role="status">
+              ⚠ {nameWarn.message}
+              {nameWarn.suggestion && (
+                <> <button type="button" className="btn ghost"
+                           onClick={() => set('dataset', nameWarn.suggestion!)}>
+                  use {nameWarn.suggestion}
+                </button></>
+              )}
+            </div>
+          )}
           <label className="field"><span>task — what the arm is being taught</span>
             <input value={form.task} placeholder="pick up the red cube and place it in the bin"
                    onChange={e => set('task', e.target.value)} />
