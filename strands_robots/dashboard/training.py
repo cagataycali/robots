@@ -244,6 +244,11 @@ def _declared_trainer_module(provider: str) -> str:
 #: so the test guarding it ASKS validate whether the mirror still holds rather than trusting
 #: this constant - if the SDK stops needing a recipe, that guard fails and this entry goes.
 _FORM_CANNOT_EXPRESS: dict[str, str] = {
+    "sagemaker": (
+        "submits the job to AWS, so it needs an ECR image_uri, an execution role_arn, and s3:// "
+        "paths for the dataset and the output - this form has no field for any of them, and a "
+        "managed job cannot mount this machine's disk. Run the sagemaker trainer from a script"
+    ),
     "cosmos3": (
         "needs a training recipe TOML (extra['sft_toml']) that selects the registered "
         "experiment, and this form has no field for it - run cosmos3 from a script"

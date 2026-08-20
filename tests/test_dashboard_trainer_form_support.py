@@ -105,3 +105,55 @@ def test_groot_wants_an_embodiment_and_the_form_can_express_it():
     assert "embodiment" in text
     assert "embodiment" in training.SPEC_KEYS
     assert "groot" not in training.form_unsupported()
+
+
+# --- the mirror must not rot for a provider NOBODY LISTED HERE YET ----------------------
+# The Q49 tests above ask validate about cosmos3, lerobot_local and groot BY NAME, so they
+# grade the providers someone thought about. That is exactly how the SageMaker trainer
+# arrived offered-but-impossible: an upstream sync registered a new trainer, the form
+# generated a row for it from the registry, and no test asked it anything. The registry is
+# the list of things the form offers, so the registry - not a hand-written tuple - is what
+# this sweep iterates.
+
+
+def test_every_offered_trainer_can_actually_be_driven_from_this_form():
+    """For each registered trainer: either it is refused up front WITH A REASON, or a
+    form-complete spec must raise no complaint the form cannot answer.
+
+    A provider that is offered and then refuses at submit time is the worst of the three
+    states: the operator has already chosen a dataset, typed a task and pressed train, and
+    the refusal names constructor fields (`image_uri`, `role_arn`) that no input on the page
+    corresponds to. Being told "run this one from a script" before choosing is a smaller
+    loss than being told after.
+    """
+    unsupported = training.form_unsupported()
+    offered = [p for p in training.list_trainers() if p not in unsupported]
+    assert offered, "every trainer refused - the form would be empty, which is its own bug"
+
+    for provider in offered:
+        text = _problems(provider)
+        # Every complaint must be about a field the form can send. The vocabulary IS
+        # SPEC_KEYS, so a demand naming anything outside it is unanswerable here.
+        for token in ("image_uri", "role_arn", "s3://", "sft_toml", "RLTrainSpec"):
+            assert token not in text, (
+                f"{provider} is offered by the form but demands {token!r}, which no field can "
+                f"supply. Add it to _FORM_CANNOT_EXPRESS with the reason, or grow the field.\n"
+                f"validate said: {text}"
+            )
+
+
+def test_the_sweep_would_have_caught_sagemaker(monkeypatch):
+    """Non-vacuity: with the entry removed, the sweep above must FAIL.
+
+    Without this, a future edit that empties _FORM_CANNOT_EXPRESS or narrows `offered` to
+    nothing would leave a green test that checks no provider at all.
+    """
+    entries = dict(training._FORM_CANNOT_EXPRESS)
+    entries.pop("sagemaker", None)
+    monkeypatch.setattr(training, "_FORM_CANNOT_EXPRESS", entries)
+    if "sagemaker" not in training.list_trainers():
+        import pytest
+
+        pytest.skip("sagemaker trainer is not registered in this build")
+    with __import__("pytest").raises(AssertionError, match="image_uri"):
+        test_every_offered_trainer_can_actually_be_driven_from_this_form()
