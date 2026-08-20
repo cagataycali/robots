@@ -7,6 +7,7 @@ import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
 import { setDeployIntent } from '../lib/deployIntent'
 import { datasetKey as dsKey, selectDataset, selectionKey, replayable, type DatasetRow } from '../lib/datasetSelection'
 import { datasetHint, isCurrentResponse } from '../lib/datasetHint'
+import { jobsLedgerNotice } from '../lib/jobsLedger'
 import { newerThanApplied } from '../lib/requestOrder'
 
 // One row is either LOCAL (has a `root` path, trains offline) or from the HUB
@@ -62,6 +63,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const tickBusy = useRef(false)
   const applied = useRef<Record<string, number>>({})
   const [dsAuth, setDsAuth] = useState<{ authenticated?: boolean; user?: string | null; detail?: string } | null>(null)
+  // The ledger is a file that can go unreadable; an empty list alone cannot say so.
+  const [jobsProblem, setJobsProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
@@ -75,6 +78,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       ])
       setTrainers(t.trainers ?? [])
       setJobs((j.jobs ?? []).slice().reverse())
+      setJobsProblem(j.problem ?? null)
       // A keystroke may have fired a newer dataset search while this was in
       // flight; the newer question owns the list.
       if (isCurrentResponse(seq, dsSeq.current)) {
@@ -444,7 +448,14 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         ))}
 
         <h3>Jobs</h3>
-        {jobs.length === 0 && <div className="dock-hint">No training jobs yet.</div>}
+        {/* Rendered for ANY count: a partial list is the dangerous case, because
+            the cards that survived make it look complete. */}
+        {(() => {
+          const notice = jobsLedgerNotice({ count: jobs.length, problem: jobsProblem })
+          return notice.text ? (
+            <div className={notice.tone === 'warn' ? 'dock-hint warn' : 'dock-hint'}>{notice.text}</div>
+          ) : null
+        })()}
         {jobs.map(job => {
           const st = statuses[job.job_id]
           const state = st?.data?.status ?? '…'
