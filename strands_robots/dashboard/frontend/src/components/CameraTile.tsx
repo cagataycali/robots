@@ -74,6 +74,11 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
     const open = () => {
       if (stopped) return
       conn.current = 'connecting'
+      // Per-socket evidence must be per SOCKET: leaving a previous connection's
+      // openedAt in place would let a later socket that never opens inherit a long
+      // openMs and clear the failure history it is supposed to be proving.
+      framesThisSocket = 0
+      openedAt = undefined
       ws = new WebSocket(wsUrl(`/ws/camera/${encodeURIComponent(peerId)}/${encodeURIComponent(cam)}`))
       ws.binaryType = 'blob'
       // NOT a reset: this handshake succeeding says nothing about whether frames exist.

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { planRetry } from './cameraRetry'
 import { frameProvesLiveness } from './liveness'
 import type { ActivityEntry, MeshEvent, MeshInfo, Peer } from '../types'
 import { wsUrl } from './endpoints'
@@ -44,31 +45,50 @@ export function useMesh(): MeshStore {
     let flashTimer: ReturnType<typeof setTimeout>
     let retryTimer: ReturnType<typeof setTimeout> | undefined
 
+    // Per-socket evidence, reset by connect() itself: how many frames THIS socket
+    // delivered and when it opened. `retryRef` deliberately outlives them.
+    let framesThisSocket = 0
+    let openedAt: number | undefined
+
     const connect = () => {
       // `closed` was checked when the retry was SCHEDULED, not when it fired, so
       // a backoff already in flight at teardown opened a socket afterwards: a
       // zombie /ws/mesh nobody closes, still pushing peers into an unmounted
       // tree. Both halves matter - clear the pending timer AND refuse here.
       if (closed) return
+      framesThisSocket = 0
+      openedAt = undefined
       ws = new WebSocket(wsUrl('/ws/mesh'))
       setConn('connecting')
 
-      ws.onopen = () => { setConn('open'); setEverOpen(true); retryRef.current = 0 }
+      // Opening is NOT success: the server accepts and authenticates the socket before
+      // it knows whether the mesh bridge can produce a snapshot, so a reset here is the
+      // Q40 mistake — the delay would stay at 1s forever against a broken bridge. The
+      // first frame is the evidence, and on a healthy socket it lands in milliseconds.
+      // openedAt is stamped INSIDE onopen, not here: a handshake that hangs for 30
+      // seconds and never opens would otherwise satisfy the "stayed open long enough"
+      // evidence and clear the very history it is proving.
+      ws.onopen = () => { openedAt = Date.now(); setConn('open'); setEverOpen(true) }
       ws.onclose = (ev) => {
         // 1008 is the server refusing our token. Retrying forever just hides a
-        // fixable problem behind a spinner.
-        if (ev.code === 1008) { setConn('unauthorized'); return }
+        // fixable problem behind a spinner. planRetry owns that rule too.
+        const plan = planRetry({
+          attempt: retryRef.current,
+          frames: framesThisSocket,
+          openMs: openedAt !== undefined ? Date.now() - openedAt : undefined,
+          code: ev.code,
+        })
+        retryRef.current = plan.attempt
+        if (plan.delayMs === null) { setConn('unauthorized'); return }
         setConn('closed')
-        if (!closed) {
-          const delay = Math.min(1000 * 2 ** retryRef.current++, 15000)
-          retryTimer = setTimeout(connect, delay)
-        }
+        if (!closed) retryTimer = setTimeout(connect, plan.delayMs)
       }
       ws.onmessage = (msg) => {
         let ev: MeshEvent
         try { ev = JSON.parse(msg.data) } catch { return }
         // Batched with the state update below in the same handler, so this is
         // one render, not two.
+        framesThisSocket += 1
         setLastEventAt(Date.now())
         switch (ev.type) {
           case 'snapshot':
