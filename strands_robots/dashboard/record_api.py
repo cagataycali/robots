@@ -24,6 +24,7 @@ defaults are :func:`record_worker.hardware_backend` and
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -371,6 +372,23 @@ def build_router(
     @r.get("/session")
     async def session() -> dict[str, Any]:
         return controller.session()
+
+    @r.get("/upload-preflight")
+    async def upload_preflight_route() -> dict[str, Any]:
+        """Q72: can this machine publish THIS session's dataset — asked before the work, not after.
+
+        Read-only. Every failure `close(upload=True)` can report is knowable now, and knowing it
+        later costs a finished session that cannot be re-pushed from here. hf_auth_state() is
+        cached and local unless the token changed, so the record screen may poll this.
+        """
+        from strands_robots.dashboard.checkpoints import hf_auth_state
+        from strands_robots.dashboard.upload_preflight import upload_preflight
+
+        current = controller.session() or {}
+        dataset = current.get("dataset") or current.get("repo_id")
+        return await asyncio.to_thread(
+            lambda: upload_preflight(dataset=dataset, auth=hf_auth_state())
+        )
 
     @r.post("/open")
     async def open_session(body: dict[str, Any]) -> dict[str, Any]:

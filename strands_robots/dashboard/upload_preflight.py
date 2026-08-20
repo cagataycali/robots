@@ -1,0 +1,122 @@
+"""Q72: can this machine actually publish that dataset — asked BEFORE the recording, not after it.
+
+The record screen's "upload to the Hugging Face Hub after finishing" tick is judged at the END of a
+session: `RecordWorker.close(upload=True)` calls push_to_hub and reports whatever comes back. Every way
+it can fail is knowable in advance, and every one of them costs the operator the same thing when it is
+not: a finished session (minutes of teleop, sometimes an hour), a "saved locally, upload FAILED" line,
+and no retry — closing the session destroys the recorder, so a second attempt is a huggingface-cli job.
+
+What this decides, from facts already on hand (checkpoints.hf_auth_state() + the session's dataset name):
+
+* no credential at all -> the push CANNOT work. Not a warning: the tick is refused, because the only
+  thing ticking it can produce is that end-of-session failure.
+* a token that whoami REJECTS (revoked, expired) -> same refusal, different sentence. A revoked token is
+  not anonymity and must not be described as it (checkpoints.py learned this already).
+* a dataset name carrying someone else's namespace -> refused. `me/thing` publishes to me; `other/thing`
+  needs write access to `other`, and if the operator does not have it the Hub answers 403 after the work
+  is done. An org they DO belong to cannot be confirmed from here, so the refusal says so and stays
+  continuable (`force`) rather than pretending to know.
+* everything known-good -> allowed, and it states the FULL destination `user/dataset`. The old hint said
+  "publishes as <dataset>", which is not where it goes: the namespace is implicit and invisible.
+
+Pure and side-effect free (the auth dict is passed in) so the rules are testable without a network or a
+recorder. The endpoint layer supplies hf_auth_state().
+"""
+
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+__all__ = ["upload_preflight", "destination"]
+
+
+def destination(dataset: str, user: str | None) -> str | None:
+    """The repo id a push would really create, or None when it cannot be known yet."""
+    name = (dataset or "").strip().strip("/")
+    if not name:
+        return None
+    if "/" in name:
+        return name
+    if not user:
+        return None
+    return f"{user}/{name}"
+
+
+def upload_preflight(
+    *,
+    dataset: str | None,
+    auth: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Judge an upload before it is armed.
+
+    Returns ``{ok, state, detail, destination, user}``. ``ok`` False means the tick must not arm:
+    the failure it leads to is certain and expensive. ``needs_force`` marks the one refusal that is
+    a genuine unknown (a namespace that is not the logged-in user) rather than a certainty.
+    """
+    name = (dataset or "").strip().strip("/")
+    a = dict(auth or {})
+    user = a.get("user") if isinstance(a.get("user"), str) else None
+    authed = a.get("authenticated") is True
+
+    if not name:
+        return {
+            "ok": False,
+            "state": "no_dataset",
+            "needs_force": False,
+            "user": user,
+            "destination": None,
+            "detail": (
+                "this session has no dataset name yet, so there is nowhere to publish it. "
+                "Name the dataset when you open the session"
+            ),
+        }
+
+    if not authed:
+        detail = a.get("detail")
+        rejected = isinstance(detail, str) and "rejected" in detail
+        return {
+            "ok": False,
+            "state": "credential_rejected" if rejected else "no_credential",
+            "needs_force": False,
+            "user": None,
+            "destination": destination(name, None),
+            "detail": (
+                # A revoked token and no token behave differently and are fixed differently.
+                "the Hugging Face token on this machine is present but REJECTED, so the push would "
+                "fail after the session is finished. Log in again (huggingface-cli login) before "
+                "you finish; the episodes stay on this machine either way"
+                if rejected else
+                "no Hugging Face credential on this machine, so the push would fail after the "
+                "session is finished - and closing the session destroys the recorder, so there is "
+                "no retry from here. Run huggingface-cli login (or set HF_TOKEN) first; the "
+                "episodes stay on this machine either way"
+            ),
+        }
+
+    if "/" in name:
+        namespace = name.split("/", 1)[0]
+        if user and namespace != user:
+            return {
+                "ok": False,
+                "state": "foreign_namespace",
+                # The one honest unknown: an org membership cannot be established from here.
+                "needs_force": True,
+                "user": user,
+                "destination": name,
+                "detail": (
+                    f"this dataset is named {name}, so the push targets the '{namespace}' namespace "
+                    f"while you are logged in as '{user}'. If '{namespace}' is an organisation you can "
+                    f"write to this works; if not, the Hub refuses it AFTER the session is finished"
+                ),
+            }
+
+    dest = destination(name, user)
+    return {
+        "ok": True,
+        "state": "ready",
+        "needs_force": False,
+        "user": user,
+        "destination": dest,
+        # Says where it goes, not just what it is called: the namespace is otherwise invisible.
+        "detail": f"publishes as {dest} (you are logged in as {user})",
+    }
