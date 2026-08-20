@@ -282,8 +282,34 @@ def form_unsupported() -> dict[str, str]:
 SPEC_KEYS = (
     "provider", "dataset_root", "dataset_repo_id", "base_model",
     "output_dir", "embodiment", "steps", "batch_size", "learning_rate",
-    "save_freq", "method", "lora_r", "lora_alpha", "seed",
+    "save_freq", "method", "lora_r", "lora_alpha", "seed", "val_episodes",
 )
+
+#: train_policy parameters this form deliberately does NOT send, each with the reason. A silent
+#: omission and a considered exemption look identical in a passing test suite, so the missing
+#: half of the vocabulary is written down and graded: tests assert SPEC_KEYS + these = every
+#: train_policy parameter, so an upstream field addition cannot slip past unnoticed (it did once
+#: already — `val_episodes` had been missing since the field existed, which meant a policy trained
+#: from this dashboard could never hold out a validation set, i.e. the operator could not tell
+#: learning from memorising).
+_NOT_IN_FORM: dict[str, str] = {
+    "action": "the verb, chosen by the endpoint rather than the operator",
+    "job_id": "assigned by the job store; a client-chosen id could collide with a running job",
+    "streaming": "mutually exclusive with val_episodes on the lerobot backend, and it is the "
+                 "wrong default for a first dataset — a Hub stream cannot be resumed offline",
+    "num_gpus": "this dashboard drives ONE host; a multi-GPU/multi-node launch is a cluster "
+                "decision, and torch elastic rendezvous on this Mac needed a fix (Q37) before "
+                "it would even start",
+    "num_nodes": "same: multi-node belongs to a script that knows the cluster's addresses",
+    "resume": "resuming needs the previous run's output_dir to still hold its checkpoints; "
+              "offering a tick box that silently starts fresh would be worse than not offering it",
+    "lora_target_modules": "a list of model-internal module names — unanswerable without the "
+                           "architecture in front of you",
+    "tune": "a per-backend dict of component toggles (GR00T llm/visual/projector/diffusion)",
+    "augmentation": "a per-backend dict of augmentation parameters",
+    "fps": "read from the dataset's own metadata; a mismatching value silently retimes the data",
+    "extra": "the escape hatch for backend-specific kwargs, which is what a script is for",
+}
 
 
 def _spec_kwargs(body: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
