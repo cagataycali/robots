@@ -43,6 +43,8 @@ import strands_robots
 from strands_robots.utils import tcp_port_error
 from tests.test_reachy_mini_driver import _force_real_device_connect_edge
 
+from tests.device_connect_env import skip_reason_if_sdk_missing
+
 # Values that cannot address a TCP port. ``True`` is included because it is an
 # ``int`` subclass: a bare range test reads it as a silent port 1.
 UNUSABLE_PORTS: list[Any] = [
@@ -157,9 +159,22 @@ class TestApiPortDomain:
         assert driver_refuses is shared_refuses
 
 
+#: Some tests below reach the SDK the OTHER way: they import the product package
+#: ``strands_robots.device_connect``, whose module body does ``from device_connect_edge
+#: import DeviceRuntime``. That is the same optional [device-connect] extra the fixtures
+#: gate on, so it gets the same verdict - a skip that says what is missing, not a
+#: ModuleNotFoundError that reads like our own code is broken. Marked per CLASS on
+#: purpose: the pure ast/domain tests in this file prove things about the source text and
+#: must keep running on a machine without any robot SDK at all.
+requires_device_connect_sdk = pytest.mark.skipif(
+    bool(skip_reason_if_sdk_missing()), reason=skip_reason_if_sdk_missing()
+)
+
+
 class TestWhyTheConstructorOwnsTheDomain:
     """Premises for the guard's placement. These hold on either tree."""
 
+    @requires_device_connect_sdk
     @pytest.mark.parametrize("port", [99999, True, 2.7, None, float("nan")], ids=repr)
     def test_the_daemon_url_interpolates_the_port_verbatim(self, monkeypatch, port):
         """``api`` builds ``http://host:<port>/path`` with no coercion."""
@@ -175,6 +190,7 @@ class TestWhyTheConstructorOwnsTheDomain:
         reachy_transport.api("bot.local", port, "/api/daemon/status")
         assert captured == [f"http://bot.local:{port}/api/daemon/status"]
 
+    @requires_device_connect_sdk
     @pytest.mark.parametrize("port", [99999, True, None], ids=repr)
     def test_the_websocket_target_interpolates_the_port_verbatim(self, port):
         """The Lite link carries the same value into its ``ws://`` target."""
@@ -183,6 +199,7 @@ class TestWhyTheConstructorOwnsTheDomain:
         link = reachy_transport.WebSocketLink("bot.local", port)
         assert link._port is port
 
+    @requires_device_connect_sdk
     def test_api_reports_a_failure_as_a_result_rather_than_raising(self, monkeypatch):
         """So no exception from an unusable port can reach the caller."""
         from strands_robots.device_connect import reachy_transport
