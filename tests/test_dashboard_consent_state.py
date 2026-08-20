@@ -1,11 +1,17 @@
 from strands_robots.dashboard import consent
 
-def test_all_three_kinds_are_reported():
+def test_every_kind_is_reported():
+    """Was pinned to the three kinds of the day; a fourth (agent_physical_motion, Q80) then made the
+    list wrong rather than making the omission visible. Generic now: whatever KINDS says must have a
+    key in the payload, so a kind added later cannot reach the permissions screen unreportable."""
     s = consent.granted_state({})
-    assert set(s["kinds"]) == {"trust_remote_code", "hf_repo_allow", "teleop_degree_units"}
+    assert set(s["kinds"]) == set(consent.KINDS)
+    for kind in consent.KINDS:
+        assert kind in s, f"{kind} is grantable but the permissions screen cannot see it"
     assert s["trust_remote_code"] is False and s["hf_repo_allow"] == []
     # the bug: this key did not exist, so the permissions screen could not show or revoke it
     assert s["teleop_degree_units"]["granted"] is False
+    assert s["agent_physical_motion"] is False
 
 def test_degree_preset_is_recognised_as_such():
     granted = consent.env_patch(consent.build_request("teleop_degree_units", "so101-arm-2"), {})

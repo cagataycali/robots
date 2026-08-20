@@ -31,11 +31,15 @@ from typing import Mapping
 #: dashboard's request path, and this module must stay import-cheap and pure.
 _HF_ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}(/[A-Za-z0-9][A-Za-z0-9._-]{0,95})?$")
 
+_AGENT_TARGET_RE = re.compile(r"starting a task on ([A-Za-z0-9][A-Za-z0-9._:-]{0,63})")
 _TRUST_ENV = "STRANDS_TRUST_REMOTE_CODE"
 _HF_ENV = "STRANDS_MESH_HF_REPO_ALLOW"
 #: The teleop safety envelope: how far one frame may reach, and how fast a joint
 #: may be commanded to travel. Both are RADIAN-shaped by default (4*pi / 8*pi),
 #: so a degree-reporting arm (every SO-10x) has every frame refused.
+# Q80: the agent's own permission to START physical motion (dashboard/agent_motion.py owns the gate;
+# this module owns the grant, so it is revocable on the permissions screen like everything else).
+_AGENT_MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
 _TELEOP_VALUE_ENV = "STRANDS_MESH_INPUT_VALUE_ABS"
 _TELEOP_SLEW_ENV = "STRANDS_MESH_INPUT_SLEW_ABS"
 #: Degrees plus a percent gripper: 400 covers a multi-turn wrist with headroom
@@ -87,7 +91,12 @@ class ConsentRequest:
 #: approval names one of these and (at most) a subject - never an env var and
 #: never a value, because "which variable does this grant touch" is a decision
 #: this module owns.
-KINDS: tuple[str, ...] = ("trust_remote_code", "hf_repo_allow", "teleop_degree_units")
+KINDS: tuple[str, ...] = (
+    "trust_remote_code",
+    "hf_repo_allow",
+    "teleop_degree_units",
+    "agent_physical_motion",
+)
 
 
 def build_request(kind: str, subject: object = None, message: str = "") -> ConsentRequest | None:
@@ -121,6 +130,35 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
             subject=name,
             message=text,
             grants=("run repository code for every policy load from now on",),
+        )
+
+    if kind == "agent_physical_motion":
+        # Subject is the peer that was refused, for the wording only: the grant is MACHINE-wide,
+        # because the gate reads one env var. Saying "allow it for this arm" and then letting the
+        # agent drive the other one would be a lie about what was approved - the same reasoning as
+        # teleop_degree_units above.
+        # Null an unparseable name rather than only softening the WORDING: `subject` is echoed in
+        # as_dict() and is what the approval endpoint rebuilds the request from, so a hostile string
+        # kept here would travel further than the sentence that hid it. (trust_remote_code's rule;
+        # caught by test_a_hostile_subject_is_dropped_not_echoed.)
+        if name is not None and not _PROVIDER_NAME_RE.match(name):
+            name = None
+        shown = name or "a real robot"
+        return ConsentRequest(
+            kind=kind,
+            scope="agent_physical_motion",
+            title="Let the agent start motion on real robots?",
+            risk=(
+                f"The fleet agent asked to run a task on {shown}, which is real hardware. Approving "
+                "lets it start physical motion on ANY real robot on this mesh from now on - by itself, "
+                "from a chat sentence or a voice command, with no confirmation step and without the "
+                "check that the policy fits the robot that the ▶ button performs. It cannot see your "
+                "room. Stopping is never gated either way, so 'everyone stop' works regardless."
+            ),
+            env_var=_AGENT_MOTION_ENV,
+            subject=name,
+            message=text,
+            grants=("start tasks on real robots unattended, until you revoke it",),
         )
 
     if kind == "teleop_degree_units":
@@ -192,6 +230,13 @@ def classify_refusal(text: object) -> ConsentRequest | None:
     if "input frame slew for" in message and "out of range" in message:
         return build_request("teleop_degree_units", None, message)
 
+    if _AGENT_MOTION_ENV in message:
+        # The refusal is ours (agent_motion.py), and it names the peer in the same breath as the
+        # words MOVE REAL HARDWARE; take the peer only from that fixed prefix so the model's own
+        # paraphrase around it cannot become the subject.
+        m = _AGENT_TARGET_RE.search(message)
+        return build_request("agent_physical_motion", m.group(1) if m else None, message)
+
     if _HF_ENV in message:
         quoted = _REPO_QUOTED_RE.search(message)
         bare = _REPO_BARE_RE.search(message)
@@ -214,6 +259,11 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
         if str(env.get(_TRUST_ENV, "")).strip().lower() in ("1", "true", "yes"):
             return {}
         return {_TRUST_ENV: "1"}
+
+    if request.kind == "agent_physical_motion":
+        if str(env.get(_AGENT_MOTION_ENV, "")).strip().lower() in ("1", "true", "yes", "on"):
+            return {}
+        return {_AGENT_MOTION_ENV: "1"}
 
     if request.kind == "teleop_degree_units":
         patch = {}
@@ -259,6 +309,11 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
     return {
         "kinds": list(KINDS),
         "trust_remote_code": str(env.get(_TRUST_ENV, "")).strip().lower() in ("1", "true", "yes"),
+        # Reported as what the environment ACTUALLY holds: a hand-set "on" is in force and must be
+        # visible, or the screen would deny a permission the agent is currently using.
+        "agent_physical_motion": (
+            str(env.get(_AGENT_MOTION_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
+        ),
         "hf_repo_allow": allow,
         "teleop_degree_units": {
             "granted": bool(value_abs or slew_abs),
@@ -289,6 +344,13 @@ def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) 
         if str(env.get(_TRUST_ENV, "")).strip().lower() not in ("1", "true", "yes"):
             return {}
         return {_TRUST_ENV: ""}
+
+    if request.kind == "agent_physical_motion":
+        # Cleared rather than set to "0": an absent line lets a stale 1 from a shell profile win the
+        # next restart, and a revocation that does not hold across a restart is the worst kind.
+        if not str(env.get(_AGENT_MOTION_ENV, "")).strip():
+            return {}
+        return {_AGENT_MOTION_ENV: ""}
 
     if request.kind == "teleop_degree_units":
         # Back to the SDK defaults by CLEARING both, not by writing 12.566...:

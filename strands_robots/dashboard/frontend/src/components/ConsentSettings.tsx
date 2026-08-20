@@ -22,6 +22,8 @@ type ConsentState = {
   /* Absent from an older server: this screen listed two of the three kinds and the teleop envelope
      widening — the grant with physical reach — could not be seen or revoked here. */
   teleop_degree_units?: TeleopEnvelope
+  /* Q80: the agent's permission to START physical motion by itself. Absent from an older server. */
+  agent_physical_motion?: boolean
   env_file?: string
 }
 
@@ -58,7 +60,8 @@ export default function ConsentSettings() {
   if (error && !state) return <p className="hint">could not read permissions: {error}</p>
 
   const envelope = state?.teleop_degree_units
-  const nothing = state && !state.trust_remote_code && state.hf_repo_allow.length === 0 && !envelope?.granted
+  const nothing = state && !state.trust_remote_code && state.hf_repo_allow.length === 0
+    && !envelope?.granted && !state.agent_physical_motion
 
   return (
     <div className="consent-settings">
@@ -82,6 +85,24 @@ export default function ConsentSettings() {
           <button className="btn ghost danger" disabled={busy === 'trust'}
                   onClick={() => revoke('trust_remote_code', null, 'trust')}>
             {busy === 'trust' ? '…' : 'revoke'}
+          </button>
+        </div>
+      ) : null}
+
+      {state?.agent_physical_motion ? (
+        <div className="cg-row">
+          <div>
+            <b>The agent may start motion on real robots</b>
+            <div className="hint">
+              A chat sentence or a voice command can put any real robot on this mesh in motion, with no
+              confirmation and without the check that the policy fits that robot — the one the ▶ button
+              does. Revoking leaves the agent able to stop robots, answer questions and run tasks in
+              simulation; starting a real arm comes back to you.
+            </div>
+          </div>
+          <button className="btn ghost danger" disabled={busy === 'agent motion'}
+                  onClick={() => revoke('agent_physical_motion', null, 'agent motion')}>
+            {busy === 'agent motion' ? '…' : 'revoke'}
           </button>
         </div>
       ) : null}
