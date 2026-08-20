@@ -463,6 +463,11 @@ body {
 /* joints */
 .joints { display: flex; flex-direction: column; gap: var(--s1); }
 .joints.empty { color: var(--dim); font-size: 11px; padding: var(--s1) 2px; }
+/* An empty strip that means something is WRONG (lib/jointAbsence.ts): an arm that
+   publishes state without joint positions is locked out or its bus read is failing,
+   and it used to read the same dim grey as a peer that simply has no joints. */
+.joints.empty[data-tone="attention"] { color: var(--warn, #ffb454); }
+.joints.empty .hint { display: block; color: var(--dim); font-size: 10px; margin-top: 3px; line-height: 1.35; }
 .joint { display: flex; align-items: center; gap: var(--s3); }
 .jname { font-size: 10px; font-family: var(--mono); color: var(--dim); width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
 /* Joint-strip freshness (lib/jointFreshness.ts). A frozen stream must not keep

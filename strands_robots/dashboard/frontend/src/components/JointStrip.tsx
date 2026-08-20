@@ -5,6 +5,7 @@ import { createHistory, pushFrame, HISTORY_WINDOW_MS } from '../lib/jointHistory
 import JointSpark from './JointSpark'
 import { humanJointNames, stripLegend } from '../lib/jointLabels'
 import { jointAgeNote } from '../lib/jointFreshness'
+import { jointAbsence } from '../lib/jointAbsence'
 
 /**
  * One scale per strip, learned from the stream.
@@ -55,11 +56,15 @@ export default function JointStrip({
 
   const joints = state?.joints
   if (!joints || Object.keys(joints).length === 0) {
-    // "no joint data" reads like a broken robot; say which case it is.
-    const expected = presence?.action_keys?.length
+    // "no joint data on this peer" was the sentence a LOCKED-OUT arm showed for ten
+    // hours while it published state 0.3s old: alive, talking, and only the joints
+    // missing. lib/jointAbsence separates the three situations the operator has to
+    // act on differently, and points at the log rather than guessing the cause.
+    const note = jointAbsence({ state, presence, nowS: nowMs / 1000 })
     return (
-      <div className="joints empty">
-        {expected ? `waiting for state (${expected} joints expected)` : 'no joint data on this peer'}
+      <div className="joints empty" data-tone={note.tone}>
+        {note.tone === 'attention' ? '⚠ ' : ''}{note.text}
+        {note.hint && <span className="hint">{note.hint}</span>}
       </div>
     )
   }
