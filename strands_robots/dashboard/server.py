@@ -788,6 +788,46 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "fields": list(training.SPEC_KEYS),
         }
 
+    @app.get("/api/datasets/labels")
+    async def dataset_labels(root: str) -> dict[str, Any]:
+        """Episode labels for one recorded dataset (#2486), read-only.
+
+        The dashboard could collect episodes and train on them but never SHOW what any episode was
+        judged to be, so an operator had no way to see (or even find out about) the two-stage
+        verdict the source records: deterministic benchmark predicates first, a judge annotation on
+        top. Read-only on purpose - `episode_labels.annotate_episode` refuses an episode with no
+        deterministic verdict, and a real-arm recording has none, so a WRITE control here would be
+        offered-but-undriveable for exactly the datasets this dashboard records. What ships instead
+        is the honest capability sentence (`can_annotate` + `why`), which is what tells the operator
+        whether labelling is even possible for this dataset and what would have to be true first.
+        """
+        from pathlib import Path
+
+        from strands_robots import episode_labels as _labels
+        from strands_robots.dashboard.episode_label_view import label_view
+
+        target = Path(root).expanduser()
+        if not target.is_dir():
+            raise HTTPException(404, f"no dataset directory at {target}")
+
+        document: dict[str, Any] | None = None
+        sidecar_error: str | None = None
+        if _labels.labels_path(target).exists():
+            try:
+                document = _labels.read_labels(target)
+            except Exception as e:  # a corrupt sidecar must not read as "no labels yet"
+                sidecar_error = f"{type(e).__name__}: {e}"
+
+        total: int | None = None
+        try:
+            import json as _json
+
+            total = _json.loads((target / "meta" / "info.json").read_text()).get("total_episodes")
+        except Exception:  # noqa: BLE001 - a dataset mid-recording has no readable info.json yet
+            pass
+
+        return label_view(document, total_episodes=total, sidecar_error=sidecar_error)
+
     @app.get("/api/training/datasets")
     async def training_datasets(q: str = "", hub: bool = True, limit: int = 12) -> dict[str, Any]:
         """Datasets for the submit form's picker: local roots + a Hub search.
