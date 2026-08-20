@@ -7,6 +7,7 @@ import { sessionFreshness, staleSuffix } from '../lib/sessionFreshness'
 import { api as httpGet, HttpError } from '../lib/endpoints'
 import { recordFailure, type RecordActionKind } from '../lib/recordOutcome'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
+import { noArmsVerdict, type RememberedBoard } from '../lib/noArms'
 import { episodeTarget } from '../lib/episodeTarget'
 import { nameVerdict, type KnownDataset } from '../lib/datasetName'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
@@ -24,7 +25,9 @@ import JointStrip from './JointStrip'
  * episode and X redoes a bad one - collection is a two-handed job and the
  * operator's eyes are on the arms, not the pointer.
  */
-export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose: () => void }) {
+export default function RecordPanel(
+  { peers, onClose, onDevices }: { peers: Peer[]; onClose: () => void; onDevices?: () => void },
+) {
   const peerIds = peers.map(p => p.peer_id)
   const [api, setApi] = useState<RecordApi | null>(null)
   /* Q58: focus must land inside an overlay and go back to whatever opened it. */
@@ -40,7 +43,16 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   // both slots stay empty rather than confidently wrong.
   const [roles, setRoles] = useState<Record<string, RoleCandidate>>({})
   const candidates: RoleCandidate[] = peerIds.map(id => roles[id] ?? { peer_id: id })
+  // Q44: what the devices screen remembers, for the case where this screen has nothing to record
+  // WITH. undefined = not asked yet, null = the request failed (which must not become the claim
+  // "nothing is configured").
+  const [boards, setBoards] = useState<RememberedBoard[] | null | undefined>(undefined)
+
   const suggestion = pairArms(candidates)
+  // Replaces pairArms's "no arms on the mesh" note when there is nothing to record with: same fact,
+  // with the way out. undefined (not asked yet) is passed through as a failed lookup rather than as
+  // "nothing configured" - the honest reading while the request is in flight.
+  const noArms = noArmsVerdict(peerIds.length, boards === undefined ? null : boards)
   const [form, setForm] = useState({
     dataset: '', task: '', leader: '', follower: '', target_episodes: '20',
   })
@@ -104,7 +116,10 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
   // pickers simply stay unopinionated (basis 'none' says so out loud).
   useEffect(() => {
     let alive = true
-    httpGet<{ managed?: Record<string, RoleCandidate & { peer_id: string }> }>('/api/devices')
+    httpGet<{
+      managed?: Record<string, RoleCandidate & { peer_id: string; alive?: boolean; port?: string }>
+      serial_ports?: { device: string; remembered?: { peer_id: string } | null }[]
+    }>('/api/devices')
       .then(doc => {
         if (!alive) return
         const next: Record<string, RoleCandidate> = {}
@@ -112,8 +127,14 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
           if (m?.peer_id) next[m.peer_id] = { peer_id: m.peer_id, role: m.role, role_volts: m.role_volts }
         }
         setRoles(next)
+        // Same document already in hand - no second request for the empty-state route.
+        const claimed = new Set(Object.values(doc.managed ?? {})
+          .filter((m: any) => m?.alive && m?.port).map((m: any) => m.port as string))
+        setBoards((doc.serial_ports ?? [])
+          .filter(p => p.remembered?.peer_id)
+          .map(p => ({ peer_id: p.remembered!.peer_id, claimed: claimed.has(p.device) })))
       })
-      .catch(() => { /* unmeasured is a valid state, not an error */ })
+      .catch(() => { setBoards(null); /* unmeasured is a valid state, not an error */ })
     return () => { alive = false }
   }, [])
 
@@ -336,7 +357,20 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
               paired from the servo buses — measured, not guessed from the names.
             </div>
           )}
-          {suggestion.note && <div className="train-msg rec-hint">{suggestion.note}</div>}
+          {/* Q44: "no arms on the mesh" was true and a dead end. After a restart the arms are not
+              unplugged, just not running — and the devices screen knows them by USB serial with a
+              one-click respawn. Name that route here instead of making the operator hunt for a
+              feature we shipped. A sentence plus an offer, never a redirect. */}
+          {noArms
+            ? <div className="train-msg rec-hint" role="status">
+                {noArms.text}
+                {noArms.offerDevices && onDevices && (
+                  <> <button type="button" className="btn ghost" onClick={onDevices}>
+                    open the devices screen
+                  </button></>
+                )}
+              </div>
+            : suggestion.note && <div className="train-msg rec-hint">{suggestion.note}</div>}
           {problems.map(({ slot, msg }) => (
             <div key={slot} className="train-msg warn">⚠ {msg}</div>
           ))}

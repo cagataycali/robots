@@ -298,7 +298,8 @@ function Dashboard() {
       )}
       {panel === 'record' && (
         <ErrorBoundary label="the record screen" onDismiss={() => setPanel(null)}>
-          <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => setPanel(null)} />
+          <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => setPanel(null)}
+            onDevices={() => setPanel('devices')} />
         </ErrorBoundary>
       )}
 
