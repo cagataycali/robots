@@ -136,9 +136,11 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
         onStop={stop}
       />
 
+      {/* ambiguous = the command may have reached the arm; '✗ failed' would be a
+          guess with a hand in the workspace behind it (lib/taskOutcome.ts). */}
       {outcome && (
         <div className={outcome.ok ? 'result ok' : 'result bad'}>
-          <span>{outcome.ok ? '✓' : '⚠'} {outcome.text}</span>
+          <span>{outcome.ok ? '✓' : outcome.ambiguous ? '⚠ unknown —' : '✗'} {outcome.text}</span>
           {outcome.detail && <details><summary>details</summary><pre>{outcome.detail}</pre></details>}
           {/* The refusal is answerable: offer the decision where the error is,
               not in a settings screen the operator has to go find. */}

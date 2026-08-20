@@ -141,7 +141,7 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
             />
             {outcome && (
               <div className={outcome.ok ? 'result ok' : 'result bad'}>
-                <span>{outcome.ok ? '✓' : '⚠'} {outcome.text}</span>
+                <span>{outcome.ok ? '✓' : outcome.ambiguous ? '⚠ unknown —' : '✗'} {outcome.text}</span>
                 {outcome.detail && <details><summary>details</summary><pre>{outcome.detail}</pre></details>}
               </div>
             )}

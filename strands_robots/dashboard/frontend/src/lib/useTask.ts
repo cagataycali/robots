@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Peer, StopResult } from '../types'
 import { HttpError, post } from './endpoints'
 import { findConsent, type ConsentNeed } from './consent'
+import { runFailure, stopFailure } from './taskOutcome'
 import type { RunBody } from '../components/RunForm'
 
 /**
@@ -13,7 +14,16 @@ import type { RunBody } from '../components/RunForm'
  */
 export type TaskPhase = 'idle' | 'starting' | 'running' | 'stopping' | 'failed' | 'done'
 
-export interface Outcome { ok: boolean; text: string; detail?: string }
+export interface Outcome {
+  ok: boolean
+  text: string
+  detail?: string
+  /** The request failed WITHOUT telling us whether it landed: the arm may be
+   *  moving (run) or may still be moving (stop). Rendered louder than a plain
+   *  refusal, because the two demand different behaviour from a human standing
+   *  next to the hardware. */
+  ambiguous?: boolean
+}
 
 /**
  * Run/stop for one peer, shared by the card and the detail view so both report
@@ -45,11 +55,24 @@ export function useTask(peer: Peer) {
     if (!reportedRunning && phase === 'running') setPhase('done')
   }, [reportedRunning])   // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Bare message - only for requests with nothing physical behind them. */
   const fail = (e: unknown): Outcome => {
     if (e instanceof HttpError) {
       return { ok: false, text: e.message, detail: e.status ? `HTTP ${e.status}` : 'unreachable' }
     }
     return { ok: false, text: e instanceof Error ? e.message : String(e) }
+  }
+
+  /**
+   * A thrown run/stop is NOT proof the robot was left alone: a rejected fetch
+   * covers "never left this machine" and "dispatched, then lost the answer", and
+   * a 5xx means the handler ran. lib/taskOutcome states which world it is and
+   * what to do about it - see that file for why "failed" was the dangerous word.
+   */
+  const physicalFail = (e: unknown, kind: 'run' | 'stop'): Outcome => {
+    const f = { status: e instanceof HttpError ? e.status : 0, message: e instanceof Error ? e.message : String(e) }
+    const v = kind === 'run' ? runFailure(f) : stopFailure(f)
+    return { ok: false, text: v.text, detail: v.detail, ambiguous: v.ambiguous }
   }
 
   const run = async (body: RunBody) => {
@@ -68,7 +91,7 @@ export function useTask(peer: Peer) {
       if (!res.ok) setConsent(findConsent(res))
     } catch (e) {
       if (!mounted.current) return
-      setOutcome(fail(e)); setPhase('failed')
+      setOutcome(physicalFail(e, 'run')); setPhase('failed')
       // A 4xx carries the same needs_consent in its body - a validation refusal
       // must be as answerable as a peer's refusal.
       if (e instanceof HttpError) setConsent(findConsent(e.body))
@@ -94,7 +117,7 @@ export function useTask(peer: Peer) {
       setPhase(res.state === 'stopped' ? 'idle' : 'failed')
     } catch (e) {
       if (!mounted.current) return
-      setOutcome(fail(e)); setPhase('failed')
+      setOutcome(physicalFail(e, 'stop')); setPhase('failed')
     }
   }
 
