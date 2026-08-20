@@ -369,6 +369,21 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
         </div>
       )}
 
+      {/*
+        The follower has not moved for the whole window. role=alert like the two
+        above, and for the same reason: every counter looks perfect while the
+        dataset being written is one pose repeated, so if this is not said while
+        the operator can still redo the episode it is discovered at training time
+        or never. A NOTICE - holding still is legitimate (lining the arms up,
+        holding a grasp), and stopping recording here would throw away real
+        episodes to prevent a suspicion.
+      */}
+      {open && s?.motion_notice && (
+        <div className="train-msg warn rec-motion-notice" role="alert">
+          ⚠ {s.motion_notice.message}
+        </div>
+      )}
+
       {open && s && (
         <div className="train-form">
           <div className="rec-counter" aria-live="polite">
@@ -380,6 +395,13 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
               {s.fps_achieved != null && (
                 <span className={s.fps_notice ? 'rec-rate-bad' : 'rec-rate-ok'}>
                   {' '}· {s.fps_achieved} captured
+                </span>
+              )}
+              {/* A healthy-looking rate is exactly what a frozen arm produces, so
+                  the pair itself carries the doubt rather than only the banner. */}
+              {s.motion_notice && (
+                <span className="rec-rate-bad" title={s.motion_notice.message}>
+                  {' '}· not moving
                 </span>
               )}
             </span>

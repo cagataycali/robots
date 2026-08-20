@@ -67,6 +67,25 @@ export interface RecordSession {
     missing: string[]
     message: string
   } | null
+  /**
+   * Present ONLY when the follower has held ONE POSE for the whole measuring
+   * window (BUGS.md Q35). A Feetech bus answers position reads off the USB logic
+   * rail while torque needs the 12V pack, so a tripped supply mid-episode records
+   * at full fps with valid numbers and perfect counters - and the dataset is a
+   * still life that teaches a policy to hold still. Absent means "nothing to say
+   * OR not enough evidence yet": it is NOT a certificate that the arm is moving,
+   * so it must never be rendered as reassurance.
+   */
+  motion_notice?: {
+    still: true
+    /** how long the pose has been held, seconds */
+    seconds: number
+    samples: number
+    /** the largest peak-to-peak travel of any joint, in DEGREES */
+    max_travel_deg: number
+    quietest_joint: string
+    message: string
+  } | null
 }
 
 export interface RecordApi {
