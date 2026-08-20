@@ -1185,6 +1185,36 @@ def _camera_option_names() -> tuple[str, ...]:
     return tuple(sorted(f.name for f in dataclasses.fields(OpenCVCameraConfig)))
 
 
+def indices_beyond_roster(cameras: Any, roster_size: int) -> dict[str, int]:
+    """Requested camera indices this machine cannot possibly have, as {name: index}.
+
+    The refusal that reconfigure_cameras needs BEFORE it despawns a working arm: an index of 7 on a
+    machine with three capture devices is not a camera that might be busy, it is a camera that does not
+    exist, and finding that out from the respawned child costs the operator the process they had.
+
+    Deliberately uses only the COUNT of the enumerated roster, never its order. scan_camera_names' own
+    docstring warns that the listing order does not match OpenCV's index order (Continuity cameras
+    renumber), so "roster[3] is named X" proves nothing about index 3 — but renumbering is a PERMUTATION,
+    and no permutation of N devices produces a valid index >= N. That makes this the strongest claim
+    available without opening a device, which the supervisor law forbids for streaming indices.
+
+    ``roster_size <= 0`` returns {} — an empty roster means enumeration did not work (no ffmpeg, an
+    unsupported platform), and absence of evidence must not become a refusal. Non-integer entries
+    (a path like /dev/video0, a string) are not judged here either: only an index can be compared to a
+    count, and validate_cameras has already refused the shapes that are simply wrong.
+    """
+    out: dict[str, int] = {}
+    if not isinstance(cameras, dict) or roster_size <= 0:
+        return out
+    for name, cfg in cameras.items():
+        idx = cfg.get("index_or_path") if isinstance(cfg, dict) else cfg
+        if isinstance(idx, bool) or not isinstance(idx, int):
+            continue
+        if idx >= roster_size or idx < 0:
+            out[str(name)] = idx
+    return out
+
+
 def validate_cameras(cameras: Any) -> dict[str, str] | None:
     """Refusal reason for a spawn/reconfigure camera config, or None.
 
@@ -2170,6 +2200,21 @@ class DeviceManager:
         bad = validate_cameras(cameras)
         if bad:
             return bad
+        # A camera that CANNOT exist is refused before the despawn, not after the respawn: the arm that
+        # is streaming right now is the thing at stake, and "index 7 of 3 cameras" is knowable without
+        # opening anything (see indices_beyond_roster - count only, no probe, silent when enumeration
+        # itself failed).
+        roster = self._camera_names(refresh=True)
+        impossible = indices_beyond_roster(cameras, len(roster))
+        if impossible:
+            listed = ", ".join(f"{n!r} -> index {i}" for n, i in sorted(impossible.items()))
+            return {
+                "error": (
+                    f"{listed}: this machine enumerates {len(roster)} capture device(s), so that index "
+                    f"cannot exist - {peer_id} was left running and untouched. Rescan the devices screen "
+                    f"(a camera may have been unplugged, which renumbers the rest) and pick again."
+                )
+            }
         with self._lock:
             m = self.robots.get(peer_id)
             if m is None:
