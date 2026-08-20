@@ -19,7 +19,7 @@ import socket
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots.bus_access import read_joints, read_observation
@@ -382,6 +382,72 @@ def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
         if did_not_stop:
             failed.add(str(response.get("responder_id") or f"<unidentified-responder-{index}>"))
     return failed
+
+
+#: Longest probe reason published in a state snapshot. The reasons are rendered on a card, and
+#: FeetechMotorsBus.__repr__ alone is ~1.5 KB of motor table -- publishing that at STATE_HZ would
+#: cost real bandwidth to say one sentence ("has no calibration registered").
+PROBE_REASON_MAX = 200
+
+
+def summarise_probe_error(exc: BaseException) -> str:
+    """One short human sentence for a failed state probe, safe to publish and to render.
+
+    Args:
+        exc: The exception a ``_read_state`` probe raised.
+
+    Returns:
+        A single line, at most :data:`PROBE_REASON_MAX` characters, always naming the exception
+        type. Never raises: a summariser that can fail would turn a degraded probe into a dead
+        state loop.
+
+    The raw ``repr`` is unusable in a UI. Q85's real message was a RuntimeError whose text is a
+    full motor table followed by the only words that matter -- ``has no calibration registered`` --
+    so the LAST non-empty line is kept rather than the first, and multi-line messages are collapsed.
+    The type name is always present because Q86's ConnectionError and Q85's RuntimeError need
+    different actions from the operator (a wire/ownership problem versus a calibration one), and an
+    exception with an empty message would otherwise publish nothing at all.
+    """
+    try:
+        kind = type(exc).__name__
+        text = str(exc).strip()
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        # The tail of a Feetech message carries the verdict; its head carries the motor dump.
+        detail = lines[-1] if lines else ""
+        detail = detail.lstrip(",)").strip() or (lines[0] if lines else "")
+        out = f"{kind}: {detail}" if detail else kind
+        if len(out) > PROBE_REASON_MAX:
+            out = out[: PROBE_REASON_MAX - 1].rstrip() + "\u2026"
+        return out
+    except Exception:  # pragma: no cover - a summariser must never break the state loop
+        return type(exc).__name__
+
+
+def degraded_report(records: Mapping[str, dict[str, Any]], now: float) -> dict[str, dict[str, Any]]:
+    """Render recorded probe failures for publication, newest fact first.
+
+    Args:
+        records: Per-category state kept by :meth:`Mesh._warn_read_state_once`.
+        now: Current epoch seconds, used for ``for_seconds``.
+
+    Returns:
+        ``{category: {reason, failures, since, for_seconds}}`` -- JSON-safe.
+
+    ``for_seconds`` exists because "this probe failed" and "this probe has been failing for three
+    hours" call for different responses, and a snapshot consumer cannot subtract two clocks it does
+    not share. A category is present only while it is CURRENTLY failing: recovery must be able to
+    remove the badge, or one transient error would libel an arm until it is restarted.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for category, rec in records.items():
+        since = float(rec.get("since", now))
+        out[category] = {
+            "reason": str(rec.get("reason", "")),
+            "failures": int(rec.get("failures", 1)),
+            "since": since,
+            "for_seconds": max(0.0, round(now - since, 1)),
+        }
+    return out
 
 
 class Mesh(SensorLoopsMixin):
@@ -1165,6 +1231,42 @@ class Mesh(SensorLoopsMixin):
             exc,
         )
 
+    def _record_probe_failure(self, category: str, exc: BaseException) -> None:
+        """Remember that this probe is failing, so the SNAPSHOT can say so (Q85/Q86).
+
+        Logging the reason once was not enough: the fleet view omitted the section and went quiet,
+        so an arm with a named reason for having no joints looked exactly like a healthy idle arm.
+        Two live arms sat like that for 3.5 hours -- one uncalibrated, one losing its bus -- and
+        nothing on screen distinguished them from each other or from a working arm.
+        """
+        records = getattr(self, "_read_state_degraded", None)
+        if records is None:
+            records = {}
+            self._read_state_degraded = records
+        rec = records.get(category)
+        if rec is None:
+            records[category] = {"reason": summarise_probe_error(exc), "failures": 1, "since": time.time()}
+        else:
+            rec["failures"] = int(rec.get("failures", 1)) + 1
+            # The reason is refreshed: a probe that starts failing for a NEW cause must not keep
+            # reporting the old one (a bus that recovers into "no calibration" is a different fault).
+            rec["reason"] = summarise_probe_error(exc)
+
+    def _clear_probe_failure(self, category: str) -> None:
+        """This probe worked, so it must stop being reported as degraded.
+
+        Without this a single transient read error would mark an arm broken until its process was
+        restarted -- a false badge is worse than no badge, because the operator stops believing the
+        true ones. Recovery also un-suppresses the log line, so a fault that comes back is warned
+        about again instead of hiding behind the first occurrence forever.
+        """
+        records = getattr(self, "_read_state_degraded", None)
+        if records:
+            records.pop(category, None)
+        warned = getattr(self, "_read_state_warned", None)
+        if warned:
+            warned.discard(category)
+
     def _read_state(self) -> dict[str, Any] | None:
         r = self.robot
         snapshot: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
@@ -1194,8 +1296,10 @@ class Mesh(SensorLoopsMixin):
                         joints[key] = value
                 if joints:
                     snapshot["joints"] = joints
+                    self._clear_probe_failure("hw_joints")
         except Exception as exc:
             self._warn_read_state_once("hw_joints", exc)
+            self._record_probe_failure("hw_joints", exc)
 
         try:
             ts = getattr(r, "_task_state", None)
@@ -1209,6 +1313,7 @@ class Mesh(SensorLoopsMixin):
                 }
         except Exception as exc:
             self._warn_read_state_once("task_state", exc)
+            self._record_probe_failure("task_state", exc)
 
         try:
             world = getattr(r, "_world", None)
@@ -1244,9 +1349,19 @@ class Mesh(SensorLoopsMixin):
                             snapshot["joints"] = sim_joints
                     except Exception as exc:
                         self._warn_read_state_once("sim_joints", exc)
+                        self._record_probe_failure("sim_joints", exc)
         except Exception as exc:
             self._warn_read_state_once("sim_world", exc)
+            self._record_probe_failure("sim_world", exc)
 
+        # Additive key: an older cached PWA bundle ignores it, so publishing it cannot break a tab
+        # that is mid-session (the same rule /api/training/trainers follows).
+        records = getattr(self, "_read_state_degraded", None)
+        if records:
+            snapshot["degraded"] = degraded_report(records, time.time())
+        # A snapshot whose ONLY content is a degradation is still worth sending: "this arm has no
+        # joints and here is why" is exactly the case that used to travel as silence. peer_id and t
+        # are the two free keys, so the threshold counts anything beyond them.
         return snapshot if len(snapshot) > 2 else None
 
     # Cameras - outgoing (opt-in)
