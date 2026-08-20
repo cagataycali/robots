@@ -55,6 +55,24 @@ def _guess_policy_type(repo_id: str, tags: list[str]) -> str | None:
     return None
 
 
+def _hf_cache_root() -> Path:
+    """Where downloaded model snapshots live, honouring the env the CLI honours.
+
+    HF_HUB_CACHE points at the hub dir itself; HF_HOME contains it. Without either it is the
+    documented default. Q79 needs this because the run form is asked about repo ids the operator may
+    have cached under a non-default HF_HOME.
+    """
+    import os
+
+    explicit = os.environ.get("HF_HUB_CACHE")
+    if explicit:
+        return Path(explicit).expanduser()
+    home = os.environ.get("HF_HOME")
+    if home:
+        return Path(home).expanduser() / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
 def local_checkpoints(query: str = "") -> list[dict[str, Any]]:
     """Already-downloaded LeRobot-shaped checkpoints in the HF cache.
 
@@ -388,3 +406,68 @@ def policy_families() -> list[str]:
         return list(list_policy_types())
     except Exception:  # noqa: BLE001 - torch-less install
         return ["act", "diffusion", "pi0", "pi0_fast", "smolvla", "tdmpc", "vqbet"]
+
+def declared_features(repo_id: str) -> dict[str, Any]:
+    """Q79: what a LOCAL checkpoint says it was trained on, or {} when it cannot be read.
+
+    lerobot writes ``input_features`` / ``output_features`` into the policy's own ``config.json``,
+    so the pairing question ("does this policy fit that robot?") is answerable from disk with no
+    network and no model load. Only the local cache and local training outputs are consulted: a Hub
+    repo would need a download, and a run form must not block on one.
+
+    Defensive by construction - an unreadable or absent config returns ``{}``, which the pure
+    comparison treats as NO EVIDENCE rather than as a match.
+    """
+    import json
+
+    raw = (repo_id or "").strip()
+    # Trailing/leading slashes are noise in a REPO ID - but a leading slash is the whole meaning of
+    # an absolute output_dir, so the two readings keep their own strings.
+    name = raw.strip("/")
+    if not name:
+        return {}
+    candidates: list[Path] = []
+
+    # 1. a local training output / exported artifact path
+    try:
+        p = Path(raw).expanduser()
+        if p.is_dir():
+            art = _artifact_dir(p)
+            if art is not None:
+                candidates.append(art)
+    except OSError:
+        pass
+
+    # 2. the HF cache snapshot for an org/name repo id
+    try:
+        root = _hf_cache_root() / f"models--{name.replace('/', '--')}" / "snapshots"
+        if root.is_dir():
+            snaps = sorted(root.iterdir())
+            if snaps:
+                candidates.append(snaps[-1])
+    except OSError:
+        pass
+
+    for d in candidates:
+        for fname in ("config.json", "train_config.json"):
+            f = d / fname
+            try:
+                if not f.exists():
+                    continue
+                data = json.loads(f.read_text())
+            except Exception:  # noqa: BLE001 - unreadable config = no evidence
+                continue
+            if not isinstance(data, dict):
+                continue
+            # train_config.json nests the policy config under "policy".
+            block = data.get("policy") if isinstance(data.get("policy"), dict) else data
+            inp = block.get("input_features")
+            out = block.get("output_features")
+            if isinstance(inp, dict) or isinstance(out, dict):
+                return {
+                    "repo_id": raw,
+                    "input_features": inp if isinstance(inp, dict) else {},
+                    "output_features": out if isinstance(out, dict) else {},
+                    "policy_type": block.get("type"),
+                }
+    return {}

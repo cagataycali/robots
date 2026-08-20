@@ -876,6 +876,19 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
         return await asyncio.to_thread(checkpoints.search, q, checkpoints.clamp_limit(limit))
 
+    @app.get("/api/checkpoints/features")
+    async def checkpoint_features(repo_id: str = "") -> dict[str, Any]:
+        """Q79: what a checkpoint declares it was trained on — so the run form can compare it with
+        the robot BEFORE ▶ energises one.
+
+        Read-only, local only (the HF cache and local training outputs), no model load and no
+        network: a run form must never wait on the Hub. An unknown or unreadable checkpoint answers
+        `{}`, which the pure comparison treats as no evidence rather than as a match.
+        """
+        from strands_robots.dashboard import checkpoints
+
+        return await asyncio.to_thread(checkpoints.declared_features, repo_id)
+
     @app.get("/api/checkpoints/families")
     async def checkpoint_families() -> dict[str, Any]:
         """policy_type values the lerobot family accepts (type dropdown)."""
