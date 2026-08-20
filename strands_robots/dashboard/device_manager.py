@@ -614,6 +614,47 @@ def profile_key(port: dict[str, Any]) -> str:
     return str(port.get("device") or "")
 
 
+def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What this board was last brought up as, in the shape a screen can show (Q41).
+
+    The devices screen is where the record screen sends an operator after an interrupted session
+    ("respawn them from devices"), and where an operator lands after any restart — but ``managed``
+    is in-memory, so after a restart it is EMPTY and the two boards read as never-configured
+    hardware. Everything needed to bring them back is already on disk in profiles.json; it was
+    simply never sent to the screen.
+
+    Only fields that describe how the board comes UP, and only when the profile can actually be
+    respawned: a payload without a peer_id is not a spawn recipe, and pretending otherwise offers a
+    button that cannot work. ``{}`` means "nothing remembered" and must render as nothing — a board
+    nobody has configured is a normal, honest state.
+
+    Camera names are listed rather than their config: the operator recognises "top, wrist", and the
+    indices behind them are exactly what may have moved since (macOS renumbers), so showing them
+    here would be the confident-but-stale kind of detail this dashboard keeps removing.
+    """
+    if not profile:
+        return {}
+    peer_id = str(profile.get("peer_id") or "").strip()
+    if not peer_id:
+        return {}
+    cams = profile.get("cameras")
+    names: list[str] = []
+    if isinstance(cams, Mapping):
+        names = [str(k) for k in cams]
+    out: dict[str, Any] = {
+        "peer_id": peer_id,
+        "robot_name": profile.get("robot_name") or None,
+        "mode": profile.get("mode") or None,
+        "cameras": names,
+        "saved_at": profile.get("saved_at"),
+    }
+    # The lerobot calibration id travels with the arm, so a wrong one moves a real arm with another
+    # arm's zero points. It is shown when remembered - never defaulted, never guessed from the name.
+    if profile.get("robot_id"):
+        out["robot_id"] = str(profile["robot_id"])
+    return out
+
+
 class ProfileStore:
     """USB device profiles on disk: serial number -> saved spawn payload.
 
@@ -1211,11 +1252,28 @@ class DeviceManager:
             for p in ports
             if p.get("device") and p.get("serial_number")
         }
+        # Q41: what each board was last spawned as. The measured role says what the board IS; this
+        # says how it comes UP - and after a restart it is the only copy of that, because `managed`
+        # lives in memory.
+        remembered = {
+            p["device"]: remembered_spawn(self.profiles.get(profile_key(p)))
+            for p in ports
+            if p.get("device")
+        }
         return {
             # Each board carries what is KNOWN about its role (measured earlier,
             # remembered by serial) so the devices screen can show it without a
             # second round trip - and so a wrong label is visible at a glance.
-            "serial_ports": [{**e, **roles.get(e.get("device"), {})} for e in ports],
+            "serial_ports": [
+                {
+                    **e,
+                    **roles.get(e.get("device"), {}),
+                    # Absent stays absent: a board nobody configured carries no `remembered` key at
+                    # all, rather than an empty object a screen would have to special-case.
+                    **({"remembered": r} if (r := remembered.get(e.get("device"))) else {}),
+                }
+                for e in ports
+            ],
             "cameras": cams,
             # One loud line when the whole machine is blocked, instead of the
             # same reason repeated on every row (and missed on all of them).
