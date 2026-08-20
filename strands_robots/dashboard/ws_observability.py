@@ -26,7 +26,17 @@ from dataclasses import dataclass
 from typing import Callable
 
 
-def close_verdict(*, frames_sent: int, lifetime_s: float, publishing: bool) -> str:
+def _mb(n: int) -> float:
+    return n / (1024 * 1024)
+
+
+def close_verdict(
+    *,
+    frames_sent: int,
+    lifetime_s: float,
+    publishing: bool,
+    bytes_sent: int = 0,
+) -> str:
     """One sentence naming what this closed socket actually was.
 
     The three cases an operator needs told apart, because the tile looks identical in
@@ -34,7 +44,16 @@ def close_verdict(*, frames_sent: int, lifetime_s: float, publishing: bool) -> s
     has nothing to give.
     """
     if frames_sent > 0:
-        return f"streamed {frames_sent} frames over {lifetime_s:.0f}s"
+        # Q51: the SIZE is the half that was missing. One live camera tile measured
+        # 4.6 fps at ~97 KB a frame = 0.45 MB/s, and the phone hammering this
+        # dashboard from cellular reopens the same tile 1.55x a second - so "how much
+        # did this socket actually carry before it died" decides whether the remote
+        # client is buggy or simply cannot drink from a firehose. A frame count alone
+        # cannot tell those apart.
+        rate = f", {_mb(bytes_sent) / lifetime_s:.2f} MB/s" if bytes_sent and lifetime_s >= 0.05 else ""
+        size = f" / {_mb(bytes_sent):.1f} MB" if bytes_sent else ""
+        fps = f" ({frames_sent / lifetime_s:.1f} fps{rate})" if lifetime_s >= 0.05 else ""
+        return f"streamed {frames_sent} frames{size} over {lifetime_s:.1f}s{fps}"
     if not publishing:
         return (
             f"sent nothing in {lifetime_s:.1f}s - that camera is not publishing to the mesh; "

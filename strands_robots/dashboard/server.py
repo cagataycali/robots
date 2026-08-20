@@ -1626,6 +1626,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # opens and zero closes: a reconnect storm looked exactly like 63,906 happy
         # viewers, and "did any of these sockets ever send a frame?" was unanswerable.
         frames_sent = 0
+        bytes_sent = 0
         started_at = time.monotonic()
         # Q50: this loop sends only when a frame exists, so on a camera that publishes
         # NOTHING there is no failing send to reveal that the viewer left - the handler
@@ -1640,6 +1641,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     if f.get("jpeg"):
                         await ws.send_bytes(f["jpeg"])
                         frames_sent += 1
+                        bytes_sent += len(f["jpeg"])
                     elif f.get("error") and f["error"] != reported:
                         # One text frame per distinct problem: the tile can then
                         # say "raw frames, cannot decode" instead of going black.
@@ -1661,6 +1663,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     frames_sent=frames_sent,
                     lifetime_s=time.monotonic() - started_at,
                     publishing=bridge.latest_frame(peer_id, cam) is not None,
+                    bytes_sent=bytes_sent,
                 )
                 line = close_line(peer_id=peer_id, cam=cam, verdict=verdict, suppressed=suppressed)
                 (logger.info if frames_sent else logger.warning)(line)

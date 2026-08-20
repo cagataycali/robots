@@ -26,7 +26,8 @@ class _Clock:
 class TestVerdict:
     def test_a_stream_that_worked_says_so_with_numbers(self) -> None:
         v = close_verdict(frames_sent=1800, lifetime_s=120.0, publishing=True)
-        assert "1800 frames" in v and "120s" in v
+        # Q51 gave the lifetime a decimal (a socket that lived 0.4s used to read as "0s")
+        assert "1800 frames" in v and "120.0s" in v and "15.0 fps" in v
 
     def test_the_q40_case_names_the_cause_and_not_the_symptom(self) -> None:
         # exactly the incident: accepted, nothing published, closed in milliseconds
@@ -102,3 +103,17 @@ class TestLine:
     def test_a_storm_count_is_in_the_line_itself(self) -> None:
         line = close_line(peer_id="p", cam="c", verdict="v", suppressed=4000)
         assert "+4000 more closes suppressed" in line
+
+
+# --- Q51: bytes, not just frames ------------------------------------------------
+def test_verdict_carries_the_volume_a_socket_actually_moved():
+    """A frame count cannot tell a buggy client from a link that cannot keep up."""
+    line = close_verdict(frames_sent=42, lifetime_s=9.0, publishing=True, bytes_sent=4_075_761)
+    assert "42 frames" in line and "3.9 MB" in line and "4.7 fps" in line and "0.43 MB/s" in line
+
+
+def test_volume_is_optional_and_never_divides_by_a_zero_lifetime():
+    """Callers that do not measure bytes, and the socket that closed instantly."""
+    assert close_verdict(frames_sent=3, lifetime_s=2.0, publishing=True) == "streamed 3 frames over 2.0s (1.5 fps)"
+    instant = close_verdict(frames_sent=1, lifetime_s=0.0, publishing=True, bytes_sent=1000)
+    assert "streamed 1 frames" in instant and "fps" not in instant and "MB/s" not in instant
