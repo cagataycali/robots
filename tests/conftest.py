@@ -317,12 +317,21 @@ def _never_touch_the_real_dashboard_state(request, tmp_path_factory, monkeypatch
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(home / "auth.json"))
     monkeypatch.setenv("STRANDS_DASH_RECORD_CRUMB", str(home / "record_session.json"))
     monkeypatch.setenv("DASHBOARD_SETTINGS_FILE", str(home / "settings.json"))
-    try:
-        from strands_robots.dashboard import settings as _settings
+    # The .env writer is the FIFTH store and the odd one out: its default is relative to the CURRENT
+    # DIRECTORY, so a test that saves config drops a .env into whatever tree pytest was run from — the
+    # repository root, in practice. That file is not inert: the running dashboard reads .env on start,
+    # so test-written values (model id, tokens, the trust and allowlist flags that exist to gate remote
+    # code execution) would become his live configuration at the next restart. No test redirects it today.
+    monkeypatch.setenv("DASHBOARD_ENV_FILE", str(home / ".env"))
+    for _mod, _attr in (("settings", "SETTINGS_FILE"), ("config_api", "ENV_FILE")):
+        # Both are module CONSTANTS resolved at import, so the env vars above cannot move them.
+        try:
+            import importlib
 
-        monkeypatch.setattr(_settings, "SETTINGS_FILE", home / "settings.json", raising=False)
-    except Exception:  # pragma: no cover - import shape is not this fixture's business
-        pass
+            _m = importlib.import_module(f"strands_robots.dashboard.{_mod}")
+            monkeypatch.setattr(_m, _attr, home / ("settings.json" if _attr == "SETTINGS_FILE" else ".env"), raising=False)
+        except Exception:  # pragma: no cover - import shape is not this fixture's business
+            pass
 
 
 @pytest.fixture(autouse=True)

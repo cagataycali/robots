@@ -77,3 +77,19 @@ def test_the_record_crumb_and_settings_file_are_redirected_too():
     # settings.SETTINGS_FILE is a module constant resolved at import, so the env var alone cannot move it;
     # this asserts the attribute patch, i.e. the mechanism, not just the intent.
     assert Path.home() not in settings.SETTINGS_FILE.parents
+
+
+def test_saving_config_cannot_drop_a_dotenv_into_the_repo(tmp_path, monkeypatch):
+    """The fifth store, and the odd one out: .env resolves against the CURRENT DIRECTORY.
+
+    A test that saves config would write .env into whatever tree pytest ran from — the repo root — and
+    that file is not inert: the dashboard reads .env at startup, so test values for the trust and
+    allowlist flags (the ones gating remote code execution) could become his live configuration.
+    """
+    from strands_robots.dashboard import config_api
+
+    cwd_before = sorted(Path.cwd().glob(".env"))
+    config_api.upsert_env_file({"STRANDS_TRUST_REMOTE_CODE": "0"})
+    assert sorted(Path.cwd().glob(".env")) == cwd_before, "a test just wrote .env into the working tree"
+    assert Path(config_api.ENV_FILE).exists() and "STRANDS_TRUST_REMOTE_CODE" in Path(config_api.ENV_FILE).read_text()
+    assert Path.home() not in Path(config_api.ENV_FILE).parents
