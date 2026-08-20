@@ -1073,6 +1073,11 @@ class DeviceManager:
         self._camera_failures: dict[int, str] = {}
         self._camera_memory: dict[int, dict[str, Any]] = {}
         self._camera_names_cache: list[dict[str, Any]] = []
+        # Each /api/devices call runs in its own worker thread, so probes are
+        # concurrent by default: separate locks because a name scan is cheap
+        # metadata while a probe OPENS the devices (see cameras.probe_needed).
+        self._camera_probe_lock = threading.Lock()
+        self._camera_names_lock = threading.Lock()
         self._camera_names_cache_t = 0.0
         self._port_serial_cache: dict[str, str] = {}
         self._port_serial_cache_t = 0.0
@@ -1146,15 +1151,33 @@ class DeviceManager:
         carried into the in-use row, tagged as remembered rather than fresh.
         """
         claimed = self._claimed_camera_indices()
-        now = time.time()
-        if refresh or (now - self._camera_cache_t) > self.CAMERA_CACHE_TTL_S:
-            probed, failures = scan_cameras_with_failures(skip=set(claimed))
-            self._camera_cache = probed
-            self._camera_failures = failures
-            self._camera_cache_t = now
-            for cam in probed:
-                # What we know about an index survives someone claiming it.
-                self._camera_memory[int(cam["index"])] = dict(cam)
+        requested_at = time.time()
+        # One probe at a time. A request that waited may already have its answer
+        # (a probe finished after it arrived), and starting a second probe over
+        # the first would make each see the other's open camera as unavailable.
+        if camera_facts.probe_needed(
+            refresh=refresh,
+            requested_at=requested_at,
+            cache_t=self._camera_cache_t,
+            ttl_s=self.CAMERA_CACHE_TTL_S,
+            now=requested_at,
+        ):
+            with self._camera_probe_lock:
+                now = time.time()
+                if camera_facts.probe_needed(
+                    refresh=refresh,
+                    requested_at=requested_at,
+                    cache_t=self._camera_cache_t,
+                    ttl_s=self.CAMERA_CACHE_TTL_S,
+                    now=now,
+                ):
+                    probed, failures = scan_cameras_with_failures(skip=set(claimed))
+                    self._camera_cache = probed
+                    self._camera_failures = failures
+                    self._camera_cache_t = time.time()
+                    for cam in probed:
+                        # What we know about an index survives someone claiming it.
+                        self._camera_memory[int(cam["index"])] = dict(cam)
         return camera_facts.merge_cameras(
             probed=[c for c in self._camera_cache if c["index"] not in claimed],
             claimed=claimed,
@@ -1272,10 +1295,24 @@ class DeviceManager:
 
     def _camera_names(self, refresh: bool = False) -> list[dict[str, Any]]:
         """Cached roster of camera names (see scan_camera_names on ordering)."""
-        now = time.time()
-        if refresh or (now - self._camera_names_cache_t) > self.CAMERA_CACHE_TTL_S:
-            self._camera_names_cache = scan_camera_names()
-            self._camera_names_cache_t = now
+        requested_at = time.time()
+        if camera_facts.probe_needed(
+            refresh=refresh,
+            requested_at=requested_at,
+            cache_t=self._camera_names_cache_t,
+            ttl_s=self.CAMERA_CACHE_TTL_S,
+            now=requested_at,
+        ):
+            with self._camera_names_lock:
+                if camera_facts.probe_needed(
+                    refresh=refresh,
+                    requested_at=requested_at,
+                    cache_t=self._camera_names_cache_t,
+                    ttl_s=self.CAMERA_CACHE_TTL_S,
+                    now=time.time(),
+                ):
+                    self._camera_names_cache = scan_camera_names()
+                    self._camera_names_cache_t = time.time()
         return self._camera_names_cache
 
     def preview_frame(

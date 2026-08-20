@@ -209,6 +209,41 @@ def merge_cameras(
     return rows
 
 
+def probe_needed(
+    *,
+    refresh: bool,
+    requested_at: float,
+    cache_t: float,
+    ttl_s: float,
+    now: float,
+) -> bool:
+    """Should THIS request run the camera probe, having waited for the lock?
+
+    Opening every camera index takes seconds, and each /api/devices request is
+    handed to a worker thread — so a rescan from the operator's phone, the 5s
+    poll in a browser tab and a second tab all probe CONCURRENTLY. Two probes at
+    once is not merely wasted work on this hardware:
+
+      * they open the SAME indices, so each sees the other's camera as busy and
+        records a false "unavailable" for a device that is fine (the failure
+        text is what the UI shows the operator, and it names the wrong cause);
+      * whichever finishes LAST writes the cache, so the older, more contended
+        answer can overwrite the good one and be stamped with a fresh timestamp.
+
+    So the probe is serialised, and this decides what a request that waited for
+    its turn should do. `requested_at` is when the request ARRIVED, before the
+    wait: if the probe that just finished completed after that instant, its
+    result is at least as new as the question, and re-probing would only add the
+    contention above. A refresh whose answer predates the request still probes —
+    the operator pressed rescan to learn about a cable they just plugged in.
+    """
+    if cache_t >= requested_at:
+        return False
+    if refresh:
+        return True
+    return (now - cache_t) > ttl_s
+
+
 def blocked_verdict(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
     """A one-line diagnosis for the whole machine, when there is one.
 
