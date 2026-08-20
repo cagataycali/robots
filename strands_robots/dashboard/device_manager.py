@@ -36,6 +36,7 @@ from typing import Any
 from ..utils import non_negative_whole_number_error
 from . import arm_roles
 from . import cameras as camera_facts
+from . import joint_silence
 
 logger = logging.getLogger(__name__)
 
@@ -1576,6 +1577,14 @@ class DeviceManager:
             names = requested_camera_names(m.cameras)
             if names:
                 out.setdefault(peer_id, {})["cameras_requested"] = names
+            # WHY a connected arm publishes no joints (Q80). The reason is already in this child's
+            # log ring buffer; without carrying it here the fleet view shows a healthy-looking arm
+            # with an empty joint history and the operator has to go read logs to find out that the
+            # port is contended or the board is uncalibrated - two faults with opposite remedies.
+            # MeshBridge drops this again if the arm is actually publishing joints.
+            problem = joint_silence.classify(list(m.logs))
+            if problem:
+                out.setdefault(peer_id, {})["joint_problem"] = problem
         return out
 
     def roles_by_peer(self) -> dict[str, dict[str, Any]]:

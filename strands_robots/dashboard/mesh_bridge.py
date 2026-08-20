@@ -31,7 +31,7 @@ from collections import deque
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from strands_robots.dashboard import safety_state
+from strands_robots.dashboard import joint_silence, safety_state
 
 logger = logging.getLogger(__name__)
 
@@ -956,7 +956,10 @@ class MeshBridge:
         for pid, fields in self._peer_annotations().items():
             peer = peers.get(pid)
             if isinstance(peer, dict) and isinstance(fields, dict):
-                peers[pid] = {**peer, **fields}
+                # joint_silence.merge drops a joint complaint the live state contradicts: mesh.core
+                # logs a degraded probe ONCE and never logs its recovery, so the log line outlives
+                # the fault and a log-driven badge would become permanent and start lying (Q80).
+                peers[pid] = {**peer, **joint_silence.merge(peer, fields)}
         return {
             "type": "snapshot",
             "dashboard_peer_id": self.peer_id,
