@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { findConsent, type ConsentNeed } from '../lib/consent'
 import ConsentSheet from './ConsentSheet'
-import { api, post } from '../lib/endpoints'
+import { api, post, HttpError } from '../lib/endpoints'
+import { deviceActionFailure, type DeviceAction } from '../lib/deviceOutcome'
 import CalibrationSection from './CalibrationSection'
 import CameraGallery, { type CameraInfo, type CameraName, type CameraProblem } from './CameraGallery'
 import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
@@ -72,7 +73,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   // A spawn refused by a safety guard (U18): keep the request so approving can
   // re-run exactly what was refused.
   const [consent, setConsent] = useState<ConsentNeed | null>(null)
-  const retry = useRef<{ fn: () => Promise<any>; label: string } | null>(null)
+  const retry = useRef<{ fn: () => Promise<any>; label: string; kind: DeviceAction } | null>(null)
 
   // spawn form
   const [robotName, setRobotName] = useState('')
@@ -156,9 +157,16 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
 
   if (!open) return null
 
-  const act = async (fn: () => Promise<any>, label: string) => {
+  /**
+   * Every mutating device action. `kind` is what the request DOES, so a thrown
+   * failure can say which of the two worlds it is in: a rejected fetch covers
+   * "never left this machine" and "ran, then lost the answer" (a 5xx means the
+   * handler executed), and here that difference is a process holding the servo
+   * bus, or a robot killed mid-episode. See lib/deviceOutcome.ts.
+   */
+  const act = async (fn: () => Promise<any>, label: string, kind: DeviceAction = 'spawn') => {
     setBusy(true); setStatus(null); setConsent(null)
-    retry.current = { fn, label }
+    retry.current = { fn, label, kind }
     try {
       const r = await fn()
       setStatus(r?.error ? `⚠ ${r.error}` : `${label}: ${r?.peer_id ?? 'ok'}`)
@@ -167,8 +175,17 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       setConsent(findConsent(r))
       await load()
     } catch (e: any) {
-      setStatus(`⚠ ${e?.message ?? String(e)}`)
+      const v = deviceActionFailure({
+        kind,
+        status: e instanceof HttpError ? e.status : 0,
+        message: e?.message ?? String(e),
+      })
+      setStatus(v.text)
       setConsent(findConsent(e?.body))
+      // The list is the observer that can actually answer "did it happen?" -
+      // so it is refreshed precisely when we do NOT know, which is the case the
+      // old code was the only one to skip.
+      if (v.ambiguous) await load()
     } finally {
       setBusy(false)
     }
@@ -295,7 +312,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
               need={consent}
               target="spawn"
               onCancel={() => setConsent(null)}
-              onRetry={() => { const again = retry.current; setConsent(null); if (again) void act(again.fn, again.label) }}
+              onRetry={() => { const again = retry.current; setConsent(null); if (again) void act(again.fn, again.label, again.kind) }}
             />
           )}
 
@@ -319,7 +336,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                   <span className="devactions">
                     <button className="btn ghost" onClick={() => void showLogs(m.peer_id)}>logs</button>
                     <button className="btn ghost danger" disabled={busy}
-                            onClick={() => void act(() => post('/api/devices/despawn', { peer_id: m.peer_id }), 'despawned')}>
+                            onClick={() => void act(() => post('/api/devices/despawn', { peer_id: m.peer_id }), 'despawned', 'despawn')}>
                       {m.alive ? 'despawn' : 'remove'}
                     </button>
                   </span>
