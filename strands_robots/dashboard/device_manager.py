@@ -1185,6 +1185,24 @@ def _camera_option_names() -> tuple[str, ...]:
     return tuple(sorted(f.name for f in dataclasses.fields(OpenCVCameraConfig)))
 
 
+def requested_camera_names(cameras: Any) -> list[str]:
+    """The camera names a spawn ASKED for, sorted, or [] if it asked for none.
+
+    The dashboard knows something the mesh snapshot does not: what it requested when it started a child.
+    A robot that was spawned with ``{"top": ..., "wrist": ...}`` and now announces no cameras did not
+    "publish none" — hardware_robot DROPS a camera it cannot open at connect, so those two names are the
+    difference between "a joints-only robot" and "two cameras failed to open", which is the question an
+    operator actually has (BUGS.md Q25: on this Mac macOS refused capture and both arms dropped both
+    cameras, reporting it only in a child log).
+
+    Only names are exposed. The full config carries indices and paths, which the fleet view has no use
+    for and which would then be broadcast to every websocket client.
+    """
+    if not isinstance(cameras, dict):
+        return []
+    return sorted(str(name) for name in cameras if name)
+
+
 def indices_beyond_roster(cameras: Any, roster_size: int) -> dict[str, int]:
     """Requested camera indices this machine cannot possibly have, as {name: index}.
 
@@ -1524,6 +1542,24 @@ class DeviceManager:
                 # one scan failed: a stale answer beats "no arm has a role".
                 logger.warning("serial rescan for roles failed (%r); keeping the last map", e)
         return self._port_serial_cache
+
+    def annotations_by_peer(self) -> dict[str, dict[str, Any]]:
+        """Everything the DASHBOARD knows about a managed peer that the mesh cannot say.
+
+        One hook, because MeshBridge.peer_annotations is one callable and the route and the websocket
+        must never disagree about a peer (the U2 lesson: annotate inside snapshot(), not in a route).
+        Today that is the measured arm role plus the cameras the spawn asked for.
+
+        Absent keys mean "not known", never a value: a peer with no measured role and no requested
+        cameras contributes nothing, so an unmanaged peer looks exactly like itself rather than like a
+        robot with zero cameras.
+        """
+        out: dict[str, dict[str, Any]] = {pid: dict(f) for pid, f in self.roles_by_peer().items()}
+        for peer_id, m in self.robots.items():
+            names = requested_camera_names(m.cameras)
+            if names:
+                out.setdefault(peer_id, {})["cameras_requested"] = names
+        return out
 
     def roles_by_peer(self) -> dict[str, dict[str, Any]]:
         """Measured role per MANAGED peer id, for callers polled at 1Hz.

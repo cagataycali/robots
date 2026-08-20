@@ -392,7 +392,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     # The measured leader/follower role travels with the fleet snapshot (both
     # rails), so a card can say which arm it IS instead of leaving the operator to
     # infer it from a name. Cached server-side; /api/fleet is polled ~1Hz.
-    app.state.bridge.peer_annotations = app.state.devices.roles_by_peer
+    # Role AND requested-camera names ride the same hook, so the fleet route and every websocket
+    # client see one story about a peer (see DeviceManager.annotations_by_peer).
+    app.state.bridge.peer_annotations = app.state.devices.annotations_by_peer
 
     @app.on_event("startup")
     async def _startup() -> None:
