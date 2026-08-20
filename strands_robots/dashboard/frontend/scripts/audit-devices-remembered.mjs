@@ -28,7 +28,16 @@ const doc = {
     { device: FREE, serial_number: 'SERIALFREE', likely_robot: 'so101',
       role: 'follower', role_volts: 12.6, role_source: 'measured',
       remembered: { peer_id: 'so101-arm-1', robot_name: 'so101', mode: 'real',
-                    cameras: ['top', 'wrist'], robot_id: 'arm_1', saved_at: 1787115801 } },
+                    cameras: ['top', 'wrist'], robot_id: 'arm_1', saved_at: 1787115801,
+                    // Q43: the wrist index the memory names is blocked by macOS right now. The
+                    // operator must read that HERE, not out of a child's log after the arm came up
+                    // streaming joints only.
+                    camera_health: { ok: false, cameras: [
+                      { name: 'top', index: 2, state: 'ready', reason: 'opened just now' },
+                      { name: 'wrist', index: 1, state: 'blocked',
+                        reason: 'macOS has not granted camera access to this process',
+                        remedy: 'start the dashboard from a terminal and allow access' },
+                    ], text: 'the saved config names wrist (index 1), which is not available right now: macOS has not granted camera access to this process. Spawning anyway works - the arm drops the camera it cannot open and comes up streaming joints only, which looks healthy and records episodes with no pictures in them' } } },
     // The REAL profile on cagatay's desk: measured 12.6V = follower, saved id says "leader_arm".
     { device: BUSY, serial_number: 'SERIALBUSY', role: 'follower', role_volts: 12.6, role_source: 'measured',
       remembered: { peer_id: 'so101-arm-2', robot_name: 'so101', mode: 'real', cameras: [], robot_id: 'leader_arm' } },
@@ -83,14 +92,26 @@ if (!(await freeRow.locator('.remembered').count())) {
   for (const needle of ['so101-arm-1', 'so101', 'real', 'top + wrist', 'arm_1']) {
     if (!text.includes(needle)) failures.push(`the memory line omits "${needle}"`)
   }
-  // Camera INDICES must not appear: macOS renumbers them, so they would be confidently stale.
-  if (/index|\b2\b/.test(text.replace('arm_1', ''))) failures.push(`the memory line prints camera indices: ${text}`)
+  // Camera INDICES must not appear in the SUMMARY: the saved ones are what macOS renumbers, so
+  // printing them as part of "what this board was" is confidently stale. The Q43 notice after the ⚠
+  // is allowed to name an index, because that judgment was made against the CURRENT scan — a fresh
+  // fact about now, not a remembered one. This distinction is the whole reason the two are separate
+  // strings, and the first version of this audit conflated them.
+  const summary = text.split('⚠')[0]
+  if (/index|\b2\b/.test(summary.replace('arm_1', ''))) failures.push(`the memory summary prints camera indices: ${summary}`)
   const btn = freeRow.locator('.remembered button')
   const label = await btn.innerText()
   if (!label.includes('so101-arm-1')) failures.push(`the button does not name the peer it will start: "${label}"`)
+  // A neutral calibration id must not raise a role warning (that warning is asserted on the busy
+  // row below); only the camera notice belongs on this row.
+  if (/name is what is wrong/.test(text)) failures.push(`a neutral calibration id raised a role warning: ${text.slice(0, 160)}`)
   if (await btn.isDisabled()) failures.push('the free board\'s respawn button is disabled')
-  // A neutral id must stay quiet: a warning that is always on is not a warning.
-  if (/⚠/.test(text)) failures.push(`a neutral calibration id raised a warning: ${text.slice(0, 160)}`)
+  // Q43: the camera trouble is stated where the decision is made, with its consequence and remedy.
+  if (!/wrist \(index 1\)/.test(text)) failures.push('the blocked camera is not named on the row')
+  if (!/no pictures in them/.test(text)) failures.push('the row states the camera problem without its consequence')
+  if (!/start the dashboard from a terminal/.test(text)) failures.push('the remedy never reaches the operator')
+  // ...and it must NOT become a gate: dropping a camera is survivable, so the spawn stays offered.
+  if (await btn.isDisabled()) failures.push('THE POINT: a camera warning disabled the spawn button — a warning, not a refusal')
 }
 
 // ---- THE DANGEROUS ONE: a bus something already drives must not be spawnable again
@@ -143,4 +164,4 @@ if (failures.length) {
   console.error('FAIL\n' + failures.map(f => ` - ${f}`).join('\n'))
   process.exit(1)
 }
-console.log('devices remembered: the memory names peer/family/mode/cameras (names, not indices), the button names the peer it starts, a busy bus refuses, an unconfigured board shows nothing, and the click sends only the port')
+console.log('devices remembered: summary names peer/family/mode/camera NAMES; a blocked saved index is stated with its consequence + remedy and does NOT gate the spawn; a contradicting calibration id is called out; a busy bus refuses; an unconfigured board shows nothing; the click sends only the port')

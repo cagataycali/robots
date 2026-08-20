@@ -39,6 +39,11 @@ interface SerialPort {
     cameras: string[]
     robot_id?: string
     saved_at?: number | null
+    /**
+     * Q43: present only when a remembered camera index is NOT usable right now. The spawn still
+     * works — the arm drops what it cannot open — so this is a warning, never a gate.
+     */
+    camera_health?: { ok: boolean; text: string; cameras: { name: string; index?: number; state: string; reason?: string; remedy?: string }[] } | null
   } | null
 }
 
@@ -645,6 +650,18 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                           last spawned as <b>{mem.summary}</b>
                           {mem.calibrationId ? ` · calibration id ${mem.calibrationId}` : ''}
                           {mem.warning && <span className="warn small"> ⚠ {mem.warning}</span>}
+                          {/* Q43: the saved camera indices are the least stable part of the memory.
+                              Said HERE, next to the button, because the alternative is learning it
+                              from a child's log after an arm came up streaming joints only — which
+                              looks healthy and records episodes with no pictures in them. The button
+                              stays enabled: spawning is still the right move, just informed. */}
+                          {p.remembered.camera_health?.text &&
+                            <span className="warn small"> ⚠ {p.remembered.camera_health.text}</span>}
+                          {(p.remembered.camera_health?.cameras ?? [])
+                            .filter(c => c.remedy && c.state !== 'ready' && c.state !== 'unchecked')
+                            .map(c => (
+                              <span key={c.name} className="hint small"> {c.name}: {c.remedy}</span>
+                            ))}
                         </span>
                         <button className="btn ghost" disabled={acting || claimedPorts.has(p.device)}
                                 title={claimedPorts.has(p.device)
