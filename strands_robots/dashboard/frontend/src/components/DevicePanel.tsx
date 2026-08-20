@@ -333,7 +333,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
             <button className="btn ghost" onClick={() => void rescan()} disabled={busy || scanning}>
               {scanning ? 'scanning…' : 'rescan'}
             </button>
-            <button className="btn ghost" onClick={onClose}>✕</button>
+            <button className="btn ghost" onClick={onClose} aria-label="close devices" title="Escape">✕</button>
           </div>
         </header>
 

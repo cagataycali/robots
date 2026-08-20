@@ -105,7 +105,7 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
               cameras
             </button>
           )}
-          <button className="btn ghost" onClick={onClose} title="Escape">✕</button>
+          <button className="btn ghost" onClick={onClose} aria-label="close this robot" title="Escape">✕</button>
         </header>
 
         {offline && (

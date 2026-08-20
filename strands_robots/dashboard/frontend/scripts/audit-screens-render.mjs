@@ -89,21 +89,41 @@ if (await search.count()) {
 // Colour is not a state announcement, so a toggle that carries the marker class must also carry
 // aria-pressed / aria-selected / aria-current.
 const arialess = []
-for (const [nav, extra] of [[null, null], ['settings', null], [null, 'peername'], ['activity', null]]) {
+const iconOnly = []
+const ICON_SCAN = () => page.evaluate(() => {
+  const ICON_ONLY = /^[\p{Extended_Pictographic}\p{So}\p{Sk}\p{Sm}\s▶■✕▴▾↑↓⚙⚒☰⏺🛑🎙📷⚠?·+×-]*$/u
+  return [...document.querySelectorAll('button')]
+    .filter(b => ICON_ONLY.test((b.innerText || '').trim()))
+    .filter(b => !b.getAttribute('aria-label') && !b.title && !b.getAttribute('aria-labelledby'))
+    .map(b => `${b.className} "${(b.innerText || '').trim().slice(0, 8)}"`)
+})
+for (const [nav, extra] of [[null, null], ['settings', null], [null, 'peername'],
+                            ['activity', null], ['devices', null], ['record', null],
+                            ['train', null], ['help', null]]) {
   await escape()
   if (nav) await page.locator(`button.chip:has-text("${nav}")`).first().click().catch(() => {})
   if (extra) await page.locator(`button.${extra}`).first().click().catch(() => {})
   await page.waitForTimeout(1800)
+  iconOnly.push(...await ICON_SCAN())
   arialess.push(...await page.evaluate(() => [...document.querySelectorAll('button')]
     .filter(b => /(^|\s)(on|active|selected)(\s|$)/.test(b.className))
     .filter(b => !b.getAttribute('aria-pressed') && !b.getAttribute('aria-selected') && !b.getAttribute('aria-current'))
     .map(b => `${b.className} "${b.innerText.trim().slice(0, 20)}"`)))
 }
+// Second a11y rule, same family: a button whose whole label is an ICON ("↑", "✕", "⚙") with no
+// aria-label or title is announced as a bare "button". The agent dock's send arrow and four of the
+// five sheet-closing ✕s were exactly that, while HelpSheet's ✕ had been labelled all along — so it
+// was drift, not a decision. Scanned per screen, because a sheet's buttons only exist while it is open.
 const uniqueArialess = [...new Set(arialess)]
 if (uniqueArialess.length) {
   for (const a of uniqueArialess) { failures.push(`selected-but-silent: ${a}`); console.log(`  A11Y  selected state is CSS-only: ${a}`) }
 } else {
   console.log('  ok    every selected toggle announces itself (aria-pressed/selected/current)')
+}
+if (iconOnly.length) {
+  for (const i of [...new Set(iconOnly)]) { failures.push(`icon-only, unnamed: ${i}`); console.log(`  A11Y  icon button with no accessible name: ${i}`) }
+} else {
+  console.log('  ok    every icon-only button has an accessible name')
 }
 
 await browser.close()

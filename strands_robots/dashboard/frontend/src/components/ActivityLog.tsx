@@ -67,7 +67,7 @@ export default function ActivityLog({ live, open, onClose }: {
       <aside className="drawer wide" onClick={e => e.stopPropagation()}>
         <header className="drawer-head">
           <h2>Activity</h2>
-          <button className="btn ghost" onClick={onClose}>✕</button>
+          <button className="btn ghost" onClick={onClose} aria-label="close the activity log" title="Escape">✕</button>
         </header>
         <nav className="tabs">
           <button className={filter === 'all' ? 'tab on' : 'tab'} aria-pressed={filter === 'all'}

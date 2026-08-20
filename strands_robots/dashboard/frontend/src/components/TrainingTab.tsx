@@ -303,7 +303,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     <div className="train-sheet" role="dialog" aria-label="Training">
       <div className="train-head">
         <h2>🎓 Training</h2>
-        <button className="dock-min" onClick={onClose}>✕</button>
+        <button className="dock-min" onClick={onClose} aria-label="close training" title="Escape">✕</button>
       </div>
 
       <div className="train-form">

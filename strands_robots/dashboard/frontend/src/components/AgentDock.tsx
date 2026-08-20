@@ -233,7 +233,11 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
           onKeyDown={e => { if (e.key === 'Enter') void send() }}
           disabled={busy}
         />
-        <button className="dock-send" onClick={() => void send()} disabled={busy || !input.trim()}>↑</button>
+        {/* "↑" is not a name. HelpSheet's ✕ and this dock's own hide/show button already carry
+            one; the send button did not, so a screen reader reached the end of the agent's input
+            row and announced an unlabelled "button". */}
+        <button className="dock-send" onClick={() => void send()} disabled={busy || !input.trim()}
+                aria-label="send to the agent" title="send to the agent">↑</button>
         <button className="dock-min" onClick={() => setOpen(o => !o)}
                 aria-label={open ? 'hide the conversation' : 'show the conversation'}
                 title={open ? 'hide the conversation' : 'show the conversation'}>

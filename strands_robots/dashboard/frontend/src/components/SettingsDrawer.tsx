@@ -172,7 +172,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
       <aside className="drawer" onClick={e => e.stopPropagation()}>
         <header className="drawer-head">
           <h2>Settings</h2>
-          <button className="btn ghost" onClick={onClose}>✕</button>
+          <button className="btn ghost" onClick={onClose} aria-label="close settings" title="Escape">✕</button>
         </header>
 
         <div className="settings-search">
