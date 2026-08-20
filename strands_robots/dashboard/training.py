@@ -188,6 +188,69 @@ def list_trainers() -> list[str]:
     return list(_lt())
 
 
+#: Trainer modules whose spec this form cannot build. Q48: the provider dropdown
+#: offered `ppo` and `fast_sac`, and picking either one made validate answer
+#: "ppo requires an RLTrainSpec, got TrainSpec" - a sentence about internal
+#: classes, on a path that can NEVER succeed no matter what the operator types,
+#: because the form builds a supervised TrainSpec by construction. An option that
+#: cannot work is worse than an absent one: it costs a dataset choice, a click and
+#: a bewildering error before it refuses.
+_RL_TRAINER_MODULE_PREFIX = "strands_robots.training.rl"
+
+#: Phrased WITHOUT a leading article and in the plural on purpose: the form joins these
+#: reasons after a list of provider names, and "fast_sac and ppo are a reinforcement-learning
+#: trainer" is the sentence that comes out of the obvious singular wording.
+_RL_REASON = (
+    "reinforcement-learning trainers learn from a live environment, not from a recorded "
+    "dataset, so they are driven from a script (RLTrainSpec) rather than this form"
+)
+
+
+def _declared_trainer_module(provider: str) -> str:
+    """Where a provider's trainer class comes from, WITHOUT importing it.
+
+    Two declaration sites, because the SDK has two: registry/policies.json names the
+    module as data, while ppo/fast_sac are registered at runtime with a loader lambda.
+    A lambda's module is only where register_trainer was called (strands_robots.training
+    for both), so that tells us nothing - but the module it IMPORTS is a constant in the
+    loader's code object, which is readable without executing it. That matters: importing
+    a trainer class pulls torch (and for GR00T/Cosmos3, much more) into a route that runs
+    on every page load.
+    """
+    from strands_robots.registry.policies import get_policy_provider
+
+    cfg = get_policy_provider(provider) or {}
+    module = str((cfg.get("trainer") or {}).get("module") or "")
+    if module:
+        return module
+    from strands_robots.training import factory
+
+    loader = factory._runtime_registry.get(provider)
+    code = getattr(loader, "__code__", None)
+    names = tuple(getattr(code, "co_names", ()) or ()) + tuple(getattr(code, "co_consts", ()) or ())
+    for name in names:
+        if isinstance(name, str) and name.startswith("strands_robots."):
+            return name
+    return ""
+
+
+def form_unsupported() -> dict[str, str]:
+    """Providers that cannot be trained FROM THIS FORM, mapped to why.
+
+    Unknown providers are deliberately absent: one we cannot classify is offered as
+    usual, since guessing "unsupported" would hide a backend that works.
+    """
+    out: dict[str, str] = {}
+    for provider in list_trainers():
+        try:
+            module = _declared_trainer_module(provider)
+        except Exception:  # a malformed registry entry must not blank the whole form
+            continue
+        if module.startswith(_RL_TRAINER_MODULE_PREFIX):
+            out[provider] = _RL_REASON
+    return out
+
+
 #: The full set of fields a training spec accepts. submit() and validate()
 #: share it so the two can never drift: a field the form sends either reaches
 #: train_policy or is refused BY NAME - silently dropping a typo'd "step"

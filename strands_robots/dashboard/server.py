@@ -737,7 +737,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def training_trainers() -> dict[str, Any]:
         from strands_robots.dashboard import training
 
-        return {"trainers": await asyncio.to_thread(training.list_trainers)}
+        # `trainers` keeps its shape (a list of names) forever: this app ships as a
+        # PWA and a cached older bundle renders that list directly - changing it to
+        # objects crashes those tabs. Q48's extra knowledge therefore arrives as a
+        # SEPARATE key, which an old bundle ignores.
+        return {
+            "trainers": await asyncio.to_thread(training.list_trainers),
+            "unsupported": await asyncio.to_thread(training.form_unsupported),
+        }
 
     @app.get("/api/training/datasets")
     async def training_datasets(q: str = "", hub: bool = True, limit: int = 12) -> dict[str, Any]:

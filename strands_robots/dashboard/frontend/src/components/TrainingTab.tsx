@@ -45,6 +45,14 @@ function guessPolicyType(baseModel: string | undefined): string | null {
 
 export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [trainers, setTrainers] = useState<string[]>([])
+  /**
+   * Q48: providers this FORM cannot submit, mapped to why. `ppo` and `fast_sac` need an
+   * RLTrainSpec built in a script — picking one here spent a dataset choice and a click to
+   * earn "ppo requires an RLTrainSpec, got TrainSpec", a sentence about internal classes on
+   * a path that could never succeed. Server-derived, never guessed here: a provider the
+   * backend cannot classify stays fully selectable.
+   */
+  const [unsupported, setUnsupported] = useState<Record<string, string>>({})
   /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLDivElement | null>(null)
   useDialogFocus(sheetRef)
@@ -91,6 +99,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         api('/api/training/jobs'),
       ])
       setTrainers(t.trainers ?? [])
+      setUnsupported(t.unsupported ?? {})
       // Newest first from the DATA, not from the file's shape: the next effect polls
       // only the first five, so an out-of-order ledger used to give status to the
       // finished runs and none to the one just started.
@@ -394,9 +403,26 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <p className={`train-story${datasetPicked ? '' : ' empty'}`}>{story}</p>
         <label className="field"><span>provider</span>
           <select value={form.provider} onChange={e => set('provider', e.target.value)} disabled={busy}>
-            {trainers.map(t => <option key={t}>{t}</option>)}
+            {/* Still LISTED, so the capability is not hidden and nobody hunts for a
+                provider they know exists — but not selectable, with the reason attached
+                rather than delivered as an error after the fact. */}
+            {trainers.map(t => (
+              <option key={t} disabled={t in unsupported}
+                      title={unsupported[t] ?? undefined}>
+                {t}{t in unsupported ? ' — not from this form' : ''}
+              </option>
+            ))}
           </select>
         </label>
+        {/* One line per DISTINCT reason, names grouped: two providers refused for the same
+            reason must not print the same long sentence twice, and two refused for different
+            reasons must not be merged under one. */}
+        {[...new Set(Object.values(unsupported))].map(reason => (
+          <p className="hint" key={reason}>
+            {Object.keys(unsupported).filter(k => unsupported[k] === reason).sort().join(' and ')}
+            {' cannot be trained from here: '}{reason}.
+          </p>
+        ))}
         <label className="field"><span>dataset</span>
           <input value={dsQuery} onChange={e => setDsQuery(e.target.value)} disabled={busy}
                  placeholder="search this machine and the Hub — e.g. pusht, so101, your org" />
