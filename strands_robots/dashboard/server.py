@@ -814,6 +814,20 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
         return await asyncio.to_thread(training.validate, body)
 
+    @app.get("/api/training/output-dir")
+    async def training_output_dir(path: str = "") -> dict[str, Any]:
+        """Q58: what would a run DO to this directory — before the operator presses train.
+
+        A GET so the form can ask while typing. Read-only: it lists and classifies, it never
+        creates or clears anything (the delete itself lives in the trainer and is gated in
+        training.submit by confirm_clear).
+        """
+        from strands_robots.dashboard import training
+
+        if not path.strip():
+            raise HTTPException(422, "path is required")
+        return await asyncio.to_thread(training.output_dir_verdict, path.strip())
+
     @app.post("/api/training/submit")
     async def training_submit(body: dict[str, Any]) -> dict[str, Any]:
         """Launch a training job (train_policy validates the spec first)."""

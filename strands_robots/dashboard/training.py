@@ -496,11 +496,41 @@ def _hf_auth_state() -> dict[str, Any]:
         return {"authenticated": False, "user": None, "detail": f"auth state unavailable ({type(exc).__name__})"}
 
 
+def output_dir_verdict(path: str) -> dict[str, Any]:
+    """What a run would do to this directory (Q58) - see dashboard.output_dir_check."""
+    from strands_robots.dashboard.output_dir_check import (
+        default_checkpoint_probe,
+        inspect_output_dir,
+    )
+
+    return inspect_output_dir(path, has_checkpoint=default_checkpoint_probe)
+
+
 def submit(body: dict[str, Any]) -> dict[str, Any]:
-    """Validate + launch a training job; persist it for the tab."""
+    """Validate + launch a training job; persist it for the tab.
+
+    Q58: the trainer's fresh-start hygiene ``shutil.rmtree``s a pre-existing ``output_dir`` that
+    holds no resumable checkpoint. That is a silent, unrecoverable delete of whatever the operator
+    typed, so it is gated here: an occupied directory refuses the launch and says what would be
+    lost, and only ``confirm_clear: true`` in the body lets it through. Same continuable-refusal
+    posture as this dashboard's other safety gates - the run is still possible, it just has to be
+    asked for deliberately.
+    """
+    confirm_clear = bool(body.pop("confirm_clear", False))
     kwargs, err = _spec_kwargs(body)
     if err is not None:
         return err
+    if not confirm_clear and kwargs and kwargs.get("output_dir"):
+        verdict = output_dir_verdict(str(kwargs["output_dir"]))
+        if verdict.get("needs_confirm"):
+            return {
+                "status": "error",
+                "data": {"output_dir_verdict": verdict, "needs_confirm": True},
+                "text": (
+                    f"{verdict['path']} {verdict['detail']}. Send confirm_clear to train here "
+                    "anyway, or point output_dir somewhere new"
+                ),
+            }
     from strands_robots.tools.train_policy import train_policy
 
     res = _tool_result(train_policy(action="train", **kwargs))
