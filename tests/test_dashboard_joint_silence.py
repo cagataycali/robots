@@ -195,3 +195,14 @@ def test_a_child_older_than_the_degraded_field_keeps_its_log_verdict() -> None:
     out = joint_silence.merge({"state": {"task": {"status": "idle"}}},
                               {"joint_problem": {"kind": "uncalibrated"}})
     assert out["joint_problem"] == {"kind": "uncalibrated"}
+
+
+def test_a_never_ran_probe_is_not_told_to_read_the_log() -> None:
+    # The log is EMPTY in this case -- nothing failed. Sending the operator there is the one wrong
+    # answer, and it is what the generic fallback would have said.
+    got = joint_silence.classify_state({"degraded": {"hw_joints": {
+        "reason": "the joint probe did not run: this peer's hardware object (SO101Follower) has no "
+                  "get_observation(), so positions cannot be read", "failures": 4}}})
+    assert got["kind"] == "not_probed"
+    assert "nothing in the log to find" in got["remedy"]
+    assert "devices > logs" not in got["remedy"]

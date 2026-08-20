@@ -441,12 +441,19 @@ def degraded_report(records: Mapping[str, dict[str, Any]], now: float) -> dict[s
     out: dict[str, dict[str, Any]] = {}
     for category, rec in records.items():
         since = float(rec.get("since", now))
-        out[category] = {
+        entry: dict[str, Any] = {
             "reason": str(rec.get("reason", "")),
             "failures": int(rec.get("failures", 1)),
             "since": since,
             "for_seconds": max(0.0, round(now - since, 1)),
         }
+        # Present ONLY for a probe that never ran: "nothing was thrown" is a different claim from
+        # "an exception was", and a consumer must not have to parse prose to tell them apart. Absent
+        # rather than False, so an older reader sees no new field and a newer one is not told
+        # something the publisher never said.
+        if rec.get("skipped"):
+            entry["skipped"] = True
+        out[category] = entry
     return out
 
 
@@ -1252,6 +1259,24 @@ class Mesh(SensorLoopsMixin):
             # reporting the old one (a bus that recovers into "no calibration" is a different fault).
             rec["reason"] = summarise_probe_error(exc)
 
+    def _record_probe_skip(self, category: str, reason: str) -> None:
+        """Publish a probe that never RAN, with the precondition that stopped it.
+
+        A failure has an exception to quote; a skip has only a fact about how this peer is built. It
+        rides the same ``degraded`` channel because the operator's question is identical ("why are
+        there no joints"), and the reason is a plain sentence rather than ``Type: message`` so nobody
+        reads it as an exception that was thrown.
+        """
+        records = getattr(self, "_read_state_degraded", None)
+        if records is None:
+            records = {}
+            self._read_state_degraded = records
+        rec = records.get(category)
+        if rec is None or rec.get("reason") != reason:
+            records[category] = {"reason": reason, "failures": 1, "since": time.time(), "skipped": True}
+        else:
+            rec["failures"] = int(rec.get("failures", 1)) + 1
+
     def _clear_probe_failure(self, category: str) -> None:
         """This probe worked, so it must stop being reported as degraded.
 
@@ -1273,6 +1298,24 @@ class Mesh(SensorLoopsMixin):
 
         try:
             inner = getattr(r, "robot", None)
+            # WHY a skip is recorded and not merely skipped: on 2026-08-20 both of cagatay's arms
+            # published connected:true, held their serial ports, logged NO probe failure, and sent no
+            # joints for hours. Nothing was failing -- the branch below was never ENTERED, so there
+            # was no exception to log, nothing for the log-reading diagnosis to find, and no degraded
+            # entry either. Silence with no error is the hardest state to debug and the cheapest to
+            # explain, so each precondition now names itself.
+            skip: str | None = None
+            if inner is None:
+                # A sim world or a gateway legitimately has no hardware object: stay silent, or every
+                # such peer would grow a permanent complaint about not being an arm.
+                pass
+            elif not hasattr(inner, "get_observation"):
+                skip = (
+                    "the joint probe did not run: this peer's hardware object "
+                    f"({type(inner).__name__}) has no get_observation(), so positions cannot be read"
+                )
+            elif not getattr(inner, "is_connected", False):
+                skip = "the joint probe did not run: the hardware object reports is_connected false"
             if inner is not None and hasattr(inner, "get_observation") and getattr(inner, "is_connected", False):
                 # Through the device's bus lock: this probe shares the wire with
                 # the camera publisher, the sensors probe and teleop, and two
@@ -1297,6 +1340,17 @@ class Mesh(SensorLoopsMixin):
                 if joints:
                     snapshot["joints"] = joints
                     self._clear_probe_failure("hw_joints")
+                else:
+                    # The read SUCCEEDED and carried no scalar joint value. Counting what came back
+                    # separates "the arm answered with nothing" from "we never asked".
+                    skip = (
+                        "the joint probe did not run: the observation carried no scalar joint value "
+                        f"({len(obs)} keys came back, of which {len(cam_keys)} are configured cameras)"
+                    )
+            if skip is not None:
+                self._record_probe_skip("hw_joints", skip)
+            elif "joints" not in snapshot and inner is not None:
+                self._clear_probe_failure("hw_joints")
         except Exception as exc:
             self._warn_read_state_once("hw_joints", exc)
             self._record_probe_failure("hw_joints", exc)

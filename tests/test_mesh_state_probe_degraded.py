@@ -152,3 +152,69 @@ def test_a_new_cause_replaces_the_old_reason(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(mesh_core, "read_joints", lambda inner: (_ for _ in ()).throw(RuntimeError(LEADER_REPR)))
     snap = m._read_state()
     assert snap["degraded"]["hw_joints"]["reason"].startswith("RuntimeError:")
+
+
+# --- silence with NO error: the state both of cagatay's arms were actually in --------------------
+
+
+class _NoObservation:
+    """A hardware object that is connected but cannot be asked for positions."""
+
+    def __init__(self) -> None:
+        self.robot = self
+        self.is_connected = True
+        self.config = type("C", (), {"cameras": {}})()
+
+
+class _Disconnected(_Arm):
+    def __init__(self) -> None:
+        super().__init__()
+        self.is_connected = False
+
+
+def test_a_probe_that_never_ran_says_which_precondition_stopped_it() -> None:
+    # 2026-08-20: both arms published connected:true, held their ports, logged NOTHING, and sent no
+    # joints for hours -- because this branch was never entered. No exception means no log line and
+    # nothing for the log-reading diagnosis to find, so the skip must speak for itself.
+    snap = _mesh(_NoObservation())._read_state()
+    reason = snap["degraded"]["hw_joints"]["reason"]
+    assert "did not run" in reason and "get_observation" in reason
+    assert "_NoObservation" in reason, "name the object, so the operator can see what was spawned"
+    assert snap["degraded"]["hw_joints"]["skipped"] is True
+
+
+def test_a_disconnected_hardware_object_is_named_as_such() -> None:
+    snap = _mesh(_Disconnected())._read_state()
+    assert "is_connected false" in snap["degraded"]["hw_joints"]["reason"]
+
+
+def test_an_observation_with_no_scalar_joint_counts_what_came_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    m = _mesh(_Arm())
+    monkeypatch.setattr(mesh_core, "read_joints", lambda inner: {})
+    reason = m._read_state()["degraded"]["hw_joints"]["reason"]
+    assert "0 keys came back" in reason, "'the arm answered with nothing' is not 'we never asked'"
+
+
+def test_a_peer_with_no_hardware_object_stays_silent() -> None:
+    # A sim world or a gateway is not a broken arm; complaining would give every such peer a
+    # permanent badge for not being hardware.
+    class Bare:
+        pass
+
+    assert _mesh(Bare())._read_state() is None
+
+
+def test_a_skip_that_resolves_clears_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    arm = _Arm()
+    m = _mesh(arm)
+    monkeypatch.setattr(mesh_core, "read_joints", lambda inner: {})
+    assert "degraded" in m._read_state()
+    monkeypatch.setattr(mesh_core, "read_joints", lambda inner: {"shoulder_pan.pos": 4.0})
+    assert "degraded" not in m._read_state()
+
+
+def test_a_thrown_failure_carries_no_skipped_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Absent, not False: a consumer must not be told something the publisher never said.
+    m = _mesh(_Arm())
+    monkeypatch.setattr(mesh_core, "read_joints", lambda inner: (_ for _ in ()).throw(RuntimeError(LEADER_REPR)))
+    assert "skipped" not in m._read_state()["degraded"]["hw_joints"]

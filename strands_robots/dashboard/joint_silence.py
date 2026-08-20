@@ -39,6 +39,15 @@ _PROBE_LINE = re.compile(r"state probe '?\"?hw_joints'?\"?.*?(failed|still faili
 #: Ordered: the FIRST match wins, so the specific readings are tried before the generic one.
 _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
     (
+        "not_probed",
+        "joint probe did not run",
+        "this peer never attempted a joint read",
+        "Nothing failed on the bus, so there is nothing in the log to find: the arm was built "
+        "without a readable hardware object, or it reports itself disconnected. Respawn it from "
+        "devices (check the port and that it is not a sim peer) - recalibrating and replugging "
+        "change nothing here.",
+    ),
+    (
         "port_in_use",
         "Port is in use!",
         "another process is holding this arm's serial port",
