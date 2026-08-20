@@ -626,7 +626,11 @@ export default function RecordPanel(
                   <input type="checkbox" checked={uploadForce}
                     onChange={e => setUploadForce(e.target.checked)} />
                   <span>
-                    I can write to <code>{pre.destination}</code> — publish there anyway
+                    {/* Q78: two different unknowns share this tick, and consenting to "I have write
+                        access" is not consenting to "replace the take already published there". */}
+                    {pre.state === 'destination_exists'
+                      ? <>Replace the dataset already published at <code>{pre.destination}</code> with this session</>
+                      : <>I can write to <code>{pre.destination}</code> — publish there anyway</>}
                   </span>
                 </label>
               )}

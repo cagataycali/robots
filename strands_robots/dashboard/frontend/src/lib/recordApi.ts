@@ -111,7 +111,10 @@ export interface UploadPreflight {
   /** false = ticking upload can only produce an end-of-session failure */
   ok: boolean
   state: 'ready' | 'no_credential' | 'credential_rejected' | 'foreign_namespace' | 'no_dataset'
-  /** the one refusal that is a genuine unknown (an org you may or may not belong to) */
+    /** Q78: the destination repo already exists on the Hub — a push uploads INTO it. */
+    | 'destination_exists'
+  /** a refusal that is the operator's call, not a certainty (an org you may belong to; a
+   *  published take only they know they want replaced) */
   needs_force: boolean
   user: string | null
   /** the repo id the push would really create, e.g. "me/so101-pick" */

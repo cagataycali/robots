@@ -91,6 +91,35 @@ def _target_facts(dataset: str) -> dict[str, Any]:
         return {}
 
 
+def _hub_facts(repo_id: str | None) -> dict[str, Any]:
+    """Q78: what is already published at this destination, or {} when it cannot be established.
+
+    Read DEFENSIVELY and never raise: no network, no token, a 5xx from the Hub, an unexpected
+    payload - all mean "no evidence", which is exactly how the check behaved before it existed. A
+    Hub lookup must not be able to stop a recording from being published.
+    """
+    name = (repo_id or "").strip().strip("/")
+    if not name or "/" not in name:
+        return {}
+    try:
+        from huggingface_hub import HfApi
+
+        api = HfApi()
+        if not api.repo_exists(repo_id=name, repo_type="dataset"):
+            return {"exists": False}
+        episodes = None
+        try:
+            info = api.dataset_info(repo_id=name)
+            card = getattr(info, "cardData", None) or {}
+            raw = card.get("total_episodes") if isinstance(card, dict) else None
+            episodes = _as_int(raw)
+        except Exception:  # noqa: BLE001 - the count is a nicety, existence is the fact
+            episodes = None
+        return {"exists": True, "episodes": episodes}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _default_recorder_factory(backend: Any) -> Callable[..., Any]:
     def make(*, repo_id: str, fps: int, task: str) -> Any:
         from strands_robots.dataset_recorder import DatasetRecorder
@@ -384,11 +413,23 @@ def build_router(
         from strands_robots.dashboard.checkpoints import hf_auth_state
         from strands_robots.dashboard.upload_preflight import upload_preflight
 
+        from strands_robots.dashboard.upload_preflight import destination
+
         current = controller.session() or {}
         dataset = current.get("dataset") or current.get("repo_id")
-        return await asyncio.to_thread(
-            lambda: upload_preflight(dataset=dataset, auth=hf_auth_state())
-        )
+
+        def judge() -> dict[str, Any]:
+            auth = hf_auth_state()
+            user = auth.get("user") if isinstance(auth, dict) else None
+            # Q78: only ask the Hub once the destination is knowable AND the credential is good -
+            # an unauthenticated probe answers about public repos only, and the auth refusal is the
+            # one that matters first anyway.
+            existing = None
+            if isinstance(auth, dict) and auth.get("authenticated") is True:
+                existing = _hub_facts(destination(dataset or "", user if isinstance(user, str) else None))
+            return upload_preflight(dataset=dataset, auth=auth, existing=existing)
+
+        return await asyncio.to_thread(judge)
 
     @r.post("/open")
     async def open_session(body: dict[str, Any]) -> dict[str, Any]:

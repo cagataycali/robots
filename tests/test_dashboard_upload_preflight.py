@@ -119,3 +119,99 @@ def test_the_route_survives_a_session_with_no_dataset(monkeypatch):
     # No dataset AND no token: report the certain one first (see the pure test above).
     assert body["ok"] is False
     assert body["state"] == "no_dataset"
+
+
+# --- Q78: the destination already exists on the Hub -------------------------------------------
+#
+# push_to_hub does not create a second repo and does not refuse — it uploads INTO the existing one.
+# Recording refuses to reuse a local dataset dir (Q39), so what is being finished is always a NEW,
+# shorter dataset: publishing rewrites meta over a longer published history while the old episode
+# files stay behind. Nothing warned about that anywhere.
+
+Q78_AUTHED = {"authenticated": True, "user": "cagatay"}
+
+
+def test_existing_destination_refuses_but_stays_the_operators_call():
+    r = upload_preflight(
+        dataset="so101-cubes", auth=Q78_AUTHED, existing={"exists": True, "episodes": 40}
+    )
+    assert r["ok"] is False
+    assert r["state"] == "destination_exists"
+    # Replacing their own earlier take deliberately is legitimate — only they know if that is this.
+    assert r["needs_force"] is True
+    assert r["destination"] == "cagatay/so101-cubes"
+    assert "40 episode" in r["detail"]
+    # The consequence, not just the fact: it is an upload INTO that repo.
+    assert "INTO that repo" in r["detail"]
+
+
+def test_existing_destination_without_a_count_still_refuses():
+    r = upload_preflight(dataset="so101-cubes", auth=Q78_AUTHED, existing={"exists": True})
+    assert r["state"] == "destination_exists"
+    assert "episode(s)" not in r["detail"]
+
+
+def test_a_free_destination_is_unaffected():
+    for existing in ({"exists": False}, {}, None):
+        r = upload_preflight(dataset="so101-cubes", auth=Q78_AUTHED, existing=existing)
+        assert r["ok"] is True, existing
+        assert r["state"] == "ready"
+
+
+def test_no_evidence_is_treated_as_nothing_there():
+    # A Hub lookup that failed (no network, 5xx) must never block a publish: silence keeps the old
+    # behaviour exactly.
+    assert upload_preflight(dataset="x", auth=Q78_AUTHED, existing={})["ok"] is True
+
+
+def test_auth_refusals_still_outrank_an_existing_destination():
+    # The credential failure is certain and is fixed differently; it must be the sentence shown.
+    r = upload_preflight(
+        dataset="so101-cubes", auth={"authenticated": False}, existing={"exists": True}
+    )
+    assert r["state"] in ("no_credential", "credential_rejected")
+    r2 = upload_preflight(
+        dataset="someorg/cubes", auth=Q78_AUTHED, existing={"exists": True, "episodes": 3}
+    )
+    assert r2["state"] == "foreign_namespace"
+
+
+def test_an_empty_dataset_name_outranks_everything():
+    r = upload_preflight(dataset="  ", auth=Q78_AUTHED, existing={"exists": True})
+    assert r["state"] == "no_dataset"
+
+
+def test_hub_facts_never_raises_and_says_nothing_without_a_namespace():
+    from strands_robots.dashboard import record_api
+
+    # No namespace yet = nothing to ask the Hub about.
+    assert record_api._hub_facts("bare-name") == {}
+    assert record_api._hub_facts("") == {}
+    assert record_api._hub_facts(None) == {}
+
+
+def test_hub_facts_reports_existence_and_swallows_a_broken_hub(monkeypatch):
+    import sys
+    import types
+
+    from strands_robots.dashboard import record_api
+
+    class FakeApi:
+        def repo_exists(self, repo_id, repo_type):  # noqa: ARG002
+            return True
+
+        def dataset_info(self, repo_id):  # noqa: ARG002
+            raise RuntimeError("hub is having a day")
+
+    mod = types.ModuleType("huggingface_hub")
+    mod.HfApi = FakeApi  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", mod)
+    # Existence is the fact that matters; the count is a nicety and its failure is swallowed.
+    assert record_api._hub_facts("cagatay/cubes") == {"exists": True, "episodes": None}
+
+    class ExplodingApi:
+        def repo_exists(self, repo_id, repo_type):  # noqa: ARG002
+            raise RuntimeError("no network")
+
+    mod.HfApi = ExplodingApi  # type: ignore[attr-defined]
+    assert record_api._hub_facts("cagatay/cubes") == {}

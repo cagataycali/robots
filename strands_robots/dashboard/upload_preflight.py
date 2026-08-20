@@ -46,12 +46,18 @@ def upload_preflight(
     *,
     dataset: str | None,
     auth: Mapping[str, Any] | None,
+    existing: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Judge an upload before it is armed.
 
     Returns ``{ok, state, detail, destination, user}``. ``ok`` False means the tick must not arm:
-    the failure it leads to is certain and expensive. ``needs_force`` marks the one refusal that is
-    a genuine unknown (a namespace that is not the logged-in user) rather than a certainty.
+    the failure it leads to is certain and expensive. ``needs_force`` marks refusals that are the
+    operator's call rather than a certainty.
+
+    ``existing`` (Q78) describes what is ALREADY published at the destination, when that could be
+    established: ``{"exists": True, "episodes": 40}``. Absence or ``{}`` means no evidence, and is
+    treated as "nothing there" exactly as before - a Hub lookup that failed must never block a
+    recording.
     """
     name = (dataset or "").strip().strip("/")
     a = dict(auth or {})
@@ -111,6 +117,34 @@ def upload_preflight(
             }
 
     dest = destination(name, user)
+
+    # Q78: the destination repo already exists on the Hub. push_to_hub does NOT create a second
+    # repo and does not refuse - it uploads INTO that one. Recording refuses to reuse a local
+    # dataset directory (Q39), so the session being finished here is always a NEW, shorter dataset:
+    # publishing it rewrites meta/info.json over a longer history while the old episode files stay
+    # behind, leaving the published dataset describing fewer episodes than it contains. That is not
+    # a merge, and from the Hub's side it is indistinguishable from corruption.
+    ex = dict(existing or {})
+    if ex.get("exists") is True:
+        n = ex.get("episodes") if isinstance(ex.get("episodes"), int) else None
+        count = f" with {n} episode(s)" if n else ""
+        return {
+            "ok": False,
+            "state": "destination_exists",
+            # The operator's call: replacing their own earlier take deliberately is legitimate, and
+            # only they know whether that is what this is.
+            "needs_force": True,
+            "user": user,
+            "destination": dest,
+            "detail": (
+                f"{dest} already exists on the Hub{count}. Publishing this session uploads INTO that "
+                "repo rather than creating a new one - the episodes recorded here are a fresh, "
+                "shorter dataset, so its meta would claim fewer episodes than the files that stay "
+                "behind. Rename this dataset, or tick below if replacing that published take is "
+                "what you intend"
+            ),
+        }
+
     return {
         "ok": True,
         "state": "ready",
