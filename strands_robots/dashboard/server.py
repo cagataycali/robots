@@ -684,7 +684,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def training_jobs() -> dict[str, Any]:
         from strands_robots.dashboard import training
 
-        return {"jobs": await asyncio.to_thread(training.jobs)}
+        rows = await asyncio.to_thread(training.jobs)
+        # `problem` is about the LEDGER, not the runs: an unreadable history and a
+        # dashboard that has never trained anything both produce an empty list, and
+        # only one of them means runs were forgotten.
+        return {"jobs": rows, "problem": training.jobs_problem()}
 
     @app.post("/api/training/validate")
     async def training_validate(body: dict[str, Any]) -> dict[str, Any]:

@@ -17,6 +17,7 @@ mesh is the control plane, workflows co-locate; see tiny-notes SOURCE-MAP
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -39,6 +40,50 @@ ROOTS_FILE = JOBS_FILE.parent / "dataset_roots.json"
 _LOCK = threading.Lock()
 
 
+#: Set when a ledger file existed but could not be read. A record of every training
+#: run this dashboard started is not something to lose silently: an empty list and an
+#: unreadable file render identically as "No training jobs yet", while the runs
+#: themselves keep going for hours with no card, no status and no export button.
+_JOBS_PROBLEM: str | None = None
+
+
+def _write_json_durably(path: Path, payload: Any) -> None:
+    """Write JSON so a crash mid-write cannot destroy what was already there.
+
+    ``Path.write_text`` TRUNCATES the file and then writes into it, so a kill or a
+    power loss in that window leaves a half file. The next read fails, the loader
+    falls back to "no jobs", and the next save makes that loss permanent. Writing a
+    sibling temp file and ``os.replace``-ing it is atomic on POSIX: a reader sees
+    either the old file or the new one, never a partial one. The fsync is what makes
+    that promise survive the machine losing power, not just the process dying.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, default=str)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        # a failed serialization must not leave litter next to the real ledger
+        with contextlib.suppress(OSError):
+            if tmp.exists():
+                tmp.unlink()
+
+
+def _quarantine(path: Path) -> Path:
+    """Move an unreadable file aside, preserving it, and return where it went.
+
+    Deleting it would be easier and is exactly wrong: this file is the only record
+    that some runs happened, it may be recoverable by hand, and whatever corrupted it
+    is worth being able to look at.
+    """
+    kept = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+    os.replace(path, kept)
+    return kept
+
+
 def remember_dataset_root(root: str) -> None:
     """Persist a dataset root so local_datasets() discovers it forever."""
     try:
@@ -50,8 +95,7 @@ def remember_dataset_root(root: str) -> None:
                     roots = data
             if root not in roots:
                 roots.append(root)
-                ROOTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-                ROOTS_FILE.write_text(json.dumps(roots[-50:]))
+                _write_json_durably(ROOTS_FILE, roots[-50:])
     except Exception as e:  # noqa: BLE001
         logger.debug("could not remember dataset root: %s", e)
 
@@ -68,22 +112,59 @@ def _remembered_roots() -> list[Path]:
 
 
 def _load_jobs() -> list[dict[str, Any]]:
+    """The job ledger, or an empty list — with ``_JOBS_PROBLEM`` set if it was lost.
+
+    A ledger that cannot be parsed is quarantined rather than overwritten, because
+    the alternative is silent and permanent: the loader returns [], the UI says "No
+    training jobs yet", and the next submit saves a one-entry list over the file that
+    still held every earlier run.
+    """
+    global _JOBS_PROBLEM
+    if not JOBS_FILE.exists():
+        _JOBS_PROBLEM = None
+        return []
     try:
-        if JOBS_FILE.exists():
-            data = json.loads(JOBS_FILE.read_text())
-            if isinstance(data, list):
-                return data
-    except Exception as e:  # noqa: BLE001
+        data = json.loads(JOBS_FILE.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001 - any unreadable ledger, not just bad JSON
         logger.warning("could not load train jobs: %s", e)
-    return []
+        detail = f"{type(e).__name__}: {e}"
+        try:
+            kept = _quarantine(JOBS_FILE)
+            _JOBS_PROBLEM = (
+                f"the training job history could not be read ({detail}) and was moved to "
+                f"{kept} — runs started before now have no card here, but any that are still "
+                f"running are unaffected"
+            )
+        except OSError as move_err:
+            _JOBS_PROBLEM = (
+                f"the training job history could not be read ({detail}) and could not be moved "
+                f"aside ({move_err}); refusing to overwrite it — runs started before now have "
+                f"no card here"
+            )
+        return []
+    if not isinstance(data, list):
+        _JOBS_PROBLEM = f"the training job history is a {type(data).__name__}, not a list of jobs"
+        return []
+    _JOBS_PROBLEM = None
+    return data
 
 
 def _save_jobs(jobs: list[dict[str, Any]]) -> None:
+    if _JOBS_PROBLEM and JOBS_FILE.exists():
+        # the ledger is there but unreadable AND could not be quarantined; writing
+        # now would replace runs we cannot see with the one we just started
+        logger.warning("not overwriting an unreadable job ledger: %s", _JOBS_PROBLEM)
+        return
     try:
-        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        JOBS_FILE.write_text(json.dumps(jobs[-100:], default=str))
+        _write_json_durably(JOBS_FILE, jobs[-100:])
     except Exception as e:  # noqa: BLE001
-        logger.debug("could not save train jobs: %s", e)
+        logger.warning("could not save train jobs: %s", e)
+
+
+def jobs_problem() -> str | None:
+    """Why the job list may be missing entries, or None when it is trustworthy."""
+    with _LOCK:
+        return _JOBS_PROBLEM
 
 
 def _tool_result(res: dict[str, Any]) -> dict[str, Any]:
