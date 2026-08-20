@@ -178,3 +178,35 @@ def _restore_dashboard_settings_overrides():
             _dsettings._overrides.clear()  # noqa: SLF001
             _dsettings._overrides.update(before)  # noqa: SLF001
             _dsettings.__dict__["_cache"] = None
+
+
+def pytest_report_header(config) -> str | None:  # noqa: ANN001 - pytest's own signature
+    """Say so at the TOP of the run when numpy reductions are broken in this interpreter (Q83).
+
+    Measured 2026-08-20 on this Mac: with ``--cov`` enabled, a plain ``np.array([[0.1,0.2,0.3]]).max()``
+    raises ``TypeError: float() argument must be a string or a real number, not '_NoValueType'`` — numpy's
+    ``_amax`` passes its ``initial=_NoValue`` sentinel into the C reduce, which no longer recognises it.
+    Without coverage the same call is fine. So the SAME test file is 10 passed with ``--no-cov`` and 6
+    failed with ``--cov``, and the failures name lighting bounds and colour ranges: every one of them reads
+    as a product regression in the simulator. Not one of them is real.
+
+    (Ruled out: a double-imported ``numpy._globals`` — ``np._NoValue is numpy._globals._NoValue`` and
+    ``_methods._NoValue is np._NoValue`` both hold, and only one ``_globals`` module is in sys.modules.
+    Root cause still open; this header exists so nobody spends a night on a fake failure meanwhile.)
+
+    A header rather than a hard error: the run must still be allowed (most tests never touch a reduction),
+    but the operator has to SEE that a red result in this configuration may belong to the environment.
+    """
+    try:
+        import numpy as _np
+
+        _np.array([[0.1, 0.2, 0.3]]).max()
+    except Exception as exc:  # noqa: BLE001 - any breakage here is the thing being reported
+        return (
+            "WARNING numpy reductions are BROKEN in this interpreter: "
+            f"np.array(...).max() -> {type(exc).__name__}: {exc}. "
+            "Q83 - seen with coverage enabled; array-valued assertions (lighting bounds, colour ranges, "
+            "anything using .max()/.min()) will fail for environmental reasons. Re-run with --no-cov "
+            "before believing a failure."
+        )
+    return None
