@@ -239,6 +239,9 @@ body {
 }
 .result.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .result.bad { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+/* A scan that RAN and found nothing is neither success nor failure — it needs its
+   own colour, or it reads as one of the two things it is not. */
+.result.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .result details { margin-top: var(--s1); }
 .result summary { cursor: pointer; opacity: .75; }
 .result pre { white-space: pre-wrap; margin-top: var(--s1); opacity: .85; }

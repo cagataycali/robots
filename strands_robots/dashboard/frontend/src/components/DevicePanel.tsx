@@ -8,6 +8,7 @@ import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
 import { calibratePlan } from '../lib/calibrateCommand'
 import { parseCalibrationList, type CalibrationEntry } from '../lib/calibration'
 import { calibrationVerdict } from '../lib/calibrationMatch'
+import { rescanReport, hardwareKey, type RescanReport } from '../lib/rescanReport'
 
 interface SerialPort {
   device: string
@@ -96,15 +97,50 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [calibFor, setCalibFor] = useState<string | null>(null)
   const [calibFamily, setCalibFamily] = useState<Record<string, string>>({})
   const [copied, setCopied] = useState<string | null>(null)
+  // The verdict for the scan the operator ASKED for (rescan), plus the in-flight
+  // flag: a serial+camera enumeration takes seconds, and a button that still
+  // looks idle invites a second click that stacks another scan on the first.
+  const [scan, setScan] = useState<RescanReport | null>(null)
+  const [scanning, setScanning] = useState(false)
+  const scannedAt = useRef<number | null>(null)
+  // What the last verdict described. A background poll that finds different
+  // hardware retires it: a verdict must never outlive its evidence.
+  const scanKey = useRef<string | null>(null)
 
   const load = useCallback(async (refresh = false) => {
     try {
-      setDoc(await api<DeviceDoc>(`/api/devices${refresh ? '?refresh=1' : ''}`))
+      const next = await api<DeviceDoc>(`/api/devices${refresh ? '?refresh=1' : ''}`)
+      setDoc(next)
+      scannedAt.current = Date.now()
       setError(null)
+      // A poll that changes the hardware on screen invalidates the last rescan
+      // verdict ("unchanged: 2 serial ports" next to one port is a new lie).
+      if (!refresh && scanKey.current !== null && hardwareKey(next) !== scanKey.current) {
+        scanKey.current = null
+        setScan(null)
+      }
+      return { ok: true as const, after: next }
     } catch (e: any) {
-      setError(e?.message ?? String(e))
+      const msg = e?.message ?? String(e)
+      // On a rescan the failure is reported BY the verdict (which also says the
+      // visible list is now stale); a second red line would say half of it.
+      if (!refresh) setError(msg)
+      return { ok: false as const, error: msg }
     }
   }, [])
+
+  const rescan = useCallback(async () => {
+    if (scanning) return
+    setScanning(true)
+    const before = doc
+    const beforeAtMs = scannedAt.current
+    const outcome = await load(true)
+    const verdict = rescanReport(before, outcome, { beforeAtMs, nowMs: Date.now() })
+    scanKey.current = outcome.ok ? hardwareKey(outcome.after) : null
+    setScan(verdict)
+    setError(null)
+    setScanning(false)
+  }, [doc, load, scanning])
 
   useEffect(() => {
     if (!open) return
@@ -240,13 +276,20 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
         <header className="drawer-head">
           <h2>Devices</h2>
           <div>
-            <button className="btn ghost" onClick={() => void load(true)} disabled={busy}>rescan</button>
+            <button className="btn ghost" onClick={() => void rescan()} disabled={busy || scanning}>
+              {scanning ? 'scanning…' : 'rescan'}
+            </button>
             <button className="btn ghost" onClick={onClose}>✕</button>
           </div>
         </header>
 
         <div className="drawer-body">
           {error && <div className="result bad">⚠ {error}</div>}
+          {scan && (
+            <div className={scan.tone === 'bad' ? 'result bad' : scan.tone === 'warn' ? 'result warn' : 'result ok'}>
+              {scan.text}
+            </div>
+          )}
           {consent && (
             <ConsentSheet
               need={consent}
