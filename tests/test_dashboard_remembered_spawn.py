@@ -88,6 +88,10 @@ def test_devices_payload_carries_it_per_board(tmp_path) -> None:
 
     rows = {r["device"]: r for r in doc["serial_ports"]}
     assert rows["/dev/cu.usbmodem5AB01818061"]["remembered"]["peer_id"] == "so101-arm-1"
+    # Q43 rides along: the saved index 2 is nowhere in this (empty) camera scan, so the row says so
+    # BEFORE the operator clicks spawn and reads it out of a child's log.
+    health = rows["/dev/cu.usbmodem5AB01818061"]["remembered"]["camera_health"]
+    assert "no camera at index 2" in health["text"] and health["ok"] is False
     # The unknown board must carry NO key at all, so a screen never has to special-case an empty
     # object that means the same as absence.
     assert "remembered" not in rows["/dev/cu.unknown"]
@@ -165,3 +169,75 @@ def test_a_non_mapping_camera_memory_is_dropped_not_forwarded() -> None:
     # hardware_robot raises "Camera 'main' config must be a mapping ... got int: 3" on this shape -
     # a live failure once. A junk memory must not be handed to Popen.
     assert respawn_payload({"peer_id": "a", "robot_name": "so101", "cameras": 3}, "/dev/x")["cameras"] is None
+
+
+# ---------------------------------------------------------------------------
+# Are the remembered cameras usable right now? (Q43)
+# ---------------------------------------------------------------------------
+
+READY = {"index": 2, "state": "ready", "reason": "opened and delivered a frame just now"}
+BLOCKED = {"index": 1, "state": "blocked", "reason": "macOS has not granted camera access to this process",
+           "remedy": "start the dashboard from a terminal and allow access"}
+
+
+def _health(cameras, rows, peer_id=""):
+    from strands_robots.dashboard.device_manager import remembered_camera_health
+
+    return remembered_camera_health(cameras, rows, peer_id)
+
+
+def test_all_ready_says_nothing() -> None:
+    # Silence is the common case: a notice that is always on is not a notice.
+    assert _health({"top": {"index_or_path": 2}}, [READY]) == {}
+    assert _health(None, [READY]) == {}
+    assert _health({}, [READY]) == {}
+
+
+def test_a_blocked_camera_is_named_with_its_consequence() -> None:
+    h = _health({"top": {"index_or_path": 2}, "wrist": {"index_or_path": 1}}, [READY, BLOCKED])
+    assert h["ok"] is False
+    assert "wrist (index 1)" in h["text"]
+    assert "top" not in h["text"], "a ready camera must not be listed as trouble"
+    # THE POINT: spawning still WORKS, which is why this needs saying at all - the arm drops the
+    # camera it cannot open and records episodes with no pictures in them.
+    assert "no pictures" in h["text"]
+    assert h["cameras"][1]["remedy"].startswith("start the dashboard")
+
+
+def test_an_index_that_no_longer_exists_is_the_normal_macos_failure() -> None:
+    # The saved index is the least stable thing in the payload: macOS renumbers between reboots.
+    h = _health({"top": {"index_or_path": 7}}, [READY])
+    assert h["cameras"][0]["state"] == "absent"
+    assert "no camera at index 7" in h["text"]
+
+
+def test_our_own_stream_is_not_a_problem() -> None:
+    # The peer we are about to respawn held that camera a moment ago - reporting it as taken would
+    # warn about the arm's own picture.
+    rows = [{"index": 2, "state": "in_use", "reason": "streaming for so101-arm-1", "claimed_by": "so101-arm-1"}]
+    assert _health({"top": {"index_or_path": 2}}, rows, "so101-arm-1") == {}
+    # ...but ANOTHER robot holding it is exactly what the operator needs to know.
+    h = _health({"top": {"index_or_path": 2}}, rows, "so101-arm-2")
+    assert "streaming for so101-arm-1" in h["text"]
+
+
+def test_a_path_configured_camera_is_admitted_as_unchecked_not_declared_fine() -> None:
+    h = _health({"top": {"index_or_path": "/dev/video3"}}, [READY])
+    # Nothing to warn about, so no banner - but the entry says plainly it was not tested rather than
+    # claiming a path is ready.
+    assert h == {}
+    full = _health({"top": {"index_or_path": "/dev/video3"}, "wrist": {"index_or_path": 1}}, [READY, BLOCKED])
+    assert full["cameras"][0]["state"] == "unchecked"
+    assert "not checked" in full["cameras"][0]["reason"]
+
+
+def test_it_opens_nothing() -> None:
+    # The judgment is made from rows /api/devices already computed. Probing here would steal a
+    # device from a running robot - so the function must not touch cv2 at all.
+    import inspect
+
+    from strands_robots.dashboard import device_manager as dm
+
+    src = inspect.getsource(dm.remembered_camera_health)
+    for verb in ("VideoCapture", "cv2", "scan_cameras", "preview_frame", "subprocess"):
+        assert verb not in src, f"remembered_camera_health must not {verb}"

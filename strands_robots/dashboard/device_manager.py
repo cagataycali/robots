@@ -655,6 +655,78 @@ def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def remembered_camera_health(
+    cameras: Mapping[str, Any] | None,
+    camera_rows: Sequence[Mapping[str, Any]],
+    peer_id: str = "",
+) -> dict[str, Any]:
+    """Are the cameras this board remembers usable RIGHT NOW? (Q43)
+
+    "spawn so101-arm-1 again" reuses a config naming camera indices 2 and 1. Those indices are the
+    least stable thing in the payload: macOS renumbers them between reboots, another app can hold
+    one, and on this machine the whole process tree can be denied camera access by TCC. Today the
+    operator learns that by clicking spawn and reading a child's log - the arm comes up having
+    silently DROPPED both cameras ("camera 'top' unavailable, dropped"), which looks like working
+    hardware until a dataset turns out to have no frames.
+
+    Judged from the camera rows /api/devices already computed, so this opens NOTHING: probing here
+    would steal a device from a running robot, and the answer is already in hand.
+
+    A camera claimed by the peer we are about to respawn is not a problem - it is the same arm's own
+    stream, seen a moment before its process went away.
+
+    Returns {} when there is nothing worth saying: every remembered camera is ready, or the memory
+    names no cameras at all. Silence is the common case and must stay silent.
+    """
+    if not isinstance(cameras, Mapping) or not cameras:
+        return {}
+    by_index = {int(r["index"]): r for r in camera_rows if isinstance(r.get("index"), int)}
+    entries: list[dict[str, Any]] = []
+    for name, cfg in cameras.items():
+        entry: dict[str, Any] = {"name": str(name)}
+        target = cfg.get("index_or_path") if isinstance(cfg, Mapping) else cfg
+        if isinstance(target, bool) or not isinstance(target, int):
+            # A device PATH (or junk). We cannot judge a path from an index scan, and pretending to
+            # would be the confident-but-untested claim this dashboard keeps deleting.
+            entry.update(state="unchecked", reason="configured by path, not by index - not checked here")
+            entries.append(entry)
+            continue
+        entry["index"] = target
+        row = by_index.get(target)
+        if row is None:
+            entry.update(state="absent", reason=f"no camera at index {target} in the latest scan")
+            entries.append(entry)
+            continue
+        state = str(row.get("state") or "unknown")
+        owner = str(row.get("claimed_by") or "")
+        if state in {"in_use", "assigned"} and owner and owner == peer_id:
+            state, reason = "ready", f"index {target} was this peer's own camera"
+        else:
+            reason = str(row.get("reason") or "")
+        entry.update(state=state, reason=reason)
+        if row.get("remedy"):
+            entry["remedy"] = str(row["remedy"])
+        entries.append(entry)
+
+    trouble = [e for e in entries if e["state"] not in {"ready", "unchecked"}]
+    if not trouble:
+        return {}
+    names = ", ".join(f"{e['name']} (index {e.get('index', '?')})" for e in trouble)
+    return {
+        "cameras": entries,
+        "ok": False,
+        # The consequence, not just the state: an arm that cannot open a camera still starts, still
+        # streams joints and still records - into a dataset with no pictures in it.
+        "text": (
+            f"the saved config names {names}, which {'is' if len(trouble) == 1 else 'are'} not "
+            f"available right now: {trouble[0]['reason']}"
+            + (f" (+{len(trouble) - 1} more)" if len(trouble) > 1 else "")
+            + ". Spawning anyway works - the arm drops the camera it cannot open and comes up "
+            "streaming joints only, which looks healthy and records episodes with no pictures in them"
+        ),
+    }
+
+
 def respawn_payload(profile: Mapping[str, Any] | None, port: str) -> dict[str, Any]:
     """Turn a remembered profile into a spawn payload for the board at ``port`` NOW (Q41).
 
@@ -1294,11 +1366,24 @@ class DeviceManager:
         # Q41: what each board was last spawned as. The measured role says what the board IS; this
         # says how it comes UP - and after a restart it is the only copy of that, because `managed`
         # lives in memory.
-        remembered = {
-            p["device"]: remembered_spawn(self.profiles.get(profile_key(p)))
-            for p in ports
-            if p.get("device")
-        }
+        remembered: dict[str, dict[str, Any]] = {}
+        for p in ports:
+            dev = p.get("device")
+            if not dev:
+                continue
+            profile = self.profiles.get(profile_key(p))
+            mem = remembered_spawn(profile)
+            if not mem:
+                continue
+            # Q43: whether the remembered camera INDICES are usable right now, judged from the rows
+            # already computed above - nothing is opened here (probing would steal a device from a
+            # running robot), and a camera held by the very peer we would respawn is not a problem.
+            health = remembered_camera_health(
+                (profile or {}).get("cameras"), cams, str(mem.get("peer_id") or ""),
+            )
+            if health:
+                mem["camera_health"] = health
+            remembered[dev] = mem
         return {
             # Each board carries what is KNOWN about its role (measured earlier,
             # remembered by serial) so the devices screen can show it without a
