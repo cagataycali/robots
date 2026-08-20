@@ -57,41 +57,54 @@ async function devicesText(mode) {
   const panel = page.locator('aside.drawer.wide')
   await panel.first().waitFor({ timeout: 10000 })
   const text = await panel.first().innerText()
+  // The `Detected hardware` inventory, read as its OWN rows: a whole-panel /^none/ also matches
+  // the spawn form's `<option>none</option>`, which is a form default and not a claim about hardware.
+  const rows = (await panel.first().locator('dl.kv dd').allInnerTexts()).join(' | ')
   await page.screenshot({ path: `/tmp/devices_empty_${mode}.png`, fullPage: true })
   await ctx.close()
-  return text
+  return { text, rows }
 }
 
 // --- world 1: the scan has not answered yet ------------------------------------
 {
-  const t = await devicesText('pending')
+  const { text: t, rows } = await devicesText('pending')
   check(/scanning this machine/i.test(t), 'pending: says it is scanning', 'not a hardware verdict')
   check(!/no servo board detected/i.test(t), 'pending: does NOT claim the boards are absent')
   check(!/No camera index answered a probe/i.test(t), 'pending: does NOT claim the cameras are absent')
   check(!/plug one in and rescan/i.test(t), 'pending: does not send anyone to the cable')
   check(!/managed robots \(0\)/i.test(t), 'pending: no (0) count before an answer')
+  // The `Detected hardware` inventory at the foot of the drawer — the row that gets screenshotted.
+  check(/unknown — still scanning/.test(rows), 'pending: the inventory says unknown, not none', rows)
+  check(!/none/i.test(rows), 'pending: no inventory row claims absent hardware', rows)
 }
 
 // --- world 2: the scan failed --------------------------------------------------
 {
-  const t = await devicesText('failed')
+  const { text: t, rows } = await devicesText('failed')
   check(/this list is empty because nothing answered/i.test(t), 'failed: names the cause, not the hardware')
   check(/not because nothing is plugged in/i.test(t), 'failed: refuses the hardware claim explicitly')
   check(!/no servo board detected/i.test(t), 'failed: the old sentence is gone')
   check(!/plug one in and rescan/i.test(t), 'failed: no instruction to touch hardware')
+  // The message is whatever the api helper produced for a 500 — assert the SHAPE, not its wording.
+  check(/unknown — the scan failed \(.+\)/.test(rows), 'failed: the inventory names the failure', rows)
+  check(!/none/i.test(rows), 'failed: no inventory row says none')
+  check(!/none probed/i.test(t), 'failed: the old summary wording is gone')
   const same = t.match(/this list is empty because nothing answered/gi) ?? []
   check(same.length >= 2, 'failed: every empty list uses the SAME wording', `${same.length} occurrences`)
 }
 
 // --- world 3: the scan answered, and there is genuinely nothing ----------------
 {
-  const t = await devicesText('empty')
+  const { text: t, rows } = await devicesText('empty')
   check(/no servo board detected/i.test(t), 'answered: the hardware verdict is allowed here')
   check(/nothing on USB enumerated as a serial bus/i.test(t), 'answered: says what was looked for')
   check(/No camera index answered a probe/i.test(t), 'answered: reports the probe, not the cable')
   check(/managed robots \(0\)/i.test(t), 'answered: the count is printed once it is true')
   check(!/scanning this machine/i.test(t), 'answered: no stale "scanning" line left behind')
   check(!/nothing answered, not because/i.test(t), 'answered: no failure wording on a good scan')
+  check(/none \(a servo bus shows up as/.test(rows), 'answered: inventory may say none, and how it would appear')
+  check(/none answered a probe/.test(rows), 'answered: cameras row reports the probe')
+  check(!/unknown/i.test(rows), 'answered: nothing is left unknown once the scan spoke', rows)
 }
 
 await browser.close()

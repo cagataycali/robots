@@ -87,3 +87,28 @@ export function cameraGridEmptyLine(opts: { scanned: boolean; error?: string | n
     message: 'No camera index answered a probe — plug one in, or rescan if you just did.',
   }
 }
+
+
+/**
+ * The terse form, for the `Detected hardware` key/value rows at the foot of the same drawer —
+ * the third place this defect lived. `freePorts.length ? … : 'none (a servo bus shows up as …)'`
+ * and `doc?.cameras.length ? … : 'none probed'` are read as a hardware inventory, and they said
+ * "none" while the request was still in flight or had failed. A summary is the LAST thing that
+ * should overstate: it is the row someone screenshots when asking why their arm is missing.
+ *
+ * `none` is reserved for an answered scan. Before that the value is `unknown`, which is the
+ * honest word for a row that is supposed to state a fact and does not have one.
+ */
+export function hardwareSummaryValue(opts: {
+  scanned: boolean
+  error?: string | null
+  items: string[]
+  /** what to append after `none` once the scan HAS answered, e.g. how the device would appear */
+  emptyNote: string
+}): string {
+  const items = opts.items.filter(Boolean)
+  if (items.length > 0) return items.join(', ')
+  const err = (opts.error ?? '').trim()
+  if (!opts.scanned) return err ? `unknown — the scan failed (${err})` : 'unknown — still scanning'
+  return `none ${opts.emptyNote}`.trim()
+}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { boardListEmptyLine, managedListEmptyLine, cameraGridEmptyLine } from '/tmp/boardList.mjs'
+import { boardListEmptyLine, managedListEmptyLine, cameraGridEmptyLine, hardwareSummaryValue } from '/tmp/boardList.mjs'
 
 // --- the defect: a failed request rendered as a hardware verdict ---------------
 {
@@ -75,6 +75,36 @@ import { boardListEmptyLine, managedListEmptyLine, cameraGridEmptyLine } from '/
   const b = managedListEmptyLine({ scanned: false, error: 'HTTP 401' }).message
   const c = cameraGridEmptyLine({ scanned: false, error: 'HTTP 401' }).message
   for (const m of [a, b, c]) assert.match(m, /the device scan failed \(HTTP 401\) — this list is empty because nothing answered/)
+}
+
+// --- the summary rows: `none` is reserved for an answered scan -------------------
+{
+  const serial = (o) => hardwareSummaryValue({ items: [], emptyNote: '(a servo bus shows up as /dev/tty.usbmodem*)', ...o })
+
+  assert.match(serial({ scanned: false }), /^unknown — still scanning$/)
+  assert.match(serial({ scanned: false, error: 'HTTP 500' }), /^unknown — the scan failed \(HTTP 500\)$/)
+  for (const v of [serial({ scanned: false }), serial({ scanned: false, error: 'HTTP 500' })])
+    assert.doesNotMatch(v, /none/, 'a summary row must not inventory hardware it never asked about')
+
+  const answered = serial({ scanned: true })
+  assert.match(answered, /^none \(a servo bus shows up as/, 'answered: "none" plus how it would appear')
+
+  // Items always win, whatever the scan state or a stale error says.
+  assert.equal(hardwareSummaryValue({ scanned: false, error: 'x', items: ['/dev/tty.usbmodem58FA0812331'], emptyNote: '(…)' }),
+               '/dev/tty.usbmodem58FA0812331')
+  assert.equal(hardwareSummaryValue({ scanned: true, items: ['#0', '#1→so101-arm-1'], emptyNote: 'probed' }),
+               '#0, #1→so101-arm-1')
+  // Empty strings are not devices.
+  assert.match(hardwareSummaryValue({ scanned: true, items: ['', ''], emptyNote: 'answered a probe' }), /^none answered a probe$/)
+}
+
+// --- the summary and the list above it can never disagree ------------------------
+// Both derive from the SAME `scanned` fact, so a screenshot of the drawer cannot show
+// "none" in the inventory next to "scanning…" in the list (or vice versa).
+for (const scanned of [false, true]) {
+  const claimsNone = /none/.test(hardwareSummaryValue({ scanned, items: [], emptyNote: 'x' }))
+  const claimsDetected = boardListEmptyLine({ scanned }).kind === 'detected'
+  assert.equal(claimsNone, claimsDetected, `summary and list disagree at scanned=${scanned}`)
 }
 
 console.log('boardList: all assertions passed')

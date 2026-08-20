@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { boardListEmptyLine, managedListEmptyLine } from '../lib/boardList'
+import { boardListEmptyLine, managedListEmptyLine, hardwareSummaryValue } from '../lib/boardList'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { numField } from '../lib/numField'
 import { findConsent, type ConsentNeed } from '../lib/consent'
@@ -805,17 +805,26 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
           <section>
             <h3>Detected hardware</h3>
             <dl className="kv">
+              {/* This is the row someone screenshots when asking why their arm is missing, so it is
+                  the last place that may overstate: both values said `none` while the request was in
+                  flight or had failed. `none` is now reserved for an ANSWERED scan (lib/boardList),
+                  and it derives `scanned` from the same fact as the lists above, so the inventory and
+                  the lists cannot contradict each other in one screenshot. */}
               <dt>serial</dt>
               <dd className="mono">
-                {freePorts.length
-                  ? freePorts.map(p => p.device).join(', ')
-                  : 'none (a servo bus shows up as /dev/tty.usbmodem* or /dev/ttyACM*)'}
+                {hardwareSummaryValue({
+                  scanned: doc !== null, error,
+                  items: freePorts.map(p => p.device),
+                  emptyNote: '(a servo bus shows up as /dev/tty.usbmodem* or /dev/ttyACM*)',
+                })}
               </dd>
               <dt>cameras</dt>
               <dd className="mono">
-                {doc?.cameras.length
-                  ? doc.cameras.map(c => `#${c.index}${c.claimed_by ? `→${c.claimed_by}` : ''}`).join(', ')
-                  : 'none probed'}
+                {hardwareSummaryValue({
+                  scanned: doc !== null, error,
+                  items: (doc?.cameras ?? []).map(c => `#${c.index}${c.claimed_by ? `→${c.claimed_by}` : ''}`),
+                  emptyNote: 'answered a probe',
+                })}
               </dd>
             </dl>
           </section>
