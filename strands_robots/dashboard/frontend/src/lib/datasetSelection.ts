@@ -32,6 +32,8 @@ export interface DatasetRow {
   usable?: boolean
   reason?: string
   problem?: string
+  /** Q38: a recorder is writing into this dataset at this moment. */
+  recording?: boolean
 }
 
 export interface DatasetSelection {
@@ -96,6 +98,19 @@ export function replayable(d: DatasetRow): { ok: boolean; reason: string } {
   // two disagree.
   if (d.usable === false) return { ok: false, reason: d.problem ?? 'this dataset has no episodes to replay' }
   return { ok: true, reason: 'Replay episode 0 in a live mesh sim — appears in the fleet grid' }
+}
+
+/**
+ * Q38: a dataset a recorder is writing into RIGHT NOW carries `recording: true`, and it is a
+ * different thing from a folder an abandoned session left behind — even though metadata alone
+ * cannot tell them apart. Marking both with the same ⚠ would say "something is wrong here" about
+ * the recording the operator is deliberately making, so the live one gets the recording glyph and
+ * the "not yet" reading, while ⚠ keeps meaning "this will not work".
+ */
+export function datasetMark(d: DatasetRow): { glyph: string; kind: 'recording' | 'problem' | 'ok' } {
+  if (d.recording) return { glyph: '⏺ ', kind: 'recording' }
+  if (d.usable === false) return { glyph: '⚠ ', kind: 'problem' }
+  return { glyph: '', kind: 'ok' }
 }
 
 /**

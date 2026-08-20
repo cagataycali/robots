@@ -7,7 +7,7 @@ import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
 import { setDeployIntent } from '../lib/deployIntent'
-import { datasetKey as dsKey, selectDataset, selectionKey, replayable, trainable, selectedRow, type DatasetRow } from '../lib/datasetSelection'
+import { datasetKey as dsKey, selectDataset, selectionKey, replayable, trainable, selectedRow, datasetMark, type DatasetRow } from '../lib/datasetSelection'
 import { datasetHint, isCurrentResponse } from '../lib/datasetHint'
 import { jobsLedgerNotice } from '../lib/jobsLedger'
 import { orderJobsNewestFirst } from '../lib/orderJobs'
@@ -214,7 +214,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     const can = trainable(picked)
     if (!can.ok) {
       if (dsOverride !== selectionKey(form)) {
-        setDsWarn({ key: selectionKey(form), reason: can.reason })
+        setDsWarn({ key: selectionKey(form), reason: can.reason, recording: picked?.recording === true })
         setMsg(null)
         return
       }
@@ -248,7 +248,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   }
 
   /** Q37: the picked dataset's refusal, and the one key the operator has insisted on. */
-  const [dsWarn, setDsWarn] = useState<{ key: string; reason: string } | null>(null)
+  const [dsWarn, setDsWarn] = useState<{ key: string; reason: string; recording?: boolean } | null>(null)
   const [dsOverride, setDsOverride] = useState<string | null>(null)
 
   const [collect, setCollect] = useState({ dataset_root: '', instruction: 'pick up the red cube', n_episodes: '5', duration: '10', robot_name: 'so101' })
@@ -416,7 +416,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
                     {/* Q37: an abandoned recording's folder lists as a dataset for ever. Marked
                         IN THE OPTION, because the picker is where the choice is made - a warning
                         that only appears after selecting arrives one decision too late. */}
-                    {d.usable === false ? '⚠ ' : ''}{d.repo_id} ({d.total_episodes ?? '?'} eps{d.robot_type && d.robot_type !== 'unknown' ? `, ${d.robot_type}` : ''})
+                    {datasetMark(d).glyph}{d.repo_id} ({d.total_episodes ?? '?'} eps{d.robot_type && d.robot_type !== 'unknown' ? `, ${d.robot_type}` : ''})
                   </option>
                 ))}
               </optgroup>
@@ -479,11 +479,17 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             never landed) rather than calling the dataset invalid. */}
         {dsWarn && dsWarn.key === selectionKey(form) && (
           <div className="train-msg warn artifact-hold" role="alert">
-            <div>⚠ not started: {dsWarn.reason}</div>
+            <div>{dsWarn.recording ? '⏺' : '⚠'} not started: {dsWarn.reason}</div>
+            {/* Q38: for a LIVE session the useful next move is the record screen, not another
+                dataset — and this tab cannot navigate, so it says where to look rather than
+                pretending to take them there. */}
+            {dsWarn.recording && <div className="jstate">the record screen shows this session's progress; training can start the moment it closes</div>}
             <div className="artifact-hold-actions">
               <button className="btn ghost" onClick={() => { setDsWarn(null); setDsOverride(null) }}>pick another dataset</button>
               <button className="btn" onClick={() => { setDsOverride(dsWarn.key); setDsWarn(null); setMsg('⚠ dataset warning overridden — press start training again') }}
-                      title="the check reads metadata only - insist if you know the episodes are there">
+                      title={dsWarn.recording
+                        ? 'the trainer would read episodes as they are still being written - only useful if the session is about to close'
+                        : 'the check reads metadata only - insist if you know the episodes are there'}>
                 train on it anyway
               </button>
             </div>
@@ -570,7 +576,9 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             <div className="train-job-head">
               <b>{d.repo_id}</b>
               <span className="jstate">
-                {d.root
+                {/* Q38: "0 eps" on a dataset being recorded right now reads as empty when it is
+                    filling — the count is a snapshot of flushed metadata, not of the session. */}
+                {d.recording ? '⏺ recording now' : d.root
                   ? `${d.total_episodes ?? '?'} eps · ${d.fps ?? '?'} fps`
                   : `Hub${d.downloads ? ` · ${d.downloads.toLocaleString()} downloads` : ''}`}
               </span>

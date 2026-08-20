@@ -1,7 +1,7 @@
 // node assertions over the bundled module (esbuild first — see the sibling
 // calibrateCommand.test.mjs for the same pattern).
 import assert from 'node:assert/strict'
-import { datasetKey, selectDataset, selectionKey, replayable, trainable, selectedRow } from '/tmp/datasetSelection.mjs'
+import { datasetKey, selectDataset, selectionKey, replayable, trainable, selectedRow, datasetMark } from '/tmp/datasetSelection.mjs'
 
 const local = { root: '/data/mine', repo_id: 'me/mine', local: true, total_episodes: 4 }
 const hub = { repo_id: 'lerobot/pusht', local: false, downloads: 1200 }
@@ -98,4 +98,38 @@ console.log('datasetSelection: all assertions passed')
   assert.equal(selectedRow(rows, { dataset_root: '', dataset_repo_id: 'lerobot/pusht' })?.repo_id, 'lerobot/pusht')
   assert.equal(selectedRow(rows, { dataset_root: '/data/gone', dataset_repo_id: '' }), null)
   assert.equal(selectedRow(rows, { dataset_root: '', dataset_repo_id: '' }), null)
+}
+
+// ---- Q38: a dataset being recorded into RIGHT NOW is a different thing from an abandoned one.
+{
+  const live = {
+    root: '/data/local/sim_recording', repo_id: 'local/sim_recording', total_episodes: 0, fps: 30,
+    usable: false, recording: true, reason: 'recording_in_progress',
+    problem: 'a recording session is writing into this dataset right now - 2 episode(s) captured so far. '
+      + 'Wait for the session to close; do NOT delete the folder.',
+  }
+  const abandoned = {
+    root: '/data/local/old', repo_id: 'local/old', total_episodes: 0, fps: 30,
+    usable: false, reason: 'no_episodes', problem: '0 episodes. ... Record into it, or delete it.',
+  }
+
+  // The two must not wear the same glyph: ⚠ on a recording the operator is deliberately making
+  // says "something is wrong here", which is a lie about the one thing that is going right.
+  assert.equal(datasetMark(live).glyph, '⏺ ')
+  assert.equal(datasetMark(live).kind, 'recording')
+  assert.equal(datasetMark(abandoned).glyph, '⚠ ')
+  assert.equal(datasetMark(abandoned).kind, 'problem')
+  assert.equal(datasetMark({ root: '/d', repo_id: 'a/b', usable: true }).glyph, '')
+  // No verdict at all (older server) is not a problem to announce.
+  assert.equal(datasetMark({ root: '/d', repo_id: 'a/b' }).kind, 'ok')
+
+  // Both verbs still refuse it - a growing dataset is not trainable and replay would race the
+  // writer - but with the sentence that tells the operator to WAIT, not to delete.
+  assert.equal(trainable(live).ok, false)
+  assert.match(trainable(live).reason, /do NOT delete the folder/)
+  assert.equal(replayable(live).ok, false)
+  assert.match(replayable(live).reason, /right now/)
+
+  // recording wins over the abandoned reading even though both carry usable:false.
+  assert.equal(datasetMark({ ...abandoned, recording: true }).kind, 'recording')
 }

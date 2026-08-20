@@ -35,6 +35,13 @@ const DATASETS = {
     { root: '/tmp/audit/cagataydev/good-one', repo_id: 'cagataydev/good-one', total_episodes: 30, fps: 10,
       robot_type: 'so101', usable: true, note: 'read from meta/info.json only' },
     { repo_id: 'lerobot/pusht', local: false, downloads: 91234, total_episodes: 206, fps: 10 },
+    // Q38: the session that is writing RIGHT NOW. Same usable:false as the abandoned row, and it
+    // must not read the same way on screen.
+    { root: '/tmp/audit/local/live_now', repo_id: 'local/live_now', total_episodes: 0, fps: 30,
+      usable: false, recording: true, reason: 'recording_in_progress',
+      problem: 'a recording session is writing into this dataset right now - 2 episode(s) captured so far. '
+        + 'Training would read a dataset that is still growing, and a replay would race the writer. '
+        + 'Wait for the session to close; do NOT delete the folder.' },
   ],
 }
 
@@ -122,9 +129,37 @@ await page.waitForTimeout(1500)
 if (await page.locator('.artifact-hold').count()) failures.push('a healthy dataset was held back')
 if (submits !== 2) failures.push(`a healthy dataset did not start (submits=${submits}, expected 2)`)
 
+// ---- 6. Q38: the LIVE session reads as "recording", never as a broken folder
+{
+  const opts6 = await page.locator('select option').allInnerTexts()
+  const liveOpt = opts6.find(o => o.includes('live_now')) ?? ''
+  if (!liveOpt.includes('⏺')) failures.push(`the live recording is not marked as recording: "${liveOpt.trim()}"`)
+  if (liveOpt.includes('⚠')) failures.push('the dataset being recorded right now wears the "something is wrong" glyph')
+
+  const liveRow = page.locator('.train-job', { hasText: 'live_now' })
+  const rowText = await liveRow.innerText()
+  if (!/recording now/i.test(rowText)) failures.push(`the live row still reads as empty: "${rowText.replace(/\s+/g, ' ')}"`)
+  if (/\b0 eps\b/.test(rowText)) failures.push('the live row shows "0 eps" for a dataset that is filling')
+
+  const liveReplay = liveRow.locator('button:has-text("replay")').first()
+  if (await liveReplay.isEnabled()) failures.push('replay is clickable on a dataset a writer holds')
+  const liveTitle = await liveReplay.getAttribute('title')
+  if (!/right now/.test(liveTitle ?? '')) failures.push(`the live replay refusal does not say a session is running: "${liveTitle}"`)
+  if (/delete/.test(liveTitle ?? '') && !/do NOT delete/.test(liveTitle ?? ''))
+    failures.push('THE DANGEROUS ONE: the live dataset is being told to delete itself')
+
+  await picker.selectOption('/tmp/audit/local/live_now')
+  await train.click()
+  await page.locator('.artifact-hold').first().waitFor({ timeout: 8000 }).catch(() => {})
+  const holdText = await page.locator('.artifact-hold').first().innerText().catch(() => '')
+  if (!/do NOT delete the folder/.test(holdText)) failures.push('the live refusal does not protect the session in progress')
+  if (!/record screen/i.test(holdText)) failures.push('the live refusal does not point anywhere useful')
+  if (submits !== 2) failures.push(`the live dataset reached the trainer (submits=${submits}, expected 2)`)
+}
+
 if (replays !== 0) failures.push(`a replay was started by this audit (${replays}) - it should never have been reachable`)
 if (thrown.length) failures.push(`page threw: ${thrown.join(' ; ')}`)
 
 await browser.close()
 if (failures.length) { console.log('FAILURES:'); for (const f of failures) console.log(`  ✗ ${f}`); process.exit(1) }
-console.log('dataset hold: marked in the picker, replay dead with the reason, train sends NOTHING, the door opens once per dataset, healthy datasets untouched')
+console.log('dataset hold: abandoned row marked ⚠ and held (no request sent, door opens once per dataset), live recording marked ⏺ with "do NOT delete" and pointed at the record screen, healthy datasets untouched')
