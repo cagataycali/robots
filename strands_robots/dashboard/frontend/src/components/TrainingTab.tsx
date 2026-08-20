@@ -19,6 +19,14 @@ import { newerThanApplied } from '../lib/requestOrder'
 type Dataset = DatasetRow
 interface Job { job_id: string; provider: string; dataset?: string; base_model?: string; output_dir?: string; steps?: number; submitted_at?: number }
 interface JobStatus { status: string; data: { status?: string; metrics?: Record<string, unknown> }; text: string }
+/**
+ * What the server could see of the exported artifact ON DISK (Q36). `ok` means "nothing
+ * objectionable there", NOT "this policy loads" - the server deliberately never loads the
+ * model (seconds to minutes, and an OOM risk on a box that is mid-training), so nothing here
+ * may be rendered as a guarantee. Absent = an older server: then the old behaviour stands,
+ * because a missing verdict is not a bad verdict.
+ */
+interface ArtifactVerdict { ok?: boolean; reason?: string; message?: string; warning?: string; path?: string }
 
 /**
  * Training tab - submit / monitor / export policy training jobs.
@@ -266,11 +274,27 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     setBusy(false)
   }
 
+  /**
+   * A checkpoint the server could not confirm on disk, held back from staging until the
+   * operator says they mean it. A REFUSAL WITH A DOOR, like every other gate here: the disk
+   * check can be wrong (a loader that infers its own weights layout, an artifact the server
+   * cannot see through a symlink), and a hard block would leave the operator with a trained
+   * run and no way to use it.
+   */
+  const [stageAnyway, setStageAnyway] = useState<{ job: Job; ckpt: string; message: string } | null>(null)
+
   const exportCkpt = async (job: Job) => {
     setBusy(true)
     try {
       const j = await post('/api/training/export', { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset, base_model: job.base_model })
-      setMsg(j.status === 'success' ? `✓ ${j.text?.slice(0, 250)}` : `✗ ${j.text?.slice(0, 250)}`)
+      const art: ArtifactVerdict | undefined = j?.artifact
+      if (j.status !== 'success') setMsg(`✗ ${j.text?.slice(0, 250)}`)
+      else if (j.deployable === false) {
+        // The export RAN - that is why the trainer's ✓ is still shown - and what it produced
+        // is not a policy. Said here, on the export button, because this is where an operator
+        // looks before they go anywhere near a robot.
+        setMsg(`⚠ the export succeeded but the artifact is not usable: ${art?.message ?? 'the checkpoint could not be confirmed on disk'}`)
+      } else setMsg(`✓ ${j.text?.slice(0, 250)}${art?.warning ? ` — ⚠ ${art.warning}` : ''}`)
     } catch (e) { failed('export', e) }
     setBusy(false)
   }
@@ -285,8 +309,15 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     try {
       const j = await post('/api/training/export', { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset, base_model: job.base_model })
       const ckpt = j?.data?.exported_model
+      const art: ArtifactVerdict | undefined = j?.artifact
       if (j.status !== 'success' || typeof ckpt !== 'string' || !ckpt) {
         setMsg(`✗ nothing deployable: ${j.text?.slice(0, 200) ?? 'export returned no artifact path'}`)
+      } else if (j.deployable === false) {
+        // Do NOT stage it. Staging prefills a run form the operator then presses Run on, and
+        // by that point the checkpoint's problem has become "the arm did not move and I do not
+        // know why". Hold it here, with the reason and a door.
+        setStageAnyway({ job, ckpt, message: art?.message ?? 'the checkpoint could not be confirmed on disk' })
+        setMsg(null)
       } else {
         setDeployIntent({
           checkpoint: ckpt,
@@ -299,6 +330,19 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     setBusy(false)
   }
 
+
+  /** The operator overrode the disk check. Stage exactly what deploy would have staged. */
+  const stageRegardless = () => {
+    if (!stageAnyway) return
+    const { job, ckpt } = stageAnyway
+    setDeployIntent({
+      checkpoint: ckpt,
+      policy_type: guessPolicyType(job.base_model),
+      source: `training job ${job.job_id} (${job.base_model || job.provider}) — staged over an unconfirmed artifact`,
+    })
+    setStageAnyway(null)
+    setMsg('🚀 checkpoint staged over the warning — open a robot\u2019s run form; nothing runs until you press Run there')
+  }
 
   // The form re-told as one sentence. A grid of fields answers "what can I
   // set"; the sentence answers the question that actually matters before a
@@ -403,6 +447,21 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
                   disabled={busy || !datasetPicked || !form.output_dir || !!wantedSteps.problem}>▶ train</button>
         </div>
         {msg && <div className="train-msg">{msg}</div>}
+        {/* Held back, not blocked. The reason names the physical event (a config with no
+            weights beside it, an unmounted volume) so the operator can decide whether they
+            know better than the check - and the button says what they are overriding. */}
+        {stageAnyway && (
+          <div className="train-msg warn artifact-hold" role="alert">
+            <div>⚠ not staged: {stageAnyway.message}</div>
+            <div className="artifact-hold-actions">
+              <button className="btn ghost" onClick={() => setStageAnyway(null)}>keep it unstaged</button>
+              <button className="btn" onClick={stageRegardless}
+                      title="the disk check can be wrong - stage it and find out on the run form">
+                stage it anyway
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="train-form">
