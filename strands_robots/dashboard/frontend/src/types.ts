@@ -64,7 +64,8 @@ export interface Peer {
    *  as soon as the arm publishes positions again, because mesh.core never logs a recovery. */
   joint_problem?: { kind?: string; headline?: string; remedy?: string; detail?: string
     /** 'peer' = the robot reported it in its own state snapshot (clears on recovery);
-     *  absent = derived from its log, which never records a recovery. */
+     *  absent = derived from its log; a recovery line clears it, but a robot
+     *  running code older than 13b72dcf logs none, so it can outlive the fault. */
     source?: string; failures?: number; for_seconds?: number } | null
   /** E-stop lockout as the SERVER understands it (Q43): 'locked' (an e-stop it
    *  saw), 'clear' (proved by this peer accepting a command a lockout would

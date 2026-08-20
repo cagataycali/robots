@@ -206,3 +206,30 @@ def test_a_never_ran_probe_is_not_told_to_read_the_log() -> None:
     assert got["kind"] == "not_probed"
     assert "nothing in the log to find" in got["remedy"]
     assert "devices > logs" not in got["remedy"]
+
+
+def test_a_recovery_line_ends_the_complaint() -> None:
+    # Newest-first: the last word on this probe is "it works", so there is nothing to report. Before
+    # mesh/core logged recoveries this was unknowable, which is what the old tooltip admitted.
+    lines = [
+        "13:58 state probe 'hw_joints' failed: RuntimeError(no calibration registered)",
+        "14:02 INFO:...:[mesh] so101-leader: state probe 'hw_joints' recovered after 2 failures over 41.0s",
+    ]
+    assert joint_silence.classify(lines) is None
+
+
+def test_a_failure_AFTER_a_recovery_is_still_reported() -> None:
+    # The fault came back. Order is what matters, not the mere presence of a recovery line.
+    lines = [
+        "13:58 state probe 'hw_joints' failed: RuntimeError(no calibration registered)",
+        "14:02 [mesh] so101-leader: state probe 'hw_joints' recovered after 2 failures over 41.0s",
+        "14:30 state probe 'hw_joints' failed: ConnectionError(... Port is in use!)",
+    ]
+    got = joint_silence.classify(lines)
+    assert got is not None and got["kind"] == "port_in_use"
+
+
+def test_a_recovery_line_is_never_read_as_a_failure() -> None:
+    # It says "state probe 'hw_joints'" like a failure does; the failure pattern requires
+    # failed/still failing, and this pins that so a future wording change cannot invert the meaning.
+    assert joint_silence.classify(["14:02 state probe 'hw_joints' recovered after 1 failures over 3.0s"]) is None

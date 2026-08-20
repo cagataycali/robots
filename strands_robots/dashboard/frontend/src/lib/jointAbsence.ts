@@ -141,8 +141,9 @@ export function jointAbsence(input: AbsenceInput): AbsenceNote {
       extras.push(verdict.source === 'peer'
         // A peer-reported fault disappears the moment the probe recovers, so its presence means NOW.
         ? 'reported by the robot itself, and it clears when the read works again'
-        // A log-derived one cannot clear itself: mesh.core logs a failure once and never a recovery.
-        : 'read from this robot\'s log, which records a failure once and never a recovery')
+        // A log-derived one clears only if the log later says the probe recovered -- which mesh.core
+        // now logs, but a robot running older code never does, so its complaint can outlive the fault.
+        : 'read from this robot\'s log, and it clears only when the log records a recovery')
     }
     return {
       text: lasting ? `no joint positions ${lasting} — ${verdict.headline}` : `no joint positions — ${verdict.headline}`,

@@ -36,6 +36,13 @@ from typing import Any, Mapping
 #: The line mesh.core writes when a probe degrades (core.py ``_warn_read_state_once``).
 _PROBE_LINE = re.compile(r"state probe '?\"?hw_joints'?\"?.*?(failed|still failing)", re.I)
 
+#: The recovery line mesh/core emits when the probe works again. Scanning newest-first, this ENDS the
+#: search: a fault that later recovered is not a fault, and reporting it anyway is how a badge that
+#: cannot clear itself teaches the operator to ignore badges. Before this line existed there was no
+#: way to know, which is exactly what the old wording admitted ("records a failure once and never a
+#: recovery"); a child running older code still emits none, so absence of a recovery proves nothing.
+_RECOVERED_LINE = re.compile(r"state probe '?\"?hw_joints'?\"?.*?recovered", re.I)
+
 #: Ordered: the FIRST match wins, so the specific readings are tried before the generic one.
 _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -81,6 +88,10 @@ def classify(log_lines: Any) -> dict[str, str] | None:
     if not isinstance(log_lines, (list, tuple)):
         return None
     for line in reversed([str(x) for x in log_lines]):
+        if _RECOVERED_LINE.search(line):
+            # Newest-first, so a recovery seen before any failure means the newest word on this probe
+            # is "it works" -- stop, and report nothing.
+            return None
         if not _PROBE_LINE.search(line):
             continue
         matched = _match(line)
@@ -185,9 +196,10 @@ def has_joints(state: Any) -> bool:
 def merge(peer: Mapping[str, Any], fields: Mapping[str, Any]) -> dict[str, Any]:
     """The annotation fields to apply to ``peer``, with a stale joint complaint removed.
 
-    A recovered probe is never logged (see the module docstring), so the ONLY evidence that the
-    fault is over is the arm publishing joints again. When it does, the past complaint is dropped
-    rather than shown - a badge that cannot clear itself teaches the operator to ignore badges.
+    Two things can end a log-derived complaint: the arm publishing joints again, and (since the
+    recovery line exists) the log itself saying the probe recovered, which ``classify`` honours. A
+    child running older code logs no recovery, so for those the arm's joints remain the only proof --
+    and a badge that cannot clear itself teaches the operator to ignore badges.
     """
     out = dict(fields)
     state = peer.get("state")

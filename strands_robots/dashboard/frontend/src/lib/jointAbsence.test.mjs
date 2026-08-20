@@ -148,11 +148,13 @@ const UNCAL = {
 }
 
 {
-  // A log-derived verdict says so, because it CANNOT clear itself: mesh.core logs a failure once
-  // and never a recovery, so it may describe a fault that is already over.
+  // A log-derived verdict says where it came from, because it clears only if the log later records a
+  // recovery -- which mesh.core now logs, but a robot running older code never does, so the verdict
+  // can still describe a fault that is already over.
   const note = jointAbsence({ ...ARM1, problem: { ...UNCAL, source: undefined, for_seconds: undefined, failures: undefined }, nowS: ARM1.state.t + 1 })
   assert.equal(note.text, 'no joint positions — this board has no calibration, so its positions cannot be read in degrees')
-  assert.match(note.detail, /never a recovery/)
+  assert.match(note.detail, /read from this robot's log/)
+  assert.match(note.detail, /clears only when the log records a recovery/)
   assert.doesNotMatch(note.detail, /consecutive failed reads/, 'a count nobody reported must not be invented')
 }
 
