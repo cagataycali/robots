@@ -695,6 +695,7 @@ function FollowerLive({ peer, recording }: { peer?: Peer; recording: boolean }) 
     peer.peer_id,
     peer.presence?.cameras,
     Object.keys(peer.cameras ?? {}),
+    peer.cameras_requested,
   )
   const cams = evidence.kind === 'ok' ? evidence.cams : []
   return (

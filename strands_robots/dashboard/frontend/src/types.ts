@@ -53,6 +53,12 @@ export interface Peer {
    *  U15: this is the ONLY thing that may differ. It says nothing about the
    *  robot's health and gates no control. */
   origin?: 'managed' | 'external' | string | null
+  /** Camera names this dashboard REQUESTED when it spawned the peer (annotation,
+   *  managed peers only). Presence lists only the cameras the robot managed to
+   *  OPEN, so this is the only way to tell "joints-only by design" from "they
+   *  failed to open and were dropped at connect". Absent = not known; an empty
+   *  array is never sent, because it would read as a claim about zero cameras. */
+  cameras_requested?: string[]
   /** E-stop lockout as the SERVER understands it (Q43): 'locked' (an e-stop it
    *  saw), 'clear' (proved by this peer accepting a command a lockout would
    *  refuse), 'unknown' (say so - the mesh deliberately does not advertise

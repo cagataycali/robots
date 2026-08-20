@@ -133,7 +133,7 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
                   // announces (lib/cameraEvidence): on a machine where macOS blocks capture,
                   // both arms announce top+wrist and deliver nothing, and the detail screen is
                   // where the operator comes to find out why. Say which of the two it is.
-                  const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, peer.presence?.cameras, cams))
+                  const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, peer.presence?.cameras, cams, peer.cameras_requested))
                   return (
                     <div className="camtile big">
                       <div className="camstate" title={ph?.title}>
