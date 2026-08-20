@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { wsUrl } from '../lib/endpoints'
-import { classifyCamera, retryDelayMs, type CamStatus } from '../lib/cameraState'
+import { classifyCamera, type CamStatus } from '../lib/cameraState'
+import { planRetry } from '../lib/cameraRetry'
 
 interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: boolean; error?: string }
 
@@ -15,6 +16,12 @@ interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: 
  * A closed socket also retries with backoff instead of sitting dead until
  * someone reloads the page - and it stops retrying when the close was a refusal
  * (1008), because hammering a door that said no is not resilience.
+ *
+ * The backoff counter is only cleared by EVIDENCE (a frame, or a socket that stayed
+ * open): this server accepts and authenticates the handshake before discovering that
+ * nothing is publishing, so `onopen` firing means nothing. Resetting there is what
+ * turned ten hours of a missing arm into 63,906 sockets from a phone on cellular
+ * data (BUGS.md Q40) - see lib/cameraRetry.
  */
 export default function CameraTile({ peerId, cam, big = false, meta }: {
   peerId: string; cam: string; big?: boolean; meta?: Meta
@@ -32,13 +39,21 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
   const conn = useRef<'connecting' | 'open' | 'closed'>('connecting')
   const error = useRef<string | null>(null)
   const retryAt = useRef<number | undefined>(undefined)
+  // Attempts survive a re-run of the effect: peerId/cam churn must not hand a dead
+  // endpoint a fresh 1s retry budget.
+  const tries = useRef(0)
+  // Read inside the ticker, so a metadata update (meta.t changes with every published
+  // frame) no longer tears the socket down and rebuilds it.
+  const metaRef = useRef(meta)
+  metaRef.current = meta
 
   useEffect(() => {
     let ws: WebSocket | null = null
     let url: string | null = null
     let stopped = false
     let retryTimer: number | undefined
-    let tries = 0
+    let openedAt: number | undefined
+    let framesThisSocket = 0
 
     // One ticker owns every visible change, so a stall becomes visible on its
     // own: when a stream dies, nothing arrives to trigger a render.
@@ -47,9 +62,9 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
       setStatus(classifyCamera({
         now, conn: conn.current, frames: frames.current,
         lastFrameAt: lastFrameAt.current, error: error.current,
-        publishedAt: meta?.t,
+        publishedAt: metaRef.current?.t,
         retryInMs: retryAt.current !== undefined ? Math.max(0, retryAt.current - now) : undefined,
-        attempt: retryAt.current !== undefined ? tries : undefined,
+        attempt: retryAt.current !== undefined ? tries.current : undefined,
       }))
       const t = performance.now()
       times.current = times.current.filter(x => t - x < 2000)
@@ -61,7 +76,8 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
       conn.current = 'connecting'
       ws = new WebSocket(wsUrl(`/ws/camera/${encodeURIComponent(peerId)}/${encodeURIComponent(cam)}`))
       ws.binaryType = 'blob'
-      ws.onopen = () => { conn.current = 'open'; tries = 0; retryAt.current = undefined }
+      // NOT a reset: this handshake succeeding says nothing about whether frames exist.
+      ws.onopen = () => { conn.current = 'open'; openedAt = Date.now(); retryAt.current = undefined }
       ws.onmessage = (msg) => {
         if (typeof msg.data === 'string') {
           // The server tells us *why* there are no pixels (e.g. the peer is
@@ -79,17 +95,27 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
         url = next
         error.current = null
         frames.current += 1
+        framesThisSocket += 1
         lastFrameAt.current = Date.now()
         times.current.push(performance.now())
       }
       ws.onclose = (ev) => {
         conn.current = 'closed'
-        if (ev.code === 1008) { error.current = 'unauthorized'; retryAt.current = undefined; return }
+        const plan = planRetry({
+          attempt: tries.current,
+          frames: framesThisSocket,
+          openMs: openedAt !== undefined ? Date.now() - openedAt : undefined,
+          code: ev.code,
+        })
+        tries.current = plan.attempt
+        if (plan.delayMs === null) {
+          error.current = 'unauthorized'
+          retryAt.current = undefined
+          return
+        }
         if (stopped) return
-        tries += 1
-        const delay = retryDelayMs(tries)
-        retryAt.current = Date.now() + delay
-        retryTimer = window.setTimeout(open, delay)
+        retryAt.current = Date.now() + plan.delayMs
+        retryTimer = window.setTimeout(open, plan.delayMs)
       }
     }
     open()
@@ -101,7 +127,7 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
       ws?.close()
       if (url) URL.revokeObjectURL(url)
     }
-  }, [peerId, cam, meta?.t])
+  }, [peerId, cam])
 
   const shape = meta?.shape?.length ? `${meta.shape[1]}×${meta.shape[0]}` : null
   const cls = ['camtile', big ? 'big' : '', `cam-${status.kind}`, status.frozen ? 'frozen' : '']

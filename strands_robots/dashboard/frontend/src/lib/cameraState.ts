@@ -171,7 +171,15 @@ export function classifyCamera(input: {
   return { kind: 'connecting', title: 'connecting', detail: 'opening the stream', live: false, frozen: false }
 }
 
-/** Backoff for reconnects: quick twice, then slow enough to be polite. */
+/**
+ * Backoff for reconnects: quick twice, then slow enough to be polite.
+ *
+ * SUPERSEDED by lib/cameraRetry's `backoffMs`/`planRetry` and no longer used by
+ * CameraTile. The curve was never the problem — the counter feeding it was reset by
+ * `onopen`, which this server fires before it knows whether any frames exist (Q40).
+ * Kept only so the timing here stays comparable; new callers must use planRetry, which
+ * decides the RESET as well as the delay.
+ */
 export function retryDelayMs(attempt: number): number {
   return Math.min(10_000, 1000 * Math.pow(2, Math.max(0, attempt - 1)))
 }
