@@ -15,8 +15,10 @@ at ``threshold=0.30``):
   ``body_on(xy_tol=-0.20)`` behaved the same way: each was ``True`` at the
   positive value and permanently ``False`` at the negated one.
 * ``body_upright`` and ``base_tipped`` already refused ``tol < 0`` inside their
-  factories, so two of the six tolerance params in the registry were held to this
-  domain and four were not.
+  factories, so those two tolerance params were held to this domain and every
+  other one the registry declares was not. The count is deliberately not stated:
+  the sweep below derives its cases from the registry, so a predicate registered
+  later adds its own and any number written here would go stale.
 
 Signed params keep both signs, and the tests below pin that: ``body_on``'s
 ``z_offset`` is a signed offset that a caller legitimately sets negative (and
@@ -76,7 +78,8 @@ def _numeric_params(factory: Any) -> dict[str, str]:
 # :func:`strands_robots.utils.name_list_error` refuses one (a string is iterable
 # per character, so reading it as a list of names is the mistake that domain
 # exists to catch). An annotation this table does not name is refused rather than
-# guessed at - see ``test_every_required_param_shape_has_a_placeholder``.
+# guessed at - see ``test_every_probe_value_has_the_shape_its_annotation_declares``
+# and ``test_every_graded_predicate_can_actually_be_built``.
 _PROBE_VALUES: dict[str, Any] = {
     "float": lambda param: 0.25,
     "int": lambda param: 1,
@@ -256,9 +259,10 @@ class TestABooleanIsAnsweredBeforeTheCoercion:
     ``tests/simulation/test_input_validators_refuse_a_boolean.py`` states in
     prose, and nothing there checks it. It is pinned here instead, so the
     exemption rests on a measurement: deleting the ``finite_number_error`` call
-    makes 26 of the 30 cases below report ``DID NOT RAISE`` - ``tol=True``
-    accepted as a tolerance of ``1.0`` - while the four ``still accepted`` cases
-    keep passing.
+    makes every refusal case below report ``DID NOT RAISE`` - ``tol=True``
+    accepted as a tolerance of ``1.0`` - while the ``still accepted`` cases keep
+    passing. Stated without counts on purpose, since the registry-derived sweep
+    grows the refusal cases whenever a predicate declares a new tolerance.
 
     What these deliberately do *not* claim is an ordering. Moving the sign check
     above the finiteness guard changes no verdict here, because the sign check
