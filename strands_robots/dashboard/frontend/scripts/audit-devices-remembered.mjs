@@ -29,8 +29,9 @@ const doc = {
       role: 'follower', role_volts: 12.6, role_source: 'measured',
       remembered: { peer_id: 'so101-arm-1', robot_name: 'so101', mode: 'real',
                     cameras: ['top', 'wrist'], robot_id: 'arm_1', saved_at: 1787115801 } },
-    { device: BUSY, serial_number: 'SERIALBUSY',
-      remembered: { peer_id: 'so101-arm-2', robot_name: 'so101', mode: 'real', cameras: [] } },
+    // The REAL profile on cagatay's desk: measured 12.6V = follower, saved id says "leader_arm".
+    { device: BUSY, serial_number: 'SERIALBUSY', role: 'follower', role_volts: 12.6, role_source: 'measured',
+      remembered: { peer_id: 'so101-arm-2', robot_name: 'so101', mode: 'real', cameras: [], robot_id: 'leader_arm' } },
     // A board nobody configured: no `remembered` key at all, and the screen must invent nothing.
     { device: '/dev/cu.usbmodemNEW1', serial_number: 'SERIALNEW' },
   ],
@@ -88,6 +89,8 @@ if (!(await freeRow.locator('.remembered').count())) {
   const label = await btn.innerText()
   if (!label.includes('so101-arm-1')) failures.push(`the button does not name the peer it will start: "${label}"`)
   if (await btn.isDisabled()) failures.push('the free board\'s respawn button is disabled')
+  // A neutral id must stay quiet: a warning that is always on is not a warning.
+  if (/⚠/.test(text)) failures.push(`a neutral calibration id raised a warning: ${text.slice(0, 160)}`)
 }
 
 // ---- THE DANGEROUS ONE: a bus something already drives must not be spawnable again
@@ -101,6 +104,16 @@ if (await busyRow.locator('.remembered').count()) {
   }
 } else {
   failures.push('the running board lost its memory line entirely')
+}
+
+// ---- a name that contradicts the measurement is called out ON THE ROW, not two clicks away
+{
+  const text = await busyRow.locator('.remembered').innerText()
+  if (!/leader_arm/.test(text)) failures.push('the contradicting calibration id is hidden instead of shown')
+  if (!/12\.6V = follower/.test(text)) {
+    failures.push(`the row shows a leader-named id under a follower badge with no warning: ${text.replace(/\n+/g, ' | ').slice(0, 200)}`)
+  }
+  if (!/reuse the memory anyway/.test(text)) failures.push('the warning reads as a refusal instead of a note')
 }
 
 // ---- a board nobody configured invents nothing

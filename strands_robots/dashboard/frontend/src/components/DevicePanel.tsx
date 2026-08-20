@@ -9,6 +9,7 @@ import CalibrationSection from './CalibrationSection'
 import CameraGallery, { type CameraInfo, type CameraName, type CameraProblem } from './CameraGallery'
 import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
 import { calibratePlan, knownCalibrationId, type SpawnProfile } from '../lib/calibrateCommand'
+import { rememberedLine } from '../lib/rememberedBoard'
 import { parseCalibrationList, type CalibrationEntry } from '../lib/calibration'
 import { calibrationVerdict } from '../lib/calibrationMatch'
 import { rescanReport, hardwareKey, type RescanReport } from '../lib/rescanReport'
@@ -631,18 +632,19 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                         hardware, though its whole spawn payload is on disk. Say what it was, and
                         offer exactly one click to bring it back — but never while something is
                         already driving that bus. */}
-                    {p.remembered && (
+                    {p.remembered && (() => {
+                      // The line, and the trap inside it: the memory's id and peer name are just
+                      // names someone typed, while the badge above is a MEASUREMENT. Where they
+                      // disagree the row says so - iteration 135 shipped this line without that,
+                      // which is how "calibration id leader_arm" ended up sitting under a badge
+                      // reading "follower · 12.6V" with nothing to explain it.
+                      const mem = rememberedLine(p.remembered, p)!
+                      return (
                       <div className="row between remembered">
                         <span className="muted small">
-                          last spawned as <b>{p.remembered.peer_id}</b>
-                          {p.remembered.robot_name ? ` — ${p.remembered.robot_name}` : ''}
-                          {p.remembered.mode ? `, ${p.remembered.mode}` : ''}
-                          {/* Camera NAMES: the saved indices are exactly what macOS renumbers, so
-                              showing them would be confidently stale. */}
-                          {p.remembered.cameras.length
-                            ? `, cameras ${p.remembered.cameras.join(' + ')}`
-                            : ', no cameras'}
-                          {p.remembered.robot_id ? ` · calibration id ${p.remembered.robot_id}` : ''}
+                          last spawned as <b>{mem.summary}</b>
+                          {mem.calibrationId ? ` · calibration id ${mem.calibrationId}` : ''}
+                          {mem.warning && <span className="warn small"> ⚠ {mem.warning}</span>}
                         </span>
                         <button className="btn ghost" disabled={acting || claimedPorts.has(p.device)}
                                 title={claimedPorts.has(p.device)
@@ -654,7 +656,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                             : `spawn ${p.remembered.peer_id} again`}
                         </button>
                       </div>
-                    )}
+                      )
+                    })()}
                     {calibFor === p.device && (() => {
                       const { family, source } = familyFor(p)
                       const plan = calibratePlan({ ...p, robot_id: knownCalibrationId(profiles, p) }, family)
