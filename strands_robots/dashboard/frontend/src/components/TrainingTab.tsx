@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDialogFocus } from '../lib/useDialogFocus'
+import { numField } from '../lib/numField'
 import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post, HttpError } from '../lib/endpoints'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
@@ -203,7 +204,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       dataset_repo_id: form.dataset_repo_id || undefined,
       base_model: form.base_model || undefined,
       output_dir: form.output_dir || undefined,
-      steps: Number(form.steps) || 10000,
+      steps: wantedSteps.value,
       method: form.method || undefined,
     }
     try {
@@ -221,6 +222,14 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [collect, setCollect] = useState({ dataset_root: '', instruction: 'pick up the red cube', n_episodes: '5', duration: '10', robot_name: 'so101' })
   const [showCollect, setShowCollect] = useState(false)
 
+  /* Q60: `type="number"` hands you "" for junk and `Number(raw) || 10000` reads that as consent to
+     a 10k-step run; `||` also lets a minus sign through, so `steps: -100` and `n_episodes: -3` were
+     posted verbatim. Bounds stated, refusals explained, nothing corrected behind the operator. */
+  const STEP_RULES = { what: 'steps', min: 1, max: 2_000_000, remedy: 'submit a shorter run' }
+  const wantedSteps = numField(form.steps, STEP_RULES)
+  const wantedEpisodes = numField(collect.n_episodes, { what: 'episodes', min: 1, max: 500, remedy: 'collect in batches' })
+  const wantedSeconds = numField(collect.duration, { what: 'seconds per episode', min: 1, max: 600 })
+
   const submitCollect = async () => {
     if (!collect.dataset_root.trim()) return
     setBusy(true); setMsg(null)
@@ -228,8 +237,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       const j = await post('/api/collect', {
         dataset_root: collect.dataset_root,
         instruction: collect.instruction,
-        n_episodes: Number(collect.n_episodes) || 5,
-        duration: Number(collect.duration) || 10,
+        n_episodes: wantedEpisodes.value,
+        duration: wantedSeconds.value,
         robot_name: collect.robot_name,
       })
       setMsg(j.peer_id
@@ -296,8 +305,11 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // multi-hour job: "what did I just ask for?"
   const datasetPicked = form.dataset_root || form.dataset_repo_id
   const datasetLabel = selectDataset(datasets, selectionKey(form)).label || null
+  // The plan sentence reads back what WILL run, so with an unusable step count it must say that
+  // rather than quietly print the 0 the parse produced — it used to print 10,000, the old fallback.
+  const stepsPhrase = wantedSteps.problem ? `an unset number of` : fmtStep(wantedSteps.value)
   const story = datasetPicked
-    ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? datasetPicked} for ${fmtStep(Number(form.steps) || 10000)} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.`
+    ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? datasetPicked} for ${stepsPhrase} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.`
     : 'Pick a dataset to begin — the plan reads back here before anything runs.'
 
   return (
@@ -372,7 +384,11 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         </label>
         <div className="train-row">
           <label className="field"><span>steps</span>
-            <input type="number" value={form.steps} onChange={e => set('steps', e.target.value)} disabled={busy} />
+            <input type="number" value={form.steps} onChange={e => set('steps', e.target.value)} disabled={busy}
+                   aria-invalid={!!wantedSteps.problem} aria-describedby="train-steps-say" />
+            <span id="train-steps-say" className={`fieldsay${wantedSteps.problem ? ' bad' : ''}`}>
+              {wantedSteps.problem ?? wantedSteps.note ?? ''}
+            </span>
           </label>
           <label className="field"><span>method</span>
             <select value={form.method} onChange={e => set('method', e.target.value)} disabled={busy}>
@@ -382,8 +398,9 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
           </label>
         </div>
         <div className="train-actions">
-          <button className="btn ghost" onClick={() => submit(true)} disabled={busy}>✓ validate</button>
-          <button className="btn go wide" onClick={() => submit(false)} disabled={busy || !datasetPicked || !form.output_dir}>▶ train</button>
+          <button className="btn ghost" onClick={() => submit(true)} disabled={busy || !!wantedSteps.problem}>✓ validate</button>
+          <button className="btn go wide" onClick={() => submit(false)}
+                  disabled={busy || !datasetPicked || !form.output_dir || !!wantedSteps.problem}>▶ train</button>
         </div>
         {msg && <div className="train-msg">{msg}</div>}
       </div>
@@ -404,12 +421,20 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             </label>
             <div className="train-row">
               <label className="field"><span>episodes</span>
-                <input type="number" value={collect.n_episodes}
+                <input type="number" value={collect.n_episodes} aria-invalid={!!wantedEpisodes.problem}
+                  aria-describedby="collect-episodes-say"
                   onChange={e => setCollect(c => ({ ...c, n_episodes: e.target.value }))} disabled={busy} />
+                <span id="collect-episodes-say" className={`fieldsay${wantedEpisodes.problem ? ' bad' : ''}`}>
+                  {wantedEpisodes.problem ?? wantedEpisodes.note ?? ''}
+                </span>
               </label>
               <label className="field"><span>sec/episode</span>
-                <input type="number" value={collect.duration}
+                <input type="number" value={collect.duration} aria-invalid={!!wantedSeconds.problem}
+                  aria-describedby="collect-seconds-say"
                   onChange={e => setCollect(c => ({ ...c, duration: e.target.value }))} disabled={busy} />
+                <span id="collect-seconds-say" className={`fieldsay${wantedSeconds.problem ? ' bad' : ''}`}>
+                  {wantedSeconds.problem ?? wantedSeconds.note ?? ''}
+                </span>
               </label>
               <label className="field"><span>robot</span>
                 <input value={collect.robot_name}
@@ -417,7 +442,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               </label>
             </div>
             <div className="train-actions">
-              <button className="btn go wide" onClick={submitCollect} disabled={busy || !collect.dataset_root.trim()}>
+              <button className="btn go wide" onClick={submitCollect}
+                disabled={busy || !collect.dataset_root.trim() || !!wantedEpisodes.problem || !!wantedSeconds.problem}>
                 📹 collect
               </button>
             </div>
