@@ -885,9 +885,10 @@ class TeleopMixin:
         # is fixed, which needs a real leader-arm session to say.
         # Imported HERE, not at module scope: importing strands_robots.mesh runs
         # the package __init__ and reaches strands_robots.simulation, which this
-        # module must not depend on - a rule tests/test_teleop_slew_bound.py pins,
-        # and which caught my module-level import immediately. pacing itself is
-        # dependency-free; it is the package around it that is heavy.
+        # module must not depend on - the same reason the slew helper below is
+        # imported lazily, and an invariant the suite pins by parsing this
+        # module's module-scope imports. pacing itself is dependency-free; it is
+        # the package around it that is heavy.
         from strands_robots.mesh.pacing import Ticker
 
         ticker = Ticker(period, self._teleop_stop_event)
