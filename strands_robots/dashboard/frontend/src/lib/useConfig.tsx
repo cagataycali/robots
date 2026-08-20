@@ -13,6 +13,8 @@ export interface ApplyResult {
   /** Q52: stored, and only a server start can put it into effect. */
   startup_required?: string[]
   env_written: string[]
+  /** Q75: keys REMOVED from .env — distinct from written-as-empty. */
+  env_removed?: string[]
   skipped_masked: string[]
   agent_reset: boolean
   errors: string[]

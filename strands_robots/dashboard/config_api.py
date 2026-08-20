@@ -22,7 +22,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from strands_robots.dashboard import settings
 
@@ -168,6 +168,63 @@ def upsert_env_file(updates: dict[str, str]) -> list[str]:
     except OSError:
         pass
     return list(updates)
+
+
+def split_env_patch(
+    raw: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Q75: separate "set this value" from "remove this variable".
+
+    ``null`` means REMOVE. It used to mean the empty string, which is a different
+    state and a trap: ``KEY=`` is *set and empty*, and almost nothing treats that
+    like absent. ``os.getenv("HF_TOKEN", default)`` returns ``""`` rather than the
+    default, an empty token authenticates as an empty token (401) instead of
+    falling back to anonymous, and an empty endpoint disables a client's own
+    discovery. Emptying the field was ALSO the only removal gesture the UI had, so
+    "take this key out" silently produced the one value most likely to break a
+    fallback path.
+
+    Pure: no file, no environ. Returns (updates, deletions).
+    """
+    updates: dict[str, Any] = {}
+    deletions: list[str] = []
+    for key, value in raw.items():
+        name = str(key).strip()
+        if value is None:
+            deletions.append(name)
+        else:
+            updates[name] = value
+    return updates, deletions
+
+
+def delete_env_keys(keys: Sequence[str]) -> list[str]:
+    """Remove keys from the env file, order-preserving. Returns those removed.
+
+    Only dashboard-managed keys, by the same allowlist that guards writing: a
+    caller who cannot set a variable must not be able to delete one either.
+    Comments and blank lines are kept — this file is edited by hand too.
+    """
+    wanted = [str(k).strip() for k in keys]
+    allowed = [k for k in wanted if not env_entry_error(k, "")]
+    if not allowed or not ENV_FILE.exists():
+        return []
+    kept: list[str] = []
+    removed: list[str] = []
+    for line in ENV_FILE.read_text().splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.partition("=")[0].strip()
+            if key in allowed:
+                removed.append(key)
+                continue
+        kept.append(line)
+    if removed:
+        ENV_FILE.write_text("\n".join(kept) + ("\n" if kept else ""))
+        try:
+            os.chmod(ENV_FILE, 0o600)
+        except OSError:
+            pass
+    return removed
 
 
 def bootstrap_env(
@@ -500,23 +557,34 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
     # --- env upsert -------------------------------------------------
     env_written: list[str] = []
     skipped_masked: list[str] = []
+    env_removed: list[str] = []
     raw_env = body.get("env")
     if isinstance(raw_env, dict):
+        # Q75: null means REMOVE, not "the empty string" - see split_env_patch.
+        raw_updates, deletions = split_env_patch(raw_env)
         updates: dict[str, str] = {}
-        for key, value in raw_env.items():
-            key = str(key).strip()
+        for key, value in raw_updates.items():
             if looks_masked(value):
                 skipped_masked.append(key)
                 continue
-            value_str = "" if value is None else str(value)
+            value_str = str(value)
             problem = env_entry_error(key, value_str)
             if problem:
                 errors.append(problem)
                 continue
             updates[key] = value_str
+        for key in deletions:
+            problem = env_entry_error(key, "")
+            if problem:
+                errors.append(problem)
         env_written = upsert_env_file(updates)
         for key, value in updates.items():
             os.environ[key] = value
+        env_removed = delete_env_keys(deletions)
+        for key in env_removed:
+            # The live process inherited it at startup; leaving it exported would make the
+            # dashboard itself the one place where the deleted variable is still in effect.
+            os.environ.pop(key, None)
 
     # --- hot apply --------------------------------------------------
     agent_reset = False
@@ -542,6 +610,7 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
         "respawn_required": respawn_required,
         "startup_required": startup_required,
         "env_written": env_written,
+        "env_removed": env_removed,
         "skipped_masked": skipped_masked,
         "agent_reset": agent_reset,
         "errors": errors,

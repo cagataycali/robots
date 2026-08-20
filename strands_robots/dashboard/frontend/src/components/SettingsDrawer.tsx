@@ -85,6 +85,8 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   const [serverToken, setServerToken] = useState('')
   // Q73: removing the token unlocks every motor on the fleet — two steps, and the second one
   // states what it exposes. Reset whenever the drawer's tab changes so it cannot stay armed.
+  // Q75: keys the operator marked for REMOVAL (null in the patch), distinct from an emptied value.
+  const [envUnset, setEnvUnset] = useState<string[]>([])
   const [removeArmed, setRemoveArmed] = useState(false)
   const [corsOrigins, setCorsOrigins] = useState('')
 
@@ -129,6 +131,14 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
     const parts: string[] = []
     if (r.applied.length) parts.push(`applied ${r.applied.join(', ')}`)
     if (r.env_written.length) parts.push(`wrote ${r.env_written.join(', ')} to .env`)
+    // Q75: a removal is not a write. Saying "wrote X" for a deleted key, or saying nothing at all,
+    // both leave the operator unsure whether the variable is gone or merely blank.
+    if (r.env_removed?.length) {
+      parts.push(
+        `removed ${r.env_removed.join(', ')} from .env `
+        + '(gone for this process and every robot spawned from now on; already-running robots keep it)',
+      )
+    }
     if (r.agent_reset) parts.push('agent will rebuild on the next turn')
     if (r.skipped_masked.length) parts.push(`skipped unchanged secrets: ${r.skipped_masked.join(', ')}`)
     if (r.restart_required.length) parts.push(`needs a mesh restart: ${r.restart_required.join(', ')}`)
@@ -523,7 +533,12 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
               <h3>Environment</h3>
               <p className="hint">
                 Written to <code>{config.env_file}</code> (chmod 600). Secrets show masked; leaving a
-                mask untouched leaves the stored value alone.
+                mask untouched leaves the stored value alone.{' '}
+                {/* Q75: clearing a field writes KEY= — set and EMPTY, which almost nothing treats
+                    like absent (getenv returns "", an empty token authenticates as an empty token).
+                    That used to be the only removal gesture available. */}
+                Clearing a value stores an <em>empty</em> value; use <b>unset</b> to remove the
+                variable entirely.
               </p>
               {config.env.some(r => r.shadowed) && (
                 <p className="hint warn">
@@ -555,8 +570,20 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                       // characters are the mask.
                       value={envDraft[row.key] ?? row.value}
                       placeholder={row.set ? '' : 'not set'}
+                      disabled={envUnset.includes(row.key)}
                       onChange={e => setEnvDraft(d => ({ ...d, [row.key]: e.target.value }))}
                     />
+                    {row.in_file && (
+                      envUnset.includes(row.key)
+                        ? <em className="warn">will be removed on save —{' '}
+                            <button className="btn ghost tiny"
+                                    onClick={() => setEnvUnset(u => u.filter(k => k !== row.key))}>
+                              keep it
+                            </button>
+                          </em>
+                        : <button className="btn ghost tiny" title="remove this variable from the file"
+                                  onClick={() => setEnvUnset(u => [...u, row.key])}>unset</button>
+                    )}
                   </label>
                 ))}
               </div>
@@ -584,10 +611,13 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 <button className="btn go" disabled={saving || !envValid}
                         title={envValid ? undefined : 'fix the highlighted fields first'}
                         onClick={() => {
-                  const env = { ...envDraft }
+                  const env: Record<string, string | null> = { ...envDraft }
+                  // A key marked unset wins over any draft edit to it: the operator's last word was
+                  // "remove", and sending both would write the value and then delete the line.
+                  for (const k of envUnset) env[k] = null
                   if (newKey.trim()) env[newKey.trim()] = newValue
                   void apply({ env, runtime: { trust_remote_code: trustRemote } })
-                  setNewKey(''); setNewValue('')
+                  setNewKey(''); setNewValue(''); setEnvUnset([])
                 }}>save</button>
               </div>
             </section>

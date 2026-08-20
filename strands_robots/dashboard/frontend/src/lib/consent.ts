@@ -32,6 +32,7 @@ export interface ConsentResult {
   scope?: string
   grants?: string[]
   env_written?: string[]
+  env_removed?: string[]
   note?: string
 }
 
