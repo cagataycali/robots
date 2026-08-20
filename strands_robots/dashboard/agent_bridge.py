@@ -294,6 +294,22 @@ def _make_fleet_tool() -> Any:
         if action == "task":
             if not target or not instruction:
                 return {"status": "error", "content": [{"text": "task requires target and instruction"}]}
+            # Q80: this line is the same send_cmd the ▶ button makes - but ▶ has a confirm sheet
+            # naming the word "physical" and a Q79 fit check, and typing a sentence into the chat
+            # box had neither. The gate belongs on the capability, so it lives here, before the
+            # command is built. Stopping is never gated; see agent_motion.py.
+            from strands_robots.dashboard.agent_motion import agent_motion_allowed
+
+            snap_peers = {}
+            try:
+                snap_peers = _bridge.snapshot().get("peers") or {}
+            except Exception:  # noqa: BLE001 - an unreadable snapshot means UNKNOWN, i.e. metal
+                snap_peers = {}
+            verdict = agent_motion_allowed(
+                "task", peer=snap_peers.get(target), target=target,
+            )
+            if not verdict["allowed"]:
+                return {"status": "error", "content": [{"text": verdict["reason"]}]}
             cmd = {
                 "action": "execute", "instruction": instruction,
                 "policy_provider": policy_provider, "duration": float(duration),

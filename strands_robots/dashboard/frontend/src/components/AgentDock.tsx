@@ -184,7 +184,12 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
                 <em>"tell {exampleRobot ?? 'so101-arm-1'} to wave hello"</em><br />
                 <em>"everyone stop" — the safety brake, it halts every robot</em>
                 <p className="hint">
-                  It can start and stop real robots. Everything it does is recorded in Activity.
+                  {/* Q80: this line used to read "it can start and stop real robots", which was true
+                      and was the problem — that path had no confirmation of any kind. The agent may
+                      now stop anything, and start motion on a SIM peer; starting a real arm is the
+                      human pressing ▶, where the confirm sheet and the fit check live. */}
+                  It can stop any robot, and start tasks in simulation. Starting a real arm stays with
+                  you — press ▶ on its card. Everything it does is recorded in Activity.
                 </p>
               </div>
             )}
