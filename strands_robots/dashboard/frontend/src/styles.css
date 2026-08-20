@@ -743,6 +743,13 @@ body {
 .detail-head .host { max-width: none; margin-left: 0; order: 9; flex-basis: 100%; }
 @media (min-width: 640px) { .detail-head .host { flex-basis: auto; order: 0; margin-left: auto; } }
 .detail-head .btn.ghost { margin-left: auto; }
+/* The E-STOP layer (z-index 200, fixed top-right) is deliberately painted over everything —
+   that is the iteration-1 safety fix. The corollary is that every header with a control in the
+   top-right corner has to RESERVE that corner, exactly as .fleetbar and .drawer-head do.
+   .detail-head did not: measured on a phone, the detail screen's `cameras` button sat at
+   x293-361/y25-69 and document.elementFromPoint returned button.estop, so it could not be
+   tapped at all. STOP ALL must keep winning; the other control has to move. */
+.detail-head { padding-right: 150px; }
 .detail > .stale-note { padding: var(--s2) var(--s5); }
 .detail-body {
   flex: 1; overflow-y: auto; display: grid; gap: var(--s5);
@@ -1094,6 +1101,7 @@ body::before {
   .estop-layer .estop { padding: 6px 9px; font-size: var(--fs-tiny); }
   .fleetbar { padding-right: 104px; }
   .drawer-head { padding-right: 116px; }
+  .detail-head { padding-right: 116px; }
   .jhist { flex-basis: 60px; min-width: 40px; }
 }
 
