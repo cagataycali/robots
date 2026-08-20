@@ -148,25 +148,22 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
   const checkpointField = wireFields.find(
     f => f.key === 'pretrained_name_or_path' || f.key === 'model_path')?.key
   const checkpoint = checkpointField ? String(value(checkpointField, '')).trim() : ''
-  // The operator's normalisation tag, when this provider offers the field. Upstream refuses a tag the
-  // checkpoint's stats do not declare, but only once the run process loads the model -- by which time
-  // ▶ has parked and torqued the arm. Sent here so the answer arrives while the field is being typed.
-  const normTag = wireFields.some(f => f.key === 'norm_tag')
-    ? String(value('norm_tag', wireFields.find(f => f.key === 'norm_tag')?.default ?? '')).trim()
-    : ''
+  /* No norm_tag here on purpose: the registry lists it in `unsettable_over_mesh`, so the wire schema
+     drops it and this form can never own that field. The server-side precheck still asks (a direct API
+     caller could send one); wiring a branch here would only imply a control the operator does not have.
+     tests/test_dashboard_norm_tag_reachability.py fails the day the registry makes it settable. */
   useEffect(() => {
     if (!checkpoint || !peerId) { setFit(null); return }
     let alive = true
     const t = setTimeout(() => {
       void httpGet<PolicyFit>(
-        `/api/robots/${encodeURIComponent(peerId)}/policy-fit?repo_id=${encodeURIComponent(checkpoint)}`
-        + (normTag ? `&norm_tag=${encodeURIComponent(normTag)}` : ''))
+        `/api/robots/${encodeURIComponent(peerId)}/policy-fit?repo_id=${encodeURIComponent(checkpoint)}`)
         .then(v => { if (alive) setFit(v) })
         // A failed lookup is not evidence of a mismatch: stay silent rather than cry wolf.
         .catch(() => { if (alive) setFit(null) })
     }, 400)
     return () => { alive = false; clearTimeout(t) }
-  }, [checkpoint, peerId, normTag])
+  }, [checkpoint, peerId])
   // Refused, and deliberately not forceable: no tick makes a 2-value action drive 6 joints.
   const fitBlocked = !!fit?.blocking
 
