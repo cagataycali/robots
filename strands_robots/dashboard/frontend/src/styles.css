@@ -1652,3 +1652,9 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   display: flex; flex-direction: column; gap: 8px;
 }
 .artifact-hold-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Q40: the two next actions after an interrupted recording, as a list of words rather than
+   buttons — a screen that offers "delete this dataset" one tap from a form is a screen that will
+   eventually delete an hour of hand-guiding by accident. */
+.hold-next { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.hold-next li { font-size: 12px; opacity: .8; line-height: 1.45; }

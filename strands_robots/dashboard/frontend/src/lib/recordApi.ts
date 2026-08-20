@@ -21,9 +21,28 @@ export interface EpisodeSummary {
   discarded?: boolean
 }
 
+/**
+ * Q40: evidence that a PREVIOUS session never closed — the dashboard wrote a breadcrumb when it
+ * opened one and did not get to remove it. Only ever present alongside `dataset: null`, because a
+ * live session is its own report.
+ */
+export interface InterruptedSession {
+  dataset: string
+  task: string
+  arms: string[]
+  /** seconds since it was opened, or null when the breadcrumb had no timestamp */
+  opened_ago: number | null
+  /** the whole sentence, composed server-side where the facts are */
+  text: string
+  /** the two real next actions, as words: nothing here deletes a dataset */
+  next: string[]
+}
+
 export interface RecordSession {
   /** null when no session is open */
   dataset: string | null
+  /** Q40: what the last session left behind, when it did not close. */
+  interrupted?: InterruptedSession | null
   task: string
   /** which teleop pair records: leader drives follower */
   leader: string | null

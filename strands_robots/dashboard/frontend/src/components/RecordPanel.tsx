@@ -253,6 +253,19 @@ export default function RecordPanel({ peers, onClose }: { peers: Peer[]; onClose
         </div>
       )}
 
+      {/* Q40: a session the dashboard died inside used to be silence — an empty form over a
+          half-written dataset, with both arms left despawned by the parking step. The server sends
+          the sentence (it has the facts); this renders it, and renders the next actions as WORDS.
+          No button here deletes a dataset: destroying an hour of hand-guiding is not a thing a
+          screen should offer next to a form the operator is about to fill in. */}
+      {!open && s?.interrupted && (
+        <div className="artifact-hold" role="status">
+          <div>⏹ {s.interrupted.text}</div>
+          <ul className="hold-next">
+            {s.interrupted.next.map(n => <li key={n}>{n}</li>)}
+          </ul>
+        </div>
+      )}
       {!open && s && (
         <form className="train-form" onSubmit={e => {
           e.preventDefault()
