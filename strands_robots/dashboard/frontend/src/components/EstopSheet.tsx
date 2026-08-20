@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { estopNothingTargeted } from '../lib/estopReach'
 import type { EstopResult } from '../types'
 import { post, HttpError } from '../lib/endpoints'
 import { estopFailureVerdict, resumeFailureVerdict, type FailureVerdict } from '../lib/estopOutcome'
@@ -146,7 +147,20 @@ export default function EstopSheet({
                 skipped (no heartbeat, cannot be reached): <code>{result.stale_skipped.join(', ')}</code>
               </p>
             )}
-            {result.targeted.length === 0 && <p className="hint">No live peers were on the mesh.</p>}
+            {/* `No live peers were on the mesh.` was read one second after someone hit stop while
+                watching an arm move — and it is a claim about the ROOM made from this dashboard's
+                snapshot. A peer started elsewhere, one whose presence has not arrived, or one already
+                pruned as stale is invisible here and can still be holding a torqued servo (Q32: ghost
+                processes lived on this fleet for days). lib/estopReach says what did not happen. */}
+            {result.targeted.length === 0 && (() => {
+              const reach = estopNothingTargeted({ staleSkipped: result.stale_skipped })
+              return (
+                <div className="result bad" role="alert">
+                  <b>{reach.headline}</b>
+                  <div>{reach.detail}</div>
+                </div>
+              )
+            })()}
 
             {result.lockout_engaged && (
               <div className="resume-box">
