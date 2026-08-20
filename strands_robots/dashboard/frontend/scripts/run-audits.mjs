@@ -45,6 +45,22 @@ try {
   process.exit(2)
 }
 
+// PREFLIGHT: these audits read the SERVED page, so a dist older than src means every one of them
+// verifies the previous bundle and passes — the most expensive false green available here, because the
+// audits are the only thing standing between a claim and the truth. Refuse instead of confirming
+// yesterday, with the same exit 2 the unreachable-dashboard refusal uses (a setup problem, not a
+// failing claim). AUDIT_SKIP_FRESHNESS=1 exists for auditing a deliberately old build.
+if (process.env.AUDIT_SKIP_FRESHNESS !== '1') {
+  const fresh = spawnSync(process.execPath, [new URL('check-dist-fresh.mjs', import.meta.url).pathname,
+                                             '--url', BASE], { encoding: 'utf8' })
+  process.stdout.write(fresh.stdout || '')
+  if (fresh.status !== 0) {
+    process.stderr.write(fresh.stderr || '')
+    console.error('  refusing to audit a bundle that is not built from the current source.')
+    process.exit(2)
+  }
+}
+
 let scripts = fs.readdirSync(HERE)
   .filter(f => /^audit-.*\.mjs$/.test(f))
   .filter(f => !filters.length || filters.some(x => f.includes(x)))
