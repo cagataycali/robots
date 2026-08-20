@@ -168,6 +168,12 @@ class TestTheLineActuallyReachesTheLog:
 
         monkeypatch.setenv("STRANDS_MESH", "false")
         monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
+        # In a full sweep another module leaves DASHBOARD_AUTH_TOKEN in the environment,
+        # and settings resolves defaults THROUGH the environment - so this app inherited a
+        # token, the middleware closed my socket with 1008, and the failure looked like the
+        # close verdict was missing. The test now owns its auth posture instead of assuming
+        # a clean environment (same class of leak as tests/test_dashboard_env_allowlist).
+        monkeypatch.delenv("DASHBOARD_AUTH_TOKEN", raising=False)
         monkeypatch.setattr(dsettings, "SETTINGS_FILE", tmp_path / "settings.json")
         dsettings._cache = None
         auth._cache_key = None

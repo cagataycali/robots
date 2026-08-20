@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import hmac
 import json
 import logging
@@ -51,6 +52,11 @@ from strands_robots.dashboard.teleop_health import published_frames, teleop_heal
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
 from strands_robots.dashboard import lan_hint
+from strands_robots.dashboard.churn_guard import (
+    ChurnGuard,
+    effective_cap,
+    viewer_identity,
+)
 from strands_robots.dashboard.ws_observability import (
     CloseLogThrottle,
     cap_note,
@@ -65,6 +71,10 @@ FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
 #: Module-level: the throttle has to outlive individual sockets to be able to count them.
 _CAMERA_CLOSE_LOG = CloseLogThrottle()
+# Q46: the client-side churn cure only reaches clients that RELOAD. Measured: a tab kept
+# reopening one camera 1.53x/s for twelve hours after both cures landed, last asset request
+# an hour earlier. So the server carries its own, and it survives any client.
+_CAMERA_CHURN = ChurnGuard()
 
 #: Reachable without a token: liveness (so a client can discover that auth is
 #: required at all), the WebAuthn ceremony endpoints (you cannot log in from
@@ -1664,8 +1674,35 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # because 15 fps of full-size JPEG was the only thing on offer. A viewer that
         # knows its link is failing can now ask for less - the server never guesses a
         # cap, it only honours one, so a LAN operator is unaffected.
-        cap = fps_cap(ws.query_params.get("max_fps"))
+        # Q46: what the viewer ASKED for, and what the server will give a viewer that has
+        # been reopening this camera in a loop. The lower of the two wins, so a stale
+        # bundle cannot talk its way back up to full rate.
+        churn = _CAMERA_CHURN.note_open(
+            viewer_identity(
+                # A JWT is per-login, so its digest identifies the viewer without the
+                # token ever entering a key or a log line. Behind the tunnel the address
+                # is 127.0.0.1 for everyone, which is why it is only the fallback.
+                subject=(
+                    hashlib.sha256(ws.query_params.get("token", "").encode()).hexdigest()[:12]
+                    if ws.query_params.get("token")
+                    else None
+                ),
+                host=ws.client.host if ws.client else None,
+                peer_id=peer_id,
+                cam=cam,
+            )
+        )
+        cap = effective_cap(fps_cap(ws.query_params.get("max_fps")), churn.cap_fps)
         min_interval = None if cap is None else 1.0 / cap
+        if churn.reason:
+            # Say it on the tile, not only in the log: a silent throttle is
+            # indistinguishable from a slow camera, and old bundles already render
+            # `camera_error` text — so even the tab that caused this can explain itself.
+            with contextlib.suppress(Exception):
+                await ws.send_text(json.dumps({
+                    "type": "camera_error", "peer_id": peer_id, "cam": cam,
+                    "error": churn.reason, "throttled": True,
+                }))
         last_sent_at: float | None = None
         # Q50: this loop sends only when a frame exists, so on a camera that publishes
         # NOTHING there is no failing send to reveal that the viewer left - the handler
@@ -1712,8 +1749,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     publishing=bridge.latest_frame(peer_id, cam) is not None,
                     bytes_sent=bytes_sent,
                 )
+                churn_note = (
+                    "" if not churn.throttled
+                    else f" [server churn cap: {churn.opens_in_window} opens/min from this viewer]"
+                )
                 line = close_line(
-                    peer_id=peer_id, cam=cam, verdict=verdict + cap_note(cap), suppressed=suppressed,
+                    peer_id=peer_id, cam=cam,
+                    verdict=verdict + cap_note(cap) + churn_note, suppressed=suppressed,
                 )
                 (logger.info if frames_sent else logger.warning)(line)
 
