@@ -42,3 +42,19 @@ const other = twinButtonCopy({ peerId: 'weird__child', twinLive: false })
 assert.match(other.title, /weird__child-twin/)
 assert.match(other.aria, /weird__child/)
 console.log('twinButtonCopy: all assertions passed')
+
+// A11Y (found by audit-screens-render, 2026-08-20): the live state was CSS-only, so a screen reader
+// announced the same "button" whether a MuJoCo sim peer was running or not — and "twin on" reads as
+// an instruction as easily as a state. aria-pressed comes from the verdict, never from the class.
+{
+  assert.equal(twinButtonCopy({ peerId: 'a', twinLive: true }).pressed, true)
+  assert.equal(twinButtonCopy({ peerId: 'a', twinLive: false }).pressed, false)
+  // Busy keeps the truth of the moment: a live twin is still live while we wait for the stop.
+  assert.equal(twinButtonCopy({ peerId: 'a', twinLive: true, busy: true }).pressed, true)
+  assert.equal(twinButtonCopy({ peerId: 'a', twinLive: false, busy: true }).pressed, false)
+  // pressed and the styling class must never disagree — that drift is the whole bug.
+  for (const twinLive of [true, false]) for (const busy of [true, false]) {
+    const c = twinButtonCopy({ peerId: 'a', twinLive, busy })
+    assert.equal(c.pressed, c.cls === 'on', `pressed/cls drift for twinLive=${twinLive} busy=${busy}`)
+  }
+}

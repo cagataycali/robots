@@ -84,7 +84,8 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
           {p?.hostname && <span className="host">{p.hostname}</span>}
           {p?.robot_type === 'robot' && !peer.peer_id.endsWith('-twin') && (
             <button className={`twinbtn${twin.cls ? ` ${twin.cls}` : ''}`} onClick={toggleTwin}
-                    disabled={twinBusy} title={twin.title} aria-label={twin.aria}>{twin.label}</button>
+                    disabled={twinBusy} title={twin.title} aria-label={twin.aria}
+                  aria-pressed={twin.pressed}>{twin.label}</button>
           )}
           {p?.robot_type === 'robot' && peer.origin === 'external' && (
             <span className="originbadge"

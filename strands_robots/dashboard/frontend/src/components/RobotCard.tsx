@@ -103,7 +103,8 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
         )}
         {type === 'robot' && !peer.peer_id.includes('__') && !peer.peer_id.endsWith('-twin') && (
           <button className={`twinbtn${twin.cls ? ` ${twin.cls}` : ''}`} onClick={toggleTwin}
-                  disabled={twinBusy} title={twin.title} aria-label={twin.aria}>{twin.label}</button>
+                  disabled={twinBusy} title={twin.title} aria-label={twin.aria}
+                  aria-pressed={twin.pressed}>{twin.label}</button>
         )}
         <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'}
               title={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'} />
