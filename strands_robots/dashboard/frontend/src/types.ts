@@ -133,6 +133,8 @@ export interface EnvRow {
   secret: boolean
   set: boolean
   in_file: boolean
+  /** Q50: the launch environment carries a DIFFERENT value, which wins over .env for this run. */
+  shadowed?: boolean
 }
 
 export interface ConfigDoc {

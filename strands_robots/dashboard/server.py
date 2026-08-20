@@ -314,6 +314,19 @@ def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
 
 def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app = FastAPI(title="strands-robots dashboard")
+    # Q50: .env was written by the Env tab and never read by anything. Load it here, before
+    # any provider resolves a credential, with the launch environment winning.
+    from strands_robots.dashboard.config_api import load_env_file
+
+    exported, shadowed = load_env_file()
+    if exported:
+        logger.info("loaded %d keys from .env: %s", len(exported), ", ".join(exported))
+    if shadowed:
+        logger.warning(
+            ".env keys ignored because this process was launched with a different value: %s "
+            "(the launch environment wins; the settings screen marks them)",
+            ", ".join(shadowed),
+        )
     origins = settings.get("security", "cors_origins", []) or []
     if "*" in [str(o) for o in origins]:
         logger.warning(

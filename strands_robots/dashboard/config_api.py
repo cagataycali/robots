@@ -22,7 +22,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from strands_robots.dashboard import settings
 
@@ -170,6 +170,42 @@ def upsert_env_file(updates: dict[str, str]) -> list[str]:
     return list(updates)
 
 
+def bootstrap_env(
+    from_file: Mapping[str, str], environ: Mapping[str, str]
+) -> tuple[dict[str, str], list[str]]:
+    """(values to export, keys the process environment already decides).
+
+    Q50: the Env tab wrote .env and exported into ``os.environ`` in the same breath, so a
+    saved key worked... until the next start. NOTHING in this codebase ever read .env back:
+    no load_dotenv, no `set -a; source .env` in restart_dashboard.sh. After a restart the tab
+    still listed HF_TOKEN as set (it reads the FILE) while the process had never heard of it,
+    so Hub downloads 401'd and voice providers reported a missing credential the settings
+    screen swore was configured.
+
+    A key already in the process environment WINS and is reported as shadowed instead: the
+    operator who typed `HF_TOKEN=... ./restart_dashboard.sh` is making a deliberate statement
+    about this run, and a file written weeks ago must not overrule it. An identical value is
+    not a conflict and is not reported.
+    """
+    to_set: dict[str, str] = {}
+    shadowed: list[str] = []
+    for key, value in from_file.items():
+        live = environ.get(key)
+        if live is None:
+            to_set[key] = value
+        elif live != value:
+            shadowed.append(key)
+    return to_set, sorted(shadowed)
+
+
+def load_env_file() -> tuple[list[str], list[str]]:
+    """Apply .env to this process (once, at startup). Returns (exported, shadowed)."""
+    to_set, shadowed = bootstrap_env(read_env_file(), os.environ)
+    for key, value in to_set.items():
+        os.environ[key] = value
+    return sorted(to_set), shadowed
+
+
 def env_view() -> list[dict[str, Any]]:
     """Masked env listing for the UI: .env contents + interesting live vars."""
     from_file = read_env_file()
@@ -179,14 +215,22 @@ def env_view() -> list[dict[str, Any]]:
             keys.append(key)
     rows: list[dict[str, Any]] = []
     for key in keys:
-        raw = from_file.get(key, os.environ.get(key, ""))
+        live = os.environ.get(key, "")
+        in_file = key in from_file
+        # Q50: show what the PROCESS uses, not what the file says. Those differ only when
+        # something in the launch environment overrides the file, and in that case the file's
+        # value is the one nothing is acting on - displaying it made the screen a plausible
+        # liar precisely when an operator was debugging a credential.
+        raw = live if live else from_file.get(key, "")
+        shadowed = bool(in_file and live and live != from_file.get(key))
         secret = is_secret(key)
         rows.append({
             "key": key,
             "value": mask(raw) if secret and raw else raw,
             "secret": secret,
             "set": bool(raw),
-            "in_file": key in from_file,
+            "in_file": in_file,
+            "shadowed": shadowed,
         })
     return rows
 

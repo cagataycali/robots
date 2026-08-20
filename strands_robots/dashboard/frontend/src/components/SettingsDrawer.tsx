@@ -465,6 +465,14 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 Written to <code>{config.env_file}</code> (chmod 600). Secrets show masked; leaving a
                 mask untouched leaves the stored value alone.
               </p>
+              {config.env.some(r => r.shadowed) && (
+                <p className="hint warn">
+                  {config.env.filter(r => r.shadowed).map(r => r.key).join(', ')}{' '}
+                  {config.env.filter(r => r.shadowed).length > 1 ? 'were' : 'was'} exported into
+                  this process before it started, and that value wins over .env for as long as it
+                  runs — saving here updates the file, not this run.
+                </p>
+              )}
               <div className="envlist">
                 {config.env.map(row => (
                   <label className="field env" key={row.key}>
@@ -472,6 +480,14 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                       {row.key}
                       {row.secret && <em title="masked on read"> 🔒</em>}
                       {!row.in_file && row.set && <em title="from the process environment"> (env)</em>}
+                      {/* Q50: .env is loaded at startup, but a value exported into the launch
+                          environment WINS. Saying so is the difference between "your file is
+                          wrong" and a screen that silently shows the losing value. */}
+                      {row.shadowed && (
+                        <em className="warn" title="this process was launched with a different value, which wins over .env until it is restarted without it">
+                          {' '}(shell overrides .env)
+                        </em>
+                      )}
                     </span>
                     <input
                       // Shown as text on purpose: the value is already masked
