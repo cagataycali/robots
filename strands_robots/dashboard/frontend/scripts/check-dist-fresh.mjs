@@ -66,7 +66,10 @@ if (s.m > d.m) {
 // Question 2: what does the live server actually hand out?
 const entryOf = (html) => (html.match(/<script[^>]+src="([^"]+)"/) ?? [])[1] ?? null
 try {
-  const res = await fetch(`${BASE}/`, { headers: { 'Cache-Control': 'no-cache' } })
+  // A 5s ceiling because this now runs INSIDE restart_dashboard.sh, the one command the owner types at
+  // his desk. node's fetch has no default timeout, so a wedged or half-started server would hang the
+  // restart itself — a guard that can stall the recovery it is part of is worse than no guard.
+  const res = await fetch(`${BASE}/`, { headers: { 'Cache-Control': 'no-cache' }, signal: AbortSignal.timeout(5000) })
   const servedEntry = entryOf(await res.text())
   const diskEntry = entryOf(fs.readFileSync(path.join(ROOT, 'dist/index.html'), 'utf8'))
   if (servedEntry && diskEntry && servedEntry !== diskEntry) {
