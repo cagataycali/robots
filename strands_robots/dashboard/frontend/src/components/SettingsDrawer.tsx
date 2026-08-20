@@ -108,6 +108,13 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   // Q76: closing with unsaved edits asks instead of discarding a 10-row prompt silently.
   const [discardArmed, setDiscardArmed] = useState(false)
   const [corsOrigins, setCorsOrigins] = useState('')
+  // Q74: the token is ONE global slot attached to whatever base is current, so re-pointing the
+  // backend used to hand the old host's credential to the new one silently. The verdict is computed
+  // when the button is pressed, and only two situations stop it — see connectionChange.
+  // Q77: declared HERE with the rest of the state, ABOVE `if (!open) return null` — this hook used
+  // to sit further down the body, so a closed drawer ran one hook fewer than an open one and every
+  // open crashed the screen with "rendered more hooks than during the previous render".
+  const [connVerdict, setConnVerdict] = useState<ConnectionVerdict | null>(null)
 
   // Q76: what the server says each draft field should be. Every save calls reload(), so this used to
   // be blindly written back over whatever the operator was typing in ANOTHER tab.
@@ -244,11 +251,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
       setSaving(false)
     }
   }
-
-  // Q74: the token is ONE global slot attached to whatever base is current, so re-pointing the
-  // backend used to hand the old host's credential to the new one silently. The verdict is computed
-  // when the button is pressed, and only two situations stop it — see connectionChange.
-  const [connVerdict, setConnVerdict] = useState<ConnectionVerdict | null>(null)
 
   const goConnect = (tokenToSend: string) => {
     setBackendBase(base)
