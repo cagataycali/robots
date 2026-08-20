@@ -174,7 +174,10 @@ function Dashboard() {
 
       {pwa.needRefresh && (
         <div className="toast">
-          A new dashboard version is ready.
+          A new dashboard version is ready
+          {/* Say how long they have been on the old one: a phone left open beside
+              the arms used to sit on an 11-hour-old bundle without ever being asked. */}
+          {pwa.bundleAge() ? ` — this tab loaded ${pwa.bundleAge()}` : ''}.
           <button className="btn go" onClick={pwa.update}>reload</button>
           <span className="hint">Reloading drops camera streams; a running task keeps running.</span>
         </div>
