@@ -27,16 +27,29 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.device_connect_env import (
+    MISSING_REASON,
+    real_device_connect_edge_on_disk,
+)
+
 
 def _force_real_device_connect_edge():
     """Restore the genuine device_connect_edge modules and re-import the driver.
 
-    Sibling test modules install MagicMock stand-ins in ``sys.modules`` for
-    ``device_connect_edge`` at import time. A real module exposes ``__file__``;
-    a MagicMock does not, so we drop the fakes, re-import the real package from
-    disk, and purge ``strands_robots.device_connect.*`` so it re-binds to the
-    real ``@rpc`` / ``DeviceDriver``.
+    Skips - never errors - when the SDK is absent. device-connect is an OPTIONAL
+    extra (pyproject [device-connect]), so a venv without it is a supported
+    configuration, and 171 collection ERRORS across three reachy modules is the
+    wrong way to say "this machine did not install an optional dependency": an
+    error means the suite is broken, a skip means the suite is honest about what
+    it could not exercise. Asked of the FILESYSTEM via device_connect_env, because
+    sibling modules put MagicMocks in sys.modules and an importable mock would
+    answer yes while proving nothing (that helper's own docstring explains why).
+    Gating the helper rather than the whole module keeps the SDK-free tests in
+    these files running - two of the three also hold pure ast/domain checks that
+    need no hardware SDK at all.
     """
+    if not real_device_connect_edge_on_disk():
+        pytest.skip(MISSING_REASON)
     for key in (
         "device_connect_edge.drivers",
         "device_connect_edge.types",
