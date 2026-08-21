@@ -53,32 +53,49 @@ export function pairArms(candidates: RoleCandidate[]): ArmPair {
     return { leader: leaders[0].peer_id, follower: followers[0].peer_id, basis: 'measured' }
   }
 
-  // Exactly one side is known. Fill THAT slot only: guessing the other from a
+  // Exactly one side is UNAMBIGUOUS. Fill that slot and only that slot: guessing the other from a
   // name is how the pair got inverted in the first place.
-  if (leaders.length === 1 && followers.length === 0) {
+  //
+  // This deliberately runs BEFORE the ambiguity branch, because "ambiguous on one side" does not
+  // make the other side unknown. One measured leader and TWO measured followers used to fall through
+  // to the tie branch and come back with BOTH slots empty — the dashboard discarding a measurement it
+  // was certain about, on the grounds that a different arm was unclear. Blanking a slot you have
+  // evidence for is the same disservice as filling one you do not.
+  if (leaders.length === 1 && followers.length !== 1) {
     return {
       leader: leaders[0].peer_id, follower: '', basis: 'measured',
-      note: `${leaders[0].peer_id} measured as the leader; no arm has measured as a 12V follower yet — ` +
-            `pick the follower yourself, or measure it on the devices screen`,
+      note: followers.length === 0
+        ? `${leaders[0].peer_id} measured as the leader; no arm has measured as a 12V follower yet — ` +
+          `pick the follower yourself, or measure it on the devices screen`
+        : `${leaders[0].peer_id} measured as the leader, but ${followers.length} arms measured as ` +
+          `followers — which one it drives is your call, so check the volts next to each name`,
     }
   }
-  if (followers.length === 1 && leaders.length === 0) {
+  if (followers.length === 1 && leaders.length !== 1) {
     return {
       leader: '', follower: followers[0].peer_id, basis: 'measured',
-      note: `${followers[0].peer_id} measured as the follower; no arm has measured as a 7.4V leader yet ` +
-            `(an unpowered arm reads 5.5V on the USB rail) — pick the leader yourself, or measure it ` +
-            `on the devices screen`,
+      note: leaders.length === 0
+        ? `${followers[0].peer_id} measured as the follower; no arm has measured as a 7.4V leader yet ` +
+          `(an unpowered arm reads 5.5V on the USB rail) — pick the leader yourself, or measure it ` +
+          `on the devices screen`
+        : `${followers[0].peer_id} measured as the follower, but ${leaders.length} arms measured as ` +
+          `leaders — which one drives is your call, so check the volts next to each name`,
     }
   }
 
-  // Two arms measured the SAME role. That is a real situation (two followers on
-  // the bench) and it is not the dashboard's job to break the tie silently.
+  // Both sides ambiguous, or one side ambiguous and the other silent. A real situation (two followers
+  // on the bench) and not the dashboard's job to break the tie silently.
   if (leaders.length > 1 || followers.length > 1) {
-    const which = leaders.length > 1 ? 'leader' : 'follower'
-    const n = leaders.length > 1 ? leaders.length : followers.length
+    const parts: string[] = []
+    if (leaders.length > 1) parts.push(`${leaders.length} arms measured as the leader`)
+    if (followers.length > 1) {
+      parts.push(parts.length
+        ? `${followers.length} as the follower`
+        : `${followers.length} arms measured as the follower`)
+    }
     return {
       leader: '', follower: '', basis: 'none',
-      note: `${n} arms measured as the ${which}, so which one drives is your call — ` +
+      note: `${parts.join(' and ')}, so which one drives is your call — ` +
             `check the volts next to each name`,
     }
   }
@@ -94,6 +111,18 @@ export function pairArms(candidates: RoleCandidate[]): ArmPair {
       ...named, basis: 'named',
       note: 'paired from the peer names — nobody has measured these buses, so the names are ' +
             'being taken at their word',
+    }
+  }
+  // Only ONE name states a role. Same rule as one measured side: fill the slot the name speaks for,
+  // leave the other blank. Filling it by ELIMINATION ("the other arm must be the follower") would be
+  // an inference from an index by another route, which is the thing this file exists to refuse.
+  if (named.leader !== named.follower && (named.leader || named.follower)) {
+    const stated = named.leader ? 'leader' : 'follower'
+    return {
+      leader: named.leader, follower: named.follower, basis: 'named',
+      note: `only ${named.leader || named.follower} states a role in its name, so it fills the ` +
+            `${stated} slot — nobody has measured these buses, and the other arm is left to you ` +
+            `(the leader is the lighter 7.4V arm)`,
     }
   }
 
