@@ -32,7 +32,20 @@ __all__ = ["diagnose_receiver", "envelope_refusal", "published_frames", "teleop_
 _RANGE_RE = re.compile(
     r"input frame value for '([^']{1,120})' out of range: \|(-?[0-9.eE+]{1,40})\| > ([0-9.eE+]{1,40})"
 )
-_SLEW_RE = re.compile(r"input frame slew for '([^']{1,120})' out of range: ([0-9.]{1,20}) > ([0-9.]{1,20})")
+_SLEW_RE = re.compile(
+    r"input frame slew for '([^']{1,120})' out of range: ([0-9.eE+\-]{1,40}) > ([0-9.eE+\-]{1,40})"
+)
+#: Q118. The SDK's slew check has TWO branches and this parser only knew one. When two frames carry
+#: the SAME timestamp (worst_dt <= 0) it cannot compute a speed, so it says "moved 30 units with no
+#: elapsed time since the last applied frame (bound 8 units/s)" - no number after the colon, so
+#: _SLEW_RE misses it and envelope_refusal returned None for the MOST extreme violation there is: an
+#: instantaneous jump. Verified by calling security.input_frame_slew_violation for both branches
+#: rather than by typing what I imagined the log says (the test does the same, so a reworded SDK
+#: message fails here instead of going quiet in a browser).
+_SLEW_NO_TIME_RE = re.compile(
+    r"input frame slew for '([^']{1,120})' out of range: moved ([0-9.eE+\-]{1,40}) units with no "
+    r"elapsed time.*?\(bound ([0-9.eE+\-]{1,40}) units/s\)"
+)
 
 
 def envelope_refusal(log_tail: Any) -> dict[str, Any] | None:
@@ -57,6 +70,17 @@ def envelope_refusal(log_tail: Any) -> dict[str, Any] | None:
             try:
                 return {"kind": "slew", "joint": m.group(1), "value": float(m.group(2)),
                         "bound": float(m.group(3))}
+            except ValueError:
+                continue
+        m = _SLEW_NO_TIME_RE.search(line)
+        if m:
+            try:
+                # No elapsed time means the implied speed is unbounded, and inf is the honest
+                # value: any bound is exceeded. `delta` carries what the frame actually asked
+                # for, because that is the number an operator can compare to their own motion.
+                return {"kind": "slew", "joint": m.group(1), "value": float("inf"),
+                        "bound": float(m.group(3)), "instant": True,
+                        "delta": float(m.group(2))}
             except ValueError:
                 continue
     return None
@@ -102,7 +126,18 @@ def diagnose_receiver(
         )
         out: dict[str, Any] = {"state": "refusing", "headline": "every frame is being refused",
                                "detail": detail, "refusal": refusal}
-        if refusal:
+        if refusal and refusal.get("instant"):
+            # The degrees/radians story below cannot apply here: nothing was measured over time.
+            # Two frames arriving with the same timestamp is a CLOCK/publisher problem, and saying
+            # "reported at inf units/s" would be arithmetic, not an explanation.
+            out["detail"] = (
+                f"{detail} Two frames carried the SAME timestamp, so the follower could not compute "
+                f"a speed for {refusal['joint']} and refused the jump of {refusal.get('delta', 0):g} "
+                f"units outright (bound {refusal['bound']:g} units/s). That is a publisher clock "
+                f"problem, not an envelope that is too tight: widening the bound cannot help, since "
+                f"no interval divides into it."
+            )
+        elif refusal:
             out["detail"] = (
                 f"{detail} The mesh's teleop envelope is {refusal['bound']:g} units, and this leader "
                 f"reported {refusal['joint']} at {refusal['value']:g} - the arm reports DEGREES while "
