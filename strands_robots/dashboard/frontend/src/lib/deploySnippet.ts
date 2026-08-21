@@ -35,3 +35,65 @@ export function snippetRefusal(status: number, detail: string): string {
   if (status === 401 || status === 403) return 'your session expired — reload and sign in again'
   return text || 'could not write the snippet'
 }
+
+/* ------------------------------------------------------------------------------------------------
+ * Q122's other half: the operator can READ that the hub address was refused, and could not FIX it.
+ *
+ * The snippet runs on ANOTHER machine, so it needs the address that machine can use to reach this
+ * dashboard's zenoh hub. The server guesses from the address the browser used and REFUSES a guess
+ * that would mislead — reaching the dashboard through the Cloudflare tunnel yields a host with no
+ * zenoh port, and a wrong address is worse than none because it looks authoritative and fails on a
+ * machine the operator is not watching (Q122, cde0146a). So the snippet correctly ships with the
+ * ZENOH_CONNECT line omitted and a `# NOTE:` explaining why.
+ *
+ * Then it stopped. /api/deploy/snippet has ALWAYS accepted an explicit `hub_host` in its body and
+ * uses it verbatim (an operator's override deliberately outranks a guess), but the only caller sent
+ * `{serial}` — so the one person who knows their LAN address had no field to type it in. Same defect
+ * as Q54's fps and the record-refusal flags: the server accepts what the form cannot send.
+ *
+ * This layer deliberately does NOT re-judge the address. The server owns that judgement, and it
+ * refuses public/loopback only when GUESSING; second-guessing an explicit override here would be a
+ * second source of truth and would block the operator who knows better than both of us. What it
+ * does is reject input that cannot be a host at all, with a reason.
+ */
+
+/** The server's own note when the snippet went out with NO hub address, else null. */
+export function hubAddressMissing(code: string | null | undefined): string | null {
+  if (!code) return null
+  // Presence of the real line is the proof an address made it in - looking for the note alone would
+  // keep prompting after a successful override, since the note stays for other reasons.
+  if (/^\s*os\.environ\.setdefault\("ZENOH_CONNECT"/m.test(code)) return null
+  const note = code.match(/^#\s*NOTE:\s*(.+?)\.?\s*$/m)
+  return note
+    ? note[1]
+    : 'this file carries no hub address, so the peer it starts will connect to nothing'
+}
+
+export interface HubHostDraft {
+  /** the address to send, or null when it cannot be one */
+  host: string | null
+  /** why it was rejected — '' when accepted */
+  why: string
+}
+
+/** Tidy what the operator typed into something sendable, or say why it is not an address. */
+export function cleanHubHost(input: string | null | undefined): HubHostDraft {
+  const raw = (input ?? '').trim()
+  if (!raw) return { host: null, why: 'type the address this dashboard is reachable at from the other machine' }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+    return { host: null, why: 'paste a host, not a URL — no http:// and no path' }
+  }
+  const host = raw.replace(/\/+$/, '')
+  if (/\s/.test(host)) return { host: null, why: 'an address has no spaces in it' }
+  // host or host:port — a bare port, an empty port and a non-numeric port are all typos worth
+  // catching here, because the snippet would otherwise be generated around them silently.
+  // The port half is captured loosely and CHECKED below on purpose: matching only digits here
+  // made 'gpu.lan:zenoh' fall through to "that is not a host name", which blames the wrong half
+  // of what the operator typed.
+  const m = host.match(/^([^:]+)(?::([^:]*))?$/)
+  if (!m || !m[1]) return { host: null, why: 'that is not a host name or IP address' }
+  if (m[2] !== undefined && !/^\d{1,5}$/.test(m[2])) {
+    return { host: null, why: 'the part after ":" must be a port number' }
+  }
+  return { host, why: '' }
+}

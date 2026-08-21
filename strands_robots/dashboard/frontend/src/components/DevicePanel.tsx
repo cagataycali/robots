@@ -19,7 +19,7 @@ import { rescanReport, hardwareKey, type RescanReport } from '../lib/rescanRepor
 import { isLatestRequest } from '../lib/requestOrder'
 import { peerNameField } from '../lib/peerName'
 import { portChoice, blocksSpawn } from '../lib/portChoice'
-import { safeFilename, snippetRefusal } from '../lib/deploySnippet'
+import { safeFilename, snippetRefusal, hubAddressMissing, cleanHubHost } from '../lib/deploySnippet'
 
 interface SerialPort {
   device: string
@@ -151,6 +151,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   // R5: which port's calibrate panel is open, the family the operator confirmed
   // for it, and the last copy attempt's verdict (copying can genuinely fail —
   // see copyCommand).
+  const [hubDraft, setHubDraft] = useState('')
   const [calibFor, setCalibFor] = useState<string | null>(null)
   const [calibFamily, setCalibFamily] = useState<Record<string, string>>({})
   const [copied, setCopied] = useState<string | null>(null)
@@ -358,11 +359,15 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
    * re-reads the profile by serial and reports if the /dev path moved.
    */
   /** U16's last mile: ask the server for the Python file that recreates this exact board. */
-  const writeSnippet = async (p: SerialPort) => {
+  /** `hubHost`: Q122's other half. /api/deploy/snippet has always accepted an explicit hub address
+   *  and uses it verbatim (an operator's override outranks the server's guess), but this caller sent
+   *  only the serial — so a refused guess left the one person who knows their LAN with no field to
+   *  type it in. Same defect as Q54's fps: the server accepts what the form cannot send. */
+  const writeSnippet = async (p: SerialPort, hubHost?: string) => {
     setSnip(null); setNotice(null)
     try {
       const r = await post<{ snippet: string; filename?: string; peer_id?: string }>(
-        '/api/deploy/snippet', { serial: p.serial_number })
+        '/api/deploy/snippet', { serial: p.serial_number, ...(hubHost ? { hub_host: hubHost } : {}) })
       setSnip({ device: p.device, code: r.snippet, filename: safeFilename(r.filename, r.peer_id) })
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 0
@@ -830,6 +835,36 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                           </span>
                         </div>
                         <pre className="snippet">{snip.code}</pre>
+                        {(() => {
+                          /* The file went out with NO hub address, so the peer it starts would connect
+                             to nothing. The server said why (it refuses a guess that would mislead —
+                             a tunnel host has no zenoh port), and now the operator can answer it. */
+                          const gap = hubAddressMissing(snip.code)
+                          if (!gap) return null
+                          const draft = cleanHubHost(hubDraft)
+                          const typed = hubDraft.trim() !== ''
+                          return (
+                            <div>
+                              <p className="muted small">
+                                No hub address — {gap}. The machine that runs this file needs an
+                                address it can reach THIS dashboard at; type the one you know.
+                              </p>
+                              <div className="row">
+                                <label className="field">
+                                  <span>Hub address</span>
+                                  <input value={hubDraft} placeholder="gpu.lan:7447"
+                                         aria-invalid={typed && !draft.host ? true : undefined}
+                                         onChange={e => setHubDraft(e.target.value)} />
+                                </label>
+                                <button className="btn ghost tiny" disabled={!draft.host}
+                                        onClick={() => { if (draft.host) void writeSnippet(p, draft.host) }}>
+                                  rebuild with this address
+                                </button>
+                              </div>
+                              {typed && draft.why && <p className="muted small">{draft.why}</p>}
+                            </div>
+                          )
+                        })()}
                       </div>
                     )}
                     {calibFor === p.device && (() => {
