@@ -49,20 +49,83 @@ export function finiteNumber(raw: string, opts: {
   return null
 }
 
-/** Comma-separated zenoh endpoints, e.g. "tls/robot.lan:7447". */
-export function endpointList(raw: string): string | null {
+/**
+ * The schemes the MESH actually accepts, read off mesh/session.py rather than guessed.
+ *
+ * `_NONE_OK_SCHEMES = ("tcp","udp","tls","quic")` and, under the DEFAULT mTLS posture,
+ * `_MTLS_OK_SCHEMES = _TLS_BEARING_SCHEMES = ("tls","quic","wss","unixsock")` — anything else makes
+ * `_build_config()` raise a ValueError when the session opens.
+ *
+ * The old regex here allowed exactly `tcp|tls|quic|udp`, which disagreed with that list in BOTH
+ * directions: it refused `wss` and `unixsock` (valid, and the only two extra ones a locked-down desk
+ * can use) while accepting `tcp`/`udp`, which the default posture REFUSES — the operator typed a
+ * legal-looking endpoint, saved it, restarted the mesh, and got the failure then, one screen away
+ * from the field that caused it. A validator that disagrees with the value's consumer is worse than
+ * no validator, because it is believed.
+ */
+const TLS_BEARING = ['tls', 'quic', 'wss', 'unixsock'] as const
+const PLAINTEXT = ['tcp', 'udp'] as const
+const ALL_SCHEMES: readonly string[] = [...TLS_BEARING, ...PLAINTEXT]
+
+/**
+ * One endpoint. `dialable` distinguishes CONNECT from LISTEN, and it is not pedantry:
+ *   - a LISTEN endpoint may use port 0, meaning "any free port" — the mesh writes exactly that for
+ *     its own ephemeral listener (`tcp/127.0.0.1:0` in session.py), so refusing it made the UI
+ *     unable to express what the system itself does;
+ *   - a CONNECT endpoint may NOT: port 0 is not dialable. That cost a debugging arc of its own
+ *     (Q37: rdzv_endpoint "localhost:0"), so it is spelled out rather than left to be rediscovered.
+ * `unixsock` has a PATH, not host:port, which the old single shape could not express either.
+ */
+function endpointError(ep: string, dialable: boolean): string | null {
+  // zenoh allows per-endpoint config after '#', e.g. tcp/0.0.0.0:7447#iface=en0
+  const [addr] = ep.split('#')
+  const slash = addr.indexOf('/')
+  if (slash <= 0) return `"${ep}" is not proto/host:port (e.g. tls/robot.lan:7447)`
+  const scheme = addr.slice(0, slash).toLowerCase()
+  const rest = addr.slice(slash + 1)
+  if (!ALL_SCHEMES.includes(scheme)) {
+    return `"${scheme}" is not a mesh transport — use one of ${ALL_SCHEMES.join(', ')}`
+  }
+  if (scheme === 'unixsock') {
+    return rest.trim() === '' ? `"${ep}" needs a socket path (unixsock/tmp/zenoh.sock)` : null
+  }
+  const colon = rest.lastIndexOf(':')
+  if (colon <= 0) return `"${ep}" is missing a port (e.g. ${scheme}/robot.lan:7447)`
+  const host = rest.slice(0, colon)
+  const portRaw = rest.slice(colon + 1)
+  if (/\s/.test(host) || host === '') return `"${ep}" has no host`
+  if (!/^\d{1,5}$/.test(portRaw)) return `"${ep}" has a non-numeric port`
+  const port = Number(portRaw)
+  if (port > 65535) return `"${ep}" has an out-of-range port`
+  if (port === 0 && dialable) return `"${ep}" cannot be dialled — port 0 means "any free port", which only a listen endpoint can use`
+  if (!TLS_BEARING.includes(scheme as (typeof TLS_BEARING)[number])) {
+    // A NOTICE the operator can act on now, not a ValueError at the next mesh restart. It is worded
+    // as a condition because this browser cannot read STRANDS_MESH_AUTH_MODE.
+    return `"${ep}" uses ${scheme}, which the default mTLS posture refuses when the mesh restarts — use ${TLS_BEARING.join('/')}, or set STRANDS_MESH_AUTH_MODE=none for the insecure development posture`
+  }
+  return null
+}
+
+function endpointsError(raw: string, dialable: boolean): string | null {
   const s = raw.trim()
   if (s === '') return null
   for (const part of s.split(',')) {
     const ep = part.trim()
     if (ep === '') continue
-    // shape: proto/host:port  (proto one of tcp,tls,quic,udp)
-    const m = ep.match(/^(tcp|tls|quic|udp)\/([^/:\s]+):(\d{1,5})$/)
-    if (!m) return `"${ep}" is not proto/host:port (e.g. tls/robot.lan:7447)`
-    const port = Number(m[3])
-    if (port < 1 || port > 65535) return `"${ep}" has an out-of-range port`
+    const err = endpointError(ep, dialable)
+    if (err) return err
   }
   return null
+}
+
+/** Comma-separated endpoints this dashboard DIALS OUT to. */
+export function connectEndpoints(raw: string): string | null {
+  return endpointsError(raw, true)
+}
+
+/** Comma-separated endpoints this dashboard LISTENS on (port 0 = any free port). */
+export function listenEndpoints(raw: string): string | null {
+  return endpointsError(raw, false)
 }
 
 export const SETTINGS: SettingMeta[] = [
@@ -116,15 +179,16 @@ export const SETTINGS: SettingMeta[] = [
     effect: 'Other mesh routers this dashboard dials out to. Empty relies on multicast discovery.',
     safeDefault: '',
     apply: 'mesh-restart',
-    validate: endpointList,
+    validate: connectEndpoints,
   },
   {
     key: 'mesh.listen',
     label: 'Listen endpoints',
-    effect: 'Addresses this dashboard accepts mesh connections on. Empty uses zenoh defaults.',
+    effect: 'Addresses this dashboard accepts mesh connections on. Empty uses zenoh defaults; '
+      + 'port 0 means any free port.',
     safeDefault: '',
     apply: 'mesh-restart',
-    validate: endpointList,
+    validate: listenEndpoints,
   },
   {
     key: 'voice.provider',
@@ -201,14 +265,17 @@ const TAB_OF: Record<string, SettingsTab> = {
   'mesh.camera_hz': 'mesh',
   'mesh.connect': 'mesh',
   'mesh.listen': 'mesh',
+  // The voice fields used to appear ONLY as hand-written EXTRA_ENTRIES copies, whose `effect` had
+  // already drifted from the field's own explanation — search said one thing, the drawer another.
+  // Anything that exists in SETTINGS is indexed FROM SETTINGS.
+  'voice.provider': 'voice',
+  'voice.voice_name': 'voice',
 }
 
 const EXTRA_ENTRIES: SearchEntry[] = [
   { key: 'connection.base', label: 'API base URL', tab: 'connection', keywords: 'backend server address host remote', effect: 'Which dashboard server this browser talks to.' },
   { key: 'connection.token', label: 'Auth token (this browser)', tab: 'connection', keywords: 'login password bearer', effect: 'Credential this browser sends with every request.' },
   { key: 'agent.system_prompt', label: 'System prompt', tab: 'agent', keywords: 'instructions personality behavior', effect: 'Standing instructions for the fleet agent.' },
-  { key: 'voice.provider', label: 'Voice provider', tab: 'voice', keywords: 'speech tts openai gemini nova sonic', effect: 'Which service speaks and listens.' },
-  { key: 'voice.voice_name', label: 'Voice name', tab: 'voice', keywords: 'speaker tts', effect: 'Which voice the provider uses.' },
   { key: 'env.vars', label: 'Environment variables', tab: 'env', keywords: 'api key secret credential openai huggingface hf token .env', effect: 'Credentials and flags written to the server .env file.' },
   { key: 'env.trust_remote_code', label: 'HuggingFace trust_remote_code', tab: 'env', keywords: 'lerobot kimodo model repo security allow', effect: 'Allows model repos to execute their own code when loaded.' },
   { key: 'security.auth_token', label: 'Server auth token', tab: 'security', keywords: 'password protect lock api', effect: 'Token every client must present on /api and /ws.' },
@@ -224,6 +291,8 @@ const KEYWORDS_OF: Record<string, string> = {
   'mesh.camera_hz': 'fps frames rate video bandwidth',
   'mesh.connect': 'endpoints dial router zenoh peer',
   'mesh.listen': 'endpoints bind accept zenoh',
+  'voice.provider': 'speech tts openai gemini nova sonic',
+  'voice.voice_name': 'speaker tts voice',
 }
 
 export const SEARCH_INDEX: SearchEntry[] = [
@@ -245,7 +314,7 @@ export function searchSettings(query: string, limit = 8): SearchEntry[] {
   const scored: { e: SearchEntry; score: number }[] = []
   for (const e of SEARCH_INDEX) {
     const label = e.label.toLowerCase()
-    const hay = `${label} ${e.key.toLowerCase()} ${e.keywords} ${e.effect.toLowerCase()}`
+    const hay = `${label} ${e.key.toLowerCase()} ${e.keywords.toLowerCase()} ${e.effect.toLowerCase()}`
     if (!terms.every(t => hay.includes(t))) continue
     let score = 1
     if (label.includes(q)) score = 2
