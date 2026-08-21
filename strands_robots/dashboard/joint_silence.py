@@ -195,6 +195,23 @@ def _self_healed(log_lines: Any) -> bool:
     return any(_FLAG_CLEARED_LINE.search(str(x)) for x in log_lines)
 
 
+def recovered(log_lines: Any) -> bool:
+    """Whether this child's log SAYS the joint probe is working again.
+
+    The public half of ``_self_healed``, needed because a caller that REMEMBERS a verdict has to
+    tell two silences apart: "no complaint in the last ten lines" (the reason scrolled away, fault
+    unchanged) and "this child said the probe recovered" (the verdict must go). Only the second may
+    clear a remembered badge; the first must change nothing, or the explanation expires while the arm
+    stays broken.
+
+    Deliberately ``_RECOVERED_LINE`` and NOT ``_self_healed``: my first version aliased the two and a
+    test caught it. ``_self_healed`` matches the stale-in-use-flag CURE, which only sharpens the
+    busy verdict (the flag is cleared, so a real owner or a dead bus remains) - it is not a claim
+    that joints are being read. Clearing a badge on it would hide a fault that is still there.
+    """
+    return any(_RECOVERED_LINE.search(str(x)) for x in log_lines)
+
+
 def _tail(line: str, limit: int = 240) -> str:
     """The exception part of the log line, trimmed - a multi-page motor dump is not a badge."""
     text = line.strip()

@@ -385,3 +385,92 @@ def test_the_published_count_does_not_touch_other_faults() -> None:
     verdict = joint_silence.classify_state(state)
     assert verdict is not None and verdict["kind"] == "uncalibrated"
     assert "Calibrate this arm" in verdict["remedy"]
+
+
+# --- Q113: a remembered verdict, because the log window is 10 lines long -------------------------
+# The reason a peer publishes no joints is derived from ManagedRobot.logs, a deque(maxlen=10). A
+# child that prints ANYTHING after its hw_joints failure pushes the explanation out of that window
+# while the fault is unchanged, and the card silently returns to the healthy-looking-arm state Q80
+# exists to end. So the verdict is remembered on the record, and only two things may clear it: the
+# arm publishing joints again (joint_silence.merge, already tested above) or the child's own
+# recovery line. `recovered` is the public half of that second rail.
+def test_recovered_is_the_only_silence_that_may_clear_a_remembered_verdict() -> None:
+    healed = [_PROBE_BUSY, "INFO:strands_robots.mesh.core:state probe 'hw_joints' recovered"]
+    assert joint_silence.recovered(healed) is True
+    # THE MISTAKE THIS TEST CAUGHT: the first version aliased `recovered` to `_self_healed`, the
+    # stale-flag CURE line. That line only sharpens the busy verdict - the flag is cleared, so a
+    # real owner or a dead bus remains - and clearing a badge on it would hide a live fault.
+    assert joint_silence.recovered([_PROBE_BUSY, _CURE_RAN]) is False
+    assert joint_silence._self_healed([_CURE_RAN]) is True, "the cure line is still recognised, as itself"
+    # The failure scrolling away is NOT recovery: an empty window is no evidence of health.
+    assert joint_silence.recovered([]) is False
+    assert joint_silence.recovered(["hardware connected", "so101-leader (real @ /dev/x) online"]) is False
+    # and it must agree with what classify itself honours: same lines, no complaint.
+    assert joint_silence.classify(healed, {}) is None
+
+
+def test_recovered_tolerates_rubbish_lines_like_the_rest_of_the_module() -> None:
+    """A log ring can hold anything a child printed; a diagnostic must not raise on it."""
+    for junk in ([None], [123], [{"a": 1}], [b"bytes"], []):
+        assert joint_silence.recovered(junk) is False
+
+
+def test_the_verdict_survives_its_own_log_line_scrolling_out_of_the_window() -> None:
+    """The Q113 defect, at the seam where the fleet view actually reads.
+
+    `ManagedRobot.logs` is a deque(maxlen=LOG_TAIL_LINES) = 200 lines. The two real arms on this
+    fleet happen to keep their hw_joints failure visible only because they printed 10 lines in 49
+    hours; a chatty child (a record run logging per episode, a retry loop) pushes the explanation
+    out of a 200-line window without difficulty. MEASURED, so the premise is not assumed: the
+    assertion below fails if the deque still holds the line. Before this, the badge
+    then vanished and the card was back to a connected arm with an empty joint history and no
+    reason -- indistinguishable from a slow probe, which is the exact confusion Q80 removed.
+    """
+    from strands_robots.dashboard.device_manager import DeviceManager, ManagedRobot
+
+    dm = DeviceManager.__new__(DeviceManager)
+    dm.robots = {"arm": ManagedRobot(
+        peer_id="arm", robot_name="so101", mode="real",
+        port="/dev/cu.usbmodem1", cameras={}, process=None, started_at=0.0,
+    )}
+    dm.roles_by_peer = lambda: {}
+    arm = dm.robots["arm"]
+
+    arm.logs.extend(["hardware connected", IN_USE])
+    assert dm.annotations_by_peer()["arm"]["joint_problem"]["kind"] == "port_in_use"
+
+    # Enough ordinary lines to fill the window: the failure is now GONE from it, the fault is not.
+    arm.logs.extend(f"episode {i} recorded" for i in range(210))
+    assert IN_USE not in list(arm.logs), "the premise: the log no longer contains the reason"
+    still = dm.annotations_by_peer()["arm"]["joint_problem"]
+    assert still["kind"] == "port_in_use", "a scrolled-away reason must not retire the badge"
+
+    # ...and the child's OWN recovery line does retire it.
+    arm.logs.append("INFO:strands_robots.mesh.core:state probe 'hw_joints' recovered")
+    assert "joint_problem" not in dm.annotations_by_peer().get("arm", {})
+
+
+def test_a_respawned_arm_does_not_inherit_the_dead_processs_complaint() -> None:
+    """Why the memory lives on the RECORD and not in a dict keyed by peer id.
+
+    A respawn under the same peer id is a NEW ManagedRobot. If the verdict were remembered by peer
+    id, the fresh process would be born wearing the old one's badge -- and the operator who just
+    fixed the port would be told it is still contended, which teaches them to ignore badges.
+    """
+    from strands_robots.dashboard.device_manager import DeviceManager, ManagedRobot
+
+    dm = DeviceManager.__new__(DeviceManager)
+    dm.roles_by_peer = lambda: {}
+    dm.robots = {"arm": ManagedRobot(
+        peer_id="arm", robot_name="so101", mode="real",
+        port="/dev/cu.usbmodem1", cameras={}, process=None, started_at=0.0,
+    )}
+    dm.robots["arm"].logs.extend(["hardware connected", IN_USE])
+    assert dm.annotations_by_peer()["arm"]["joint_problem"]["kind"] == "port_in_use"
+
+    dm.robots["arm"] = ManagedRobot(                     # the respawn
+        peer_id="arm", robot_name="so101", mode="real",
+        port="/dev/cu.usbmodem1", cameras={}, process=None, started_at=1.0,
+    )
+    dm.robots["arm"].logs.append("hardware connected")
+    assert "joint_problem" not in dm.annotations_by_peer().get("arm", {})

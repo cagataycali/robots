@@ -90,6 +90,13 @@ class ManagedRobot:
     # with stdout=PIPE and no reader, the child blocks in print() once the
     # OS pipe buffer (~64KB) fills and the peer silently freezes.
     logs: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
+    # The Q80 joint verdict, REMEMBERED once seen. `logs` is a 200-line window (LOG_TAIL_LINES), so
+    # a child that prints more than that after its hw_joints failure rotates its own explanation
+    # away while the fault is unchanged - a record run logging per-episode lines does it easily - and the card silently returns to the healthy-looking-arm-with-no-joints state
+    # Q80 exists to end. Kept on the RECORD rather than in a dict keyed by peer id, so a respawn
+    # (a fresh record) starts blank: inheriting the dead process's complaint would be worse than
+    # having none.
+    joint_problem_seen: dict[str, Any] | None = None
     # What this process was started to DO ({"repo_id","episode"} for a replay,
     # {"dataset_root"} for a collect). Without it "is this already running?"
     # cannot be answered, and a second identical job silently starts.
@@ -1723,12 +1730,19 @@ class DeviceManager:
             # The child's own name and id go WITH the listing: without them the remedy can only
             # print every calibration on the machine (ten paths across three robot families here)
             # and leave the operator to work out which one lerobot wanted.
+            lines = list(m.logs)
             problem = joint_silence.classify(
-                list(m.logs), _calibrations_on_disk(),
+                lines, _calibrations_on_disk(),
                 robot_name=m.robot_name, robot_id=m.robot_id,
             )
             if problem:
-                out.setdefault(peer_id, {})["joint_problem"] = problem
+                m.joint_problem_seen = problem
+            elif joint_silence.recovered(lines):
+                # The child SAID it recovered: that is a real clearing rail, unlike the reason
+                # merely scrolling out of the window.
+                m.joint_problem_seen = None
+            if m.joint_problem_seen:
+                out.setdefault(peer_id, {})["joint_problem"] = m.joint_problem_seen
         return out
 
     def roles_by_peer(self) -> dict[str, dict[str, Any]]:
