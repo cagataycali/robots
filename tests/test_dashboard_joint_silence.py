@@ -474,3 +474,39 @@ def test_a_respawned_arm_does_not_inherit_the_dead_processs_complaint() -> None:
     )
     dm.robots["arm"].logs.append("hardware connected")
     assert "joint_problem" not in dm.annotations_by_peer().get("arm", {})
+
+
+# --- pinned against the VERBATIM lines this fleet actually logs (captured 2026-08-22) --------------
+# Everything above builds its own log text, so every pattern here is only ever tested against a
+# sentence written by the same person who wrote the pattern. These two strings were read out of the
+# LIVE ring buffer (`GET /api/devices/logs/<peer>`) on cagatay's fleet while both arms had been
+# publishing zero joints for ~56h, so they carry what a fixture keeps forgetting: the child's
+# "HH:MM:SS " timestamp prefix, the `WARNING:strands_robots.mesh.core:[mesh] <peer>:` preamble, the
+# "(further failures logged at debug)" clause, and -- for the leader -- a multi-line RuntimeError
+# repr that embeds newlines and quotes inside the reason. If a future tightening of these patterns
+# only matches a tidy paraphrase, this is the test that notices.
+_LIVE_FOLLOWER = '13:58:52 WARNING:strands_robots.mesh.core:[mesh] so101-follower: state probe \'hw_joints\' failed, that section of the snapshot is omitted (further failures logged at debug): ConnectionError("Failed to sync read \'Present_Position\' on ids=[1, 2, 3, 4, 5, 6] after 3 tries. [TxRxResult] Port is in use!")'
+_LIVE_LEADER = '13:59:22 WARNING:strands_robots.mesh.core:[mesh] so101-leader: state probe \'hw_joints\' failed, that section of the snapshot is omitted (further failures logged at debug): RuntimeError("FeetechMotorsBus(\\n    Port: \'/dev/cu.usbmodem5AB01818061\',\\n    Motors: \\n{       \'shoulder_pan\': Motor(id=1,\\n                              model=\'sts3215\',\\n                              norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                              motor_type_str=None,\\n                              recv_id=None),\\n        \'shoulder_lift\': Motor(id=2,\\n                               model=\'sts3215\',\\n                               norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                               motor_type_str=None,\\n                               recv_id=None),\\n        \'elbow_flex\': Motor(id=3,\\n                            model=\'sts3215\',\\n                            norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        \'wrist_flex\': Motor(id=4,\\n                            model=\'sts3215\',\\n                            norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        \'wrist_roll\': Motor(id=5,\\n                            model=\'sts3215\',\\n                            norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        \'gripper\': Motor(id=6,\\n                         model=\'sts3215\',\\n                         norm_mode=<MotorNormMode.RANGE_0_100: \'range_0_100\'>,\\n                         motor_type_str=None,\\n                         recv_id=None)},\\n)\',\\n has no calibration registered.")'
+
+
+def test_the_live_port_in_use_line_classifies():
+    v = joint_silence.classify([_LIVE_FOLLOWER], robot_name="so101", robot_id="follower")
+    assert v is not None and v["kind"] == "port_in_use", v
+    assert "Port is in use!" in v["detail"]
+
+
+def test_the_live_uncalibrated_line_classifies_and_the_advice_forbids_recalibrating():
+    """The leader's real fault is a PATH, and the generic remedy sends a person to the arm for nothing."""
+    # The SHAPE is the live one, verified against device_manager._calibrations_on_disk() on this
+    # machine: "device_type/model" -> [device_id, ...]. Writing it as a list of dicts (my first
+    # guess) got the GENERIC remedy back with no error anywhere -- the advice simply found nothing,
+    # which is the failure mode this whole rail exists to avoid, so the shape is pinned here too.
+    listing = {
+        "robots/so101_follower": ["follower", "follower_arm", "leader_arm"],
+        "teleoperators/so101_leader": ["leader", "leader_arm"],
+    }
+    v = joint_silence.classify([_LIVE_LEADER], listing, robot_name="so101", robot_id="leader")
+    assert v is not None and v["kind"] == "uncalibrated", v
+    remedy = v["remedy"]
+    assert "teleoperators/so101_leader/leader.json" in remedy, "it must name the file that DOES exist"
+    assert "NOT recalibrate" in remedy or "not recalibrate" in remedy.lower(), remedy
