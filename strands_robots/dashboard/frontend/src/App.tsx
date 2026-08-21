@@ -4,6 +4,7 @@ import { usePwa } from './lib/usePwa'
 import { linkHealth, estopPosture } from './lib/linkHealth'
 import LanHint from './components/LanHint'
 import { lockoutBanner } from './lib/lockoutBadge'
+import { reloadImpact } from './lib/swUpdate'
 import { ConfigProvider } from './lib/useConfig'
 import { authToken, backendKey, backendLabel, setAuthToken } from './lib/endpoints'
 import { sessionVerdict } from './lib/sessionExpiry'
@@ -251,7 +252,10 @@ function Dashboard() {
               the arms used to sit on an 11-hour-old bundle without ever being asked. */}
           {pwa.bundleAge() ? ` — this tab loaded ${pwa.bundleAge()}` : ''}.
           <button className="btn go" onClick={pwa.update}>reload</button>
-          <span className="hint">Reloading drops camera streams; a running task keeps running.</span>
+          {/* Q97: what reloading costs RIGHT NOW. The static hint that used to live here printed the
+              same sentence at the safest moment and the worst one; the app already knows which is
+              which, and this decision was deliberately left to the operator. */}
+          <span className="hint">{reloadImpact(Object.keys(busyPeers).filter(id => busyPeers[id])).text}</span>
         </div>
       )}
 
