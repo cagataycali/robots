@@ -14,6 +14,8 @@ either a saved profile or the live form state; tests feed it dicts.
 
 from __future__ import annotations
 
+import ipaddress
+
 import time
 from typing import Any, Mapping
 
@@ -89,10 +91,59 @@ def _fmt(value: Any, indent: int = 0) -> str:
     return repr(value)
 
 
+def hub_host_from_reached(reached_on: str | None) -> tuple[str | None, str | None]:
+    """Is the host the browser reached this dashboard on usable as a ZENOH hub address?
+
+    Q122. The snippet is copied onto ANOTHER machine, so the address in it must be reachable from
+    there - and the only address the server had was the one the browser used, which answers a
+    different question. Two ways that goes wrong, one already handled and one not:
+
+    * loopback - ``127.0.0.1`` on the edge device means the EDGE DEVICE. Already refused.
+    * a public hostname - the interesting case, and it is cagatay's own setup. This dashboard is
+      published through a Cloudflare tunnel (``robots.cagatay.my``) that proxies HTTP to :8090 and
+      NOTHING else. The zenoh hub is a raw TCP port; ``tcp/robots.cagatay.my:7447`` resolves to a
+      Cloudflare edge address that does not carry it, so the peer starts, connects to nothing and
+      never appears - the precise failure this file's port comment already warns about, arriving
+      through a different door. A snippet that states a wrong address is worse than one that states
+      none: it looks authoritative, and it is the file the operator runs on a machine they cannot see.
+
+    Returns ``(host, note)``: the host to use, or None plus a note explaining what was rejected.
+    A note is returned WITH a host only when something is worth saying about it - never silently.
+    """
+    reached = (reached_on or "").strip().strip("[]").lower()
+    if not reached:
+        return None, None
+    if reached in ("localhost", "127.0.0.1", "::1") or reached.endswith(".localhost"):
+        return None, (
+            "you opened this dashboard on localhost, and on the edge device that name means the "
+            "edge device itself"
+        )
+    try:
+        ip = ipaddress.ip_address(reached)
+    except ValueError:
+        # A NAME. Treat the LAN-shaped ones as usable; anything else is an entry point, not a host.
+        if reached.endswith((".local", ".lan", ".internal", ".home", ".arpa")) or "." not in reached:
+            return reached, None
+        return None, (
+            f"you reached this dashboard at {reached}, which is a public name - usually a tunnel or "
+            "reverse proxy that forwards HTTP only. The zenoh hub is a raw TCP port and is almost "
+            "certainly not published there, so a peer pointed at it would connect to nothing"
+        )
+    if ip.is_loopback:
+        return None, "that address is loopback: on the edge device it would mean the edge device"
+    if ip.is_private or ip.is_link_local:
+        return reached, None
+    return None, (
+        f"{reached} is a public address; the zenoh hub should be reached over your own network, not "
+        "the internet. Use this machine's LAN address (the Mesh tab shows it)"
+    )
+
+
 def render_snippet(
     payload: Mapping[str, Any],
     *,
     hub_host: str | None = None,
+    hub_note: str | None = None,
     mesh_env: Mapping[str, str] | None = None,
     hub_port: int | str | None = None,
     now: float | None = None,
@@ -179,6 +230,10 @@ def render_snippet(
         lines.append("# Reach this dashboard's zenoh hub from the edge device:")
         lines.append(f'os.environ.setdefault("ZENOH_CONNECT", "tcp/{hub_host}:{port_txt}")')
     else:
+        if hub_note:
+            # The operator asked for a deployable file and got a commented-out line; without the
+            # reason, the only reading is "the dashboard forgot".
+            lines.append(f"# NOTE: {hub_note}.")
         lines.append("# Deploying to ANOTHER machine? Point the peer at this dashboard's hub:")
         lines.append(
             f'# os.environ.setdefault("ZENOH_CONNECT", "tcp/<dashboard-host>:{port_txt}")'

@@ -311,3 +311,77 @@ def test_resolve_mesh_env_is_pure_and_ordered():
     assert [k for k, _ in rows] == [
         k for k, _ in deploy._MESH_ENV if k != "STRANDS_MESH_LOCAL_DEV"
     ]
+
+
+# ── Q122: the address in the snippet must be reachable from the machine that RUNS it ──
+# Added as a section (this file already had tests that all still matter). The snippet is copied onto
+# an edge device, so "the host the browser used" is an answer to a different question.
+import pytest
+
+from strands_robots.dashboard.deploy import hub_host_from_reached
+
+
+@pytest.mark.parametrize(
+    "reached,expected",
+    [
+        ("192.168.1.151", "192.168.1.151"),  # LAN literal: exactly what an edge device needs
+        ("10.0.0.5", "10.0.0.5"),
+        ("fe80::1", "fe80::1"),
+        ("mac.local", "mac.local"),  # mDNS name, resolvable on the same network
+        ("MAC.LOCAL", "mac.local"),
+        ("thor", "thor"),  # a bare hostname is a LAN name by shape
+        ("robots.cagatay.my", None),  # the tunnel: HTTP in, no zenoh port behind it
+        ("8.8.8.8", None),  # public literal
+        ("localhost", None),
+        ("127.0.0.1", None),
+        ("::1", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_only_an_address_another_machine_could_use_is_offered(reached, expected):
+    host, _ = hub_host_from_reached(reached)
+    assert host == expected
+
+
+def test_every_refusal_explains_itself_and_no_acceptance_needs_to():
+    """A commented-out line with no reason reads as "the dashboard forgot"."""
+    for reached in ("localhost", "127.0.0.1", "robots.cagatay.my", "8.8.8.8"):
+        host, note = hub_host_from_reached(reached)
+        assert host is None and note, reached
+    # the tunnel case must say what it actually suspects, since the operator can see the site working
+    _, note = hub_host_from_reached("robots.cagatay.my")
+    assert "tunnel or reverse proxy" in note and "HTTP only" in note
+    # and an accepted host says nothing: a note beside a working value is noise that trains
+    # operators to ignore notes
+    for reached in ("192.168.1.151", "mac.local", "thor"):
+        host, note = hub_host_from_reached(reached)
+        assert host and note is None, reached
+    # nothing at all is not a refusal to explain
+    assert hub_host_from_reached("") == (None, None)
+
+
+def test_the_snippet_carries_the_reason_and_never_a_rejected_address():
+    from strands_robots.dashboard.deploy import render_snippet
+
+    host, note = hub_host_from_reached("robots.cagatay.my")
+    # ARM_1 is this file's own fixture - reused rather than invented, so this test breaks if the
+    # payload contract moves.
+    text = render_snippet(ARM_1, hub_host=host, hub_note=note, mesh_env={}, hub_port=7447)["snippet"]
+    # Scoped to what "must not appear" MEANS: not as a hub address. The note names the host on
+    # purpose - a warning that will not say which address it is about cannot be acted on - so the
+    # first draft of this assertion (the whole file) failed on the explanation itself.
+    assert "tcp/robots.cagatay.my" not in text, "a rejected address must not appear as a hub"
+    for line in text.splitlines():
+        if "robots.cagatay.my" in line:
+            assert line.lstrip().startswith("#"), f"only a comment may name it: {line!r}"
+    assert "NOTE:" in text and "tunnel or reverse proxy" in text
+    # "no ZENOH_CONNECT" means no ACTIVE one: the commented <dashboard-host> example is the whole
+    # point of the fallback branch, and it contains the same string.
+    active = [l for l in text.splitlines() if "ZENOH_CONNECT" in l and not l.lstrip().startswith("#")]
+    assert active == [], f"nothing may SET the hub when the address was rejected: {active}"
+    assert any("<dashboard-host>" in l for l in text.splitlines()), "the example line still guides"
+
+    lan = render_snippet(ARM_1, hub_host="192.168.1.151", mesh_env={}, hub_port=7447)["snippet"]
+    assert 'ZENOH_CONNECT", "tcp/192.168.1.151:7447"' in lan
+    assert "NOTE:" not in lan

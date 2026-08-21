@@ -1889,16 +1889,18 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if not isinstance(payload, dict):
             raise HTTPException(422, "payload object or serial required")
         hub_host = body.get("hub_host")
+        hub_note = None
         if hub_host is None:
-            reached_on = (request.url.hostname or "").strip()
-            if reached_on and reached_on not in ("localhost", "127.0.0.1", "::1"):
-                hub_host = reached_on
+            # Q122: the browser's address answers "how do I reach the dashboard", not "how does a
+            # DIFFERENT machine reach its hub". deploy.hub_host_from_reached judges it and says why.
+            hub_host, hub_note = deploy.hub_host_from_reached(request.url.hostname)
         # Q53: the snippet mirrors the LIVE posture (mesh port, camera rate, whether wire
         # security is disabled here) instead of a frozen table - "recreates this exact rig"
         # is the file's whole promise.
         result = deploy.render_snippet(
             payload,
             hub_host=hub_host or None,
+            hub_note=hub_note,
             mesh_env=os.environ,
             hub_port=settings.get("mesh", "port", deploy.DEFAULT_HUB_PORT),
         )
