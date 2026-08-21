@@ -27,6 +27,12 @@ const PINNED = [
     find: /className="train-msg" role="alert"/ },
   { file: 'components/RunForm.tsx', what: "the policy-fit verdict when it BLOCKS the run",
     find: /role=\{fit\.blocking \? 'alert' : undefined\}/ },
+  // Q152: the camera sheet's answers, pinned for the same reason as EstopSheet's — a focus-trapped
+  // sheet whose answer renders silently reads as "the button did nothing".
+  { file: 'components/CameraConfigSheet.tsx', what: 'the camera probe failure and the 409 refusal',
+    find: /\{check\.error && <div className="result bad" role="alert">[\s\S]{0,160}?\{error && <div className="result bad" role="alert">/ },
+  { file: 'components/CameraConfigSheet.tsx', what: 'the reconfigure result (a respawn finished)',
+    find: /<div className="result ok" role="status">\{done\}<\/div>/ },
 ]
 
 const missing = []
