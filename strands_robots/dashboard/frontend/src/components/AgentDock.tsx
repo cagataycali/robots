@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useVoice } from '../lib/useVoice'
-import { post, wsUrl } from '../lib/endpoints'
+import { post, wsUrl, authRefusedRecently } from '../lib/endpoints'
 import { useConfig } from '../lib/useConfig'
 import { sendFailureVerdict, interruptionNotice, bubbleLabel } from '../lib/chatDelivery'
 import ConsentSheet from './ConsentSheet'
@@ -81,7 +81,15 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
     if (wsRef.current?.readyState === WebSocket.OPEN) return resolve(wsRef.current)
     const ws = new WebSocket(wsUrl('/ws/chat'))
     ws.onopen = () => { wsRef.current = ws; setConnError(null); resolve(ws) }
-    ws.onerror = () => reject(new Error('could not reach the agent socket'))
+    // Q102: a credential-refused handshake arrives as an ordinary error event (the server closes
+    // with 1008 before accepting, so the browser sees 1006). "could not reach" then blames the
+    // network for a sign-in the operator could fix in one tap — and this dock is where they ask
+    // what is wrong. The 401 that any recent request already collected is the only witness.
+    ws.onerror = () => reject(new Error(
+      authRefusedRecently()
+        ? 'the agent socket was refused — this page is not signed in any more, sign in again'
+        : 'could not reach the agent socket',
+    ))
     ws.onmessage = (msg) => {
       let ev: any
       try { ev = JSON.parse(msg.data) } catch { return }

@@ -104,7 +104,9 @@ if (!filter) {
   //   check-one-fetcher — a request that skips lib/endpoints, and with it the bearer token and the
   //                       server-age explanation that makes all 10 currently-dark routes degrade
   //                       honestly without a line of per-route code.
-  for (const guard of ['check-lib-wired.mjs', 'check-one-fetcher.mjs']) {
+  //   check-retry-inputs — a retrying socket handed only PART of the evidence planRetry reads, which
+  //     is how Q102 shipped wired to one of two sockets and cost a second iteration.
+  for (const guard of ['check-lib-wired.mjs', 'check-one-fetcher.mjs', 'check-retry-inputs.mjs']) {
     const w = spawnSync(process.execPath, [new URL(guard, import.meta.url).pathname], { encoding: 'utf8' })
     process.stdout.write(w.stdout || '')
     process.stderr.write(w.stderr || '')

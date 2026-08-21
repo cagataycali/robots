@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { planRetry } from './cameraRetry'
 import { mergeMeshEvent, sweepStale } from './meshPeers'
 import type { ActivityEntry, MeshEvent, MeshInfo, Peer } from '../types'
-import { authToken, wsUrl } from './endpoints'
+import { authRefusedRecently, authToken, wsUrl } from './endpoints'
 import { sessionVerdict } from './sessionExpiry'
 
 export type ConnState = 'connecting' | 'open' | 'closed' | 'unauthorized'
@@ -83,6 +83,11 @@ export function useMesh(): MeshStore {
           // just freezes and reconnects forever — the exact shape that ran for 19.3 hours
           // on the camera sockets. AuthGate re-gates within 30s; this stops the traffic now.
           sessionExpired: sessionVerdict(authToken(), Date.now() / 1000).refusesUntilSignIn,
+          // Q102: expiry is only ONE way to be refused. A token rotated by a dashboard restart, a
+          // stale ?token= link or a revoked session is invalid without being expired, and the
+          // handshake refusal reaches the browser as 1006 — so without this the fleet view
+          // reconnects against a door that already said no, exactly like the camera tiles did.
+          pageRefused: authRefusedRecently(),
         })
         retryRef.current = plan.attempt
         if (plan.delayMs === null) { setConn('unauthorized'); return }
