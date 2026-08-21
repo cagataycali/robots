@@ -291,9 +291,15 @@ hatch run format            # ruff check --fix, ruff format
    - Thread's last non-bot comment is **yours** -> do not reply. You have
      already said it. If there is code to push, push it; the push is the
      message.
-   - Thread is **`isResolved` or `isOutdated`** -> do not reply. Resolution is
-     terminal. Reopening it to restate a landed fix reads as noise, not
-     diligence.
+   - Thread is **`isResolved`** -> do not reply. Resolution is a reviewer action
+     and terminal. Reopening it to restate a landed fix reads as noise, not
+     diligence. `isOutdated` is **not** terminal, measured: it describes the diff
+     rather than the conversation, and a thread keeps accepting comments after it
+     flips - #2577's took two more after `d04a8969` moved its lines. It is also
+     `false` on threads that *are* answered, when the fix adds lines elsewhere
+     (#2480, still `false` after `e83cf51` fixed it). Decide an outdated thread on
+     authorship like any other, or a reviewer's new demand on a moved line is
+     filed as settled.
    - Last comment is **someone else's** and your existing replies do not answer
      it -> reply once, then resolve.
 
@@ -301,6 +307,26 @@ hatch run format            # ruff check --fix, ruff format
    those twelve comments on its own: no semantic comparison, just the author of
    the last comment. Both `isResolved` and the comment authors are already in
    the context payload - they were fetched and not read.
+
+   **Ask for the verdict rather than re-deriving it.** "Fetched and not read" is
+   the whole failure, and it recurred after this rule was written: #2511 took
+   four author replies to one question and #2577 took two, with every field
+   needed to refuse them present in the payload each time. Re-deriving one
+   boolean from a payload that also contains a reviewer's question addressed to
+   you is the part that does not survive a context rebuild, so ask a command:
+
+   ```
+   python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --pr <N>
+   python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
+   ```
+
+   `settled` and `answered` are not work. `awaiting-the-author` is, and it is the
+   only outcome that exits 1 - so the sweep answers "which of my open pull
+   requests actually need me" in one read. The report also names the commit each
+   thread was written against beside the pull request's head, which is what tells
+   "already fixed at `<oid>`" apart from "not yet fixed" without re-deriving the
+   fix (#2520). It reports and does not gate: what an author should do next is not
+   something a branch can turn green.
 
    What makes this worth writing down is that the previous rule was *satisfied*
    by all twelve. "Address all review comments", and "reply when a thread asks
