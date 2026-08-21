@@ -13,6 +13,7 @@ import { episodeTarget } from '../lib/episodeTarget'
 import { fpsField, fpsSuggestion } from '../lib/recordFps'
 import { nameVerdict, type KnownDataset } from '../lib/datasetName'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
+import { overrideOffered, overrideBody } from '../lib/recordRefusal'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 
@@ -137,6 +138,17 @@ export default function RecordPanel(
   const camWarning = cameraWarning(deadCams, { peerId: form.follower })
   const [camAck, setCamAck] = useState(false)
 
+  // The SERVER's camera gates (frame age, enumeration, identity) each refuse with
+  // 409 + the name of the flag that proceeds anyway. The tick above only answers
+  // the first, and only when this screen's own freshness check saw it first: a
+  // camera unplugged before the arm subscribed, or an index that changed hands,
+  // is invisible here and arrives as a refusal. Without this the operator reads a
+  // paragraph naming a flag they cannot send - a continuable refusal continuable
+  // only by curl. Cleared on every new attempt: consent to a stale camera is not
+  // consent to a camera that changed identity.
+  const [refusalAck, setRefusalAck] = useState(false)
+  const offered = overrideOffered(err)
+
   // The measured roles. Managed children carry them keyed by peer id, so this is
   // one request, not one per arm. A failure here is not worth a banner: the
   // pickers simply stay unopinionated (basis 'none' says so out loud).
@@ -211,7 +223,7 @@ export default function RecordPanel(
 
   const run = async (fn: () => Promise<RecordSession>, kind: RecordActionKind) => {
     if (busy) return
-    setBusy(true); setErr(null)
+    setBusy(true); setErr(null); setRefusalAck(false)
     // An action's own answer is a fresh read of the session: it counts.
     try { setS(await fn()); setLastOkAt(Date.now()); setPollErr(null) }
     catch (e) {
@@ -324,6 +336,8 @@ export default function RecordPanel(
             // Only ever sent when the operator ticked the box in front of the
             // named camera and its age - never a default, never remembered.
             ...(camWarning && camAck ? { ignore_dead_cameras: true } : {}),
+            // The flag the LAST refusal named, and only with its box ticked.
+            ...overrideBody(offered, refusalAck),
           }), 'open')
         }}>
           <label className="field"><span>dataset (name or hf repo id)</span>
@@ -675,6 +689,16 @@ export default function RecordPanel(
       {closed && !open && <div className="toast">✓ {closed}</div>}
 
       {err && <div className="train-msg">✗ {err}</div>}
+      {/* The refusal's own words stay above, unrewritten - they were written next to
+          the check that knows why. This adds the answer: the admission in the first
+          person, the cost if the operator is wrong, and press start again. */}
+      {err && offered && (
+        <label className="ackrow">
+          <input type="checkbox" checked={refusalAck}
+                 onChange={e => setRefusalAck(e.target.checked)} />
+          <span>{offered.label} <span className="hint">— {offered.cost}</span></span>
+        </label>
+      )}
     </div>
   )
 }

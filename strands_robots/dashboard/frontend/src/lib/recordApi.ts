@@ -136,7 +136,21 @@ export interface RecordApi {
    * (`fps=int(body.get("fps", 30) or 30)`) — this type simply never named it, so the form could
    * not send it and every dataset was stamped 30 regardless of what the bus could deliver.
    */
-  open(opts: { dataset: string; task: string; leader: string; follower: string; target_episodes: number; fps?: number; ignore_dead_cameras?: boolean }): Promise<RecordSession>
+  /**
+   * The other two camera gates are overridable the same way, and this type has to
+   * name them or the form CANNOT send them: `ignore_missing_cameras` (an index this
+   * machine does not list at all) and `ignore_camera_identity` (the index is listed
+   * and streaming, but a different camera answers it now — an unplug renumbers the
+   * rest). Same discipline as above: optional, never defaulted, only ever sent for
+   * the refusal the operator just read (lib/recordRefusal).
+   */
+  open(opts: {
+    dataset: string; task: string; leader: string; follower: string
+    target_episodes: number; fps?: number
+    ignore_dead_cameras?: boolean
+    ignore_missing_cameras?: boolean
+    ignore_camera_identity?: boolean
+  }): Promise<RecordSession>
   startEpisode(): Promise<RecordSession>
   /** stop and keep the in-flight episode */
   stopEpisode(): Promise<RecordSession>
