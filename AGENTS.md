@@ -1100,6 +1100,38 @@ hatch run format            # ruff check --fix, ruff format
    nothing to resolve, which is why `mergeStateStatus: CLEAN` is not merely
    unhelpful here but actively reassuring.
 
+   **What the sweep cannot see, and why it is not worth a heuristic.** Every
+   relation it computes intersects changed *paths*, so a test resolving its
+   population from a filesystem walk is invisible to it: the grader is coupled to
+   files it never names, and its intersection with the sibling it grades is empty.
+   #2557 added `tests/test_log_strings_are_ascii.py`, a walk of the package, and
+   merged in a batch with #2559 and #2560 - both of which added exactly the
+   tool-result prose that grader scores - at a pairwise path intersection of `[]`
+   with each. The batch was safe, but only because it was checked by hand.
+
+   Do not widen the path set to the walked root. Measured on the open set of 9,
+   that relation selects **11 of 36 pairs, 9 of them new, and none a defect**:
+   125 of the 1136 test files resolve a population from a walk, and the ones that
+   reach furthest are rooted at `strands_robots` entire, so they intersect nearly
+   every open branch, while a narrowly-rooted grader (`strands_robots/mesh/`)
+   selects only the pair the path intersection already reports. That is the
+   `awaiting-first-review` failure mode from step 8 in a different field: a
+   finding on a third of the queue is boilerplate, and the batch where it
+   mattered is not distinguishable from the rest.
+
+   What does separate them is composing the two branches and running the grader,
+   which needs no model of what the grader reads. Run by hand over the open set
+   for #2562's whole-tree grader it cost ~10 s per composition, and it correctly
+   left alone three siblings whose new `except` tuples a path-or-keyword
+   heuristic would have flagged - `(KeyboardInterrupt, Exception)` among them,
+   which is correct code. Two branches were `CONFLICTING` and so honestly
+   `skipped`, not green. That relation cannot live in `--all-open`: the sweep
+   reads the open set from the API and **no checkout at all**, which is what lets
+   a health report run it without a clone, and every sweep test pins that by
+   running from a directory that is not a repository. So the sweep reports what
+   it measured - shared paths - and names the class it cannot describe (#2561).
+   A composition run stays a manual step, below.
+
    Read that run as a **delta, not an absolute**. The environment you verify in
    is almost never the one CI uses, and a partial one fails tests for reasons
    that have nothing to do with the merge. Composing #1786 and #1804 - both
