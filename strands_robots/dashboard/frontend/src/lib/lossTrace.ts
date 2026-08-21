@@ -50,6 +50,38 @@ export function pushLoss(
   return next
 }
 
+/**
+ * The vertical band a trace is drawn in — and whether it had to be INVENTED.
+ *
+ * A sparkline that always scales to min..max is a liar about flat data: a run stuck at loss
+ * 2.5000 ± 0.0004 fills the full height with a dramatic mountain range, and the operator reads
+ * progress that is not happening. Amplifying noise to 34 pixels is not neutral drawing; it is a
+ * claim about the run.
+ *
+ * So the band has a FLOOR of 2% of the values' own magnitude. Real variation (a loss falling from
+ * 2.5 to 0.8) is far wider than the floor and scales exactly as before; negligible variation gets
+ * a band it cannot fill, so a flat run looks flat and a padded band is reported as `flat: true`
+ * for the caller to say so in words.
+ */
+export function lossBand(points: readonly LossPoint[]): { lo: number; hi: number; flat: boolean } {
+  let lo = Infinity
+  let hi = -Infinity
+  for (const p of points) {
+    if (p.loss < lo) lo = p.loss
+    if (p.loss > hi) hi = p.loss
+  }
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { lo: 0, hi: 1, flat: true }
+  const spread = hi - lo
+  const magnitude = Math.max(Math.abs(hi), Math.abs(lo))
+  // All-zero losses have no magnitude to take a percentage of, so the floor is absolute there.
+  const floorSpan = magnitude > 0 ? magnitude * 0.02 : 1
+  if (spread >= floorSpan) return { lo, hi, flat: false }
+  const mid = (lo + hi) / 2
+  // Centred, so a perfectly flat curve draws through the MIDDLE — pinned to the bottom edge (what
+  // the old `Math.max(1e-9, hi - lo)` produced) reads as "converged to its best value".
+  return { lo: mid - floorSpan / 2, hi: mid + floorSpan / 2, flat: true }
+}
+
 /** Scale points into canvas space. Returns [] for <2 points (nothing drawable). */
 export function lossPath(
   points: LossPoint[],
@@ -60,12 +92,7 @@ export function lossPath(
   if (points.length < 2 || width <= 0 || height <= 0) return []
   const s0 = points[0].step
   const s1 = points[points.length - 1].step
-  let lo = Infinity
-  let hi = -Infinity
-  for (const p of points) {
-    if (p.loss < lo) lo = p.loss
-    if (p.loss > hi) hi = p.loss
-  }
+  const { lo, hi } = lossBand(points)
   const sSpan = Math.max(1e-9, s1 - s0)
   const lSpan = Math.max(1e-9, hi - lo)
   const w = width - pad * 2

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { lossPath, fmtStep, type LossPoint } from '../lib/lossTrace'
+import { lossBand, lossPath, fmtStep, type LossPoint } from '../lib/lossTrace'
 
 /**
  * A training job's loss curve, drawn on canvas (same rationale as JointSpark:
@@ -53,12 +53,19 @@ export default function LossSpark({ trace, height = 34 }: { trace: LossPoint[]; 
   }
   const first = trace[0]
   const last = trace[trace.length - 1]
+  // A flat trace is drawn flat (lib/lossTrace lossBand pads the band rather than magnifying noise),
+  // and SAYS so: the shape alone cannot distinguish "no measurable change" from "not much happened",
+  // and the difference is whether the run is worth leaving to finish.
+  const flat = lossBand(trace).flat
   return (
     <div className="loss-spark">
       <canvas ref={ref} />
       <div className="loss-spark-label">
         <span>loss {last.loss.toPrecision(3)}</span>
-        <span className="dim">{fmtStep(first.step)} → {fmtStep(last.step)} steps (observed)</span>
+        <span className="dim">
+          {fmtStep(first.step)} → {fmtStep(last.step)} steps (observed)
+          {flat ? ' · flat across this window' : ''}
+        </span>
       </div>
     </div>
   )
