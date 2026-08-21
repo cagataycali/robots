@@ -52,6 +52,7 @@ export const BUNDLE_ROUTES: readonly string[] = [
   '/api/robots/{p}/policy-fit',
   '/api/robots/{p}/stop',
   '/api/robots/{p}/task',
+  '/api/robots/{p}/teleop',
   '/api/robots/{p}/twin',
   '/api/safety/estop',
   '/api/safety/resume',

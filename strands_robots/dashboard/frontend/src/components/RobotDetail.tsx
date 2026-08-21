@@ -5,6 +5,8 @@ import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
 import { twinButtonCopy } from '../lib/twinButton'
 import { statusSentence, peerStatusFields } from '../lib/statusSentence'
+import { teleopView, type TeleopView } from '../lib/teleopView'
+import { api } from '../lib/endpoints'
 import { useTelemetry } from '../lib/useTelemetry'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
@@ -43,6 +45,20 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, onC
   // R2: same words as the card, from the same pure module.
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
   const [cam, setCam] = useState<string | null>(null)
+  /* U22 slice 1, READ-ONLY. Teleop has four server routes and no screen at all, so the dashboard has
+     been telling operators to "collect teleop episodes" while giving them no way to see whether teleop
+     is even working. The server's verdict already exists (teleop_health.py) and was written because of
+     a measured disaster: 176 frames published, every one refused, while every surface the dashboard
+     could see said success. Fetched ON DEMAND rather than polled — asking a peer costs a mesh
+     round-trip on the same shared servo bus that starves the state reads. */
+  const [teleop, setTeleop] = useState<TeleopView | null | 'asking' | 'unreachable'>(null)
+  const askTeleop = async () => {
+    setTeleop('asking')
+    try { setTeleop(teleopView(await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop`))) }
+    // A failed ASK is not an idle arm: say the ask failed. endpoints already explains a 404 from an
+    // older server, and swallowing this into "no teleop" would be the same lie the counters told.
+    catch { setTeleop('unreachable') }
+  }
   /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLElement | null>(null)
   useDialogFocus(sheetRef)
@@ -128,8 +144,27 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, onC
               cameras
             </button>
           )}
+          <button className="btn ghost" onClick={askTeleop} disabled={teleop === 'asking'}
+                  title="is this arm following another arm, or publishing its own joints? (reads only)">
+            {teleop === 'asking' ? 'asking…' : 'teleop'}
+          </button>
           <button className="btn ghost" onClick={onClose} aria-label="close this robot" title="Escape">✕</button>
         </header>
+        {teleop === 'unreachable' && (
+          <p className="hint warn" role="status">could not ask this arm about teleop — it may be busy or gone; its own log (devices › logs) is where a refusal appears</p>
+        )}
+        {teleop && typeof teleop === 'object' && (
+          <div className={`hint ${teleop.tone === 'warn' ? 'warn' : ''}`} role="status">
+            <b>teleop:</b> {teleop.headline}
+            {teleop.streaming && <span className="muted small"> · frames are on the wire</span>}
+            {teleop.detail && <div className="muted small">{teleop.detail}</div>}
+            {/* The envelope is a SAFETY bound: the screen names the consent that widens it and never
+                widens it here. ConsentSettings already renders this kind. */}
+            {teleop.consentKind && (
+              <div className="muted small">every frame is outside the safety envelope — settings › consent › {teleop.consentKind} is where that bound is widened, deliberately and by you</div>
+            )}
+          </div>
+        )}
         {/* Q151: the safety sentence belongs on THIS surface most — it is what an operator reads while
             walking up to the arm. Same pure rule and same fields as the card, so the two cannot say
             different things about the same robot. */}
