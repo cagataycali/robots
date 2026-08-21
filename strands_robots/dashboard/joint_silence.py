@@ -201,12 +201,36 @@ def classify_state(state: Any) -> dict[str, Any] | None:
         "remedy": "Open this robot's log (devices > logs) - the exception the probe raised is "
                   "recorded there in full.",
     }
+    if matched["kind"] == "port_in_use" and _published_recoveries(state) > 0:
+        # The snapshot's own fingerprint, exactly parallel to the log's (see _FLAG_CLEARED_LINE):
+        # bus_recoveries counts stranded flags this peer has already cleared, so the stale-flag
+        # explanation is spent here for the same reason it is spent there. Without this, the two
+        # sources would answer "what do I do about this arm" differently - the drift this module's
+        # single remedy table exists to prevent - and the SNAPSHOT path is the one external peers
+        # have, so they would get the weaker answer precisely where no log exists to correct it.
+        matched = {**matched, "remedy": _PORT_IN_USE_AFTER_SELF_HEAL}
     out: dict[str, Any] = {**matched, "detail": _tail(reason), "source": "peer"}
     for key in ("failures", "for_seconds"):
         value = entry.get(key)
         if isinstance(value, (int, float)):
             out[key] = value
     return out
+
+
+def _published_recoveries(state: Any) -> int:
+    """How many stranded in-use flags the peer says it has cleared (``bus_recoveries``).
+
+    Absent on a peer running an older build and on a peer that never stranded a flag - the two are
+    indistinguishable from here, and both correctly mean "no evidence", so the cautious verdict stands.
+    A non-numeric or negative value is treated as no evidence rather than as a fault: an invented count
+    would sharpen a diagnosis on nothing.
+    """
+    if not isinstance(state, Mapping):
+        return 0
+    value = state.get("bus_recoveries")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return int(value) if value > 0 else 0
 
 
 def has_joints(state: Any) -> bool:

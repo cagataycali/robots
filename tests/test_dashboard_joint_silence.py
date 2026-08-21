@@ -333,3 +333,55 @@ def test_the_cure_line_only_sharpens_the_port_busy_verdict() -> None:
 def test_a_healthy_log_with_a_recovery_still_reports_nothing() -> None:
     """A cured flag is not a fault: healing and then working is the success case, badge-free."""
     assert joint_silence.classify([_PROBE_BUSY, _CURE_RAN, "state probe 'hw_joints' recovered"]) is None
+
+
+def _busy_state(**extra):
+    return {
+        "peer_id": "so101-arm-1",
+        "degraded": {"hw_joints": {"reason": "[TxRxResult] Port is in use!", "failures": 40,
+                                   "for_seconds": 900}},
+        **extra,
+    }
+
+
+def test_the_snapshot_path_sharpens_from_the_published_count_not_just_the_log() -> None:
+    """Both sources must answer "what do I do about this arm" the same way.
+
+    The log path learned to retire the stale-flag explanation when it sees the cure's fingerprint. The
+    snapshot path has its own fingerprint - the peer publishes how many stranded flags it has cleared -
+    and it is the ONLY path external peers have, so without this they would get the weaker answer
+    exactly where there is no log to correct it.
+    """
+    weak = joint_silence.classify_state(_busy_state())
+    assert weak is not None and "CLEARS that by itself" in weak["remedy"], "no evidence: stay cautious"
+
+    sharp = joint_silence.classify_state(_busy_state(bus_recoveries=3))
+    assert sharp is not None and sharp["kind"] == "port_in_use"
+    assert "no longer the explanation" in sharp["remedy"]
+    assert "REAL second owner" in sharp["remedy"]
+    assert sharp["failures"] == 40 and sharp["for_seconds"] == 900, "keep the peer's own numbers"
+    assert sharp["source"] == "peer"
+
+
+def test_a_published_count_of_zero_or_nonsense_is_no_evidence_at_all() -> None:
+    """Absent, zero, negative, a string and a bool all mean "no evidence" - never a sharpened claim.
+
+    Absent covers both an older build and a peer that simply never stranded a flag; those are
+    indistinguishable from here and both correctly leave the cautious verdict in place. Sharpening a
+    diagnosis on an invented count would be worse than the staleness this replaced.
+    """
+    for value in (0, -4, "7", True, None, [1]):
+        verdict = joint_silence.classify_state(_busy_state(bus_recoveries=value))
+        assert verdict is not None
+        assert "CLEARS that by itself" in verdict["remedy"], f"{value!r} must not sharpen the verdict"
+
+
+def test_the_published_count_does_not_touch_other_faults() -> None:
+    """A cleared flag says nothing about calibration - the remedy for that must not move."""
+    state = {
+        "degraded": {"hw_joints": {"reason": "no calibration registered for so101"}},
+        "bus_recoveries": 9,
+    }
+    verdict = joint_silence.classify_state(state)
+    assert verdict is not None and verdict["kind"] == "uncalibrated"
+    assert "Calibrate this arm" in verdict["remedy"]
