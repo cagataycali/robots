@@ -52,6 +52,7 @@ from strands_robots.dashboard.teleop_health import published_frames, teleop_heal
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
 from strands_robots.dashboard import lan_hint
+from strands_robots.dashboard.refusals import RefusalTally
 from strands_robots.dashboard.churn_guard import (
     ChurnGuard,
     effective_cap,
@@ -120,6 +121,29 @@ class TokenAuthMiddleware:
 
     def __init__(self, app: Any) -> None:
         self.app = app
+
+    @staticmethod
+    def _note_refusal(scope: dict[str, Any], path: str, kind: str) -> None:
+        """Count a refused handshake (Q88). Never allowed to affect the refusal itself.
+
+        A refused request that raises inside the bookkeeping would turn a correct 401 into a
+        500 - and a counter is never worth that. The tally lives on app.state (per app, the
+        Q63 lesson) with a module-level fallback for an ASGI mount that has no app in scope.
+        """
+        try:
+            state = getattr(scope.get("app"), "state", None)
+            tally = getattr(state, "refusals", None) if state is not None else None
+            if tally is None:
+                tally = _REFUSALS
+            client = scope.get("client")
+            tally.record(
+                client=str(client[0]) if client else "?",
+                path=path,
+                kind=kind,
+                now=time.time(),
+            )
+        except Exception:  # pragma: no cover - bookkeeping must never break the guard
+            pass
 
     @staticmethod
     def _client_is_local(scope: dict[str, Any]) -> bool:
@@ -194,6 +218,7 @@ class TokenAuthMiddleware:
             await self.app(scope, receive, send)
             return
         if self._cross_origin_refused(scope):
+            self._note_refusal(scope, path, "origin")
             if scope["type"] == "websocket":
                 await receive()  # consume websocket.connect before rejecting
                 await send({"type": "websocket.close", "code": 1008})
@@ -219,6 +244,7 @@ class TokenAuthMiddleware:
             if dash_auth is not None and dash_auth.session_is_valid(presented):
                 await self.app(scope, receive, send)
                 return
+        self._note_refusal(scope, path, "credential")
         if scope["type"] == "websocket":
             await receive()  # consume websocket.connect before rejecting
             await send({"type": "websocket.close", "code": 1008})
@@ -230,6 +256,11 @@ class TokenAuthMiddleware:
 #: The frame types /ws/chat implements. A type outside this set is answered with a typed error rather
 #: than dropped (Q81); a frame with NO type at all stays acceptable, because "text" alone is what the
 #: oldest clients send and refusing it would break a working path to fix a silent one.
+#: Fallback tally for a guard running without an app in scope (a bare ASGI mount). create_app
+#: binds a fresh one onto app.state; this exists so the counter can never be the reason a
+#: refusal raises. See refusals.py.
+_REFUSALS = RefusalTally()
+
 _CHAT_FRAME_TYPES = frozenset({"chat", "ping"})
 
 CHAT_MAX_FRAME_BYTES = 32 * 1024  # a generous chat turn; 2 MB frames ran real model turns
@@ -368,6 +399,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app.state.bridge = bridge or MeshBridge()
     # Per-app, not per-process: see the note on _CAMERA_CLOSE_LOG (Q63).
     app.state.camera_close_log = CloseLogThrottle()
+    # Q88: refused handshakes, counted so a retry storm is visible in /api/health instead of
+    # only in a 34 MB log. Per app for the same reason as the close log.
+    app.state.refusals = RefusalTally()
     app.state.camera_churn = ChurnGuard()
     app.state.mesh_online = False
     app.state.devices = DeviceManager()
@@ -476,6 +510,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # the number the perf lens should be able to check on a live fleet.
             "mesh_coalesce": app.state.bridge.coalesce_stats(),
             "t": time.time(),
+            # Q88: present ONLY when something was actually refused (see refusals.summary) -
+            # a section that is always there is a section nobody reads.
+            **(
+                {"refused_handshakes": s}
+                if (s := app.state.refusals.summary(time.time())) is not None
+                else {}
+            ),
         }
 
     @app.get("/api/fleet")
