@@ -67,6 +67,29 @@ console.log(`${ports.length} serial port(s) on this rig`)
 // command to the other in the first version of this script. Keying by the row makes a mis-scoped
 // read impossible rather than unlikely - the same reason the lib refuses a prefix port match.
 const panels = {}
+/* PRECONDITION, stated and measured. Under a full `audit:all` sweep this script reported "no
+   calibrate panel rendered for this row" for BOTH ports while the product was fine: the devices
+   screen had not painted its rows yet (30 audits back-to-back keep the server busy), the loop below
+   found zero `calibrate…` buttons, silently `break`ed, and the verdict loop blamed the page for
+   panels it had never even tried to open. A precondition that fails silently turns into a false
+   accusation against the thing being audited, so it is checked FIRST and reported in its own words. */
+const wantRows = ports.length
+let paintedRows = await page.locator('button:has-text("calibrate…")').count()
+if (paintedRows < wantRows) {
+  await page.waitForFunction(
+    n => document.querySelectorAll('li').length && [...document.querySelectorAll('button')]
+      .filter(b => b.innerText.includes('calibrate…') || b.innerText.includes('hide calibrate command')).length >= n,
+    wantRows, { timeout: 20000 }).catch(() => {})
+  paintedRows = await page.locator('button:has-text("calibrate…")').count()
+}
+if (paintedRows < wantRows) {
+  failures.push(`the devices screen painted ${paintedRows} calibrate control(s) for the ${wantRows} serial `
+    + 'port(s) /api/devices reports, after its APIs settled and 20s of waiting — the page\'s calibrate '
+    + 'command was never examined, so this is a PRECONDITION failure (a busy server, most likely under a '
+    + 'full sweep), NOT a missing panel')
+}
+
+const timedOut = new Set()
 for (let i = 0; i < ports.length; i++) {
   const closed = page.locator('button:has-text("calibrate…")')
   if (!(await closed.count())) break
@@ -75,7 +98,11 @@ for (let i = 0; i < ports.length; i++) {
   // panel rendered for this row" while the product was fine. The disclosure is single-value and its
   // content arrives with a fetch, so a flat sleep is a race whose loser blames the page. A flake
   // here is expensive twice over — it reads as a product defect AND it teaches people to rerun.
-  await page.locator('.calibcmd').first().waitFor({ state: 'visible', timeout: 6000 }).catch(() => {})
+  /* The panel renders synchronously from props (DevicePanel reads `calibFor === p.device`), so a
+     timeout here means the CLICK did not take, never that content is slow — and it must say so
+     instead of being swallowed into an empty panel map. */
+  await page.locator('.calibcmd').first().waitFor({ state: 'visible', timeout: 15000 })
+    .catch(() => { timedOut.add(i) })
   await page.waitForTimeout(300)
   Object.assign(panels, await page.evaluate(() => {
     const out = {}
@@ -92,7 +119,13 @@ for (const p of ports) {
   const text = panels[p.device] ?? ''
   const role = (p.role ?? '').trim()
   const label = `${p.device} (${role || 'unmeasured'})`
-  if (!text) { failures.push(`${label}: no calibrate panel rendered for this row`); continue }
+  if (!text) {
+    failures.push(timedOut.size
+      ? `${label}: the calibrate disclosure did not become visible within 15s of the click — a TIMEOUT `
+        + '(the panel renders from props, so the click did not take), not a page that renders no command'
+      : `${label}: the row opened but rendered no calibrate command`)
+    continue
+  }
   const cmd = /lerobot-calibrate[^|]*/.exec(text)?.[0]?.trim() ?? null
   const want = remembered(p.device, p.serial_number)
 

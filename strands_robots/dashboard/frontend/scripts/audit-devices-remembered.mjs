@@ -19,6 +19,29 @@ const TOKEN = fs.readFileSync(
   process.env.STRANDS_DASH_TOKEN_FILE ?? `${process.env.HOME}/.strands_dashboard/local_api_token.txt`, 'utf8').trim()
 const BASE = process.env.STRANDS_DASH_URL ?? 'http://127.0.0.1:8090'
 const failures = []
+/* The spawn button is addressed BY NAME, never as ".remembered button".
+   This audit died with a playwright strict-mode stack trace ("resolved to 2 elements") because Q123
+   later added a `deploy .py` sibling into the same block. A crashing audit is worse than a failing
+   one: in the sweep's summary it is indistinguishable from a broken page, and its message accuses
+   nothing in particular. Naming the control also means the next sibling — there will be one — cannot
+   break this file. The name covers both of its states: it reads "spawn <peer> again" when the bus is
+   free and "already running" when a child owns it. */
+const spawnBtn = row => row.locator('.remembered button')
+  .filter({ hasText: /spawn .* again|already running/ }).first()
+const requireOne = async (row, what) => {
+  const all = row.locator('.remembered button')
+  const n = await all.count()
+  const named = await spawnBtn(row).count()
+  if (!named) {
+    failures.push(`${what}: no spawn button in the memory block (it holds ${n} button(s): `
+      + `${(await all.allInnerTexts()).join(' / ') || 'none'}) — the control was renamed, so this `
+      + 'audit checked nothing about spawning')
+    return false
+  }
+  return true
+}
+
+
 
 const FREE = '/dev/cu.usbmodemFREE1'
 const BUSY = '/dev/cu.usbmodemBUSY1'
@@ -131,25 +154,30 @@ if (!(await freeRow.locator('.remembered').count())) {
   // strings, and the first version of this audit conflated them.
   const summary = text.split('⚠')[0]
   if (/index|\b2\b/.test(summary.replace('arm_1', ''))) failures.push(`the memory summary prints camera indices: ${summary}`)
-  const btn = freeRow.locator('.remembered button')
-  const label = await btn.innerText()
-  if (!label.includes('so101-arm-1')) failures.push(`the button does not name the peer it will start: "${label}"`)
+  const named = await requireOne(freeRow, 'the free board')
+  const btn = spawnBtn(freeRow)
+  // Null-safe on purpose: requireOne has already recorded the real failure, and a second cascade of
+  // "button is disabled" noise from a control that does not exist buries it.
+  const label = named ? await btn.innerText() : ''
+  const isDead = async () => named && await btn.isDisabled()
+  if (named && !label.includes('so101-arm-1')) failures.push(`the button does not name the peer it will start: "${label}"`)
   // A neutral calibration id must not raise a role warning (that warning is asserted on the busy
   // row below); only the camera notice belongs on this row.
   if (/name is what is wrong/.test(text)) failures.push(`a neutral calibration id raised a role warning: ${text.slice(0, 160)}`)
-  if (await btn.isDisabled()) failures.push('the free board\'s respawn button is disabled')
+  if (await isDead()) failures.push('the free board\'s respawn button is disabled')
   // Q43: the camera trouble is stated where the decision is made, with its consequence and remedy.
   if (!/wrist \(index 1\)/.test(text)) failures.push('the blocked camera is not named on the row')
   if (!/no pictures in them/.test(text)) failures.push('the row states the camera problem without its consequence')
   if (!/start the dashboard from a terminal/.test(text)) failures.push('the remedy never reaches the operator')
   // ...and it must NOT become a gate: dropping a camera is survivable, so the spawn stays offered.
-  if (await btn.isDisabled()) failures.push('THE POINT: a camera warning disabled the spawn button — a warning, not a refusal')
+  if (await isDead()) failures.push('THE POINT: a camera warning disabled the spawn button — a warning, not a refusal')
 }
 
 // ---- THE DANGEROUS ONE: a bus something already drives must not be spawnable again
 if (await busyRow.locator('.remembered').count()) {
-  const btn = busyRow.locator('.remembered button')
-  if (!(await btn.isDisabled())) {
+  const btn = spawnBtn(busyRow)
+  if (!(await requireOne(busyRow, 'the busy board'))) { /* reported */ }
+  else if (!(await btn.isDisabled())) {
     failures.push('THE DANGEROUS ONE: the respawn button is live on a bus a running child already owns — two processes on one servo bus')
   }
   if (!(await btn.innerText()).includes('already running')) {
@@ -185,7 +213,7 @@ if (!(await teleopRow.locator('.remembered').count())) {
   if (/name is what is wrong/.test(text)) failures.push('an unmeasured board was given a role contradiction')
   // NOT a gate, on purpose: the calibration list was read once, and an operator who has since run
   // lerobot-calibrate is right and this page is stale. It explains; the decision stays theirs.
-  const btn = teleopRow.locator('.remembered button')
+  const btn = spawnBtn(teleopRow)  // by name: Q123's `deploy .py` sibling makes a bare selector ambiguous
   if (await btn.isDisabled()) {
     failures.push('an unloadable calibration id disabled the respawn button — this is a warning, not a refusal (a calibration may have been created since the list was read)')
   }
@@ -208,7 +236,7 @@ if (await newRow.locator('.remembered').count()) {
 }
 
 // ---- the click sends the PORT and nothing else: the payload lives server-side
-await freeRow.locator('.remembered button').click()
+await spawnBtn(freeRow).click()  // by name — the positional selector clicked whichever button came first
 await page.waitForTimeout(1200)
 if (spawns.length !== 1) {
   failures.push(`expected exactly one respawn request, got ${spawns.length}`)
