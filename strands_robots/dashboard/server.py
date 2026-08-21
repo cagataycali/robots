@@ -424,6 +424,19 @@ def static_cache_control(path: str) -> str:
     without being wasteful. no-store would throw the bytes away and make every reload a full download.
     """
     name = path.rsplit("/", 1)[-1]
+    # Q116, measured on a real build: vite emitted `index-BGRlFtdn.js` and the digit rule below
+    # REFUSED IT, so the main bundle - the biggest file the app loads - was revalidated on every
+    # page load. A vite hash is 8 base64 characters and only 10 of the 64 are digits, so roughly
+    # one build in four rolls an all-letter hash: the defect appears and disappears with the hash,
+    # which is why it survived the test that exists to catch it.
+    # THE DIRECTORY IS EVIDENCE AND THE NAME IS A GUESS. vite content-hashes everything it puts in
+    # assets/ (build.rollupOptions output naming), and both call sites pass a path that contains
+    # that directory - StaticFiles hands us the file's real path, the fallback route the URL
+    # sub-path. So ask the structure first and keep the name pattern only for hashed files that
+    # live at the dist ROOT (workbox-e97c6ee1.js).
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) >= 2 and parts[-2] == "assets":
+        return "public, max-age=31536000, immutable"
     # A vite content hash is HYPHEN-separated and base62-ish: index-BB6lyXA6.css,
     # workbox-e97c6ee1.js, workbox-window.prod.es5-BqEJf4Xk.js. Only a name that CHANGES when its
     # content changes may be cached for a year, so the hash is required to be the LAST
@@ -434,8 +447,14 @@ def static_cache_control(path: str) -> str:
     # changed nothing), and allowing a hyphen INSIDE the hash matched apple-touch-icon.png, which is
     # not hashed at all - a year-long cache on a file whose name never changes is unfixable from the
     # server. Missing a real hash only costs a revalidation, so the pattern errs that way on purpose.
+    # A hash-shaped segment is one that could not have been TYPED by a person: it carries a digit
+    # (workbox-e97c6ee1) or mixes case (BGRlFtdn). Requiring a digit alone rejected a real hash;
+    # allowing any 8+ letters would accept `favicon-original.png`, whose name never changes, and a
+    # year-long cache on that is unfixable from the server. Missing a hash costs one revalidation,
+    # so where neither signal is present this still errs toward no-cache.
     if re.fullmatch(
-        r".+-(?=[A-Za-z0-9_]*[0-9])[A-Za-z0-9_]{8,}\.(?:js|css|woff2?|png|svg|jpg|jpeg|webp|ico)",
+        r".+-(?=[A-Za-z0-9_]*(?:[0-9]|[a-z][A-Za-z0-9_]*[A-Z]|[A-Z][A-Za-z0-9_]*[a-z]))"
+        r"[A-Za-z0-9_]{8,}\.(?:js|css|woff2?|png|svg|jpg|jpeg|webp|ico)",
         name,
     ):
         return "public, max-age=31536000, immutable"

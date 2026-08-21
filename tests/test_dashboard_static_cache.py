@@ -23,6 +23,18 @@ IMMUTABLE = "public, max-age=31536000, immutable"
 # (index.BB6lyXA6.css) and matched none of these, so every asset silently stayed no-cache and the
 # "fix" changed nothing at all.
 HASHED = [
+    # Q116, THE REGRESSION THIS FILE MISSED FOR A DAY: a real vite hash with NO DIGIT IN IT. Every
+    # example above happened to contain one, so the "must contain a digit" rule looked correct and
+    # refused the main bundle of one build in four (8 base64 chars, 10 of 64 are digits => ~25%).
+    # The defect came and went with the hash, which is why a green test could sit on top of it.
+    "index-BGRlFtdn.js",
+    "assets/index-BGRlFtdn.js",
+    # The DIRECTORY is the evidence: vite content-hashes everything it emits into assets/, so a name
+    # this function cannot recognise is still immutable when it lives there. Both call sites pass a
+    # path that keeps the directory (StaticFiles gives the real file path; the fallback route the
+    # URL sub-path), and this is the shape a Windows path arrives in.
+    "assets/whatever-vite-emits-next.js",
+    r"C:\\dist\\assets\\index-BGRlFtdn.js",
     "index-BB6lyXA6.css",
     "index-CxO2NtX_.js",
     "workbox-window.prod.es5-BqEJf4Xk.js",
@@ -34,6 +46,10 @@ ENTRY = ["index.html", "sw.js", "registerSW.js", "manifest.webmanifest", ""]
 # Named, unhashed assets. apple-touch-icon.png is the trap: allowing a hyphen inside the hash matched
 # it, and a year-long immutable cache on a file whose name never changes cannot be fixed from here.
 UNHASHED = ["apple-touch-icon.png", "maskable-192.png", "icon-192.png", "icon.svg",
+            # The reason the digit rule could not simply be DROPPED: eight lowercase letters that a
+            # person typed. Mixed case and digits are what a hash has and a hand-written name does
+            # not, so this must stay revalidated - its bytes can change under a name that never does.
+            "favicon-original.png", "sw-registration-helper.js",
             "strands-dashboard.png", "robots.txt",
             # These two are the mutation-hardening cases. apple-touch-icon.png survives a LOOSER
             # charset only because of the digit rule, and maskable-192.png survives a dropped digit
