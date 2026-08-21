@@ -3,6 +3,7 @@ import { boardListEmptyLine, managedListEmptyLine, hardwareSummaryValue } from '
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { numField } from '../lib/numField'
 import { findConsent, type ConsentNeed } from '../lib/consent'
+import { spawnNotice, type SpawnNotice } from '../lib/spawnNotice'
 import ConsentSheet from './ConsentSheet'
 import { api, post, HttpError } from '../lib/endpoints'
 import { deviceActionFailure, type DeviceAction } from '../lib/deviceOutcome'
@@ -100,6 +101,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   // A spawn refused by a safety guard (U18): keep the request so approving can
   // re-run exactly what was refused.
   const [consent, setConsent] = useState<ConsentNeed | null>(null)
+  const [notice, setNotice] = useState<SpawnNotice | null>(null)
   const retry = useRef<{ fn: () => Promise<any>; label: string; kind: DeviceAction } | null>(null)
 
   // spawn form
@@ -257,7 +259,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
    * bus, or a robot killed mid-episode. See lib/deviceOutcome.ts.
    */
   const act = async (fn: () => Promise<any>, label: string, kind: DeviceAction = 'spawn') => {
-    setBusy(true); setStatus(null); setConsent(null)
+    setBusy(true); setStatus(null); setConsent(null); setNotice(null)
     retry.current = { fn, label, kind }
     try {
       const r = await fn()
@@ -265,6 +267,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       // 200-with-error is how a settled-then-dead spawn reports itself; the
       // consent hint rides in that same body.
       setConsent(findConsent(r))
+      // A spawn can SUCCEED and still be about to fail on the wire: the calibration gap arrives in
+      // the same 200 body as the pid. It is a separate fact from the status line, so it gets its own
+      // amber box rather than being appended to "spawned: so101-leader".
+      setNotice(spawnNotice(r))
       await load()
     } catch (e: any) {
       const v = deviceActionFailure({
@@ -274,6 +280,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       })
       setStatus(v.text)
       setConsent(findConsent(e?.body))
+      setNotice(spawnNotice(e?.body))
       // The list is the observer that can actually answer "did it happen?" -
       // so it is refreshed precisely when we do NOT know, which is the case the
       // old code was the only one to skip.
@@ -434,6 +441,16 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
           {scan && (
             <div className={scan.tone === 'bad' ? 'result bad' : scan.tone === 'warn' ? 'result warn' : 'result ok'}>
               {scan.text}
+            </div>
+          )}
+          {/* The child started; this says why the arm may still show no joints. Kept next to the
+              spawn form because that is where the id that caused it was typed. */}
+          {notice && (
+            <div className="result warn" role="status">
+              ⚠ {notice.text}
+              <button className="btn ghost" style={{ marginLeft: 8 }} onClick={() => setNotice(null)}>
+                dismiss
+              </button>
             </div>
           )}
           {consent && (
