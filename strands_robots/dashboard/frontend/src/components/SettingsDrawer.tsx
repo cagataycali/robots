@@ -9,6 +9,7 @@ import {
   setAuthToken, setBackendBase,
 } from '../lib/endpoints'
 import ConsentSettings from './ConsentSettings'
+import PasskeyList from './PasskeyList'
 import { useConfig, type ApplyResult } from '../lib/useConfig'
 import {
   APPLY_LABEL, envKeyError, envValueError, searchSettings, settingMeta, validateSetting,
@@ -788,6 +789,9 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
               </p>
               {/* The consent sheet promises a way back; this is it (U18). */}
               <ConsentSettings />
+              {/* Q124: the same question as the permissions list, about a sharper subject — which
+                  DEVICES hold a key to this dashboard. */}
+              <PasskeyList authRequired={Boolean(config?.security?.auth_enabled)} />
             </section>
           )}
         </div>

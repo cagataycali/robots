@@ -360,6 +360,13 @@ export const post = <T = any>(path: string, body?: unknown) =>
   api<T>(path, { method: 'POST', body: body === undefined ? '{}' : JSON.stringify(body) })
 
 /**
+ * DELETE. Added for Q124 (revoking a passkey) — the first caller that needed the verb, and it goes
+ * through api() like everything else so auth, session renewal and the 404 route explanation apply.
+ * No body: FastAPI's DELETE routes here take the id in the path.
+ */
+export const del = <T = any>(path: string) => api<T>(path, { method: 'DELETE' })
+
+/**
  * Authed fetch of a binary endpoint (camera previews), returned as an object
  * URL. An <img src> cannot carry an Authorization header, so the bytes come
  * through fetch and the caller MUST revoke the URL when done with it.
