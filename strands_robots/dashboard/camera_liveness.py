@@ -162,3 +162,100 @@ def missing_refusal(missing: list[dict[str, Any]], *, peer_id: str) -> str:
         "the rest, so the same index may now be a different camera and the dataset would record the "
         "wrong view. Pass ignore_missing_cameras to record without it anyway."
     )
+
+
+def _norm(name: Any) -> str:
+    """Compare device names the way a human would read them, not byte for byte."""
+    return " ".join(str(name or "").split()).casefold()
+
+
+def identity_drift(
+    configured: Mapping[str, Any] | None,
+    roster: Iterable[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Configured cameras whose index is now answered by a DIFFERENT device.
+
+    The nastiest shape of the unplug, and the one neither rail above can see: an OpenCV index is a
+    POSITION in a list that closes up when a device is removed, so pulling the camera at index 1
+    slides index 2 down into its place. The configured index still exists, still opens, still
+    streams -- with the wrong view. Every surface looks healthy and the mistake surfaces at training
+    time, in a dataset that cannot be fixed afterwards.
+
+    The only defence is remembering WHICH device the operator picked. A camera config may carry
+    ``device_name``: the roster name that index had when it was configured. Comparing that against
+    the roster now turns an invisible substitution into a statement.
+
+    Args:
+        configured: The profile's ``name -> config`` mapping. Configs carrying no ``device_name``
+            are not judged - most profiles predate the field, and a missing memory is not a change.
+        roster: ``[{"listing_index", "name"}]`` as the machine lists cameras now.
+
+    Returns:
+        ``[{"camera", "index", "remembered", "now", "moved_to"?, "ambiguous"?}]`` in configured
+        order. ``moved_to`` is the index where the remembered device turned up, which is what the
+        operator actually needs to fix the config. ``ambiguous`` marks the case where the remembered
+        name appears MORE THAN ONCE in the roster, so the new index is a guess and is not offered.
+
+    Stays silent when the evidence cannot support a claim: no remembered name, an index the roster
+    does not list at all (that absence is ``missing_cameras``' verdict, not an identity change), a
+    roster entry with no name, and - the blind spot worth stating - two cameras sharing one name.
+    This machine has two devices both called ``USB2.0_CAM1``; names cannot distinguish them, so a
+    swap between those two indices is undetectable here and must not be reported as clean.
+    """
+    if not isinstance(configured, Mapping):
+        return []
+    by_index: dict[int, str] = {}
+    for entry in roster or ():
+        if not isinstance(entry, Mapping):
+            continue
+        index, name = entry.get("listing_index"), entry.get("name")
+        if isinstance(index, int) and not isinstance(index, bool) and str(name or "").strip():
+            by_index[int(index)] = str(name)
+    if not by_index:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for cam, cfg in configured.items():
+        if not isinstance(cfg, Mapping):
+            continue
+        remembered = cfg.get("device_name")
+        index = cfg.get("index_or_path")
+        if not str(remembered or "").strip() or isinstance(index, bool) or not isinstance(index, int):
+            continue
+        now_name = by_index.get(int(index))
+        if now_name is None or _norm(now_name) == _norm(remembered):
+            continue
+        elsewhere = [i for i, n in by_index.items() if _norm(n) == _norm(remembered)]
+        item: dict[str, Any] = {
+            "camera": str(cam),
+            "index": int(index),
+            "remembered": str(remembered),
+            "now": str(now_name),
+        }
+        if len(elsewhere) == 1:
+            item["moved_to"] = elsewhere[0]
+        elif len(elsewhere) > 1:
+            # Two devices answer to that name; picking one would be a coin flip dressed as advice.
+            item["ambiguous"] = True
+        out.append(item)
+    return out
+
+
+def drift_refusal(drift: list[dict[str, Any]], *, peer_id: str) -> str:
+    """Why a session whose camera index changed hands is refused, and how to fix it in one step."""
+    parts = []
+    for d in drift:
+        line = f"{d['camera']} index {d['index']} was {d['remembered']}, now {d['now']}"
+        if isinstance(d.get("moved_to"), int):
+            line += f" ({d['remembered']} is at index {d['moved_to']} now)"
+        elif d.get("ambiguous"):
+            line += f" (more than one camera is called {d['remembered']}, so its new index is a guess)"
+        parts.append(line)
+    plural = "cameras" if len(drift) > 1 else "camera"
+    return (
+        f"{peer_id}: {len(drift)} configured {plural} changed hands - {'; '.join(parts)}. "
+        "Removing a camera renumbers the rest, so this index still opens and still streams, with the "
+        "wrong view: the episodes would look perfectly healthy and be unusable. Point the camera at "
+        "its new index in the robot's camera settings, or pass ignore_camera_identity to record with "
+        "the index as it stands."
+    )
