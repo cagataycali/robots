@@ -58,6 +58,14 @@ export interface SocketOutcome {
    * refused handshake carries no close code and every rule here reasons about sockets that opened.
    */
   sessionExpired?: boolean
+  /**
+   * Q102: this PAGE was refused (401/403) moments ago, so a socket that never opened was refused too.
+   * The sibling of sessionExpired for a token that is invalid rather than expired — rotated by a
+   * dashboard restart, a stale ?token= link, a revoked session. Neither the close code (1006 on a
+   * refused handshake) nor the token's own `exp` can see that, and AuthGate checks once on mount and
+   * never again, so without this the tile blames the camera for as long as the page stays open.
+   */
+  pageRefused?: boolean
 }
 
 export interface RetryPlan {
@@ -75,12 +83,18 @@ export function backoffMs(attempt: number): number {
 }
 
 export function planRetry(
-  { attempt, frames, openMs, code, recentOpens, sessionExpired }: SocketOutcome,
+  { attempt, frames, openMs, code, recentOpens, sessionExpired, pageRefused }: SocketOutcome,
 ): RetryPlan {
   // Checked FIRST, above every socket-shaped rule: while the sign-in is lapsed no retry can ever
   // succeed, and the honest reason is not about this camera at all.
   if (sessionExpired) {
     return { attempt, delayMs: null, reason: 'this sign-in has expired — sign in again' }
+  }
+  // Q102: the page is being refused and this socket NEVER OPENED — the same door, the same no.
+  // Requires `never opened`: an established stream that drops while some unrelated request 401s is
+  // a camera event, and calling that unauthorized would hide a real hardware fault behind a login.
+  if (pageRefused && openMs === undefined && frames === 0) {
+    return { attempt, delayMs: null, reason: 'this page is being refused — sign in again (the camera was never asked)' }
   }
   // A refusal is an answer. Hammering a door that said no is not resilience, and 1008
   // is what this server sends when the token is bad — retrying cannot fix it.

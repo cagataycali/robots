@@ -143,3 +143,29 @@ console.log('cameraRetry: Q51 churn assertions ok')
   assert.notEqual(normal.delayMs, null)
 }
 console.log('cameraRetry: Q88 expired-session assertions ok')
+
+// ── Q102: refused, not broken ──────────────────────────────────────────────────────────────────────
+// The middleware closes a credential-refused websocket BEFORE accepting, so uvicorn fails the
+// handshake and the browser reports 1006 — the `code === 1008` rule below can never see it from a
+// browser. Q88 caught the case where the token is decodably EXPIRED. A token that is merely INVALID
+// (rotated by a dashboard restart, a stale ?token= link, a revoked session) has nothing in it to read,
+// and AuthGate cannot rescue the page: its check is a useEffect with [] deps, once on mount, no poll.
+const refused = planRetry({ attempt: 4, frames: 0, code: 1006, pageRefused: true })
+assert.equal(refused.delayMs, null, 'retrying a door that said no is not resilience')
+assert.match(refused.reason, /sign in again/)
+assert.match(refused.reason, /never asked/, 'and it must not read as a camera fault')
+
+// It outranks nothing it should not: an ESTABLISHED stream that drops while some unrelated request
+// 401s is a camera event, and calling that unauthorized would hide a hardware fault behind a login.
+const droppedWhileRefused = planRetry({ attempt: 1, frames: 40, openMs: 9_000, pageRefused: true })
+assert.notEqual(droppedWhileRefused.delayMs, null)
+assert.match(droppedWhileRefused.reason, /delivered frames/)
+const openedThenDied = planRetry({ attempt: 1, frames: 0, openMs: 300, pageRefused: true })
+assert.notEqual(openedThenDied.delayMs, null, 'it opened, so the refusal is not what stopped it')
+
+// Silence is not evidence: no refusal seen means the ordinary rules decide, unchanged.
+const ordinary = planRetry({ attempt: 2, frames: 0, code: 1006 })
+assert.notEqual(ordinary.delayMs, null)
+assert.equal(planRetry({ attempt: 2, frames: 0, pageRefused: false }).delayMs !== null, true)
+
+console.log('cameraRetry: Q102 refused-not-broken ok')

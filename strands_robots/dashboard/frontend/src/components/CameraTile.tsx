@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { wsUrl } from '../lib/endpoints'
+import { wsUrl, authRefusedRecently } from '../lib/endpoints'
 import { classifyCamera, type CamStatus } from '../lib/cameraState'
 import { planRetry, CHURN_OPENS_PER_MIN } from '../lib/cameraRetry'
 import { authToken } from '../lib/endpoints'
@@ -157,6 +157,8 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
           // a door that already said no. The token itself knows; reading its `exp` costs nothing
           // and grants nothing (the server still verifies every request).
           sessionExpired: sessionVerdict(authToken(), Date.now() / 1000).refusesUntilSignIn,
+          // Q102: and the token may be invalid rather than expired — only an HTTP 401 can see that.
+          pageRefused: authRefusedRecently(),
         })
         tries.current = plan.attempt
         if (plan.delayMs === null) {

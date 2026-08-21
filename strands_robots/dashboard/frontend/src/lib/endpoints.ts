@@ -204,6 +204,38 @@ export function forgetLiveRoutes(): void {
   _liveRoutesTried = false
 }
 
+/**
+ * Q102: WHEN DID THIS PAGE LAST GET REFUSED?
+ *
+ * A websocket refused for credentials is closed by the middleware BEFORE it accepts, which uvicorn
+ * turns into a failed handshake — the browser reports code 1006, never the 1008 the server sent. Q88
+ * covered the case where the token is decodably EXPIRED; a token that is merely INVALID (rotated by a
+ * dashboard restart, a stale ?token= link, a revoked passkey session) looks exactly like a camera that
+ * will not stream, and AuthGate cannot rescue it: its check runs once on mount, with no polling.
+ *
+ * The evidence exists anyway, in the one place every request passes: an HTTP 401/403. Remember when it
+ * last happened so a socket-shaped failure can be read for what it is.
+ */
+let _refusedAt: number | null = null
+
+export function noteAuthRefusal(status: number, at: number = Date.now()): void {
+  if (status === 401 || status === 403) _refusedAt = at
+}
+
+/** Clear it the moment a request succeeds: a stale refusal must not accuse a working session. */
+export function noteAuthAccepted(): void {
+  _refusedAt = null
+}
+
+/**
+ * Has this page been refused recently enough to explain a socket that never opened? Deliberately a
+ * WINDOW, not a flag: sockets and HTTP calls fail seconds apart, and a refusal from ten minutes ago
+ * says nothing about now.
+ */
+export function authRefusedRecently(withinMs = 60_000, now: number = Date.now()): boolean {
+  return _refusedAt !== null && now - _refusedAt <= withinMs
+}
+
 export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const token = authToken()
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) }
@@ -220,6 +252,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   let body: any = text
   try { body = text ? JSON.parse(text) : null } catch { /* keep raw text */ }
   if (!res.ok) {
+    noteAuthRefusal(res.status)
     const detail = (body && (body.detail ?? body.error)) || text || res.statusText
     // Q99: the server's richest errors arrive as an OBJECT ({error, hint, and the alternatives that
     // exist}) — JSON.stringify put braces and quotes on the screen and buried the answer in the middle
@@ -239,6 +272,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
     }
     throw new HttpError(res.status, message, body)
   }
+  noteAuthAccepted()
   return body as T
 }
 

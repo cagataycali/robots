@@ -109,3 +109,20 @@ assert.equal(err.status, 0, 'no HTTP status, because no HTTP happened')
 assert.match(err.message, /cannot reach robot\.lan:9000/, 'the operator is told WHICH address is dead')
 
 console.log('endpoints.test.mjs: all assertions passed')
+
+// ── Q102: the page remembers being refused, so a socket-shaped failure can be read for what it is ──
+{
+  const m = await import('/tmp/endpoints.mjs?case=q102')
+  assert.equal(m.authRefusedRecently(), false, 'a fresh page has not been refused')
+  m.noteAuthRefusal(401, 1_000)
+  assert.equal(m.authRefusedRecently(60_000, 5_000), true)
+  assert.equal(m.authRefusedRecently(60_000, 90_000), false, 'a refusal from ten minutes ago says nothing about now')
+  m.noteAuthRefusal(500, 100_000)
+  assert.equal(m.authRefusedRecently(60_000, 100_001), false, 'a 500 is not a refusal')
+  m.noteAuthRefusal(403, 200_000)
+  assert.equal(m.authRefusedRecently(60_000, 200_001), true, '403 counts too — the middleware uses both')
+  m.noteAuthAccepted()
+  assert.equal(m.authRefusedRecently(60_000, 200_002), false, 'a successful request must not leave an accusation behind')
+}
+
+console.log('endpoints.test.mjs: Q102 refusal memory ok')
