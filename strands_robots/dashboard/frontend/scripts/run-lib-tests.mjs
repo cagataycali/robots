@@ -141,6 +141,10 @@ if (!filter) {
     //   check-state-dots — Q164: a status mark whose states differ only in HUE. Empty to a screen
     //   reader, identical under forced colours — and the fleet's on/busy/off dot was both.
     'check-state-dots.mjs',
+    //   check-token-overrides — Q165: a preference block that a LATER plain :root silently outranks
+    //   (media queries add no specificity), plus brace balance — a CSS parser recovers from a missing
+    //   '}' by scoping every following rule inside the open block, which esbuild bundles happily.
+    'check-token-overrides.mjs',
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {

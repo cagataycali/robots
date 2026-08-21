@@ -297,9 +297,7 @@ body {
 .mark .mark-back { fill: color-mix(in srgb, var(--text) 42%, transparent); }
 .mark .mark-front { fill: var(--ok); }
 .brand:hover .mark .mark-front { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--ok) 55%, transparent)); }
-@media (prefers-contrast: more) {
-  .mark .mark-back { fill: var(--text); }
-}
+
 .brand h1 { font-size: 15px; font-weight: 700; letter-spacing: .04em; }
 .brand .sub { font-size: var(--fs-tiny); color: var(--dim); font-family: var(--mono); }
 .brand .backend { opacity: .65; }
@@ -1061,6 +1059,35 @@ body {
 
   /* focus ring, shared by every interactive primitive */
   --ring: 0 0 0 2px var(--bg), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* Q165: what "more contrast" was answering with, before this — one rule, for the logo.
+ *
+ * The palette was already ratio-audited for TEXT and clears AA everywhere (--dim measures 6.18:1 on
+ * --panel, --quiet 8.88, --text 15.34), so the honest gap is not the words. It is the LINES: --border
+ * measures 1.23:1 against --panel and --border-hi 1.58:1, against a 3:1 minimum for non-text. That is
+ * deliberate — a glass UI draws its edges by implication — and it is exactly the deliberate choice a
+ * person asking the OS for more contrast is asking to have overridden. Every ratio below is measured,
+ * not estimated.
+ *
+ * Remapping TOKENS rather than rules means every component inherits this at once, including ones
+ * written later, and nothing needs to remember to opt in. */
+@media (prefers-contrast: more) {
+  :root {
+    --dim: #b9c6d6;            /* 10.46:1 on --panel, was 6.18 — still visibly quieter than --text */
+    --quiet: #d5dfea;          /* 13.44:1, was 8.88 */
+    --border: #6b7c94;         /* 4.26:1 on --panel, was 1.23 — an edge you can actually see */
+    --border-hi: #8b9cb4;      /* 6.29:1, was 1.58 */
+    /* Glass keeps its blur (that is Q162's preference, not this one) but stops hiding its edges,
+     * and the panes go opaque so text sits on a known background instead of on whatever is behind. */
+    --glass-border: #6b7c94;
+    --glass-border-hi: #8b9cb4;
+    --glass-1: var(--glass-solid);
+    --glass-2: var(--glass-solid);
+    --glass-3: var(--glass-solid);
+    --glass-sheen: none;
+  }
+  .mark .mark-back { fill: var(--text); }
 }
 
 /* Ambient depth. Fixed, inert, behind everything -- gives the blur
