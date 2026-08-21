@@ -51,7 +51,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from strands_robots.dashboard import arm_roles, config_api, consent, deploy, settings
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.device_manager import DeviceManager
-from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
+from strands_robots.dashboard.mesh_bridge import MeshBridge, silent_arms, stop_outcome
 from strands_robots.dashboard import lan_hint
 from strands_robots.dashboard.refusals import RefusalTally
 from strands_robots.dashboard.churn_guard import (
@@ -612,6 +612,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # than asserted: a saving nobody can measure is a claim, and this is
             # the number the perf lens should be able to check on a live fleet.
             "mesh_coalesce": app.state.bridge.coalesce_stats(),
+            # Q149: "peers: 4" read HEALTHY for forty-four hours while three of those
+            # four arms published no joints at all. Present only when something IS
+            # silent (the refused_handshakes law), so a poller gets news without a
+            # second request - and absent on a fleet that is actually streaming.
+            **(
+                {"joint_streams": js}
+                if (js := silent_arms(app.state.bridge.peers)) is not None
+                else {}
+            ),
             "t": time.time(),
             # Q88: present ONLY when something was actually refused (see refusals.summary) -
             # a section that is always there is a section nobody reads.

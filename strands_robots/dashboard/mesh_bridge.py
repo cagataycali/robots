@@ -118,6 +118,59 @@ def peer_is_known(
     return bool(parent and child) and parent in haystack
 
 
+def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Which peers are present but publishing NO joints (Q149).
+
+    ``/api/health`` reported ``peers: 4`` for forty-four hours while three of
+    those four arms were mute: presence connected, cameras flowing, joints
+    absent. The number was true and the impression was false, and the only way
+    to learn the difference was to walk ``/api/fleet`` counting ``state.joints``
+    by hand -- which the caretaker did, every forty-five minutes, for days.
+
+    Two rules, both borrowed from places that already earned them:
+
+    * ``lib/armHosts.ts``: a process is not an arm. Peers are named
+      ``parent`` / ``parent__child``, and a parent that HAS a child while
+      reporting no joints itself is the simulator/host PROCESS -- silence is
+      correct for it. A jointless CHILDLESS peer is a broken arm. Evidence
+      above structure: the parent is demoted only when a child actually exists.
+    * A stale peer's silence is already explained by its staleness, so it is
+      counted separately rather than blamed for not streaming.
+
+    Returns ``None`` when nothing is silent, following the same law as
+    ``refused_handshakes``: a section that is always there is a section nobody
+    reads. When it IS there, the caretaker's poll has news without a second
+    request.
+    """
+    ids = list(peers)
+    streaming: list[str] = []
+    silent: list[str] = []
+    hosts = 0
+    stale = 0
+    for pid in ids:
+        rec = peers.get(pid) or {}
+        state = rec.get("state") or {}
+        joints = state.get("joints") or {}
+        if joints:
+            streaming.append(pid)
+            continue
+        if rec.get("stale"):
+            stale += 1
+            continue
+        if any(other != pid and other.startswith(f"{pid}__") for other in ids):
+            hosts += 1  # a host process, not an arm: silence is its normal state
+            continue
+        silent.append(pid)
+    if not silent:
+        return None
+    return {
+        "streaming": len(streaming),
+        "silent": sorted(silent),
+        **({"host_processes": hosts} if hosts else {}),
+        **({"stale": stale} if stale else {}),
+    }
+
+
 def peer_origins(
     peer_ids: Mapping[str, Any] | Iterable[str],
     managed_ids: Iterable[str] = (),
