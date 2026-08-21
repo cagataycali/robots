@@ -129,6 +129,11 @@ if (!filter) {
     //   check-disabled-colour — Q147: an enabled control painted with the DISABLED token does not get
     //   clicked. --dim only under :disabled; --quiet for live-but-restrained.
     'check-disabled-colour.mjs',
+    //   check-reduced-transparency — Q162: a glass surface with no fallback when the OS asks for less
+    //   transparency. Eight components hand-roll the glass look, so that list is kept BY HAND and
+    //   drifts invisibly — a developer without the preference set sees nothing wrong, and the people
+    //   who do have it set meet the sign-in card first.
+    'check-reduced-transparency.mjs',
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {
