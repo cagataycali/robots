@@ -16,6 +16,8 @@
 
 const KEY = 'strands.deployIntent'
 const TTL_MS = 10 * 60 * 1000
+/** Tolerated backwards clock drift before a stamp is judged untrustworthy rather than fresh. */
+const CLOCK_GRACE_MS = 60 * 1000
 
 export interface DeployIntent {
   checkpoint: string
@@ -37,7 +39,16 @@ export function peekDeployIntent(now = Date.now()): DeployIntent | null {
     if (!raw) return null
     const i = JSON.parse(raw) as DeployIntent
     if (!i || typeof i.checkpoint !== 'string' || !i.checkpoint) return null
-    if (typeof i.at !== 'number' || now - i.at > TTL_MS) {
+    // Age outside [-GRACE, TTL] is not a valid intent. The upper bound is the 10-minute
+    // expiry; the LOWER bound matters because `now - at > TTL` alone can never expire a
+    // stamp from the FUTURE — a system clock that jumps back (sleep/resume, an NTP
+    // correction, a VM snapshot) leaves an intent whose age is negative forever, i.e. a
+    // deploy prefill with no expiry at all, which is exactly what the TTL exists to prevent.
+    // A clock we cannot trust is treated as an expired intent, never as a fresh one: the
+    // cost is re-clicking Deploy, and the alternative is a checkpoint prefilled into some
+    // other robot's form tomorrow.
+    const age = now - i.at
+    if (typeof i.at !== 'number' || !Number.isFinite(age) || age > TTL_MS || age < -CLOCK_GRACE_MS) {
       sessionStorage.removeItem(KEY)
       return null
     }
