@@ -14,7 +14,7 @@ rest of the scene's life" -- and named no operation that ends it, while the one
 undo it did name (``recompile the scene``) is not an action the tool surface
 publishes at all. Seven published scene actions perform that undo incidentally,
 and the sequence a per-episode loop reaches for first is the one that loses
-everything: :meth:`~strands_robots.simulation.base.BenchmarkProtocol.on_episode_start`
+everything: :meth:`~strands_robots.simulation.benchmark.BenchmarkProtocol.on_episode_start`
 invites "per-episode randomization, goal sampling, or procedural scene
 generation", and randomizing before the episode's objects are added leaves the
 policy's first observation looking at an unrandomized scene with both calls
