@@ -948,6 +948,52 @@ hatch run format            # ruff check --fix, ruff format
    still `APPROVED`, nine suites queued including the required one. #1988 has the
    full account.
 
+   **Two further causes need no second token, and one needs nothing at all.**
+   `mergeStateStatus` is one word for at least six situations and names none of
+   them, so the rule that is actually unsatisfied has to be read separately.
+   Measured 2026-08-21, both approved and green, both idle after approval because
+   a scheduled pass read `BLOCKED` and concluded the next move was a reviewer's:
+
+   | PR | approved | merged | idle | actually unsatisfied | who could clear it |
+   |---|---|---|---|---|---|
+   | #2566 | 16:39 | 17:10 | 31 min | one unresolved review thread | the author |
+   | #2574 | 16:25 | 17:10 | 45 min | nothing - a stale computation | anyone, by retrying |
+
+   #2566 sat on `required_review_thread_resolution`, which the ruleset carries:
+   one thread was open, its fix had already landed, and the reviewer had approved
+   *past* it. Resolving it flipped `blocked` to `clean` on the next read. #2574 had
+   zero threads and twelve green checks, and `blocked` was simply stale -
+   `mergePullRequest` refused with `Pull Request is not mergeable`, naming nothing,
+   and `PUT /repos/{owner}/{repo}/pulls/{n}/merge` then succeeded on the first
+   attempt with no state having changed in between.
+
+   Two consequences worth keeping. **A merge attempt is cheap and self-verifying**,
+   so `BLOCKED` on a pull request with no unsatisfied rule is not a reason to wait;
+   and **prefer REST for the attempt**, because its refusal names the requirement
+   that is unmet while the GraphQL mutation's does not.
+
+   Rather than infer which of these is operating, read it:
+
+   ```
+   python3 scripts/check_merge_blockers.py --repo strands-labs/robots --pr <N>
+   python3 scripts/check_merge_blockers.py --repo strands-labs/robots --all-open
+   ```
+
+   It reads the branch ruleset - so a rule that is changed in settings cannot
+   drift from this file - and names every rule the pull request leaves
+   unsatisfied together with the party who can clear it: a conflict or an
+   unresolved thread or a failing check (the author), a missing approval (any
+   reviewer), an approval only its own pusher supplied (a different reviewer,
+   per #1905), a required check absent because a fork run is held at
+   `action_required` (a maintainer), a check still running (nobody), or no
+   unsatisfied rule at all, which is the #2574 case and the one worth saying out
+   loud. A conflict or a draft is reported as *gating*: the rules behind it
+   cannot be assessed, so an approval there is necessary but not sufficient.
+
+   It composes `check_last_push_approval.py` rather than restating it, so what
+   counts as a current approval has one owner. Neither script gates a merge.
+   Pinned by tests/test_merge_blockers.py.
+
    This is worth the words because the failure mode is silent and expensive in the
    opposite direction from the usual one. Treating an advisory red as a merge
    blocker does not look like a mistake; it looks like diligence, and it costs a
@@ -1099,6 +1145,38 @@ hatch run format            # ruff check --fix, ruff format
    pinned a defect that way and #2235 fixed it; composed, the tree was red with
    nothing to resolve, which is why `mergeStateStatus: CLEAN` is not merely
    unhelpful here but actively reassuring.
+
+   **What the sweep cannot see, and why it is not worth a heuristic.** Every
+   relation it computes intersects changed *paths*, so a test resolving its
+   population from a filesystem walk is invisible to it: the grader is coupled to
+   files it never names, and its intersection with the sibling it grades is empty.
+   #2557 added `tests/test_log_strings_are_ascii.py`, a walk of the package, and
+   merged in a batch with #2559 and #2560 - both of which added exactly the
+   tool-result prose that grader scores - at a pairwise path intersection of `[]`
+   with each. The batch was safe, but only because it was checked by hand.
+
+   Do not widen the path set to the walked root. Measured on the open set of 9,
+   that relation selects **11 of 36 pairs, 9 of them new, and none a defect**:
+   125 of the 1136 test files resolve a population from a walk, and the ones that
+   reach furthest are rooted at `strands_robots` entire, so they intersect nearly
+   every open branch, while a narrowly-rooted grader (`strands_robots/mesh/`)
+   selects only the pair the path intersection already reports. That is the
+   `awaiting-first-review` failure mode from step 8 in a different field: a
+   finding on a third of the queue is boilerplate, and the batch where it
+   mattered is not distinguishable from the rest.
+
+   What does separate them is composing the two branches and running the grader,
+   which needs no model of what the grader reads. Run by hand over the open set
+   for #2562's whole-tree grader it cost ~10 s per composition, and it correctly
+   left alone three siblings whose new `except` tuples a path-or-keyword
+   heuristic would have flagged - `(KeyboardInterrupt, Exception)` among them,
+   which is correct code. Two branches were `CONFLICTING` and so honestly
+   `skipped`, not green. That relation cannot live in `--all-open`: the sweep
+   reads the open set from the API and **no checkout at all**, which is what lets
+   a health report run it without a clone, and every sweep test pins that by
+   running from a directory that is not a repository. So the sweep reports what
+   it measured - shared paths - and names the class it cannot describe (#2561).
+   A composition run stays a manual step, below.
 
    Read that run as a **delta, not an absolute**. The environment you verify in
    is almost never the one CI uses, and a partial one fails tests for reasons
@@ -1365,6 +1443,7 @@ Corrections from code review that apply to all future contributions:
 ### Thread Safety
 - **Lock ALL model/data mutations** - MuJoCo `model`/`data` are not thread-safe. Any method that writes `qpos`, `qvel`, `ctrl`, `qfrc_applied`, `body_mass`, `geom_friction`, or calls `mj_step`/`mj_forward`/`mj_resetData` MUST hold `self._lock`.
 - **Guard scene mutations during policy** - Use `_require_no_running_policy()` before any action that recompiles or replaces the model/data objects.
+- **Lock a read that copies model/data out too** - the rule above is stated for writes, but a read that copies mjData into another buffer races a concurrent `mj_step` exactly as a write does, and the corrupt half is the copy. `Renderer.update_scene` copies `xpos`/`xquat`/`xmat` and the geom poses, and `Renderer.render` dereferences `data.contact`, so every method that drives that pair must hold `self._lock` across it and `.copy()` the frame inside, leaving only the encoding unlocked. The blanket dispatch lock is not that guarantee: it covers the tool surface only, so a direct Python call, a recorder daemon, or a `PolicyRunner` worker holds nothing. `render` and `get_frame` serialised this read and `render_depth` did not - identical operations on the same buffers, and with a policy worker stepping on its own thread 3 of 60 depth reads landed inside a physics step while 0 of 60 RGB reads did. Where the read lives in a private helper, lock the public facade across the delegation instead (`get_observation` -> `_get_sim_observation`) and pin *that*, rather than exempting the helper. `Pinned by` `tests/simulation/mujoco/test_frame_readers_serialize_the_mjdata_read.py`, which derives the graded set from the module's AST so a reader added later is held to the rule, and `tests/simulation/mujoco/test_concurrency_lock_audit.py` for the read-only physics queries.
 - **Document the concurrency contract** - If a method is safe to call concurrently, say so. If not, say so.
 
 ### Error Handling Contracts
@@ -1373,7 +1452,7 @@ Corrections from code review that apply to all future contributions:
 - **Fail-fast with `strict=True`** - Silent frame dropping or catch-all `except Exception` with logging is forbidden unless gated behind a `strict=False` parameter.
 
 ### API Consistency
-- **Don't export private functions** - `_`-prefixed names must never appear in `__all__`.
+- **Don't export private functions** - `_`-prefixed names must never appear in `__all__`. A star-import skips underscore names *unless* `__all__` lists them, so an entry there is the sole reason `from <pkg> import *` binds one: `strands_robots/mesh/__init__.py` listed `_LOCAL_ROBOTS` (the in-process registry dict) and `_LOCAL_ROBOTS_LOCK` under the comment "exposed for test patching only", and that reason does not hold - `__all__` has no bearing on the attribute access both registry-touching test files actually use, one of which already reached `strands_robots.mesh.core` where the two are defined. What such an entry usually is load-bearing for is silencing `F401` on an import whose only purpose is to place the name on the package namespace, which is what ruff's own remedy text ("consider removing, adding to `__all__`, or using a redundant alias") describes - so drop the import along with the entry, and export a public accessor instead. Pinned by `tests/test_all_exports_are_statically_defined.py::TestNoExportIsPrivate`, which grades this over the same population as the definedness half.
 - **Match docstrings to semantics** - If the docstring says "single-shot" but the code is "latched", one of them must change. Always verify by reading the underlying library docs.
 - **Forward all advertised kwargs** - If `tool_spec.json` exposes a parameter, the dispatch chain must forward it all the way through. Silent drops are bugs.
 - **Centralize import checks at init** - Prefer checking optional deps once in `__init__` over scattered `_ensure_X()` guards. Consumers catch issues at init time.
@@ -1388,9 +1467,10 @@ Corrections from code review that apply to all future contributions:
 - **Round-trip tests for recording** - Any recording feature needs: start -> write -> stop -> reopen -> assert non-empty. Schema-only tests miss silent data loss.
 - **Pin regression tests for reviewed fixes** - Every review fix gets a test that fails on pre-fix code. Otherwise the next refactor silently reintroduces the bug.
 - **No host paths in test files** - Never commit `/Users/<name>/` or `/home/<name>/` paths. CI test `test_no_host_paths.py` enforces this.
+- **Name a test for its behaviour, not for its provenance** - a test class or function must not carry the release (`TestHardwareConfigV040Followups`) or review round (`...Followups`) that produced it. The name is the first thing a maintainer reads, so it has to say what is verified; and a name tied to a shipped release reads as historical, which invites skipping it. A bundle named for a review round is usually a bundle of unrelated checks - split it into one behaviour per class rather than inventing a name that covers all of them. Provenance belongs in the docstring, where the `#NNN` reference stays useful. A version token of one or two digits is fine: it names a *data format* under test (`test_load_v3_parses_every_field`), not a release. `Pinned by` `tests/test_test_case_names_describe_behaviour.py`.
 
 ### Performance
-- **Don't create executors in hot loops** - Reuse a single `ThreadPoolExecutor` instance instead of creating one per call at 50Hz.
+- **Don't create executors in hot loops** - Reuse a single `ThreadPoolExecutor` instance instead of creating one per call at 50Hz. A `with ThreadPoolExecutor(...)` block joins its worker before returning, so the live thread *count* never grows and nothing watching thread counts can see the churn - count `Thread.start` instead. For resolving a coroutine in a sync context the reuse already exists: `strands_robots._async_utils` owns that rule and submits to one module-level worker, so a sync wrapper delegates to it rather than building a private executor. Pinned by tests/policies/test_base.py.
 - **Cache expensive JSON parsing** - If a `@property` re-parses a JSON file on every access, cache the result at module load or first access.
 
 
@@ -1405,7 +1485,14 @@ Corrections from code review that apply to all future contributions:
 
 ### Exception Clauses Must Be Narrow
 - **`except Exception` is forbidden** for non-recovery code paths. Use the smallest superset of expected exception types.
-- **`except (ImportError, Exception)` is a bug** - `Exception` is a superclass of `ImportError`, so the tuple collapses to `except Exception`. Lint/review will catch this; don't write it.
+- **`except (ImportError, Exception)` is a bug** - `Exception` is a superclass of `ImportError`, so the tuple collapses to `except Exception`. The same collapse happens for any member another member already covers: `except (FileNotFoundError, OSError)` is `except OSError`, and with it `PermissionError`, `TimeoutError` and the whole `ConnectionError` family. The covered name contributes no scope, only the impression of a smaller superset than the handler has - and where the prose on the handler enumerates the tuple, that impression becomes a claim the handler does not keep. No linter reports it: ruff's `B014` covers a *duplicate* member only, and the full
+  catalogue (`--select ALL`) reports neither `(FileNotFoundError, OSError)` nor
+  `(ImportError, Exception)`. Drop the covered member - that changes no behaviour. Narrowing the
+  handler's real surface is a separate behaviour change, one per site. Pinned by
+  tests/test_except_tuples_state_their_real_scope.py, over builtins, the standard library and
+  this package; a third-party tree is left alone because a dependency can re-parent its classes
+  between releases, so naming both it and a builtin superclass is a hedge.
+- **A `try` covers only the operation whose exception it classifies** - where a handler exists to read a *verdict* out of an exception class, anything else inside the same `try` that can raise that class is read as the verdict. `asyncio.get_running_loop()` reports "no running loop" by raising `RuntimeError`, so with the offload it guards inside the same `try`, a `RuntimeError` raised by the awaited coroutine was taken for that verdict and the caller was handed `asyncio.run() cannot be called from a running event loop` in place of what the coroutine said - the whole family (`NotImplementedError`, `RecursionError`) with it. Put the guarded call after the `except`, so the handler can only ever see the operation it is classifying. Pinned by tests/test_async_utils.py.
 - **USB / hardware probing** - use `except (ImportError, OSError)`. `PermissionError` is an `OSError`, `FileNotFoundError` is an `OSError`, etc.
 
 ### Actuators: a joint pose goes only where `ctrl` IS a joint pose
@@ -1693,6 +1780,7 @@ which side the enum is on.
 
 ### Unicode & String Hygiene
 - **No emojis in user-facing strings** - this is a project rule. Tool result dicts (`{"content": [{"text": ...}]}`), log messages, error messages: plain ASCII only. Agents read these strings programmatically; emojis just add tokenizer noise.
+- **All three surfaces are graded, and the tool result needs a flow step.** A log line and a `raise` message hold their text inline, so a scan of the call site sees it. A handler's report is usually built up in a local and joined into the returned dict - `lines.append(...)` in a loop, then the joined list as the `text` value - so a scan of the `return` expression alone sees nothing - which is how ten glyphs (`U+2194` in `get_contact_forces`, `U+2192` in `set_geom_properties` / `set_body_properties`, `U+00D7` in `get_mass_matrix`, `U+00B7` in `apply_force`, `U+00B1` in `randomize`, `U+2022` in `list_benchmarks`) sat in text an agent reads back out of its own tool call, on the surface this rule names first. Prefer the spelling the package already uses for the same content: `simulation.mujoco.rendering` listed a contact pair `geom1 <-> geom2` while `simulation.mujoco.physics` listed it `geom1 U+2194 geom2`. ASCII renderings: `->`, `<->`, `+/-`, `x`, `N*m`, `  - ` for a bullet. Semantic Unicode in a *docstring* stays - the rule is about what a caller reads back, not about how the source documents itself. Pinned by `tests/test_log_strings_are_ascii.py::test_tool_result_strings_are_ascii`.
 - **Hunt orphan combining marks after any emoji sweep** - `⏱️` is `U+23F1` + `U+FE0F` (variation selector). Stripping `U+23F1` leaves a stray invisible `U+FE0F` in the output. Sweep with:
   ```bash
   grep -nP '[^\x00-\x7F]' path/to/file.py
@@ -1720,14 +1808,24 @@ Corrections from code review that apply to all future contributions:
   into `subprocess.run`, `subprocess.Popen`, MJCF / XML interpolation, or filesystem
   path construction MUST be validated up front via regex allowlist, enum match, or
   range check. Argv-style subprocess does not exempt you - defense-in-depth.
-- **Centralise validation in one function** - pattern: a `validate_inputs(...)` helper
-  at the top of the tool module that takes every user-supplied param as a keyword arg
-  and raises `ValueError` with a clear message on any rejection. Single entry-point
-  is independently testable. PR #90's `gr00t_inference.validate_inputs()` is the
-  canonical example.
+- **Group the check by what consumes the value, and run it at the dispatch
+  boundary** - one `..._option_error(action, *, <params>) -> str | None` helper per
+  *kind* of value, called before any expensive work starts, returning the reason for
+  the dispatcher to fold into its error dict. Keying it on the action means a caller
+  is never refused for a value the requested action ignores.
+  `gr00t_inference._numeric_option_error` and its enum-valued sibling
+  `_enumerable_option_error` are the shipped pair: both cover options that are
+  interpolated into a `docker exec` command line run **detached**, where a value the
+  server's own flag parser rejects surfaces minutes later in the container log
+  instead of as the call's result. Note the shape returns rather than raises, so
+  **Return error dicts, never raise** above still holds at the tool surface.
 - **Allowlist enumerable values** - `data_config`, `embodiment_tag`, dtype strings,
   container names: all match `^[a-z][a-z0-9_]+$` or an explicit `{"fp16", "fp8", ...}`
-  set. Never accept arbitrary strings into enumerable surfaces.
+  set. Never accept arbitrary strings into enumerable surfaces. Derive the
+  "refuses nothing real" half from a shipped catalogue rather than a copied list -
+  `data_configs.json` names every valid `data_config`, so a config added there is
+  admitted by construction. Pinned by
+  `tests/tools/test_gr00t_enumerable_option_guards.py`.
 - **Reject shell metacharacters in paths** - `;`, `|`, `$`, backticks, `>`, `<`,
   `\n`, `\r`, `\x00`. Also reject `..` path traversal components. Apply even when
   using argv-style subprocess.
@@ -1777,18 +1875,26 @@ Corrections from code review that apply to all future contributions:
 - **One alert class clears under none of the three, and the question that settles
   it is which thread you marshal onto.** `py/catch-base-exception` never fires on
   cleanup-and-reraise: the query accepts a handler that re-raises *lexically*, and
-  six of the tree's seven `except BaseException` handlers do, so they have never
-  been flagged.
+  every `except BaseException` handler in this tree does so but one, which is why
+  none of them has ever been flagged. A count would rot here, so the census below
+  is stated as the property that matters and is derived from the tree by
+  `tests/test_codeql_query_filters.py` rather than copied into this file.
+
+  Every handler in `strands_robots/`, named by the function that owns it because a
+  line number is the part that goes stale:
 
   | handler | ends in | flagged |
   |---|---|---|
-  | `robot.py:368` | `sim.destroy()`, bare `raise` | no |
-  | `policies/persistent.py:193` | `handoff.abandon()`, bare `raise` | no |
-  | `simulation/safe_output.py:185` | `os.unlink(tmp)`, bare `raise` | no |
-  | `hardware_robot.py:1865` | `self._release_task()`, bare `raise` | no |
-  | `tests/policies/lerobot_local/test_list_policy_types.py:70` | `raise AssertionError(...) from exc` | no |
-  | `tests/policies/lerobot_local/test_vla_jepa.py:164` | `raise AssertionError(...) from exc` | no |
-  | `simulation/isaac/simulation.py:5125` | `box["exc"] = exc`, no lexical raise | **yes** |
+  | `strands_robots/episode_labels.py::_write_document` | `os.unlink(tmp_name)`, bare `raise` | no |
+  | `strands_robots/hardware_robot.py::start_task` | `self._release_task()`, bare `raise` | no |
+  | `strands_robots/policies/persistent.py::get_actions` | `handoff.abandon()`, bare `raise` | no |
+  | `strands_robots/robot.py::Robot` | `sim.destroy()`, bare `raise` | no |
+  | `strands_robots/simulation/safe_output.py::atomic_write_bytes` | `os.unlink(tmp)`, bare `raise` | no |
+  | `strands_robots/simulation/isaac/simulation.py::_job` | `box["exc"] = exc`, no lexical raise | **yes** |
+
+  The handlers under `tests/`, `examples/` and `scripts/` re-raise lexically too,
+  several as `raise AssertionError(...) from exc` rather than a bare `raise`: the
+  query accepts either, because what it reads is the lexical raise.
 
   The rule's entire alert surface here is therefore one construct: a
   **cross-thread exception-marshal box**, which parks the exception for *another*
@@ -1832,8 +1938,8 @@ Corrections from code review that apply to all future contributions:
   must keep failing the two-id set `tests/test_codeql_query_filters.py` pins.
 
   What makes the class worth naming is that both answers are live right now and
-  nothing else records why they differ. Alert #691 - `run_on_main`'s box at
-  `simulation/isaac/simulation.py:5125` - has been open on `refs/heads/main` since
+  nothing else records why they differ. Alert #691 - `run_on_main`'s box in
+  `strands_robots.simulation.isaac.simulation` - has been open on `refs/heads/main` since
   2026-07-07 at note severity, gating nothing, carrying only a
   `# noqa: BLE001` that CodeQL does not read. Alerts #853 and #854 are the same
   idiom raised on a branch, one of them in that same file, and each opened a
@@ -1870,6 +1976,12 @@ Corrections from code review that apply to all future contributions:
   returns a `frozenset` so the dual-pin grace period is expressible. Any future
   pinned fingerprint (other roots, signing keys) should follow the same
   multi-value shape so rotation never requires a flag-day deploy.
+- **A cited runbook is graded, not assumed.** The runbook heading above, the
+  four ordered steps, and the two env vars they distinguish are checked
+  against README.md, and every pin refusal is checked to name the runbook -
+  so a procedure that only exists in this file cannot pass for a published
+  one. The dual-pin state the runbook depends on stays pinned beside it.
+  Pinned by tests/mesh/test_iot_ca_pin_rotation.py.
 
 ## Review Learnings (PR-6 - mesh core safety hardening)
 
