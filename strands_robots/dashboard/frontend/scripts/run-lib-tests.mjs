@@ -123,6 +123,12 @@ if (!filter) {
     //   check-control-labels — Q144: a form control with no accessible name. A placeholder is not a
     //   label: it vanishes the moment the operator types, and a screen reader reads "edit text".
     'check-control-labels.mjs',
+    //   check-consent-kinds-have-rows — a consent kind the server can HOLD but the permissions
+    //   screen cannot NAME: a grant nobody can revoke, and these grants execute remote code or
+    //   hand a host actions back. The UI-side kind list went stale twice (at 1 kind, then at 4)
+    //   because the only guard for it drives a browser against a running :8090 and therefore
+    //   never runs on an ordinary day.
+    'check-consent-kinds-have-rows.mjs',
     //   check-live-regions — Q145: the e-stop verdict and the record refusal are ANSWERS to a tap; they
     //   must announce themselves, or they are seen and never heard.
     'check-live-regions.mjs',
