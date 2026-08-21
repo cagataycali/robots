@@ -5,7 +5,7 @@ import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
 import { twinButtonCopy } from '../lib/twinButton'
 import { statusSentence, peerStatusFields } from '../lib/statusSentence'
-import { teleopView, stopVerdict, type TeleopView } from '../lib/teleopView'
+import { teleopView, stopVerdict, startVerdict, type TeleopView } from '../lib/teleopView'
 import { leaderOptions, pairPlan, type PairInput } from '../lib/teleopPair'
 import { api } from '../lib/endpoints'
 import { useTelemetry } from '../lib/useTelemetry'
@@ -68,6 +68,32 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
      comes from asking again, never from the POST returning 200. */
   const [stopArmed, setStopArmed] = useState(false)
   const [stopped, setStopped] = useState<{ ok: boolean; line: string } | null>(null)
+  /* U22 slice 3b: STARTING. This is the only button on this screen whose effect is an arm in motion, so:
+     armed-then-confirmed with the confirm sentence naming BOTH arms and which one moves; publish on the
+     leader FIRST (read-only on that arm — it publishes what it measures) and only then point the follower
+     at it, because a follower aimed at a stream nobody publishes waits out its subscribe budget and
+     shrugs; and the result is MEASURED by asking again, where "started but every frame refused" is the
+     outcome this fleet has actually produced. */
+  const [startArmed, setStartArmed] = useState<string | null>(null)
+  const [started, setStarted] = useState<{ ok: boolean; line: string } | null>(null)
+  const startTeleop = async (leaderId: string) => {
+    setStartArmed(null); setStarted(null); setStopped(null); setTeleop('asking')
+    try {
+      await api(`/api/robots/${encodeURIComponent(leaderId)}/teleop/publish`, { method: 'POST', body: JSON.stringify({}) })
+    } catch (e) {
+      setTeleop('unreachable'); setStarted({ ok: false, line: `${leaderId} could not start publishing, so nothing was pointed at it: ${(e as Error).message}` }); return
+    }
+    try {
+      await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/receive`, { method: 'POST', body: JSON.stringify({ source_peer_id: leaderId }) })
+    } catch (e) {
+      setTeleop('unreachable'); setStarted({ ok: false, line: `${leaderId} is publishing, but ${peer.peer_id} would not follow it: ${(e as Error).message} — stop teleop on ${leaderId} if you are done` }); return
+    }
+    let after: TeleopView | null = null
+    try { after = teleopView(await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop`)) } catch { after = null }
+    setTeleop(after ?? 'unreachable')
+    setStarted(startVerdict(after))
+  }
+
   const stopTeleop = async () => {
     setStopArmed(false); setStopped(null); setTeleop('asking')
     try { await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/stop`, { method: 'POST' }) }
@@ -207,6 +233,25 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                       <> · starting asks for {plan.consents.join(' + ')} first, because frames move a real arm</>
                     )}
                     {plan?.notes.map((n, i) => <div key={i}>{n}</div>)}
+                    {/* One armed step per candidate leader. The confirm sentence says which arm MOVES —
+                        "start teleop" alone does not tell an operator standing next to two arms which of
+                        them is about to travel. */}
+                    <div className="row small">
+                      {usable.map(o => (startArmed === o.peer_id ? (
+                        <span key={o.peer_id} className="row small">
+                          <button className="btn danger" onClick={() => startTeleop(o.peer_id)}>
+                            confirm — hand-guide {o.peer_id}, and {peer.peer_id} MOVES with it
+                          </button>
+                          <button className="btn ghost" onClick={() => setStartArmed(null)}>cancel</button>
+                        </span>
+                      ) : (
+                        <button key={o.peer_id} className="btn ghost small" onClick={() => setStartArmed(o.peer_id)}
+                                title={`${peer.peer_id} will follow ${o.peer_id}'s joints and move`}>
+                          follow {o.peer_id}
+                        </button>
+                      )))}
+                    </div>
+                    {started && <div className={started.ok ? 'small muted' : 'small warn'} role="status">{started.line}</div>}
                   </div>
                 )
               }

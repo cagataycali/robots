@@ -84,3 +84,23 @@ export function stopVerdict(after: TeleopView | null): { ok: boolean; line: stri
   }
   return { ok: true, line: `teleop stopped — ${after.headline}` }
 }
+
+/**
+ * U22 slice 3b: what may be claimed after a START was sent.
+ *
+ * The same law as stopVerdict, in the more dangerous direction — and with the one outcome this fleet has
+ * actually produced. When a real SO-101 led a follower, /teleop/receive answered "Teleop receive started"
+ * and 176 frames were published while the follower applied NONE of them: degrees into a radian envelope.
+ * A stream that is refusing is NOT a working teleop session, and the operator must read that on the
+ * screen the moment it happens, next to the grant that widens the bound — not in a child log later.
+ */
+export function startVerdict(after: TeleopView | null): { ok: boolean; line: string } {
+  if (!after) {
+    return { ok: false, line: 'start was sent, but the arm did not answer when asked again — nothing confirms frames are flowing' }
+  }
+  if (after.consentKind) {
+    return { ok: false, line: `started, but every frame is being REFUSED: ${after.headline} — the bound is widened at settings › consent › ${after.consentKind}, deliberately and by you` }
+  }
+  if (after.streaming) return { ok: true, line: `teleop live — ${after.headline}` }
+  return { ok: false, line: 'start was sent, but nothing is on the wire yet — a follower can take up to 45s to declare its subscriber, so ask again before assuming it failed' }
+}

@@ -1,7 +1,7 @@
 /** U22 slice 1: the server's teleop verdict must reach a human, worst news first — and silence must
  *  stay silence. Subject: npx esbuild src/lib/teleopView.ts --bundle --format=esm --outfile=/tmp/teleopView.mjs */
 import assert from 'node:assert/strict'
-import { teleopView, stopVerdict } from '/tmp/teleopView.mjs'
+import { teleopView, stopVerdict, startVerdict } from '/tmp/teleopView.mjs'
 
 // UNASKED IS NOT IDLE. Every shape of "no answer" says nothing at all: an arm that IS streaming would
 // otherwise render as quiet, which is the exact lie the raw counters told on real hardware.
@@ -62,5 +62,18 @@ assert.equal(stopVerdict(teleopView({ health: { worst: { state: 'stopped', headl
 // Silence after a stop is NOT success: the arm may be mid-refusal and unable to answer.
 const silent = stopVerdict(null)
 assert.equal(silent.ok, false); assert.match(silent.line, /nothing confirms/)
+
+// SLICE 3b: starting is the dangerous direction, and this fleet has already produced the outcome that
+// matters — "receive started" with all 176 frames refused (degrees into a radian envelope).
+const live = startVerdict(teleopView({ health: { worst: { state: 'following', headline: 'following so101-leader at 9.8Hz' } } }))
+assert.equal(live.ok, true); assert.match(live.line, /teleop live/)
+const refused = startVerdict(teleopView({ health: { worst: { state: 'refusing', headline: 'every frame is being refused', refusal: 'out of range' } } }))
+assert.equal(refused.ok, false, 'a refusing stream is NOT a working teleop session however cleanly it started')
+assert.match(refused.line, /REFUSED/)
+assert.match(refused.line, /teleop_degree_units/, 'the remedy is named where it is granted')
+const nothing = startVerdict(teleopView({ health: { receivers: {}, publishers: {} } }))
+assert.equal(nothing.ok, false)
+assert.match(nothing.line, /45s/, 'a slow subscriber must not be reported as a failure')
+assert.equal(startVerdict(null).ok, false)
 
 console.log('teleopView: all assertions passed')
