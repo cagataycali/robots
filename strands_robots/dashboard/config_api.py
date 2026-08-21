@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from strands_robots.dashboard import settings
+from strands_robots.dashboard.argv_exposure import argv_token_notice
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +452,11 @@ def snapshot(*, bridge: Any = None, agent_status: dict[str, Any] | None = None) 
             # Never echo the token back - only whether one is configured.
             "auth_enabled": bool(tree["security"].get("auth_token")),
             "cors_origins": tree["security"].get("cors_origins") or ["*"],
+            # This process's own posture: a token passed as --auth-token is readable by every
+            # local user via `ps`. Absent key when there is nothing to say, so a screen renders
+            # nothing rather than an empty box, and /api/config is AUTHENTICATED - a public
+            # endpoint is the wrong place to describe how a credential is exposed.
+            **({"notice": notice} if (notice := argv_token_notice(sys.argv)) else {}),
         },
         "policies": _policy_catalog(),
         "env": env_view(),
