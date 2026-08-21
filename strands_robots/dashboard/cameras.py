@@ -26,7 +26,23 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Sequence
 
 #: Probe verdicts, worst-to-best for the UI's sorting purposes.
-STATES = ("blocked", "absent", "assigned", "in_use", "unreadable", "ready")
+STATES = ("blocked", "absent", "vanished", "assigned", "in_use", "unreadable", "ready")
+
+#: Said when an index we have measured a camera at answers nothing now. The wording carries the one
+#: consequence an operator cannot deduce and must not learn from a ruined dataset: on macOS the camera
+#: INDICES are positions in a list that closes up when a device is removed, so unplugging one camera can
+#: hand its number to a different camera. A remembered resolution is therefore not proof of identity -
+#: it is the last thing we saw at that POSITION, and the tag geometry_from="remembered" already says so.
+_VANISHED_REASON = (
+    "a camera answered at this index earlier and none does now - it was unplugged, went to sleep, or "
+    "its hub dropped it"
+)
+_VANISHED_REMEDY = (
+    "replug it (and prefer a direct port over a hub chain), then rescan. Do NOT assume the index still "
+    "means the same camera: macOS renumbers cameras when one is removed, so preview an index before "
+    "assigning it to an arm - a shifted index records a dataset from the wrong view while everything "
+    "on screen looks healthy"
+)
 
 
 class CameraUnavailable(RuntimeError):
@@ -191,7 +207,13 @@ def merge_cameras(
                 row["geometry_from"] = "remembered"
         else:
             state, reason, remedy = classify_probe_stderr(failures.get(index, ""))
-            if state == "absent" and index not in failures and name:
+            if state == "absent" and index in remembered:
+                # A camera we MEASURED at this index is not answering now, which is a different
+                # event from an index that was always empty - and the row was reading as the
+                # latter while quietly carrying the remembered 1920x1080, so an empty index
+                # looked like a healthy camera with no advice attached.
+                state, reason, remedy = "vanished", _VANISHED_REASON, _VANISHED_REMEDY
+            elif state == "absent" and index not in failures and name:
                 # The roster lists it but nothing probed it (a scan capped by
                 # max_index). Saying "absent" there would be a claim we did not
                 # test.

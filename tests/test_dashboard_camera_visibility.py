@@ -201,3 +201,83 @@ def test_no_streaming_evidence_keeps_the_kinder_reading():
         if r["index"] == 1
     ]
     assert row["state"] == "in_use"
+
+
+# ---------------------------------------------------------------------------
+# A camera that GOES AWAY mid-session is not an index that was always empty
+# ---------------------------------------------------------------------------
+
+
+def test_an_index_we_measured_before_reports_vanished_not_absent() -> None:
+    """"no camera answered at this index" is true here and useless.
+
+    An index that was always empty needs no action. An index where we measured a real camera and now
+    get nothing is an EVENT - unplugged, asleep, or dropped by its hub - and it was reading as the
+    harmless case while quietly carrying its remembered 1920x1080, so a gap looked like a healthy
+    camera with no advice attached.
+    """
+    rows = cam.merge_cameras(
+        probed=[],
+        claimed={},
+        remembered={1: {"width": 1920, "height": 1080, "fps": 30}},
+    )
+    row = next(r for r in rows if r["index"] == 1)
+    assert row["state"] == "vanished"
+    assert "answered at this index earlier" in row["reason"]
+    assert "unplugged" in row["reason"] and "hub" in row["reason"]
+    assert row["available"] is False, "a vanished camera is not available"
+    assert row["geometry_from"] == "remembered", "keep the measurement, keep the tag that dates it"
+
+
+def test_the_vanished_remedy_names_the_index_shift_danger() -> None:
+    """The consequence an operator cannot deduce, and must not learn from a ruined dataset.
+
+    macOS camera indices are positions in a list that closes up when a device is removed, so pulling
+    one camera can hand its number to another. A remembered resolution is then not proof of identity -
+    it is the last thing seen at that POSITION.
+    """
+    rows = cam.merge_cameras(probed=[], claimed={}, remembered={2: {"width": 640, "height": 480}})
+    remedy = next(r for r in rows if r["index"] == 2)["remedy"]
+    assert "replug" in remedy
+    assert "renumbers" in remedy, "say WHY the index cannot be trusted afterwards"
+    assert "preview an index before assigning" in remedy, "give the check that makes it safe"
+    assert "wrong view while everything on screen looks healthy" in remedy
+
+
+def test_an_index_never_measured_still_reports_absent() -> None:
+    """The distinction only exists where there is evidence: no memory, no event, no escalation."""
+    rows = cam.merge_cameras(probed=[], claimed={}, failures={3: "nothing there"}, max_index=3)
+    row = next(r for r in rows if r["index"] == 3)
+    assert row["state"] == "absent"
+    assert "no camera answered" in row["reason"]
+    assert "remedy" not in row, "an empty index asks nothing of the operator"
+
+
+def test_a_remembered_index_that_opens_now_is_simply_ready() -> None:
+    """Memory must not haunt a working camera: a frame right now beats any history."""
+    rows = cam.merge_cameras(
+        probed=[{"index": 1, "width": 1280, "height": 720, "fps": 30}],
+        claimed={},
+        remembered={1: {"width": 1920, "height": 1080}},
+    )
+    row = next(r for r in rows if r["index"] == 1)
+    assert row["state"] == "ready" and row["available"] is True
+    assert row.get("geometry_from") != "remembered"
+    assert row["width"] == 1280, "the fresh measurement wins"
+
+
+def test_a_remembered_index_that_is_BLOCKED_keeps_the_permission_verdict() -> None:
+    """A stderr that explains itself always beats an inference from memory.
+
+    Permission denial has a cure that has nothing to do with cables; calling it "vanished" would send
+    the operator to replug a camera that is plugged in and working.
+    """
+    rows = cam.merge_cameras(
+        probed=[],
+        claimed={},
+        remembered={0: {"width": 1920, "height": 1080}},
+        failures={0: "OpenCV: not authorized to capture video (status 0)"},
+    )
+    row = next(r for r in rows if r["index"] == 0)
+    assert row["state"] == "blocked"
+    assert "not granted camera access" in row["reason"]
