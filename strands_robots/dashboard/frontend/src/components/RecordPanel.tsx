@@ -16,7 +16,8 @@ import { episodeTarget } from '../lib/episodeTarget'
 import { fpsField, fpsSuggestion } from '../lib/recordFps'
 import { nameVerdict, type KnownDataset } from '../lib/datasetName'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
-import { overrideOffered, overrideBody } from '../lib/recordRefusal'
+import { overrideOffered, nextAcknowledged, overrideBodyFlags } from '../lib/recordRefusal'
+import type { RecordOverrideFlag } from '../lib/recordRefusal'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 
@@ -183,6 +184,14 @@ export default function RecordPanel(
   // consent to a camera that changed identity.
   const [refusalAck, setRefusalAck] = useState(false)
   const offered = overrideOffered(err)
+  // Q98: EVERY admission made about this attempt sequence, not only the last one. The route checks its
+  // three camera gates in order and each is skipped only by its own flag, so carrying one flag at a
+  // time made a two-fault camera ping-pong forever - and the commonest two-fault case is one unplug,
+  // which makes a camera missing AND renumbers the rest into identity drift.
+  const [ackedFlags, setAckedFlags] = useState<RecordOverrideFlag[]>([])
+  // An admission about these cameras is an admission about THAT robot and THAT dataset: changing any
+  // of them starts over.
+  useEffect(() => { setAckedFlags([]) }, [form.follower, form.leader, form.dataset])
 
   // The measured roles. Managed children carry them keyed by peer id, so this is
   // one request, not one per arm. A failure here is not worth a banner: the
@@ -363,6 +372,7 @@ export default function RecordPanel(
       {!open && s && (
         <form className="train-form" onSubmit={e => {
           e.preventDefault()
+          setAckedFlags(nextAcknowledged(ackedFlags, offered, refusalAck))
           void run(() => api!.open({
             dataset: form.dataset.trim(), task: form.task.trim(),
             leader: form.leader, follower: form.follower,
@@ -371,8 +381,8 @@ export default function RecordPanel(
             // Only ever sent when the operator ticked the box in front of the
             // named camera and its age - never a default, never remembered.
             ...(camWarning && camAck ? { ignore_dead_cameras: true } : {}),
-            // The flag the LAST refusal named, and only with its box ticked.
-            ...overrideBody(offered, refusalAck),
+            // Every flag whose refusal was read and ticked in this sequence (Q98).
+            ...overrideBodyFlags(nextAcknowledged(ackedFlags, offered, refusalAck)),
           }), 'open')
         }}>
           <label className="field"><span>dataset (name or hf repo id)</span>

@@ -70,18 +70,45 @@ export function overrideOffered(message: unknown): RecordOverride | null {
   return named.length === 1 ? named[0] : null
 }
 
+/** The three flags, in the order `/api/record/open` checks them: dead, then missing, then identity. */
+export type RecordOverrideFlag = RecordOverride['flag']
+const FLAGS: RecordOverrideFlag[] = OVERRIDES.map(o => o.flag)
+
 /**
- * The extra request fields for a retry, given what the operator ticked.
+ * Every admission the operator has made about THIS attempt sequence, not just the last one.
  *
- * The flag is sent ONLY when the operator ticked the box in front of the
- * refusal that named it. It is never a default and never remembered: a new
- * refusal must be read and answered again, because "yes" to a stale camera is
- * not "yes" to a camera that changed identity.
+ * THE BUG THIS EXISTS FOR (Q98): the route checks the three gates in order and each one is skipped
+ * only by its own flag, so an attempt carrying ONE flag is still refused by an earlier gate. Sending
+ * only the flag from the most recent refusal therefore ping-ponged forever:
+ *
+ *   attempt 1 -> refused: missing camera        (tick)
+ *   attempt 2 -> ignore_missing, refused: identity drift   (tick, and the first admission is dropped)
+ *   attempt 3 -> ignore_identity, refused: missing camera again ... and around it goes.
+ *
+ * And that pair is not exotic, it is THE SAME PHYSICAL EVENT: unplugging one camera makes it missing
+ * AND renumbers every index after it, which is identity drift. So the second most likely camera fault
+ * on a real desk could not be continued from the screen at all, in the module written to end exactly
+ * that dead end.
+ *
+ * Accumulating is safe for the reason a single tick was: every flag in here was named by a refusal the
+ * operator READ and ticked in front of. What must never happen is a flag arriving any other way, so
+ * this drops anything not on the allowlist, keeps the canonical order, and cannot grow a duplicate.
+ * The caller clears the whole set when the arms or the dataset change, because an admission about
+ * these cameras is an admission about THAT robot.
  */
-export function overrideBody(
+export function nextAcknowledged(
+  prev: readonly string[],
   offered: RecordOverride | null,
   acknowledged: boolean,
-): Record<string, true> {
-  if (!offered || !acknowledged) return {}
-  return { [offered.flag]: true }
+): RecordOverrideFlag[] {
+  const kept = FLAGS.filter(f => prev.includes(f))
+  if (!offered || !acknowledged || kept.includes(offered.flag)) return kept
+  return FLAGS.filter(f => kept.includes(f) || f === offered.flag)
+}
+
+/** Those admissions as request fields. Nothing else can get in: the allowlist is the safety property. */
+export function overrideBodyFlags(flags: readonly string[]): Record<string, true> {
+  const body: Record<string, true> = {}
+  for (const f of FLAGS) if (flags.includes(f)) body[f] = true
+  return body
 }

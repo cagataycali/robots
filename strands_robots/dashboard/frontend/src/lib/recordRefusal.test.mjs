@@ -6,7 +6,9 @@
  * that the allowlist keeps a bypass from appearing where nobody designed one.
  */
 import assert from 'node:assert/strict'
-import { overrideOffered, overrideBody } from '/tmp/recordRefusal.mjs'
+import { overrideOffered, nextAcknowledged, overrideBodyFlags } from '/tmp/recordRefusal.mjs'
+
+const ack = (offered, ticked, prev = []) => overrideBodyFlags(nextAcknowledged(prev, offered, ticked))
 
 // Real server sentences, not paraphrases: this module reads what the backend writes.
 const STALE =
@@ -58,8 +60,54 @@ assert.equal(overrideOffered(`${STALE} ${DRIFT}`), null)
 
 // The flag travels only with a deliberate tick, and never by default.
 const drift = overrideOffered(DRIFT)
-assert.deepEqual(overrideBody(drift, true), { ignore_camera_identity: true })
-assert.deepEqual(overrideBody(drift, false), {})
-assert.deepEqual(overrideBody(null, true), {})
+assert.deepEqual(ack(drift, true), { ignore_camera_identity: true })
+assert.deepEqual(ack(drift, false), {}, 'an unticked box sends nothing')
+assert.deepEqual(ack(null, true), {}, 'a tick with nothing offered sends nothing')
 
 console.log('recordRefusal: ok')
+
+// ── Q98: the admissions ACCUMULATE, or a two-fault camera loops forever ──
+// The route checks dead -> missing -> identity, and each gate is skipped only by its own flag. Sending
+// just the last refusal's flag ping-ponged: ignore_missing gets past gate 2 and is then refused by
+// gate 3, whose retry drops ignore_missing and is refused by gate 2 again. And that pair is ONE
+// PHYSICAL EVENT - unplugging a camera makes it missing and renumbers the rest into identity drift -
+// so the commonest two-fault case could not be continued from the screen at all.
+const missing = overrideOffered(GONE)
+const identity = overrideOffered(DRIFT)
+assert.equal(missing.flag, 'ignore_missing_cameras')
+assert.equal(identity.flag, 'ignore_camera_identity')
+
+const afterFirst = nextAcknowledged([], missing, true)
+assert.deepEqual(afterFirst, ['ignore_missing_cameras'])
+const afterSecond = nextAcknowledged(afterFirst, identity, true)
+assert.deepEqual(afterSecond, ['ignore_missing_cameras', 'ignore_camera_identity'],
+  'THE REGRESSION: the earlier admission must survive the next refusal, or the gates ping-pong')
+assert.deepEqual(overrideBodyFlags(afterSecond),
+  { ignore_missing_cameras: true, ignore_camera_identity: true }, 'and both are actually sent')
+
+// Order is the ROUTE's (dead, missing, identity), not the order the faults happened to be met in - in
+// the SET as well as the body. Asserting it on the body alone proved nothing: overrideBodyFlags walks
+// the allowlist itself, so a body is canonical however the set was built. (A surviving mutation said
+// so - the assertion, not the code, was the weak half.)
+assert.deepEqual(nextAcknowledged(['ignore_camera_identity'], missing, true),
+                 ['ignore_missing_cameras', 'ignore_camera_identity'])
+assert.deepEqual(Object.keys(overrideBodyFlags(['ignore_camera_identity', 'ignore_missing_cameras'])),
+                 ['ignore_missing_cameras', 'ignore_camera_identity'])
+
+// An UNTICKED refusal adds nothing, and never removes what was already admitted: not answering the
+// new question is not withdrawal of the old answer.
+assert.deepEqual(nextAcknowledged(afterFirst, identity, false), afterFirst)
+// Ticking the same refusal twice cannot grow a duplicate.
+assert.deepEqual(nextAcknowledged(afterFirst, missing, true), afterFirst)
+
+// THE ALLOWLIST STILL RULES: the set is not a place a flag can arrive from anywhere else. Anything
+// that is not one of the three - a typo, a server-invented field, an injected key - is dropped.
+assert.deepEqual(nextAcknowledged(['ignore_everything', 'ignore_dead_camera', '__proto__'], null, false), [])
+assert.deepEqual(overrideBodyFlags(['ignore_everything', 'constructor']), {})
+assert.deepEqual(overrideBodyFlags([]), {}, 'no admissions is an empty body, not a missing one')
+
+// A message naming TWO flags still offers NO tick: that rule is about one refusal being two
+// admissions, and accumulating over SEPARATE refusals does not weaken it.
+assert.equal(overrideOffered(`${GONE} ${DRIFT}`), null)
+
+console.log('recordRefusal: Q98 accumulation assertions ok')
