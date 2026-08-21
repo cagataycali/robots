@@ -43,6 +43,12 @@ export interface StatusFacts {
   jointsSeen?: boolean | null
   /** seconds since the last state-topic sample (null = no samples yet) */
   stateAgeS: number | null
+  /**
+   * The e-stop lockout as the server understands it (Q43's peer.lockout.state): 'locked', 'clear',
+   * 'unknown' or absent. Only 'locked' changes the sentence — see the branch below for why 'unknown'
+   * deliberately does not.
+   */
+  lockout?: string | null
 }
 
 export interface StatusLine {
@@ -81,6 +87,34 @@ export function statusSentence(f: StatusFacts): StatusLine {
       severity: 'warn',
       word: 'no hw',
       text: 'hardware not connected — the arm is unplugged or unpowered, nothing can move',
+    }
+  }
+
+  // AN E-STOP LOCKOUT IS THE REASON THE ARM IS STILL (Q95), so the sentence has to say it. Q43 put a
+  // loud "e-stop locked" badge on the card but left this function blind to the field, and the two
+  // widgets then contradicted each other ON THE SAME CARD: a locked arm read "idle and still — safe to
+  // approach" beside a red lockout badge. Joining widgets so the operator does not have to is the whole
+  // reason this function exists.
+  //
+  // Only 'locked' speaks here. 'unknown' is the COMMON case — the mesh does not advertise lockout state,
+  // so most peers report it — and letting doubt suppress the green sentence would gut it fleet-wide;
+  // the dashed "lockout unknown" badge already carries that doubt at the right volume.
+  if ((f.lockout ?? '').trim().toLowerCase() === 'locked') {
+    if (f.moving === true) {
+      // A lockout means commands are refused. Joints moving anyway means the lockout is not holding,
+      // or something outside the mesh is driving the arm. That is the worst state on this card.
+      return {
+        severity: 'danger',
+        word: 'locked?!',
+        text: 'an e-stop lockout is in place but the joints are MOVING — the lockout is not holding, or '
+          + 'something outside the mesh is driving the arm; keep hands clear',
+      }
+    }
+    return {
+      severity: 'warn',
+      word: 'locked',
+      text: 'e-stop lockout — commands are refused and the arm is holding where the stop caught it; '
+        + 'clearing the lockout is what makes it live again',
     }
   }
 

@@ -50,6 +50,9 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
     // green "safe to approach".
     jointsSeen: telemetry.jointsSeen,
     stateAgeS: telemetry.stateAgeS,
+    // Q95: the lockout is the REASON a locked arm is still, so the sentence says it instead of
+    // contradicting the badge two rows above it.
+    lockout: peer.lockout?.state ?? null,
   }) : null
 
   // The app keeps a screen wake lock while anything is moving.

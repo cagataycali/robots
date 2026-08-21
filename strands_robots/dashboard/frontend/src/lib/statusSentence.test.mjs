@@ -174,3 +174,47 @@ assert.equal(statusSentence({ ...base, taskStatus: '' }).text, 'idle and still �
              'an empty status is the same silence as no status at all')
 
 console.log('statusSentence: Q93 task-status assertions ok')
+
+// ── Q95: the sentence and the lockout badge must not contradict each other ──
+// Q43 put a loud "e-stop locked" badge on the card, and this function was blind to the field, so a
+// LOCKED arm rendered "idle and still — safe to approach" two rows under a red badge. The operator was
+// left to decide which widget to believe, which is the exact disease this function exists to cure.
+const locked = statusSentence({ ...base, lockout: 'locked' })
+assert.equal(locked.word, 'locked')
+assert.equal(locked.severity, 'warn')
+assert.doesNotMatch(locked.text, /safe to approach/, 'a locked arm never gets the safety claim')
+assert.match(locked.text, /commands are refused/, 'it says why it is still')
+assert.match(locked.text, /clearing the lockout is what makes it live again/, 'and what would end it')
+
+// A lockout means commands are REFUSED. Joints moving anyway is the worst state on the card: either the
+// lockout is not holding, or something outside the mesh is driving the arm.
+const escaping = statusSentence({ ...base, lockout: 'locked', moving: true })
+assert.equal(escaping.severity, 'danger', 'this is the only card state that outranks warn')
+assert.equal(escaping.word, 'locked?!')
+assert.match(escaping.text, /lockout is not holding|outside the mesh/)
+
+// The lockout explains a "running" task that is not moving, so it must OUTRANK the wedged accusation:
+// a locked arm under a policy is not a wedged policy, and the remedy is the lockout, not a restart.
+const lockedRunning = statusSentence({ ...base, lockout: 'locked', taskStatus: 'running', moving: false })
+assert.equal(lockedRunning.word, 'locked', 'not "wedged?" — the lockout is the reason, and it is fixable')
+
+// ...and the same for the Q93 statuses: whatever the task says, the lockout is the live fact.
+assert.equal(statusSentence({ ...base, lockout: 'locked', taskStatus: 'error' }).word, 'locked')
+assert.equal(statusSentence({ ...base, lockout: 'locked', taskStatus: 'connecting' }).word, 'locked')
+
+// 'unknown' DELIBERATELY says nothing. It is the COMMON case — the mesh does not advertise lockout
+// state, so most peers report it — and letting doubt suppress the green sentence would gut it
+// fleet-wide. The dashed "lockout unknown" badge already carries that doubt at the right volume.
+for (const state of ['unknown', 'clear', null, undefined, '']) {
+  assert.equal(statusSentence({ ...base, lockout: state }).text, 'idle and still — safe to approach',
+               `lockout ${JSON.stringify(state)} leaves the sentence to the motion measurement`)
+}
+// case and whitespace come off the wire unevenly, as everywhere else in this module
+assert.equal(statusSentence({ ...base, lockout: ' LOCKED ' }).word, 'locked')
+
+// but a dead peer or unplugged hardware still outranks the lockout: both mean the lockout state on the
+// card is itself second-hand, and both have a different first action.
+assert.equal(statusSentence({ ...base, lockout: 'locked', stale: true }).word, 'offline')
+assert.equal(statusSentence({ ...base, lockout: 'locked', hwConnected: false }).word, 'no hw')
+
+console.log('statusSentence: Q95 lockout assertions ok')
