@@ -385,3 +385,49 @@ def test_the_snippet_carries_the_reason_and_never_a_rejected_address():
     lan = render_snippet(ARM_1, hub_host="192.168.1.151", mesh_env={}, hub_port=7447)["snippet"]
     assert 'ZENOH_CONNECT", "tcp/192.168.1.151:7447"' in lan
     assert "NOTE:" not in lan
+
+
+# --- the dashboard's own bookkeeping key must not reach the generated code -------------------------
+# Added 2026-08-22. camera_liveness.stamp_device_names writes `device_name` into the camera config at
+# spawn, and a remembered profile / spawn payload is exactly what this renderer is handed. The code
+# path that hands a config to a CHILD strips it (hardware_robot refuses an unknown camera option by
+# name, which kills every camera on the arm); this renderer did not, so every snippet generated for a
+# camera-stamped arm since that landed was a file that died at connect on the edge device.
+
+
+def _stamped_payload():
+    return {
+        "robot_name": "so101", "mode": "real", "port": "/dev/cu.usbmodem5AB0181806",
+        "peer_id": "so101-follower",
+        "cameras": {
+            "main": {"index_or_path": 0, "fps": 30, "device_name": "USB2.0_CAM1"},
+            "wrist": {"index_or_path": 2, "fps": 30},
+        },
+    }
+
+
+def test_device_name_never_reaches_the_generated_code():
+    snippet = render_snippet(_stamped_payload())["snippet"]
+    code = snippet.split('"""', 2)[2]  # everything after the docstring: the runnable half
+    assert "device_name" not in code
+    # and the options the child DOES accept are still there, unchanged
+    assert "'index_or_path': 0," in code and "'fps': 30," in code
+    assert "'index_or_path': 2," in code
+
+
+def test_the_stamped_name_survives_where_a_human_reads_it():
+    """Stripping it must not DISCARD it: 'index 0' is a position, 'USB2.0_CAM1' is a camera, and the
+    file's own advice is to re-check the indices on the edge device -- which needs the name."""
+    snippet = render_snippet(_stamped_payload())["snippet"]
+    docstring = snippet.split('"""')[1]
+    assert 'main: was "USB2.0_CAM1" on the dashboard machine' in docstring
+    assert "wrist" not in docstring.split("Camera indices are PER-MACHINE")[1].split("\n\n")[0]
+
+
+def test_a_payload_with_no_stamp_renders_exactly_as_before():
+    """No annotation anywhere: no note line, and the cameras dict is untouched."""
+    payload = _stamped_payload()
+    payload["cameras"] = {"main": {"index_or_path": 0, "fps": 30}}
+    snippet = render_snippet(payload)["snippet"]
+    assert "on the dashboard machine" not in snippet
+    assert "'index_or_path': 0," in snippet

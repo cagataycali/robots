@@ -19,6 +19,8 @@ import ipaddress
 import time
 from typing import Any, Mapping
 
+from . import camera_liveness
+
 __all__ = ["render_snippet", "snippet_filename"]
 
 #: Env the dashboard's own spawner sets. Rendered as setdefault so an edge
@@ -139,6 +141,19 @@ def hub_host_from_reached(reached_on: str | None) -> tuple[str | None, str | Non
     )
 
 
+def _stamped_names(cameras: Any) -> dict[str, str]:
+    """{camera: the roster name this index carried when it was configured}, for the cameras that have one."""
+    if not isinstance(cameras, Mapping):
+        return {}
+    out: dict[str, str] = {}
+    for cam, cfg in cameras.items():
+        if isinstance(cfg, Mapping):
+            was = cfg.get("device_name")
+            if isinstance(was, str) and was.strip():
+                out[str(cam)] = was.strip()
+    return out
+
+
 def render_snippet(
     payload: Mapping[str, Any],
     *,
@@ -192,6 +207,14 @@ def render_snippet(
     if payload.get("cameras"):
         lines.append("Camera indices are PER-MACHINE: index 1 here may be index 0 on the")
         lines.append("edge device. Re-check them there (lerobot-find-cameras opencv).")
+        # The roster name this index carried when it was configured is the ONE thing that makes that
+        # re-check possible: "index 0" is a position in a list that closes up when a device is
+        # unplugged, while "USB2.0_CAM1" is a camera. The dashboard stamps it into the config
+        # (camera_liveness.stamp_device_names) and it is stripped from the CODE below, because
+        # hardware_robot refuses an unknown camera option and would kill every camera on the arm --
+        # so it is said HERE, where a human reads it, instead of being thrown away.
+        for cam, was in sorted(_stamped_names(payload.get("cameras")).items()):
+            lines.append(f'  {cam}: was "{was}" on the dashboard machine - check that camera is still that index.')
         lines.append("")
     if mode == "real":
         # Q47: the file warned that camera INDICES are per-machine and said nothing about the
@@ -249,7 +272,14 @@ def render_snippet(
         lines.append(f"    id={str(payload['robot_id'])!r},  # lerobot calibration identity")
     cameras = payload.get("cameras")
     if cameras:
-        lines.append(f"    cameras={_fmt(cameras, 4)},")
+        # STRIPPED, not rendered verbatim: a spawn payload or remembered profile carries the
+        # dashboard's own bookkeeping key (device_name), the child never sees it (the spawner strips
+        # it before Popen for exactly this reason), and hardware_robot refuses an unknown camera
+        # option BY NAME -- so a snippet generated for a camera-stamped arm produced a file that
+        # died at connect with "Unknown option(s) for camera 'main': ['device_name']". A generated
+        # file that starts the wrong rig is worse than no file, and this one started no rig at all.
+        # The name itself is not lost: it is in the docstring above, which is where it helps.
+        lines.append(f"    cameras={_fmt(camera_liveness.without_annotations(cameras), 4)},")
     lines.append("    mesh=True,")
     lines.append(f"    peer_id={peer_id!r},")
     lines.append(")")
