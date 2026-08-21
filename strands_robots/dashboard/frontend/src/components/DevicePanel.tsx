@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { boardListEmptyLine, managedListEmptyLine, hardwareSummaryValue } from '../lib/boardList'
+import { deathVerdict, retainedOutputIsStartup } from '../lib/childDeath'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { numField } from '../lib/numField'
 import { findConsent, type ConsentNeed } from '../lib/consent'
@@ -77,6 +78,11 @@ interface Managed {
   alive: boolean
   started_at?: number
   log_tail?: string[]
+  /**
+   * U22: the exit status the server has always sent and this drawer never read, so
+   * a kill -9 and a clean finish both rendered as the single word "exited".
+   */
+  returncode?: number | null
 }
 
 /**
@@ -480,7 +486,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                   <b>{m.peer_id}</b>
                   <span className="meta">
                     {m.robot_name} · {m.mode}{m.port ? ` · ${m.port}` : ''}
-                    {!m.alive && ' · exited'}
+
                   </span>
                   <span className="devactions">
                     <button className="btn ghost" onClick={() => void showLogs(m.peer_id)}>logs</button>
@@ -489,9 +495,25 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                       {m.alive ? 'despawn' : 'remove'}
                     </button>
                   </span>
-                  {!m.alive && m.log_tail?.length ? (
-                    <pre className="logtail">{m.log_tail.slice(-6).join('\n')}</pre>
-                  ) : null}
+                  {!m.alive && (() => {
+                    const v = deathVerdict(m.returncode)
+                    // U22: name the cause where the word "exited" used to stand for all of them.
+                    return <div className={v.unexplained ? 'deathnote unexplained' : 'deathnote'}>{v.phrase}</div>
+                  })()}
+                  {!m.alive && m.log_tail?.length ? (() => {
+                    // The ring keeps 10 lines. When they are all from the child's first seconds
+                    // they are its BIRTH CRY, not its last words - saying so is the difference
+                    // between "it warned and stopped" and "something killed it 22h later".
+                    const startup = retainedOutputIsStartup({ lines: m.log_tail, startedAt: m.started_at })
+                    return (
+                      <>
+                        {startup === true && (
+                          <div className="meta">its startup output — it printed nothing after that, so these are not its last words</div>
+                        )}
+                        <pre className="logtail">{m.log_tail.slice(-6).join('\n')}</pre>
+                      </>
+                    )
+                  })() : null}
                 </li>
               ))}
             </ul>

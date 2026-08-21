@@ -5,3 +5,8 @@
 .ds-label-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.86rem; }
 .ds-label-row.muted { opacity: 0.62; }
 .ds-label-badge { width: 1.2em; text-align: center; }
+
+/* U22: a dead managed child names its cause. `unexplained` is not an alarm colour —
+   it is a quieter amber, because "who killed it" is a question, not a fault. */
+.deathnote { font-size: 0.78rem; opacity: 0.85; margin: 0.2rem 0 0 1.2rem; line-height: 1.35; }
+.deathnote.unexplained { color: #e8b44a; }
