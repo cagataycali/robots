@@ -17,7 +17,11 @@ import { BUNDLE_ROUTES } from './bundleRoutes.generated'
  */
 export function darkRoutes(livePaths: string[] | null | undefined, needed: readonly string[] = BUNDLE_ROUTES): string[] {
   if (!Array.isArray(livePaths) || livePaths.length === 0) return []
-  return needed.filter(p => routeKnown(livePaths, p) === false).sort()
+  return needed.filter(p => p.endsWith('/')
+    // A BASE ('/api/auth/login/') is not a route: callers append a segment. It is satisfied by
+    // anything beneath it, and judged as a route it would be permanently, wrongly dark.
+    ? !livePaths.some(t => t.startsWith(p))
+    : routeKnown(livePaths, p) === false).sort()
 }
 
 /** The banner sentence, or null when there is nothing to say. Names the count, the remedy, and why the

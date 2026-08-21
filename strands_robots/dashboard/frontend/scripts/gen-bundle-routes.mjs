@@ -18,35 +18,27 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { routeSites } from './lib/frontend-routes.mjs'
 
 const SRC = path.resolve('src')
 const OUT = path.join(SRC, 'lib', 'bundleRoutes.generated.ts')
 
-const walk = d => fs.readdirSync(d, { withFileTypes: true }).flatMap(e =>
-  e.isDirectory() ? walk(path.join(d, e.name))
-    : /\.(ts|tsx)$/.test(e.name) && !e.name.includes('.test.') && e.name !== 'bundleRoutes.generated.ts'
-      ? [path.join(d, e.name)] : [])
-
+/* Extraction is SHARED with the typo gate (scripts/lib/frontend-routes.mjs) so the two cannot
+ * disagree about what this bundle calls. Here the raw literals are normalised into the shape
+ * openapi.json publishes: `${expr}` becomes {p}, one path SEGMENT, which is what a server template
+ * means too. A path this cannot judge is DROPPED rather than guessed — a ternary or a query inside
+ * the literal, or a concatenated base — and the count printed below is the honest surface. */
 const routes = new Set()
-for (const f of walk(SRC)) {
-  /* Comments are STRIPPED first, exactly as scripts/check-routes-exist.mjs does it. This file's
-   * comments quote real paths ("/api/devices/camera/{index}/modes"), and a path named only in prose
-   * would enter the list and make the banner accuse the server of missing a route nobody calls — the
-   * same "a mention in a comment is not a row" rule the consent-kinds guard needed.
-   * TODO(one extractor): check-routes-exist.mjs walks the same tree with the same regex for a
-   * different comparison (typos, against python source). Two extractors of one fact can drift, and
-   * drift here produces a FALSE accusation, so they should share one exported function. */
-  const body = fs.readFileSync(f, 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
-  // Quoted or backticked path literals. An interpolation becomes {p}: one path SEGMENT, which is what
-  // the server's template means too. A path built by concatenation cannot be seen here — that is a
-  // known blind spot, not a silent one (see the count this prints).
-  for (const m of body.matchAll(/['"`](\/api\/[A-Za-z0-9_\-/{}.$]*)['"`]/g)) {
-    let p = m[1].replace(/\$\{[^}]*\}/g, '{p}').replace(/\/+$/, '')
-    if (p.includes('$')) continue          // a mangled interpolation: refuse rather than guess
-    if (/\/(?:\{p\})?$/.test(p) && p.endsWith('/{p}')) { /* keep: a real trailing param */ }
-    routes.add(p)
-  }
+for (const raw of routeSites(SRC).keys()) {
+  if (!raw.startsWith('/api/')) continue                    // /ws sockets are the gate's business, not openapi's
+  /* A TRAILING SLASH IS MEANINGFUL and must survive: endpoints.ts lists '/api/auth/login/' and
+   * '/api/auth/register/' as BASES that callers concatenate onto ('…/begin', '…/finish'). Stripping
+   * the slash turned each into a route the server has never had, and the banner then accused a
+   * healthy server of two missing features — measured in a browser before this fix. darkFeatures
+   * satisfies a base from any route beneath it, exactly as the typo gate does. */
+  const p = raw.split('?')[0].replace(/\$\{[^}]*\}/g, '{p}')
+  if (/[$?\s]/.test(p)) continue                             // a mangled interpolation: refuse rather than guess
+  routes.add(p)
 }
 const sorted = [...routes].sort()
 

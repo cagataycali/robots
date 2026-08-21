@@ -18,6 +18,7 @@
  * missing, because they are registered on an APIRouter(prefix=...) in record_api.py.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { routeSites, sourceFiles } from './lib/frontend-routes.mjs'
 import { join, dirname } from 'node:path'
 
 const here = dirname(new URL(import.meta.url).pathname)
@@ -53,25 +54,12 @@ const asRegex = p => new RegExp('^' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').r
 const matchers = routes.map(r => ({ ...r, rx: asRegex(r.path) }))
 
 // ── the paths the frontend names ───────────────────────────────────────────────────────────────
-// bundleRoutes.generated.ts is EXCLUDED: it is not a call site, it is a DERIVED LIST of the call sites
-// this same tree already contains (scripts/gen-bundle-routes.mjs writes it for the Q124 dark-feature
-// banner). Scanning it would double-count every path and, worse, judge its normalised '{p}' parameter
-// names against python's real ones — a typo report about a file no human wrote.
-const tsFiles = walk(SRC).filter(f => /\.tsx?$/.test(f) && !f.includes('.test.')
-  && !f.endsWith('bundleRoutes.generated.ts'))
-const used = new Map()
-/**
- * Comments are stripped first. A JSDoc line that MENTIONS a route in markdown backticks
- * (`/api/record`) is documentation, not a caller — rehearsalNav.ts explains that this backend may
- * not have /api/record at all, and the first version of this guard reported it as a missing route.
- */
-const stripComments = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-for (const f of tsFiles) {
-  for (const m of stripComments(readFileSync(f, 'utf8')).matchAll(/['"`](\/(?:api|ws)\/[^'"`]*)['"`]/g)) {
-    if (!used.has(m[1])) used.set(m[1], new Set())
-    used.get(m[1]).add(f.split('/').pop())
-  }
-}
+// The extraction lives in scripts/lib/frontend-routes.mjs — ONE reader of the frontend's path
+// literals, shared with gen-bundle-routes.mjs, which asks the same question for the opposite
+// comparison (a RUNNING server rather than the python source). Two regexes had already drifted apart
+// on how they strip comments; a shared one cannot.
+const tsFiles = sourceFiles(SRC)
+const used = routeSites(SRC)
 
 if (routes.length === 0 || used.size === 0) {
   console.error(`FAIL routes-exist: narrowed to nothing (${routes.length} routes, ${used.size} paths) — the scan is broken, not the code`)

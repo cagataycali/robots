@@ -26,6 +26,15 @@ assert.deepEqual(darkRoutes(['/api/devices/camera/{index}/modes'], ['/api/device
 assert.deepEqual(darkRoutes(['/api/devices/camera/{i}/modes'], ['/api/devices/camera/{index}/modes']), [],
   'the server names its parameter differently — still the same route')
 
+// A BASE, not a route. endpoints.ts names '/api/auth/login/' and callers append 'begin'/'finish';
+// judged as a route it is permanently dark, and the banner accused a healthy server of two missing
+// features (measured in a browser, then fixed). Satisfied by anything beneath it — and still dark
+// when nothing is.
+assert.deepEqual(darkRoutes(['/api/auth/login/begin', '/api/auth/login/finish'], ['/api/auth/login/']), [],
+  'a base is satisfied by a route underneath it')
+assert.deepEqual(darkRoutes(['/api/fleet'], ['/api/auth/login/']), ['/api/auth/login/'],
+  'a base with nothing beneath it IS dark')
+
 // SILENCE WHEN UNKNOWN. Each of these is a way of not knowing, and none of them is "everything is dark".
 for (const unknown of [null, undefined, []]) {
   assert.deepEqual(darkRoutes(unknown, NEEDED), [], `unknown route table (${JSON.stringify(unknown)}) says nothing`)

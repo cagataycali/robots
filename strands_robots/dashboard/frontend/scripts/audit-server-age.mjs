@@ -13,6 +13,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { routeSites } from './lib/frontend-routes.mjs'
 
 const BASE = process.env.STRANDS_DASH_URL ?? 'http://127.0.0.1:8090'
 const TOKEN_FILE = process.env.STRANDS_DASH_TOKEN_FILE ?? `${process.env.HOME}/.strands_dashboard/local_api_token.txt`
@@ -81,12 +82,14 @@ if (missing.length === 0) {
    * server that predates the source. Matched on the literal prefix before the first {param},
    * because a call site writes `/api/devices/camera/${index}/modes` and no substring of the
    * templated path appears in it. */
-  const srcDir = path.resolve('src')
-  const walk = d => fs.readdirSync(d, { withFileTypes: true }).flatMap(e =>
-    e.isDirectory() ? walk(path.join(d, e.name))
-      : /\.(ts|tsx)$/.test(e.name) && !e.name.includes('.test.') ? [path.join(d, e.name)] : [])
-  const srcText = walk(srcDir).map(f => fs.readFileSync(f, 'utf8')).join('\n')
-  const calledBy = p => srcText.includes(p.split('{')[0].replace(/\/$/, ''))
+  /* Asks the SHARED extractor (scripts/lib/frontend-routes.mjs), not a raw substring search: this
+   * audit first "proved" the UI calls /api/checkpoints/features, which appears in the frontend only
+   * inside serverAge.ts's PROSE. A comment is not a caller, and an over-reported dark feature sends
+   * the operator to restart for something no click can reach. */
+  const named = [...routeSites(path.resolve('src')).keys()]
+    .map(r => r.split('?')[0].replace(/\$\{[^}]*\}/g, '{p}'))
+  const calledBy = p => named.some(n => n.split('{')[0] === p.split('{')[0]
+    || n.startsWith(p.split('{')[0]) && p.endsWith('/'))
   const dark = missing.filter(calledBy)
   const ahead = missing.filter(p => !calledBy(p))
   for (const p of dark) console.log(`  note    DARK — the UI calls this and gets a 404 → ${p}`)
