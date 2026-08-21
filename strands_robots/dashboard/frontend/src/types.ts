@@ -171,7 +171,18 @@ export interface ConfigDoc {
   voice: { provider: string; voice_name: string | null; providers: string[] }
   mesh: MeshInfo
   runtime: { trust_remote_code: boolean }
-  security: { auth_enabled: boolean; cors_origins: string[] }
+  security: {
+    auth_enabled: boolean
+    cors_origins: string[]
+    /**
+     * This PROCESS's own posture, absent when there is nothing to say — today only
+     * `token_in_argv`: the dashboard was started with --auth-token on the command line, so
+     * `ps` shows its bearer token to every local user. Optional at every layer: an older
+     * server omits it and the screen shows nothing, which is the correct rendering of
+     * "this server cannot tell me".
+     */
+    notice?: { kind: string; severity?: string; text: string; remedy?: string } | null
+  }
   policies: PolicyProvider[]
   env: EnvRow[]
   env_file: string

@@ -716,6 +716,22 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                   ? '✓ a token is required on /api and /ws'
                   : '⚠ no auth: anyone who can reach this port can move motors'}
               </div>
+              {/*
+                "A token is required" can be TRUE and still not safe: the token itself may be
+                sitting in this process's argv, where `ps` shows it to every local user (found
+                exactly that way on this Mac — a pgrep for the pid printed the live token). So the
+                notice sits directly under the green tick it qualifies, not in a corner.
+                Rendered only when the server sends one: an older server omits the field, and
+                inventing "probably fine" from silence is how a security screen starts lying.
+              */}
+              {config.security.notice?.text && (
+                <div className="result warn" data-notice={config.security.notice.kind}>
+                  <span>⚠ {config.security.notice.text}</span>
+                  {config.security.notice.remedy && (
+                    <span className="hint">{config.security.notice.remedy}</span>
+                  )}
+                </div>
+              )}
               <label className="field">
                 <span>Server auth token</span>
                 <input type="password" value={serverToken} placeholder={config.security.auth_enabled ? '•••••• (set)' : 'not set'}
