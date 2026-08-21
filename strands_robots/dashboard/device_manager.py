@@ -1575,6 +1575,26 @@ class DeviceManager:
             streaming=self._streaming_indices(live_cameras),
         )
 
+    def managed_children(self) -> list[dict[str, Any]]:
+        """The managed table, cheaply: no serial scan, no camera probe.
+
+        devices() rescans the USB ports and can probe cameras, so it must never be
+        called from /api/fleet (~1Hz). This returns only what a fleet-side memorial
+        needs (U22), read under the same lock the table is mutated under.
+        """
+        with self._lock:
+            return [
+                {
+                    "peer_id": m.peer_id,
+                    "robot_name": m.robot_name,
+                    "mode": m.mode,
+                    "alive": m.alive(),
+                    "returncode": m.process.poll() if m.process is not None else None,
+                    "started_at": m.started_at,
+                }
+                for m in self.robots.values()
+            ]
+
     def devices(
         self,
         refresh: bool = False,

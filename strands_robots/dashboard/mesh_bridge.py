@@ -160,6 +160,58 @@ def peer_origins(
     return {pid: origin(pid) for pid in peer_ids}
 
 
+
+def absent_children(
+    peers: Mapping[str, Any] | Iterable[str],
+    children: Iterable[Mapping[str, Any]] = (),
+) -> list[dict[str, Any]]:
+    """Managed children that are DEAD and no longer on the mesh (U22).
+
+    A peer that stops publishing is pruned from the snapshot, and that pruning
+    is right: it really is gone from the fleet. But the child process is still in
+    the manager's table with its exit status, which means the dashboard KNOWS a
+    robot the operator started is dead and says so nowhere the operator looks --
+    the peer list simply gets shorter. Measured on the live rig: the only peer
+    publishing joints was SIGKILLed and the fleet screen's answer was silence.
+
+    So this is deliberately NOT a peer. It is a separate list a screen may render
+    as a memorial, and every rule below exists to stop it becoming one:
+
+    * ``alive`` children are never included, even when they are missing from the
+      mesh. A child that has just been spawned has not published presence yet,
+      and calling that a death would alarm on every single spawn.
+    * a dead child still IN the snapshot is not included either: its card is on
+      the screen, and the devices drawer explains it (childDeath.ts).
+    * a dead PARENT whose child peer still publishes (``parent__child``) is not
+      absent, because that stream can only come from a living process -- the
+      same family rule prune_peers and peer_is_known use.
+
+    Only the facts a memorial needs are copied out; the log ring stays behind the
+    devices route, which is where a 20-line tail belongs.
+    """
+    present = set(peers)
+    families = {pid.split("__", 1)[0] for pid in present if "__" in pid}
+    out: list[dict[str, Any]] = []
+    for child in children or ():
+        if not isinstance(child, Mapping):
+            continue
+        peer_id = str(child.get("peer_id") or "")
+        if not peer_id or child.get("alive"):
+            continue
+        if peer_id in present or peer_id in families:
+            continue
+        out.append(
+            {
+                "peer_id": peer_id,
+                "robot_name": child.get("robot_name"),
+                "mode": child.get("mode"),
+                "returncode": child.get("returncode"),
+                "started_at": child.get("started_at"),
+            }
+        )
+    out.sort(key=lambda c: c["peer_id"])
+    return out
+
 def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Route commands aimed at a child sim peer to its parent Simulation peer.
 
