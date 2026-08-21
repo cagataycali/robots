@@ -7,6 +7,7 @@ import { lockoutBanner } from './lib/lockoutBadge'
 import { ConfigProvider } from './lib/useConfig'
 import { authToken, backendKey, backendLabel, setAuthToken } from './lib/endpoints'
 import { sessionVerdict } from './lib/sessionExpiry'
+import { serverNotice, type RefusedHandshakes } from './lib/serverNotice'
 import FleetBar from './components/FleetBar'
 import { getRecordApi } from './lib/recordApi'
 import RobotCard from './components/RobotCard'
@@ -190,6 +191,27 @@ function Dashboard() {
   }, [])
   void linkTick
 
+  // Q88: /api/health counts refused handshakes, and NOTHING in this frontend read it — the news
+  // existed only for whoever thought to curl it, which is a hiding place, not a surface. Polled
+  // slowly and only while the socket is up: a storm lasts hours (measured: 19.3 of them), so a
+  // minute of latency costs nothing, and hammering health while the API is down would make this
+  // page part of the problem it reports. Failures are swallowed — linkHealth already owns "the
+  // API is unreachable", and a second opinion about that helps nobody.
+  const [refused, setRefused] = useState<RefusedHandshakes | null>(null)
+  useEffect(() => {
+    if (conn !== 'open') return
+    let alive = true
+    const poll = () => {
+      httpGet<{ refused_handshakes?: RefusedHandshakes }>('/api/health')
+        .then(h => { if (alive) setRefused(h?.refused_handshakes ?? null) })
+        .catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 60_000)
+    return () => { alive = false; clearInterval(id) }
+  }, [conn])
+  const notice = serverNotice(refused)
+
   return (
     <div className="stage">
       {/* FIRST IN THE DOM, therefore the FIRST TAB STOP on every screen
@@ -241,6 +263,15 @@ function Dashboard() {
       {link.headline && (
         <div className={`toast ${link.commandsWork ? '' : 'warn'}`} role="status">
           <b>{link.headline}</b> {link.detail}
+        </div>
+      )}
+
+      {/* Q88: somebody ELSE is being refused in a loop. Deliberately below the link banner and
+          only when the link is healthy — when this page cannot command the fleet, that is the
+          sentence that matters, and two stacked warnings compete for the same glance. */}
+      {notice.text && !link.headline && (
+        <div className="toast warn" role="status">
+          <b>A client is being refused repeatedly</b> {notice.text}
         </div>
       )}
 
