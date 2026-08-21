@@ -229,3 +229,81 @@ def test_http_surface_speaks_the_contract(tmp_path):
     r = client.post("/api/record/close", json={})
     assert r.status_code == 200 and r.json()["ok"] is True
     assert client.get("/api/record/session").json()["dataset"] is None
+
+
+# ── Q101: a failed open that could not put the arms back must SAY SO ───────────────────────────────
+# open() despawns both arms before it builds the recorder, so every failure after that point restores
+# the fleet - best effort. Restoring can fail (a port still held, a spawn refused), and that used to go
+# only to logger.warning: the refusal still read "no session was opened", the frontend added "the arms
+# are untouched and still in the fleet", and both robot cards were gone. The operator cannot see the
+# server log; they can see the sentence the click produced.
+
+class RefusingSpawnDevices(FakeDevices):
+    """Despawns fine, refuses to bring one arm back - the shape of a port still held."""
+
+    def __init__(self, refuse: str, *, raises: bool = False):
+        super().__init__()
+        self._refuse = refuse
+        self._raises = raises
+
+    def spawn(self, **cfg):
+        if cfg.get("peer_id") == self._refuse:
+            if self._raises:
+                raise RuntimeError("port /dev/cu.usb2 is in use")
+            self.spawned.append(cfg)
+            return {"peer_id": cfg["peer_id"], "error": "port /dev/cu.usb2 is in use"}
+        return super().spawn(**cfg)
+
+
+def _boom_factory(**kw):
+    raise RuntimeError("no calibration for 'leader'")
+
+
+def test_failed_open_that_cannot_restore_an_arm_says_which_one(tmp_path):
+    dev = RefusingSpawnDevices("arm-follower")
+    ctl, dev, _ = make_controller(tmp_path, devices=dev, backend_factory=_boom_factory)
+    with pytest.raises(HTTPException) as ei:
+        ctl.open(dict(OPEN))
+    assert ei.value.status_code == 500
+    detail = ei.value.detail
+    # the original cause survives - it is why the session failed
+    assert "no calibration for 'leader'" in detail
+    # ...and the fleet loss is IN THE SENTENCE, naming the arm and the remedy
+    assert "arm-follower" in detail
+    assert "port /dev/cu.usb2 is in use" in detail
+    assert "Devices" in detail
+    # the arm that DID come back is not accused
+    assert "arm-leader (" not in detail
+
+
+def test_a_spawn_that_raises_is_reported_too(tmp_path):
+    dev = RefusingSpawnDevices("arm-follower", raises=True)
+    ctl, dev, _ = make_controller(tmp_path, devices=dev, backend_factory=_boom_factory)
+    with pytest.raises(HTTPException) as ei:
+        ctl.open(dict(OPEN))
+    assert "arm-follower" in ei.value.detail and "in use" in ei.value.detail
+
+
+def test_a_4xx_after_parking_admits_the_fleet_loss_too(tmp_path):
+    """The dangerous one: a 4xx reads as 'refused, nothing happened' on the client."""
+
+    def refuse_422(**kw):
+        raise ValueError("fps must be positive")
+
+    dev = RefusingSpawnDevices("arm-follower")
+    ctl, dev, _ = make_controller(tmp_path, devices=dev, backend_factory=refuse_422)
+    with pytest.raises(HTTPException) as ei:
+        ctl.open(dict(OPEN))
+    assert ei.value.status_code == 422
+    assert "fps must be positive" in ei.value.detail
+    assert "DID NOT FULLY RECOVER" in ei.value.detail and "arm-follower" in ei.value.detail
+
+
+def test_a_restored_fleet_adds_nothing_to_the_refusal(tmp_path):
+    """No news is no sentence: the ordinary failure must not grow a scary paragraph."""
+    ctl, dev, _ = make_controller(tmp_path, backend_factory=_boom_factory)
+    with pytest.raises(HTTPException) as ei:
+        ctl.open(dict(OPEN))
+    assert ei.value.detail == "could not open the arms: no calibration for 'leader'"
+    assert {c["peer_id"] for c in dev.spawned} == {"arm-leader", "arm-follower"}
+    assert dev.autospawn.suspended is False, "and the watcher is handed back either way"

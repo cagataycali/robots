@@ -101,3 +101,16 @@ for (const kind of KINDS) {
 assert.equal(recordFailure({ kind: 'redo', status: 418, message: 'x' }).ambiguous, true)
 
 console.log('recordOutcome: all assertions passed')
+
+// ── Q101: the inert verdict for `open` must not promise a fleet it cannot see ──
+// A refusal can be raised AFTER both arms were parked, and the respawn can fail; the server names the
+// arm that did not come back in the same message. A blanket "the arms are untouched" contradicted it in
+// one toast, and the reassurance was the wrong half to keep.
+const refusedOpen = recordFailure({ kind: 'open', status: 422, message: 'fps must be positive' })
+assert.equal(refusedOpen.ambiguous, false)
+assert.doesNotMatch(refusedOpen.text, /untouched/)
+assert.match(refusedOpen.text, /unless the message above says otherwise/,
+  'it defers to the server\'s own sentence about the fleet instead of overruling it')
+assert.match(refusedOpen.text, /no session was opened/, 'what IS certain is still stated plainly')
+
+console.log('recordOutcome: Q101 inert-open wording ok')

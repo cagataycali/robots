@@ -37,7 +37,12 @@ export interface RecordFailureVerdict {
 
 /** What did NOT happen, when the server refused before running anything. */
 const INERT: Record<RecordActionKind, string> = {
-  open: 'no session was opened — the arms are untouched and still in the fleet.',
+  // Q101: NOT "the arms are untouched". Opening parks both arms before it builds the recorder, so a
+  // refusal raised after that point has already despawned and respawned them — and when the respawn
+  // fails, the server now names the arm that did not come back in this very message. A blanket
+  // reassurance here would contradict it in the same toast, and the reassurance is the wrong half.
+  open: 'no session was opened and nothing was recorded — and unless the message above says '
+    + 'otherwise, the arms are back in the fleet.',
   start: 'no episode was started — nothing is being recorded.',
   stop: 'the episode was NOT stopped — if one was recording, it still is.',
   redo: 'nothing was thrown away — the take is still there.',

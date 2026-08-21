@@ -32,7 +32,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
@@ -345,16 +345,25 @@ class RecordController:
                     recorder_factory=self._recorder_factory_factory(backend),
                     thumb_dir=self._thumb_root,
                 )
-            except HTTPException:
-                self._unpark_locked()
-                raise
+            # Q101: every path here restores the parked arms, and restoring can FAIL. Whatever the
+            # refusal says, it also has to say that - the operator is looking at this sentence, not
+            # at the server log, and a 4xx otherwise reads as "nothing happened to your fleet".
+            except HTTPException as exc:
+                lost = self._unpark_locked()
+                if not lost:
+                    raise
+                raise HTTPException(
+                    exc.status_code, _with_lost_arms(exc.detail, lost)
+                ) from exc
             except ValueError as exc:
-                self._unpark_locked()
-                raise HTTPException(422, str(exc)) from exc
+                lost = self._unpark_locked()
+                raise HTTPException(422, _with_lost_arms(str(exc), lost)) from exc
             except Exception as exc:
-                # a failed open must leave the fleet exactly as it found it
-                self._unpark_locked()
-                raise HTTPException(500, f"could not open the arms: {exc}") from exc
+                # a failed open must leave the fleet exactly as it found it - and admit it when it could not
+                lost = self._unpark_locked()
+                raise HTTPException(
+                    500, _with_lost_arms(f"could not open the arms: {exc}", lost)
+                ) from exc
             opened = self._worker.session()
             record_crash.write_crumb(opened, path=self._crumb)
             return opened
@@ -509,8 +518,21 @@ class RecordController:
                 self._unpark_locked()
             return result
 
-    def _unpark_locked(self) -> None:
+    def _unpark_locked(self) -> list[str]:
+        """Put the parked arms back, and SAY which ones did not come back (Q101).
+
+        Opening a session despawns both arms before it builds the recorder, so every failure after
+        that point has to restore the fleet. Restoring is best effort - a port can still be held,
+        a spawn can refuse - and this used to swallow that into a ``logger.warning`` nobody reading
+        the record screen can see. The refusal then told the operator "the arms are untouched and
+        still in the fleet" while both cards were vanishing from it.
+
+        So return the losses instead of logging them alone: the caller puts them in the sentence it
+        raises, which is the one place the operator is already looking.
+        """
+        lost: list[str] = []
         for cfg in self._parked:
+            peer = str(cfg.get("peer_id") or "an arm")
             try:
                 res = self._devices.spawn(**cfg)
                 if res.get("error"):
@@ -518,15 +540,39 @@ class RecordController:
                         "respawn of %s after record session failed: %s",
                         cfg.get("peer_id"), res["error"],
                     )
+                    lost.append(f"{peer} ({res['error']})")
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "respawn of %s after record session failed: %r",
                     cfg.get("peer_id"), exc,
                 )
+                lost.append(f"{peer} ({exc})")
         self._parked = []
         watcher = getattr(self._devices, "autospawn", None)
         if watcher is not None:
             watcher.suspended = False
+        return lost
+
+
+def _with_lost_arms(detail: Any, lost: Sequence[str]) -> Any:
+    """Append the arms that did not come back to whatever the refusal was going to say.
+
+    A dict detail keeps its shape (the frontend reads `error`/`hint` fields), a string grows a
+    sentence. The remedy is named because it is not obvious: the arms are gone from the fleet and
+    only the Devices screen brings them back.
+    """
+    if not lost:
+        return detail
+    note = (
+        f"AND THE FLEET DID NOT FULLY RECOVER: {', '.join(lost)} could not be respawned. "
+        "Bring it back from Devices (spawn remembered) before trying again."
+    )
+    if isinstance(detail, dict):
+        merged = dict(detail)
+        merged["arms_not_restored"] = list(lost)
+        merged["hint"] = f"{detail['hint']} {note}" if isinstance(detail.get("hint"), str) else note
+        return merged
+    return f"{detail} - {note}" if detail else note
 
 
 def build_router(
