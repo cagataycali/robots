@@ -42,7 +42,7 @@ function initialPanel(): Panel {
 }
 
 function Dashboard() {
-  const { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded, lastEventAt, everOpen } = useMesh()
+  const { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, loaded, lastEventAt, everOpen } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
   /**
@@ -236,6 +236,7 @@ function Dashboard() {
         online={pwa.online}
         installable={pwa.installable}
         activityCount={activity.length}
+        absentChildren={absentChildren}
         recordMock={recordMock}
         onInstall={() => void pwa.install()}
         onSettings={() => { setSettingsTab(undefined); setPanel('settings') }}

@@ -5,6 +5,8 @@ import type { ActivityEntry, MeshEvent, MeshInfo, Peer } from '../types'
 import { authRefusedRecently, authToken, wsUrl } from './endpoints'
 import { sessionVerdict } from './sessionExpiry'
 
+import type { AbsentChild } from './absentChildren'
+
 export type ConnState = 'connecting' | 'open' | 'closed' | 'unauthorized'
 
 export interface MeshStore {
@@ -18,6 +20,10 @@ export interface MeshStore {
   loaded: boolean
   /** epoch ms of the last frame on the socket (undefined = none yet) */
   lastEventAt?: number
+  /** dead managed children, already pruned from `peers` (U22). [] = none, and an
+   *  older server that never sends the field also yields [] - absentNotice treats
+   *  both as "nothing to say", never as "all present". */
+  absentChildren: AbsentChild[]
   /** true once the socket has opened at least once this session */
   everOpen: boolean
 }
@@ -31,6 +37,7 @@ export function useMesh(): MeshStore {
   const [peers, setPeers] = useState<Record<string, Peer>>({})
   const [safetyFlash, setSafetyFlash] = useState<string | null>(null)
   const [mesh, setMesh] = useState<MeshInfo>({})
+  const [absentChildren, setAbsentChildren] = useState<AbsentChild[]>([])
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [loaded, setLoaded] = useState(false)
   // When the last frame arrived, and whether the socket ever opened this
@@ -109,6 +116,9 @@ export function useMesh(): MeshStore {
             // SERVER's clock, so mergeMeshEvent rebases them by AGE into this browser's.
             setPeers(p => mergeMeshEvent(p, ev, Date.now() / 1000))
             if (ev.mesh) setMesh(ev.mesh)
+            // Replaced wholesale, never merged: the list IS the current answer, so a child
+            // that came back must disappear from it on the very next snapshot.
+            setAbsentChildren(Array.isArray(ev.absent_children) ? ev.absent_children : [])
             setLoaded(true)
             break
           case 'presence':
@@ -151,5 +161,5 @@ export function useMesh(): MeshStore {
     }
   }, [])
 
-  return { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded, lastEventAt, everOpen }
+  return { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, loaded, lastEventAt, everOpen }
 }

@@ -207,8 +207,13 @@ export interface EstopResult {
   lockout_engaged?: boolean
 }
 
+import type { AbsentChild } from './lib/absentChildren'
+
 export type MeshEvent =
-  | { type: 'snapshot'; dashboard_peer_id: string; peers: Record<string, Peer>; mesh?: MeshInfo; t: number }
+  | { type: 'snapshot'; dashboard_peer_id: string; peers: Record<string, Peer>; mesh?: MeshInfo;
+      /** dead managed children, already pruned from `peers` (U22). Optional: a server
+       *  older than the field sends nothing, which must read as "cannot tell you". */
+      absent_children?: AbsentChild[]; t: number }
   | { type: 'presence'; peer_id: string; data: Presence }
   | { type: 'state'; peer_id: string; data: PeerState }
   | { type: 'stream'; peer_id: string; data: StreamStep }
