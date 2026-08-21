@@ -65,3 +65,22 @@ export function teleopView(payload: unknown): TeleopView | null {
   if (worst.refusal) view.consentKind = 'teleop_degree_units'
   return view
 }
+
+/**
+ * U22 slice 2: what may be claimed AFTER a stop was sent.
+ *
+ * "Stopped!" is a claim about a real arm, and the whole reason teleop_health.py exists is that the
+ * optimistic version of this sentence was already believed once: /teleop/receive answered "Teleop
+ * receive started" for a stream in which every single frame was refused. So the verdict after a stop
+ * comes from ASKING AGAIN, never from the fact that the request returned 200 — and a re-ask that
+ * still shows frames on the wire is a FAILURE, however cleanly the POST succeeded.
+ */
+export function stopVerdict(after: TeleopView | null): { ok: boolean; line: string } {
+  if (!after) {
+    return { ok: false, line: 'stop was sent, but the arm did not answer when asked again — nothing confirms it landed' }
+  }
+  if (after.streaming) {
+    return { ok: false, line: `stop was sent, but frames are STILL on the wire: ${after.headline}` }
+  }
+  return { ok: true, line: `teleop stopped — ${after.headline}` }
+}

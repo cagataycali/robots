@@ -5,7 +5,7 @@ import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
 import { twinButtonCopy } from '../lib/twinButton'
 import { statusSentence, peerStatusFields } from '../lib/statusSentence'
-import { teleopView, type TeleopView } from '../lib/teleopView'
+import { teleopView, stopVerdict, type TeleopView } from '../lib/teleopView'
 import { api } from '../lib/endpoints'
 import { useTelemetry } from '../lib/useTelemetry'
 import CameraTile from './CameraTile'
@@ -58,6 +58,21 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, onC
     // A failed ASK is not an idle arm: say the ask failed. endpoints already explains a 404 from an
     // older server, and swallowing this into "no teleop" would be the same lie the counters told.
     catch { setTeleop('unreachable') }
+  }
+  /* U22 slice 2. STOPPING is the safe direction — it can only remove commands from an arm — so it
+     needs no consent, but it does need (a) an armed two-step, because a mis-click during a good
+     recording session costs the operator the take, and (b) a MEASURED result: the sentence afterwards
+     comes from asking again, never from the POST returning 200. */
+  const [stopArmed, setStopArmed] = useState(false)
+  const [stopped, setStopped] = useState<{ ok: boolean; line: string } | null>(null)
+  const stopTeleop = async () => {
+    setStopArmed(false); setStopped(null); setTeleop('asking')
+    try { await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/stop`, { method: 'POST' }) }
+    catch (e) { setTeleop('unreachable'); setStopped({ ok: false, line: `stop was refused: ${(e as Error).message}` }); return }
+    let after: TeleopView | null = null
+    try { after = teleopView(await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop`)) } catch { after = null }
+    setTeleop(after ?? 'unreachable')
+    setStopped(stopVerdict(after))
   }
   /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLElement | null>(null)
@@ -160,6 +175,22 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, onC
             {teleop.detail && <div className="muted small">{teleop.detail}</div>}
             {/* The envelope is a SAFETY bound: the screen names the consent that widens it and never
                 widens it here. ConsentSettings already renders this kind. */}
+            {teleop.streaming && (
+              stopArmed
+                ? (
+                  <div className="row small">
+                    <button className="btn danger" onClick={stopTeleop}>confirm — stop teleop on {peer.peer_id}</button>
+                    <button className="btn ghost" onClick={() => setStopArmed(false)}>keep it running</button>
+                  </div>
+                )
+                : <button className="btn ghost small" onClick={() => setStopArmed(true)}
+                          title="stop the teleop stream on this arm — it only removes commands, it cannot move anything">
+                    stop teleop
+                  </button>
+            )}
+            {stopped && (
+              <div className={`small ${stopped.ok ? 'muted' : 'warn'}`} role="status">{stopped.line}</div>
+            )}
             {teleop.consentKind && (
               <div className="muted small">every frame is outside the safety envelope — settings › consent › {teleop.consentKind} is where that bound is widened, deliberately and by you</div>
             )}

@@ -1,7 +1,7 @@
 /** U22 slice 1: the server's teleop verdict must reach a human, worst news first — and silence must
  *  stay silence. Subject: npx esbuild src/lib/teleopView.ts --bundle --format=esm --outfile=/tmp/teleopView.mjs */
 import assert from 'node:assert/strict'
-import { teleopView } from '/tmp/teleopView.mjs'
+import { teleopView, stopVerdict } from '/tmp/teleopView.mjs'
 
 // UNASKED IS NOT IDLE. Every shape of "no answer" says nothing at all: an arm that IS streaming would
 // otherwise render as quiet, which is the exact lie the raw counters told on real hardware.
@@ -48,4 +48,19 @@ assert.equal(idleLeader.tone, 'idle'); assert.equal(idleLeader.streaming, false)
 // The server's own worst-first ordering is respected when `worst` is absent but receivers exist.
 const fallback = teleopView({ health: { receivers: { 'a': { state: 'refusing', headline: 'refused' } } } })
 assert.equal(fallback.tone, 'warn')
+// SLICE 2: a stop is only "stopped" when the arm SAYS SO on a re-ask. The optimistic sentence was
+// already believed once in this codebase's history (/teleop/receive answered "started" for a stream
+// whose every frame was refused), so a 200 may never be the evidence.
+const stillOn = stopVerdict(teleopView({ health: { worst: { state: 'following', headline: 'following so101-leader at 9.8Hz' } } }))
+assert.equal(stillOn.ok, false, 'frames still on the wire is a FAILED stop, however clean the POST was')
+assert.match(stillOn.line, /STILL/)
+const refusingAfter = stopVerdict(teleopView({ health: { worst: { state: 'refusing', headline: 'every frame is being refused' } } }))
+assert.equal(refusingAfter.ok, false, 'a refusing stream is still a stream — the arm is being commanded')
+const gone = stopVerdict(teleopView({ health: { receivers: {}, publishers: {} } }))
+assert.equal(gone.ok, true); assert.match(gone.line, /teleop stopped/)
+assert.equal(stopVerdict(teleopView({ health: { worst: { state: 'stopped', headline: 'not following anything' } } })).ok, true)
+// Silence after a stop is NOT success: the arm may be mid-refusal and unable to answer.
+const silent = stopVerdict(null)
+assert.equal(silent.ok, false); assert.match(silent.line, /nothing confirms/)
+
 console.log('teleopView: all assertions passed')
