@@ -70,7 +70,13 @@ export default function JointStrip({
     return (
       <div className="joints empty" data-tone={note.tone} title={note.detail ?? undefined}>
         {note.tone === 'attention' ? '⚠ ' : ''}{note.text}
-        {note.hint && <span className="hint">{note.hint}</span>}
+        {/* Q115: `title` carries the WHOLE remedy because the card CLAMPS this span to 4 lines.
+            A 617-character remedy (the port_in_use one, measured) rendered 163px tall inside a
+            268px card - the reason ate the robot. Clamping without the title would lose the half
+            that matters most: the leader's remedy ends "Do NOT recalibrate", i.e. the sentence
+            that stops someone doing physical work to fix a filename. The drawer and the record
+            panel are NOT clamped, so the full text has a home on screen too. */}
+        {note.hint && <span className="hint" title={typeof note.hint === 'string' ? note.hint : undefined}>{note.hint}</span>}
       </div>
     )
   }

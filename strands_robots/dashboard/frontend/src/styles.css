@@ -472,6 +472,14 @@ body {
    and it used to read the same dim grey as a peer that simply has no joints. */
 .joints.empty[data-tone="attention"] { color: var(--warn, #ffb454); }
 .joints.empty .hint { display: block; color: var(--dim); font-size: 10px; margin-top: 3px; line-height: 1.35; }
+/* A remedy is prose (the measured ones run 396-617 chars), and a grid tile is not a document:
+   unclamped, one silent arm made a 268px card 60% remedy and pushed every sibling down the page.
+   Four lines keep the ACTIONABLE first sentence ("Ask the OS who holds it first: lsof ...") while
+   the element's title holds all of it, and the detail drawer / record panel render it unclamped. */
+.card .joints.empty .hint {
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden; cursor: help;
+}
 .joint { display: flex; align-items: center; gap: var(--s3); }
 .jname { font-size: 10px; font-family: var(--mono); color: var(--dim); width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
 /* Joint-strip freshness (lib/jointFreshness.ts). A frozen stream must not keep
