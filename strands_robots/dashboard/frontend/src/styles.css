@@ -917,6 +917,18 @@ body {
   max-width: 720px; margin: 0 auto;
 }
 .train-head { display: flex; justify-content: space-between; align-items: center; }
+/* Q133: keep this head's ✕ OUT FROM UNDER THE E-STOP. .estop-layer is fixed at the top right with
+   z-index 200 and MUST stay supreme — an emergency stop that a panel can cover is not an emergency
+   stop. But .train-sheet (z-index 70) is max-width 720 centred inside inset:0, so its right edge
+   tracks the viewport: the ✕ lands under the e-stop's footprint for every width below ~944px
+   (measured: at 390 the ✕ spans 350-374 and the e-stop 283-376; at 844, 742-766 vs 710-830; at
+   1024 they no longer touch). The consequence was not cosmetic — on every phone, portrait AND
+   landscape, elementFromPoint at the ✕'s centre returned button.estop, so the gesture for "close
+   this panel" pressed the fleet's stop instead, and the panel could not be closed at all.
+   The head reserves the corner instead; the e-stop keeps its z-index. */
+@media (max-width: 960px) {
+  .train-sheet .train-head { padding-right: 136px; }
+}
 .train-head h2 { font-size: 18px; }
 .train-form {
   display: flex; flex-direction: column; gap: 10px;
