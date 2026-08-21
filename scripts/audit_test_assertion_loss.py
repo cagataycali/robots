@@ -62,6 +62,19 @@ def classify(before: int, after: int, inserted: int, deleted: int, current: int 
     return "suspect" if deleted > inserted else "note"
 
 
+#: audit_all.py forwards a finding line only if its FIRST TOKEN is one of its news words, so a verdict
+#: whose tag is not in that vocabulary is invisible in the runner's summary — which is how 'healed'
+#: findings vanished from the first real run of this audit inside audit_all (measured, not guessed).
+#: tests/test_audit_test_assertion_loss.py imports audit_all's own NEWS_WORDS and checks these against it,
+#: so if the runner's vocabulary ever changes, the divergence fails a test instead of silencing findings.
+_TAGS = {"suspect": "FAIL   suspect", "healed": "note   healed", "note": "note   refactor?"}
+
+
+def line_tag(verdict: str) -> str:
+    """The prefix a finding is printed with — first token must be a word audit_all forwards."""
+    return _TAGS[verdict]
+
+
 def _git(*args: str) -> str:
     return subprocess.run(["git", *args], capture_output=True, text=True).stdout
 
@@ -111,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {len(pairs)} (commit, test file) pair(s) with deletions checked across "
               f"{len(commits)} commit(s) since {args.since!r}")
         for f in findings:
-            tag = {"suspect": "SUSPECT", "healed": "healed ", "note": "note   "}[f["verdict"]]
+            tag = line_tag(f["verdict"])
             print(f"  {tag} {f['commit']} {f['file'].split('/')[-1]}: {f['before']} -> {f['after']} "
                   f"assertions (+{f['inserted']}/-{f['deleted']} lines)")
             print(f"          {f['subject'][:100]}")
