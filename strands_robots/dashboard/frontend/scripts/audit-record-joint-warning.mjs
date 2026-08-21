@@ -52,8 +52,16 @@ const page = await ctx.newPage()
 page.on('pageerror', e => failures.push(`page threw: ${String(e.message).slice(0, 180)}`))
 await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(5000)
+/* TIMING TRAP, and it cost a whole journal entry: the arm <select>s render from peers immediately but
+   the MEASURED roles arrive from a separate /api/devices request, so an audit that reads the options a
+   couple of seconds after the click sees "role not measured" on an arm that was measured at 12.6V — and
+   reports a role bug that does not exist. Wait for the request the labels depend on.
+   (Related: do NOT probe an API with page.evaluate(fetch) — the app attaches the bearer token itself, so
+   a bare in-page fetch 401s while the app's own request beside it returns 200.) */
+const devicesDone = page.waitForResponse(r => r.url().includes('/api/devices') && r.status() === 200, { timeout: 15000 })
 await page.locator('button.chip:has-text("record")').first().click()
-await page.waitForTimeout(3000)
+await devicesDone.catch(() => {})
+await page.waitForTimeout(1500)
 
 /* The arm selects are found by their LABEL, not their index: this screen has six selects and the
    policy pickers come first. */
