@@ -46,6 +46,13 @@ _AGENT_MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
 _TASK_CONFIRM_ENV = "STRANDS_DASH_TASK_REQUIRES_CONFIRM"
 _TELEOP_VALUE_ENV = "STRANDS_MESH_INPUT_VALUE_ABS"
 _TELEOP_SLEW_ENV = "STRANDS_MESH_INPUT_SLEW_ABS"
+#: Q119. The SDK refuses FIVE things by allowlist and only ONE of them reached this module.
+#: Measured by calling security.validate_command for each: pretrained_name_or_path was classified,
+#: while policy_provider, policy_type and policy_host ended in a dead end - the exact complaint
+#: ("these validation errors should be something I can continue over the UI") that consent exists to
+#: answer. provider and type SHARE this variable, and the SDK's own sentence says so:
+#: "Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend (provider and policy_type share one allowlist)".
+_POLICY_TYPE_ENV = "STRANDS_MESH_POLICY_TYPE_ALLOW"
 #: Degrees plus a percent gripper: 400 covers a multi-turn wrist with headroom
 #: and still refuses a runaway three orders of magnitude out. Not "unlimited" -
 #: the envelope is the point, only its UNIT was wrong.
@@ -60,6 +67,9 @@ _PROVIDER_RE = re.compile(r"provider '([^']{1,120})'")
 _REPO_QUOTED_RE = re.compile(r"pretrained_name_or_path=(['\"])(.{0,250}?)\1")
 _REPO_BARE_RE = re.compile(r"pretrained_name_or_path=([^\s,]{1,250})")
 _PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+#: Taken only from the SDK's fixed `policy_provider=` / `policy_type=` prefix, quoted or bare, so a
+#: paraphrase wrapped around the refusal cannot become the subject (the _AGENT_TARGET_RE rule).
+_POLICY_SUBJECT_RE = re.compile(r"policy_(?:provider|type)=(?:'([^']{1,80})'|\"([^\"]{1,80})\"|([^\s,]{1,80}))")
 
 #: The refusal text can be a whole traceback; keep the evidence bounded.
 _MAX_MESSAGE = 2000
@@ -100,6 +110,7 @@ KINDS: tuple[str, ...] = (
     "hf_repo_allow",
     "teleop_degree_units",
     "agent_physical_motion",
+    "policy_type_allow",
 )
 
 
@@ -193,6 +204,32 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
             ),
         )
 
+    if kind == "policy_type_allow":
+        # One variable, two things the SDK refuses with it. The grant is deliberately NARROW - this
+        # name only - mirroring hf_repo_allow: an operator approving "lerobot_async" must not be
+        # opening every policy type the SDK can construct.
+        if name is not None and not _PROVIDER_NAME_RE.match(name):
+            name = None  # unparseable/hostile: ask, but grant nothing automatically
+        shown = name or "the requested policy"
+        return ConsentRequest(
+            kind=kind,
+            scope=f"policy_type_allow:{name}" if name else "policy_type_allow",
+            title=f"Allow the policy {shown}?",
+            risk=(
+                f"{shown} is not in this machine's policy allowlist, so the mesh refused to build "
+                "it. A policy decides what the arms DO, and approving lets this one be constructed "
+                "and run on real hardware from now on. Exactly this name is added - no wildcard, "
+                "and no other provider."
+            ),
+            env_var=_POLICY_TYPE_ENV,
+            subject=name,
+            message=text,
+            grants=(
+                f"build and run the policy {name}" if name
+                else "nothing yet - the policy name could not be read",
+            ),
+        )
+
     if name is not None and not _HF_ENTRY_RE.match(name):
         name = None  # unparseable/hostile: ask, but grant nothing automatically
     shown = name or "the requested model"
@@ -241,6 +278,11 @@ def classify_refusal(text: object) -> ConsentRequest | None:
         m = _AGENT_TARGET_RE.search(message)
         return build_request("agent_physical_motion", m.group(1) if m else None, message)
 
+    if _POLICY_TYPE_ENV in message:
+        m = _POLICY_SUBJECT_RE.search(message)
+        subject = next((g for g in (m.groups() if m else ()) if g), None)
+        return build_request("policy_type_allow", subject, message)
+
     if _HF_ENV in message:
         quoted = _REPO_QUOTED_RE.search(message)
         bare = _REPO_BARE_RE.search(message)
@@ -276,6 +318,16 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
         if str(env.get(_TELEOP_SLEW_ENV, "")).strip() != _TELEOP_DEGREE_SLEW:
             patch[_TELEOP_SLEW_ENV] = _TELEOP_DEGREE_SLEW
         return patch
+
+    if request.kind == "policy_type_allow":
+        name = request.subject
+        if not name or not _PROVIDER_NAME_RE.match(name):
+            return {}
+        current = [e.strip() for e in str(env.get(_POLICY_TYPE_ENV, "")).split(",") if e.strip()]
+        # No org shortcut here: a policy name has no hierarchy, so nothing broader can cover it.
+        if name in current:
+            return {}
+        return {_POLICY_TYPE_ENV: ",".join(current + [name])}
 
     if request.kind == "hf_repo_allow":
         repo = request.subject
@@ -319,6 +371,11 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
             str(env.get(_AGENT_MOTION_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
         ),
         "hf_repo_allow": allow,
+        # Shown for the same reason the teleop envelope had to be: a grant with no surface cannot
+        # be revoked, while the dialog promises it can.
+        "policy_type_allow": [
+            e.strip() for e in str(env.get(_POLICY_TYPE_ENV, "")).split(",") if e.strip()
+        ],
         "teleop_degree_units": {
             "granted": bool(value_abs or slew_abs),
             "value_abs": value_abs or None,
@@ -375,6 +432,15 @@ def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) 
         if str(env.get(_TELEOP_SLEW_ENV, "")).strip():
             patch[_TELEOP_SLEW_ENV] = ""
         return patch
+
+    if request.kind == "policy_type_allow":
+        name = request.subject
+        if not name:
+            return {}
+        current = [e.strip() for e in str(env.get(_POLICY_TYPE_ENV, "")).split(",") if e.strip()]
+        if name not in current:
+            return {}
+        return {_POLICY_TYPE_ENV: ",".join(e for e in current if e != name)}
 
     if request.kind == "hf_repo_allow":
         repo = request.subject
