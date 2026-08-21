@@ -9,6 +9,7 @@ import { sessionFreshness, staleSuffix } from '../lib/sessionFreshness'
 import { api as httpGet, HttpError } from '../lib/endpoints'
 import { recordFailure, type RecordActionKind } from '../lib/recordOutcome'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
+import { armJointWarning } from '../lib/recordArms'
 import { noArmsVerdict, type RememberedBoard } from '../lib/noArms'
 import { episodeTarget } from '../lib/episodeTarget'
 import { fpsField, fpsSuggestion } from '../lib/recordFps'
@@ -137,6 +138,21 @@ export default function RecordPanel(
   const followerPeer = peers.find(p => p.peer_id === form.follower)
   const deadCams = stoppedCameras(followerPeer?.cameras, Date.now() / 1000)
   const camWarning = cameraWarning(deadCams, { peerId: form.follower })
+
+  // An arm that cannot report where it is cannot be recorded from: the follower's positions are the
+  // dataset's observations and the leader's are its actions. The backend refuses this too (409,
+  // record_joints) - asking here means the operator finds out before naming a dataset and setting up
+  // a scene. Same rule as the server's, deliberately: a form that predicted a refusal the server
+  // would not make would be worse than no prediction.
+  const jointWarnings = ([
+    ['leader', form.leader],
+    ['follower', form.follower],
+  ] as const)
+    .map(([slot, pid]) => ({
+      slot,
+      msg: armJointWarning(peers.find(p => p.peer_id === pid), { slot, nowS: Date.now() / 1000 }),
+    }))
+    .filter((x): x is { slot: 'leader' | 'follower'; msg: string } => !!x.msg)
   const [camAck, setCamAck] = useState(false)
 
   // The SERVER's camera gates (frame age, enumeration, identity) each refuse with
@@ -437,6 +453,11 @@ export default function RecordPanel(
               </span>
             </label>
           )}
+          {/* No acknowledgement offered, unlike the camera warnings: the server's refusal for this
+              has no override flag, and a tick that cannot change the outcome is a lie. */}
+          {jointWarnings.map(({ slot, msg }) => (
+            <div key={`joints-${slot}`} className="train-msg warn" role="alert">⚠ {msg}</div>
+          ))}
           {camWarning && (
             <div className="train-msg warn">⚠ {camWarning}</div>
           )}
@@ -462,7 +483,8 @@ export default function RecordPanel(
                               || !form.leader || !form.follower || form.leader === form.follower
                               || !!wanted.problem || !!rate.problem
                               || (problems.length > 0 && !ack)
-                              || (!!camWarning && !camAck)}>
+                              || (!!camWarning && !camAck)
+                              || jointWarnings.length > 0}>
               {openCopy.label}
             </button>
           </div>
