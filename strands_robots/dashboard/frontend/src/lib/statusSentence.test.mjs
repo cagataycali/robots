@@ -109,3 +109,68 @@ assert.match(ribbonDetail(noJoints), /publishes no joint positions/)
 assert.match(ribbonDetail(measuring), /motion not measured yet/)
 
 console.log('statusSentence: silence-is-not-stillness assertions ok')
+
+// ── Q93: the fixture shape was the bug ──
+// Every case in this file built `taskStatus: 'idle'` or `'running'`, so it could not EXPRESS the other
+// four values the SDK actually publishes: TaskStatus in hardware_robot.py is
+// idle | connecting | running | completed | stopped | error. statusSentence branched on 'running'
+// alone, so the remaining four fell through to the green sentence. MEASURED before the fix:
+// taskStatus 'error' returned { severity: 'ok', word: 'idle', text: 'idle and still — safe to
+// approach' }. A crashed policy rendered as a calm green card.
+const TASK_STATUSES = ['idle', 'connecting', 'running', 'completed', 'stopped', 'error']
+
+for (const status of TASK_STATUSES) {
+  const line = statusSentence({ ...base, taskStatus: status })
+  if (status === 'idle' || status === 'completed') {
+    assert.equal(line.text, 'idle and still — safe to approach',
+                 `${status} IS idle, and with motion measured still it earns the green sentence`)
+  } else {
+    assert.doesNotMatch(line.text, /safe to approach/, `Q93: "${status}" must never render the safety claim`)
+  }
+}
+
+// connecting is the WORST possible moment for "safe to approach": the instant before torque engages.
+const connecting = statusSentence({ ...base, taskStatus: 'connecting' })
+assert.equal(connecting.word, 'starting')
+assert.equal(connecting.severity, 'active')
+assert.match(connecting.text, /torque can engage.*without warning/, 'and it says why to keep clear')
+
+// a task that ENDED BADLY is not an idle robot: no safety claim, and it says where the arm is.
+const failed = statusSentence({ ...base, taskStatus: 'error' })
+assert.equal(failed.severity, 'warn')
+assert.equal(failed.word, 'failed')
+assert.match(failed.text, /stopped wherever it/, 'the arm did not go home; it stopped mid-task')
+
+// `stopped` is deliberately NOT a warning — an operator pressing stop is normal, and an amber card
+// after every normal stop is alarm fatigue. It only has to stop claiming safety.
+const stopped = statusSentence({ ...base, taskStatus: 'stopped' })
+assert.equal(stopped.severity, 'ok', 'pressing stop is not an anomaly')
+assert.match(stopped.text, /resume/, 'but a resume moves an arm parked mid-task')
+
+// AN UNRECOGNISED STATUS IS NO EVIDENCE, and no evidence cannot earn the green sentence. Before this,
+// any state a newer SDK invents rendered as "safe to approach" purely because it was not 'running'.
+const paused = statusSentence({ ...base, taskStatus: 'paused' })
+assert.equal(paused.word, 'unknown')
+assert.equal(paused.severity, 'warn')
+assert.match(paused.text, /paused/, 'quote the state back, so the operator can look it up')
+assert.match(paused.text, /stillness is not confirmed/)
+
+// MOTION STILL WINS over a task-status sentence: a moving arm is the more urgent physical claim.
+assert.equal(statusSentence({ ...base, taskStatus: 'error', moving: true }).word, 'moving',
+             'an arm moving after a failed task is a MOVING arm first')
+assert.equal(statusSentence({ ...base, taskStatus: 'stopped', moving: true }).word, 'moving')
+// ...except during connecting, where motion is the robot homing itself, not a stranger commanding it.
+const homing = statusSentence({ ...base, taskStatus: 'connecting', moving: true })
+assert.equal(homing.word, 'starting')
+assert.match(homing.text, /ALREADY MOVING/)
+assert.equal(homing.severity, 'warn', 'and that IS worth amber — it moved before anyone asked')
+
+// the dead-peer and hardware sentences still outrank every task status.
+assert.equal(statusSentence({ ...base, taskStatus: 'error', stale: true }).word, 'offline')
+assert.equal(statusSentence({ ...base, taskStatus: 'connecting', hwConnected: false }).word, 'no hw')
+// whitespace and case come off the wire unevenly.
+assert.equal(statusSentence({ ...base, taskStatus: ' ERROR ' }).word, 'failed')
+assert.equal(statusSentence({ ...base, taskStatus: '' }).text, 'idle and still — safe to approach',
+             'an empty status is the same silence as no status at all')
+
+console.log('statusSentence: Q93 task-status assertions ok')

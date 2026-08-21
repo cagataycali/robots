@@ -84,7 +84,8 @@ export function statusSentence(f: StatusFacts): StatusLine {
     }
   }
 
-  const running = (f.taskStatus ?? '').toLowerCase() === 'running'
+  const status = (f.taskStatus ?? '').trim().toLowerCase()
+  const running = status === 'running'
 
   if (running) {
     const what = f.instruction ? ` ${quote(f.instruction)}` : ''
@@ -104,12 +105,63 @@ export function statusSentence(f: StatusFacts): StatusLine {
     }
   }
 
+  // Coming up. The SDK's TaskStatus has SIX values (idle, connecting, running, completed, stopped,
+  // error) and this function used to branch on 'running' alone, so every other one fell through to the
+  // green "safe to approach" sentence below (Q93). `connecting` is the worst possible moment for that
+  // claim: it is the instant BEFORE torque engages.
+  if (status === 'connecting') {
+    return f.moving === true
+      ? {
+          severity: 'warn',
+          word: 'starting',
+          text: 'bringing the hardware up and the arm is ALREADY MOVING — homing or a queued command, keep hands clear',
+        }
+      : {
+          severity: 'active',
+          word: 'starting',
+          text: 'bringing the hardware up — torque can engage and the arm move without warning, keep hands clear',
+        }
+  }
+
   // Idle per the task state - but is it actually still?
   if (f.moving === true) {
     return {
       severity: 'warn',
       word: 'moving',
       text: 'arm is MOVING with no task — teleop or another client is commanding it, keep hands clear',
+    }
+  }
+
+  // A task that ENDED BADLY is not the same thing as an idle robot (Q93). Neither of these claims
+  // safety; both say where the arm is and what would move it.
+  if (status === 'error') {
+    return {
+      severity: 'warn',
+      word: 'failed',
+      text: 'the task ended in ERROR — nothing is commanding the arm now, but it stopped wherever it '
+        + 'got to; read the robot log before approaching',
+    }
+  }
+  if (status === 'stopped') {
+    // Deliberately not a warning: an operator pressing stop is normal, and an amber card after every
+    // normal stop is alarm fatigue. It simply must not say "safe to approach" about an arm parked
+    // mid-task that a resume would move.
+    return {
+      severity: 'ok',
+      word: 'stopped',
+      text: 'the task was stopped before finishing — the arm is holding where it stopped, and a resume '
+        + 'would move it from there',
+    }
+  }
+  // An unrecognised status is NO EVIDENCE, and no evidence cannot earn the green sentence. This is the
+  // future-proofing the old code lacked: 'paused' or any state a newer SDK invents used to render as
+  // "idle and still - safe to approach" simply because it was not the string 'running'.
+  if (status !== '' && status !== 'idle' && status !== 'completed') {
+    return {
+      severity: 'warn',
+      word: 'unknown',
+      text: `the robot reports task status ${quote(status, 24)} — this dashboard does not know that `
+        + 'state, so stillness is not confirmed here',
     }
   }
 
