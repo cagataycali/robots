@@ -3,6 +3,7 @@ import { useVoice } from '../lib/useVoice'
 import { post, wsUrl, authRefusedRecently } from '../lib/endpoints'
 import { useConfig } from '../lib/useConfig'
 import { sendFailureVerdict, interruptionNotice, bubbleLabel } from '../lib/chatDelivery'
+import { turnAnnouncement } from '../lib/agentAnnounce'
 import ConsentSheet from './ConsentSheet'
 import { type ConsentNeed } from '../lib/consent'
 
@@ -193,7 +194,18 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
             <button className="btn ghost" onClick={clearHistory} title="Forget the conversation">clear</button>
             {onSettings && <button className="btn ghost" onClick={onSettings} title="Model & prompt">⚒</button>}
           </div>
-          <div className="dock-scroll" ref={scrollRef}>
+          {/* Q157: a `log` (a transcript that appends), NAMED so it can be found, and with live
+              updates explicitly OFF. patchAgent appends deltas token by token, so a live region
+              here would stutter the reply word by word and re-interrupt itself for its whole
+              length — unstoppable and unreadable. The settled turn is announced below instead. */}
+          <div
+            className="dock-scroll"
+            ref={scrollRef}
+            role="log"
+            aria-label="conversation with the fleet agent"
+            aria-live="off"
+            aria-busy={busy || undefined}
+          >
             {msgs.length === 0 && (
               <div className="dock-hint">
                 Ask the fleet agent anything:<br />
@@ -233,6 +245,11 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
                 </div>
               )
             ))}
+          </div>
+          {/* One sentence per finished turn — the only thing spoken automatically. aria-atomic
+              because a partial re-read of a reply is not a reply. */}
+          <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {turnAnnouncement({ busy, last: msgs[msgs.length - 1], error: connError })}
           </div>
           {connError && <div className="dock-notice bad">⚠ {connError}</div>}
           {voice.transcript && <div className="voice-transcript">{voice.transcript}</div>}
