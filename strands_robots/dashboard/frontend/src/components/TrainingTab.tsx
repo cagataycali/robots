@@ -10,6 +10,7 @@ import { fieldSupport } from '../lib/serverFields'
 import { sideEffectVerdict, type SideEffectKind } from '../lib/submitOutcome'
 import LossSpark from './LossSpark'
 import { pushLoss, fmtStep, type LossPoint } from '../lib/lossTrace'
+import { jobTransitions, type JobStateMap } from '../lib/jobAnnounce'
 import { setDeployIntent } from '../lib/deployIntent'
 import { datasetKey as dsKey, selectDataset, selectionKey, replayable, trainable, selectedRow, datasetMark, episodeChoice, type DatasetRow } from '../lib/datasetSelection'
 import { datasetHint, isCurrentResponse } from '../lib/datasetHint'
@@ -68,6 +69,12 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({})
+  /* Q159: training is the longest thing this dashboard does — minutes to hours, watched by
+   * nobody for most of it — and the end of a run had no signal at all: a failure looked
+   * exactly like still-working until you came back and read the word. Announced from the
+   * POLL, as a transition, so a state that keeps being reported is not said twice. */
+  const [jobSay, setJobSay] = useState('')
+  const seenStates = useRef<JobStateMap>({})
   // WHEN each status was last read, and how many reads have failed since - a
   // swallowed poll error used to leave a dead run rendering as healthy progress.
   const [polledAt, setPolledAt] = useState<Record<string, number>>({})
@@ -178,6 +185,19 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     }, 250)
     return () => clearTimeout(t)
   }, [dsQuery])
+
+  useEffect(() => {
+    const now: JobStateMap = {}
+    for (const [id, st] of Object.entries(statuses)) {
+      const state = st?.data?.status
+      if (typeof state === 'string' && state) now[id] = state
+    }
+    const said = jobTransitions(seenStates.current, now)
+    // Merged, not replaced: a job that drops out of the poll must not be re-announced if
+    // it comes back, and a finished job's state is what proves it was already told.
+    seenStates.current = { ...seenStates.current, ...now }
+    if (said) setJobSay(said)
+  }, [statuses])
 
   // poll running job statuses every 5s
   useEffect(() => {
@@ -795,6 +815,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         ))}
 
         <h3>Jobs</h3>
+        {/* The only automatic speech on this screen: one atomic sentence when a run ends. */}
+        <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{jobSay}</div>
         {/* Rendered for ANY count: a partial list is the dangerous case, because
             the cards that survived make it look complete. */}
         {(() => {
