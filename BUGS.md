@@ -1,0 +1,33 @@
+
+## Q155 — MEASURED CONTRADICTIONS on the live rig (2026-08-22 02:2xZ, read-only, cagatay away)
+
+Evidence first, conclusions marked as such. Measured with the dashboard's own token against pid 2519
+(alive 2d04h, terminal-blessed Aug 19 start), plus `lsof` and `ps`.
+
+**(a) `presence.connected = True` for an arm whose servo bus NOBODY HOLDS.**
+`/api/fleet` shows exactly two peers, `so101-follower` and `so101-leader`, both `stale=False`,
+`connected=True`, `joints=0`, camera `main` present. But `lsof /dev/cu.usbmodem5AB01584281` and
+`…5AB01818061` return **nothing at all** — no process holds either port. An earlier caretaker check
+(2026-08-20) got holders WITH byte offsets from the same command, so this is a real change, not a tool
+limitation. hardware_robot.py documents `is_connected` as deliberately describing THE MOTORS (blind
+cameras are dropped so one refusing camera cannot report the whole robot as disconnected, lines 343-361).
+A motors-truth flag reading True while no process holds the motor port is a contradiction.
+CONSEQUENCE IF CONFIRMED: `statusSentence`/`connBadge` consume `hwConnected`, so the fleet asserts
+"hardware connected" for two arms that never opened their bus. The mute-arm warning (jointAbsence) is
+the only thing saving the screen from reading fully healthy.
+NOT YET DONE: prove where the flag is set relative to the bus open, and whether the follower's Q26
+"Port is in use!" happened BEFORE or AFTER it was set.
+
+**(b) a peer disappeared from the fleet while its process kept running.**
+The sim twin (`so101-follower-twin` + `…__so101`) is GONE from `/api/fleet` — yet pid 37603, the
+dashboard-spawned SIM child (`sim.add_camera(name=f"{n}/front"…`), is alive with 1d01h44m uptime. So the
+mesh pruned/lost a peer whose process the dashboard is still parenting. That is exactly the pair the U15
+`origin` rail (managed vs external) and the ageing-protection share a source for, and it deserves a look:
+a managed child should not be able to age out of the fleet while its process runs — or, if it can, the
+managed list is the place that knows and should say so.
+
+**(c) not a bug, recorded so the disk alarm is not re-raised:** root has **98Gi** available of 926Gi. The
+Aug-21 bleed (32 -> 21 -> 18Gi) fully reversed on its own; nothing was deleted by any loop.
+
+Neither (a) nor (b) was acted on: fixing them means respawning arms on hardware nobody is standing next
+to, and the supervisor law is never to restart. Both are diagnosis-ready for the next iteration.
