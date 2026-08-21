@@ -20,8 +20,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const SRC = path.resolve(import.meta.dirname, '..', 'src')
-// Q139 removed 'dev-snippet' and 'snippet' from this list by WRITING THE RULES, which is the only
-// permitted way out of it. 8 left.
+// Q139 removed 'dev-snippet' and 'snippet' from this list, Q140 removed 'thumb-loading' — each by
+// WRITING THE RULES, which is the only permitted way out of it. 7 left.
 const KNOWN_UNDEFINED = new Set([
   'bubble-text',      // AgentDock: the message text inside a chat bubble
   'camgallery',       // CameraGallery: the whole gallery wrapper
@@ -30,7 +30,6 @@ const KNOWN_UNDEFINED = new Set([
   'preset-row',       // SettingsDrawer: a row of preset buttons
   'rec-disk-notice',  // RecordPanel: the disk-space warning (rides on .train-msg, which IS defined)
   'src',              // ActivityLog: the source icon column
-  'thumb-loading',    // AuthedImg: the placeholder span before a thumbnail arrives — no rule = no size
 ])
 
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>

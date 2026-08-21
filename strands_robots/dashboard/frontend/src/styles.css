@@ -1781,3 +1781,16 @@ pre.startsnip {
   border-radius: var(--s3); background: var(--glass-1); border: 1px solid var(--glass-border); }
 .dev-snippet pre.snippet { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; max-width: 100%;
   margin: var(--s2) 0 0; font-size: 0.78rem; line-height: 1.45; }
+
+/* Q140: the thumbnail that has not arrived yet (AuthedImg). The class was in the JSX since Q127 and had
+   NO rule, so an empty <span> is 0x0: three placeholders in a 0-height row, then the pictures pop in and
+   shove the layout. Q127 exists because a broken thumbnail reads as "the recording captured nothing" —
+   the LOADING state was telling the operator the same lie, and for longer, because these bytes come
+   through an authed fetch over the tunnel. Geometry MIRRORS `.rec-thumbs img` exactly (width, min-width,
+   aspect-ratio, radius) so the swap from placeholder to picture shifts nothing. */
+.thumb-loading { display: block; width: 100%; min-width: 0; aspect-ratio: 4/3; border-radius: 6px;
+  background: var(--glass-1); border: 1px solid var(--glass-border);
+  animation: thumb-pulse 1.4s ease-in-out infinite; }
+@keyframes thumb-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.85; } }
+/* A pulsing box says "coming", a still box says "empty" — but only for people who want motion. */
+@media (prefers-reduced-motion: reduce) { .thumb-loading { animation: none; opacity: 0.6; } }
