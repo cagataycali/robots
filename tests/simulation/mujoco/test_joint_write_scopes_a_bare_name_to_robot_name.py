@@ -31,6 +31,7 @@ that names no joint of ``robot_name`` but does name one elsewhere in the scene.
 
 import os
 import tempfile
+from typing import Any
 
 import numpy as np
 import pytest
@@ -227,9 +228,17 @@ def test_list_form_writes_the_addressed_robot(sim):
 
 
 # A robot_name that cannot key the robot registry, one per unhashable builtin a
-# caller might plausibly pass by mistake, mirroring the set in
+# caller might plausibly pass by mistake (a single-element list is what wrapping
+# a name in brackets produces; a dict is what a half-built kwargs mapping looks
+# like). Spelled out rather than derived from the types so the values are the
+# ones a caller would actually pass, and to cover the same set as
 # tests/simulation/test_unhashable_entity_name_is_reported.py.
-UNHASHABLE_ROBOT_NAMES = [(t.__name__, t(["bob"]) if t is not dict else {"bob": 1}) for t in (list, set, dict)]
+UNHASHABLE_ROBOT_NAMES: list[tuple[str, Any]] = [
+    ("list", ["bob"]),
+    ("dict", {"bob": 1}),
+    ("set", {"bob"}),
+    ("bytearray", bytearray(b"bob")),
+]
 
 
 @pytest.mark.parametrize("kind,robot_name", UNHASHABLE_ROBOT_NAMES, ids=[k for k, _ in UNHASHABLE_ROBOT_NAMES])
