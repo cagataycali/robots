@@ -147,7 +147,7 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
         </div>
       )}
 
-      <JointStrip state={peer.state} presence={p} problem={peer.joint_problem} />
+      <JointStrip state={peer.state} presence={p} problem={peer.joint_problem} peerStale={peer.stale} />
       <TelemetryStrip peer={peer} />
 
       {peer.stream && (

@@ -54,6 +54,13 @@ export interface AbsenceInput {
     /** How long it has been failing, in seconds, when the peer reports it. */
     for_seconds?: number | null
   } | null
+  /**
+   * The dashboard's OWN presence-derived staleness for this peer (`stale` in the fleet snapshot).
+   * An INDEPENDENT rail: presence publishes ~1Hz while a state probe's cadence is the robot's own,
+   * so a fresh presence proves the process is alive no matter how far behind the state document is.
+   * Absent/null = unknown, which must never be read as "alive" (silence is not evidence).
+   */
+  peerStale?: boolean | null
   nowS: number
 }
 
@@ -127,6 +134,23 @@ export function jointAbsence(input: AbsenceInput): AbsenceNote {
 
   if (!stateArriving) {
     const ago = ageS < 90 ? `${Math.round(ageS)}s` : ageS < 5400 ? `${Math.round(ageS / 60)}m` : `${(ageS / 3600).toFixed(1)}h`
+    // MEASURED 2026-08-22 on cagatay's live fleet, and it made this branch LIE: both real arms publish
+    // state every ~11s, so with STATE_QUIET_S = 10 they crossed this line on every single cycle and the
+    // card said "its process may have exited" about two processes that had been alive for 27 hours and
+    // whose presence was current. The threshold is not the thing to tune -- a state probe's cadence
+    // belongs to the robot, and any constant here is a guess about someone else's loop. Presence is a
+    // SEPARATE rail: when the dashboard's own ageing says this peer is not stale, the process is alive
+    // as a measured fact, so the guess that it exited must not be printed. What remains true, and
+    // actionable, is that the state document carries no joints -- which is the servo bus, not the mesh.
+    if (input.peerStale === false) {
+      return {
+        text: `state is ${ago} behind — no joints in it`,
+        tone: 'attention',
+        hint: verdict?.remedy
+          ?? 'the process is alive (presence is current), so the servo-bus read is what fails: devices > logs for this peer',
+        detail: verdict?.detail ?? null,
+      }
+    }
     // The default hint RULES OUT the servo bus ("the peer or the mesh, not the servo bus"), which is a
     // claim — and a claim the child's own log can contradict: an arm whose probe died on "Port is in
     // use!" went quiet BECAUSE of the bus. Where a verdict exists, it is evidence and the guess is not,

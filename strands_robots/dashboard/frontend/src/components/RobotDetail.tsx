@@ -201,7 +201,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, onC
 
           <div className="side">
             <h3>Joints ({joints.length})</h3>
-            <JointStrip state={peer.state} presence={p} problem={peer.joint_problem} />
+            <JointStrip state={peer.state} presence={p} problem={peer.joint_problem} peerStale={peer.stale} />
             {joints.length > 0 && (
               <table className="jointtable">
                 <thead><tr><th>joint</th><th>pos</th><th>vel</th></tr></thead>

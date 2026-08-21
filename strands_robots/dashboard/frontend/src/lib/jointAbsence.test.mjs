@@ -213,3 +213,44 @@ const UNCAL = {
   // With no verdict the guess is the best available answer and stays.
   assert.match(jointAbsence(quiet).hint, /not the servo bus/)
 }
+
+// --- presence is a SEPARATE rail from the state probe (measured 2026-08-22) ------------------------
+// On cagatay's live fleet both real arms publish state every ~11s while STATE_QUIET_S is 10, so this
+// branch fired on EVERY cycle and told the operator "its process may have exited" about two processes
+// that had been alive for 27 hours with current presence. Presence (~1Hz, aged by the dashboard
+// itself) is independent evidence, so where it says the peer is not stale, the exit guess is banned.
+{
+  const alive = { connected: true, hw: 'so_follower' }
+  const nowS = 1_000_000
+
+  const behind = jointAbsence({ state: { t: nowS - 11 }, presence: alive, peerStale: false, nowS })
+  assert.equal(behind.tone, 'attention', 'joints are still missing: this is not a neutral state')
+  assert.match(behind.text, /11s behind/, 'the lag is still reported, it is a real fact')
+  assert.doesNotMatch(behind.hint ?? '', /may have exited/, 'presence proves it did not exit')
+  assert.match(behind.hint ?? '', /servo-bus|logs/, 'it points at the bus and the log that holds the reason')
+
+  // A peer the dashboard's own ageing calls stale keeps the original sentence: there the guess is
+  // the best available reading, because both rails agree the peer has gone.
+  const gone = jointAbsence({ state: { t: nowS - 11 }, presence: alive, peerStale: true, nowS })
+  assert.match(gone.text, /went quiet/)
+  assert.match(gone.hint ?? '', /may have exited/)
+
+  // UNKNOWN staleness is not "alive". Absent field => unchanged behaviour, so nothing that already
+  // renders this component without the new prop silently changes meaning.
+  for (const unknown of [undefined, null]) {
+    const n = jointAbsence({ state: { t: nowS - 11 }, presence: alive, peerStale: unknown, nowS })
+    assert.match(n.hint ?? '', /may have exited/, `peerStale=${unknown} must not be read as alive`)
+  }
+
+  // A backend verdict still outranks the new hint, exactly as it outranked the old guess.
+  const withVerdict = jointAbsence({
+    state: { t: nowS - 11 }, presence: alive, peerStale: false, nowS,
+    problem: { headline: 'bus busy', remedy: 'stop the other owner of that port', detail: 'Port is in use!' },
+  })
+  assert.equal(withVerdict.hint, 'stop the other owner of that port')
+  assert.equal(withVerdict.detail, 'Port is in use!')
+
+  // And a state document INSIDE the window is untouched by any of this.
+  const fresh = jointAbsence({ state: { t: nowS - 2 }, presence: alive, peerStale: false, nowS })
+  assert.doesNotMatch(fresh.text, /behind|went quiet/)
+}

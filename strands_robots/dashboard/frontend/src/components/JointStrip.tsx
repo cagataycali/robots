@@ -25,9 +25,15 @@ function readValue(v: unknown): number {
 }
 
 export default function JointStrip({
-  state, presence, problem, history: showHistory = true,
+  state, presence, problem, peerStale, history: showHistory = true,
 }: {
   state?: PeerState; presence?: Presence; history?: boolean
+  /**
+   * The fleet snapshot's own `stale` for this peer. Passed through because presence and the state
+   * probe are INDEPENDENT rails: a peer whose presence is current cannot have exited, however far
+   * behind its state document is, and jointAbsence must not print that guess over a measured fact.
+   */
+  peerStale?: boolean | null
   /** the backend's `joint_problem` verdict for this peer (Q80) — absent means nothing is known */
   problem?: { kind?: string | null; headline?: string | null; remedy?: string | null; detail?: string | null } | null
 }) {
@@ -66,7 +72,7 @@ export default function JointStrip({
     // act on differently, and points at the log rather than guessing the cause.
     // Since Q80 the backend may KNOW the reason (it reads the child's log): a held serial port and
     // an uncalibrated board are opposite remedies that both used to render as the same shrug.
-    const note = jointAbsence({ state, presence, problem, nowS: nowMs / 1000 })
+    const note = jointAbsence({ state, presence, problem, peerStale, nowS: nowMs / 1000 })
     return (
       <div className="joints empty" data-tone={note.tone} title={note.detail ?? undefined}>
         {note.tone === 'attention' ? '⚠ ' : ''}{note.text}
