@@ -13,6 +13,7 @@
  * Run: node scripts/audit-devices-remembered.mjs   (running dashboard on :8090 + node playwright)
  */
 import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { blockMutations } from './lib/audit-guard.mjs'
 import fs from 'node:fs'
 
 const TOKEN = fs.readFileSync(
@@ -105,6 +106,10 @@ const doc = {
 const browser = await chromium.launch()
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' })
 const page = await ctx.newPage()
+/* The audit hardware guard goes FIRST: playwright matches handlers in REVERSE registration order, so
+   every fixture below still wins, and any MUTATING request this audit forgot to intercept is blocked
+   and recorded instead of reaching the running dashboard (which spawns processes and commands arms). */
+const guard = await blockMutations(page)
 const thrown = []
 const spawns = []
 page.on('pageerror', e => thrown.push(String(e.message).slice(0, 160)))
@@ -289,6 +294,7 @@ await ctx.close()
 
 await browser.close()
 
+guard.assertNoEscapes(failures)
 if (failures.length) {
   console.error('FAIL\n' + failures.map(f => ` - ${f}`).join('\n'))
   process.exit(1)

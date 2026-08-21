@@ -15,6 +15,7 @@
  * Run: node scripts/audit-child-death.mjs   (running dashboard on :8090 + node playwright)
  */
 import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { blockMutations } from './lib/audit-guard.mjs'
 import fs from 'node:fs'
 
 const TOKEN = fs.readFileSync(
@@ -61,6 +62,10 @@ const doc = {
 const browser = await chromium.launch()
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 1100 }, serviceWorkers: 'block' })
 const page = await ctx.newPage()
+/* The audit hardware guard goes FIRST: playwright matches handlers in REVERSE registration order, so
+   every fixture below still wins, and any MUTATING request this audit forgot to intercept is blocked
+   and recorded instead of reaching the running dashboard (which spawns processes and commands arms). */
+const guard = await blockMutations(page)
 await page.route('**/api/devices', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(doc) }))
 await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' })
 await page.locator('button.chip:has-text("devices")').first().click()
@@ -89,6 +94,7 @@ if (/SIGKILL|exited|killed/.test(alive)) failures.push(`a RUNNING child is descr
 await page.screenshot({ path: '/tmp/audit-child-death.png' })
 await browser.close()
 
+guard.assertNoEscapes(failures)
 if (failures.length) {
   console.log('FAIL  child-death audit')
   for (const f of failures) console.log('  ·', f)

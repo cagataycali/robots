@@ -15,6 +15,7 @@
  * Run: node scripts/audit-record-interrupted.mjs   (running dashboard on :8090 + node playwright)
  */
 import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { blockMutations, assertNoEscapes } from './lib/audit-guard.mjs'
 import fs from 'node:fs'
 
 const TOKEN = fs.readFileSync(
@@ -48,6 +49,10 @@ const open = async (interrupted) => {
   // blame the UI for its own plumbing.
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' })
   const page = await ctx.newPage()
+  /* The audit hardware guard goes FIRST: playwright matches handlers in REVERSE registration order, so
+     every fixture below still wins, and any MUTATING request this audit forgot to intercept is blocked
+     and recorded instead of reaching the running dashboard (which spawns processes and commands arms). */
+  const guard = await blockMutations(page)
   const thrown = []
   page.on('pageerror', e => thrown.push(String(e.message).slice(0, 160)))
   const body = JSON.stringify(idle(interrupted))
@@ -102,6 +107,7 @@ const browser = await chromium.launch()
 
 await browser.close()
 
+assertNoEscapes(failures)
 if (failures.length) {
   console.error('FAIL\n' + failures.map(f => ` - ${f}`).join('\n'))
   process.exit(1)
