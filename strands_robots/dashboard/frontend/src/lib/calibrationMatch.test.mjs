@@ -97,3 +97,48 @@ for (const typed of ['  follower_arm  ', 'FOLLOWER_ARM', 'Follower_Arm']) {
 }
 
 console.log('calibrationMatch: all assertions passed')
+
+// --- THE WRONG SIDE OF THE PAIR (measured live 2026-08-21) ------------------
+// `leader` exists — as `teleoperators/so101_leader/leader.json`. Every family test passes (that is
+// what familyMatches is for), so this verdict rendered a green "✓ matches leader" for the exact id
+// that produced an arm with presence connected:true and ZERO joints: a robot in real mode loads
+// robots/<type>/<id>.json, lerobot raised "has no calibration registered", and the reason lived in a
+// child log. A green tick in front of that is this page agreeing with the mistake.
+const T = (id, model = 'so101_leader') => ({
+  deviceType: 'teleoperators', model, id, unreadable: false,
+})
+
+{
+  const v = calibrationVerdict('leader', [T('leader'), E('follower'), E('leader_arm')], 'so101')
+  assert.equal(v.warn, true, 'never a green tick for a teleoperator calibration')
+  assert.match(v.note, /teleoperator \(teleoperators\/so101_leader\)/)
+  assert.match(v.note, /has no calibration registered/, 'the words lerobot will actually print')
+  assert.match(v.note, /no joints/, 'and the symptom, so the two can be connected')
+  assert.match(v.note, /follower, leader_arm/, 'ids that ARE robot-side')
+  assert.equal(v.suggestion, undefined,
+    'which robot file this arm should load is a decision about physical limits, not a typo fix')
+}
+
+// The same id on BOTH sides: the robot-side file is the one lerobot will load, so it is a match.
+{
+  const v = calibrationVerdict('leader_arm', [T('leader_arm'), E('leader_arm', 'so101_follower', { motors: 6 })], 'so101')
+  assert.equal(v.warn, false)
+  assert.match(v.note, /matches leader_arm \(so101_follower, 6 motors\)/)
+}
+
+// Nothing robot-side at all: say so rather than listing an empty set as if it were help.
+{
+  const v = calibrationVerdict('leader', [T('leader')], 'so101')
+  assert.equal(v.warn, true)
+  assert.match(v.note, /nothing on this machine is calibrated as a robot for this family yet/)
+}
+
+// An entry whose type we cannot read is NOT accused of being on the wrong side: silence beats a
+// confident sentence about a listing we failed to parse.
+{
+  const v = calibrationVerdict('follower', [{ deviceType: '', model: 'so101_follower', id: 'follower', unreadable: false }], 'so101')
+  assert.equal(v.warn, false)
+  assert.match(v.note, /matches follower/)
+}
+
+console.log('calibrationMatch: wrong-side assertions passed')

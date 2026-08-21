@@ -35,6 +35,15 @@ const norm = (s: string) => s.trim().toLowerCase()
 /** Looser, for SUGGESTING only: separators are where the typo lives. */
 const loose = (s: string) => norm(s).replace(/[\s_-]+/g, '')
 
+/** Which SIDE of the pair a calibration was recorded for. lerobot stores them in
+ *  `<root>/robots/<type>/<id>.json` and `<root>/teleoperators/<type>/<id>.json`, and a robot in
+ *  real mode can only load the first: it is `robots/` or it is not loadable, whatever the name
+ *  says. An entry whose type we cannot read is NOT accused of being on the wrong side. */
+const isRobotSide = (e: CalibrationEntry): boolean => {
+  const t = norm(e.deviceType || '')
+  return !t || t.startsWith('robot')
+}
+
 /** Entries whose model plausibly belongs to the selected robot family. */
 function familyMatches(entry: CalibrationEntry, family: string): boolean {
   const f = loose(family)
@@ -75,7 +84,33 @@ export function calibrationVerdict(
     }
   }
 
-  const exact = known.find(e => e.id === id) ?? known.find(e => norm(e.id) === norm(id))
+  /* The side is checked BEFORE the name, because the name passes: `leader` under
+     `teleoperators/so101_leader` satisfies every family test against `so101` (that is what
+     familyMatches is for), so this verdict used to render a green "✓ matches leader
+     (so101_leader, 6 motors)" for the exact id that was measured, live, producing an arm with
+     presence connected:true and ZERO joints. lerobot looked for robots/so101_follower/leader.json,
+     raised "has no calibration registered", and the reason sat in a child log. A green tick in
+     front of that is worse than no check at all: it is this page agreeing with the mistake. */
+  const pick = (from: CalibrationEntry[]) =>
+    from.find(e => e.id === id) ?? from.find(e => norm(e.id) === norm(id))
+  const robotSide = known.filter(isRobotSide)
+  const exact = pick(robotSide) ?? pick(known)
+  if (exact && !isRobotSide(exact)) {
+    const usable = robotSide.filter(e => familyMatches(e, family)).map(e => e.id)
+    return {
+      kind: 'match',
+      warn: true,
+      // No one-tap suggestion here on purpose: choosing WHICH of the robot-side files this arm
+      // should load is a decision about a physical arm's limits, not a typo fix.
+      note:
+        `${exact.id} was calibrated as a teleoperator (${exact.deviceType}/${exact.model}), and a ` +
+        'robot in real mode loads robots/<type>/<id>.json — lerobot will refuse with "has no ' +
+        'calibration registered" and the arm will report presence with no joints' +
+        (usable.length
+          ? ` — ids calibrated as robots here: ${usable.join(', ')}`
+          : ' — nothing on this machine is calibrated as a robot for this family yet'),
+    }
+  }
   if (exact) {
     if (exact.unreadable) {
       return {
