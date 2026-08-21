@@ -51,7 +51,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from strands_robots.dashboard import arm_roles, config_api, consent, deploy, settings
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.device_manager import DeviceManager
-from strands_robots.dashboard.mesh_bridge import MeshBridge, absent_children, stop_outcome
+from strands_robots.dashboard.mesh_bridge import MeshBridge, stop_outcome
 from strands_robots.dashboard import lan_hint
 from strands_robots.dashboard.refusals import RefusalTally
 from strands_robots.dashboard.churn_guard import (
@@ -472,6 +472,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     # Role AND requested-camera names ride the same hook, so the fleet route and every websocket
     # client see one story about a peer (see DeviceManager.annotations_by_peer).
     app.state.bridge.peer_annotations = app.state.devices.annotations_by_peer
+    # U22: and who this dashboard started that is now dead. managed_children() does no
+    # serial scan (devices() does), which matters on a snapshot built ~1Hz.
+    app.state.bridge.managed_children = app.state.devices.managed_children
 
     @app.on_event("startup")
     async def _startup() -> None:
@@ -575,19 +578,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def fleet() -> dict[str, Any]:
         # Roles ride along inside snapshot() (bridge.peer_annotations), so this
         # route and the WS stream cannot disagree about which arm is the leader.
-        snap = app.state.bridge.snapshot()
-        # U22: a child this dashboard started, now dead AND pruned from the mesh, is
-        # otherwise reported nowhere a fleet screen looks - the peer list just gets
-        # shorter. Both facts meet HERE, in one process, so no screen needs a second
-        # request to learn it. managed_children() does no serial scan (devices() does),
-        # because this route is polled about once a second.
-        try:
-            snap["absent_children"] = absent_children(
-                snap.get("peers") or {}, app.state.devices.managed_children()
-            )
-        except Exception:  # pragma: no cover - a memorial may never break the fleet view
-            logger.debug("absent_children failed", exc_info=True)
-        return snap
+        return app.state.bridge.snapshot()
 
     # ------------------------------------------------------------------
     # WebAuthn passkey auth (see dashboard/auth.py)

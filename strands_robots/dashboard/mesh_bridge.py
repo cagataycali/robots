@@ -476,6 +476,11 @@ class MeshBridge:
         # only the /api/fleet route (my first attempt) put the answer on a rail
         # nothing renders from.
         self.peer_annotations: Any | None = None
+        # U22: the managed table (DeviceManager.managed_children), so snapshot() can
+        # report children this dashboard started that are dead AND already pruned.
+        # Same lesson as the annotations above, relearned the same way: the /api/fleet
+        # route alone is a rail the UI never reads.
+        self.managed_children: Any | None = None
 
     def _peer_annotations(self) -> dict[str, dict[str, Any]]:
         if self.peer_annotations is None:
@@ -486,6 +491,21 @@ class MeshBridge:
         except Exception as exc:  # never let a bad hook break the snapshot
             logger.warning("[mesh] peer annotation lookup failed (%r)", exc)
             return {}
+
+    def _managed_children(self) -> list[Any]:
+        # getattr, not self.managed_children: snapshot() must keep working on a bridge
+        # that predates this hook. Three existing tests build one with __new__ and set
+        # only the attributes they need, and they were right to expect that to hold -
+        # a new optional feature may not turn into a required field.
+        hook = getattr(self, "managed_children", None)
+        if hook is None:
+            return []
+        try:
+            data = hook()
+            return list(data) if data else []
+        except Exception as exc:  # a memorial may never break the fleet snapshot
+            logger.warning("[mesh] managed children lookup failed (%r)", exc)
+            return []
 
     def _protected_peer_ids(self) -> frozenset[str]:
         if self.protected_peer_ids is None:
@@ -1032,6 +1052,10 @@ class MeshBridge:
             "dashboard_peer_id": self.peer_id,
             "peers": peers,
             "mesh": self.mesh_info(),
+            # U22: dead children already pruned from `peers` above. Here rather than in
+            # the route, because the UI renders from the WEBSOCKET snapshot and the two
+            # must tell one story about who is gone.
+            "absent_children": absent_children(peers, self._managed_children()),
             "t": now,
         }
 
