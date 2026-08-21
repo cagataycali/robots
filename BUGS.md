@@ -75,3 +75,33 @@ Aug-21 bleed (32 -> 21 -> 18Gi) fully reversed on its own; nothing was deleted b
 
 Neither (a) nor (b) was acted on: fixing them means respawning arms on hardware nobody is standing next
 to, and the supervisor law is never to restart. Both are diagnosis-ready for the next iteration.
+
+### 2026-08-22 — the two silent arms: THE DASHBOARD SIDE IS ALREADY FIXED, the running process is not
+
+Measured today on the live server (`/api/fleet`): the fleet is down to **2 peers**, both real arms, both
+`joints: 0` with `connected: true`, `hw: 'so_follower'`, and `joint_problem: null`. The sim twin and its
+child are gone.
+
+What the operator actually reads on those cards, quoted from the running page — this is working as
+intended and needs no change: *"state is arriving, but carries no joint positions… the arm is alive and
+talking; a safety lockout and a failed bus read both look like this"*, above an `IDLE?` caveat saying
+stillness cannot be confirmed, so treat the arm as able to move.
+
+The `leader` half of the cause is fixed in this tree and **proven against cagatay's real calibration
+directory** today, not against a fixture — `robot_calibration_gap("so101", "leader")` returns:
+
+> robot_id 'leader' has a calibration, but as a teleoperator:
+> …/calibration/teleoperators/so101_leader/leader.json. A robot in real mode loads
+> robots/so101_follower/leader.json, which does not exist, so the bus will refuse with 'has no
+> calibration registered' and the arm will report presence with no joints. Calibrate this id as a robot,
+> or spawn it with one that already is: follower, follower_arm, leader_arm
+
+That is the diagnosis it took a caretaker sweep plus a dig through a 10-line child log ring buffer to
+reach by hand on Aug 21, now produced from the filesystem at spawn time. `robot_id="follower"` and
+`"follower_arm"` correctly produce no warning; an unknown id lists the ids that do exist.
+
+**So there is nothing left to build here.** The pre-flight landed Aug 20, one day AFTER these arms were
+spawned (13:58/13:59 on Aug 19), and `joint_problem` annotation postdates the running server too — which
+is exactly why the live cards can only point at the log instead of naming the cause. Both surfaces come
+alive the next time cagatay starts the dashboard from a terminal. No loop should respawn those arms:
+they are hardware nobody is standing next to.

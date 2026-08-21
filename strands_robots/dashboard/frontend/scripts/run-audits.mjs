@@ -1,9 +1,10 @@
 /**
  * Run the page audits — the harness they never had either.
  *
- * There are 28 `audit-*.mjs` scripts in here (the count in this sentence drifted from 20 — the runner
- * globs the directory, so only this prose was ever wrong), each proving on the REAL page a claim some
- * commit made
+ * Every `audit-*.mjs` in here is run — the count lives in the code below (readdirSync + a glob), and
+ * this sentence deliberately no longer states it. It said 20, was corrected to 28, and was 34 by the
+ * time anyone looked again: a number in prose beside a directory that grows weekly is a fact with a
+ * half-life. Each audit proves on the REAL page a claim some commit made
  * (a dropped camera is not an absent one, an abandoned dataset directory is not a dataset, a training
  * provider that cannot run is not offered, the devices screen's three empty worlds differ). `npm run
  * audit` chained exactly four of them, so the other eleven ran once, in the iteration that wrote them,
