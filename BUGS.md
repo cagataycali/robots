@@ -1,4 +1,35 @@
 
+## Q156 — a live module vouches for a dead export (2026-08-22, CLOSED in 4 iterations)
+
+`scripts/check-lib-wired.mjs` proved every pure rule MODULE is imported from a screen, and passed while
+`quietNotice()` — the rule the iteration existed to add — had no caller at all. A module reached by one
+screen vouches for every export beside it, so a dead rule hides inside a live file: the same
+"correct, tested, green, never ran" failure the guard was written to end, one level down.
+
+Pass 2 now asks the question per EXPORT. Measured across 312 of them, and the first naive rule was wrong in a
+way worth keeping: 79 look uncalled until test files count as callers, because this repo deliberately exports
+tuning constants so a test asserts against the real number instead of a copy. Three classes, gating only on
+the defect — test-only (by design), exported wider than used, and called by NOTHING anywhere.
+
+Three were in that last class, each resolved differently, and none of them by guessing:
+
+* **`endpoints.onBackendChange` — DELETED.** A subscription with no subscriber that could never have gained a
+  useful one: its only trigger's caller reloads the page immediately after, and App remounts on
+  `backendKey()`. A callback firing microseconds before the page dies is a decoy, not a rail. Deleting it
+  exposed a second notifier (`setAuthToken`) within seconds. Replaced by a test that both halves of the
+  identity move the remount key, so an invisible backend switch fails by name.
+* **`jointHistory.heldSeconds` — WIRED.** Both joint labels claimed "last 60 seconds of movement" from the
+  first frame, so a 3-second-old arm was announced as a minute of movement and its flat trace read as a
+  minute of stillness. For a screen-reader user that label IS the chart. `historyClaim()` narrows the claim.
+* **`cameraState.retryDelayMs` — DELETED, and its comment was FALSE.** Kept "only so the timing here stays
+  comparable" with `planRetry`; it capped at 10s where the live `backoffMs` caps at 30s, a 3x divergence at
+  the tail. A second source of truth kept for comparison is worse than none: the reader gets a wrong answer
+  with a reassuring note attached. The ceiling is now asserted by name.
+
+The guard paid for itself two iterations after landing: its stale-row check fired the instant `heldSeconds`
+gained a caller, which is how the tolerance row got deleted instead of being left behind as a lie. The
+TOLERATED map is empty, and an empty map is the goal state.
+
 ## Q155 — MEASURED CONTRADICTIONS on the live rig (2026-08-22 02:2xZ, read-only, cagatay away)
 
 Evidence first, conclusions marked as such. Measured with the dashboard's own token against pid 2519

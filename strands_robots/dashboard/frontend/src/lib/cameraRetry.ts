@@ -77,7 +77,16 @@ export interface RetryPlan {
   reason: string
 }
 
-/** Exponential with a ceiling: 1s, 2s, 4s, 8s, 16s, 30s… */
+/**
+ * Exponential with a ceiling: 1s, 2s, 4s, 8s, 16s, 30s…
+ *
+ * Replaces cameraState's retryDelayMs, deleted in Q156: it survived as a duplicate
+ * carrying the comment "kept only so the timing here stays comparable", and the comparison
+ * was FALSE — that curve capped at 10s where this one caps at 30s, so a reader checking one
+ * against the other got a wrong answer with a reassuring note attached. A second source of
+ * truth kept for comparison is worse than no second source, and the ceiling below is now
+ * asserted by name so the divergence cannot come back quietly.
+ */
 export function backoffMs(attempt: number): number {
   return Math.min(MAX_RETRY_MS, 1000 * Math.pow(2, Math.max(0, attempt - 1)))
 }

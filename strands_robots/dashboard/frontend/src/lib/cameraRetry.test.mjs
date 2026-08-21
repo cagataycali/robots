@@ -169,3 +169,15 @@ assert.notEqual(ordinary.delayMs, null)
 assert.equal(planRetry({ attempt: 2, frames: 0, pageRefused: false }).delayMs !== null, true)
 
 console.log('cameraRetry: Q102 refused-not-broken ok')
+
+// --- Q156: the ceiling, pinned by name ----------------------------------------------
+// cameraState.retryDelayMs was kept as a duplicate "so the timing stays comparable" and
+// nothing ever compared them: it capped at 10s, this caps at 30s. The duplicate is gone;
+// what is left is this assertion, so the real ceiling is a fact rather than a comment.
+{
+  assert.equal(MAX_RETRY_MS, 30_000, 'the ceiling is 30s — the retired duplicate said 10s')
+  assert.equal(backoffMs(4), 8000, 'still doubling below the ceiling')
+  assert.equal(backoffMs(6), MAX_RETRY_MS, '2^5 = 32s exceeds it, so attempt 6 is where it lands')
+  assert.notEqual(backoffMs(6), 10_000, 'the 10s tail died with the duplicate')
+}
+

@@ -82,7 +82,9 @@ const bodyOf = new Map([...files, ...testFiles].map(f => [f, fs.readFileSync(f, 
 /* Exports whose absence of a caller is KNOWN and explained. Each line is a claim the next
  * agent can check, not a mute suppression — resolve one and delete its row. */
 const TOLERATED = new Map([
-  ['lib/cameraState.ts :: retryDelayMs', 'documents itself as superseded by planRetry; kept "so the timing stays comparable", which nothing verifies — a parity assertion in planRetry\'s test would earn it a caller'],
+  // EMPTY IS THE GOAL STATE, and it is currently empty: every dead export named by this
+  // guard's first run has been wired or deleted. A new row must carry what reading the
+  // code revealed, never just a name — and the stale check below deletes it for you.
 ])
 const deadExports = []
 let internalOnly = 0, testOnly = 0, exportCount = 0
