@@ -1699,3 +1699,21 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   font-variant-numeric: tabular-nums;
 }
 .ep-box:disabled { opacity: 0.45; }
+
+/* Q88 — the pre-lapse session warning, above everything the app draws.
+ * Sticky rather than fixed so it pushes the fleet bar down instead of covering it: this is
+ * information, and the STOP ALL corner must never be under anything. Amber, not red — the
+ * session still works for another few minutes, and the operator's decision is "sign in before
+ * you start recording", not "stop". */
+.sessionwarn {
+  position: sticky; top: 0; z-index: 60;
+  padding: 8px 14px; padding-right: 136px;
+  font-size: 13px; line-height: 1.35;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  backdrop-filter: blur(8px);
+}
+@media (max-width: 720px) {
+  .sessionwarn { padding-right: 104px; }
+}

@@ -73,7 +73,12 @@ assert.equal(humaniseSeconds(-40), '40 seconds')
 assert.equal(humaniseSeconds(240), '4 minutes')
 assert.equal(humaniseSeconds(3240), '54 minutes')
 assert.equal(humaniseSeconds(69_480), '19 hours')
-assert.equal(humaniseSeconds(9_000), '2.5 hours')  // a decimal earns its place while the number is small
+assert.equal(humaniseSeconds(9_000), '2.5 hours')
+// FOUND BY THE BROWSER AUDIT, not by this file: a whole number of hours must not print "4.0 hours".
+assert.equal(humaniseSeconds(4 * 3600), '4 hours')
+// Below 90 minutes the sentence stays in minutes, which reads better than "1.5 hours".
+assert.equal(humaniseSeconds(3600), '60 minutes')
+assert.equal(humaniseSeconds(5400), '1.5 hours')  // a decimal earns its place while the number is small
 assert.equal(humaniseSeconds(200_000), '56 hours')
 
 // Garbage that would throw in a naive decoder must not take the page down with it.

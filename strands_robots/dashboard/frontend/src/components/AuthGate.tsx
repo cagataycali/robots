@@ -10,9 +10,24 @@
  * The session JWT rides the existing token plumbing (setAuthToken -> localStorage
  * -> Authorization: Bearer on fetches, ?token= on WebSockets), so nothing below
  * this component knows passkeys exist.
+ *
+ * AND IT KEEPS WATCHING (Q88). That decision used to be made once, on mount, which is
+ * wrong for the way this dashboard is actually used: a tab left open on a phone. Measured
+ * on the live rig, a session lapsed mid-session and the page stayed "open" for 19.3 HOURS
+ * -- camera sockets refused with 403 on every reopen, REST calls failing one by one, and
+ * not a word on screen about a sign-in. A dashboard that looks alive and is deaf is worse
+ * than a locked door, because the operator debugs the ROBOT.
+ *
+ * So while the gate is open it re-reads the verdict from the token's own `exp` (see
+ * lib/sessionExpiry): five minutes before the lapse a banner warns above the app, and at
+ * the lapse the gate closes again with the reason. It does not poll the server -- the
+ * answer is already in the page's pocket, and a lapsed session must not generate traffic
+ * to discover that it is lapsed. Only a JWT can trigger this; a static --auth-token and
+ * an auth-off LAN dashboard are silent, so nobody is thrown out of a session that works.
  */
 import { useEffect, useRef, useState } from 'react'
-import { api, setAuthToken, HttpError } from '../lib/endpoints'
+import { api, setAuthToken, authToken, HttpError } from '../lib/endpoints'
+import { sessionVerdict } from '../lib/sessionExpiry'
 import {
   fetchAuthStatus, enroll, webauthnReady, type AuthStatus,
   beginLogin, completeLogin, loginFresh, type PreparedLogin,
@@ -33,6 +48,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [label, setLabel] = useState('')
   const [bootstrap, setBootstrap] = useState('')
   const [showToken, setShowToken] = useState(false)
+  /** Q88: the pre-lapse warning shown ABOVE the running app, or '' when there is nothing to say. */
+  const [expiring, setExpiring] = useState('')
   const [tokenValue, setTokenValue] = useState('')
   // Login challenge fetched AHEAD of the tap: iOS Safari only opens the Face ID
   // sheet while the tap's user-activation is alive, so the click handler must
@@ -52,6 +69,39 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       void updateServiceWorker(true) // activate waiting SW + reload
     }
   }, [gateNeedsRefresh, mode, updateServiceWorker])
+
+  // Q88: while the app is open, watch the sign-in we are holding.
+  useEffect(() => {
+    if (mode !== 'open') { setExpiring(''); return }
+    let alive = true
+    const check = () => {
+      if (!alive) return
+      const v = sessionVerdict(authToken(), Date.now() / 1000)
+      if (v.refusesUntilSignIn) {
+        setExpiring('')
+        setError(v.text ?? 'this sign-in has expired')
+        // Which door to show depends on whether a credential exists at all; ask, but never
+        // leave the operator on a stale "open" page if that request is the one being refused.
+        fetchAuthStatus()
+          .then(st => { if (alive) { setStatus(st); setMode(st.setup_required ? 'enroll' : 'login') } })
+          .catch(() => { if (alive) setMode('login') })
+        return
+      }
+      setExpiring(v.state === 'expiring' ? (v.text ?? '') : '')
+    }
+    check()
+    // 30s is fine for a five-minute warning and costs nothing: no network, one base64 decode.
+    const t = setInterval(check, 30_000)
+    // A phone spends most of its life with the tab hidden; the timer may be throttled to
+    // minutes there, so re-check the moment it comes back rather than trusting the interval.
+    window.addEventListener('focus', check)
+    document.addEventListener('visibilitychange', check)
+    return () => {
+      alive = false; clearInterval(t)
+      window.removeEventListener('focus', check)
+      document.removeEventListener('visibilitychange', check)
+    }
+  }, [mode])
 
   useEffect(() => {
     if (mode !== 'login' || !webauthnReady()) return
@@ -118,7 +168,20 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (mode === 'open') return <>{children}</>
+  if (mode === 'open') {
+    // role=status, not alert: the session still works, and a modal here would interrupt a
+    // recording to announce something that is five minutes away.
+    return (
+      <>
+        {expiring && (
+          <div className="sessionwarn" role="status" aria-live="polite">
+            <span aria-hidden="true">⏳</span> {expiring}
+          </div>
+        )}
+        {children}
+      </>
+    )
+  }
 
   if (mode === 'checking') {
     return (

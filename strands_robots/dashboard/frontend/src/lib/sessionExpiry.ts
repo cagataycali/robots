@@ -82,7 +82,10 @@ export function humaniseSeconds(s: number): string {
   if (abs < 90) return `${Math.round(abs)} seconds`
   if (abs < 5400) return `${Math.round(abs / 60)} minutes`
   const hours = abs / 3600
-  return `${hours < 10 ? hours.toFixed(1) : Math.round(hours)} hours`
+  // One decimal while the number is small ("19.3 hours" is real information), but never a
+  // decimal POINT ZERO: "expired 4.0 hours ago" reads like an instrument, not like a sentence.
+  const shown = hours < 10 ? Number(hours.toFixed(1)) : Math.round(hours)
+  return `${shown} hour${shown === 1 ? '' : 's'}`
 }
 
 /**
