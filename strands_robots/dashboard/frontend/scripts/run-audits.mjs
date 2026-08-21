@@ -63,10 +63,8 @@ if (process.env.AUDIT_SKIP_FRESHNESS !== '1') {
   }
 }
 
-let scripts = fs.readdirSync(HERE)
-  .filter(f => /^audit-.*\.mjs$/.test(f))
-  .filter(f => !filters.length || filters.some(x => f.includes(x)))
-  .sort()
+const allAudits = fs.readdirSync(HERE).filter(f => /^audit-.*\.mjs$/.test(f)).sort()
+let scripts = allAudits.filter(f => !filters.length || filters.some(x => f.includes(x)))
 
 // A filter that matches nothing must not look like a clean sweep: "PASS 0 audits" is the most
 // dangerous possible output for a verification tool.
@@ -74,7 +72,11 @@ if (filters.length && !scripts.length) {
   console.error(`  no audit matches ${filters.join(', ')} — nothing was verified`)
   process.exit(1)
 }
-if (filters.length) console.log(`  filter ${filters.join(', ')} — ${scripts.length} of 16 audit(s)`)
+// "X of Y" must be COUNTED, not remembered: this said "of 16" while the directory held 28. A
+// narrowed run that misstates the whole is how a partial sweep gets read as a full one — the same
+// law the python audit scripts follow after scripts/audit_collaborator_kwargs.py printed a
+// confident total for 2 of the 7 classes it exists to check.
+if (filters.length) console.log(`  filter ${filters.join(', ')} — ${scripts.length} of ${allAudits.length} audit(s)`)
 
 /** The one-line purpose the script states about itself (first prose line of its header). */
 const purpose = (f) => {
