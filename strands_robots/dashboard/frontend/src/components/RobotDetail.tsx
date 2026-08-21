@@ -6,6 +6,7 @@ import { useTask } from '../lib/useTask'
 import { twinButtonCopy } from '../lib/twinButton'
 import { statusSentence, peerStatusFields } from '../lib/statusSentence'
 import { teleopView, stopVerdict, type TeleopView } from '../lib/teleopView'
+import { leaderOptions, pairPlan, type PairInput } from '../lib/teleopPair'
 import { api } from '../lib/endpoints'
 import { useTelemetry } from '../lib/useTelemetry'
 import CameraTile from './CameraTile'
@@ -32,12 +33,14 @@ function fmt(v: unknown): string {
  * emitting rather than a 3-line summary. Steps are buffered client-side because
  * `strands/<peer>/stream` is fire-and-forget - nothing on the mesh replays it.
  */
-export default function RobotDetail({ peer, twinLive = false, hostsChildren, onClose }: {
+export default function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onClose }: {
   peer: Peer
   /** a '<id>-twin' peer is live in the fleet */
   twinLive?: boolean
   /** Q150: children this peer hosts, when it is a process rather than an arm. */
   hostsChildren?: string[] | null
+  /** U22: the fleet's joint counts + measured roles, for "who could lead this arm". */
+  fleet?: PairInput[] | null
   onClose: () => void
 }) {
   const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer)
@@ -188,6 +191,32 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, onC
                     stop teleop
                   </button>
             )}
+            {/* U22 slice 3a: what would it TAKE to teleop this arm? Answered from evidence the peers
+                carry, and only when the arm is not already streaming. The refusals matter more than the
+                offers here: on this fleet both real arms report no joints, which is why teleop has never
+                started — a fact that until now lived only in a child log. */}
+            {!teleop.streaming && (fleet?.length ?? 0) > 0 && (() => {
+              const opts = leaderOptions(peer.peer_id, fleet!)
+              const usable = opts.filter(o => o.ok)
+              if (usable.length) {
+                const plan = pairPlan(peer.peer_id, usable[0].peer_id, fleet!)
+                return (
+                  <div className="small muted">
+                    could follow: {usable.map(o => `${o.peer_id} (${o.why})`).join(', ')}
+                    {plan && !plan.blockers.length && (
+                      <> · starting asks for {plan.consents.join(' + ')} first, because frames move a real arm</>
+                    )}
+                    {plan?.notes.map((n, i) => <div key={i}>{n}</div>)}
+                  </div>
+                )
+              }
+              return (
+                <div className="small muted">
+                  no arm on this fleet can lead it yet:
+                  {opts.map(o => <div key={o.peer_id}>· {o.peer_id} — {o.why}</div>)}
+                </div>
+              )
+            })()}
             {stopped && (
               <div className={`small ${stopped.ok ? 'muted' : 'warn'}`} role="status">{stopped.line}</div>
             )}

@@ -141,6 +141,13 @@ function Dashboard() {
   const fleetHosts = useMemo(() => armHosts(list.map(q => ({
     peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length }))), [list])
 
+  /* U22: the same fleet shape the detail view needs to answer "who could lead this arm" — joint counts
+     plus the MEASURED role evidence (12.6V = follower). Derived here so the pairing rule and the host
+     rule above read the identical list and cannot disagree about which peers are arms. */
+  const pairInputs = useMemo(() => list.map(q => ({
+    peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length,
+    role: q.role ?? null, role_volts: q.role_volts ?? null, role_source: q.role_source ?? null })), [list])
+
   useEffect(() => { void pwa.keepAwake(anyRunning) }, [anyRunning])  // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Q124: which features on this page does the server answering here NOT have? lib/serverAge explains
@@ -452,7 +459,7 @@ function Dashboard() {
       {detailPeer && (
         <ErrorBoundary label="the robot detail view" onDismiss={() => setDetail(null)}>
           <RobotDetail peer={detailPeer} twinLive={liveTwins.has(`${detailPeer.peer_id}-twin`)}
-            hostsChildren={fleetHosts[detailPeer.peer_id]?.children ?? null}
+            hostsChildren={fleetHosts[detailPeer.peer_id]?.children ?? null} fleet={pairInputs}
                        onClose={() => setDetail(null)} />
         </ErrorBoundary>
       )}
