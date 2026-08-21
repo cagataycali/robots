@@ -39,7 +39,17 @@ const now = Date.now() / 1000
 const arm = (id, extra) => ({
   peer_id: id, last_seen: now, stale: false, cameras: {}, origin: 'managed',
   presence: { connected: true, hostname: 'Mac', robot_type: 'so101', timestamp: now },
-  state: { 'shoulder_pan.pos': 1.5, 'gripper.pos': 12 },
+  // The joints must live UNDER state.joints (lib/recordArms.jointCount reads peer.state.joints) and be
+  // datable from last_seen: flat 'shoulder_pan.pos' keys count as ZERO joints, which is a legitimate,
+  // unackable refusal ("the episodes would carry no actions to learn from") added after this audit was
+  // written. The form then never enables and the failure reads like a UI bug — audit-record-joint-warning
+  // has the shape right, and this one had drifted from it.
+  state: {
+    joints: {
+      shoulder_pan: 1.5, shoulder_lift: 0.2, elbow_flex: 0.1,
+      wrist_flex: 0.0, wrist_roll: 0.0, gripper: 12,
+    },
+  },
   ...extra,
 })
 
@@ -142,6 +152,11 @@ async function attemptRecording(page) {
       inputs: [...f.querySelectorAll('input')].map(i => [i.placeholder, i.value]),
       selects: [...f.querySelectorAll('select')].map(x => x.value),
       acks: [...f.querySelectorAll('.ackrow')].map(a => [a.innerText.slice(0, 60), a.querySelector('input')?.checked]),
+      // A disabled primary action is only debuggable if the page SAYS why. Capture what it says:
+      // the button's own hint, plus every warning/problem row in the form. If these come back empty
+      // the finding is not "the audit is stale", it is "the button refuses in silence".
+      hint: f.querySelector('.rec-hint')?.innerText?.slice(0, 200) ?? null,
+      warnings: [...f.querySelectorAll('.train-msg, .warn, .problem')].map(x => x.innerText.slice(0, 120)).filter(Boolean),
     })))
     failures.push(`the start button stays disabled with a filled form: ${why}`)
     return false
