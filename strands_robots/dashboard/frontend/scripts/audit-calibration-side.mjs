@@ -94,7 +94,7 @@ if (mode) {
       if (!/no calibration registered/i.test(v.warn)) failures.push('the warning omits the words lerobot itself will print')
       if (!/no joints/i.test(v.warn)) failures.push('the warning omits the symptom (presence, no joints), so the operator cannot connect the two')
     } else {
-      notes.push('note: nothing on this machine is calibrated ONLY as a teleoperator, so the wrong-side case could not be exercised on the page')
+      notes.push('NARROWED: nothing on this machine is calibrated ONLY as a teleoperator, so the wrong-side case could not be exercised on the page')
     }
 
     if (robotSide) {

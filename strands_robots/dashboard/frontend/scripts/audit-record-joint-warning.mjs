@@ -96,7 +96,7 @@ if (leaderSel && followerSel) {
     const btn = page.locator('button.btn.go.wide').first()
     if (!await btn.isDisabled()) failures.push('the submit button is still enabled with a jointless arm selected')
   } else {
-    notes.push('note: no arm on this fleet is both fresh and jointless, so the warning could not be exercised')
+    notes.push('NARROWED: no arm on this fleet is both fresh and jointless, so the warning could not be exercised')
   }
 
   if (reading) {
@@ -107,7 +107,7 @@ if (leaderSel && followerSel) {
     // THE CONTROL: a check that always fires is not a check, and this one disables the button.
     if (w.length) failures.push(`${reading.id} reports ${reading.count} joints and is warned about anyway: ${w[0].slice(0, 160)}`)
   } else {
-    notes.push('note: no arm on this fleet reports joints, so the control case could not be exercised')
+    notes.push('NARROWED: no arm on this fleet reports joints, so the control case could not be exercised')
   }
 }
 

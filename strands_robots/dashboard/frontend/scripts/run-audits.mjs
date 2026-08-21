@@ -87,7 +87,7 @@ const purpose = (f) => {
   return (line ?? '').replace(/\s+$/, '').slice(0, 96)
 }
 
-let failed = 0, timedOut = 0
+let failed = 0, timedOut = 0, narrowed = 0
 const started = Date.now()
 for (const f of scripts) {
   const t0 = Date.now()
@@ -102,13 +102,25 @@ for (const f of scripts) {
     continue
   }
   if (r.status === 0) {
-    console.log(`  ok    ${name} (${secs}s) — ${purpose(f)}`)
+    // A GREEN THAT PROVES LESS THAN IT USED TO. Measured 2026-08-22 on cagatay's own fleet: both real
+    // arms had been silent for three days and the sim twin was gone, so audit-record-joint-warning
+    // could exercise NEITHER its warning case nor its control case — and still printed a plain `ok`.
+    // The suite is where this repo's "a tool that can be NARROWED must say X of Y" law was written,
+    // and it was the one place not obeying it: a degraded fleet made the sweep QUIETER instead of
+    // louder, and the day the hardware returns is the day those cases silently resume with nobody
+    // told they had stopped. An audit declares that with a NARROWED: line — a PREFIX it opts into,
+    // never prose this runner pattern-matches, because guessing at English is how a bypass grows.
+    // Deliberately NOT a failure: a fleet with no arms is a legitimate state (Q135 first-run), and a
+    // suite that goes red when the hardware is off trains the next agent to ignore it.
+    const narrowedLines = (r.stdout || '').split('\n').filter(l => /^\s*NARROWED\b/.test(l))
+    if (narrowedLines.length) narrowed += 1
+    console.log(`  ok${narrowedLines.length ? '~' : '  '}  ${name} (${secs}s) — ${purpose(f)}`)
     // NEWS FROM A PASSING AUDIT. Not every audit produces a verdict: audit-server-age exists to
     // REPORT which routes the shipped bundle calls that the running server lacks, and an old server
     // is news for the operator, not a broken build — so it exits 0 by design. This runner printed
     // only "ok" and threw the finding away, which is how a sweep reported "ok server-age (0s)" while
     // NINE routes were dark on the live dashboard. A line starting NEWS/OLD/note now survives.
-    for (const line of (r.stdout || '').split('\n').filter(l => /^\s*(NEWS|OLD|note)\b/.test(l)).slice(0, 12))
+    for (const line of (r.stdout || '').split('\n').filter(l => /^\s*(NEWS|OLD|note|NARROWED)\b/.test(l)).slice(0, 12))
       console.log(`          ${line.trim()}`)
   } else {
     failed += 1
@@ -123,5 +135,7 @@ for (const f of scripts) {
 const mins = ((Date.now() - started) / 60000).toFixed(1)
 console.log(failed
   ? `\n  ${failed} of ${scripts.length} audit(s) FAILED in ${mins} min${timedOut ? ` (${timedOut} hung)` : ''}`
-  : `\n  PASS  ${scripts.length} audits in ${mins} min — every page claim still holds`)
+  : narrowed
+    ? `\n  PASS  ${scripts.length} audits in ${mins} min — but ${narrowed} was NARROWED (marked ok~):\n        part of its case could not be exercised on this fleet, so this green covers less than\n        it did. The remedy is the fleet, not the audit.`.replace(' was NARROWED', narrowed === 1 ? ' was NARROWED' : ' were NARROWED').replace('part of its case', narrowed === 1 ? 'part of its case' : 'part of their case')
+    : `\n  PASS  ${scripts.length} audits in ${mins} min — every page claim still holds`)
 process.exit(failed ? 1 : 0)
