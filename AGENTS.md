@@ -948,6 +948,52 @@ hatch run format            # ruff check --fix, ruff format
    still `APPROVED`, nine suites queued including the required one. #1988 has the
    full account.
 
+   **Two further causes need no second token, and one needs nothing at all.**
+   `mergeStateStatus` is one word for at least six situations and names none of
+   them, so the rule that is actually unsatisfied has to be read separately.
+   Measured 2026-08-21, both approved and green, both idle after approval because
+   a scheduled pass read `BLOCKED` and concluded the next move was a reviewer's:
+
+   | PR | approved | merged | idle | actually unsatisfied | who could clear it |
+   |---|---|---|---|---|---|
+   | #2566 | 16:39 | 17:10 | 31 min | one unresolved review thread | the author |
+   | #2574 | 16:25 | 17:10 | 45 min | nothing - a stale computation | anyone, by retrying |
+
+   #2566 sat on `required_review_thread_resolution`, which the ruleset carries:
+   one thread was open, its fix had already landed, and the reviewer had approved
+   *past* it. Resolving it flipped `blocked` to `clean` on the next read. #2574 had
+   zero threads and twelve green checks, and `blocked` was simply stale -
+   `mergePullRequest` refused with `Pull Request is not mergeable`, naming nothing,
+   and `PUT /repos/{owner}/{repo}/pulls/{n}/merge` then succeeded on the first
+   attempt with no state having changed in between.
+
+   Two consequences worth keeping. **A merge attempt is cheap and self-verifying**,
+   so `BLOCKED` on a pull request with no unsatisfied rule is not a reason to wait;
+   and **prefer REST for the attempt**, because its refusal names the requirement
+   that is unmet while the GraphQL mutation's does not.
+
+   Rather than infer which of these is operating, read it:
+
+   ```
+   python3 scripts/check_merge_blockers.py --repo strands-labs/robots --pr <N>
+   python3 scripts/check_merge_blockers.py --repo strands-labs/robots --all-open
+   ```
+
+   It reads the branch ruleset - so a rule that is changed in settings cannot
+   drift from this file - and names every rule the pull request leaves
+   unsatisfied together with the party who can clear it: a conflict or an
+   unresolved thread or a failing check (the author), a missing approval (any
+   reviewer), an approval only its own pusher supplied (a different reviewer,
+   per #1905), a required check absent because a fork run is held at
+   `action_required` (a maintainer), a check still running (nobody), or no
+   unsatisfied rule at all, which is the #2574 case and the one worth saying out
+   loud. A conflict or a draft is reported as *gating*: the rules behind it
+   cannot be assessed, so an approval there is necessary but not sufficient.
+
+   It composes `check_last_push_approval.py` rather than restating it, so what
+   counts as a current approval has one owner. Neither script gates a merge.
+   Pinned by tests/test_merge_blockers.py.
+
    This is worth the words because the failure mode is silent and expensive in the
    opposite direction from the usual one. Treating an advisory red as a merge
    blocker does not look like a mistake; it looks like diligence, and it costs a
