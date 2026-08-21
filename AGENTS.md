@@ -1829,18 +1829,26 @@ Corrections from code review that apply to all future contributions:
 - **One alert class clears under none of the three, and the question that settles
   it is which thread you marshal onto.** `py/catch-base-exception` never fires on
   cleanup-and-reraise: the query accepts a handler that re-raises *lexically*, and
-  six of the tree's seven `except BaseException` handlers do, so they have never
-  been flagged.
+  every `except BaseException` handler in this tree does so but one, which is why
+  none of them has ever been flagged. A count would rot here, so the census below
+  is stated as the property that matters and is derived from the tree by
+  `tests/test_codeql_query_filters.py` rather than copied into this file.
+
+  Every handler in `strands_robots/`, named by the function that owns it because a
+  line number is the part that goes stale:
 
   | handler | ends in | flagged |
   |---|---|---|
-  | `robot.py:368` | `sim.destroy()`, bare `raise` | no |
-  | `policies/persistent.py:193` | `handoff.abandon()`, bare `raise` | no |
-  | `simulation/safe_output.py:185` | `os.unlink(tmp)`, bare `raise` | no |
-  | `hardware_robot.py:1865` | `self._release_task()`, bare `raise` | no |
-  | `tests/policies/lerobot_local/test_list_policy_types.py:70` | `raise AssertionError(...) from exc` | no |
-  | `tests/policies/lerobot_local/test_vla_jepa.py:164` | `raise AssertionError(...) from exc` | no |
-  | `simulation/isaac/simulation.py:5125` | `box["exc"] = exc`, no lexical raise | **yes** |
+  | `strands_robots/episode_labels.py::_write_document` | `os.unlink(tmp_name)`, bare `raise` | no |
+  | `strands_robots/hardware_robot.py::start_task` | `self._release_task()`, bare `raise` | no |
+  | `strands_robots/policies/persistent.py::get_actions` | `handoff.abandon()`, bare `raise` | no |
+  | `strands_robots/robot.py::Robot` | `sim.destroy()`, bare `raise` | no |
+  | `strands_robots/simulation/safe_output.py::atomic_write_bytes` | `os.unlink(tmp)`, bare `raise` | no |
+  | `strands_robots/simulation/isaac/simulation.py::_job` | `box["exc"] = exc`, no lexical raise | **yes** |
+
+  The handlers under `tests/`, `examples/` and `scripts/` re-raise lexically too,
+  several as `raise AssertionError(...) from exc` rather than a bare `raise`: the
+  query accepts either, because what it reads is the lexical raise.
 
   The rule's entire alert surface here is therefore one construct: a
   **cross-thread exception-marshal box**, which parks the exception for *another*
@@ -1884,8 +1892,8 @@ Corrections from code review that apply to all future contributions:
   must keep failing the two-id set `tests/test_codeql_query_filters.py` pins.
 
   What makes the class worth naming is that both answers are live right now and
-  nothing else records why they differ. Alert #691 - `run_on_main`'s box at
-  `simulation/isaac/simulation.py:5125` - has been open on `refs/heads/main` since
+  nothing else records why they differ. Alert #691 - `run_on_main`'s box in
+  `strands_robots.simulation.isaac.simulation` - has been open on `refs/heads/main` since
   2026-07-07 at note severity, gating nothing, carrying only a
   `# noqa: BLE001` that CodeQL does not read. Alerts #853 and #854 are the same
   idiom raised on a branch, one of them in that same file, and each opened a
