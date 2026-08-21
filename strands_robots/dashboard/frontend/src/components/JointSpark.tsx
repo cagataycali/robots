@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Range } from '../lib/jointScale'
-import { traceFor, stalled, type Sample, HISTORY_WINDOW_MS } from '../lib/jointHistory'
+import { traceFor, stalled, historyClaim, type Sample } from '../lib/jointHistory'
 
 /**
  * One joint's recent past, drawn on a canvas (U6).
@@ -128,7 +128,8 @@ export default function JointSpark({
       ref={ref}
       className="jspark"
       role="img"
-      aria-label={`last ${Math.round(HISTORY_WINDOW_MS / 1000)} seconds of movement`}
+      // The label IS the chart for a screen reader, so it may not overstate its span.
+      aria-label={historyClaim('movement', track, Date.now())}
     />
   )
 }

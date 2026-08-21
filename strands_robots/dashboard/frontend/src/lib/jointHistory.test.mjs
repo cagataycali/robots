@@ -3,7 +3,7 @@
 //        && node src/lib/jointHistory.test.mjs
 import assert from 'node:assert/strict'
 
-const { createHistory, pushFrame, traceFor, stalled, GAP_MS } = await import('/tmp/jointHistory.mjs')
+const { createHistory, pushFrame, traceFor, stalled, historyClaim, GAP_MS } = await import('/tmp/jointHistory.mjs')
 
 // The window's right edge is NOW: that is the property the sparkline's honesty
 // rests on, and the reason a frozen canvas is a lie rather than a stale picture.
@@ -46,3 +46,31 @@ const { createHistory, pushFrame, traceFor, stalled, GAP_MS } = await import('/t
   assert.equal(stalled([{ t: now - 300, v: 1 }], now, 200), true)
 }
 console.log('jointHistory: stalled() assertions passed')
+
+// --- historyClaim (Q156b): the label may not overstate its span ----------------------
+{
+  const now = 1_000_000
+  const track = t => [{ t: now - t, v: 1 }, { t: now, v: 2 }]
+
+  assert.equal(historyClaim('movement', undefined, now), 'no movement history for movement yet')
+  assert.equal(historyClaim('movement', [{ t: now, v: 1 }], now),
+    'no movement history for movement yet', 'one frame is not a window')
+
+  // THE DEFECT: three seconds of data announced as a minute, so a flat trace reads as a
+  // minute of stillness instead of a robot that just arrived.
+  const young = historyClaim('shoulder_pan', track(3000), now)
+  assert.match(young, /^3s of shoulder_pan so far/)
+  assert.match(young, /60s window is not full yet/)
+  assert.doesNotMatch(young, /^last 60s/, 'the old label claimed the full window from the first frame')
+
+  // A full window says so plainly — and so does one 3% short, or the label would flicker
+  // as a frame ages out between measuring and painting.
+  assert.equal(historyClaim('movement', track(60_000), now), 'last 60s of movement')
+  assert.equal(historyClaim('movement', track(58_400), now), 'last 60s of movement')
+  assert.match(historyClaim('movement', track(50_000), now), /^50s of movement so far/)
+
+  // The window is a parameter, so a chart with a different span cannot inherit "60".
+  assert.equal(historyClaim('movement', track(10_000), now, 10_000), 'last 10s of movement')
+  assert.match(historyClaim('movement', track(4000), now, 10_000), /10s window is not full yet/)
+}
+

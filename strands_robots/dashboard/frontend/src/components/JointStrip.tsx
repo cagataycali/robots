@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Presence, PeerState } from '../types'
 import { decideStripScale, fillPercent, type ScaleMemo } from '../lib/jointScale'
-import { createHistory, pushFrame, HISTORY_WINDOW_MS } from '../lib/jointHistory'
+import { createHistory, pushFrame, historyClaim, HISTORY_WINDOW_MS } from '../lib/jointHistory'
 import JointSpark from './JointSpark'
 import { humanJointNames, stripLegend } from '../lib/jointLabels'
 import { jointAgeNote } from '../lib/jointFreshness'
@@ -128,7 +128,7 @@ export default function JointStrip({
               {vel !== undefined && Math.abs(vel) > 1e-3 && <span className="jvel" />}
             </div>
             {showHistory && (
-              <div className="jhist" title={`last ${Math.round(HISTORY_WINDOW_MS / 1000)}s of ${name}`}>
+              <div className="jhist" title={historyClaim(name, hist.current.get(name), Date.now())}>
                 <JointSpark track={hist.current.get(name)} range={range} frame={frame} />
               </div>
             )}

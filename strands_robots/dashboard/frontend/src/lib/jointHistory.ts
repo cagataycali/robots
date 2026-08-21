@@ -110,6 +110,35 @@ export function traceFor(
   return out
 }
 
+/**
+ * The label that tells the truth about how much history there is (Q156b).
+ *
+ * Both joint labels claimed "last 60 seconds of movement" from the first frame onward —
+ * the sparkline of an arm that appeared three seconds ago was announced as a minute of
+ * movement, and a flat trace then reads as a minute of STILLNESS rather than as a robot
+ * that just arrived. For a screen-reader user that label is the entire chart, so the
+ * claim was the whole picture and it was wrong.
+ *
+ * Narrows the CLAIM instead of faking the data, the same move connBadge makes for the
+ * socket badge. heldSeconds() does the measuring and had no caller until now.
+ */
+export function historyClaim(
+  subject: string,
+  track: Sample[] | undefined,
+  now: number,
+  windowMs: number = HISTORY_WINDOW_MS,
+): string {
+  const windowS = Math.round(windowMs / 1000)
+  const held = heldSeconds(track, now)
+  // Under a second of span is not a window worth quoting: one frame, or two frames a
+  // blink apart, is "nothing yet" to a reader deciding whether to trust a flat line.
+  if (held < 1) return `no movement history for ${subject} yet`
+  // A near-full window rounds to the honest round number: quibbling over the last 3%
+  // (a frame that aged out between measure and paint) would make the label flicker.
+  if (held >= windowS * 0.97) return `last ${windowS}s of ${subject}`
+  return `${Math.round(held)}s of ${subject} so far — the ${windowS}s window is not full yet`
+}
+
 /** Seconds of history actually held, for the "60s" label to tell the truth. */
 export function heldSeconds(track: Sample[] | undefined, now: number): number {
   if (!track || track.length < 2) return 0
