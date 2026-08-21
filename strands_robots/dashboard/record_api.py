@@ -32,6 +32,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
@@ -224,6 +225,18 @@ class RecordController:
                         409, camera_liveness.refusal(dead, peer_id=follower_id)
                     )
 
+            # The rail above judges frame AGE, so it is blind to a camera that never
+            # published at all - which is exactly a camera unplugged before the arm
+            # subscribed. The machine's own enumeration answers that independently.
+            if not body.get("ignore_missing_cameras"):
+                missing = camera_liveness.missing_cameras(
+                    follower.cameras, self._present_camera_indices()
+                )
+                if missing:
+                    raise HTTPException(
+                        409, camera_liveness.missing_refusal(missing, peer_id=follower_id)
+                    )
+
             leader_type = str(
                 body.get("leader_type")
                 or LEADER_TYPES.get(leader.robot_name, "")
@@ -280,6 +293,35 @@ class RecordController:
             opened = self._worker.session()
             record_crash.write_crumb(opened, path=self._crumb)
             return opened
+
+    #: How old an already-taken camera roster may be and still count as evidence. A roster from
+    #: this morning could omit a camera plugged in since, and refusing a session over that would be
+    #: this gate inventing a fault.
+    ROSTER_MAX_AGE_S = 300.0
+
+    def _present_camera_indices(self) -> tuple[int, ...]:
+        """Camera indices this machine listed, from the roster it ALREADY has.
+
+        Deliberately does not trigger a scan. Two reasons, and the second is the important one:
+        a fresh name scan shells out to ffmpeg with a 10s timeout, which would sit in front of the
+        record button; and any probe that *opens* cameras to enumerate them could itself take the
+        index the arm is about to use. So this reads the cache the devices screen has already
+        filled - and an empty or stale cache reads as no evidence, which cannot refuse anything.
+        """
+        devices = self._devices
+        try:
+            roster = getattr(devices, "_camera_names_cache", None)
+            taken_at = float(getattr(devices, "_camera_names_cache_t", 0.0) or 0.0)
+            if not roster or taken_at <= 0 or time.time() - taken_at > self.ROSTER_MAX_AGE_S:
+                return ()
+            return tuple(
+                int(r["listing_index"])
+                for r in roster
+                if isinstance(r, Mapping) and isinstance(r.get("listing_index"), int)
+            )
+        except Exception:  # noqa: BLE001 - evidence gathering must never break a session
+            logger.debug("[record] could not read the camera roster")
+            return ()
 
     def _camera_meta(self, peer_id: str) -> dict[str, Any]:
         """What the fleet snapshot last saw from this peer's cameras.

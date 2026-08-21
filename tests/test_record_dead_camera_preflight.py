@@ -171,3 +171,64 @@ class TestNoEvidenceNeverRefuses:
             c.open(dict(BODY))
         assert "stopped publishing" not in str(e.value.detail)
         assert "mesh is having a moment" not in str(e.value.detail)
+
+
+class TestTheRosterRailIsWiredAndCannotInventAFault:
+    """The second rail at the record gate: an index this machine does not list.
+
+    Its evidence is a roster the devices screen ALREADY took. That choice is deliberate on both
+    sides: a fresh name scan shells out to ffmpeg with a 10s timeout and would sit in front of the
+    record button, and a probe that opens cameras to enumerate them could take the very index the
+    arm is about to use. So the only question these tests ask is whether an ALREADY-KNOWN absence
+    stops a session, and whether anything weaker than that stays out of the way.
+    """
+
+    @staticmethod
+    def _controller(roster: list[dict[str, object]] | None, *, age_s: float = 1.0) -> RecordController:
+        class Devices:
+            _camera_names_cache = roster
+            _camera_names_cache_t = time.time() - age_s
+
+        return RecordController(Devices())  # type: ignore[arg-type]
+
+    def test_a_fresh_roster_yields_its_indices(self) -> None:
+        ctrl = self._controller([{"listing_index": 0, "name": "Logi"}, {"listing_index": 2, "name": "top"}])
+        assert ctrl._present_camera_indices() == (0, 2)
+
+    def test_a_stale_roster_is_not_evidence(self) -> None:
+        """This morning's roster could omit a camera plugged in since lunch.
+
+        Refusing a session over that would be the gate inventing a fault, so age alone disqualifies
+        the evidence rather than being tolerated with a warning.
+        """
+        ctrl = self._controller([{"listing_index": 0}], age_s=RecordController.ROSTER_MAX_AGE_S + 1)
+        assert ctrl._present_camera_indices() == ()
+
+    def test_an_empty_or_never_taken_roster_is_not_evidence(self) -> None:
+        assert self._controller([]) ._present_camera_indices() == ()
+        assert self._controller(None)._present_camera_indices() == ()
+        never = self._controller([{"listing_index": 1}], age_s=0.0)
+        never._devices._camera_names_cache_t = 0.0  # type: ignore[attr-defined]
+        assert never._present_camera_indices() == ()
+
+    def test_a_devices_object_that_raises_is_not_evidence_either(self) -> None:
+        """Evidence gathering must never be the thing that breaks a recording."""
+
+        class Hostile:
+            @property
+            def _camera_names_cache(self):  # noqa: ANN202
+                raise RuntimeError("no")
+
+        assert RecordController(Hostile())._present_camera_indices() == ()  # type: ignore[arg-type]
+
+    def test_garbage_roster_entries_are_skipped_not_fatal(self) -> None:
+        ctrl = self._controller([{"listing_index": 0}, {"name": "no index"}, "junk", {"listing_index": "1"}])
+        assert ctrl._present_camera_indices() == (0,)
+
+    def test_the_two_rails_produce_DIFFERENT_refusals(self) -> None:
+        """An operator acts differently on each: one is a cable, the other a dead reader thread."""
+        stale = camera_liveness.refusal([{"camera": "wrist", "age_s": 37327.0}], peer_id="arm-1")
+        gone = camera_liveness.missing_refusal([{"camera": "wrist", "index": 1}], peer_id="arm-1")
+        assert "stopped publishing" in stale and "ignore_dead_cameras" in stale
+        assert "not listed by this machine at all" in gone and "ignore_missing_cameras" in gone
+        assert "RESCAN" in gone and "RESCAN" not in stale
