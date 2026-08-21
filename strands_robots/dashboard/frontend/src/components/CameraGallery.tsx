@@ -8,7 +8,7 @@ export interface CameraInfo {
   height?: number
   fps?: number | null
   claimed_by?: string
-  /** ready | in_use | blocked | unreadable | absent | unknown (server-side). */
+  /** ready | in_use | assigned | blocked | unreadable | vanished | absent | unknown (server-side). */
   state?: string
   available?: boolean
   reason?: string
@@ -30,6 +30,10 @@ const STATE_LABEL: Record<string, string> = {
   blocked: 'blocked by macOS',
   unreadable: 'not responding',
   absent: 'nothing here',
+  /* Not 'nothing here': a camera WAS here. The label has to carry the event, because the difference
+     between an empty index and one that just lost its camera is the difference between no action and
+     "your wrist view may now be pointing at the wrong thing". */
+  vanished: 'gone since we saw it',
   unknown: 'not probed',
 }
 
@@ -125,7 +129,15 @@ export default function CameraGallery(
                 <button className="btn ghost campreview-btn" disabled={!!loading[c.index]}
                         onClick={() => void snap(c.index)}
                         title="opens the camera once, right now — the server refuses only if a robot is really streaming it">
-                  {loading[c.index] ? 'trying…' : c.state === 'assigned' ? '📷 identify it anyway' : 'try anyway'}
+                  {loading[c.index]
+                    ? 'trying…'
+                    : c.state === 'assigned'
+                      ? '📷 identify it anyway'
+                      /* For a vanished index the probe answers the question the remedy raises: macOS
+                         renumbers on removal, so what matters is not "is something there" but WHICH
+                         camera is there now. The verb has to say that, or the operator reads the
+                         reappearance of a picture as proof their camera came back. */
+                      : c.state === 'vanished' ? '📷 see which camera is here now' : 'try anyway'}
                 </button>
                 {previews[c.index] && (
                   <img src={previews[c.index]} alt={`camera index ${c.index} snapshot`}

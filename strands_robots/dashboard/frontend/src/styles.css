@@ -1459,6 +1459,13 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .campill-blocked { background: var(--danger-fill); color: #fff; }
 .campill-unreadable, .campill-unknown { background: color-mix(in srgb, #d9a020 30%, transparent); color: #ffe6b0; border-color: color-mix(in srgb, #d9a020 55%, transparent); }
 .campill-absent { background: rgba(255, 255, 255, .07); color: var(--text-3, #8b98a9); }
+/* `vanished` is a real event, not an empty slot: warn-toned like `unreadable`, and dashed because
+   what is on screen is a MEMORY of a camera rather than a camera. A new state with no rule here
+   would inherit the bare pill and read as calm. */
+.campill-vanished {
+  background: color-mix(in srgb, #d9a020 22%, transparent); color: #ffe6b0;
+  border-style: dashed; border-color: color-mix(in srgb, #d9a020 55%, transparent);
+}
 .camname-hint { font-size: 11.5px; color: var(--text-3, #8b98a9); margin: 2px 0 6px; }
 .cam-why { display: grid; gap: 6px; font-size: 12.5px; line-height: 1.45; }
 .camcard.cam-blocked { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
