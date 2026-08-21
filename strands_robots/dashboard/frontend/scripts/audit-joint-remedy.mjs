@@ -60,13 +60,29 @@ if (await hint.count() === 0) {
   const text = (await hint.innerText()).replace(/\s+/g, ' ')
   const box = await hint.boundingBox()
   const size = await hint.evaluate(el => getComputedStyle(el).fontSize)
-  // The sentence that stops the physical work must be present, not just the generic tail.
+  // The sentence that stops the physical work must be present, not just the generic tail. This
+  // check DOUBLES AS THE FIXTURE-LANDED SENTINEL (Q114): no live peer says "id/path mismatch", so
+  // if the ws fixture failed to arrive this audit fails loudly instead of quietly measuring
+  // whatever the real fleet happened to be doing.
   if (!/id\/path mismatch/.test(text)) failures.push(`the card's hint omits the mismatch sentence: ${text.slice(0, 200)}`)
+  // ...and since Q115 CLAMPS this element to 4 lines in the card, innerText is no longer proof of
+  // VISIBILITY: the DOM keeps the whole string while the box shows part of it. The clamp's other
+  // half is what makes that safe, so assert it here too — title must carry the entire remedy.
+  const title = await hint.getAttribute('title')
+  if (!title || !/id\/path mismatch/.test(title)) {
+    failures.push('the hint is clamped but its title does not carry the full remedy — the hidden half is unreachable')
+  }
   if (/Calibrate this arm/.test(text)) failures.push('the card still tells the operator to recalibrate a calibrated arm')
   // Readability, measured: a hint taller than a third of the card is a wall of text, and 10px is the floor.
   console.log(`hint: ${Math.round(box.width)}x${Math.round(box.height)}px at ${size}, ${text.length} chars`)
   if (parseFloat(size) < 10) failures.push(`hint font-size ${size} is below the 10px readability floor`)
-  if (box.height > 220) failures.push(`the hint is ${Math.round(box.height)}px tall on a card — it needs the drawer, not the card`)
+  // 220px was the old ceiling and far too generous: the reason ate 60% of the tile and pushed every
+  // sibling down the page while this audit stayed green (Q115). The threshold now comes from the
+  // CLAMP'S OWN GEOMETRY rather than taste - 4 lines x 10px x 1.35 = 54px, measured at exactly 54 -
+  // with slack for one wrapped line. MEASURED SEPARATION, by un-clamping the live page: 54px
+  // clamped vs 122px not. My first attempt put this at 120, which "passed" by 2px; a threshold that
+  // close to the failing value is a coincidence, not a test.
+  if (box.height > 80) failures.push(`the hint is ${Math.round(box.height)}px tall on a card — the clamp is gone; it needs the drawer, not the card`)
   await page.screenshot({ path: '/tmp/audit-joint-remedy.png' })
 }
 if (thrown.length) failures.push(`page errors: ${thrown.join(' | ')}`)
