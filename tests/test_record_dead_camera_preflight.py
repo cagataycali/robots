@@ -232,3 +232,105 @@ class TestTheRosterRailIsWiredAndCannotInventAFault:
         assert "stopped publishing" in stale and "ignore_dead_cameras" in stale
         assert "not listed by this machine at all" in gone and "ignore_missing_cameras" in gone
         assert "RESCAN" in gone and "RESCAN" not in stale
+
+
+class TestTheIdentityRailIsWiredAtTheRecordGate:
+    """The third rail: the index is listed, opens and streams — with a DIFFERENT camera behind it.
+
+    Both rails above call this healthy, which is what makes it the dangerous one: frames arrive
+    (frame clock content), the index is listed (enumeration content), and the episodes look perfect
+    until training. Only the roster name the index carried when it was configured — stamped at spawn
+    since 0a9441cc — can say the substitution happened.
+    """
+
+    @staticmethod
+    def _controller(roster, cameras, *, age_s: float = 1.0):
+        class Devices(_Devices):
+            _camera_names_cache = roster
+            _camera_names_cache_t = time.time() - age_s
+
+        devices = Devices()
+        c = RecordController(
+            devices, bridge=_Bridge({}),
+            backend_factory=lambda **k: (_ for _ in ()).throw(
+                RuntimeError("no real arms in this test")
+            ),
+        )
+        managed = {"leader": _Managed("leader", {}), "follower": _Managed("follower", cameras)}
+        c._managed = lambda peer_id, *, role: managed[peer_id]  # type: ignore[assignment]
+        return c
+
+    _ROSTER = [
+        {"listing_index": 0, "name": "Logi 4K Pro"},
+        {"listing_index": 1, "name": "USB2.0_CAM1"},
+    ]
+
+    def test_an_index_that_changed_hands_refuses_with_409_before_the_fleet_is_touched(self) -> None:
+        c = self._controller(
+            self._ROSTER,
+            {"wrist": {"index_or_path": 0, "device_name": "USB2.0_CAM1"}},
+        )
+        with pytest.raises(HTTPException) as e:
+            c.open(dict(BODY))
+        assert e.value.status_code == 409
+        detail = str(e.value.detail)
+        assert "changed hands" in detail and "wrist index 0" in detail
+        # and it answers the operator's next question rather than leaving a hunt
+        assert "USB2.0_CAM1 is at index 1 now" in detail
+        assert "ignore_camera_identity" in detail
+        # A refusal that has already parked the arms is an outage, not a refusal.
+        assert c._devices.despawned == [] and c._devices.autospawn.suspended is False
+
+    def test_the_override_lets_the_operator_proceed(self) -> None:
+        c = self._controller(
+            self._ROSTER, {"wrist": {"index_or_path": 0, "device_name": "USB2.0_CAM1"}}
+        )
+        with pytest.raises(HTTPException) as e:
+            c.open({**BODY, "ignore_camera_identity": True})
+        assert "changed hands" not in str(e.value.detail)
+
+    def test_the_same_camera_at_the_same_index_is_not_refused(self) -> None:
+        c = self._controller(
+            self._ROSTER, {"wrist": {"index_or_path": 1, "device_name": "USB2.0_CAM1"}}
+        )
+        with pytest.raises(HTTPException) as e:
+            c.open(dict(BODY))
+        assert "changed hands" not in str(e.value.detail)
+
+    def test_an_unstamped_config_is_never_accused(self) -> None:
+        """Most profiles predate the stamp; a missing memory is not a change."""
+        c = self._controller(self._ROSTER, {"wrist": {"index_or_path": 0}})
+        with pytest.raises(HTTPException) as e:
+            c.open(dict(BODY))
+        assert "changed hands" not in str(e.value.detail)
+
+    def test_a_stale_or_absent_roster_cannot_accuse_anyone(self) -> None:
+        stamped = {"wrist": {"index_or_path": 0, "device_name": "USB2.0_CAM1"}}
+        for roster, age in ((self._ROSTER, 10_000.0), (None, 1.0), ([], 1.0)):
+            c = self._controller(roster, stamped, age_s=age)
+            with pytest.raises(HTTPException) as e:
+                c.open(dict(BODY))
+            assert "changed hands" not in str(e.value.detail)
+
+    def test_both_machine_rails_read_the_SAME_roster(self) -> None:
+        """One source, so absence and identity can never disagree about what is plugged in."""
+        c = self._controller(self._ROSTER, {})
+        assert c._present_camera_indices() == (0, 1)
+        assert [r["name"] for r in c._present_camera_roster()] == ["Logi 4K Pro", "USB2.0_CAM1"]
+
+    def test_a_true_listing_index_is_not_index_one(self) -> None:
+        """True == 1 in Python: a bool must not become an index for either rail."""
+        c = self._controller([{"listing_index": True, "name": "bool"}], {})
+        assert c._present_camera_indices() == ()
+
+    def test_each_fact_belongs_to_exactly_one_rail(self) -> None:
+        """An index the roster does not list is the ABSENCE rail's verdict, not identity's."""
+        c = self._controller(
+            [{"listing_index": 5, "name": "Logi 4K Pro"}],
+            {"wrist": {"index_or_path": 0, "device_name": "USB2.0_CAM1"}},
+        )
+        with pytest.raises(HTTPException) as e:
+            c.open(dict(BODY))
+        detail = str(e.value.detail)
+        assert "not listed by this machine at all" in detail
+        assert "changed hands" not in detail

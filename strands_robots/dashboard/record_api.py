@@ -237,6 +237,20 @@ class RecordController:
                         409, camera_liveness.missing_refusal(missing, peer_id=follower_id)
                     )
 
+            # The third shape, and the one both rails above call healthy: an index is a POSITION in
+            # a list that closes up when a device is removed, so pulling the camera at index 1
+            # slides index 2 into its place. The configured index still exists, still opens, still
+            # streams - with the wrong view, and the episodes look perfect until training. Only the
+            # name the index carried when it was configured (stamped at spawn) can say so.
+            if not body.get("ignore_camera_identity"):
+                drift = camera_liveness.identity_drift(
+                    follower.cameras, self._present_camera_roster()
+                )
+                if drift:
+                    raise HTTPException(
+                        409, camera_liveness.drift_refusal(drift, peer_id=follower_id)
+                    )
+
             leader_type = str(
                 body.get("leader_type")
                 or LEADER_TYPES.get(leader.robot_name, "")
@@ -299,14 +313,17 @@ class RecordController:
     #: this gate inventing a fault.
     ROSTER_MAX_AGE_S = 300.0
 
-    def _present_camera_indices(self) -> tuple[int, ...]:
-        """Camera indices this machine listed, from the roster it ALREADY has.
+    def _present_camera_roster(self) -> tuple[dict[str, Any], ...]:
+        """The camera roster this machine ALREADY took, if it is still evidence.
 
         Deliberately does not trigger a scan. Two reasons, and the second is the important one:
         a fresh name scan shells out to ffmpeg with a 10s timeout, which would sit in front of the
         record button; and any probe that *opens* cameras to enumerate them could itself take the
         index the arm is about to use. So this reads the cache the devices screen has already
         filled - and an empty or stale cache reads as no evidence, which cannot refuse anything.
+
+        Single source for both machine-side camera rails (absence and identity), so they can never
+        disagree about what this Mac is showing right now.
         """
         devices = self._devices
         try:
@@ -314,14 +331,18 @@ class RecordController:
             taken_at = float(getattr(devices, "_camera_names_cache_t", 0.0) or 0.0)
             if not roster or taken_at <= 0 or time.time() - taken_at > self.ROSTER_MAX_AGE_S:
                 return ()
-            return tuple(
-                int(r["listing_index"])
-                for r in roster
-                if isinstance(r, Mapping) and isinstance(r.get("listing_index"), int)
-            )
+            return tuple(dict(r) for r in roster if isinstance(r, Mapping))
         except Exception:  # noqa: BLE001 - evidence gathering must never break a session
             logger.debug("[record] could not read the camera roster")
             return ()
+
+    def _present_camera_indices(self) -> tuple[int, ...]:
+        """Just the indices of :meth:`_present_camera_roster`, for the absence rail."""
+        return tuple(
+            int(r["listing_index"])
+            for r in self._present_camera_roster()
+            if isinstance(r.get("listing_index"), int) and not isinstance(r.get("listing_index"), bool)
+        )
 
     def _camera_meta(self, peer_id: str) -> dict[str, Any]:
         """What the fleet snapshot last saw from this peer's cameras.
