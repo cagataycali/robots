@@ -147,10 +147,12 @@ export default function CalibrationSection() {
             {g.rows.map(e => {
               const open = !!sel && label(sel.entry) === label(e)
               return (
-                <li key={label(e)} className={e.unreadable ? 'dead' : ''}>
-                  <b>{e.id}</b>
+                <li key={label(e)} className={e.unreadable || e.problem ? 'dead' : ''}>
+                  <b>{e.problem ? '⚠ ' : ''}{e.id}</b>
                   <span className="meta">
-                    {e.unreadable
+                    {e.problem
+                      ? e.problem
+                      : e.unreadable
                       ? 'file unreadable'
                       : [
                           e.motors !== undefined ? `${e.motors} motors` : null,

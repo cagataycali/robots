@@ -25,6 +25,8 @@ export type CalibrationEntry = {
   motors?: number
   /** true when the tool could not read the file behind this id */
   unreadable: boolean
+  /** set when the id ITSELF is the footprint of a bug — see idProblem */
+  problem?: string
 }
 
 export type CalibrationList = {
@@ -52,6 +54,34 @@ export type CalibrationDetail = {
 /** Strip the markdown emphasis the tool wraps almost every value in. */
 function plain(s: string): string {
   return s.replace(/[*`]/g, '').trim()
+}
+
+/**
+ * MEASURED on this machine 2026-08-21: the calibration folder contains
+ * `teleoperators/so_leader/None.json`, written 2026-08-19 11:33 — a python `None` that reached a
+ * FILENAME, i.e. an arm was spawned with no robot_id and lerobot cheerfully calibrated into the
+ * string of it. The dashboard listed that row like any other, and the spawn form OFFERED it as a
+ * calibration id (the datalist filtered only on truthiness, and "None" is truthy).
+ *
+ * Why this matters more than tidiness: a calibration id selects the file that supplies a real arm's
+ * joint limits and homing offsets. Picking a file whose name means "the id was missing" hands the
+ * arm limits that belong to whatever ran during that accident — the wrong-limits failure the spawn
+ * form's own hint warns about, arriving through the suggestion list itself.
+ *
+ * The row is still SHOWN (it exists on disk, and hiding it would leave an unexplainable file the
+ * operator cannot inspect or delete) — it is shown as a problem, and it stops being suggested.
+ */
+export function idProblem(id: string): string | undefined {
+  const bare = id.trim()
+  if (!bare) return 'this calibration has no id — the file name is empty'
+  // The stringified null of every language that could have written this: python None, JS
+  // null/undefined, and the literal word. Case-insensitive because `none` is equally a bug here.
+  if (/^(none|null|undefined|nan)$/i.test(bare)) {
+    return `"${bare}" is a missing value that reached a file name — something was spawned without a `
+      + 'robot id, so these joint limits belong to that accident, not to an arm. Recalibrate under a '
+      + 'real id and delete this file.'
+  }
+  return undefined
 }
 
 /**
@@ -95,6 +125,8 @@ export function parseCalibrationList(text: string): CalibrationList {
         deviceType, model, id,
         unreadable: /error reading file/i.test(meta),
       }
+      const bad = idProblem(id)
+      if (bad) entry.problem = bad
       if (meta && !entry.unreadable) {
         // "2025-11-23 22:17:33, 0.9KB, 6 motors" — trailing parts are omitted
         // when the tool has no value for them, so match each independently.

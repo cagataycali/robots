@@ -565,7 +565,11 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                            list="calib-ids"
                            onChange={e => setRobotId(e.target.value)} />
                     <datalist id="calib-ids">
-                      {(calibIds ?? []).filter(c => c.id).map(c => (
+                      {/* A SUGGESTION IS AN ENDORSEMENT: an id whose own name says the value was
+                          missing (None/null — see lib/calibration idProblem) is never offered here,
+                          because picking it would hand a real arm limits from that accident. The
+                          calibration list still shows the file, marked, so it can be inspected. */}
+                      {(calibIds ?? []).filter(c => c.id && !c.problem).map(c => (
                         <option key={`${c.deviceType}/${c.model}/${c.id}`} value={c.id}>{c.model}</option>
                       ))}
                     </datalist>
