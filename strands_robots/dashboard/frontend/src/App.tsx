@@ -8,7 +8,7 @@ import { reloadImpact } from './lib/swUpdate'
 import { ConfigProvider } from './lib/useConfig'
 import { authToken, backendKey, backendLabel, setAuthToken } from './lib/endpoints'
 import { sessionVerdict } from './lib/sessionExpiry'
-import { serverNotice, type RefusedHandshakes } from './lib/serverNotice'
+import { serverNotice, staleServerNotice, fleetFieldGaps, type RefusedHandshakes } from './lib/serverNotice'
 import FleetBar from './components/FleetBar'
 import { getRecordApi } from './lib/recordApi'
 import RobotCard from './components/RobotCard'
@@ -214,12 +214,16 @@ function Dashboard() {
   // page part of the problem it reports. Failures are swallowed — linkHealth already owns "the
   // API is unreachable", and a second opinion about that helps nobody.
   const [refused, setRefused] = useState<RefusedHandshakes | null>(null)
+  // The WHOLE payload, because the build stamp's ABSENCE is the signal (ec5aabb4) and a
+  // sub-block cannot express it. `undefined` until the first answer: "not asked yet" must
+  // never read as "your server is old".
+  const [health, setHealth] = useState<unknown>(undefined)
   useEffect(() => {
     if (conn !== 'open') return
     let alive = true
     const poll = () => {
       httpGet<{ refused_handshakes?: RefusedHandshakes }>('/api/health')
-        .then(h => { if (alive) setRefused(h?.refused_handshakes ?? null) })
+        .then(h => { if (alive) { setRefused(h?.refused_handshakes ?? null); setHealth(h) } })
         .catch(() => {})
     }
     poll()
@@ -227,6 +231,10 @@ function Dashboard() {
     return () => { alive = false; clearInterval(id) }
   }, [conn])
   const notice = serverNotice(refused)
+  // Staleness alone is the normal state of a long-running server and is NOT news; a field the
+  // whole fleet is silent about is not news either. Together they are, because the operator is
+  // then seeing less than this bundle can show and there is exactly one remedy.
+  const stale = useMemo(() => staleServerNotice(health, fleetFieldGaps(peers)), [health, peers])
 
   return (
     <div className="stage">
@@ -293,6 +301,15 @@ function Dashboard() {
       {notice.text && !link.headline && (
         <div className="toast warn" role="status">
           <b>A client is being refused repeatedly</b> {notice.text}
+        </div>
+      )}
+
+      {/* The server is older than the bundle it is serving, AND that is costing the operator
+          something visible. Last in this stack on purpose: a refusal loop and a dead link are
+          both more urgent than a missing badge, and only one banner should compete for a glance. */}
+      {stale.text && !notice.text && !link.headline && (
+        <div className="toast" role="status">
+          <b>This server is older than this page</b> {stale.text}
         </div>
       )}
 
