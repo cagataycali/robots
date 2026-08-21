@@ -42,10 +42,20 @@ export interface LinkInput {
    * for an expired token.
    */
   sessionExpired?: boolean
+  /**
+   * Q100: is the DASHBOARD's own mesh session up? A different failure from every other one here —
+   * the API is fine, this page is connected to it, and nothing can reach a robot. The socket keeps
+   * whatever frames it has, so the cards stay on screen and the only honest verdict comes from the
+   * server saying so (`mesh.online`, already on the snapshot this page reads).
+   *
+   * `undefined` means the server did not say, which must change NOTHING: absence of evidence is not
+   * evidence of a dead mesh, and inventing one would put a false brake warning on a working fleet.
+   */
+  meshOnline?: boolean
 }
 
 export interface LinkVerdict {
-  kind: 'live' | 'connecting' | 'device-offline' | 'unauthorized' | 'lost' | 'stalled'
+  kind: 'live' | 'connecting' | 'device-offline' | 'unauthorized' | 'lost' | 'stalled' | 'mesh-down'
   /** commands (including the e-stop) can be expected to reach the fleet */
   commandsWork: boolean
   /** true when robots are on screen that this dashboard can no longer command */
@@ -101,6 +111,30 @@ export function linkHealth(i: LinkInput): LinkVerdict {
       headline: 'The server rejected this session',
       detail: 'Every command, including 🛑 STOP ALL, will be refused until the token is accepted again.',
       estopReason: 'the server is rejecting this session — STOP ALL will be refused',
+    }
+  }
+
+  // The API is up and this page is talking to it, and STILL nothing can reach a robot: the
+  // dashboard's own mesh session is down. Only trusted while the socket is OPEN, because that is
+  // when the flag is fresh news; after a drop, `conn` already tells the better story and a
+  // remembered `false` would explain a live fleet with a dead one.
+  //
+  // THE MEASURED HOLE (Q100): App renders "the dashboard's mesh session is down" inside its
+  // EMPTY-FLEET block, so it appears only when no robot is on screen. When the session dies with
+  // cards already rendered — the case that misleads — that explanation never rendered, this module
+  // was never told, and the two things it says at that moment were both wrong: "Commands should
+  // still get through", and an e-stop button whose title read like a working brake.
+  if (i.conn === 'open' && i.meshOnline === false) {
+    return {
+      kind: 'mesh-down', commandsWork: false, misleading: showing,
+      headline: 'This dashboard is not on the robot mesh',
+      detail: (showing
+        ? 'The API is up and this page is connected to it, but its mesh session is down — the fleet '
+          + 'below is the last thing the mesh reported and the robots keep doing whatever they were '
+          + 'last told. No command, including 🛑 STOP ALL, can reach them. '
+        : 'The API is up and this page is connected to it, but its mesh session is down, so no robot '
+          + 'can be seen or commanded. ') + PHYSICAL,
+      estopReason: "the dashboard's mesh session is down — STOP ALL cannot reach any robot",
     }
   }
 

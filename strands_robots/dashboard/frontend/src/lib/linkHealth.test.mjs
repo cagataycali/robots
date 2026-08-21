@@ -87,3 +87,45 @@ console.log('linkHealth: all assertions passed')
   assert.notEqual(generic.detail, lapsed.detail)
 }
 console.log('linkHealth: Q88 lapsed-sign-in wording ok')
+
+// ── Q100: the API is up, this page is connected, and nothing can reach a robot ──
+// App explains a dead mesh session inside its EMPTY-FLEET block, so it only ever appeared when no
+// robot was on screen — the harmless half. With cards rendered, this module was never told, and both
+// things it said were wrong: "commands should still get through", and a brake title that read healthy.
+const meshDown = linkHealth({ ...base, conn: 'open', meshOnline: false })
+assert.equal(meshDown.kind, 'mesh-down')
+assert.equal(meshDown.commandsWork, false, 'THE POINT: a dead mesh session cannot deliver STOP ALL')
+assert.equal(meshDown.misleading, true, 'robots are on screen that this page cannot command')
+assert.match(meshDown.detail, /power switch/, 'so the physical fallback is named')
+assert.match(meshDown.detail, /last thing the mesh reported/)
+assert.doesNotMatch(meshDown.detail, /should still get through/)
+assert.match(estopPosture(meshDown).title, /mesh session is down/)
+assert.equal(estopPosture(meshDown).degraded, true)
+// It must NOT be mistaken for the fleet being empty: with no cards the sentence changes, the verdict
+// does not — nothing can be commanded either way.
+const meshDownIdle = linkHealth({ ...base, peerCount: 0, conn: 'open', meshOnline: false })
+assert.equal(meshDownIdle.commandsWork, false)
+assert.equal(meshDownIdle.misleading, false, 'a frozen empty fleet misleads nobody')
+
+// A mute socket is the case this used to be confused with, and it is a DIFFERENT verdict: the mesh is
+// up, so commands are still expected to arrive.
+const stalled = linkHealth({ ...base, conn: 'open', meshOnline: true, lastEventAt: 1_000, now: 40_000 })
+assert.equal(stalled.kind, 'stalled')
+assert.equal(stalled.commandsWork, true)
+
+// SILENCE IS NOT EVIDENCE. A server that never reports mesh.online (older than this feature) must
+// change nothing at all: inventing a dead mesh would put a false brake warning over a working fleet.
+assert.equal(linkHealth({ ...base, conn: 'open' }).kind, 'live')
+assert.equal(linkHealth({ ...base, conn: 'open', meshOnline: undefined }).kind, 'live')
+assert.equal(linkHealth({ ...base, conn: 'open', meshOnline: true }).kind, 'live')
+
+// Only trusted while the socket is OPEN. Once it drops, `conn` tells the better story and a remembered
+// false would explain a live fleet with a dead mesh; and the device having no network outranks both,
+// because nothing leaves the machine at all.
+assert.equal(linkHealth({ ...base, conn: 'closed', meshOnline: false }).kind, 'lost')
+assert.equal(linkHealth({ ...base, conn: 'connecting', meshOnline: false }).kind, 'lost')
+assert.equal(linkHealth({ ...base, conn: 'open', meshOnline: false, browserOnline: false }).kind, 'device-offline')
+assert.equal(linkHealth({ ...base, conn: 'unauthorized', meshOnline: false }).kind, 'unauthorized',
+  'a refused session cannot know the mesh state — it is being told nothing')
+
+console.log('linkHealth: Q100 dead-mesh verdict ok')

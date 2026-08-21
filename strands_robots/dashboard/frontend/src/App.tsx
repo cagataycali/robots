@@ -171,6 +171,9 @@ function Dashboard() {
   const [linkTick, setLinkTick] = useState(0)
   const link = linkHealth({
     conn, browserOnline: pwa.online, lastEventAt, everOpen,
+    // Q100: the same fact the empty-fleet block explains 130 lines below — but that block only
+    // renders when NO robot is on screen, which is the harmless half of the failure.
+    meshOnline: mesh.online,
     // list.length, NOT the non-stale count: what is RENDERED is what can
     // mislead. Measured — when the stream dies quietly the stale sweep drops
     // the non-stale count to 0, so gating on it went silent at the exact moment
