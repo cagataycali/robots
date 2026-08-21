@@ -22,15 +22,14 @@ import path from 'node:path'
 const SRC = path.resolve(import.meta.dirname, '..', 'src')
 // Q139 removed 'dev-snippet' and 'snippet' from this list, Q140 removed 'thumb-loading' — each by
 // WRITING THE RULES, which is the only permitted way out of it. 7 left.
-const KNOWN_UNDEFINED = new Set([
-  // Q141 emptied this list except one. Six names were deleted from the JSX rather than styled, because
-  // each promised something its surroundings already did: .bubble already wraps text, .sheet-actions
-  // already flexes, .train-msg already styles the notice, the .activity grid owns a 20px track for the
-  // source icon, and .camgallery/.passkey-list were bare wrappers whose children carry everything.
-  // Two names before them (Q139, Q140) came off by WRITING the rules, which found two live defects.
-  'linklike',         // AuthGate: "use a token instead" — real intent (a button that should read as a
-                      // link), so this one is a rule to write, not a name to delete.
-])
+// THE BASELINE IS EMPTY, and that is the point: an empty allowlist means the very next class name added
+// without a rule fails on the spot, with no judgement call about whether it is "probably fine". Ten names
+// were undefined when this guard was written (Q138). Two came off by WRITING the rules and both were live
+// defects — a generated deploy file 1476px wide in a 389px drawer (Q139) and a 0x0 thumbnail placeholder
+// that told the operator their recording was empty (Q140). Q142's `.linklike` was the third: the login
+// screen's token fallback shouting as loudly as the passkey it falls back FROM. The other six were
+// deleted rather than styled (Q141), because each promised what its surroundings already did.
+const KNOWN_UNDEFINED = new Set([])
 
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>
   e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)])

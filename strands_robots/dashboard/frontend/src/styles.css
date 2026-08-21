@@ -1794,3 +1794,16 @@ pre.startsnip {
 @keyframes thumb-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.85; } }
 /* A pulsing box says "coming", a still box says "empty" — but only for people who want motion. */
 @media (prefers-reduced-motion: reduce) { .thumb-loading { animation: none; opacity: 0.6; } }
+
+/* Q142: the escape hatch on the login screen reads as a LINK, not a second primary action.
+   `.btn linklike` has been in AuthGate since the token fallback landed and .linklike had no rule, so
+   "passkey not working? sign in with an access token" inherited the full .btn look: measured 276x50,
+   solid panel background, 15px, full text colour — the same visual weight as "sign in" right above it.
+   Two equally loud buttons make the RECOMMENDED path ambiguous on the one screen a locked-out remote
+   operator has to reason about. Quieter, underlined, accent-coloured: offered, not urged. It keeps the
+   global :focus-visible ring (a button that stops looking like a button must still be findable by
+   keyboard), and enough padding to stay a >=24px tap target — a link-looking control on a phone is still
+   something a thumb has to hit. */
+.btn.linklike { min-width: 0; padding: 8px 2px; background: none; border: none; color: var(--accent);
+  font-size: var(--fs-small); text-decoration: underline; text-underline-offset: 2px; }
+.btn.linklike:hover { color: color-mix(in srgb, var(--accent) 78%, var(--text)); }
