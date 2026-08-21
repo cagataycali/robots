@@ -103,7 +103,13 @@ _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
-def classify(log_lines: Any, calibrations: Any = None) -> dict[str, str] | None:
+def classify(
+    log_lines: Any,
+    calibrations: Any = None,
+    *,
+    robot_name: Any = None,
+    robot_id: Any = None,
+) -> dict[str, str] | None:
     """Explain the NEWEST degraded ``hw_joints`` probe in ``log_lines``, or return None.
 
     Silence is the common case and must stay silent: a child whose log never mentions the probe
@@ -123,7 +129,7 @@ def classify(log_lines: Any, calibrations: Any = None) -> dict[str, str] | None:
             if matched["kind"] == "port_in_use" and _self_healed(log_lines):
                 matched = {**matched, "remedy": _PORT_IN_USE_AFTER_SELF_HEAL}
             if matched["kind"] == "uncalibrated":
-                better = calibration_advice(calibrations)
+                better = calibration_advice(calibrations, robot_name=robot_name, robot_id=robot_id)
                 if better:
                     matched = {**matched, "remedy": better}
             return {**matched, "detail": _tail(line)}
@@ -137,7 +143,7 @@ def classify(log_lines: Any, calibrations: Any = None) -> dict[str, str] | None:
     return None
 
 
-def calibration_advice(available: Any) -> str | None:
+def calibration_advice(available: Any, *, robot_name: Any = None, robot_id: Any = None) -> str | None:
     """A better remedy for ``uncalibrated`` when calibration files ALREADY EXIST on this machine.
 
     Measured on cagatay's rig 2026-08-21: so101-leader was spawned as a real robot with
@@ -157,6 +163,9 @@ def calibration_advice(available: Any) -> str | None:
     """
     if not isinstance(available, Mapping) or not available:
         return None
+    narrow = _advice_for_this_arm(available, robot_name, robot_id)
+    if narrow:
+        return narrow
     where = sorted(
         f"{group}/{name}.json"
         for group, names in available.items()
@@ -317,3 +326,63 @@ def merge(peer: Mapping[str, Any], fields: Mapping[str, Any]) -> dict[str, Any]:
         # nothing -- i.e. it runs code older than dde98e46.
         out["joint_problem"] = reported
     return out
+
+
+def _advice_for_this_arm(available: Mapping, robot_name: Any, robot_id: Any) -> str | None:
+    """The same advice, but for THIS arm — the exact path lerobot wanted and the ids that would work.
+
+    The generic sentence lists every calibration on the machine, which on this rig is ten paths
+    across three robot families; the operator then has to work out which one lerobot was looking for.
+    With the child's own ``robot_name`` and ``robot_id`` that becomes one path and a short list.
+
+    Silent unless BOTH are known AND the machine has a ``robots/<name>…`` directory to talk about:
+    a robot family this dashboard has never seen must fall back to the broad answer rather than get a
+    confident sentence about a layout nobody verified.
+    """
+    name = str(robot_name or "").strip()
+    rid = str(robot_id or "").strip()
+    if not name or not rid:
+        return None
+    models = sorted(
+        group.split("/", 1)[1]
+        for group in available
+        if isinstance(group, str) and group.startswith("robots/")
+        and (group.split("/", 1)[1] == name or group.split("/", 1)[1].startswith(f"{name}_"))
+    )
+    if not models:
+        return None
+    ids = sorted({
+        str(n)
+        for model in models
+        for n in (available.get(f"robots/{model}") or [])
+        if isinstance(available.get(f"robots/{model}"), (list, tuple))
+    })
+    if rid in ids:
+        # The file lerobot wants IS there. Whatever went wrong, "your calibration is missing" is not
+        # it, and sending this operator to recalibrate would be re-teaching a calibrated arm.
+        return (
+            f"robots/{models[0]}/{rid}.json EXISTS, so this arm is calibrated and the fault is not a "
+            "missing calibration - read the probe's own exception in this robot's log (devices > "
+            "logs) before touching the hardware."
+        )
+    elsewhere = sorted(
+        f"{group}/{rid}.json"
+        for group, names in available.items()
+        if isinstance(group, str) and not group.startswith("robots/")
+        and isinstance(names, (list, tuple)) and rid in [str(n) for n in names]
+    )
+    wanted = f"robots/{models[0]}/{rid}.json"
+    if elsewhere:
+        return (
+            f"lerobot wanted {wanted} and it is not there - but {elsewhere[0]} IS, so this id was "
+            "calibrated for the OTHER side of the pair. This is a filename, not an uncalibrated arm: "
+            + (f"respawn it as one of {', '.join(ids)}, " if ids else "")
+            + "or copy that file to the path above. Do NOT recalibrate - re-teaching a calibrated arm "
+            "is physical work to fix a path."
+        )
+    return (
+        f"lerobot wanted {wanted}, which does not exist"
+        + (f"; the ids calibrated for this robot are {', '.join(ids)}. Respawn this arm as one of "
+           "them, or calibrate it under the id you are using." if ids
+           else ". Calibrate this arm under the id you are using.")
+    )

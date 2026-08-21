@@ -79,6 +79,10 @@ class ManagedRobot:
     robot_name: str
     mode: str                      # "real" | "sim"
     port: str | None = None
+    # The lerobot calibration id this child was started with. Kept because it is the ONLY thing that
+    # explains an "uncalibrated" arm whose calibration file exists: lerobot loads
+    # robots/<robot_type>/<robot_id>.json, so the id is half of the path that was not found.
+    robot_id: str | None = None
     cameras: dict[str, Any] = field(default_factory=dict)
     process: subprocess.Popen | None = None
     started_at: float = 0.0
@@ -1696,7 +1700,13 @@ class DeviceManager:
             # with an empty joint history and the operator has to go read logs to find out that the
             # port is contended or the board is uncalibrated - two faults with opposite remedies.
             # MeshBridge drops this again if the arm is actually publishing joints.
-            problem = joint_silence.classify(list(m.logs), _calibrations_on_disk())
+            # The child's own name and id go WITH the listing: without them the remedy can only
+            # print every calibration on the machine (ten paths across three robot families here)
+            # and leave the operator to work out which one lerobot wanted.
+            problem = joint_silence.classify(
+                list(m.logs), _calibrations_on_disk(),
+                robot_name=m.robot_name, robot_id=m.robot_id,
+            )
             if problem:
                 out.setdefault(peer_id, {})["joint_problem"] = problem
         return out
@@ -2122,7 +2132,7 @@ class DeviceManager:
             )
             managed = ManagedRobot(
                 peer_id=peer_id, robot_name=robot_name, mode=mode, port=port,
-                cameras=cameras or {}, process=proc, started_at=time.time(),
+                robot_id=robot_id, cameras=cameras or {}, process=proc, started_at=time.time(),
             )
             self.robots[peer_id] = managed
             # Drain stdout forever - daemon thread, ring buffer.
