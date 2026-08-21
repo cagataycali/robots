@@ -1392,7 +1392,7 @@ Corrections from code review that apply to all future contributions:
 - **Name a test for its behaviour, not for its provenance** - a test class or function must not carry the release (`TestHardwareConfigV040Followups`) or review round (`...Followups`) that produced it. The name is the first thing a maintainer reads, so it has to say what is verified; and a name tied to a shipped release reads as historical, which invites skipping it. A bundle named for a review round is usually a bundle of unrelated checks - split it into one behaviour per class rather than inventing a name that covers all of them. Provenance belongs in the docstring, where the `#NNN` reference stays useful. A version token of one or two digits is fine: it names a *data format* under test (`test_load_v3_parses_every_field`), not a release. `Pinned by` `tests/test_test_case_names_describe_behaviour.py`.
 
 ### Performance
-- **Don't create executors in hot loops** - Reuse a single `ThreadPoolExecutor` instance instead of creating one per call at 50Hz.
+- **Don't create executors in hot loops** - Reuse a single `ThreadPoolExecutor` instance instead of creating one per call at 50Hz. A `with ThreadPoolExecutor(...)` block joins its worker before returning, so the live thread *count* never grows and nothing watching thread counts can see the churn - count `Thread.start` instead. For resolving a coroutine in a sync context the reuse already exists: `strands_robots._async_utils` owns that rule and submits to one module-level worker, so a sync wrapper delegates to it rather than building a private executor. Pinned by tests/policies/test_base.py.
 - **Cache expensive JSON parsing** - If a `@property` re-parses a JSON file on every access, cache the result at module load or first access.
 
 
@@ -1414,6 +1414,7 @@ Corrections from code review that apply to all future contributions:
   tests/test_except_tuples_state_their_real_scope.py, over builtins, the standard library and
   this package; a third-party tree is left alone because a dependency can re-parent its classes
   between releases, so naming both it and a builtin superclass is a hedge.
+- **A `try` covers only the operation whose exception it classifies** - where a handler exists to read a *verdict* out of an exception class, anything else inside the same `try` that can raise that class is read as the verdict. `asyncio.get_running_loop()` reports "no running loop" by raising `RuntimeError`, so with the offload it guards inside the same `try`, a `RuntimeError` raised by the awaited coroutine was taken for that verdict and the caller was handed `asyncio.run() cannot be called from a running event loop` in place of what the coroutine said - the whole family (`NotImplementedError`, `RecursionError`) with it. Put the guarded call after the `except`, so the handler can only ever see the operation it is classifying. Pinned by tests/test_async_utils.py.
 - **USB / hardware probing** - use `except (ImportError, OSError)`. `PermissionError` is an `OSError`, `FileNotFoundError` is an `OSError`, etc.
 
 ### Actuators: a joint pose goes only where `ctrl` IS a joint pose
