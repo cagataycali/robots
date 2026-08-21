@@ -109,7 +109,12 @@ if (!filter) {
   //   check-routes-exist — an /api path no route serves (Q125). serverAge.ts answers this against
   //     the LIVE server, which cannot tell a typo from an old server: both are 404, and the UI then
   //     explains the wrong one ("restart the dashboard" about a route that never existed).
-  for (const guard of ['check-lib-wired.mjs', 'check-one-fetcher.mjs', 'check-retry-inputs.mjs',
+  //   check-css-wired — a STYLESHEET that reaches no bundle. check-lib-wired's sibling, and the same
+  //     disease in a place the compiler cannot see: src/index.css was imported by nothing, so #2486's
+  //     label rows and U22's death note shipped as class names no sheet defined, and a Q136 phone fix
+  //     was then appended to the same dead file. All three builds were green.
+  for (const guard of ['check-lib-wired.mjs', 'check-css-wired.mjs', 'check-one-fetcher.mjs',
+                       'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {
     const w = spawnSync(process.execPath, [new URL(guard, import.meta.url).pathname], { encoding: 'utf8' })
     process.stdout.write(w.stdout || '')
