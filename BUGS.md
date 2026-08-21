@@ -4,7 +4,20 @@
 Evidence first, conclusions marked as such. Measured with the dashboard's own token against pid 2519
 (alive 2d04h, terminal-blessed Aug 19 start), plus `lsof` and `ps`.
 
-**(a) `presence.connected = True` for an arm whose servo bus NOBODY HOLDS.**
+**(a) RETRACTED THE SAME NIGHT — THE PROBE WAS BROKEN, NOT THE PRODUCT.** ~~`presence.connected = True`
+for an arm whose servo bus nobody holds.~~ `lsof` returns **zero lines for every pid in this context,
+including the shell asking** (`lsof -p $$` → 0, `lsof -p 2519` → 0). It is not permitted to read fds here
+at all, so its silence about the serial ports said nothing about the serial ports. Positive control, one
+command, would have caught it before the entry was written. And `/api/devices/logs/so101-follower` confirms
+the opposite of my claim: `hardware connected` at 13:58:52, immediately after the `hw_joints` state-probe
+failure — the bus DID open, and the mute joints are the known Q26 sync-read collision, not a fictional
+never-opened port. `connected` is `bool(inner.is_connected)` (mesh/core.py:1032) and is telling the truth.
+LAW (second time this week a measurement, not the code, was the defect): **a probe used as evidence of
+ABSENCE must first be run against a positive control.** A tool that cannot see anything reports exactly
+what "nothing is there" reports. The earlier caretaker check that DID return byte offsets ran in a
+different (terminal-blessed) context — so "lsof worked last time" is not transferable evidence either.
+The original claim, kept struck through so nobody re-derives it:
+~~
 `/api/fleet` shows exactly two peers, `so101-follower` and `so101-leader`, both `stale=False`,
 `connected=True`, `joints=0`, camera `main` present. But `lsof /dev/cu.usbmodem5AB01584281` and
 `…5AB01818061` return **nothing at all** — no process holds either port. An earlier caretaker check
@@ -15,8 +28,8 @@ A motors-truth flag reading True while no process holds the motor port is a cont
 CONSEQUENCE IF CONFIRMED: `statusSentence`/`connBadge` consume `hwConnected`, so the fleet asserts
 "hardware connected" for two arms that never opened their bus. The mute-arm warning (jointAbsence) is
 the only thing saving the screen from reading fully healthy.
-NOT YET DONE: prove where the flag is set relative to the bus open, and whether the follower's Q26
-"Port is in use!" happened BEFORE or AFTER it was set.
+~~ (end of the retracted claim.) DONE INSTEAD: the flag is set from `inner.is_connected` at every presence
+publish, and the log proves the open succeeded, so there is nothing to fix in (a).
 
 **(b) a peer disappeared from the fleet while its process kept running.**
 The sim twin (`so101-follower-twin` + `…__so101`) is GONE from `/api/fleet` — yet pid 37603, the
