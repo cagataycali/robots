@@ -20,6 +20,7 @@
  */
 import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
 import fs from 'node:fs'
+import { apiSettled, SCREEN_APIS } from './_audit_wait.mjs'
 
 const TOKEN = fs.readFileSync(
   process.env.STRANDS_DASH_TOKEN_FILE ?? `${process.env.HOME}/.strands_dashboard/local_api_token.txt`, 'utf8').trim()
@@ -53,8 +54,13 @@ const page = await ctx.newPage()
 page.on('pageerror', e => failures.push(`page threw: ${String(e.message).slice(0, 180)}`))
 await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(5000)
+/* The devices screen's calibration verdicts come from /api/calibration and /api/devices, both
+   fetched after the panel mounts: read the DOM before they land and the audit reports the
+   product's words wrong. See _audit_wait.mjs for the entry that cost a retraction. */
+const devicesReady = apiSettled(page, ...SCREEN_APIS.devices)
 await page.locator('button.chip:has-text("devices")').first().click()
-await page.waitForTimeout(3500)
+await devicesReady
+await page.waitForTimeout(1200)
 
 /* The mode control is found by its OPTIONS, not its position: this drawer has seven selects and the
    spawn form is not the first of them. */

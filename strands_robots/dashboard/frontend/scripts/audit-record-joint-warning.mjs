@@ -20,6 +20,7 @@
  */
 import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
 import fs from 'node:fs'
+import { apiSettled, SCREEN_APIS } from './_audit_wait.mjs'
 
 const TOKEN = fs.readFileSync(
   process.env.STRANDS_DASH_TOKEN_FILE ?? `${process.env.HOME}/.strands_dashboard/local_api_token.txt`, 'utf8').trim()
@@ -58,9 +59,9 @@ await page.waitForTimeout(5000)
    reports a role bug that does not exist. Wait for the request the labels depend on.
    (Related: do NOT probe an API with page.evaluate(fetch) — the app attaches the bearer token itself, so
    a bare in-page fetch 401s while the app's own request beside it returns 200.) */
-const devicesDone = page.waitForResponse(r => r.url().includes('/api/devices') && r.status() === 200, { timeout: 15000 })
+const recordReady = apiSettled(page, ...SCREEN_APIS.record)
 await page.locator('button.chip:has-text("record")').first().click()
-await devicesDone.catch(() => {})
+await recordReady
 await page.waitForTimeout(1500)
 
 /* The arm selects are found by their LABEL, not their index: this screen has six selects and the
