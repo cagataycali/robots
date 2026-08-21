@@ -188,7 +188,13 @@ async function liveRoutes(): Promise<string[] | null> {
     const res = await fetch(apiUrl('/openapi.json'), {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      // Guarded route, so a 401/403 here is as good a witness as any other refusal. It stays SILENT
+      // otherwise (a server without /openapi.json is not an error) — only the accounting is added.
+      noteAuthRefusal(res.status)
+      return null
+    }
+    noteAuthAccepted('/openapi.json')
     const doc = await res.json()
     const paths = doc && doc.paths && typeof doc.paths === 'object' ? Object.keys(doc.paths) : []
     _liveRoutes = paths.length ? paths : null
@@ -315,6 +321,11 @@ export async function apiBlob(path: string): Promise<string> {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`)
   }
   if (!res.ok) {
+    // Q104: a camera preview is a GUARDED request like any other, and on the fleet screen it is often
+    // the FIRST thing a rotated token refuses — the tiles are what the operator is looking at. Without
+    // this the refusal memory never hears about it, so planRetry keeps reopening and AuthGate's watcher
+    // has no evidence to verify.
+    noteAuthRefusal(res.status)
     const text = await res.text()
     let detail: unknown = text || res.statusText
     try { detail = JSON.parse(text).detail ?? detail } catch { /* raw text */ }
@@ -322,5 +333,6 @@ export async function apiBlob(path: string): Promise<string> {
     // 503 with the driver's words) is read by a person too.
     throw new HttpError(res.status, detailSentence(detail) || text || res.statusText)
   }
+  noteAuthAccepted(path)
   return URL.createObjectURL(await res.blob())
 }

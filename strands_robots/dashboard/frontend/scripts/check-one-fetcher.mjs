@@ -52,4 +52,37 @@ if (offenders.length) {
   process.exit(1)
 }
 console.log(`  every request goes through lib/endpoints (${files.length} app files carry no direct fetch)`)
+
+/*
+ * SECOND HALF (Q104): the funnel is allowed raw fetch() — but it is not one fetcher, it is THREE
+ * (api, apiBlob, the /openapi.json live-routes probe), and only api() recorded a 401. So the module
+ * that exists to make refusals visible had two paths that swallowed them: a camera preview refused on
+ * the fleet screen — usually the FIRST thing a rotated token refuses, and what the operator is actually
+ * looking at — left the refusal memory empty, so planRetry kept reopening and AuthGate's watcher had no
+ * evidence to verify. The check above cannot see this: the offending fetch is in the exempt file.
+ *
+ * The rule: every fetch() site inside endpoints.ts sits in a function that calls noteAuthRefusal.
+ */
+const SRC_FETCHER = path.join(ROOT, 'src/lib/endpoints.ts')
+const fetcher = fs.readFileSync(SRC_FETCHER, 'utf8')
+// Split on top-level function starts; a fetch() belongs to the declaration it follows.
+const parts = fetcher.split(/\n(?=(?:export )?(?:async )?function )/)
+const unaccounted = parts
+  .filter(b => /[^.\w]fetch\(/.test(b))
+  .filter(b => !/noteAuthRefusal\(/.test(b))
+  .map(b => (b.match(/(?:export )?(?:async )?function (\w+)/) ?? [null, '(top level)'])[1])
+
+const fetchSites = parts.filter(b => /[^.\w]fetch\(/.test(b)).length
+console.log(`  ${fetchSites} fetch site(s) inside lib/endpoints, each accounting for a refusal`)
+if (fetchSites === 0) {
+  console.error('  FAIL  no fetch() found inside lib/endpoints.ts — this guard is looking in the wrong')
+  console.error('        place, which is worse than the bug it guards against.')
+  process.exit(1)
+}
+if (unaccounted.length) {
+  console.error(`  FAIL  ${unaccounted.length} fetcher(s) in lib/endpoints.ts swallow a 401: ${unaccounted.join(', ')}`)
+  console.error('  A refusal nobody records is a refusal nothing can react to: planRetry keeps knocking')
+  console.error('  and the gate never re-checks. Call noteAuthRefusal(res.status) on the failure path.')
+  process.exit(1)
+}
 process.exit(0)

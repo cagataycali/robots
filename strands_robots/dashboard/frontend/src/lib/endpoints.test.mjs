@@ -145,3 +145,27 @@ console.log('endpoints.test.mjs: Q102 refusal memory ok')
 }
 
 console.log('endpoints.test.mjs: Q103 public-200 absolution ok')
+
+// ── Q104: EVERY fetcher in this module records a refusal, not just api() ────────────────────────────
+// apiBlob is the camera-preview rail: on the fleet screen it is usually the FIRST thing a rotated token
+// refuses, and it had its own fetch() with no accounting — so the tiles went dark while the refusal
+// memory stayed empty, and both planRetry and AuthGate's watcher were left with nothing to act on.
+{
+  const m = await import('/tmp/endpoints.mjs?case=q104-blob')
+  globalThis.localStorage = { getItem: () => 'a-token', setItem() {}, removeItem() {} }
+  globalThis.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized', text: async () => '' })
+  await assert.rejects(() => m.apiBlob('/api/devices/camera/0/preview'))
+  assert.equal(m.authRefusedRecently(), true, 'a refused camera preview is evidence like any other')
+}
+{
+  // ...and a successful GUARDED blob clears it, the same rule api() follows.
+  const m = await import('/tmp/endpoints.mjs?case=q104-blob-ok')
+  globalThis.localStorage = { getItem: () => 'a-token', setItem() {}, removeItem() {} }
+  globalThis.URL.createObjectURL = () => 'blob:stub'
+  m.noteAuthRefusal(401)
+  globalThis.fetch = async () => ({ ok: true, status: 200, blob: async () => 'bytes' })
+  await m.apiBlob('/api/devices/camera/0/preview')
+  assert.equal(m.authRefusedRecently(), false)
+}
+
+console.log('endpoints.test.mjs: Q104 every fetcher accounts ok')
