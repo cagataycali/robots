@@ -16,6 +16,12 @@
   --border-hi: #2c3a4f;
   --text: #e6edf3;
   --dim: #8b98a9;
+  /* Q147: --dim is the DISABLED colour (see above), and five CLICKABLE rules were wearing it — the nav
+     chips, the settings tabs, the dock's minimise button, the apply chip and the glass button. Contrast
+     was never the problem (5.77:1 on --panel2, AA-clear); the SEMANTIC COLLISION was: the palette says
+     "this colour means you cannot click it" and then paints the record entry point with it. --quiet is
+     the same restraint without that claim, and it keeps --dim honest. */
+  --quiet: #a9b7c7;
   /* UX_REVIEW #2: --dim is the DISABLED colour (.btn:disabled, .btn.go:disabled
      both paint it). Enabled secondary buttons used it too, so a clickable
      control and a dead one were the same grey. --text-2 is the "enabled, not
@@ -120,7 +126,7 @@ body {
 .explain b { color: var(--warn); }
 
 .chip {
-  font-size: 11px; color: var(--dim); background: var(--panel2);
+  font-size: 11px; color: var(--quiet); background: var(--panel2);
   border: 1px solid var(--border); border-radius: var(--rpill);
   padding: 4px 10px; cursor: pointer; white-space: nowrap;
   transition: border-color var(--dur), color var(--dur);
@@ -184,7 +190,7 @@ body {
 .field-meta { font-size: 10.5px; line-height: 1.45; color: var(--dim); font-style: normal; opacity: .85; }
 .field-err { font-size: 11px; color: var(--danger, #ff4d5e); font-style: normal; }
 .apply-chip { padding: 1px 6px; border-radius: 8px; font-size: 9.5px; white-space: nowrap;
-  border: 1px solid rgba(255,255,255,.14); color: var(--dim); }
+  border: 1px solid rgba(255,255,255,.14); color: var(--quiet); }
 .apply-chip.live { color: #7de3a0; border-color: rgba(125,227,160,.35); }
 .apply-chip.next-turn { color: #7cc0ff; border-color: rgba(124,192,255,.35); }
 .apply-chip.mesh-restart, .apply-chip.startup { color: #ffc46b; border-color: rgba(255,196,107,.35); }
@@ -611,7 +617,7 @@ body {
 .tabs { display: flex; gap: var(--s1); padding: var(--s3) var(--s4) 0; overflow-x: auto; border-bottom: 1px solid var(--border); }
 .tab {
   background: none; border: none; border-bottom: 2px solid transparent;
-  color: var(--dim); font-size: var(--fs-small); padding: var(--s2) var(--s3) var(--s3);
+  color: var(--quiet); font-size: var(--fs-small); padding: var(--s2) var(--s3) var(--s3);
   cursor: pointer; white-space: nowrap;
 }
 .tab:hover { color: var(--text); }
@@ -821,7 +827,7 @@ body {
 }
 .dock-send:disabled { background: var(--glass-1); color: var(--dim); backdrop-filter: blur(var(--glass-blur)); }
 .dock-min {
-  background: none; border: none; color: var(--dim); font-size: 14px; cursor: pointer; padding: var(--s2);
+  background: none; border: none; color: var(--quiet); font-size: 14px; cursor: pointer; padding: var(--s2);
   /* R7: measured 23x28 — one pixel short of the floor, on the button that closes
      the agent dock. min-width, not padding, so the icon stays centred. */
   min-width: 24px; min-height: 24px;
@@ -1076,7 +1082,7 @@ body::before {
 .gbtn {
   display: inline-flex; align-items: center; gap: var(--s2);
   min-height: 34px; padding: 0 var(--s4);
-  background: var(--glass-1); color: var(--dim);
+  background: var(--glass-1); color: var(--quiet);
   border: 1px solid var(--glass-border); border-radius: var(--rpill);
   font: inherit; font-size: var(--fs-small); cursor: pointer;
   backdrop-filter: blur(var(--glass-blur));

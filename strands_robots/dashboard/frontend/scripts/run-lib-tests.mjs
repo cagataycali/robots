@@ -126,6 +126,9 @@ if (!filter) {
     //   check-live-regions — Q145: the e-stop verdict and the record refusal are ANSWERS to a tap; they
     //   must announce themselves, or they are seen and never heard.
     'check-live-regions.mjs',
+    //   check-disabled-colour — Q147: an enabled control painted with the DISABLED token does not get
+    //   clicked. --dim only under :disabled; --quiet for live-but-restrained.
+    'check-disabled-colour.mjs',
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {
