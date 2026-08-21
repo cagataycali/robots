@@ -1,0 +1,111 @@
+// Run: npx esbuild src/lib/endpoints.ts --bundle --format=esm --outfile=/tmp/endpoints.mjs && node src/lib/endpoints.test.mjs
+//
+// endpoints.ts is the one place EVERY screen's fetch, auth header, token storage and 404 explanation
+// passes through, and it had no test at all. Three defects fixed here are the reason it needs one, and
+// each is a silent lie rather than a crash:
+//   1. normalize() answered `new URL().origin` for any scheme, and `foo://bar` / `file:///x` return the
+//      STRING "null" — so a typo in the backend field made every later request go to "nullapi/fleet".
+//   2. absorbUrl() used to live inside backendBase(), but api() reads authToken() BEFORE resolving the
+//      URL — so the first request of a `?token=` link went out unauthenticated and came back 401, which
+//      the AuthGate shows as a login form to someone who just clicked an authorised link.
+//   3. The live route list (Q79) belongs to ONE server. Kept across a backend switch, the old server's
+//      routes explain the new server's 404s: "restart your dashboard" about a route that exists.
+// Module state (cachedBase, absorbedUrl, _liveRoutes) is per-import, so a case needing a different
+// location/localStorage re-imports the bundle with a `?case=N` cache-buster.
+import assert from 'node:assert/strict'
+
+const store = new Map()
+globalThis.localStorage = {
+  getItem: k => (store.has(k) ? store.get(k) : null),
+  setItem: (k, v) => store.set(k, String(v)),
+  removeItem: k => store.delete(k),
+}
+globalThis.location = { search: '', host: 'dash.local', origin: 'http://dash.local' }
+
+const json = (body, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+let openapiFetches = 0
+let routes = ['/api/fleet']
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes('/openapi.json')) {
+    openapiFetches += 1
+    return json({ paths: Object.fromEntries(routes.map(r => [r, {}])) })
+  }
+  lastRequest = { url: String(url), headers: (init && init.headers) || {} }
+  // A RESOURCE 404 from a route that exists. Deliberately not the SPA catch-all's wording
+  // ("not found" / "no endpoint at ..."), which is the server's own signal for an unrouted path.
+  return json({ detail: 'no dataset directory at /tmp/x' }, 404)
+}
+let lastRequest = null
+
+const mod = await import('/tmp/endpoints.mjs')
+
+// ── 1. a typo must land as "same origin", never as an address that cannot exist ──
+assert.equal(mod.normalize('robot.lan:8080'), 'http://robot.lan:8080', 'a bare host gets http://')
+assert.equal(mod.normalize(' robot.lan:8080/ '), 'http://robot.lan:8080', 'trimmed, no trailing slash')
+assert.equal(mod.normalize('ws://robot.lan:8080'), 'http://robot.lan:8080', 'ws:// typed in is accepted')
+assert.equal(mod.normalize('wss://robot.lan'), 'https://robot.lan', 'wss:// becomes https')
+for (const poison of ['foo://bar', 'file:///x', 'about:blank']) {
+  const got = mod.normalize(poison)
+  assert.equal(got, '', `${poison} is not a fetchable base, so it means same origin`)
+  assert.notEqual(got, 'null', `${poison} must never become the STRING "null"`)
+}
+assert.equal(mod.normalize('ftp://robot.lan:21'), '', 'a scheme fetch cannot speak is refused whole')
+assert.equal(mod.normalize(''), '')
+assert.equal(mod.normalize(null), '', 'no value is same origin, not a throw')
+
+// same origin means the path is used verbatim — the shape every dev-proxy setup relies on
+assert.equal(mod.apiUrl('/api/fleet'), '/api/fleet')
+mod.setBackendBase('robot.lan:8080')
+assert.equal(mod.apiUrl('/api/fleet'), 'http://robot.lan:8080/api/fleet')
+mod.setBackendBase('foo://bar')
+assert.equal(mod.apiUrl('/api/fleet'), '/api/fleet', 'a poisoned base falls back, it does not prefix')
+assert.ok(!mod.apiUrl('/api/fleet').startsWith('null'), 'the "nullapi/fleet" regression')
+
+// ── 3. the route list belongs to the server it came from ──
+mod.setBackendBase('old.lan:8090')
+routes = ['/api/fleet'] // this server does NOT route /api/record/open
+let err = await mod.api('/api/record/open').then(() => null, e => e)
+assert.equal(err.status, 404)
+assert.equal(openapiFetches, 1, 'the route list is fetched on the FIRST 404 only, never on success')
+assert.match(err.message, /restart/i, 'a route this server lacks is explained as a stale server')
+
+err = await mod.api('/api/record/open').then(() => null, e => e)
+assert.equal(openapiFetches, 1, 'and at most once per backend')
+
+routes = ['/api/fleet', '/api/record/open'] // the NEW server has the route
+mod.setBackendBase('new.lan:8090')
+err = await mod.api('/api/record/open').then(() => null, e => e)
+assert.equal(openapiFetches, 2, 'switching backends forgets the old server route list (it re-asks)')
+assert.equal(err.message, 'no dataset directory at /tmp/x',
+  "a route the new server HAS keeps the server's own words about the resource")
+assert.doesNotMatch(err.message, /restart/i, 'no restart advice about a route that exists')
+
+// ── 2. a ?token= link is authorised on its FIRST request, not its second ──
+store.clear()
+globalThis.location = { search: '?token=urltok&backend=robot.lan:9000', host: 'dash.local', origin: 'http://dash.local' }
+const fresh = await import('/tmp/endpoints.mjs?case=token')
+await fresh.api('/api/fleet').then(() => null, e => e)
+assert.equal(lastRequest.headers.Authorization, 'Bearer urltok',
+  'the very first request of a ?token= link carries the header (else the AuthGate shows a login form)')
+assert.equal(lastRequest.url, 'http://robot.lan:9000/api/fleet', '?backend= is absorbed too')
+assert.equal(fresh.authToken(), 'urltok', 'and the token persists for the rest of the session')
+assert.match(fresh.wsUrl('/ws'), /^ws:\/\/robot\.lan:9000\/ws\?token=urltok$/,
+  'a websocket cannot set headers, so the token rides the query string')
+
+// a token given by the login form replaces it; clearing it removes it, so backendKey() remounts the tree
+fresh.setAuthToken(' formtok ')
+assert.equal(fresh.authToken(), 'formtok', 'trimmed — a pasted token usually carries whitespace')
+assert.equal(fresh.backendKey(), 'http://robot.lan:9000|auth')
+fresh.setAuthToken('')
+assert.equal(fresh.authToken(), '')
+assert.equal(fresh.backendKey(), 'http://robot.lan:9000|open', 'the key changes, so the tree remounts')
+
+// ── a dead backend is a reachability error naming the address, never a silent idle fleet ──
+globalThis.fetch = async () => { throw new TypeError('Failed to fetch') }
+err = await fresh.api('/api/fleet').then(() => null, e => e)
+assert.equal(err.status, 0, 'no HTTP status, because no HTTP happened')
+assert.match(err.message, /cannot reach robot\.lan:9000/, 'the operator is told WHICH address is dead')
+
+console.log('endpoints.test.mjs: all assertions passed')

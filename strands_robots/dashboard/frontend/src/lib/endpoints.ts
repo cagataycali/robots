@@ -26,6 +26,13 @@ export function normalize(raw: string): string {
     // ws:// typed into the field is a natural mistake - accept it.
     if (url.protocol === 'ws:') url.protocol = 'http:'
     if (url.protocol === 'wss:') url.protocol = 'https:'
+    // Only a scheme fetch can actually speak. `new URL()` is happy with far more than that, and
+    // `.origin` answers for the rest in ways that quietly poison every later request: `foo://bar`
+    // and `file:///x` return the STRING "null", so the base became "null" and every call went to
+    // "nullapi/fleet"; `ftp://robot.lan:21` returns "ftp://robot.lan", silently dropping the port.
+    // A typo in this field must land as "same origin", which is visible in the connection chip,
+    // rather than as an address that cannot exist.
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
     return url.origin
   } catch {
     return ''
@@ -33,17 +40,40 @@ export function normalize(raw: string): string {
 }
 
 let cachedBase: string | null = null
+let absorbedUrl = false
+/** `?backend=` from the URL, once — null when the URL said nothing. */
+let urlBase: string | null = null
+
+/**
+ * Take the credentials off the URL. `?backend=` makes a QR code or bookmark point a phone straight at
+ * one robot; `?token=` is how a share link (and every frontend/scripts/audit-*.mjs run) arrives already
+ * authorised.
+ *
+ * This USED TO LIVE INSIDE backendBase(), and api() reads authToken() BEFORE it resolves the URL — so
+ * on a page opened with ?token=..., the very first request of the session went out with no
+ * Authorization header at all and came back 401, which is the AuthGate's cue to show a login form to
+ * someone who just clicked an authorised link. Absorbing has to happen before either reader answers,
+ * so both call this and it runs exactly once.
+ */
+function absorbUrl(): void {
+  if (absorbedUrl) return
+  absorbedUrl = true
+  try {
+    const params = new URLSearchParams(location.search)
+    const fromToken = params.get('token')
+    if (fromToken) localStorage.setItem(TOKEN_KEY, fromToken)
+    urlBase = params.get('backend')
+  } catch {
+    urlBase = null // no location (a test, a worker): the stored values are the whole truth
+  }
+}
 
 export function backendBase(): string {
+  absorbUrl()
   if (cachedBase !== null) return cachedBase
-  // ?backend=... wins once, then persists: it makes a QR code / bookmark that
-  // points a phone straight at a specific robot.
-  const params = new URLSearchParams(location.search)
-  const fromQuery = params.get('backend')
-  const fromToken = params.get('token')
-  if (fromToken) localStorage.setItem(TOKEN_KEY, fromToken)
-  if (fromQuery !== null) {
-    cachedBase = normalize(fromQuery)
+  // ?backend=... wins once, then persists.
+  if (urlBase !== null) {
+    cachedBase = normalize(urlBase)
     localStorage.setItem(BASE_KEY, cachedBase)
     return cachedBase
   }
@@ -52,6 +82,7 @@ export function backendBase(): string {
 }
 
 export function authToken(): string {
+  absorbUrl()
   return (localStorage.getItem(TOKEN_KEY) ?? '').trim()
 }
 
@@ -82,6 +113,11 @@ export function setBackendBase(raw: string): void {
   cachedBase = normalize(raw)
   if (cachedBase) localStorage.setItem(BASE_KEY, cachedBase)
   else localStorage.removeItem(BASE_KEY)
+  // The route list belongs to the server we were talking to. Kept across a switch, the OLD server's
+  // routes explain the NEW one's 404s — telling the operator to restart a dashboard whose route was
+  // never missing, about a resource that genuinely is not there. forgetLiveRoutes() was written for
+  // exactly this and had no caller.
+  forgetLiveRoutes()
   notify()
 }
 
