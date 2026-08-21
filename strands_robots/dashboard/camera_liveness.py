@@ -103,3 +103,62 @@ def refusal(dead: list[dict[str, Any]], *, peer_id: str) -> str:
         "which you would only discover at training time. Fix or detach it in the robot's "
         "camera settings, or pass ignore_dead_cameras to record without it anyway."
     )
+
+
+def missing_cameras(
+    configured: Mapping[str, Any] | None,
+    present_indices: Iterable[int] | None,
+) -> list[dict[str, Any]]:
+    """The configured cameras whose INDEX this machine no longer lists at all.
+
+    The frame-age rail above cannot see the worst case it was built for. A camera that never
+    published a single frame this session has no age, so it is absent from ``dead_cameras`` by
+    design -- and a camera unplugged *before* the arm ever subscribed is exactly that case. The
+    operating system's own enumeration is independent evidence: if the index is not in the machine's
+    list, nothing is there to open, whatever the frame history says (or fails to say).
+
+    Args:
+        configured: The profile's ``name -> config`` mapping for this session's cameras.
+        present_indices: The camera indices this machine currently lists.
+
+    Returns:
+        ``[{"camera", "index"}]`` in configured order. Empty whenever the evidence is not solid:
+
+        * ``present_indices`` empty or None -- a scan that found nothing is far more often a failed
+          scan than a machine with no cameras, and refusing a session on a failed scan would make
+          this gate the thing that blocks work.
+        * a camera configured by PATH or by name rather than a numeric index -- not judged here,
+          because absence from an index list says nothing about a device path.
+    """
+    if not isinstance(configured, Mapping):
+        return []
+    present = {int(i) for i in present_indices or () if isinstance(i, (int, float))}
+    if not present:
+        return []
+    out: list[dict[str, Any]] = []
+    for name, cfg in configured.items():
+        index = cfg.get("index_or_path") if isinstance(cfg, Mapping) else cfg
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        if index not in present:
+            out.append({"camera": str(name), "index": index})
+    return out
+
+
+def missing_refusal(missing: list[dict[str, Any]], *, peer_id: str) -> str:
+    """Why a session with an unlisted camera index is refused.
+
+    Names the renumbering trap deliberately: on macOS the indices are positions in a list that
+    closes up when a device is removed, so the fix is never "put it back and press record" -- the
+    number may now belong to a different camera, and recording then captures the wrong view with
+    every surface looking healthy.
+    """
+    which = ", ".join(f"{m['camera']} (index {m['index']})" for m in missing)
+    plural = "cameras are" if len(missing) > 1 else "camera is"
+    return (
+        f"{peer_id}: {len(missing)} configured {plural} not listed by this machine at all - {which}. "
+        "Nothing is there to open, so the episodes would carry no image stream for it. Replug it "
+        "(a direct port beats a hub chain) and RESCAN before recording: removing a camera renumbers "
+        "the rest, so the same index may now be a different camera and the dataset would record the "
+        "wrong view. Pass ignore_missing_cameras to record without it anyway."
+    )
