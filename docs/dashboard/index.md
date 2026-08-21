@@ -58,7 +58,7 @@ Verified live against a running dashboard:
 | control | `POST /api/robots/{peer_id}/task`, `POST /api/robots/{peer_id}/stop`, `POST /api/robots/{peer_id}/twin` |
 | teleop | `GET /api/robots/{peer_id}/teleop`, `POST .../teleop/receive`, `POST .../teleop/stop` |
 | safety | `POST /api/safety/estop`, `POST /api/safety/resume` |
-| policies | `GET /api/policies`, `POST /api/policies/validate`, `GET /api/checkpoints/search`, `GET /api/checkpoints/families` |
+| policies | `GET /api/policies`, `POST /api/policies/validate`, `GET /api/checkpoints/search`, `GET /api/checkpoints/families`, `GET /api/checkpoints/features?repo_id=…` (what a checkpoint declares it was trained on — the raw rail behind `GET /api/robots/{peer_id}/policy-fit`, read-only, local cache only, `{}` when unknown; useful for asking by hand why a fit verdict came out the way it did) |
 | data | `POST /api/collect`, `POST /api/replay`, `GET /api/training/datasets` |
 | training | `GET /api/training/{trainers,jobs,status}`, `POST /api/training/{validate,submit,export}` |
 | calibration | `GET /api/calibration`, `GET /api/calibration/{name}` |
