@@ -105,7 +105,9 @@ def test_the_real_middleware_counts_while_still_refusing(sealed_app) -> None:
         with client.websocket_connect("/ws/mesh?token=stale"):
             pass
 
-    health = client.get("/api/health").json()
+    # The identities are for the operator; the token rides along (the withholding rule itself
+    # is pinned by test_an_unauthenticated_reader_gets_counts_but_no_identities).
+    health = client.get("/api/health", headers={"Authorization": "Bearer the-real-token"}).json()
     assert health["status"] == "ok"  # health stays public and still answers
     block = health["refused_handshakes"]
     assert block["total"] >= STORM_THRESHOLD + 3
@@ -116,8 +118,39 @@ def test_the_real_middleware_counts_while_still_refusing(sealed_app) -> None:
     # And an accepted request adds nothing: only refusals are counted.
     before = block["total"]
     assert client.get("/api/fleet", headers={"Authorization": "Bearer the-real-token"}).status_code == 200
-    after = client.get("/api/health").json()["refused_handshakes"]["total"]
+    after = client.get(
+        "/api/health", headers={"Authorization": "Bearer the-real-token"}
+    ).json()["refused_handshakes"]["total"]
     assert after == before
+
+
+def test_an_unauthenticated_reader_gets_counts_but_no_identities(sealed_app) -> None:
+    """/api/health is PUBLIC by design — so this block must not become reconnaissance.
+
+    Counted, then reviewed one iteration later: the sentence named a LAN address and the exact
+    screens being refused, and it was readable by the one caller who could NOT authenticate.
+    The counts are still public (a "something is hammering me" number gives nothing away).
+    """
+    client = TestClient(sealed_app)
+    for _ in range(STORM_THRESHOLD + 2):
+        client.get("/api/fleet", headers={"Authorization": "Bearer stale"})
+
+    # A remote caller with no credential: counts yes, who/where no.
+    public = client.get("/api/health", headers={"X-Forwarded-For": "203.0.113.9"}).json()
+    block = public["refused_handshakes"]
+    assert block["total"] >= STORM_THRESHOLD + 2
+    assert block["storm"] is True                      # the fact survives
+    assert "worst" not in block                        # the address does not
+    body = str(block)
+    assert "/api/fleet" not in body and "192.168." not in body and "testclient" not in body
+    assert "Sign in to see" in str(block["text"])
+
+    # The same server, the same moment, to the operator who CAN act on it.
+    trusted = client.get(
+        "/api/health", headers={"Authorization": "Bearer the-real-token"}
+    ).json()["refused_handshakes"]
+    assert "/api/fleet" in str(trusted["worst"]["path"])
+    assert "sign in again" in str(trusted["text"])
 
 
 def test_health_has_no_refusal_section_on_a_clean_app(sealed_app) -> None:

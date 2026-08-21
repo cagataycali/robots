@@ -73,12 +73,20 @@ class RefusalTally:
         if seen[0] < cutoff:
             self._recent[key] = [t for t in seen if t >= cutoff]
 
-    def summary(self, now: float) -> dict[str, object] | None:
+    def summary(self, now: float, *, detailed: bool = True) -> dict[str, object] | None:
         """What /api/health should say, or ``None`` when there is nothing to report.
 
         None rather than a zeroed block on purpose: a health payload that always carries a
         refusals section trains the reader to skip it, and this number only matters when it is
         not zero.
+
+        ``detailed=False`` is the answer for an UNAUTHENTICATED reader, because /api/health is
+        deliberately public and this block is built from other people's addresses. The counts
+        stay (a public "something is hammering me" is useful and gives nothing away), but the
+        client address, the path and the naming sentence are withheld: a LAN address map plus
+        "which screens are being refused" is reconnaissance, handed to exactly the caller who
+        could not authenticate. Caught in review one iteration after shipping the counter —
+        the counter was right, its audience was not.
         """
         cutoff = now - WINDOW_S
         live = {k: [t for t in v if t >= cutoff] for k, v in self._recent.items()}
@@ -104,6 +112,14 @@ class RefusalTally:
             return out
         (client, path, kind), stamps = max(live.items(), key=lambda kv: len(kv[1]))
         worst = len(stamps)
+        if not detailed:
+            # Say THAT it is happening and how hard, never who or where.
+            out["storm"] = worst >= STORM_THRESHOLD
+            out["text"] = (
+                f"{recent} handshake(s) refused in the last {int(WINDOW_S / 60)} minutes. "
+                "Sign in to see which client and which path."
+            )
+            return out
         out["worst"] = {"client": client, "path": path, "kind": kind, "count": worst}
         if worst >= STORM_THRESHOLD:
             span = max(stamps) - min(stamps)

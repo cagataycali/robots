@@ -499,7 +499,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         return lan_hint.hint(client_ip, own, int(getattr(app.state, "port", None) or 8090))
 
     @app.get("/api/health")
-    async def health() -> dict[str, Any]:
+    async def health(request: Request) -> dict[str, Any]:
         return {
             "status": "ok",
             "mesh_online": app.state.mesh_online,
@@ -514,7 +514,16 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # a section that is always there is a section nobody reads.
             **(
                 {"refused_handshakes": s}
-                if (s := app.state.refusals.summary(time.time())) is not None
+                if (
+                    s := app.state.refusals.summary(
+                        time.time(),
+                        # /api/health is public BY DESIGN (the caretaker polls it, the LAN hint
+                        # needs it before any sign-in), so the identities in this block are
+                        # withheld from a caller who has not authenticated. See refusals.summary.
+                        detailed=_health_reader_is_trusted(request),
+                    )
+                )
+                is not None
                 else {}
             ),
         }
@@ -539,6 +548,29 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if auth_header.lower().startswith("bearer "):
             return auth_header[7:].strip()
         return request.query_params.get("token", "").strip()
+
+    def _health_reader_is_trusted(request: Request) -> bool:
+        """May this caller see WHO is being refused?
+
+        Yes for a valid static token or session, and yes on loopback with auth off — the LAN-dev
+        posture where every /api is already open, so withholding here would only hide the news
+        from the one operator who can act on it. Everyone else gets counts without identities.
+        """
+        presented = _session_presented(request)
+        token = settings.get("security", "auth_token")
+        if token and hmac.compare_digest(presented, str(token)):
+            return True
+        if dash_auth is not None and dash_auth.session_is_valid(presented):
+            return True
+        passkeys_on = dash_auth is not None and dash_auth.auth_enabled()
+        if not token and not passkeys_on:
+            client = request.client.host if request.client else None
+            if client in (None, "testclient"):
+                return True
+            if dash_auth is not None:
+                return bool(dash_auth.client_is_loopback(client))
+            return client in ("127.0.0.1", "::1", "localhost")
+        return False
 
     @app.get("/api/auth/status")
     async def auth_status(request: Request) -> dict[str, Any]:
