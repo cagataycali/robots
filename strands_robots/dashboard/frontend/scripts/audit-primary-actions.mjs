@@ -26,8 +26,17 @@ await page.waitForTimeout(2000)
 const audit = () => page.evaluate((src) => {
   const PRIMARY = new RegExp(src, 'i')
   const out = []
+  const nameless = []
   for (const el of document.querySelectorAll('button')) {
     const t = el.textContent.trim()
+    /* Q146: a button's name is often a DYNAMIC expression, so no source-level guard can see it — this is
+       the only place that reads what the operator actually gets. A button with no rendered text, no
+       aria-label and no title is a shape you have to click to identify. */
+    const r0 = el.getBoundingClientRect()
+    const name = t || (el.getAttribute('aria-label') || '').trim() || (el.getAttribute('title') || '').trim()
+    if (!name && r0.width > 0 && r0.height > 0)
+      nameless.push({ cls: el.className || '(no class)', w: Math.round(r0.width), h: Math.round(r0.height),
+        html: el.innerHTML.replace(/\s+/g, ' ').slice(0, 40) })
     if (!t || !PRIMARY.test(t)) continue
     const cs = getComputedStyle(el)
     const r = el.getBoundingClientRect()
@@ -40,7 +49,7 @@ const audit = () => page.evaluate((src) => {
       color: cs.color, bg, opacity: cs.opacity,
       suspect: !el.disabled && greyText && (transparentish || bg === 'rgb(22, 29, 41)') })
   }
-  return out
+  return { out, nameless }
 }, PRIMARY.source)
 
 const screens = [
@@ -52,16 +61,31 @@ const screens = [
   ['settings', 'chip:has-text("settings")'],
 ]
 const suspects = []
+const anonymous = []
 for (const [name, sel] of screens) {
   if (sel) {
     await page.keyboard.press('Escape').catch(() => {})
     await page.locator('.' + sel).first().click().catch(() => {})
     await page.waitForTimeout(1200)
   }
-  const rows = await audit()
+  const { out: rows, nameless } = await audit()
+  for (const n of nameless) { console.log(`   NAMELESS ${n.w}x${n.h} .${n.cls} → "${n.html}"`); anonymous.push([name, n]) }
   const bad = rows.filter(r => r.suspect)
   console.log(`${name}: ${rows.length} primary-ish buttons, ${bad.length} suspect`)
   bad.forEach(r => { console.log('   SUSPECT', JSON.stringify(r)); suspects.push([name, r]) })
 }
-console.log('TOTAL SUSPECTS:', suspects.length)
+console.log('TOTAL SUSPECTS:', suspects.length, '· NAMELESS BUTTONS:', anonymous.length)
+
+/* Q146 — measured 0 across all six screens the day this was added, which is why it is FATAL rather than
+   advisory: there is no backlog to grandfather, so the first nameless button ever added fails here. It has
+   to live in a BROWSER audit, because a button's label is routinely a dynamic expression
+   ({busy ? 'stopping…' : 'stop'}) that no source-level guard can read — I measured all 148 <button>s in the
+   source first and every apparent hit was one of those. Known blind spot, stated rather than implied: this
+   walks the six nav screens, so a control that only exists inside a modal is not covered. */
+if (anonymous.length) {
+  console.error(`FAIL  ${anonymous.length} visible button(s) with NO name at all — no text, no aria-label, `
+    + 'no title. A shape the operator has to click to find out what it does:')
+  for (const [screen, n] of anonymous) console.error(`  - ${screen}: ${n.w}x${n.h} .${n.cls} → "${n.html}"`)
+  process.exit(1)
+}
 await b.close()
