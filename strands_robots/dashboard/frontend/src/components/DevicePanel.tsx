@@ -19,6 +19,7 @@ import { rescanReport, hardwareKey, type RescanReport } from '../lib/rescanRepor
 import { isLatestRequest } from '../lib/requestOrder'
 import { peerNameField } from '../lib/peerName'
 import { portChoice, blocksSpawn } from '../lib/portChoice'
+import { safeFilename, snippetRefusal } from '../lib/deploySnippet'
 
 interface SerialPort {
   device: string
@@ -103,6 +104,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  /* Q123: U16's snippet, fetched per board. Keyed by device so two boards cannot show each other's
+     file (the calibFor lesson: a single-value disclosure means opening one closes the other, which
+     is correct here — the operator reads one file at a time). */
+  const [snip, setSnip] = useState<{ device: string; code: string; filename: string } | null>(null)
   const [logs, setLogs] = useState<{ peer: string; lines: string[] } | null>(null)
   // A spawn refused by a safety guard (U18): keep the request so approving can
   // re-run exactly what was refused.
@@ -352,6 +357,19 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
    * one opens the wrong device). The port travels because it is where the board is NOW; the server
    * re-reads the profile by serial and reports if the /dev path moved.
    */
+  /** U16's last mile: ask the server for the Python file that recreates this exact board. */
+  const writeSnippet = async (p: SerialPort) => {
+    setSnip(null); setNotice(null)
+    try {
+      const r = await post<{ snippet: string; filename?: string; peer_id?: string }>(
+        '/api/deploy/snippet', { serial: p.serial_number })
+      setSnip({ device: p.device, code: r.snippet, filename: safeFilename(r.filename, r.peer_id) })
+    } catch (e) {
+      const status = e instanceof HttpError ? e.status : 0
+      setNotice({ text: `✗ ${snippetRefusal(status, e instanceof Error ? e.message : String(e))}` } as SpawnNotice)
+    }
+  }
+
   const respawnRemembered = (p: SerialPort) =>
     act(() => post('/api/devices/spawn-remembered', { port: p.device }),
         `spawned ${p.remembered?.peer_id ?? 'it'} from its saved profile`)
@@ -771,6 +789,12 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                               <span key={c.name} className="hint small"> {c.name}: {c.remedy}</span>
                             ))}
                         </span>
+                        {/* Q123: reads the SAME remembered payload the respawn button uses, so the
+                            file and the button can never describe different rigs. Always enabled —
+                            writing a file touches no hardware, and it is most useful precisely when
+                            the bus is busy (that is when you are deploying the rig elsewhere). */}
+                        <button className="btn ghost" title="write the Python file that recreates this rig on another machine"
+                                onClick={() => void writeSnippet(p)}>deploy .py</button>
                         <button className="btn ghost" disabled={acting || claimedPorts.has(p.device)}
                                 title={claimedPorts.has(p.device)
                                   ? 'something is already running on this bus — despawn it first'
@@ -783,6 +807,29 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                       </div>
                       )
                     })()}
+                    {snip?.device === p.device && (
+                      <div className="dev-snippet">
+                        <div className="row between">
+                          <span className="muted small">{snip.filename} — runs this rig on another machine</span>
+                          <span>
+                            <button className="btn ghost tiny" onClick={() => {
+                              void navigator.clipboard?.writeText(snip.code)
+                              setCopied(`${p.device}\u0000copied ${snip.filename}`)
+                            }}>copy</button>{' '}
+                            <button className="btn ghost tiny" onClick={() => {
+                              /* A data: URL would be truncated by some browsers at a few hundred KB and
+                                 this file grows with the camera list; a blob is exact. */
+                              const url = URL.createObjectURL(new Blob([snip.code], { type: 'text/x-python' }))
+                              const a = document.createElement('a')
+                              a.href = url; a.download = snip.filename; a.click()
+                              setTimeout(() => URL.revokeObjectURL(url), 4000)
+                            }}>download</button>{' '}
+                            <button className="btn ghost tiny" onClick={() => setSnip(null)}>close</button>
+                          </span>
+                        </div>
+                        <pre className="snippet">{snip.code}</pre>
+                      </div>
+                    )}
                     {calibFor === p.device && (() => {
                       const { family, source } = familyFor(p)
                       const plan = calibratePlan({ ...p, robot_id: knownCalibrationId(profiles, p) }, family)
