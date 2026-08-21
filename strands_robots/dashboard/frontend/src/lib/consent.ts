@@ -76,14 +76,55 @@ export function findConsent(payload: any, depth = 3): ConsentNeed | null {
  * disabled rather than lying about having helped.
  */
 export function canApprove(need: ConsentNeed): boolean {
+  // A SUBJECT is required only where the grant IS the subject: an allowlist entry with no readable
+  // repository name would add nothing.
   if (need.kind === 'hf_repo_allow') return !!need.subject
-  return need.kind === 'trust_remote_code'
+  // Otherwise: approvable when the server named something it would actually set. This used to be
+  // `kind === 'trust_remote_code'` — a closed list of ONE — so the two guards added since
+  // (teleop_degree_units, agent_physical_motion; consent.py KINDS has four) arrived with a complete,
+  // grantable payload and got a disabled button plus "the name in this refusal could not be read
+  // safely, check the model path". On this fleet that was the Q27 degree envelope: teleop refused
+  // every frame, the dashboard offered the consent dialog, and the dialog could not grant it.
+  // Asking the payload instead of a hardcoded list means the next guard works on arrival.
+  return !!need.env_var || !!need.grants?.length
 }
 
-/** How dangerous is saying yes? Drives which button style the sheet uses. */
+/**
+ * Why approving is impossible, in the words of the actual reason.
+ *
+ * The sheet used to print one sentence for every blocked case ("the name could not be read safely …
+ * check the model path"), which was false for any kind that has no model path — and false in a
+ * SECURITY dialog, where a wrong explanation is what the operator carries away.
+ */
+export function blockedReason(need: ConsentNeed): string {
+  if (need.kind === 'hf_repo_allow') {
+    return 'The repository name in this refusal could not be read safely, so there is nothing to '
+      + 'allow. Check the model path and try again.'
+  }
+  return 'This refusal did not say what approving would change, so there is nothing to grant from '
+    + 'here. It may come from a newer guard than this page — reload, and if it persists, grant it '
+    + 'in the environment instead.'
+}
+
+/**
+ * How dangerous is saying yes? Drives which button style the sheet uses.
+ *
+ * 'danger' is for a grant that is OPEN-ENDED — it hands over a capability, not a value:
+ *   - trust_remote_code: arbitrary code execution, for every future policy load;
+ *   - agent_physical_motion: the agent may start motion on any real robot on this mesh, unattended,
+ *     from a chat sentence, with no confirmation step. It was styled as a mild warning, level with
+ *     adding one repository to an allowlist.
+ * 'warn' is for a bounded change: one allowlist entry, or an envelope that stays an envelope
+ * (teleop_degree_units widens the bound and still refuses a runaway).
+ * An UNKNOWN kind is treated as danger: a permission this page cannot recognise is the last thing
+ * that should be presented as routine.
+ */
+const OPEN_ENDED: ReadonlySet<string> = new Set(['trust_remote_code', 'agent_physical_motion'])
+const BOUNDED: ReadonlySet<string> = new Set(['hf_repo_allow', 'teleop_degree_units'])
+
 export function severity(need: ConsentNeed): 'danger' | 'warn' {
-  // trust_remote_code grants arbitrary code execution, for every future load.
-  return need.kind === 'trust_remote_code' ? 'danger' : 'warn'
+  if (OPEN_ENDED.has(need.kind)) return 'danger'
+  return BOUNDED.has(need.kind) ? 'warn' : 'danger'
 }
 
 /** The server owns the variable and the value; we send kind + subject only. */

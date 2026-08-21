@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   afterApproval,
   approveConsent,
+  blockedReason,
   canApprove,
   severity,
   type ConsentNeed,
@@ -74,10 +75,7 @@ export default function ConsentSheet({ need, target, onCancel, onRetry }: Props)
         ) : null}
 
         {!allowed ? (
-          <p className="cs-blocked">
-            The name in this refusal could not be read safely, so there is nothing to approve.
-            Check the model path and try again.
-          </p>
+          <p className="cs-blocked">{blockedReason(need)}</p>
         ) : null}
 
         {note ? <p className="cs-note">{note}</p> : null}
