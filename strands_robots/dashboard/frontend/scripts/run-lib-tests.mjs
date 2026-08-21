@@ -113,7 +113,11 @@ if (!filter) {
   //     disease in a place the compiler cannot see: src/index.css was imported by nothing, so #2486's
   //     label rows and U22's death note shipped as class names no sheet defined, and a Q136 phone fix
   //     was then appended to the same dead file. All three builds were green.
-  for (const guard of ['check-lib-wired.mjs', 'check-css-wired.mjs', 'check-one-fetcher.mjs',
+  //   check-class-defined — Q137's disease generalised: markup naming a class NO stylesheet defines.
+  //     Ten were already undefined when it was written; they are a listed, visible queue so the
+  //     ELEVENTH fails today instead of after another arc of silence.
+  for (const guard of ['check-lib-wired.mjs', 'check-css-wired.mjs', 'check-class-defined.mjs',
+                       'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {
     const w = spawnSync(process.execPath, [new URL(guard, import.meta.url).pathname], { encoding: 'utf8' })
