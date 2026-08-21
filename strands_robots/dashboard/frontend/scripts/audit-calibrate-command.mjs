@@ -181,7 +181,7 @@ for (const p of ports) {
   if (!(await opener.count())) {
     // Not a failure: with no serial port on the rig there is no disclosure to measure, and an
     // audit that fails for absent hardware is noise that trains people to ignore it.
-    console.log('phone pass: skipped — no calibrate row on this rig')
+    console.log('  SKIP  phone pass — no calibrate row on this rig')  // SKIP-prefixed so the sweep counts it as narrowing (2026-08-22): lowercase prose 'skipped' was invisible to the runner's summary.
   } else {
     await opener.first().click()
     await ph.waitForTimeout(1200)

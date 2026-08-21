@@ -112,7 +112,15 @@ for (const f of scripts) {
     // never prose this runner pattern-matches, because guessing at English is how a bypass grows.
     // Deliberately NOT a failure: a fleet with no arms is a legitimate state (Q135 first-run), and a
     // suite that goes red when the hardware is off trains the next agent to ignore it.
-    const narrowedLines = (r.stdout || '').split('\n').filter(l => /^\s*NARROWED\b/.test(l))
+    // SKIP IS NARROWING, SPELLED DIFFERENTLY — and it was invisible to this summary until 2026-08-22.
+    // Four audits already declared a skipped case with a `SKIP` prefix and the sweep printed a plain
+    // `ok` over all of them: audit-server-age SKIPs when it cannot reach the server AT ALL (a green
+    // that measured nothing, in the audit whose entire purpose is comparing bundle to server),
+    // audit-touch-targets SKIPs a WHOLE SCREEN when its nav chip is absent, audit-screens-render
+    // SKIPs a screen "not on this rig", audit-calibrate-command skips its phone pass with no
+    // calibrate row. Counting them as narrowing costs one regex and turns four silent holes into
+    // sentences; no audit had to be rewritten, because the prefix was already there.
+    const narrowedLines = (r.stdout || '').split('\n').filter(l => /^\s*(NARROWED|SKIP)\b/.test(l))
     if (narrowedLines.length) narrowed += 1
     console.log(`  ok${narrowedLines.length ? '~' : '  '}  ${name} (${secs}s) — ${purpose(f)}`)
     // NEWS FROM A PASSING AUDIT. Not every audit produces a verdict: audit-server-age exists to
@@ -120,7 +128,7 @@ for (const f of scripts) {
     // is news for the operator, not a broken build — so it exits 0 by design. This runner printed
     // only "ok" and threw the finding away, which is how a sweep reported "ok server-age (0s)" while
     // NINE routes were dark on the live dashboard. A line starting NEWS/OLD/note now survives.
-    for (const line of (r.stdout || '').split('\n').filter(l => /^\s*(NEWS|OLD|note|NARROWED)\b/.test(l)).slice(0, 12))
+    for (const line of (r.stdout || '').split('\n').filter(l => /^\s*(NEWS|OLD|note|NARROWED|SKIP)\b/.test(l)).slice(0, 12))
       console.log(`          ${line.trim()}`)
   } else {
     failed += 1
