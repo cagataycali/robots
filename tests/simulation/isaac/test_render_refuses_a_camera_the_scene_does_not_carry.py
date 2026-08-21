@@ -298,7 +298,7 @@ class TestEveryBackendGivesTheSameVerdict:
     answered a name nothing carries with a frame.
     """
 
-    @pytest.mark.parametrize(("label", "module", "cls", "func"), _RENDER_NAME_RESOLVERS, ids=lambda p: str(p))
+    @pytest.mark.parametrize(("label", "module", "cls", "func"), _RENDER_NAME_RESOLVERS, ids=str)
     def test_the_resolver_refuses_an_uncarried_name(self, label: str, module: str, cls: str, func: str) -> None:
         import importlib
 
