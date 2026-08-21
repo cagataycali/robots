@@ -1,12 +1,1 @@
 
-/* #2486 episode-labels disclosure on a dataset row. Muted = nothing judged yet, which must look
-   different from a judged row without shouting: absence is information, not an error. */
-.ds-labels { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
-.ds-label-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.86rem; }
-.ds-label-row.muted { opacity: 0.62; }
-.ds-label-badge { width: 1.2em; text-align: center; }
-
-/* U22: a dead managed child names its cause. `unexplained` is not an alarm colour —
-   it is a quieter amber, because "who killed it" is a question, not a fault. */
-.deathnote { font-size: 0.78rem; opacity: 0.85; margin: 0.2rem 0 0 1.2rem; line-height: 1.35; }
-.deathnote.unexplained { color: #e8b44a; }

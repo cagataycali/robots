@@ -45,6 +45,11 @@ function Dashboard() {
   const { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, loaded, lastEventAt, everOpen } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
+  /* The verdict of copying the first-run snippet. Never a bare boolean: on a non-secure origin
+     (http://<lan-ip>:8090, how this dashboard is usually opened from a phone) navigator.clipboard is
+     undefined, and a copy button that silently does nothing is the exact class of lie this project
+     hunts. Same rule as DevicePanel.copyCommand. */
+  const [snipCopied, setSnipCopied] = useState<string | null>(null)
   /**
    * Q45: what this machine REMEMBERS, for the empty fleet. The home screen used to answer an empty
    * mesh with a python snippet only — after a restart the arms are not unplugged, they are simply
@@ -333,7 +338,24 @@ function Dashboard() {
                   live at /dev/cu.usbmodem*. The one piece of code the dashboard hands you could not
                   run on the machine you copied it from. Now it names a detected port when there is
                   one, and admits the placeholder when there is not. */}
-              <pre>{snippet.code}</pre>
+              {/* Q136: this <pre> was `white-space: pre` in a 340px column at phone width — measured
+                  scrollWidth 453 vs clientWidth 340, so the `mode="real", port=…` line, the whole
+                  point of the second line, sat outside the box behind a horizontal scroll nobody
+                  discovers. The calibrate panel already had to learn this (its audit asserts the
+                  command wraps COMPLETE inside 390px with its copy button in reach); the one snippet
+                  a brand-new user meets FIRST was still failing that law. Wrapping keeps python
+                  valid to read, and the copy button means a phone never has to select it by hand. */}
+              <pre className="startsnip">{snippet.code}</pre>
+              <p className="row">
+                <button className="btn ghost tiny" onClick={async () => {
+                  try {
+                    if (!navigator.clipboard) throw new Error('this page is not a secure origin, so the browser blocks copying')
+                    await navigator.clipboard.writeText(snippet.code)
+                    setSnipCopied('copied')
+                  } catch (e: any) { setSnipCopied(e?.message ?? String(e)) }
+                }}>copy</button>
+                {snipCopied && <span className={snipCopied === 'copied' ? 'muted small' : 'warn small'} role="status">{snipCopied}</span>}
+              </p>
               <p className="hint">{snippet.provenance}</p>
               <p className="hint">
                 Set <code>STRANDS_MESH_LOCAL_DEV=1</code> + <code>STRANDS_MESH_MULTICAST=true</code> for local dev.

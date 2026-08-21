@@ -86,7 +86,34 @@ for (const [name, chip] of [['fleet', null], ['record', 'record'], ['train', 'tr
   if (chip) { await page.keyboard.press('Escape').catch(() => {}); await page.waitForTimeout(700) }
 }
 
+// ---- Q136: THE PHONE. The first thing a new user meets must be READABLE and COPYABLE at 390px.
+// Measured before the fix: scrollWidth 453 inside clientWidth 340, `white-space: pre` — so the
+// `mode="real", port=…` line, the entire point of the second line, sat outside the box behind a
+// horizontal scroll nobody discovers. The document did NOT overflow, which is why every existing
+// geometry audit called this screen fine: the clipping was INSIDE an element with overflow-x:auto.
+await page.setViewportSize({ width: 390, height: 844 })
+await page.locator('button.chip:has-text("devices")').first().click()  // leave whatever panel is open
+await page.keyboard.press('Escape').catch(() => {})
+await page.waitForTimeout(1200)
+const snip = await page.evaluate(() => {
+  const el = document.querySelector('pre.startsnip')
+  if (!el) return null
+  const copy = [...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'copy')
+  return { sw: el.scrollWidth, cw: el.clientWidth, wrap: getComputedStyle(el).whiteSpace,
+    lines: el.innerText.split('\n').length, copy: !!copy && copy.getBoundingClientRect().height > 0,
+    docSw: document.documentElement.scrollWidth, docCw: document.documentElement.clientWidth }
+})
+if (!snip) failures.push('the first-run start snippet (pre.startsnip) is gone from the empty fleet')
+else {
+  console.log(`  phone: snippet ${snip.sw}/${snip.cw}px (${snip.wrap}, ${snip.lines} lines), copy button ${snip.copy ? 'present' : 'MISSING'}`)
+  if (snip.sw > snip.cw + 2) failures.push(`the start snippet is clipped at 390px: ${snip.sw}px of code in a ${snip.cw}px box `
+    + '— the mode="real" line is behind a horizontal scroll, on the one snippet a brand-new user meets first')
+  if (!snip.copy) failures.push('no copy button on the start snippet: on a phone it can be neither fully read nor selected by hand')
+  if (snip.docSw > snip.docCw + 2) failures.push(`the empty fleet scrolls sideways at 390px (${snip.docSw} > ${snip.docCw})`)
+}
+
 await browser.close()
 if (failures.length) { console.error('FAIL\n' + failures.map(f => ` - ${f}`).join('\n')); process.exit(1) }
 console.log('first run: with no peers, no boards, no profiles and no datasets, every screen still says what '
-  + 'to do next — and no empty payload leaks a placeholder into the page')
+  + 'to do next — and no empty payload leaks a placeholder into the page; at 390px the start snippet '
+  + 'wraps COMPLETE with a copy button in reach')

@@ -1741,3 +1741,14 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 @media (max-width: 720px) {
   .sessionwarn { padding-right: 104px; }
 }
+
+/* Q136: the first-run start snippet. `white-space: pre` measured 453px of content inside a 340px
+   column at 390px viewport, hiding the `mode="real", port=…` half of the example behind a horizontal
+   scroll nobody finds — on the one snippet a brand-new user meets first. pre-wrap keeps the line
+   breaks that make it valid python to read; anywhere lets a long /dev/cu.usbmodem5AB01584281 path
+   (this Mac's real ports, which Q46 substitutes into the example) break instead of pushing the box. */
+pre.startsnip {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
