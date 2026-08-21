@@ -91,7 +91,10 @@ export function setAuthToken(token: string): void {
   const value = token.trim()
   if (value) localStorage.setItem(TOKEN_KEY, value)
   else localStorage.removeItem(TOKEN_KEY)
-  notify()
+  // Nothing to notify (Q156): the token is half of backendKey(), so writing it remounts
+  // the App tree by itself — AuthGate.tsx:199 relies on exactly that ("remounts App via
+  // backendKey(); gate re-checks and opens"). The listener set this used to poke had no
+  // subscriber in either of its two call sites.
 }
 
 /** Human label for the connection chip. */
@@ -119,18 +122,14 @@ export function setBackendBase(raw: string): void {
   // never missing, about a resource that genuinely is not there. forgetLiveRoutes() was written for
   // exactly this and had no caller.
   forgetLiveRoutes()
-  notify()
-}
-
-const listeners = new Set<() => void>()
-
-function notify(): void {
-  listeners.forEach(fn => fn())
-}
-
-export function onBackendChange(fn: () => void): () => void {
-  listeners.add(fn)
-  return () => listeners.delete(fn)
+  // No change notification, deliberately (Q156). There WAS a listener set here with no
+  // subscriber — and it could never have gained a useful one: the only caller of this
+  // function (SettingsDrawer.goConnect) calls location.reload() immediately after, and
+  // App remounts on backendKey() anyway. A callback that fires microseconds before the
+  // page is destroyed is not a rail, it is a decoy: the next agent reads it as the way
+  // screens react to a backend switch and wires new work to something that never runs.
+  // The remount IS the mechanism, and it is stronger — sockets, peer maps and frame
+  // buffers all belong to the backend they came from.
 }
 
 export function apiUrl(path: string): string {

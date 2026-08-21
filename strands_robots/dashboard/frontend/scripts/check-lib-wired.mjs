@@ -84,7 +84,6 @@ const bodyOf = new Map([...files, ...testFiles].map(f => [f, fs.readFileSync(f, 
 const TOLERATED = new Map([
   ['lib/cameraState.ts :: retryDelayMs', 'documents itself as superseded by planRetry; kept "so the timing stays comparable", which nothing verifies — a parity assertion in planRetry\'s test would earn it a caller'],
   ['lib/jointHistory.ts :: heldSeconds', 'a label-honesty rule (the "60s" axis claiming more history than it holds) written for a chart that never called it — wire it to the joint history axis or drop it'],
-  ['lib/endpoints.ts :: onBackendChange', 'a subscription with no subscriber, so the notify beside it fires into nothing; either a screen should re-fetch on a backend switch or both halves should go'],
 ])
 const deadExports = []
 let internalOnly = 0, testOnly = 0, exportCount = 0

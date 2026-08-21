@@ -247,4 +247,22 @@ const withHeader = value => ({
   assert.equal(m.absorbRenewedSession(null), false)
   assert.equal(m.absorbRenewedSession({ headers: { get() { throw new Error('no headers here') } } }), false)
 }
+
+// --- Q156: the remount key IS the change notification -------------------------------
+// A listener set lived here with no subscriber, poked by both setters. It was deleted, so
+// this pins what replaces it: BOTH halves of the identity change the key, which is what
+// remounts App. If someone reintroduces a callback rail, this still passes — but if a
+// setter ever stops moving the key, the switch becomes invisible and this fails.
+{
+  const m = await import('/tmp/endpoints.mjs?case=remountkey')
+  m.setBackendBase('one.lan:8090')
+  m.setAuthToken('t1')
+  const first = m.backendKey()
+  m.setBackendBase('two.lan:8090')
+  assert.notEqual(m.backendKey(), first, 'a new backend must move the key — nothing else tells the tree')
+  const second = m.backendKey()
+  m.setAuthToken('')
+  assert.notEqual(m.backendKey(), second, 'clearing the token must move it too (AuthGate depends on this)')
+}
+
 console.log('endpoints.test.mjs: U21 sliding session ok')
