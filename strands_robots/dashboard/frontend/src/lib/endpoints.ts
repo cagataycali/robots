@@ -262,6 +262,44 @@ export function authRefusedRecently(withinMs = 60_000, now: number = Date.now())
   return _refusedAt !== null && now - _refusedAt <= withinMs
 }
 
+/**
+ * U21: a sliding session renews itself on an ordinary response.
+ *
+ * The server hands a fresh token back on `X-Session-Token` once the current one is
+ * past its half-life. Storing it here — in the ONE place every request already goes
+ * through — is why no screen needs to know renewal exists.
+ *
+ * Measured reason this exists: the JWT lives 24h with no renewal route, so the phone
+ * that signed in on Monday was refused on Tuesday and its socket knocked 18,968 times
+ * over 44 hours (Q109).
+ *
+ * The refusals matter as much as the write:
+ * · no header → nothing happens. An older server never sends one, and a session must
+ *   not be disturbed by silence.
+ * · the same token back → no write, so listeners are not woken on every request.
+ * · a header with NO stored token → ignored. We never had a session to renew, and
+ *   accepting a credential we did not ask for is how a shared proxy hands you
+ *   somebody else's.
+ * · a value that is not a three-part JWT → ignored, keeping the credential that is
+ *   currently WORKING. A renewal is an improvement or it is nothing.
+ * Returns true only when the stored token actually changed (what a test can read).
+ */
+export function absorbRenewedSession(res: { headers?: { get(name: string): string | null } } | null): boolean {
+  let offered: string | null = null
+  try {
+    offered = res?.headers?.get('X-Session-Token') ?? null
+  } catch {
+    return false // a Response-like without real headers (a stub, a blob shim) is not an error
+  }
+  const fresh = (offered ?? '').trim()
+  if (!fresh) return false
+  const current = (localStorage.getItem(TOKEN_KEY) ?? '').trim()
+  if (!current || fresh === current) return false
+  if (fresh.split('.').length !== 3) return false
+  setAuthToken(fresh)
+  return true
+}
+
 export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const token = authToken()
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) }
@@ -274,6 +312,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`)
   }
+  absorbRenewedSession(res)
   const text = await res.text()
   let body: any = text
   try { body = text ? JSON.parse(text) : null } catch { /* keep raw text */ }
@@ -320,6 +359,7 @@ export async function apiBlob(path: string): Promise<string> {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`)
   }
+  absorbRenewedSession(res)
   if (!res.ok) {
     // Q104: a camera preview is a GUARDED request like any other, and on the fleet screen it is often
     // the FIRST thing a rotated token refuses — the tiles are what the operator is looking at. Without

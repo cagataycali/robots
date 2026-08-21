@@ -169,3 +169,79 @@ console.log('endpoints.test.mjs: Q103 public-200 absolution ok')
 }
 
 console.log('endpoints.test.mjs: Q104 every fetcher accounts ok')
+
+// --- U21: a sliding session renews itself on an ordinary response ---------------------
+// The JWT lives 24h and had no renewal route, so the phone that signed in on Monday was
+// refused on Tuesday and its socket knocked 18,968 times over 44 hours (Q109). The server
+// now hands a fresh token back on X-Session-Token; absorbing it HERE is why no screen
+// needs to know renewal exists.
+const JWT_A = 'aaa.bbb.ccc'
+const JWT_B = 'ddd.eee.fff'
+
+function storeWith(initial) {
+  // A previous section left ?token=urltok in the stubbed location, and absorbUrl() would
+  // adopt it INTO this case — the same per-module state trap the ?case= imports exist for.
+  globalThis.location = { search: '', host: 'dash.local', origin: 'http://dash.local' }
+  const cell = { value: initial }
+  globalThis.localStorage = {
+    getItem: k => (k === 'strands.token' ? cell.value : null),
+    setItem: (k, v) => { if (k === 'strands.token') cell.value = v },
+    removeItem: () => { cell.value = null },
+  }
+  return cell
+}
+const withHeader = value => ({
+  ok: true, status: 200, statusText: 'OK',
+  headers: { get: n => (n.toLowerCase() === 'x-session-token' ? value : null) },
+  text: async () => '{}',
+})
+
+{
+  const m = await import('/tmp/endpoints.mjs?case=u21-renew')
+  const cell = storeWith(JWT_A)
+  globalThis.fetch = async () => withHeader(JWT_B)
+  await m.api('/api/fleet')
+  assert.equal(cell.value, JWT_B, 'the renewed session must be STORED, or tomorrow logs the phone out again')
+}
+{
+  // silence changes nothing: an older server sends no such header, and a session must
+  // not be disturbed by the absence of news.
+  const m = await import('/tmp/endpoints.mjs?case=u21-silent')
+  const cell = storeWith(JWT_A)
+  globalThis.fetch = async () => withHeader(null)
+  await m.api('/api/fleet')
+  assert.equal(cell.value, JWT_A)
+}
+{
+  // a header with NO stored token is ignored: we never had a session to renew, and
+  // accepting a credential we did not ask for is how a shared proxy hands you someone
+  // else's session.
+  const m = await import('/tmp/endpoints.mjs?case=u21-unasked')
+  const cell = storeWith(null)
+  globalThis.fetch = async () => withHeader(JWT_B)
+  await m.api('/api/fleet')
+  assert.equal(cell.value, null)
+}
+{
+  // garbage never replaces a WORKING credential — a renewal is an improvement or nothing.
+  const m = await import('/tmp/endpoints.mjs?case=u21-garbage')
+  const cell = storeWith(JWT_A)
+  for (const bad of ['not-a-jwt', 'two.parts', '   ', 'a.b.c.d']) {
+    globalThis.fetch = async () => withHeader(bad)
+    await m.api('/api/fleet')
+    assert.equal(cell.value, JWT_A, `refused: ${bad}`)
+  }
+  // the same token back is not a write either (listeners must not wake per request)
+  assert.equal(m.absorbRenewedSession(withHeader(JWT_A)), false)
+  assert.equal(m.absorbRenewedSession(withHeader(JWT_B)), true, 'and a real one still lands')
+}
+{
+  // a Response-like with no headers at all (stubs, blob shims) must not throw INSIDE the
+  // request it is decorating: a renewal failure may never cost the caller its answer.
+  const m = await import('/tmp/endpoints.mjs?case=u21-headerless')
+  storeWith(JWT_A)
+  assert.equal(m.absorbRenewedSession({}), false)
+  assert.equal(m.absorbRenewedSession(null), false)
+  assert.equal(m.absorbRenewedSession({ headers: { get() { throw new Error('no headers here') } } }), false)
+}
+console.log('endpoints.test.mjs: U21 sliding session ok')
