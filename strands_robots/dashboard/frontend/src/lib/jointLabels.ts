@@ -1,4 +1,4 @@
-import type { JointUnit } from './jointScale'
+import { isOneSidedJoint, type JointUnit } from './jointScale'
 
 /**
  * Reading the joint strip — UX_REVIEW #4, the part still missing.
@@ -52,7 +52,12 @@ export function stripLegend(
   jointNames: readonly string[] = [],
 ): string {
   const secs = Math.round(windowMs / 1000)
-  const hasGripper = jointNames.some(n => /gripper|jaw|hand/i.test(n))
+  // ONE definition of "this joint is on its own 0…100 scale": jointScale's, the module that
+  // actually puts it there. This line used to carry its own regex (/gripper|jaw|hand/i) and the two
+  // disagreed in both directions — a joint named `claw` or `finger` got the one-sided scale with a
+  // legend that never mentioned it, and a joint named `hand` got a legend promising a 0…100 scale
+  // that no bar was drawn on. A legend that explains the scale rule must ASK the scale rule.
+  const hasGripper = jointNames.some(isOneSidedJoint)
   const units = unit === 'radian'
     ? 'values in radians'
     : hasGripper

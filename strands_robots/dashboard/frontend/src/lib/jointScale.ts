@@ -97,6 +97,15 @@ export function frameEvidence(samples: Array<[string, number]>): JointUnit | und
     peak = Math.max(peak, Math.abs(pos))
   }
   if (!sawFinite) return undefined
+  // An ALL-ZERO frame is compatible with either unit — this function's own contract says so — but
+  // `peak <= RADIAN_FLOOR` used to answer 'radian' for it, and that made the contract false. The
+  // consequence was visible on cagatay's SO-101, which reports DEGREES: a parked arm reading zeros
+  // (or a robot that publishes zeros before its first real read) argued 'radian' every frame, so
+  // after SWITCH_FRAMES the strip flipped to a ±π axis and threw away the degree extremes it had
+  // observed. The arm then moves, and the bars sit pinned at the ends of the wrong axis until eight
+  // more frames flip it back. Axis flapping under a still arm is exactly what the hysteresis exists
+  // to prevent, so silence about zeros is not a nicety.
+  if (peak === 0) return undefined
   if (peak > RADIAN_CEILING) return 'servo'
   if (peak <= RADIAN_FLOOR) return 'radian'
   return undefined
@@ -127,7 +136,15 @@ export function decideStripScale(
   let pending: JointUnit | null = null
   let pendingFrames = 0
 
-  if (prev && evidence && evidence !== prev.unit) {
+  if (prev && !evidence) {
+    // A frame with NO OPINION changes nothing, including the counter. Resetting a streak on an
+    // ambiguous frame let a genuinely degree-scaled stream stall forever on the radian axis: every
+    // pass through the ambiguous band (or one zero frame from a robot between reads) wiped the
+    // evidence collected so far, so the eighth agreeing frame never arrived. Only evidence moves
+    // this state machine — in either direction.
+    pending = prev.pending
+    pendingFrames = prev.pendingFrames
+  } else if (prev && evidence && evidence !== prev.unit) {
     pendingFrames = prev.pending === evidence ? prev.pendingFrames + 1 : 1
     if (pendingFrames >= switchFrames) {
       unit = evidence
