@@ -1,7 +1,7 @@
 /**
  * Run the page audits — the harness they never had either.
  *
- * There are 16 `audit-*.mjs` scripts in here, each proving on the REAL page a claim some commit made
+ * There are 18 `audit-*.mjs` scripts in here, each proving on the REAL page a claim some commit made
  * (a dropped camera is not an absent one, an abandoned dataset directory is not a dataset, a training
  * provider that cannot run is not offered, the devices screen's three empty worlds differ). `npm run
  * audit` chained exactly four of them, so the other eleven ran once, in the iteration that wrote them,
