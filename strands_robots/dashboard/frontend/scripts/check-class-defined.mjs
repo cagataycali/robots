@@ -20,11 +20,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const SRC = path.resolve(import.meta.dirname, '..', 'src')
+// Q139 removed 'dev-snippet' and 'snippet' from this list by WRITING THE RULES, which is the only
+// permitted way out of it. 8 left.
 const KNOWN_UNDEFINED = new Set([
   'bubble-text',      // AgentDock: the message text inside a chat bubble
   'camgallery',       // CameraGallery: the whole gallery wrapper
-  'dev-snippet',      // DevicePanel: the spawn-snippet block
-  'snippet',          // DevicePanel: the <pre> inside it — UNWRAPPED, the Q136 shape
   'linklike',         // AuthGate: "use a token instead" button styled as a link
   'passkey-list',     // PasskeyList: the list wrapper
   'preset-row',       // SettingsDrawer: a row of preset buttons

@@ -1767,3 +1767,17 @@ pre.startsnip {
    it is a quieter amber, because "who killed it" is a question, not a fault. */
 .deathnote { font-size: 0.78rem; opacity: 0.85; margin: 0.2rem 0 0 1.2rem; line-height: 1.35; }
 .deathnote.unexplained { color: #e8b44a; }
+
+/* Q139: the deploy-.py disclosure (DevicePanel). Both class names were in the JSX from the day Q123
+   landed and NEITHER had a rule — found by Q138's guard, then measured: at 390px the <pre> was 1476px
+   wide, and with no rule to contain it the pre EXPANDED .dev-snippet to 1476 too, so the drawer clipped
+   it at 389px with NO scrollbar. Three quarters of the generated file was invisible AND unreachable —
+   on the one screen whose job is to hand you code you are about to run on another machine. Copy and
+   download worked the whole time, which is precisely why nobody noticed: the file was fine, only
+   unreadable. Same wrapping law as Q136's pre.startsnip; block styling matches .calibcmd above so the
+   two disclosures in this drawer read as siblings. min-width:0 is the part that actually stops the
+   expansion — a flex/grid child's automatic minimum is its CONTENT, so max-width alone loses. */
+.dev-snippet { margin-top: var(--s3); padding: var(--s3) var(--s4); min-width: 0; max-width: 100%;
+  border-radius: var(--s3); background: var(--glass-1); border: 1px solid var(--glass-border); }
+.dev-snippet pre.snippet { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; max-width: 100%;
+  margin: var(--s2) 0 0; font-size: 0.78rem; line-height: 1.45; }

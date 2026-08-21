@@ -250,7 +250,43 @@ if (spawns.length !== 1) {
 if (await page.locator('.crashcard').count()) failures.push('the devices screen crashed')
 if (thrown.length) failures.push(`page threw: ${thrown.join(' ; ')}`)
 
+
+// NOTE: this phone check must run BEFORE `await ctx.close()` below — appended after it, the
+// first line fails with "Target page … has been closed", which reads like a browser problem
+// rather than a misplaced edit.
+// ---- Q139: the deploy-.py file must be READABLE, not just copyable, at phone width.
+// Measured before the rules existed: the <pre> was 1476px wide at a 390px viewport and, with neither
+// .dev-snippet nor pre.snippet defined anywhere, it EXPANDED its own container to 1476 too — so the
+// drawer clipped it at 389 with no scrollbar and no way to reach the rest. Copy and download worked
+// throughout, which is exactly why it survived: the file was correct, merely unreadable.
+await page.setViewportSize({ width: 390, height: 844 })
+await page.route('**/api/deploy/snippet', r => r.fulfill({ status: 200, contentType: 'application/json',
+  body: JSON.stringify({ filename: 'so101_arm_1.py', peer_id: 'so101-arm-1', snippet:
+    'from strands_robots import Robot\n\nrobot = Robot("so101", mode="real", '
+    + 'port="/dev/cu.usbmodem5AB01584281", cameras={"main": {"index": 0, "fps": 30, "width": 640, '
+    + '"height": 480}}, robot_id="follower")\nrobot.run()\n' }) }))
+const deployBtn = page.locator('button:has-text("deploy .py")').first()
+if (await deployBtn.count()) {
+  await deployBtn.click()
+  await page.waitForTimeout(900)
+  const geo = await page.evaluate(() => {
+    const pre = document.querySelector('pre.snippet')
+    if (!pre) return null
+    const host = document.querySelector('aside.drawer')
+    return { sw: pre.scrollWidth, cw: pre.clientWidth, wrap: getComputedStyle(pre).whiteSpace,
+      drawerCw: host?.clientWidth ?? 0, drawerSw: host?.scrollWidth ?? 0 }
+  })
+  if (!geo) failures.push('deploy .py produced no pre.snippet — the generated file never reached the screen')
+  else {
+    console.log(`  phone: deploy snippet ${geo.sw}px in a ${geo.drawerCw}px drawer (${geo.wrap})`)
+    if (geo.sw > geo.drawerCw) failures.push(`the generated deploy file is ${geo.sw}px wide in a `
+      + `${geo.drawerCw}px drawer — it is clipped with no scrollbar, so most of the code you are about `
+      + 'to run on another machine cannot be read (copy/download still work, which is why this hides)')
+  }
+} else failures.push('no deploy .py button on a remembered row — Q123 control is gone')
+
 await ctx.close()
+
 await browser.close()
 
 if (failures.length) {
