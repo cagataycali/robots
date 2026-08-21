@@ -10,6 +10,7 @@ import { api as httpGet, HttpError } from '../lib/endpoints'
 import { recordFailure, type RecordActionKind } from '../lib/recordOutcome'
 import { pairArms, roleLabel, contradiction, type RoleCandidate } from '../lib/armPairing'
 import { armJointWarning } from '../lib/recordArms'
+import { armHosts } from '../lib/armHosts'
 import { noArmsVerdict, type RememberedBoard } from '../lib/noArms'
 import { episodeTarget } from '../lib/episodeTarget'
 import { fpsField, fpsSuggestion } from '../lib/recordFps'
@@ -47,7 +48,24 @@ export default function RecordPanel(
   // from /api/devices (measured once, remembered by USB serial). Until they do,
   // both slots stay empty rather than confidently wrong.
   const [roles, setRoles] = useState<Record<string, RoleCandidate>>({})
-  const candidates: RoleCandidate[] = peerIds.map(id => roles[id] ?? { peer_id: id })
+  /* A PROCESS is not an arm: `parent` hosts `parent__child`, and on this fleet the parent is the
+     simulator while the child is the robot with six joints. Offered identically, the parent is a
+     doomed pick with the friendlier name — and since 91d1a009 it draws the joint warning with the
+     wrong remedy ("check its log") for a process behaving exactly as designed. Kept in the list but
+     unpickable and explained: an operator who came looking for that name deserves to be told where
+     its arm went, not to watch it vanish. */
+  const hosts = armHosts(peers.map(p => ({
+    peer_id: p.peer_id,
+    joints: p.state?.joints
+      ? Array.isArray(p.state.joints) ? p.state.joints.length
+        : typeof p.state.joints === 'object' ? Object.keys(p.state.joints).length : null
+      : 0,
+  })))
+  // pairArms must not SUGGEST one either: a host is never measured, so it could only ever arrive in a
+  // slot as a guess, and this screen's rule is that a confident wrong default is worse than a blank.
+  const candidates: RoleCandidate[] = peerIds
+    .filter(id => !hosts[id])
+    .map(id => roles[id] ?? { peer_id: id })
   // Q44: what the devices screen remembers, for the case where this screen has nothing to record
   // WITH. undefined = not asked yet, null = the request failed (which must not become the claim
   // "nothing is configured").
@@ -387,6 +405,9 @@ export default function RecordPanel(
                 {candidates.map(c => (
                   <option key={c.peer_id} value={c.peer_id}>{roleLabel(c)}</option>
                 ))}
+                {Object.entries(hosts).map(([id, h]) => (
+                  <option key={id} value={id} disabled>{id} — {h.why}</option>
+                ))}
               </select>
             </label>
             <label className="field"><span>follower — gets recorded</span>
@@ -395,6 +416,9 @@ export default function RecordPanel(
                 <option value="">select…</option>
                 {candidates.map(c => (
                   <option key={c.peer_id} value={c.peer_id}>{roleLabel(c)}</option>
+                ))}
+                {Object.entries(hosts).map(([id, h]) => (
+                  <option key={id} value={id} disabled>{id} — {h.why}</option>
                 ))}
               </select>
             </label>
