@@ -166,7 +166,7 @@ agent's own recording actions are the two rails that produce real files. Details
 
 | symptom | cause |
 |---|---|
-| `Port is in use!` in a peer's log | two processes on one servo bus - despawn the other peer first (the arm cannot be shared) |
+| `Port is in use!` in a peer's log | usually nothing to do: a read that died mid-exchange leaves the bus flagged, and the next read clears it by itself. If it persists, two processes are on one servo bus (the arm cannot be shared) - `/usr/sbin/lsof /dev/cu.usbmodem*` names every holder; despawn the other peer. One holder that keeps stranding is a cable or hub, not software - see the card's `bus healed ×N` count |
 | a camera tile shows nothing | another app owns that index, or the index moved; check `GET /api/devices` and re-map |
 | joints read but the arm fights its range | calibration `id` at spawn does not match the one you calibrated |
 | dashboard refuses to start | a dashboard already owns the port; its pid is in the message |
