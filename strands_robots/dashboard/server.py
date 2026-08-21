@@ -49,6 +49,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from strands_robots.dashboard import arm_roles, config_api, consent, deploy, settings
+from strands_robots.dashboard.build_info import build_info
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, silent_arms, stop_outcome
@@ -621,6 +622,10 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 if (js := silent_arms(app.state.bridge.peers)) is not None
                 else {}
             ),
+            # Which build is answering. ALWAYS present, unlike the news-only blocks above:
+            # its ABSENCE is how a client learns the server predates this stamp, which is the
+            # question every "the UI renders nothing for that field" report turns out to be.
+            "build": build_info(),
             "t": time.time(),
             # Q88: present ONLY when something was actually refused (see refusals.summary) -
             # a section that is always there is a section nobody reads.
