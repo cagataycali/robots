@@ -114,7 +114,7 @@ export default function EstopSheet({
             {/* "Nothing was sent" was the old line for EVERY failure — including a
                 lost answer, where the stop may well have landed. The verdict
                 distinguishes them, because the two demand different next moves. */}
-            <div className="result bad">{error.headline}</div>
+            <div className="result bad" role="alert">{error.headline}</div>
             <p className="hint warn">{error.advice}</p>
             <div className="sheet-actions">
               <button className="btn danger" onClick={fire}>
@@ -127,7 +127,12 @@ export default function EstopSheet({
 
         {result && (
           <>
-            <div className={result.all_stopped ? 'result ok' : 'result bad'}>
+            {/* Q145: the answer to "did every robot actually stop?" arrives asynchronously, and
+                until now it arrived SILENTLY — nothing announced it. role=alert on the unconfirmed
+                verdict, because "N peers NOT confirmed stopped" is the one sentence in this dashboard
+                that must interrupt whatever a screen reader was saying; the all-clear is polite. */}
+            <div className={result.all_stopped ? 'result ok' : 'result bad'}
+                 role={result.all_stopped ? 'status' : 'alert'}>
               {result.all_stopped
                 ? `✓ all ${result.counts.stopped} live peer(s) confirmed stopped`
                 : `⚠ ${unconfirmed} of ${result.targeted.length} peer(s) NOT confirmed stopped`}

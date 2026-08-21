@@ -123,6 +123,9 @@ if (!filter) {
     //   check-control-labels — Q144: a form control with no accessible name. A placeholder is not a
     //   label: it vanishes the moment the operator types, and a screen reader reads "edit text".
     'check-control-labels.mjs',
+    //   check-live-regions — Q145: the e-stop verdict and the record refusal are ANSWERS to a tap; they
+    //   must announce themselves, or they are seen and never heard.
+    'check-live-regions.mjs',
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {

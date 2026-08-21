@@ -769,7 +769,10 @@ export default function RecordPanel(
 
       {closed && !open && <div className="toast">✓ {closed}</div>}
 
-      {err && <div className="train-msg">✗ {err}</div>}
+      {/* Q145: every refusal the operator can act on (dead camera, identity drift, taken
+          dataset name) arrives here, after a tap, asynchronously. role=alert so it is heard and not
+          only seen — a refusal nobody notices reads as a button that did nothing. */}
+      {err && <div className="train-msg" role="alert">✗ {err}</div>}
       {/* The refusal's own words stay above, unrewritten - they were written next to
           the check that knows why. This adds the answer: the admission in the first
           person, the cost if the operator is wrong, and press start again. */}
