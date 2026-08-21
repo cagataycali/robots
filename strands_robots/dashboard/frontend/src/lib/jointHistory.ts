@@ -140,7 +140,8 @@ export function historyClaim(
 }
 
 /** Seconds of history actually held, for the "60s" label to tell the truth. */
-export function heldSeconds(track: Sample[] | undefined, now: number): number {
+/* Module-private on purpose: historyClaim is the only caller and the tested surface; a wider export invited a second reader of a number that means nothing without the claim around it. */
+function heldSeconds(track: Sample[] | undefined, now: number): number {
   if (!track || track.length < 2) return 0
   return Math.max(0, (now - track[0].t) / 1000)
 }

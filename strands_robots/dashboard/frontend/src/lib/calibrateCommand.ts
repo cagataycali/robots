@@ -117,7 +117,8 @@ export function deviceId(facts: PortFacts, role: 'follower' | 'leader'): string 
  * concludes they are calibrating the other arm. That mislabel is the same one
  * cagatay originally reported on the record screen, one surface over.
  */
-export function idNameContradictsRole(id: string, role: 'follower' | 'leader'): boolean {
+/* Module-private on purpose: both callers are in this file and both are tested through their own verdicts (idWarn); exporting the predicate alone invited a caller that skips the sentence explaining it. */
+function idNameContradictsRole(id: string, role: 'follower' | 'leader'): boolean {
   const other = role === 'follower' ? 'leader' : 'follower'
   return id.trim().toLowerCase().includes(other)
 }

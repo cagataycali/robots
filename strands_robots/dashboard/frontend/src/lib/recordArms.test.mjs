@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { armJointWarning } from '/tmp/recordArms.mjs'
+import { armJointWarning, MAX_AGE_S } from '/tmp/recordArms.mjs'
 
 const NOW = 1_000_000
 const peer = (joints, { age = 2, problem = null, presence = { hw: 'so_follower' } } = {}) => ({
@@ -46,3 +46,12 @@ assert.ok(armJointWarning(peer(null, { age: 29 }), { slot: 'follower', nowS: NOW
     'an undateable reading cannot be called fresh')
 }
 console.log('recordArms: all assertions passed')
+
+// --- the evidence window is the REAL constant ------------------------------------------
+// MAX_AGE_S exists because "no joints" from a snapshot older than this is not evidence
+// about NOW. Exported for a test, and no test read it.
+{
+  const at = (age) => armJointWarning(peer(null, { age }), { slot: 'follower', nowS: NOW })
+  assert.equal(at(MAX_AGE_S + 1), null, 'past the window, silence is not evidence and must not warn')
+  assert.notEqual(at(MAX_AGE_S - 1), null, 'inside the window, a jointless arm is a real warning')
+}

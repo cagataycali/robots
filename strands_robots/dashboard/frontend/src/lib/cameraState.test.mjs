@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { classifyCamera, ageText, publishedAtMs, PUBLISH_FRESH_MS, CAPTURE_STALE_MS } from '/tmp/cameraState.mjs'
+import { classifyCamera, ageText, publishedAtMs, PUBLISH_FRESH_MS, CAPTURE_STALE_MS, STALL_MS } from '/tmp/cameraState.mjs'
 
 const NOW = 1_787_180_409_000 // ms, matching the live snapshot this was measured on
 
@@ -186,3 +186,16 @@ assert.equal(errFirst.kind, 'busy')
 assert.equal(errFirst.frozen, true, 'old pixels are still on screen and still marked')
 
 console.log('cameraState: 62 assertions ok')
+
+// --- the stall threshold is asserted against the REAL constant, not a copy of it -------
+// STALL_MS was exported for exactly this and no test read it, so the number here and the
+// number in the product were free to drift apart in silence. It governs a camera that HAS
+// delivered frames and then stopped — the frozen-tile case, not a never-opened one.
+{
+  const cam = (sinceLast) => classifyCamera({
+    now: NOW, conn: true, frames: 5, lastFrameAt: NOW - sinceLast,
+  })
+  assert.notEqual(cam(STALL_MS - 200).kind, cam(STALL_MS + 200).kind,
+    'the verdict must change across the real threshold')
+  assert.equal(cam(STALL_MS + 200).frozen, true, 'past the threshold the tile is frozen, not live')
+}

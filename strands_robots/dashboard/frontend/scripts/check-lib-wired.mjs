@@ -87,6 +87,7 @@ const TOLERATED = new Map([
   // code revealed, never just a name — and the stale check below deletes it for you.
 ])
 const deadExports = []
+const internalNames = []
 let internalOnly = 0, testOnly = 0, exportCount = 0
 for (const f of libFiles) {
   const body = bodyOf.get(f)
@@ -96,12 +97,16 @@ for (const f of libFiles) {
     const re = new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\b`, 'g')
     if (files.some(o => o !== f && re.test(bodyOf.get(o)))) continue
     if (testFiles.some(o => re.test(bodyOf.get(o)))) { testOnly++; continue }
-    if ((body.match(re) || []).length > 1) { internalOnly++; continue }
+    if ((body.match(re) || []).length > 1) { internalOnly++; internalNames.push(`${path.relative(SRC, f)} :: ${name}`); continue }
     deadExports.push(`${path.relative(SRC, f)} :: ${name}`)
   }
 }
 const unexplained = deadExports.filter(d => !TOLERATED.has(d))
 console.log(`  ${exportCount} lib value exports — ${testOnly} test-only (by design), ${internalOnly} exported wider than used, ${deadExports.length} with no caller anywhere`)
+/* A count nobody can act on is a count nobody acts on: this row sat at 6 for days because
+ * the number was printed and the names were not. Not a gate — a wider-than-needed export
+ * misleads nobody about behaviour, it is only untidy — but now it is RESOLVABLE. */
+if (internalNames.length) console.log(`  note  wider than needed (drop \`export\` unless a test wants it): ${internalNames.join(', ')}`)
 for (const d of deadExports.filter(d => TOLERATED.has(d))) console.log(`        known: ${d} — ${TOLERATED.get(d)}`)
 if (unexplained.length) {
   console.log(`  FAIL  ${unexplained.length} lib export(s) nothing calls — a live module vouched for them:`)

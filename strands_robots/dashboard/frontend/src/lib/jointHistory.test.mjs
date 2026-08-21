@@ -3,7 +3,7 @@
 //        && node src/lib/jointHistory.test.mjs
 import assert from 'node:assert/strict'
 
-const { createHistory, pushFrame, traceFor, stalled, historyClaim, GAP_MS } = await import('/tmp/jointHistory.mjs')
+const { createHistory, pushFrame, traceFor, stalled, historyClaim, GAP_MS, MAX_POINTS } = await import('/tmp/jointHistory.mjs')
 
 // The window's right edge is NOW: that is the property the sparkline's honesty
 // rests on, and the reason a frozen canvas is a lie rather than a stale picture.
@@ -74,3 +74,14 @@ console.log('jointHistory: stalled() assertions passed')
   assert.match(historyClaim('movement', track(4000), now, 10_000), /10s window is not full yet/)
 }
 
+
+// --- the ring buffer's cap is the REAL constant ----------------------------------------
+// MAX_POINTS bounds memory for a tab left open; exported for a test that never read it.
+{
+  const h = createHistory()
+  // A wide window, so the trim under test is the COUNT cap and not the time window.
+  for (let i = 0; i < MAX_POINTS + 50; i++) pushFrame(h, [['shoulder', i]], 1000 + i, 9e9)
+  const track = h.get('shoulder')
+  assert.ok(track.length <= MAX_POINTS, `kept ${track.length} samples, cap is ${MAX_POINTS}`)
+  assert.equal(track[track.length - 1].v, MAX_POINTS + 49, 'the NEWEST sample survives the trim')
+}
