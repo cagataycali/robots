@@ -53,6 +53,14 @@ _TELEOP_SLEW_ENV = "STRANDS_MESH_INPUT_SLEW_ABS"
 #: answer. provider and type SHARE this variable, and the SDK's own sentence says so:
 #: "Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend (provider and policy_type share one allowlist)".
 _POLICY_TYPE_ENV = "STRANDS_MESH_POLICY_TYPE_ALLOW"
+#: Q119 part two, closing the family at 5 of 5. policy_host AND server_address's host check share
+#: this one variable (is_safe_server_address strips scheme/path/port and defers to
+#: is_safe_policy_host), so they are one kind here too.
+_POLICY_HOST_ENV = "STRANDS_MESH_POLICY_HOST_ALLOW"
+#: The SDK's own charset for an ENTRY in that variable (security._POLICY_HOST_ENTRY_RE), copied
+#: rather than imported so this module stays free of the mesh at import time. Hostnames, IP
+#: literals and CIDR ranges - and nothing shell-shaped.
+_POLICY_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9.:/_\-]{1,253}$")
 #: Degrees plus a percent gripper: 400 covers a multi-turn wrist with headroom
 #: and still refuses a runaway three orders of magnitude out. Not "unlimited" -
 #: the envelope is the point, only its UNIT was wrong.
@@ -69,10 +77,53 @@ _REPO_BARE_RE = re.compile(r"pretrained_name_or_path=([^\s,]{1,250})")
 _PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 #: Taken only from the SDK's fixed `policy_provider=` / `policy_type=` prefix, quoted or bare, so a
 #: paraphrase wrapped around the refusal cannot become the subject (the _AGENT_TARGET_RE rule).
+_POLICY_HOST_SUBJECT_RE = re.compile(
+    r"(policy_host|server_address)=(?:'([^']{1,300})'|\"([^\"]{1,300})\"|([^\s,]{1,300}))"
+)
 _POLICY_SUBJECT_RE = re.compile(r"policy_(?:provider|type)=(?:'([^']{1,80})'|\"([^\"]{1,80})\"|([^\s,]{1,80}))")
 
 #: The refusal text can be a whole traceback; keep the evidence bounded.
 _MAX_MESSAGE = 2000
+
+
+def _host_entry(raw: object, *, strip_url: bool = False) -> str | None:
+    """The allowlist ENTRY that grants ``raw``, or None if nothing safe can be derived.
+
+    ``strip_url`` distinguishes the two refusals that share this variable, and MEASUREMENT decided
+    it, not symmetry: is_safe_server_address strips scheme/path/port before checking, so a
+    ``server_address='http://gpu.lan:8000'`` is granted by the entry ``gpu.lan``. But
+    ``policy_host`` is matched LITERALLY, so ``policy_host='gpu.lan:8000'`` needs the entry
+    ``gpu.lan:8000`` - granting ``gpu.lan`` there produced an approval that left the command
+    refused, which is the exact "approval that changes nothing" this function exists to prevent. I
+    wrote the symmetric version first and the round-trip test caught it.
+
+    The refusal quotes what the operator sent - ``server_address='http://gpu.lan:8000'`` - but the
+    variable holds hosts, matched literally by :func:`security.is_safe_policy_host`. Appending the
+    URL verbatim would produce an entry that the SDK's own charset check rejects and that could
+    never match anything: an approval that changes nothing, which is worse than a refusal because
+    the operator believes they are through. So the scheme, path and port are stripped here, exactly
+    as is_safe_server_address strips them.
+    """
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not strip_url:
+        # Already an entry (a policy_host, or a subject the browser sent back): validate, never
+        # rewrite - the approval endpoint rebuilds the request from this string.
+        return s if s and _POLICY_HOST_ENTRY_RE.match(s) else None
+    if "://" in s:
+        s = s.split("://", 1)[1]
+    s = s.split("/", 1)[0]  # path (a CIDR entry never arrives via a refusal, so / cannot be kept)
+    if s.startswith("["):  # bracketed IPv6, with or without a port
+        if "]" not in s:
+            return None
+        s = s[1 : s.index("]")]
+    elif s.count(":") == 1:  # host:port - an IPv6 literal has more, and keeps them
+        s = s.split(":", 1)[0]
+    s = s.strip()
+    if not s or not _POLICY_HOST_ENTRY_RE.match(s):
+        return None
+    return s
 
 
 @dataclass(frozen=True)
@@ -111,6 +162,7 @@ KINDS: tuple[str, ...] = (
     "teleop_degree_units",
     "agent_physical_motion",
     "policy_type_allow",
+    "policy_host_allow",
 )
 
 
@@ -204,6 +256,31 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
             ),
         )
 
+    if kind == "policy_host_allow":
+        # Subject is normalised to an ENTRY, not kept as the operator typed it: see _host_entry.
+        host = _host_entry(name)  # validate only: classify_refusal already derived the entry
+        shown = host or "that address"
+        return ConsentRequest(
+            kind=kind,
+            scope=f"policy_host_allow:{host}" if host else "policy_host_allow",
+            title=f"Let policies run on {shown}?",
+            risk=(
+                f"The mesh only talks to policy servers on loopback by default, and {shown} is not "
+                "in the allowlist. Approving sends your robots' camera frames and joint states to "
+                "that host, and lets the actions it returns drive real hardware - so it is trusted "
+                "with what the arms SEE and what they DO. Hostnames are matched literally with no "
+                "DNS resolution, so this trusts whatever that name resolves to at the time; an IP "
+                "literal keeps the boundary under your control."
+            ),
+            env_var=_POLICY_HOST_ENV,
+            subject=host,
+            message=text,
+            grants=(
+                f"reach the policy server at {host}" if host
+                else "nothing yet - the host could not be read",
+            ),
+        )
+
     if kind == "policy_type_allow":
         # One variable, two things the SDK refuses with it. The grant is deliberately NARROW - this
         # name only - mirroring hf_repo_allow: an operator approving "lerobot_async" must not be
@@ -278,6 +355,13 @@ def classify_refusal(text: object) -> ConsentRequest | None:
         m = _AGENT_TARGET_RE.search(message)
         return build_request("agent_physical_motion", m.group(1) if m else None, message)
 
+    if _POLICY_HOST_ENV in message:
+        m = _POLICY_HOST_SUBJECT_RE.search(message)
+        subject = next((g for g in (m.groups()[1:] if m else ()) if g), None)
+        # Which field was refused decides how the entry is derived - they are matched differently.
+        entry = _host_entry(subject, strip_url=bool(m and m.group(1) == "server_address"))
+        return build_request("policy_host_allow", entry, message)
+
     if _POLICY_TYPE_ENV in message:
         m = _POLICY_SUBJECT_RE.search(message)
         subject = next((g for g in (m.groups() if m else ()) if g), None)
@@ -318,6 +402,15 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
         if str(env.get(_TELEOP_SLEW_ENV, "")).strip() != _TELEOP_DEGREE_SLEW:
             patch[_TELEOP_SLEW_ENV] = _TELEOP_DEGREE_SLEW
         return patch
+
+    if request.kind == "policy_host_allow":
+        host = _host_entry(request.subject)
+        if not host:
+            return {}
+        current = [e.strip() for e in str(env.get(_POLICY_HOST_ENV, "")).split(",") if e.strip()]
+        if host in current:
+            return {}
+        return {_POLICY_HOST_ENV: ",".join(current + [host])}
 
     if request.kind == "policy_type_allow":
         name = request.subject
@@ -376,6 +469,12 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
         "policy_type_allow": [
             e.strip() for e in str(env.get(_POLICY_TYPE_ENV, "")).split(",") if e.strip()
         ],
+        # Loopback is allowed by the SDK's own default and is NOT listed: this key answers "what has
+        # this machine been opened up to", and printing localhost as a grant would bury the one
+        # entry that matters among defaults nobody approved.
+        "policy_host_allow": [
+            e.strip() for e in str(env.get(_POLICY_HOST_ENV, "")).split(",") if e.strip()
+        ],
         "teleop_degree_units": {
             "granted": bool(value_abs or slew_abs),
             "value_abs": value_abs or None,
@@ -432,6 +531,17 @@ def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) 
         if str(env.get(_TELEOP_SLEW_ENV, "")).strip():
             patch[_TELEOP_SLEW_ENV] = ""
         return patch
+
+    if request.kind == "policy_host_allow":
+        host = _host_entry(request.subject)
+        if not host:
+            return {}
+        current = [e.strip() for e in str(env.get(_POLICY_HOST_ENV, "")).split(",") if e.strip()]
+        if host not in current:
+            # A CIDR entry the operator added by hand may still cover it; say nothing changed
+            # rather than narrowing a range this module did not write.
+            return {}
+        return {_POLICY_HOST_ENV: ",".join(e for e in current if e != host)}
 
     if request.kind == "policy_type_allow":
         name = request.subject
