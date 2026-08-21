@@ -1721,14 +1721,24 @@ Corrections from code review that apply to all future contributions:
   into `subprocess.run`, `subprocess.Popen`, MJCF / XML interpolation, or filesystem
   path construction MUST be validated up front via regex allowlist, enum match, or
   range check. Argv-style subprocess does not exempt you - defense-in-depth.
-- **Centralise validation in one function** - pattern: a `validate_inputs(...)` helper
-  at the top of the tool module that takes every user-supplied param as a keyword arg
-  and raises `ValueError` with a clear message on any rejection. Single entry-point
-  is independently testable. PR #90's `gr00t_inference.validate_inputs()` is the
-  canonical example.
+- **Group the check by what consumes the value, and run it at the dispatch
+  boundary** - one `..._option_error(action, *, <params>) -> str | None` helper per
+  *kind* of value, called before any expensive work starts, returning the reason for
+  the dispatcher to fold into its error dict. Keying it on the action means a caller
+  is never refused for a value the requested action ignores.
+  `gr00t_inference._numeric_option_error` and its enum-valued sibling
+  `_enumerable_option_error` are the shipped pair: both cover options that are
+  interpolated into a `docker exec` command line run **detached**, where a value the
+  server's own flag parser rejects surfaces minutes later in the container log
+  instead of as the call's result. Note the shape returns rather than raises, so
+  **Return error dicts, never raise** above still holds at the tool surface.
 - **Allowlist enumerable values** - `data_config`, `embodiment_tag`, dtype strings,
   container names: all match `^[a-z][a-z0-9_]+$` or an explicit `{"fp16", "fp8", ...}`
-  set. Never accept arbitrary strings into enumerable surfaces.
+  set. Never accept arbitrary strings into enumerable surfaces. Derive the
+  "refuses nothing real" half from a shipped catalogue rather than a copied list -
+  `data_configs.json` names every valid `data_config`, so a config added there is
+  admitted by construction. Pinned by
+  `tests/tools/test_gr00t_enumerable_option_guards.py`.
 - **Reject shell metacharacters in paths** - `;`, `|`, `$`, backticks, `>`, `<`,
   `\n`, `\r`, `\x00`. Also reject `..` path traversal components. Apply even when
   using argv-style subprocess.
