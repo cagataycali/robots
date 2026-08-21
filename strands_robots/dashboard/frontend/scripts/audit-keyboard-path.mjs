@@ -17,7 +17,7 @@
  * It only presses Tab and Escape and never activates anything, so it is safe with real arms
  * powered on.
  */
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 import fs from 'node:fs'
 
 const TOKEN_FILE = process.env.STRANDS_DASH_TOKEN_FILE ?? `${process.env.HOME}/.strands_dashboard/local_api_token.txt`

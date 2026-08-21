@@ -11,7 +11,7 @@
  * Baseline at the time of writing (2026-08-19, after this commit): 0 suspect
  * BUTTONS, the only greys left being .chip / .tab navigation.
  */
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 import fs from 'node:fs'
 const token = fs.readFileSync('/Users/cagatay/.strands_dashboard/local_api_token.txt','utf8').trim()
 const PRIMARY = /^(run|▶|send|↑|start|save|create|train|enroll|apply|confirm|record|⏺|launch|spawn|add|connect|sign in|calibrate|deploy|submit|measure|probe|rescan|stop|■|🛑)/i

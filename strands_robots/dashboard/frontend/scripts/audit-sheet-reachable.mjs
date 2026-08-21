@@ -21,7 +21,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 
 const dist = 'dist/assets'
 const cssFile = fs.readdirSync(dist).filter(f => f.endsWith('.css')).sort()[0]

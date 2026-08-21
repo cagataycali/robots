@@ -34,8 +34,14 @@ export const ESCAPES = []
  *  still blocked. */
 const BENIGN = [/\/api\/auth\//]
 
+/** One guard per page: the wrapped browser installs it at birth and an audit may still call it itself
+ *  (older audits do, and the explicit call reads better) — installing twice would count one escape twice. */
+const GUARDED = new WeakSet()
+
 export async function blockMutations(page, { allow = [] } = {}) {
   allow = [...BENIGN, ...allow]
+  if (GUARDED.has(page)) return { blocked: ESCAPES, assertNoEscapes }
+  GUARDED.add(page)
   await page.route('**/api/**', async route => {
     const req = route.request()
     const method = req.method()

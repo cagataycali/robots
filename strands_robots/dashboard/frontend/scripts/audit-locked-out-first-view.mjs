@@ -18,7 +18,7 @@
  *
  * Run: node scripts/audit-locked-out-first-view.mjs   (running dashboard on :8090 + node playwright)
  */
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 
 const BASE = process.env.STRANDS_DASH_URL ?? 'http://127.0.0.1:8090'
 const failures = []

@@ -9,7 +9,7 @@
  *
  * Read-only against the live dashboard: no arm moves, no camera socket is opened by this script.
  */
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 import fs from 'node:fs'
 
 const TOKEN = fs.readFileSync(process.env.HOME + '/.strands_dashboard/local_api_token.txt', 'utf8').trim()

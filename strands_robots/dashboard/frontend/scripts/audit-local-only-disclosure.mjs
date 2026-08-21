@@ -17,7 +17,7 @@
  *
  * Run: node scripts/audit-local-only-disclosure.mjs   (running dashboard on :8090 + node playwright)
  */
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 import fs from 'node:fs'
 
 const TOKEN = fs.readFileSync(

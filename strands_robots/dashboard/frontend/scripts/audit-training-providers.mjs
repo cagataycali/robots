@@ -12,7 +12,7 @@
  *
  * Run: node scripts/audit-training-providers.mjs
  */
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 import fs from 'node:fs'
 const TOKEN = fs.readFileSync(process.env.HOME + '/.strands_dashboard/local_api_token.txt', 'utf8').trim()
 const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' }); const p = await ctx.newPage()

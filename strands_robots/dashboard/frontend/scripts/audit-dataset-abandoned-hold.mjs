@@ -15,7 +15,7 @@
  *
  * Run: node scripts/audit-dataset-abandoned-hold.mjs
  */
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 import fs from 'node:fs'
 
 const TOKEN = fs.readFileSync(

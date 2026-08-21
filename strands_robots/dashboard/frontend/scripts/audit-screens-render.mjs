@@ -12,7 +12,7 @@
  * Run: node scripts/audit-screens-render.mjs   (needs a running dashboard on :8090
  *      and node playwright — same requirements as audit-primary-actions.mjs)
  */
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 import fs from 'node:fs'
 
 const TOKEN_FILE = process.env.STRANDS_DASH_TOKEN_FILE

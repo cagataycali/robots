@@ -15,7 +15,7 @@
  * Read-only: it opens two screens, scrolls, and measures. It never fills the form or presses start.
  */
 import fs from 'node:fs'
-import { chromium } from '/Users/cagatay/.tiny/npm/node_modules/playwright/index.mjs'
+import { chromium } from './lib/audit-browser.mjs'  // guarded browser: every page blocks unintercepted mutations
 
 const TOKEN = fs.readFileSync(
   process.env.STRANDS_DASH_TOKEN_FILE ?? `${process.env.HOME}/.strands_dashboard/local_api_token.txt`, 'utf8').trim()
