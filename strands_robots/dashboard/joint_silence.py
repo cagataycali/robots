@@ -103,7 +103,7 @@ _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
-def classify(log_lines: Any) -> dict[str, str] | None:
+def classify(log_lines: Any, calibrations: Any = None) -> dict[str, str] | None:
     """Explain the NEWEST degraded ``hw_joints`` probe in ``log_lines``, or return None.
 
     Silence is the common case and must stay silent: a child whose log never mentions the probe
@@ -122,6 +122,10 @@ def classify(log_lines: Any) -> dict[str, str] | None:
         if matched is not None:
             if matched["kind"] == "port_in_use" and _self_healed(log_lines):
                 matched = {**matched, "remedy": _PORT_IN_USE_AFTER_SELF_HEAL}
+            if matched["kind"] == "uncalibrated":
+                better = calibration_advice(calibrations)
+                if better:
+                    matched = {**matched, "remedy": better}
             return {**matched, "detail": _tail(line)}
         return {
             "kind": "probe_failed",
@@ -131,6 +135,44 @@ def classify(log_lines: Any) -> dict[str, str] | None:
             "detail": _tail(line),
         }
     return None
+
+
+def calibration_advice(available: Any) -> str | None:
+    """A better remedy for ``uncalibrated`` when calibration files ALREADY EXIST on this machine.
+
+    Measured on cagatay's rig 2026-08-21: so101-leader was spawned as a real robot with
+    ``robot_id="leader"``, so lerobot looked for ``calibration/robots/so101_follower/leader.json``
+    and raised "has no calibration registered". The arm was calibrated -- its file sits at
+    ``calibration/teleoperators/so101_leader/leader.json``. The generic remedy ("Calibrate this
+    arm") would therefore have sent the operator to re-teach a correctly calibrated arm: physical
+    work, on hardware, to fix a filename. That is the worst kind of wrong advice this dashboard can
+    give, so when the evidence contradicts it, it must not be given.
+
+    ``available`` is what the caller found on disk: ``{"robots/so101_follower": ["follower",
+    "leader_arm"], "teleoperators/so101_leader": ["leader"]}``. Pure -- it reads a listing that was
+    already gathered, opens no port and touches no file.
+
+    Returns None when the generic remedy is right (nothing on disk, or nothing we can say better),
+    because a hint that fires on no evidence is how a diagnosis starts inventing.
+    """
+    if not isinstance(available, Mapping) or not available:
+        return None
+    where = sorted(
+        f"{group}/{name}.json"
+        for group, names in available.items()
+        if isinstance(names, (list, tuple))
+        for name in [str(n) for n in names]
+    )
+    if not where:
+        return None
+    shown = ", ".join(where[:6]) + (f" (+{len(where) - 6} more)" if len(where) > 6 else "")
+    return (
+        "Calibration files DO exist on this machine, so this is probably an id/path mismatch rather "
+        "than an uncalibrated arm: lerobot looks for calibration/robots/<robot_type>/<id>.json, and "
+        f"what exists is {shown}. Spawn this arm with the id whose file exists (or copy that file to "
+        "the path lerobot wants) BEFORE recalibrating - re-teaching an arm that is already "
+        "calibrated is physical work to fix a filename."
+    )
 
 
 def _self_healed(log_lines: Any) -> bool:

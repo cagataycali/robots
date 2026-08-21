@@ -95,6 +95,43 @@ class ManagedRobot:
         return self.process is not None and self.process.poll() is None
 
 
+#: lerobot's calibration store. Listed (never read) so an "uncalibrated" verdict can tell an
+#: id/path mismatch from a genuinely uncalibrated arm — the difference between editing a spawn id
+#: and re-teaching a correctly calibrated arm by hand.
+_CALIBRATION_ROOT = Path.home() / ".cache" / "huggingface" / "lerobot" / "calibration"
+_CALIB_CACHE: dict[str, Any] = {"at": 0.0, "value": {}}
+
+
+def _calibrations_on_disk(ttl: float = 30.0) -> dict[str, list[str]]:
+    """``{"robots/so101_follower": ["follower", ...]}`` — the ids that HAVE a calibration file.
+
+    Called from the annotation path, which a 1 Hz poller drives, so the listing is cached for
+    ``ttl`` seconds: a diagnosis that stats a directory tree every tick would be a cost the fleet
+    view pays forever to answer a question that changes when a human calibrates something. Any
+    filesystem error yields {} — this is a HINT, and a hint that can break the fleet snapshot is
+    worse than no hint.
+    """
+    now = time.time()
+    if now - float(_CALIB_CACHE["at"]) < ttl:
+        return dict(_CALIB_CACHE["value"])
+    found: dict[str, list[str]] = {}
+    try:
+        for group in ("robots", "teleoperators"):
+            base = _CALIBRATION_ROOT / group
+            if not base.is_dir():
+                continue
+            for kind_dir in sorted(base.iterdir()):
+                if not kind_dir.is_dir():
+                    continue
+                ids = sorted(f.stem for f in kind_dir.glob("*.json"))
+                if ids:
+                    found[f"{group}/{kind_dir.name}"] = ids
+    except OSError:
+        found = {}
+    _CALIB_CACHE.update(at=now, value=found)
+    return dict(found)
+
+
 def crash_reason(lines: Iterable[str]) -> str | None:
     """The line that explains why a child died, or None if nothing does.
 
@@ -1659,7 +1696,7 @@ class DeviceManager:
             # with an empty joint history and the operator has to go read logs to find out that the
             # port is contended or the board is uncalibrated - two faults with opposite remedies.
             # MeshBridge drops this again if the arm is actually publishing joints.
-            problem = joint_silence.classify(list(m.logs))
+            problem = joint_silence.classify(list(m.logs), _calibrations_on_disk())
             if problem:
                 out.setdefault(peer_id, {})["joint_problem"] = problem
         return out
