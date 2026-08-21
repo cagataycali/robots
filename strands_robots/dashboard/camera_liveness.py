@@ -259,3 +259,100 @@ def drift_refusal(drift: list[dict[str, Any]], *, peer_id: str) -> str:
         "its new index in the robot's camera settings, or pass ignore_camera_identity to record with "
         "the index as it stands."
     )
+
+
+#: Keys the dashboard adds to a camera config for its OWN memory, which no camera driver declares.
+#: ``device_name`` is the roster name an index carried when it was configured (see identity_drift).
+ANNOTATION_KEYS: tuple[str, ...] = ("device_name",)
+
+
+def stamp_device_names(
+    cameras: Mapping[str, Any] | None,
+    roster: Iterable[Mapping[str, Any]] | None,
+) -> Mapping[str, Any] | None:
+    """Remember WHICH device each numeric camera index was, at the moment it is configured.
+
+    ``identity_drift`` can only speak if something wrote the memory it compares against; this is
+    that write. It runs where the operator's choice is made (spawn / camera reconfigure), because
+    that is the only moment at which "index 1" and "the camera the operator meant" are known to be
+    the same thing.
+
+    THE ONE RULE THAT MAKES OR BREAKS THE WHOLE ARC: an existing ``device_name`` is NEVER
+    overwritten. Re-stamping on every spawn would rewrite the memory with whatever now answers to
+    that index -- so the first respawn after a renumber would erase the evidence and make
+    ``identity_drift`` permanently silent, exactly for the fleet that needs it. A memory that
+    updates itself to agree with the present is not a memory. Changing an index is an operator
+    action and goes through the camera settings, which write the new name deliberately.
+
+    Args:
+        cameras: The ``name -> config`` mapping about to be stored/spawned.
+        roster: ``[{"listing_index", "name"}]`` as the machine lists cameras NOW. The caller owns
+            freshness (same law as the record gate: a stale roster is not evidence). An empty or
+            missing roster stamps nothing at all -- inventing a name from a failed scan would plant
+            a false memory, which is worse than no memory because it can refuse a healthy rig later.
+
+    Returns:
+        ``cameras`` unchanged when there is nothing to add (identity by design, so a caller can
+        tell), otherwise a new mapping whose stamped entries are copies. Never mutates its input:
+        the same dict is often already stored in a profile.
+    """
+    if not isinstance(cameras, Mapping) or not cameras:
+        return cameras
+    by_index: dict[int, str] = {}
+    for entry in roster or ():
+        if not isinstance(entry, Mapping):
+            continue
+        index, name = entry.get("listing_index"), entry.get("name")
+        if isinstance(index, int) and not isinstance(index, bool) and str(name or "").strip():
+            by_index[int(index)] = str(name)
+    if not by_index:
+        return cameras
+
+    out: dict[str, Any] = dict(cameras)
+    changed = False
+    for cam, cfg in cameras.items():
+        if not isinstance(cfg, Mapping):
+            continue
+        if str(cfg.get("device_name") or "").strip():
+            continue  # already remembered - see the rule above
+        index = cfg.get("index_or_path")
+        # A path-configured camera is not judged by index, so a name buys it nothing; a bool is
+        # not an index (True == 1 would stamp whatever sits at index 1 onto it).
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        name = by_index.get(int(index))
+        if not name:
+            continue  # the roster does not list it: there is nothing to remember
+        stamped = dict(cfg)
+        stamped["device_name"] = name
+        out[cam] = stamped
+        changed = True
+    return out if changed else cameras
+
+
+def without_annotations(cameras: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The same camera config with the dashboard's own bookkeeping keys removed.
+
+    MUST be used on every path that hands a camera config to a robot process.
+    ``hardware_robot._build_camera_config`` REFUSES any key ``OpenCVCameraConfig`` does not declare
+    (Review Learnings #86, and rightly: an option silently dropped means a camera streaming at the
+    default while the spawn reports success). So an unstripped ``device_name`` would not degrade one
+    camera -- it would kill EVERY camera on the arm, with a message about an unknown option.
+
+    Returns ``cameras`` unchanged when it carries no annotation, so the common case allocates
+    nothing and a caller can see that nothing was removed.
+    """
+    if not isinstance(cameras, Mapping) or not cameras:
+        return cameras
+    if not any(
+        isinstance(cfg, Mapping) and any(k in cfg for k in ANNOTATION_KEYS)
+        for cfg in cameras.values()
+    ):
+        return cameras
+    out: dict[str, Any] = {}
+    for cam, cfg in cameras.items():
+        if isinstance(cfg, Mapping) and any(k in cfg for k in ANNOTATION_KEYS):
+            out[cam] = {k: v for k, v in cfg.items() if k not in ANNOTATION_KEYS}
+        else:
+            out[cam] = cfg
+    return out
