@@ -126,3 +126,22 @@ console.log('endpoints.test.mjs: all assertions passed')
 }
 
 console.log('endpoints.test.mjs: Q102 refusal memory ok')
+
+// ── Q103: a PUBLIC 200 must not absolve a refused page ─────────────────────────────────────────────
+// Measured in a browser against the live dashboard: after the token was rotated, /api/auth/status
+// (public — the middleware never looks at it) kept answering 200 and cleared the refusal within a
+// second, so AuthGate's watcher never saw one and the page stayed open, deaf, exactly as before.
+{
+  const m = await import('/tmp/endpoints.mjs?case=q103')
+  m.noteAuthRefusal(401, 1_000)
+  m.noteAuthAccepted('/api/auth/status')
+  assert.equal(m.authRefusedRecently(60_000, 2_000), true, 'a public route proves nothing about credentials')
+  m.noteAuthAccepted('/api/health')
+  assert.equal(m.authRefusedRecently(60_000, 2_000), true)
+  m.noteAuthAccepted('/api/auth/login/begin')
+  assert.equal(m.authRefusedRecently(60_000, 2_000), true)
+  m.noteAuthAccepted('/api/fleet')
+  assert.equal(m.authRefusedRecently(60_000, 2_000), false, 'a GUARDED success is the proof, and it clears')
+}
+
+console.log('endpoints.test.mjs: Q103 public-200 absolution ok')

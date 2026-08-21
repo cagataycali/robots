@@ -24,9 +24,15 @@
  * answer is already in the page's pocket, and a lapsed session must not generate traffic
  * to discover that it is lapsed. Only a JWT can trigger this; a static --auth-token and
  * an auth-off LAN dashboard are silent, so nobody is thrown out of a session that works.
+ *
+ * ONE EXCEPTION, and it is evidence rather than polling (Q103): a token can be INVALID without being
+ * expired -- rotated by a dashboard restart, a stale ?token= link, a revoked session -- and nothing in
+ * its claims says so. When a request has ALREADY been refused (lib/endpoints remembers the last
+ * 401/403), the watcher verifies once against /api/fleet, the same probe the mount uses. The refusal is
+ * the trigger; the server is the judge.
  */
 import { useEffect, useRef, useState } from 'react'
-import { api, setAuthToken, authToken, HttpError } from '../lib/endpoints'
+import { api, setAuthToken, authToken, authRefusedRecently, HttpError } from '../lib/endpoints'
 import { sessionVerdict } from '../lib/sessionExpiry'
 import {
   fetchAuthStatus, enroll, webauthnReady, type AuthStatus,
@@ -55,6 +61,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   // sheet while the tap's user-activation is alive, so the click handler must
   // reach credentials.get() without awaiting the network first.
   const prepared = useRef<PreparedLogin | null>(null)
+  /** Q103: one server probe at a time, so a burst of 401s cannot become a burst of requests. */
+  const verifying = useRef(false)
 
   // The App's update prompt lives BEHIND the gate — a visitor stuck out here
   // (exactly where auth bugs strand them) could otherwise be pinned to a stale
@@ -88,6 +96,34 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         return
       }
       setExpiring(v.state === 'expiring' ? (v.text ?? '') : '')
+
+      // Q103: `exp` is not the only way a sign-in dies. A token ROTATED by a dashboard restart, a
+      // stale ?token= link, a revoked session or a server that forgot its sessions is INVALID while
+      // its own claims still look perfectly fresh — so the verdict above says "fine" and this page
+      // stays open, deaf, for as long as the tab lives. That is the 19.3-hour shape again with a
+      // cause the token cannot see.
+      //
+      // The doctrine above still holds: a lapsed session must not generate traffic to DISCOVER that
+      // it is lapsed. This is not speculation — some request has already come back 401/403, and the
+      // refusal is only the TRIGGER. /api/fleet stays the JUDGE, the same probe the mount uses, so a
+      // route-specific refusal costs exactly one request instead of throwing the operator at a login
+      // screen they did not need. Self-limiting either way: success clears the memory, denial closes
+      // the gate and unmounts this watcher.
+      if (authRefusedRecently() && !verifying.current) {
+        verifying.current = true
+        api('/api/fleet')
+          .then(() => { verifying.current = false })
+          .catch(e => {
+            verifying.current = false
+            const denied = e instanceof HttpError && (e.status === 401 || e.status === 403)
+            if (!alive || !denied) return
+            setExpiring('')
+            setError('this page is not signed in any more — the server refused it')
+            fetchAuthStatus()
+              .then(st => { if (alive) { setStatus(st); setMode(st.setup_required ? 'enroll' : 'login') } })
+              .catch(() => { if (alive) setMode('login') })
+          })
+      }
     }
     check()
     // 30s is fine for a five-minute warning and costs nothing: no network, one base64 decode.

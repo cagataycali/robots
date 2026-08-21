@@ -222,8 +222,28 @@ export function noteAuthRefusal(status: number, at: number = Date.now()): void {
   if (status === 401 || status === 403) _refusedAt = at
 }
 
-/** Clear it the moment a request succeeds: a stale refusal must not accuse a working session. */
-export function noteAuthAccepted(): void {
+/**
+ * The server's own PUBLIC_PATHS (server.py): these answer 200 whether or not the credentials are any
+ * good, because the middleware never looks at them. Mirrored here because a success on one of them is
+ * NOT evidence that this page is signed in — measured on the live rig, /api/auth/status is polled
+ * constantly, so clearing the memory on "any success" erased every refusal within a second and the
+ * gate never came back. If this list drifts from the server's, it drifts safely: an unlisted public
+ * route only clears a refusal that a guarded route will re-record on its next call.
+ */
+const PROVES_NOTHING = [
+  '/api/health',
+  '/api/auth/status',
+  '/api/auth/register/',
+  '/api/auth/login/',
+]
+
+/**
+ * Clear it when a GUARDED request succeeds — that is the only answer which proves the credentials
+ * work. A stale refusal must not accuse a working session, and a public 200 must not absolve a
+ * refused one.
+ */
+export function noteAuthAccepted(path?: string): void {
+  if (path !== undefined && PROVES_NOTHING.some(p => path.startsWith(p))) return
   _refusedAt = null
 }
 
@@ -272,7 +292,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
     }
     throw new HttpError(res.status, message, body)
   }
-  noteAuthAccepted()
+  noteAuthAccepted(path)
   return body as T
 }
 
