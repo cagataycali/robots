@@ -23,13 +23,13 @@ const SRC = path.resolve(import.meta.dirname, '..', 'src')
 // Q139 removed 'dev-snippet' and 'snippet' from this list, Q140 removed 'thumb-loading' — each by
 // WRITING THE RULES, which is the only permitted way out of it. 7 left.
 const KNOWN_UNDEFINED = new Set([
-  'bubble-text',      // AgentDock: the message text inside a chat bubble
-  'camgallery',       // CameraGallery: the whole gallery wrapper
-  'linklike',         // AuthGate: "use a token instead" button styled as a link
-  'passkey-list',     // PasskeyList: the list wrapper
-  'preset-row',       // SettingsDrawer: a row of preset buttons
-  'rec-disk-notice',  // RecordPanel: the disk-space warning (rides on .train-msg, which IS defined)
-  'src',              // ActivityLog: the source icon column
+  // Q141 emptied this list except one. Six names were deleted from the JSX rather than styled, because
+  // each promised something its surroundings already did: .bubble already wraps text, .sheet-actions
+  // already flexes, .train-msg already styles the notice, the .activity grid owns a 20px track for the
+  // source icon, and .camgallery/.passkey-list were bare wrappers whose children carry everything.
+  // Two names before them (Q139, Q140) came off by WRITING the rules, which found two live defects.
+  'linklike',         // AuthGate: "use a token instead" — real intent (a button that should read as a
+                      // link), so this one is a rule to write, not a name to delete.
 ])
 
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>

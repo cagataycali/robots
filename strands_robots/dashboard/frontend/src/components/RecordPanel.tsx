@@ -549,7 +549,7 @@ export default function RecordPanel(
         const d = diskNoticeView(s?.disk_notice, { recording: open })
         if (!d) return null
         return (
-          <div className={`train-msg ${d.tone} rec-disk-notice`}
+          <div className={`train-msg ${d.tone}`}
                data-testid={d.testid}
                {...(d.urgent ? { role: 'alert' as const } : { 'aria-live': 'polite' as const })}>
             ⚠ {d.headline}

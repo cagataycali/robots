@@ -43,7 +43,7 @@ export default function PasskeyList({ authRequired }: { authRequired: boolean })
   }
 
   return (
-    <div className="passkey-list">
+    <div>
       <h4>Devices that can sign in</h4>
       {creds === null ? <p className="hint">reading…</p> : (
         <>

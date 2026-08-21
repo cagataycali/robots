@@ -531,7 +531,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 </div>
               )}
 
-              <div className="sheet-actions preset-row">
+              <div className="sheet-actions">
                 <button className="btn ghost" disabled={saving} title="Fills the fields below - nothing is saved until you click save & re-point" onClick={() => {
                   setMeshPort(''); setConnect(''); setListen(''); setMeshBackend(''); setCameraHz('15')
                   setStatus('SO-101 preset filled in below - review, then "save & re-point"')

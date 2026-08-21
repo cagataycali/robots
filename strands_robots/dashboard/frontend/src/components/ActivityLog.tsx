@@ -98,7 +98,7 @@ export default function ActivityLog({ live, open, onClose }: {
                 <span className="when" title={new Date(e.t * 1000).toLocaleString()}>
                   {ago(e.t, now)}
                 </span>
-                <span className="src">{SOURCE_ICON[e.source] ?? '•'}</span>
+                <span>{SOURCE_ICON[e.source] ?? '•'}</span>
                 <span className="what">
                   <b>{e.action}</b> → <code>{activityLine(e).target}</code>
                   {e.elapsed != null && <em> {e.elapsed.toFixed(1)}s</em>}

@@ -221,7 +221,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
                   {m.reasoning && (
                     <details className="reasoning"><summary>thinking</summary><pre>{m.reasoning}</pre></details>
                   )}
-                  <div className="bubble-text">{m.text || (busy && i === msgs.length - 1 ? '…' : '')}</div>
+                  <div>{m.text || (busy && i === msgs.length - 1 ? '…' : '')}</div>
                   {bubbleLabel(m.delivered) && (
                     <div className="bubble-foot">
                       <span className="badge warn">{bubbleLabel(m.delivered)}</span>
