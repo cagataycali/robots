@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, close_match_hint
-from strands_robots.simulation.models import registered
+from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
@@ -1357,7 +1357,7 @@ class PhysicsMixin:
         # that is not a joint of this robot still reaches the shared lookup.
         ns = ""
         if robot_name is not None and self._world is not None:
-            robot = self._world.robots.get(robot_name)
+            robot = registry_entry(self._world.robots, robot_name)
             if robot is not None:
                 ns = robot.namespace or ""
 

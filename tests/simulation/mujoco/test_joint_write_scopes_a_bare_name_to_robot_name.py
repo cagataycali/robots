@@ -224,3 +224,52 @@ def test_list_form_writes_the_addressed_robot(sim):
         assert _qpos(sim, joint) == pytest.approx(0.1), joint
     for joint in ("alice/j1", "alice/j2"):
         assert _qpos(sim, joint) == pytest.approx(0.0), joint
+
+
+# A robot_name that cannot key the robot registry, one per unhashable builtin a
+# caller might plausibly pass by mistake, mirroring the set in
+# tests/simulation/test_unhashable_entity_name_is_reported.py.
+UNHASHABLE_ROBOT_NAMES = [(t.__name__, t(["bob"]) if t is not dict else {"bob": 1}) for t in (list, set, dict)]
+
+
+@pytest.mark.parametrize("kind,robot_name", UNHASHABLE_ROBOT_NAMES, ids=[k for k, _ in UNHASHABLE_ROBOT_NAMES])
+def test_dict_form_reports_a_robot_name_that_cannot_be_a_key(sim, kind, robot_name):
+    """Scoping made robot_name a registry lookup, which must stay total.
+
+    The namespace lookup here is the dict form's *first* use of ``robot_name``:
+    before scoping, the dict form ignored the argument outright, so no lookup
+    existed to be partial. A bare ``self._world.robots.get(robot_name)`` is not
+    total -- for a name that cannot be a key (a list, a dict, a set) the lookup
+    itself raises ``TypeError: unhashable type``, which escapes the
+    ``{"status", "content"}`` envelope this method documents as its only failure
+    channel. Measured on the unscoped-lookup tree: all three names raised out of
+    the dict form while the list form reported each one, so one argument had two
+    answers depending on the form. Routing through
+    :func:`~strands_robots.simulation.models.registry_entry` makes the name
+    resolve to "no such robot", which is the fall-back path
+    :func:`test_unknown_robot_name_falls_back_rather_than_raising` already pins.
+    """
+    result = sim.set_joint_positions({"j1": 0.4}, robot_name=robot_name)
+    assert isinstance(result, dict) and "status" in result, f"{kind} name escaped the envelope: {result!r}"
+    assert result["status"] == "success", result
+    assert _qpos(sim, "alice/j1") == pytest.approx(0.4)
+
+
+@pytest.mark.parametrize("kind,robot_name", UNHASHABLE_ROBOT_NAMES, ids=[k for k, _ in UNHASHABLE_ROBOT_NAMES])
+def test_the_list_form_still_refuses_such_a_name(sim, kind, robot_name):
+    """The control: the ordered form already reported it, and still must.
+
+    Without this, the test above could be satisfied by making both forms raise.
+    """
+    result = sim.set_joint_positions([0.1, 0.2, 0.3], robot_name=robot_name)
+    assert result["status"] == "error", result
+    assert "not found" in result["content"][0]["text"], result
+
+
+@pytest.mark.parametrize("kind,robot_name", UNHASHABLE_ROBOT_NAMES, ids=[k for k, _ in UNHASHABLE_ROBOT_NAMES])
+def test_velocities_share_the_total_lookup(sim, kind, robot_name):
+    """The sibling setter shares the resolver, so it shares the contract."""
+    result = sim.set_joint_velocities({"j1": 1.0}, robot_name=robot_name)
+    assert isinstance(result, dict) and "status" in result, f"{kind} name escaped the envelope: {result!r}"
+    assert result["status"] == "success", result
+    assert _qvel(sim, "alice/j1") == pytest.approx(1.0)
