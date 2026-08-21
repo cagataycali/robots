@@ -1833,7 +1833,7 @@ def _download_checkpoint(
         "hf_subfolder": hf_subfolder,
         "local_dir": str(local_dir),
         "skipped": False,
-        "message": f"Downloaded {hf_repo}{('/' + hf_subfolder) if hf_subfolder else ''} → {local_dir}",
+        "message": f"Downloaded {hf_repo}{('/' + hf_subfolder) if hf_subfolder else ''} -> {local_dir}",
     }
 
 
