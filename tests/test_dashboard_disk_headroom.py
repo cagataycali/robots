@@ -49,3 +49,72 @@ def test_free_space_never_raises_and_never_answers_for_the_wrong_volume():
     # exactly like a right one. This assertion exists because the first version did that.
     assert dh.free_space("\0not-a-path") == {}
     assert dh.free_space("relative/datasets") == {}
+
+
+# --- the wiring: the record session document carries it, idle AND recording ----------------------
+class _FakeWorker:
+    def session(self):
+        return {"dataset": "local/x", "episodes": 3, "fps_notice": None}
+
+
+def _manager():
+    from strands_robots.dashboard.record_api import RecordController
+
+    m = RecordController.__new__(RecordController)
+    import threading
+    from pathlib import Path
+
+    m._lock = threading.Lock()
+    m._worker = None
+    m._crumb = Path("/nonexistent/crumb.json")
+    m._parked = []
+    m._disk_cache = None
+    m._disk_seen = None
+    return m
+
+
+def test_the_idle_session_carries_a_tight_disk(monkeypatch):
+    m = _manager()
+    monkeypatch.setattr(dh, "free_space", lambda *a, **k: {"free_mb": 6 * 1024, "total_mb": 900 * 1024})
+    got = m.session()
+    assert got["disk_notice"]["level"] == "tight"
+    assert "6.0Gi" in got["disk_notice"]["headline"]
+
+
+def test_a_recording_session_carries_it_too_because_Q91_was_a_rate(monkeypatch):
+    # The whole point: the volume lost ~2Gi/h to swap, so a session comfortable at open can be in
+    # trouble by episode 20. A check that ran only at open would miss exactly that.
+    m = _manager()
+    m._worker = _FakeWorker()
+    monkeypatch.setattr(dh, "free_space", lambda *a, **k: {"free_mb": 500, "total_mb": 900 * 1024})
+    got = m.session()
+    assert got["disk_notice"]["level"] == "critical"
+    assert got["dataset"] == "local/x", "the worker's own document must survive intact"
+
+
+def test_a_healthy_volume_leaves_the_key_ABSENT(monkeypatch):
+    # Absent, not null: every other *_notice on this document works that way, and a null would make
+    # the UI render an empty warning row.
+    m = _manager()
+    monkeypatch.setattr(dh, "free_space", lambda *a, **k: {"free_mb": 400 * 1024, "total_mb": 900 * 1024})
+    assert "disk_notice" not in m.session()
+
+
+def test_an_unreadable_volume_cannot_break_the_session(monkeypatch):
+    m = _manager()
+    monkeypatch.setattr(dh, "free_space", lambda *a, **k: {})
+    assert "disk_notice" not in m.session()
+
+
+def test_the_reading_is_cached_so_a_1hz_poll_is_not_a_1hz_statfs(monkeypatch):
+    m = _manager()
+    calls = []
+
+    def counted(*a, **k):
+        calls.append(1)
+        return {"free_mb": 6 * 1024, "total_mb": 900 * 1024}
+
+    monkeypatch.setattr(dh, "free_space", counted)
+    for _ in range(5):
+        m.session()
+    assert len(calls) == 1

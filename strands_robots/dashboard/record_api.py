@@ -40,6 +40,7 @@ from fastapi.responses import FileResponse
 
 from strands_robots.dashboard import camera_liveness
 from strands_robots.dashboard import record_crash
+from strands_robots.dashboard import disk_headroom
 from strands_robots.dashboard.dataset_check import _as_int, record_target_verdict
 from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend
 
@@ -162,6 +163,33 @@ class RecordController:
         #: Q40: proof that a session was open, for the next process to read.
         self._crumb = record_crash.crumb_path()
         self._parked: list[dict[str, Any]] = []
+        #: Q92: cached free-space verdict + when it was read.
+        self._disk_cache: dict[str, Any] | None = None
+        self._disk_seen: float | None = None
+
+    #: How long a free-space reading stays good enough (Q92). The record screen polls session() about
+    #: once a second; a statfs is cheap but not free, and disk pressure is a minutes-scale story.
+    DISK_POLL_S = 20.0
+
+    def _disk_notice(self) -> dict[str, Any] | None:
+        """The free-space warning for the volume datasets land on, or None.
+
+        Reported on EVERY session read, idle or recording, because Q91 was a RATE: the volume this
+        rig records into lost ~2Gi/h to swap growth, so a session that was comfortable when it opened
+        can be in trouble by episode 20. A check that only runs at open would have missed exactly
+        that. Cached, blind to failure, and silent when there is nothing to say.
+        """
+        now = time.time()
+        if self._disk_seen is not None and now - self._disk_seen < self.DISK_POLL_S:
+            return self._disk_cache
+        got = disk_headroom.free_space()
+        self._disk_cache = disk_headroom.headroom_verdict(
+            free_mb=got.get("free_mb"),
+            total_mb=got.get("total_mb"),
+            where="the dataset home",
+        )
+        self._disk_seen = now
+        return self._disk_cache
 
     # ------------------------------------------------------------- session
 
@@ -179,8 +207,18 @@ class RecordController:
                 )
                 if notice:
                     idle["interrupted"] = notice
+                disk = self._disk_notice()
+                if disk:
+                    idle["disk_notice"] = disk
                 return idle
-            return self._worker.session()
+            live = self._worker.session()
+            # Q92: the worker owns the recording, not the machine it runs on, so the disk reading is
+            # attached here. Absent rather than null when there is nothing to say, matching every
+            # other *_notice on this document.
+            disk = self._disk_notice()
+            if disk:
+                live = {**live, "disk_notice": disk}
+            return live
 
     @property
     def thumb_dir(self) -> Path:
