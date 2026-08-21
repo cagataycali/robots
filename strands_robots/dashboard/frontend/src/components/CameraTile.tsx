@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { wsUrl } from '../lib/endpoints'
 import { classifyCamera, type CamStatus } from '../lib/cameraState'
 import { planRetry, CHURN_OPENS_PER_MIN } from '../lib/cameraRetry'
+import { authToken } from '../lib/endpoints'
+import { sessionVerdict } from '../lib/sessionExpiry'
 import { pacingFromNotice, nextRequestedFps } from '../lib/cameraPacing'
 
 interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: boolean; error?: string }
@@ -150,10 +152,17 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
           openMs: openedAt !== undefined ? Date.now() - openedAt : undefined,
           code: ev.code,
           recentOpens: openLog.current.length,
+          // Q88: a lapsed JWT makes the server refuse the HANDSHAKE (403), which the browser
+          // reports as an ordinary failed connection - so the tile would churn forever against
+          // a door that already said no. The token itself knows; reading its `exp` costs nothing
+          // and grants nothing (the server still verifies every request).
+          sessionExpired: sessionVerdict(authToken(), Date.now() / 1000).refusesUntilSignIn,
         })
         tries.current = plan.attempt
         if (plan.delayMs === null) {
-          error.current = 'unauthorized'
+          // The tile's status line reads this; 'unauthorized' covers both a refused socket (1008)
+          // and a lapsed sign-in, and plan.reason says which.
+          error.current = plan.reason.includes('sign in') ? plan.reason : 'unauthorized'
           retryAt.current = undefined
           return
         }

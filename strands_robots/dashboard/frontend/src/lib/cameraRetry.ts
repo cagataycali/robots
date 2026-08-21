@@ -52,6 +52,12 @@ export interface SocketOutcome {
   code?: number
   /** how many times THIS tile has opened a socket in the last 60s (this one included) */
   recentOpens?: number
+  /**
+   * Q88: the page's own sign-in has lapsed, so the handshake is being REFUSED (403) before a socket
+   * exists. Measured on the live rig: 19.3 hours of refused reopens from one phone, because a
+   * refused handshake carries no close code and every rule here reasons about sockets that opened.
+   */
+  sessionExpired?: boolean
 }
 
 export interface RetryPlan {
@@ -68,7 +74,14 @@ export function backoffMs(attempt: number): number {
   return Math.min(MAX_RETRY_MS, 1000 * Math.pow(2, Math.max(0, attempt - 1)))
 }
 
-export function planRetry({ attempt, frames, openMs, code, recentOpens }: SocketOutcome): RetryPlan {
+export function planRetry(
+  { attempt, frames, openMs, code, recentOpens, sessionExpired }: SocketOutcome,
+): RetryPlan {
+  // Checked FIRST, above every socket-shaped rule: while the sign-in is lapsed no retry can ever
+  // succeed, and the honest reason is not about this camera at all.
+  if (sessionExpired) {
+    return { attempt, delayMs: null, reason: 'this sign-in has expired — sign in again' }
+  }
   // A refusal is an answer. Hammering a door that said no is not resilience, and 1008
   // is what this server sends when the token is bad — retrying cannot fix it.
   if (code === 1008) {

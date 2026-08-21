@@ -126,3 +126,20 @@ console.log('cameraRetry: all assertions passed')
   assert.equal(p.delayMs, 1000)
 }
 console.log('cameraRetry: Q51 churn assertions ok')
+
+// Q88: a LAPSED SIGN-IN outranks every socket-shaped rule. Measured on the live rig: 19.3 hours of
+// refused reopens because the server answered the handshake with 403 — which carries no close code,
+// so `code === 1008` never fired and "frames are evidence" had nothing to say either.
+{
+  const stop = planRetry({ attempt: 3, frames: 0, openMs: undefined, sessionExpired: true })
+  assert.equal(stop.delayMs, null, 'a lapsed sign-in must stop the loop, not slow it')
+  assert.match(stop.reason, /sign in again/)
+  // Even a socket that just delivered frames (a token can lapse mid-stream) must not be retried:
+  // the NEXT handshake is the one that gets refused.
+  const mid = planRetry({ attempt: 1, frames: 42, openMs: 60_000, code: 1006, sessionExpired: true })
+  assert.equal(mid.delayMs, null)
+  // And the flag absent changes nothing about the old behaviour.
+  const normal = planRetry({ attempt: 1, frames: 42, openMs: 60_000, code: 1006 })
+  assert.notEqual(normal.delayMs, null)
+}
+console.log('cameraRetry: Q88 expired-session assertions ok')
