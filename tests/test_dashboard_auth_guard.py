@@ -337,3 +337,65 @@ def test_wildcard_beside_a_named_origin_keeps_only_the_named_one(monkeypatch):
     _with_cors(monkeypatch, ["*", "https://tools.example"])
     assert run_scope(_origin_scope(origin="https://tools.example")) == "passed"
     assert run_scope(_origin_scope(origin="https://evil.example")) == 403
+
+
+# --- the allowlist itself ------------------------------------------------------
+# Q128: the tests above prove every PUBLIC_PATHS entry PASSES the gate. Nothing proved the entries
+# still name real routes, and that is the direction which locks everybody out: membership is exact
+# string equality (`path in PUBLIC_PATHS`), so renaming a ceremony route leaves its exemption
+# pointing at nothing and the new name is gated behind the very session it exists to create. Remote
+# users get a 401 loop and a login form that can never succeed — the Aug-19 iOS wedge's shape, from
+# one rename. Both directions are cheap to pin from the source, so they are pinned here.
+
+import re as _re
+from pathlib import Path as _Path
+
+_ROUTE_RE = _re.compile(r'@(\w+)\.(get|post|put|patch|delete|websocket)\(\s*["\']([^"\']+)["\']')
+_PREFIX_RE = _re.compile(r'(\w+)\s*=\s*APIRouter\(\s*prefix\s*=\s*["\']([^"\']*)["\']')
+
+
+def _declared_routes() -> set[str]:
+    """Every route path the dashboard package registers, prefixes resolved."""
+    dash = _Path(srv.__file__).parent
+    found: set[str] = set()
+    for f in dash.rglob("*.py"):
+        text = f.read_text(errors="ignore")
+        prefixes = {m.group(1): m.group(2) for m in _PREFIX_RE.finditer(text)}
+        for m in _ROUTE_RE.finditer(text):
+            found.add(prefixes.get(m.group(1), "") + m.group(3))
+    assert len(found) >= 60, f"route discovery collapsed ({len(found)}) — this test is broken"
+    return found
+
+
+def test_every_public_path_names_a_real_route():
+    routes = _declared_routes()
+    dead = sorted(p for p in PUBLIC_PATHS if p not in routes)
+    assert not dead, (
+        "PUBLIC_PATHS exempts paths that no route serves — if one of these was RENAMED, the new "
+        f"name is now behind the login it is supposed to perform: {dead}"
+    )
+
+
+def test_no_public_path_carries_a_parameter():
+    """An exemption with a {param} in it can never match: the gate compares strings, not templates."""
+    templated = sorted(p for p in PUBLIC_PATHS if "{" in p)
+    assert not templated, f"these exemptions are silently dead (exact-match gate): {templated}"
+
+
+def test_the_whole_login_ceremony_is_reachable_without_a_session():
+    """Whatever else changes, these three must stay public or nobody can ever log in again."""
+    for path in ("/api/auth/status", "/api/auth/login/begin", "/api/auth/login/finish"):
+        assert path in PUBLIC_PATHS, f"{path} must be public — it is part of logging in"
+
+
+def test_credential_management_is_never_public():
+    """The mirror image: /api/auth/* is not a blanket-public prefix.
+
+    Listing and DELETING passkeys live under the same prefix as the ceremony, and an exemption added
+    by prefix-thinking rather than path-thinking would let an anonymous caller remove the only key
+    to the dashboard. Q124 gave the revoke button its UI; this keeps its gate.
+    """
+    creds = sorted(p for p in _declared_routes() if p.startswith("/api/auth/credentials"))
+    assert creds, "expected the credential routes to exist (Q124)"
+    for path in creds:
+        assert path not in PUBLIC_PATHS, f"{path} must require a session"
