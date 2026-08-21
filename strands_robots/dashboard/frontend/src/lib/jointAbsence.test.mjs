@@ -173,3 +173,43 @@ const UNCAL = {
   assert.equal(note.detail, null)
   assert.equal(note.text, 'no joint positions — the joint read failed')
 }
+
+// --- Q89 follow-up: a verdict must not be thrown away by the two early branches ------------------
+// Both were written for a peer we know nothing about, and both then spoke as if that were still true
+// after the backend had read the reason out of the child's log.
+{
+  const problem = {
+    kind: 'uncalibrated',
+    headline: 'this board has no calibration, so its positions cannot be read in degrees',
+    remedy: 'Calibration files DO exist on this machine, so this is probably an id/path mismatch…',
+    detail: 'RuntimeError: FeetechMotorsBus(...) has no calibration registered.',
+  }
+  // NO state document at all — the shape of an arm that failed its probe before publishing anything.
+  const n = jointAbsence({ presence: { connected: true, hw: 'so_leader' }, state: null, problem, nowS: NOW })
+  assert.match(n.text, /no state frames yet/)
+  assert.match(n.text, /no calibration/, 'the headline is the news, not the missing frame')
+  assert.equal(n.hint, problem.remedy)
+  assert.equal(n.detail, problem.detail)
+  assert.equal(n.tone, 'attention')
+  // Unknown peer, no verdict: the old shrug is still exactly right.
+  const shrug = jointAbsence({ presence: { connected: true }, state: null, nowS: NOW })
+  assert.equal(shrug.text, 'no joint data on this peer')
+  assert.equal(shrug.hint, null)
+}
+{
+  // A peer gone QUIET, whose log says the bus was contended. The default hint rules the bus out —
+  // a guess that this evidence contradicts, so the evidence must win.
+  const problem = {
+    kind: 'port_in_use',
+    headline: 'another process holds this arm’s serial port',
+    remedy: 'Find the other owner (devices → bus holders); replugging changes nothing.',
+    detail: "[TxRxResult] Port is in use!",
+  }
+  const quiet = { presence: { connected: true, hw: 'so_follower' }, state: { t: NOW - 600 }, nowS: NOW }
+  const withVerdict = jointAbsence({ ...quiet, problem })
+  assert.match(withVerdict.text, /state went quiet 10m ago/)
+  assert.equal(withVerdict.hint, problem.remedy)
+  assert.ok(!/not the servo bus/.test(withVerdict.hint), 'never rule out the bus the log just blamed')
+  // With no verdict the guess is the best available answer and stays.
+  assert.match(jointAbsence(quiet).hint, /not the servo bus/)
+}

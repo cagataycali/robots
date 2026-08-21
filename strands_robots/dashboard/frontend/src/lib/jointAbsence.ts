@@ -107,6 +107,19 @@ export function jointAbsence(input: AbsenceInput): AbsenceNote {
 
   // A peer with no state document at all, or one that stopped sending.
   if (state == null || ageS === null) {
+    // A verdict outranks the shrug even here (Q89 follow-up). The backend reads it from the CHILD'S
+    // LOG, which exists whether or not a single state frame was ever published — so discarding it
+    // because no frame arrived throws away the only explanation on offer, in the case where the
+    // operator has least to go on. Measured on the live rig: an arm that fails its probe at spawn is
+    // exactly the arm least likely to be publishing.
+    if (verdict) {
+      return {
+        text: `no state frames yet — ${verdict.headline}`,
+        tone: 'attention',
+        hint: verdict.remedy ?? null,
+        detail: verdict.detail ?? null,
+      }
+    }
     if (expects === 'unknown') return { text: 'no joint data on this peer', tone: 'none', hint: null }
     const count = expects === 'yes' ? '' : ` (${expects} joints expected)`
     return { text: `waiting for the first state frame${count}`, tone: 'waiting', hint: null }
@@ -114,10 +127,16 @@ export function jointAbsence(input: AbsenceInput): AbsenceNote {
 
   if (!stateArriving) {
     const ago = ageS < 90 ? `${Math.round(ageS)}s` : ageS < 5400 ? `${Math.round(ageS / 60)}m` : `${(ageS / 3600).toFixed(1)}h`
+    // The default hint RULES OUT the servo bus ("the peer or the mesh, not the servo bus"), which is a
+    // claim — and a claim the child's own log can contradict: an arm whose probe died on "Port is in
+    // use!" went quiet BECAUSE of the bus. Where a verdict exists, it is evidence and the guess is not,
+    // so the guess must not be printed over it.
     return {
       text: `state went quiet ${ago} ago — no joints since`,
       tone: 'attention',
-      hint: 'the peer or the mesh, not the servo bus: its process may have exited',
+      hint: verdict?.remedy
+        ?? 'the peer or the mesh, not the servo bus: its process may have exited',
+      detail: verdict?.detail ?? null,
     }
   }
 
