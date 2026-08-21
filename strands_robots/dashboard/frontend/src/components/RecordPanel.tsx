@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { cameraEvidence } from '../lib/cameraEvidence'
+import { diskNoticeView } from '../lib/diskNotice'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer } from '../types'
 import { getRecordApi, type RecordApi, type RecordSession, type UploadPreflight } from '../lib/recordApi'
@@ -479,6 +480,27 @@ export default function RecordPanel(
         the operator should do next: every episode will look successful and the
         finished dataset will have no image channel to train on.
       */}
+      {/*
+        Q92: the disk. Rendered whether or not a session is open — unlike the three notices below
+        it, which are properties of a running recording. This one is a property of the MACHINE, and
+        the reason it is not gated on `open` is that the volume drains DURING a session: measured
+        ~2Gi/h to macOS swap on this rig, so a session that began comfortable can be in trouble by
+        episode 20. Mid-session the advice deliberately changes (diskNotice.ts) — telling someone
+        holding a leader arm to "free space first" is advice they cannot take.
+      */}
+      {(() => {
+        const d = diskNoticeView(s?.disk_notice, { recording: open })
+        if (!d) return null
+        return (
+          <div className={`train-msg ${d.tone} rec-disk-notice`}
+               data-testid={d.testid}
+               {...(d.urgent ? { role: 'alert' as const } : { 'aria-live': 'polite' as const })}>
+            ⚠ {d.headline}
+            {d.advice && <div className="fieldsay">{d.advice}</div>}
+          </div>
+        )
+      })()}
+
       {open && s?.camera_notice && (
         <div className="train-msg warn rec-camera-notice" role="alert">
           ⚠ {s.camera_notice.message}

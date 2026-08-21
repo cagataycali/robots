@@ -43,6 +43,17 @@ export interface RecordSession {
   dataset: string | null
   /** Q40: what the last session left behind, when it did not close. */
   interrupted?: InterruptedSession | null
+  /**
+   * Q92: free space where datasets are written, present on EVERY session read (idle and
+   * recording) because the volume can drain during a session — measured losing ~2Gi/h to macOS
+   * swap on the rig this was written on. Absent, not null, when there is nothing to say.
+   */
+  disk_notice?: {
+    level: 'tight' | 'critical'
+    free_mb: number
+    headline: string
+    advice: string
+  } | null
   task: string
   /** which teleop pair records: leader drives follower */
   leader: string | null
