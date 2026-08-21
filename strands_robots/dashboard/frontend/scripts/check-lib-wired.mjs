@@ -60,6 +60,62 @@ while (queue.length) {
   }
 }
 
+/* ---------------------------------------------------------------------------------------
+ * PASS 2 (Q156): the same question one level down — does anything call each EXPORT?
+ *
+ * The module pass has a blind spot that cost a whole iteration to notice: it proved
+ * lib/absentChildren.ts was imported, and passed happily while quietNotice() — the rule
+ * that iteration existed to add — had no caller at all. A module reached by ONE screen
+ * vouches for every export beside it, so a dead rule hides inside a live file.
+ *
+ * Three classes, deliberately not one number, because only the first is a defect:
+ *   DEAD            — referenced by no other file, no test, and not even inside its own
+ *                     module. Nothing on earth runs it.
+ *   used-internally  — its own module uses it; `export` is merely wider than needed.
+ *   test-only        — only its test imports it. INTENTIONAL here: tuning constants are
+ *                     exported so a test asserts against the real number instead of a
+ *                     copy of it. 71 of those, and gating on them would be wrong.
+ * Type-only exports are skipped: an unused interface misleads nobody about behaviour.
+ * ------------------------------------------------------------------------------------ */
+const testFiles = walk(SRC).filter(f => /\.test\./.test(f))
+const bodyOf = new Map([...files, ...testFiles].map(f => [f, fs.readFileSync(f, 'utf8')]))
+/* Exports whose absence of a caller is KNOWN and explained. Each line is a claim the next
+ * agent can check, not a mute suppression — resolve one and delete its row. */
+const TOLERATED = new Map([
+  ['lib/cameraState.ts :: retryDelayMs', 'documents itself as superseded by planRetry; kept "so the timing stays comparable", which nothing verifies — a parity assertion in planRetry\'s test would earn it a caller'],
+  ['lib/jointHistory.ts :: heldSeconds', 'a label-honesty rule (the "60s" axis claiming more history than it holds) written for a chart that never called it — wire it to the joint history axis or drop it'],
+  ['lib/endpoints.ts :: onBackendChange', 'a subscription with no subscriber, so the notify beside it fires into nothing; either a screen should re-fetch on a backend switch or both halves should go'],
+])
+const deadExports = []
+let internalOnly = 0, testOnly = 0, exportCount = 0
+for (const f of libFiles) {
+  const body = bodyOf.get(f)
+  const names = [...body.matchAll(/^export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z_$][\w$]*)/gm)].map(m => m[1])
+  for (const name of names) {
+    exportCount++
+    const re = new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\b`, 'g')
+    if (files.some(o => o !== f && re.test(bodyOf.get(o)))) continue
+    if (testFiles.some(o => re.test(bodyOf.get(o)))) { testOnly++; continue }
+    if ((body.match(re) || []).length > 1) { internalOnly++; continue }
+    deadExports.push(`${path.relative(SRC, f)} :: ${name}`)
+  }
+}
+const unexplained = deadExports.filter(d => !TOLERATED.has(d))
+console.log(`  ${exportCount} lib value exports — ${testOnly} test-only (by design), ${internalOnly} exported wider than used, ${deadExports.length} with no caller anywhere`)
+for (const d of deadExports.filter(d => TOLERATED.has(d))) console.log(`        known: ${d} — ${TOLERATED.get(d)}`)
+if (unexplained.length) {
+  console.log(`  FAIL  ${unexplained.length} lib export(s) nothing calls — a live module vouched for them:`)
+  for (const d of unexplained) console.log(`          ${d}`)
+  console.log('        → give it a caller, unexport it, or delete it. Then this guard stays honest.')
+  process.exit(1)
+}
+const stale = [...TOLERATED.keys()].filter(k => !deadExports.includes(k))
+if (stale.length) {
+  console.log(`  FAIL  ${stale.length} tolerated export(s) are no longer dead — delete the stale row(s):`)
+  for (const k of stale) console.log(`          ${k}`)
+  process.exit(1)
+}
+
 const dead = libFiles.filter(f => !reachable.has(f)).map(f => path.relative(SRC, f)).sort()
 console.log(`  ${libFiles.length} lib modules, ${reachable.size} reached from ${entries.length} entry points`)
 if (!dead.length) {
