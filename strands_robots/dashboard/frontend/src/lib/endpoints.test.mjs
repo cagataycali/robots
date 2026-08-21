@@ -265,4 +265,58 @@ const withHeader = value => ({
   assert.notEqual(m.backendKey(), second, 'clearing the token must move it too (AuthGate depends on this)')
 }
 
+
+// --- Q161: a remembered route list must not outlive the server that gave it ------------
+// The cache is consulted ONLY to explain a 404, and its wrong answer is the dangerous one:
+// after a restart it keeps saying "restart the dashboard to pick it up" about routes that
+// now exist. Asserted against the REAL TTL, with Date.now driven so the test does not sleep.
+{
+  const m = await import('/tmp/endpoints.mjs?case=q161')
+  const realNow = Date.now
+  let t = 1_800_000_000_000
+  globalThis.Date.now = () => t
+  let openapiFetches = 0
+  globalThis.fetch = async (url) => {
+    const u = String(url)
+    if (u.includes('/openapi.json')) {
+      openapiFetches++
+      return { ok: true, status: 200, json: async () => ({ paths: { '/api/fleet': {} } }) }
+    }
+    // Every other call is a 404 for a path the list above does not contain, which is what
+    // makes the route list be read at all.
+    return {
+      ok: false, status: 404, headers: { get: () => 'application/json' },
+      json: async () => ({ detail: 'Not Found' }), text: async () => '{}',
+    }
+  }
+  m.setAuthToken('tkn')
+
+  const ask = async () => {
+    try { await m.api('/api/deploy/snippet') } catch (e) { return e }
+  }
+  const first = await ask()
+  assert.match(first.message, /restart/i, 'a route the server does not have is explained, not left as HTTP 404')
+  assert.equal(openapiFetches, 1, 'the list is fetched once, not per call')
+
+  await ask()
+  assert.equal(openapiFetches, 1, 'inside the TTL the remembered list still speaks — no request per 404')
+
+  // The server restarts and now HAS the route. Nothing tells the tab; only time passes.
+  t += LIVE_ROUTES_TTL_MS_FROM(m) + 1
+  await ask()
+  assert.equal(openapiFetches, 2,
+    'past the TTL the list is re-read, so the restart advice cannot outlive the restart')
+
+  // The explicit seam still works, and is what a backend switch uses.
+  m.forgetLiveRoutes()
+  await ask()
+  assert.equal(openapiFetches, 3, 'forgetLiveRoutes() drops the list immediately, without waiting for the TTL')
+
+  globalThis.Date.now = realNow
+}
+function LIVE_ROUTES_TTL_MS_FROM(m) {
+  assert.equal(typeof m.LIVE_ROUTES_TTL_MS, 'number', 'the TTL is exported so this test asserts the REAL number')
+  return m.LIVE_ROUTES_TTL_MS
+}
+
 console.log('endpoints.test.mjs: U21 sliding session ok')

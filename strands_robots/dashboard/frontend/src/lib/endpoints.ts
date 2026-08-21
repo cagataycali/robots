@@ -178,10 +178,28 @@ export class HttpError extends Error {
  */
 let _liveRoutes: string[] | null = null
 let _liveRoutesTried = false
+let _liveRoutesAt = 0
+
+/**
+ * Q161: how long a remembered route list may still speak for the server.
+ *
+ * Fetched once per page life, this cache is wrong in exactly the case it is consulted in:
+ * RESTART THE SERVER WITH A TAB OPEN, and the old process's route list keeps explaining
+ * 404s with "restart the dashboard to pick it up" — advice that becomes false at the very
+ * moment somebody follows it, and stays false until they think to reload. Ten routes are
+ * dark on this fleet right now, so that sentence is about to be read and acted on.
+ *
+ * A TTL is enough because of WHEN the list is read: only to explain a 404, never on the
+ * happy path. So re-validating a minute-old list costs one request per failing request —
+ * nothing on a working screen — and the staleness window shrinks to something no operator
+ * can act inside. The point is not the number; it is that the list stops being immortal.
+ */
+export const LIVE_ROUTES_TTL_MS = 60_000
 
 async function liveRoutes(): Promise<string[] | null> {
-  if (_liveRoutesTried) return _liveRoutes
+  if (_liveRoutesTried && Date.now() - _liveRoutesAt < LIVE_ROUTES_TTL_MS) return _liveRoutes
   _liveRoutesTried = true
+  _liveRoutesAt = Date.now()
   try {
     const token = authToken()
     const res = await fetch(apiUrl('/openapi.json'), {
@@ -203,10 +221,11 @@ async function liveRoutes(): Promise<string[] | null> {
   return _liveRoutes
 }
 
-/** Test seam + a place for a reconnect to forget what the OLD backend routed. */
+/** Test seam, and what a backend switch calls to forget what the OLD server routed. */
 export function forgetLiveRoutes(): void {
   _liveRoutes = null
   _liveRoutesTried = false
+  _liveRoutesAt = 0
 }
 
 /**
