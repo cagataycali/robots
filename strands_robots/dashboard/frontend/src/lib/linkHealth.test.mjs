@@ -63,3 +63,27 @@ assert.equal(estopPosture(live).degraded, false)
 assert.match(estopPosture(live).title, /keyboard shortcut/)
 
 console.log('linkHealth: all assertions passed')
+
+// Q88 — the SAME transport failure, two different sentences. When the rejection is our own
+// lapsed sign-in, "the server rejected this session" is technically true and practically
+// misleading: it points at the backend, and the measured incident was 19.3 hours of hunting a
+// camera bug for an expired token.
+{
+  const base = { conn: 'unauthorized', browserOnline: true, everOpen: true, peerCount: 2, now: 1000 }
+  const generic = linkHealth(base)
+  const lapsed = linkHealth({ ...base, sessionExpired: true })
+  assert.equal(lapsed.kind, 'unauthorized', 'it is still the same transport verdict')
+  assert.equal(lapsed.commandsWork, false)
+  assert.match(lapsed.headline, /sign-in has expired/i)
+  assert.match(lapsed.detail, /Sign in again/)
+  assert.match(lapsed.detail, /nothing is wrong with the robots/i)
+  // Non-negotiable in either wording: a brake that cannot leave the browser must never be
+  // implied to work, and the physical fallback must be named.
+  assert.match(lapsed.detail, /STOP ALL cannot be sent/)
+  assert.match(lapsed.detail, /power switch/)
+  assert.match(lapsed.estopReason, /sign in again/i)
+  // And the flag absent leaves the old sentence exactly as it was.
+  assert.match(generic.headline, /server rejected this session/)
+  assert.notEqual(generic.detail, lapsed.detail)
+}
+console.log('linkHealth: Q88 lapsed-sign-in wording ok')

@@ -35,6 +35,13 @@ export interface LinkInput {
   everOpen: boolean
   /** silence after which an open-but-mute socket is suspicious (ms) */
   stallMs?: number
+  /**
+   * Q88: the rejection is OUR OWN sign-in having lapsed, not the server changing its mind.
+   * Same facts, completely different sentence — "the server rejected this session" sends the
+   * operator to the backend, and the measured incident was 19.3 hours of hunting a camera bug
+   * for an expired token.
+   */
+  sessionExpired?: boolean
 }
 
 export interface LinkVerdict {
@@ -77,6 +84,18 @@ export function linkHealth(i: LinkInput): LinkVerdict {
   }
 
   if (i.conn === 'unauthorized') {
+    if (i.sessionExpired) {
+      return {
+        kind: 'unauthorized', commandsWork: false, misleading: showing,
+        headline: 'Your sign-in has expired',
+        // The fix is one tap and it is on this page, so say that before anything else. The
+        // e-stop caveat still has to be here: a brake that cannot leave the browser must never
+        // be implied to work, however ordinary the cause.
+        detail: `Sign in again to command the fleet — nothing is wrong with the robots, this page is `
+          + `being refused. Until then 🛑 STOP ALL cannot be sent. ${PHYSICAL}`,
+        estopReason: 'this sign-in has expired — STOP ALL will be refused until you sign in again',
+      }
+    }
     return {
       kind: 'unauthorized', commandsWork: false, misleading: showing,
       headline: 'The server rejected this session',

@@ -5,7 +5,8 @@ import { linkHealth, estopPosture } from './lib/linkHealth'
 import LanHint from './components/LanHint'
 import { lockoutBanner } from './lib/lockoutBadge'
 import { ConfigProvider } from './lib/useConfig'
-import { backendKey, backendLabel, setAuthToken } from './lib/endpoints'
+import { authToken, backendKey, backendLabel, setAuthToken } from './lib/endpoints'
+import { sessionVerdict } from './lib/sessionExpiry'
 import FleetBar from './components/FleetBar'
 import { getRecordApi } from './lib/recordApi'
 import RobotCard from './components/RobotCard'
@@ -173,6 +174,8 @@ function Dashboard() {
     // the non-stale count to 0, so gating on it went silent at the exact moment
     // the screen was worst (2 frozen cards, no banner, a normal-looking brake).
     peerCount: list.length, now: Date.now(),
+    // Q88: the same token the sockets are being refused for. Read locally, no request.
+    sessionExpired: sessionVerdict(authToken(), Date.now() / 1000).refusesUntilSignIn,
   })
   // The tick runs ALWAYS, and that is the whole point. I first gated it on the
   // verdict being unhealthy and MEASURED the result: with the link healthy

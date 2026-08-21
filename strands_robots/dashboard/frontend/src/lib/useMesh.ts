@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { planRetry } from './cameraRetry'
 import { frameProvesLiveness } from './liveness'
 import type { ActivityEntry, MeshEvent, MeshInfo, Peer } from '../types'
-import { wsUrl } from './endpoints'
+import { authToken, wsUrl } from './endpoints'
+import { sessionVerdict } from './sessionExpiry'
 
 export type ConnState = 'connecting' | 'open' | 'closed' | 'unauthorized'
 
@@ -77,6 +78,11 @@ export function useMesh(): MeshStore {
           frames: framesThisSocket,
           openMs: openedAt !== undefined ? Date.now() - openedAt : undefined,
           code: ev.code,
+          // Q88: a lapsed sign-in means the HANDSHAKE is refused (403) and no close code
+          // ever arrives, so `code === 1008` cannot see it. Without this the fleet view
+          // just freezes and reconnects forever — the exact shape that ran for 19.3 hours
+          // on the camera sockets. AuthGate re-gates within 30s; this stops the traffic now.
+          sessionExpired: sessionVerdict(authToken(), Date.now() / 1000).refusesUntilSignIn,
         })
         retryRef.current = plan.attempt
         if (plan.delayMs === null) { setConn('unauthorized'); return }
