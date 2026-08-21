@@ -61,6 +61,8 @@ console.log(`  server at ${BASE} publishes ${live.length} paths; this source reg
             + ` across ${pyFiles.length} python modules`)
 if (missing.length === 0) {
   console.log('  PASS  the running server has every route this source calls')
+  // Same disclosure on the GREEN path, where it matters more: "every route" is not "every feature".
+  console.log('        (paths only — a new FIELD on an existing route is outside this audit\'s reach)')
 } else {
   // Prefixed NEWS so a full sweep surfaces it: this audit's whole output IS its value, and exiting
   // 0 previously made the runner swallow every line of it.
@@ -74,6 +76,14 @@ if (missing.length === 0) {
   console.log('        → the UI explains these as "restart the dashboard to pick it up" (lib/serverAge.ts).')
   console.log('        → an owner-run restart from a terminal makes them live (never restart from a daemon:')
   console.log('          a launchd-descended process can never be granted camera access on macOS).')
+  // WHAT THIS AUDIT CANNOT SEE, said out loud rather than left to be assumed: it compares PATHS.
+  // A route that already exists but has grown a new RESPONSE FIELD (or accepts a new request field)
+  // is invisible here — /api/config gaining `security.notice` in 40b68667 is exactly that shape, and
+  // a reader of a green "every route present" line would conclude the server is current when a whole
+  // feature is still dark. The rule in this repo: a check that can be narrower than its headline must
+  // say so where the headline is printed.
+  console.log('        → SCOPE: paths only. A new FIELD on an existing route cannot be detected here;')
+  console.log('          RESTART_NOTES.md carries the field-level list (e.g. /api/config security.notice).')
 }
 // Honesty about the scan's own limits: a module with SEVERAL routers cannot be attributed by regex, and
 // silently dropping those routes would turn them into phantom "server only" entries — the exact bug this
