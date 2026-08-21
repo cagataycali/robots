@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
 import { shouldCheckForUpdate, SW_UPDATE_INTERVAL_MS, bundleAgeText } from './swUpdate'
+import { wakeLockAction, wakeLockNote } from './wakeLock'
 
 /**
  * PWA plumbing: install prompt, update prompt, online state, screen wake lock.
@@ -43,6 +44,8 @@ export function usePwa() {
   const [installable, setInstallable] = useState(false)
   const promptRef = useRef<any>(null)
   const wakeRef = useRef<any>(null)
+  // What the app last asked for, so the lock can be RE-TAKEN after the browser drops it (Q89).
+  const wantAwakeRef = useRef(false)
 
   useEffect(() => {
     const up = () => setOnline(true)
@@ -112,25 +115,53 @@ export function usePwa() {
    * mid-task drops the camera sockets and the operator loses sight of a moving
    * arm - the one moment the screen must stay on.
    */
-  const keepAwake = useCallback(async (want: boolean) => {
+  const applyWakeLock = useCallback(async () => {
     const anyNav = navigator as any
-    if (!anyNav.wakeLock) return
-    if (want && !wakeRef.current) {
+    const action = wakeLockAction({
+      want: wantAwakeRef.current,
+      held: !!wakeRef.current,
+      visible: document.visibilityState === 'visible',
+      supported: !!anyNav.wakeLock,
+    })
+    if (action === 'request') {
       try {
         wakeRef.current = await anyNav.wakeLock.request('screen')
+        // The browser releases the lock itself when the page is hidden; this keeps `held` honest so
+        // the next visibility change knows to take it again.
         wakeRef.current.addEventListener?.('release', () => { wakeRef.current = null })
-      } catch { /* denied or not visible */ }
-    } else if (!want && wakeRef.current) {
+      } catch { /* denied, or the page went hidden mid-request */ }
+    } else if (action === 'release') {
       try { await wakeRef.current.release() } catch { /* already gone */ }
       wakeRef.current = null
     }
   }, [])
+
+  const keepAwake = useCallback(async (want: boolean) => {
+    wantAwakeRef.current = want
+    await applyWakeLock()
+  }, [applyWakeLock])
+
+  // Q89: a screen wake lock does NOT survive the page being hidden, and App only re-asks when
+  // `anyRunning` changes - so without this the lock was gone for the rest of the task the first time
+  // the operator switched apps, while an arm was moving.
+  useEffect(() => {
+    const onVisible = () => { void applyWakeLock() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [applyWakeLock])
 
   const standalone = window.matchMedia('(display-mode: standalone)').matches
     || (navigator as any).standalone === true
 
   return {
     online, needRefresh, update, installable, install, keepAwake, standalone,
+    /** honest word about the screen: null when there is nothing to say (see lib/wakeLock) */
+    wakeNote: () => wakeLockNote({
+      want: wantAwakeRef.current,
+      held: !!wakeRef.current,
+      visible: document.visibilityState === 'visible',
+      supported: !!(navigator as any).wakeLock,
+    }),
     /** how long this tab has been running the bundle it loaded, for the update prompt */
     bundleAge: () => bundleAgeText(loadedAtRef.current, Date.now()),
     updateIntervalMs: SW_UPDATE_INTERVAL_MS,
