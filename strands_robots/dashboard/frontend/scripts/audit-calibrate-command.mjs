@@ -71,7 +71,12 @@ for (let i = 0; i < ports.length; i++) {
   const closed = page.locator('button:has-text("calibrate…")')
   if (!(await closed.count())) break
   await closed.first().click()
-  await page.waitForTimeout(1200)
+  // WAIT for the panel, do not guess at it: this script failed once in five runs with "no calibrate
+  // panel rendered for this row" while the product was fine. The disclosure is single-value and its
+  // content arrives with a fetch, so a flat sleep is a race whose loser blames the page. A flake
+  // here is expensive twice over — it reads as a product defect AND it teaches people to rerun.
+  await page.locator('.calibcmd').first().waitFor({ state: 'visible', timeout: 6000 }).catch(() => {})
+  await page.waitForTimeout(300)
   Object.assign(panels, await page.evaluate(() => {
     const out = {}
     for (const li of document.querySelectorAll('li')) {
@@ -122,6 +127,75 @@ for (const p of ports) {
   }
 }
 
+// ---- Q131: the same disclosure at phone width. A calibrate command is the one thing on this
+// screen an operator must READ CHARACTER BY CHARACTER (it names a /dev path and a robot id), and it
+// is long, monospaced and machine-generated — the exact shape that overflows a 390px column. The
+// CSS says it was designed for this (overflow-wrap: anywhere, user-select: all, because clipboard
+// access is unavailable on a non-secure LAN origin and selecting the text is then the ONLY route),
+// so this proves the design holds rather than assuming it.
+{
+  const PHONE = { width: 390, height: 844 }
+  const ctx = await browser.newContext({ viewport: PHONE, serviceWorkers: 'block' })
+  const ph = await ctx.newPage()
+  ph.on('pageerror', e => failures.push(`phone page threw: ${String(e.message).slice(0, 160)}`))
+  await ph.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' })
+  await ph.waitForTimeout(6000)
+  const ready = apiSettled(ph, ...SCREEN_APIS.devices)
+  await ph.locator('button.chip:has-text("devices")').first().click()
+  await ready
+  await ph.waitForTimeout(1500)
+  const opener = ph.locator('button:has-text("calibrate…")')
+  if (!(await opener.count())) {
+    // Not a failure: with no serial port on the rig there is no disclosure to measure, and an
+    // audit that fails for absent hardware is noise that trains people to ignore it.
+    console.log('phone pass: skipped — no calibrate row on this rig')
+  } else {
+    await opener.first().click()
+    await ph.waitForTimeout(1200)
+    const m = await ph.evaluate(() => {
+      const d = document.documentElement
+      const code = document.querySelector('.calibcmd .cmdline')
+      const copy = [...document.querySelectorAll('.calibcmd .row button')]
+        .find(b => /copy/i.test(b.innerText))
+      const box = code?.getBoundingClientRect()
+      return {
+        pageWide: d.scrollWidth > d.clientWidth + 1, scroll: d.scrollWidth, client: d.clientWidth,
+        hasCode: !!code,
+        text: code?.innerText ?? '',
+        wraps: code ? code.scrollWidth <= code.clientWidth + 1 : false,
+        right: box ? box.x + box.width : 0,
+        lines: box && code ? Math.round(box.height / parseFloat(getComputedStyle(code).lineHeight)) : 0,
+        copyVisible: !!copy && copy.getBoundingClientRect().width > 0,
+      }
+    })
+    if (m.pageWide) {
+      failures.push(`phone: the devices screen scrolls SIDEWAYS at ${PHONE.width}px `
+        + `(${m.scroll} > ${m.client}) — the command runs off the edge instead of wrapping`)
+    }
+    if (!m.hasCode) failures.push('phone: the calibrate command line did not render')
+    else {
+      if (!m.wraps) {
+        failures.push('phone: the command line does NOT wrap — a /dev path read through a '
+          + 'horizontal scroll inside a code block is how the wrong port gets typed')
+      }
+      if (m.right > PHONE.width + 1) failures.push(`phone: the command extends past the viewport (right edge ${Math.round(m.right)})`)
+      if (!/lerobot-calibrate/.test(m.text)) failures.push(`phone: the command lost its verb: ${JSON.stringify(m.text.slice(0, 70))}`)
+      // Checked as a SHAPE, not as remembered flag names: the first version of this looked for
+      // --robot.port (lerobot's own spelling) while the dashboard emits --port=, and reported a
+      // missing flag on a command that was complete. `--port=` followed by a path proves the tail
+      // of a five-line wrap survived, which is the property that matters.
+      if (!/--port=\/\S+/.test(m.text)) {
+        failures.push(`phone: no port flag with a path survived the wrap — a wrapped line must be `
+          + `COMPLETE, not elided: ${JSON.stringify(m.text.slice(-60))}`)
+      }
+      if (!m.copyVisible) failures.push('phone: the copy button is not visible beside the command')
+      console.log(`phone pass: command wraps to ~${m.lines} line(s) at ${PHONE.width}px, copy button visible`)
+    }
+  }
+  await ctx.close()
+}
+
 await browser.close()
 if (failures.length) { console.log('\nFAILURES:'); for (const f of failures) console.log(`  ✗ ${f}`); process.exit(1) }
-console.log('\ncalibrate command: the page names the id every arm actually loads')
+console.log('\ncalibrate command: the page names the id every arm actually loads, and the command wraps COMPLETE '
+  + 'inside a 390px column with its copy button in reach')
