@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
+import { nothingGranted } from '../lib/consent'
 
 type TeleopEnvelope = {
   granted: boolean
@@ -19,6 +20,10 @@ type TeleopEnvelope = {
 type ConsentState = {
   trust_remote_code: boolean
   hf_repo_allow: string[]
+  /* Q119: the two policy allowlists. Absent from an older server — an empty list is then correct,
+     because that server could not have granted one. */
+  policy_type_allow?: string[]
+  policy_host_allow?: string[]
   /* Absent from an older server: this screen listed two of the three kinds and the teleop envelope
      widening — the grant with physical reach — could not be seen or revoked here. */
   teleop_degree_units?: TeleopEnvelope
@@ -83,8 +88,10 @@ export default function ConsentSettings() {
   if (error && !state) return <p className="hint">could not read permissions: {error}</p>
 
   const envelope = state?.teleop_degree_units
-  const nothing = state && !state.trust_remote_code && state.hf_repo_allow.length === 0
-    && !envelope?.granted && !state.agent_physical_motion
+  // Q121: asked of the payload's shape, not of a list of kind names — the inline conjunction that
+  // used to live here was wrong three times, each time printing "nothing is allowed" over a real
+  // grant. See nothingGranted().
+  const nothing = state && nothingGranted(state as unknown as Record<string, unknown>)
 
   return (
     <div className="consent-settings">
@@ -170,6 +177,37 @@ export default function ConsentSettings() {
           </button>
         </div>
       ) : null}
+
+      {(state?.policy_type_allow ?? []).map(entry => (
+        <div className="cg-row" key={`type-${entry}`}>
+          <div>
+            <b className="rc-mono">{entry}</b>
+            <div className="hint">this policy may be built and run — one name, no wildcard</div>
+          </div>
+          <button className="btn ghost danger" disabled={busy === entry}
+                  onClick={() => revoke('policy_type_allow', entry, entry)}>
+            {busy === entry ? '…' : 'revoke'}
+          </button>
+        </div>
+      ))}
+
+      {(state?.policy_host_allow ?? []).map(entry => (
+        <div className="cg-row" key={`host-${entry}`}>
+          <div>
+            <b className="rc-mono">{entry}</b>
+            <div className="hint">
+              {entry.includes('/')
+                ? 'every address in this range may run policies for your robots — wider than one host'
+                : 'policies may run on this host: it receives camera frames and joint states, and '
+                  + 'what it returns drives the arms'}
+            </div>
+          </div>
+          <button className="btn ghost danger" disabled={busy === entry}
+                  onClick={() => revoke('policy_host_allow', entry, entry)}>
+            {busy === entry ? '…' : 'revoke'}
+          </button>
+        </div>
+      ))}
 
       {state?.hf_repo_allow.map(entry => (
         <div className="cg-row" key={entry}>

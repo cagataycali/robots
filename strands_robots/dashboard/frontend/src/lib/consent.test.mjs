@@ -5,7 +5,7 @@
 // untested, and its approvability rule was a hardcoded list of one kind while the backend
 // (dashboard/consent.py KINDS) had grown to four.
 import assert from 'node:assert/strict'
-import { findConsent, canApprove, blockedReason, severity, afterApproval } from '/tmp/consent.mjs'
+import { findConsent, canApprove, blockedReason, severity, afterApproval, nothingGranted } from '/tmp/consent.mjs'
 
 const need = (over = {}) => ({
   kind: 'trust_remote_code', scope: 'trust_remote_code',
@@ -110,3 +110,24 @@ assert.ok(!/model path/i.test(typeReason))
 assert.equal(severity(need({ kind: 'policy_type_allow' })), 'warn')
 assert.equal(severity(need({ kind: 'policy_host_allow' })), 'danger',
   'a host that receives frames and returns actions is a capability, not a value')
+
+// ── Q121: "nothing is allowed here" must be asked of the payload, not of a list of kind names ──
+// That inline conjunction was wrong three times (teleop envelope, agent motion, the two policy
+// allowlists), each time printing an ASSURANCE over a live grant. These cases are the regression.
+assert.equal(nothingGranted({ trust_remote_code: false, hf_repo_allow: [] }), true)
+assert.equal(nothingGranted({ trust_remote_code: true, hf_repo_allow: [] }), false)
+assert.equal(nothingGranted({ trust_remote_code: false, hf_repo_allow: ['org/repo'] }), false)
+assert.equal(nothingGranted({ policy_type_allow: ['smolvla_x'] }), false, 'Q119 kind counts')
+assert.equal(nothingGranted({ policy_host_allow: ['gpu.lan'] }), false, 'Q119 kind counts')
+assert.equal(nothingGranted({ teleop_degree_units: { granted: true } }), false)
+assert.equal(nothingGranted({ teleop_degree_units: { granted: false } }), true)
+// a kind from a NEWER server than this bundle counts even with no row to show it: the screen may
+// under-explain, but it must never falsely reassure
+assert.equal(nothingGranted({ some_future_allow: ['x'] }), false)
+assert.equal(nothingGranted({ some_future_grant: true }), false)
+// locks TIGHTEN the machine — reporting a restriction as a permission would be a different lie
+assert.equal(nothingGranted({ locks: { task_requires_confirm: true } }), true)
+assert.equal(nothingGranted({ kinds: ['trust_remote_code'], env_file: '/x/.env' }), true, 'metadata')
+// unknown state is not "nothing": before the fetch lands, say nothing rather than reassure
+assert.equal(nothingGranted(null), false)
+assert.equal(nothingGranted(undefined), false)

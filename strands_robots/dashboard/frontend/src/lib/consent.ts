@@ -179,3 +179,40 @@ export function afterApproval(
       'granted — but this robot is already running with the old permissions. Respawn it, then run again.',
   }
 }
+
+
+/**
+ * Does this machine grant anything beyond the SDK's own defaults?
+ *
+ * Q121. The permissions screen computed this inline as a conjunction naming each kind
+ * (`!trust && hf.length === 0 && !envelope?.granted && !agent`), and that shape has now been wrong
+ * three times: once when the teleop envelope arrived, once when agent motion did, and again when
+ * Q119 added the two policy allowlists. Each time the screen said "Nothing extra is allowed here"
+ * while a real grant was in force — the most damaging sentence a permissions page can get wrong,
+ * because the operator reads it as an assurance.
+ *
+ * So this asks the PAYLOAD's own shape instead of a list of names: any truthy boolean, any non-empty
+ * array, or a granted envelope means something is granted. A kind added by a newer server than this
+ * bundle therefore counts on arrival, even though no row exists to display it yet — which is the
+ * safe direction to be wrong in: the screen may under-explain, never falsely reassure.
+ *
+ * `locks` is skipped by name and it is the one exception worth hardcoding: it TIGHTENS the machine
+ * (task_requires_confirm), so counting it as a grant would report a restriction as a permission.
+ * `kinds` and `env_file` are metadata, not state.
+ */
+const NOT_A_GRANT: ReadonlySet<string> = new Set(['locks', 'kinds', 'env_file'])
+
+export function nothingGranted(state: Record<string, unknown> | null | undefined): boolean {
+  if (!state) return false  // unknown is not "nothing": say nothing rather than reassure
+  for (const [key, value] of Object.entries(state)) {
+    if (NOT_A_GRANT.has(key)) continue
+    if (Array.isArray(value)) {
+      if (value.length > 0) return false
+    } else if (value && typeof value === 'object') {
+      if ((value as { granted?: unknown }).granted) return false
+    } else if (value === true) {
+      return false
+    }
+  }
+  return true
+}
