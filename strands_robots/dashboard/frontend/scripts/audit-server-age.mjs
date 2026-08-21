@@ -66,13 +66,33 @@ if (missing.length === 0) {
 } else {
   // Prefixed NEWS so a full sweep surfaces it: this audit's whole output IS its value, and exiting
   // 0 previously made the runner swallow every line of it.
-  console.log(`  NEWS  ${missing.length} route(s) this bundle calls are NOT on the running server — restart to light them up:`)
+  console.log(`  NEWS  ${missing.length} route(s) this SOURCE registers are NOT on the running server — restart to light them up:`)
   // Every line names its OWN direction. The two lists used to print as bare paths, which made the
   // first list's items sit directly above the SECOND list's summary — and a tail read (how a loop
   // consumes a 4.5-minute sweep log) then attributed them to the opposite direction. It fooled the
   // person who wrote this sweep, one iteration after writing it, so the report is at fault: a line
   // that only means the right thing when you can see what is above it does not survive truncation.
-  for (const p of missing) console.log(`  note    bundle needs → ${p}`)
+  /* Which of them does the FRONTEND actually call? This audit derives `declared` from the python
+   * source, so it knows what the SERVER lacks, never what the BUNDLE wants — and the old NEWS line
+   * said "routes this bundle calls", a claim its own input cannot support (the same misdescribed
+   * method this file's header comment warns about, committed one paragraph below the warning).
+   * The distinction is the operator's whole decision: a missing route the UI calls is a DARK
+   * FEATURE they will meet as a 404 mid-task, while a missing route nothing calls yet is merely a
+   * server that predates the source. Matched on the literal prefix before the first {param},
+   * because a call site writes `/api/devices/camera/${index}/modes` and no substring of the
+   * templated path appears in it. */
+  const srcDir = path.resolve('src')
+  const walk = d => fs.readdirSync(d, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? walk(path.join(d, e.name))
+      : /\.(ts|tsx)$/.test(e.name) && !e.name.includes('.test.') ? [path.join(d, e.name)] : [])
+  const srcText = walk(srcDir).map(f => fs.readFileSync(f, 'utf8')).join('\n')
+  const calledBy = p => srcText.includes(p.split('{')[0].replace(/\/$/, ''))
+  const dark = missing.filter(calledBy)
+  const ahead = missing.filter(p => !calledBy(p))
+  for (const p of dark) console.log(`  note    DARK — the UI calls this and gets a 404 → ${p}`)
+  for (const p of ahead) console.log(`  note    server-side only, nothing in the UI calls it yet → ${p}`)
+  console.log(`  note    ${dark.length} of ${missing.length} missing route(s) are reachable from the UI`
+    + `${dark.length ? ' — those are the dark features' : ' — no dark feature, just an older server'}`)
   console.log('        → the UI explains these as "restart the dashboard to pick it up" (lib/serverAge.ts).')
   console.log('        → an owner-run restart from a terminal makes them live (never restart from a daemon:')
   console.log('          a launchd-descended process can never be granted camera access on macOS).')
