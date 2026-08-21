@@ -97,3 +97,40 @@ assert.equal(sweepStale({ x: { peer_id: 'x' } }, NOW).x.stale, true, 'no last_se
 assert.equal(sweepStale({ x: { peer_id: 'x', last_seen: NOW, stale: true } }, NOW).x.stale, false, 'staleness clears')
 
 console.log('meshPeers.test.mjs: all assertions passed')
+
+// ── Q94: a camera frame is not evidence that a robot EXISTS ──
+// Fixture-shape hole: every camera_meta case above merges into a map where 'arm-1' is already present,
+// so this file could not express the event the bridge actually broadcasts — a replayed frame for a peer
+// THIS CLIENT HAS NEVER HEARD OF. The bridge replays each camera's last cached frame to every new
+// subscriber, and mesh_bridge.py states the rule for its own server-side annotations: "an annotation
+// must never conjure a peer into the fleet". The client did exactly that.
+const empty = {}
+assert.equal(mergeMeshEvent(empty, { type: 'camera_meta', peer_id: 'ghost-1', cam: 'main', data: { t: NOW - 3600 } }, NOW),
+             empty, 'an unknown peer is not created by a cached frame — and identity is returned, so no render')
+
+// It mattered most for the FRESH frame, which used to look like good news: the conjured peer had no
+// last_seen, the sweep read that as ancient, and the card rendered "no heartbeat — state unknown, treat
+// the arm as unpredictable". A robot invented out of a cached JPEG, wearing a safety warning.
+assert.equal(mergeMeshEvent(empty, { type: 'camera_meta', peer_id: 'ghost-1', cam: 'main', data: { t: NOW - 0.1 } }, NOW),
+             empty, 'nor by a fresh one — a peer that is really live announces itself on presence within ~1s')
+
+// THE REACHABLE PATH: mesh_reconfigured empties the map on purpose, and cached frames keep arriving for
+// the peers of the mesh we just left. Those must not repopulate the fleet view we deliberately cleared.
+const cleared = mergeMeshEvent({ 'old-arm': { peer_id: 'old-arm', last_seen: NOW } }, { type: 'mesh_reconfigured' }, NOW)
+assert.deepEqual(cleared, {}, 'the old mesh is gone')
+assert.deepEqual(mergeMeshEvent(cleared, { type: 'camera_meta', peer_id: 'old-arm', cam: 'main', data: { t: NOW } }, NOW),
+                 {}, 'and a replayed frame from it cannot bring a card back')
+
+// ...while annotating a peer that DOES exist still works exactly as before.
+const known = { 'arm-1': { peer_id: 'arm-1', last_seen: NOW - 1, stale: false } }
+const annotated = mergeMeshEvent(known, { type: 'camera_meta', peer_id: 'arm-1', cam: 'wrist', data: { t: NOW } }, NOW)
+assert.deepEqual(annotated['arm-1'].cameras.wrist, { t: NOW }, 'the camera still lands on a real peer')
+
+// A MISSING TIMESTAMP STAYS STALE — considered and REJECTED as a fix this iteration, recorded so the
+// next reader does not "fix" it back. `stale` is a boolean, so the only alternative to stale is LIVE,
+// and a peer whose age is unknown rendered green is the worse error for a machine that can move.
+// `?? 0` is not a measurement, but it lands on the safe side of one.
+assert.equal(sweepStale({ x: { peer_id: 'x' } }, NOW).x.stale, true,
+             'unknown age keeps the conservative verdict, not a green card')
+
+console.log('meshPeers: Q94 conjured-peer assertions ok')

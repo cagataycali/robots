@@ -22,6 +22,11 @@ export function sweepStale(peers: Record<string, Peer>, nowS: number): Record<st
   let changed = false
   const next = { ...peers }
   for (const [id, peer] of Object.entries(next)) {
+    // A MISSING TIMESTAMP STAYS STALE, deliberately (considered and rejected in Q94): `stale` is a
+    // boolean, so the only alternative to "stale" is "live", and rendering a peer whose age is
+    // unknown as a green card is the worse error for a machine that can move. `?? 0` is not a
+    // measurement, but it lands on the safe side of one. After Q94 the only way a peer reaches this
+    // sweep without a timestamp is a snapshot the server sent that way.
     const stale = nowS - (peer.last_seen ?? 0) > PEER_STALE_S
     if (stale !== peer.stale) { next[id] = { ...peer, stale }; changed = true }
   }
@@ -90,7 +95,15 @@ export function mergeMeshEvent(
     }
     case 'camera_meta': {
       if (!id) return peers
-      const peer = peers[id] ?? { peer_id: id }
+      // AN ANNOTATION MUST NEVER CONJURE A PEER INTO THE FLEET (Q94) - the same rule mesh_bridge.py
+      // states for its own server-side annotations. A camera frame is not evidence that a robot
+      // exists: the bridge replays each camera's last cached frame to every new subscriber, so a
+      // frame for a peer this client has never heard of (or one just cleared by mesh_reconfigured)
+      // used to CREATE a card - with no last_seen, which the sweep then read as ancient and rendered
+      // as "no heartbeat, treat the arm as unpredictable". A robot invented out of a cached JPEG.
+      // A peer that really is live announces itself on presence within ~1s and the next frame lands.
+      const peer = peers[id]
+      if (!peer) return peers
       const cameras = { ...peer.cameras, [ev.cam]: ev.data }
       const fresh = frameProvesLiveness({ frameT: ev.data?.t, nowS })
       return {
