@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 
 const mod = await import('/tmp/telemetryRing.mjs')
-const { advance, emptyRing, summarize, jointValues, motionBetween, TELEMETRY_CAP } = mod
+const { advance, emptyRing, summarize, jointValues, motionBetween, TELEMETRY_CAP, recentRun, TELEMETRY_GAP_S } = mod
 
 /** Fold a sequence of frames in, one state timestamp per frame, 10 Hz like the real topic. */
 const drive = (frames, t0 = 1_000) => {
@@ -98,5 +98,50 @@ assert.ok(long.samples[0].t > 1_003, 'the OLDEST samples are the ones dropped')
 // today's answer so the fix is a deliberate change with a failing test, not a silent drift.
 const dither = summarize(drive(Array(15).fill(0).map((_, i) => ({ a: 0.5 + (i % 2) * 0.0004 }))), 1_002)
 assert.equal(dither.moving, true, 'Q85: sub-milli-unit dither currently reads as motion (pinned, not endorsed)')
+
+// ── Q91: a stream that stopped and resumed leaves TWO episodes in one ring ──
+// Samples are stamped by ARRIVAL and the ring is capped by COUNT, never by age. On this fleet a state
+// topic that stops and starts is routine (both real arms have spent days that way), so the mixture is
+// the common case — and judging NOW from it was wrong three ways at once.
+const S = (t, motion) => ({ t, motion })
+
+assert.deepEqual(recentRun([]), [], 'nothing is its own trailing run')
+assert.deepEqual(recentRun([S(1, 0)]), [S(1, 0)], 'one sample is a run of one')
+const dense = [S(1, 0), S(1.1, 0), S(1.2, 0)]
+assert.deepEqual(recentRun(dense), dense, 'a stream with no gap is entirely current')
+assert.deepEqual(recentRun([S(1, 5), S(2, 5), S(600, 1), S(600.1, 1)]), [S(600, 1), S(600.1, 1)],
+                 'the run starts AFTER the silence')
+assert.deepEqual(recentRun([S(1, 0), S(1 + TELEMETRY_GAP_S, 0)]).length, 2,
+                 'a gap of exactly the threshold is not yet a break (> not >=)')
+assert.deepEqual(recentRun([S(1, 0), S(1 + TELEMETRY_GAP_S + 0.01, 0)]).length, 1, 'just over it is')
+assert.deepEqual(recentRun([S(1, 0), S(50, 0), S(50.1, 0), S(200, 0)]), [S(200, 0)],
+                 'only the LAST gap matters — everything before it is another episode')
+
+// (a) hz spread the sample count across the dead gap.
+const resumed = { jointsSeen: true, samples: [
+  ...Array(10).fill(0).map((_, i) => S(1_000 + i * 0.1, 2)),      // 10 Hz, then the stream dies
+  ...Array(10).fill(0).map((_, i) => S(1_600 + i * 0.1, 0.04)),   // ten minutes later, 10 Hz again
+] }
+const view = summarize(resumed, 1_600.9)
+assert.ok(view.hz > 9 && view.hz < 11, `hz must describe the CURRENT episode, got ${view.hz.toFixed(2)} ` +
+          '(before Q91 the dead gap dragged it to ~0.03 Hz while frames arrived at ten a second)')
+assert.equal(view.samples.length, 10,
+             'and the sparkline gets only the current episode — it plots by INDEX, so a ten-minute ' +
+             'silence was drawn as one adjacent pixel, a line that looks like motion across an outage')
+
+// (b) THE DANGEROUS ONE: a big move BEFORE the outage raised the bar for the move happening now.
+// peak was the loudest motion anywhere in the ring and `moving` asks for >5% of it, so an arm creeping
+// at 2% of its old peak was reported "still" — the one sentence on this card that gets a person's hands
+// near the hardware.
+assert.equal(view.moving, true,
+             'Q91: motion of 0.04 is real motion when the current episode peaks at 0.04; judging it ' +
+             'against a peak of 2 from before the silence returned "still - safe to approach"')
+
+// (c) the age is reported even when the resume is too young to judge.
+const justBack = summarize({ jointsSeen: true, samples: [...Array(9).fill(0).map((_, i) => S(1_000 + i * 0.1, 2)), S(1_600, 0.5)] }, 1_601)
+assert.equal(justBack.moving, null, 'one sample into a new episode is no opinion, not an inherited one')
+assert.ok(Math.abs(justBack.stateAgeS - 1) < 1e-6,
+          'but the AGE still comes from the newest sample — it used to return null whenever the run was ' +
+          'shorter than 2, which is exactly when statusSentence needs to say "the stream stopped Ns ago"')
 
 console.log('telemetryRing.test.mjs: all assertions passed')

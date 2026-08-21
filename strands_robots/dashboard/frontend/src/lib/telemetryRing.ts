@@ -76,6 +76,39 @@ export function advance(acc: RingAcc, peer: Pick<Peer, 'state'>, nowS: number): 
   }
 }
 
+/**
+ * A gap in ARRIVALS longer than this starts a new episode. Same 5 s that
+ * lib/statusSentence calls a stopped stream, deliberately: one number, so the strip cannot describe
+ * a rate the sentence beside it calls stale.
+ */
+export const TELEMETRY_GAP_S = 5
+
+/**
+ * The trailing run of samples with no dead gap in it — the only ones that describe NOW.
+ *
+ * Samples are stamped by ARRIVAL and the ring is capped by COUNT, never by age, so a stream that
+ * stops and resumes leaves one ring holding two episodes with a silence between them. Judging the
+ * present from that mixture was wrong three different ways at once (Q91):
+ *
+ *  - `hz = (n-1)/span` spread the sample count across the dead gap: 10 frames at 10 Hz, ten minutes
+ *    of silence, then 10 more at 10 Hz reads "0.03 Hz" while frames arrive at ten a second.
+ *  - `peak` was the loudest motion anywhere in the ring, and `moving` asks whether recent motion
+ *    exceeds 5% of it. A big move before the outage therefore RAISED THE BAR for the move happening
+ *    now: an arm creeping at 2% of its old peak was reported "still — safe to approach", which is the
+ *    one sentence on this card that gets a person's hands near the hardware.
+ *  - the sparkline plots by INDEX, so a ten-minute silence was drawn as one adjacent pixel: a line
+ *    that looks like continuous motion across an outage.
+ *
+ * On this fleet that mixture is routine, not exotic — the arms are respawned constantly, and both real
+ * ones have spent days with a state topic that stops and starts.
+ */
+export function recentRun(samples: TelemetrySample[], maxGapS = TELEMETRY_GAP_S): TelemetrySample[] {
+  for (let i = samples.length - 1; i > 0; i--) {
+    if (samples[i].t - samples[i - 1].t > maxGapS) return samples.slice(i)
+  }
+  return samples
+}
+
 export interface TelemetryView {
   samples: TelemetrySample[]
   /** measured state-topic rate, Hz (0 until 2+ samples) */
@@ -104,8 +137,13 @@ export interface TelemetryView {
  * is noise.
  */
 export function summarize(acc: RingAcc, nowS: number): TelemetryView {
-  const { samples, jointsSeen } = acc
-  if (samples.length < 2) return { samples, hz: 0, moving: null, stateAgeS: null, jointsSeen }
+  const { jointsSeen } = acc
+  // Only the CURRENT episode is evidence about now (Q91). See recentRun.
+  const samples = recentRun(acc.samples)
+  const newest = acc.samples[acc.samples.length - 1]
+  if (samples.length < 2) {
+    return { samples, hz: 0, moving: null, stateAgeS: newest ? nowS - newest.t : null, jointsSeen }
+  }
   const span = samples[samples.length - 1].t - samples[0].t
   const hz = span > 0 ? (samples.length - 1) / span : 0
   const peak = Math.max(...samples.map(s => s.motion), 1e-6)
