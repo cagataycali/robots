@@ -118,6 +118,66 @@ def peer_is_known(
     return bool(parent and child) and parent in haystack
 
 
+def managed_without_presence(
+    peers: Mapping[str, Mapping[str, Any]],
+    managed_ids: Iterable[str] = (),
+    *,
+    spawn_times: Mapping[str, float] | None = None,
+    now: float | None = None,
+    grace_s: float = 20.0,
+) -> list[str]:
+    """Which of OUR OWN children are not in the fleet at all (Q155b).
+
+    The complement of TWO rules that already exist, and deliberately disjoint from
+    both: :func:`silent_arms` answers "present but mute", and U22's absent-children
+    report answers "DEAD child, gone from the mesh" -- its
+    ``test_a_living_child_missing_from_the_mesh_is_never_a_death`` refuses this case
+    on purpose. This one is the third square: ALIVE, ours, and absent. Disjointness
+    is structural rather than agreed: the caller passes the same LIVE protected set
+    the ageing protection uses, which a dead child is not in. That one
+    answers "present but mute"; this one answers "we are holding a live child
+    process and the mesh has never heard of it" -- a peer that does not appear
+    cannot be rendered stale, cannot be rendered mute, and cannot be rendered at
+    all. Measured on the live rig: the sim twin was gone from ``/api/fleet``
+    while the child process the dashboard spawned for it was alive at 25h.
+
+    ``prune_peers`` protects a managed peer from ageing out, but protection can
+    only save a peer that ARRIVED; presence that never comes (or stops coming
+    while the process lives) leaves the dashboard with strictly more knowledge
+    than the fleet it renders -- it knows the pid -- and no place to say so.
+
+    Rules, each borrowed rather than invented:
+
+    * a managed id whose ``"<id>__<child>"`` child IS present counts as
+      reporting: sim children publish for themselves and the parent is the
+      process, exactly the demotion rule ``armHosts`` uses on the record screen.
+    * a child of a present parent counts as reporting, matching
+      :func:`peer_is_known`'s family rule (both halves non-empty).
+    * an id inside its spawn/settle window is OMITTED -- a child two seconds old
+      has not published yet, and calling that silence a fault would flag every
+      healthy spawn. Same grace ``peer_is_known`` extends, and the same law the
+      camera roster follows: no evidence is not evidence of absence. An id with
+      NO known spawn time is reported, because a missing timestamp is not youth.
+    """
+    present = set(peers)
+    stamps = spawn_times or {}
+    clock = time.time() if now is None else now
+    out: list[str] = []
+    for pid in managed_ids:
+        if not pid or pid in present:
+            continue
+        if any(p.partition("__")[0] == pid for p in present if "__" in p):
+            continue
+        parent, _, child = pid.partition("__")
+        if parent and child and parent in present:
+            continue
+        started = stamps.get(pid)
+        if started is not None and clock - started < grace_s:
+            continue
+        out.append(pid)
+    return sorted(out)
+
+
 def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None:
     """Which peers are present but publishing NO joints (Q149).
 
@@ -1067,6 +1127,17 @@ class MeshBridge:
         # below and derived from the same live-managed set the pruning already
         # used, so the origin badge cannot disagree with which peers are held
         # alive as ours. Every peer gets a label: absent would read as unknown.
+        # Q155b: children WE hold that the fleet has never heard of. Derived from the
+        # SAME protected set as the origin badge and the ageing protection, so the
+        # three cannot disagree; spawn times come from the managed table so a child
+        # two seconds old is not called a fault. Never conjures a peer - it is a
+        # LIST beside the peers, because the whole point is that these have no peer.
+        stamps: dict[str, float] = {}
+        for m in self._managed_children():
+            mid = getattr(m, "peer_id", None)
+            if mid:
+                stamps[str(mid)] = float(getattr(m, "started_at", 0.0) or 0.0)
+        quiet = managed_without_presence(peers, protected, spawn_times=stamps, now=now)
         for pid, origin in peer_origins(peers, protected).items():
             peer = peers.get(pid)
             if isinstance(peer, dict):
@@ -1102,6 +1173,8 @@ class MeshBridge:
                 peers[pid] = {**peer, **joint_silence.merge(peer, fields)}
         return {
             "type": "snapshot",
+            # Q155b: our own children with no mesh presence at all (usually empty).
+            "managed_no_presence": quiet,
             "dashboard_peer_id": self.peer_id,
             "peers": peers,
             "mesh": self.mesh_info(),
