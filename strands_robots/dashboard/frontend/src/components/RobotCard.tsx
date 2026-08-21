@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Peer } from '../types'
 import { useTask } from '../lib/useTask'
+import { busRecoveryBadge } from '../lib/busRecoveries'
 import { lockoutBadge } from '../lib/lockoutBadge'
 import { useTelemetry } from '../lib/useTelemetry'
 import { ribbonDetail, statusSentence } from '../lib/statusSentence'
@@ -97,6 +98,15 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
             external
           </span>
         )}
+        {/* Q81: the bus cure is silent by design, so the count is the only evidence a
+            cable is failing. Absent/zero renders nothing - a healthy arm earns no
+            ornament - and the tone escalates once it stops looking like bad luck. */}
+        {(() => {
+          const bus = busRecoveryBadge(peer.state?.bus_recoveries)
+          return bus ? (
+            <span className={`badge ${bus.tone}`} title={bus.title}>{bus.label}</span>
+          ) : null
+        })()}
         {p?.hostname && <span className="host">{p.hostname}</span>}
         {p?.connected === false && type === 'robot' && (
           <span className="badge warn" title="peer is online but its hardware is not connected">hw off</span>

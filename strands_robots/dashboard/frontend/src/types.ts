@@ -23,6 +23,8 @@ export interface PeerState {
   task?: { status?: string; instruction?: string; steps?: number; duration?: number }
   sim_time?: number
   robots?: Record<string, { active: boolean }>
+  /** Q81: stranded serial in-use flags this robot has cleared since it started (absent when none). */
+  bus_recoveries?: number
 }
 
 export interface StreamStep {
