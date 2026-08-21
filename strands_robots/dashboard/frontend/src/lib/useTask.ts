@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { deriveTaskFlags, nextPhase, reportedTaskStatus } from './taskPhase'
+import type { TaskPhase } from './taskPhase'
 import type { Peer, StopResult } from '../types'
 import { HttpError, post } from './endpoints'
 import { findConsent, type ConsentNeed } from './consent'
@@ -12,7 +14,7 @@ import type { RunBody } from '../components/RunForm'
  * them the ▶ button re-enables while the command is still in flight, and a
  * double tap sends the task twice.
  */
-export type TaskPhase = 'idle' | 'starting' | 'running' | 'stopping' | 'failed' | 'done'
+export type { TaskPhase } from './taskPhase'
 
 export interface Outcome {
   ok: boolean
@@ -43,17 +45,15 @@ export function useTask(peer: Peer) {
   const mounted = useRef(true)
   useEffect(() => () => { mounted.current = false }, [])
 
-  const reported = peer.state?.task?.status ?? peer.presence?.task_status
-  const reportedRunning = reported === 'running' || reported === 'executing'
-  // The peer's own status wins over our optimistic phase - it is the robot
-  // telling us what it is doing, we are only guessing.
-  const running = reportedRunning || phase === 'starting' || phase === 'running'
-  const busy = phase === 'starting' || phase === 'stopping' || twinBusy
+  // Phase logic lives in ./taskPhase as a decision table (tested there; in this body it needed a
+  // rendered card against a live peer). Q87: `reported === undefined` is NOT a completion.
+  const reported = reportedTaskStatus(peer)
+  const { running, busy } = deriveTaskFlags({ phase, reported, twinBusy })
 
   useEffect(() => {
-    if (reportedRunning && phase !== 'running') setPhase('running')
-    if (!reportedRunning && phase === 'running') setPhase('done')
-  }, [reportedRunning])   // eslint-disable-line react-hooks/exhaustive-deps
+    const next = nextPhase(phase, reported)
+    if (next) setPhase(next)
+  }, [reported])   // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Bare message - only for requests with nothing physical behind them. */
   const fail = (e: unknown): Outcome => {
