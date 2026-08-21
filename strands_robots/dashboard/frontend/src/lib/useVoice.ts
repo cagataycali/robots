@@ -1,7 +1,9 @@
 import { useCallback, useRef, useState } from 'react'
 import { wsUrl } from './endpoints'
+import { interpretVoiceEvent, voiceCloseState } from './voiceSession'
+import type { VoiceState } from './voiceSession'
 
-export type VoiceState = 'idle' | 'connecting' | 'live' | 'error'
+export type { VoiceState } from './voiceSession'
 
 /** Browser mic (PCM16 @16k) ↔ /ws/voice ↔ bidi fleet agent. */
 export function useVoice() {
@@ -16,19 +18,30 @@ export function useVoice() {
   const nodesRef = useRef<{ src?: MediaStreamAudioSourceNode; proc?: ScriptProcessorNode; stream?: MediaStream }>({})
   const playRef = useRef<{ ctx?: AudioContext; nextT: number; rate: number }>({ nextT: 0, rate: 24000 })
 
-  const stop = useCallback(() => {
-    wsRef.current?.send(JSON.stringify({ type: 'stop' }))
-    wsRef.current?.close()
-    wsRef.current = null
+  /**
+   * Give the microphone back. Separate from stop() and safe to call twice, because the mic can be
+   * live in states where there is nothing else to tear down (Q90): getUserMedia resolves BEFORE the
+   * socket opens, so a refused or unreachable /ws/voice left a hot mic - browser recording indicator
+   * on, tracks live - for the whole life of the tab, with no UI in any state able to release it.
+   */
+  const releaseMic = useCallback(() => {
     nodesRef.current.proc?.disconnect()
     nodesRef.current.src?.disconnect()
     nodesRef.current.stream?.getTracks().forEach(t => t.stop())
+    nodesRef.current = {}
     ctxRef.current?.close()
     ctxRef.current = null
+  }, [])
+
+  const stop = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: 'stop' }))
+    wsRef.current?.close()
+    wsRef.current = null
+    releaseMic()
     playRef.current.ctx?.close()
     playRef.current.ctx = undefined
     setState('idle')
-  }, [])
+  }, [releaseMic])
 
   const start = useCallback(async () => {
     if (state === 'live' || state === 'connecting') { stop(); return }
@@ -37,31 +50,36 @@ export function useVoice() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
       // Same backend (and token) as every other channel - the dashboard API can
       // be on another host entirely.
+      // Owned from this line on, whatever happens to the socket next (Q90).
+      nodesRef.current = { stream }
       const ws = new WebSocket(wsUrl('/ws/voice'))
       wsRef.current = ws
+      ws.onerror = () => releaseMic()
 
       ws.onmessage = (msg) => {
         try {
-          const ev = JSON.parse(msg.data)
-          if (ev.type === 'voice_meta') { playRef.current.rate = ev.rate || 24000 }
-          else if (ev.type === 'audio') playPcm(ev.data)
-          else if (ev.type === 'transcript' && ev.text) setTranscript(`${ev.role === 'user' ? '🎙' : '🤖'} ${ev.text}`)
-          else if (ev.type === 'needs_consent') {
-            setNeed(ev.need)
-            /* Say it in the transcript too: the sheet may be behind a collapsed dock, and a spoken
-               sentence the operator half-heard is not a record of what was refused. */
-            if (ev.spoken) setTranscript(`⚠ ${String(ev.spoken).slice(0, 200)}`)
-          }
-          else if (ev.type === 'error') { setTranscript(`⚠ ${ev.error}`); setState('error') }
-        } catch { /* ignore */ }
+          /* What a frame MEANS lives in ./voiceSession, tested there. This handler only performs it -
+             the old inline chain sat inside this same `catch { ignore }`, where every mistake was
+             silence in the one channel whose job is to talk back. */
+          const eff = interpretVoiceEvent(JSON.parse(msg.data))
+          if (eff.rate !== undefined) playRef.current.rate = eff.rate
+          if (eff.play !== undefined) playPcm(eff.play)
+          /* Say it in the transcript too: the sheet may be behind a collapsed dock, and a spoken
+             sentence the operator half-heard is not a record of what was refused. */
+          if (eff.transcript !== undefined) setTranscript(eff.transcript)
+          if ('need' in eff) setNeed(eff.need)
+          if (eff.state !== undefined) setState(eff.state)
+        } catch { /* a frame we could not even parse */ }
       }
       ws.onclose = (e) => {
-        if (e.code === 1008) {
-          setTranscript('⚠ unauthorized — set the dashboard token in Settings')
-          setState('error')
-          return
-        }
-        setState(s => (s === 'error' ? s : 'idle'))
+        // The socket is gone, so the mic must go with it (Q90) - a failed connect used to leave the
+        // browser recording indicator on for the life of the tab.
+        releaseMic()
+        setState(s => {
+          const v = voiceCloseState(e.code, s)
+          if (v.transcript) setTranscript(v.transcript)
+          return v.state
+        })
       }
       ws.onopen = () => {
         setState('live')
@@ -70,7 +88,7 @@ export function useVoice() {
         ctxRef.current = ctx
         const src = ctx.createMediaStreamSource(stream)
         const proc = ctx.createScriptProcessor(4096, 1, 1)
-        nodesRef.current = { src, proc, stream }
+        nodesRef.current = { ...nodesRef.current, src, proc, stream }
         const inRate = ctx.sampleRate
         src.connect(proc)
         proc.connect(ctx.destination)
@@ -88,10 +106,12 @@ export function useVoice() {
         }
       }
     } catch (e) {
+      // getUserMedia may have succeeded before whatever threw next.
+      releaseMic()
       setTranscript(`⚠ ${e}`)
       setState('error')
     }
-  }, [state, stop])
+  }, [state, stop, releaseMic])
 
   const playPcm = (b64: string) => {
     const p = playRef.current
