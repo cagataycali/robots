@@ -406,6 +406,7 @@ function Dashboard() {
       {detailPeer && (
         <ErrorBoundary label="the robot detail view" onDismiss={() => setDetail(null)}>
           <RobotDetail peer={detailPeer} twinLive={liveTwins.has(`${detailPeer.peer_id}-twin`)}
+            hostsChildren={fleetHosts[detailPeer.peer_id]?.children ?? null}
                        onClose={() => setDetail(null)} />
         </ErrorBoundary>
       )}

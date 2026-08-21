@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { statusSentence, ribbonDetail } from '/tmp/statusSentence.mjs'
+import { peerStatusFields, statusSentence, ribbonDetail } from '/tmp/statusSentence.mjs'
 
 const base = { stale: false, lastSeenAgoS: 1, hwConnected: true, taskStatus: 'idle',
   instruction: null, taskDurationS: null, moving: false, stateAgeS: 0.2 }
@@ -251,4 +251,35 @@ console.log('statusSentence: Q95 lockout assertions ok')
   const busyParent = statusSentence({ ...base, jointsSeen: true, moving: false,
     hostsChildren: ['a__x'] })
   assert(busyParent.word !== 'process', 'a peer publishing joints is an arm, whatever it hosts')
+}
+
+// ---------------------------------------------------------------------------
+// Q151: one builder, two screens. The card had the peer->facts mapping inline and the DETAIL STAGE
+// had no status sentence at all, so the surface an operator reads while walking up to the arm said
+// nothing about whether the stillness on screen was measured. Sharing the builder is what stops the
+// two from ever saying different things about the same robot.
+{
+  const peer = {
+    last_seen: Date.now() / 1000 - 2, stale: false,
+    presence: { connected: true, robot_type: 'robot', task_status: 'idle' },
+    state: { task: { status: 'idle' } }, lockout: null,
+  }
+  const f = peerStatusFields(peer, { moving: false, jointsSeen: true, stateAgeS: 0.4 })
+  assert(f.hwConnected === true, 'hardware connection must survive the mapping')
+  assert(f.taskStatus === 'idle' && f.moving === false && f.jointsSeen === true, 'facts pass through')
+  assert(f.lastSeenAgoS > 1 && f.lastSeenAgoS < 5, `heartbeat age should be seconds, got ${f.lastSeenAgoS}`)
+  assert(statusSentence(f).text === 'idle and still — safe to approach', 'the calm case still reads calm')
+
+  // The mute arm reads the SAME on both screens — that is the point of the shared builder.
+  const mute = peerStatusFields(peer, { moving: null, jointsSeen: false, stateAgeS: 0.4 })
+  assert(statusSentence(mute).severity === 'warn', 'a mute arm warns wherever it is rendered')
+
+  // hostsChildren rides through the builder, so the detail stage inherits Q150's process rule.
+  const host = peerStatusFields(peer, { moving: null, jointsSeen: false, stateAgeS: 0.4 }, ['sim__so101'])
+  assert(statusSentence(host).word === 'process', 'a host process is a process on both screens')
+
+  // Absent telemetry must not fabricate measurements: undefined becomes null, never false.
+  const empty = peerStatusFields(peer, {})
+  assert(empty.moving === null && empty.jointsSeen === null && empty.stateAgeS === null,
+    'missing telemetry is null, not a measurement')
 }

@@ -4,7 +4,7 @@ import { useTask } from '../lib/useTask'
 import { busRecoveryBadge } from '../lib/busRecoveries'
 import { lockoutBadge } from '../lib/lockoutBadge'
 import { useTelemetry } from '../lib/useTelemetry'
-import { ribbonDetail, statusSentence } from '../lib/statusSentence'
+import { peerStatusFields, ribbonDetail, statusSentence } from '../lib/statusSentence'
 import { twinButtonCopy } from '../lib/twinButton'
 import { deadCameraNote, stoppedCameras } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
@@ -40,23 +40,11 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
   // MEASURED motion - so "running but frozen" and "moving with no task"
   // (teleop/runaway: exactly when hands must stay clear) are said out loud
   // instead of being left for the operator to infer from four widgets.
-  const status = type === 'robot' ? statusSentence({
-    stale: offline,
-    lastSeenAgoS: peer.last_seen ? Date.now() / 1000 - peer.last_seen : null,
-    hwConnected: p?.connected ?? null,
-    taskStatus: peer.state?.task?.status ?? p?.task_status ?? null,
-    instruction: peer.state?.task?.instruction || p?.instruction || null,
-    taskDurationS: peer.state?.task?.duration ?? null,
-    moving: telemetry.moving,
-    // Silence is not stillness: a peer with no joint stream must not earn a
-    // green "safe to approach".
-    jointsSeen: telemetry.jointsSeen,
-    hostsChildren,
-    stateAgeS: telemetry.stateAgeS,
-    // Q95: the lockout is the REASON a locked arm is still, so the sentence says it instead of
-    // contradicting the badge two rows above it.
-    lockout: peer.lockout?.state ?? null,
-  }) : null
+  const status = type === 'robot'
+    // Q151: the fields come from peerStatusFields, shared with the detail stage — two screens
+    // rendering the same judgement from two copies of the mapping is how they drift.
+    ? statusSentence(peerStatusFields(peer, telemetry, hostsChildren))
+    : null
 
   // The app keeps a screen wake lock while anything is moving.
   useEffect(() => { onBusyChange?.(peer.peer_id, running) }, [running, peer.peer_id])  // eslint-disable-line react-hooks/exhaustive-deps

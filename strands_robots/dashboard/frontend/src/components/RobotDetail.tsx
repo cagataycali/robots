@@ -4,6 +4,8 @@ import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
 import { twinButtonCopy } from '../lib/twinButton'
+import { statusSentence, peerStatusFields } from '../lib/statusSentence'
+import { useTelemetry } from '../lib/useTelemetry'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
@@ -28,10 +30,12 @@ function fmt(v: unknown): string {
  * emitting rather than a 3-line summary. Steps are buffered client-side because
  * `strands/<peer>/stream` is fire-and-forget - nothing on the mesh replays it.
  */
-export default function RobotDetail({ peer, twinLive = false, onClose }: {
+export default function RobotDetail({ peer, twinLive = false, hostsChildren, onClose }: {
   peer: Peer
   /** a '<id>-twin' peer is live in the fleet */
   twinLive?: boolean
+  /** Q150: children this peer hosts, when it is a process rather than an arm. */
+  hostsChildren?: string[] | null
   onClose: () => void
 }) {
   const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer)
@@ -64,6 +68,13 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
   const p = peer.presence
   const offline = !!peer.stale
   const joints = Object.entries(peer.state?.joints ?? {})
+  const telemetry = useTelemetry(peer)
+  // Q151: THE SAFETY SENTENCE BELONGS HERE MOST. This is the surface an operator has open while
+  // walking up to the arm, and it said nothing about whether the stillness on screen is measured —
+  // while the card behind it said "safe to approach" or refused to. Same pure rule, same fields.
+  const status = (p?.robot_type ?? '?') === 'robot'
+    ? statusSentence(peerStatusFields(peer, telemetry, hostsChildren))
+    : null
 
   // Steps per second, measured off the stream itself rather than trusted from
   // the policy's declared control frequency.
@@ -114,6 +125,14 @@ export default function RobotDetail({ peer, twinLive = false, onClose }: {
           )}
           <button className="btn ghost" onClick={onClose} aria-label="close this robot" title="Escape">✕</button>
         </header>
+        {/* Q151: the safety sentence belongs on THIS surface most — it is what an operator reads while
+            walking up to the arm. Same pure rule and same fields as the card, so the two cannot say
+            different things about the same robot. */}
+        {status && (
+          <div className={`status-ribbon ${status.severity}`} role="status">
+            <b>{status.word}</b> {status.text}
+          </div>
+        )}
 
         {offline && (
           <div className="stale-note">

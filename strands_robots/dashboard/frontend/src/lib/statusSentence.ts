@@ -273,3 +273,34 @@ export function ribbonDetail(line: StatusLine): string {
   const rest = text.slice(word.length).replace(/^[\s\u2014:,-]+/, '')
   return rest.length > 0 ? rest : text
 }
+
+
+/**
+ * Q151: build statusSentence's fields from a peer + its telemetry, in ONE place.
+ *
+ * The card had this mapping inline, and the DETAIL STAGE — the full-screen view an operator has open
+ * while walking up to the arm — had no status sentence at all. So the surface you read from two feet
+ * away said nothing, while the card behind it said "idle and still — safe to approach" or "treat the
+ * arm as able to move". Two screens rendering the same judgement from two copies of the mapping is
+ * how they drift; one builder is why they cannot.
+ */
+export function peerStatusFields(
+  peer: { last_seen?: number | null; stale?: boolean | null; state?: any; lockout?: any; presence?: any },
+  telemetry: { moving?: boolean | null; jointsSeen?: boolean | null; stateAgeS?: number | null },
+  hostsChildren?: string[] | null,
+): StatusFacts {
+  const p = peer.presence
+  return {
+    stale: !!peer.stale,
+    lastSeenAgoS: peer.last_seen ? Date.now() / 1000 - peer.last_seen : null,
+    hwConnected: p?.connected ?? null,
+    taskStatus: peer.state?.task?.status ?? p?.task_status ?? null,
+    instruction: peer.state?.task?.instruction || p?.instruction || null,
+    taskDurationS: peer.state?.task?.duration ?? null,
+    moving: telemetry.moving ?? null,
+    jointsSeen: telemetry.jointsSeen ?? null,
+    stateAgeS: telemetry.stateAgeS ?? null,
+    lockout: peer.lockout?.state ?? null,
+    hostsChildren: hostsChildren ?? null,
+  }
+}
