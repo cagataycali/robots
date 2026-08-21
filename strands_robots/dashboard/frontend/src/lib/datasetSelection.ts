@@ -21,6 +21,8 @@ export interface DatasetRow {
   local?: boolean
   downloads?: number | null
   total_episodes?: number
+  /** frames actually written; 0 alongside 0 episodes is the abandoned-session shape. */
+  total_frames?: number | null
   robot_type?: string
   fps?: number
   /**
@@ -90,6 +92,31 @@ export function selectionKey(sel: { dataset_root: string; dataset_repo_id: strin
  * Hub row cannot — and saying so before the click beats a failure raised deep
  * inside a dataset loader.
  */
+/**
+ * MEASURED 2026-08-21, and the reason the two functions below no longer trust the verdict alone:
+ * this machine's disk holds `local/sim_recording` — 0 episodes, 0 frames, an abandoned session's
+ * leftovers — and the RUNNING dashboard predates `dataset_verdict`, so its rows arrive with no
+ * `usable` field at all. Against that server the screen offered the empty folder as a normal
+ * training target: the run would charge an environment setup and a model download before dying
+ * inside a dataset loader, and the operator would read it as a broken trainer.
+ *
+ * `total_episodes` has been in every version of that response, so a zero there is evidence the page
+ * already holds. Defence in depth for the case that is LIVE right now (a page newer than its
+ * server), deliberately narrow:
+ *   - only an explicit, finite 0 counts. undefined/null is no evidence and stays allowed.
+ *   - the server's verdict WINS when present, because its sentence names which failure mode this is;
+ *     this fallback only speaks when the field is missing entirely.
+ */
+function noEpisodes(d: DatasetRow): boolean {
+  if (d.usable !== undefined) return false
+  return d.total_episodes === 0 || d.total_frames === 0
+}
+
+/** The sentence for a row whose own count says it is empty — the server's wording, minus the part only it can know. */
+const EMPTY_ROW = '0 episodes. meta/info.json is written when a recording session OPENS, before the first '
+  + 'episode is captured, so a directory like this is what an abandoned session leaves behind — not a dataset. '
+  + 'Record into it, or delete it.'
+
 export function replayable(d: DatasetRow): { ok: boolean; reason: string } {
   if (!d.root) return { ok: false, reason: 'on the Hub, not on this machine — training downloads it; replay needs it local' }
   // Q37: replay reads an episode off the disk. A dataset whose metadata says zero episodes has none to read,
@@ -98,6 +125,7 @@ export function replayable(d: DatasetRow): { ok: boolean; reason: string } {
   // verbatim: it knows which of the failure modes this is, and re-wording it here would let the
   // two disagree.
   if (d.usable === false) return { ok: false, reason: d.problem ?? 'this dataset has no episodes to replay' }
+  if (noEpisodes(d)) return { ok: false, reason: EMPTY_ROW }
   // Deliberately says no episode NUMBER: the number lives in the box next to the button now, and this
   // sentence is composed with episodeChoice's in the tooltip — two claims about the index would contradict.
   return { ok: true, reason: 'Replay in a live mesh sim — appears in the fleet grid' }
@@ -113,6 +141,8 @@ export function replayable(d: DatasetRow): { ok: boolean; reason: string } {
 export function datasetMark(d: DatasetRow): { glyph: string; kind: 'recording' | 'problem' | 'ok' } {
   if (d.recording) return { glyph: '⏺ ', kind: 'recording' }
   if (d.usable === false) return { glyph: '⚠ ', kind: 'problem' }
+  // Same evidence, same glyph: a row the buttons will refuse must not look normal in the list.
+  if (noEpisodes(d)) return { glyph: '⚠ ', kind: 'problem' }
   return { glyph: '', kind: 'ok' }
 }
 
@@ -124,6 +154,7 @@ export function datasetMark(d: DatasetRow): { glyph: string; kind: 'recording' |
 export function trainable(d: DatasetRow | null): { ok: boolean; reason: string } {
   if (!d) return { ok: true, reason: '' }
   if (d.usable === false) return { ok: false, reason: d.problem ?? 'this dataset has no episodes to train on' }
+  if (noEpisodes(d)) return { ok: false, reason: EMPTY_ROW }
   return { ok: true, reason: '' }
 }
 

@@ -138,3 +138,27 @@ console.log('datasetSelection: all assertions passed')
   // recording wins over the abandoned reading even though both carry usable:false.
   assert.equal(datasetMark({ ...abandoned, recording: true }).kind, 'recording')
 }
+
+// ── an EMPTY dataset row, from a server too old to judge it (measured on this machine) ──
+// /Users/cagatay/.cache/huggingface/lerobot/local/sim_recording as the RUNNING dashboard reports it:
+// no `usable`, no `problem`, and a count of zero. Source-side dataset_verdict already calls this
+// unusable; the page must reach the same answer without it.
+const emptyRow = {
+  root: '/Users/cagatay/.cache/huggingface/lerobot/local/sim_recording',
+  repo_id: 'local/sim_recording', total_episodes: 0, total_frames: 0, fps: 30, robot_type: 'unknown',
+}
+assert.ok(!trainable(emptyRow).ok, 'training on an empty folder must be refused by the page too')
+assert.match(trainable(emptyRow).reason, /abandoned session/, 'the reason explains why the folder exists')
+assert.ok(!replayable(emptyRow).ok, 'there is no episode 0 to replay')
+assert.equal(datasetMark(emptyRow).kind, 'problem', 'a row both buttons refuse must not look normal')
+
+// A server that DOES judge it wins: its sentence knows which failure mode this is.
+const judged = { ...emptyRow, usable: false, problem: 'meta/info.json lists 3 episodes but data/ is empty' }
+assert.match(trainable(judged).reason, /data\/ is empty/, "the server's own wording is not overwritten")
+
+// NO EVIDENCE stays allowed: a row without counts is not a row known to be empty.
+assert.ok(trainable({ root: '/x', repo_id: 'a/b' }).ok, 'an unknown count blocks nothing')
+assert.ok(trainable({ root: '/x', repo_id: 'a/b', total_episodes: null }).ok, 'null is not zero')
+assert.ok(trainable({ root: '/x', repo_id: 'a/b', total_episodes: 30, total_frames: 14595 }).ok)
+// A row a recorder is writing into RIGHT NOW starts at zero episodes and is NOT a mistake.
+assert.equal(datasetMark({ ...emptyRow, recording: true }).kind, 'recording')
