@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
  * Q125: every /api path the frontend names must be served by a real route.
+ * Q129: and every /ws path too — the sockets are the same producer/consumer pairing, and a
+ * mistyped socket path is WORSE than a mistyped fetch: a WebSocket handshake failure surfaces as a
+ * close event, which every socket here already retries, so the typo appears as a camera that
+ * reconnects forever rather than as an error anybody reads.
  *
  * serverAge.ts answers this at RUNTIME against whatever server is live, which is the right tool for
  * "your server is older than this bundle" — but it cannot catch a path that is simply MISTYPED,
@@ -58,7 +62,7 @@ const used = new Map()
  */
 const stripComments = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 for (const f of tsFiles) {
-  for (const m of stripComments(readFileSync(f, 'utf8')).matchAll(/['"`](\/api\/[^'"`]*)['"`]/g)) {
+  for (const m of stripComments(readFileSync(f, 'utf8')).matchAll(/['"`](\/(?:api|ws)\/[^'"`]*)['"`]/g)) {
     if (!used.has(m[1])) used.set(m[1], new Set())
     used.get(m[1]).add(f.split('/').pop())
   }
@@ -85,10 +89,10 @@ for (const [raw, files] of [...used].sort()) {
   if (!matchers.some(m => m.rx.test(probe))) problems.push([raw, files, 'no route serves this'])
 }
 
-const label = `${used.size} /api path(s) in ${tsFiles.length} file(s) vs ${routes.length} route(s) in ${pyFiles.length} python file(s)`
+const label = `${used.size} /api + /ws path(s) in ${tsFiles.length} file(s) vs ${routes.length} route(s) in ${pyFiles.length} python file(s)`
 if (problems.length) {
   console.error(`FAIL routes-exist: ${label}`)
   for (const [p, files, why] of problems) console.error(`   ${p}  — ${why}  [${[...files].join(', ')}]`)
   process.exit(1)
 }
-console.log(`  ok    every /api path the frontend names is served (${label})`)
+console.log(`  ok    every /api and /ws path the frontend names is served (${label})`)

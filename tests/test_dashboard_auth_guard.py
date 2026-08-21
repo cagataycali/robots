@@ -399,3 +399,30 @@ def test_credential_management_is_never_public():
     assert creds, "expected the credential routes to exist (Q124)"
     for path in creds:
         assert path not in PUBLIC_PATHS, f"{path} must require a session"
+
+
+def test_http_requests_also_accept_the_token_in_the_query_string(monkeypatch):
+    """Q129: pinned as it IS today, with the trade-off written down rather than quietly changed.
+
+    A browser cannot set headers on a WebSocket handshake, so ?token= exists for /ws — but
+    `_presented` reads the query string for HTTP scopes too, which means a credential can ride in a
+    URL: access logs, browser history and the Referer of anything that page loads. Nothing in the
+    UI needs it (every fetch sends a header, AuthedImg fetches picture bytes rather than pointing an
+    <img> at a route, there are no download anchors, and the audits put ?token= on the PAGE url
+    where lib/endpoints absorbs it into storage), so narrowing this to websockets is defensible.
+
+    It is NOT done here because it cannot be proven safe from inside the repo: a curl habit, a
+    phone shortcut or a script on another machine may authenticate this way, and locking the owner
+    out of a publicly tunnelled dashboard is worse than a credential in a log line he controls.
+    /api/health's trusted-reader check reads ?token= on purpose (_session_presented), so the two
+    rails must be decided together. This test exists so the day someone narrows it, they narrow it
+    deliberately and see the reason and the second call site.
+    """
+    # The env matters and cost this test one run: with NOTHING configured the server is open to
+    # loopback ONLY, so a remote client is refused whatever it presents — it never reaches the
+    # credential branch at all. That is its own small reassurance about the LAN-dev posture.
+    monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "true")
+    token = auth.issue_token("cred1")
+    scope = _http_scope("/api/fleet", client=("203.0.113.7", 1))
+    scope["query_string"] = f"token={token}".encode()
+    assert run_scope(scope) == "passed"
