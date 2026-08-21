@@ -202,6 +202,8 @@ const withHeader = value => ({
   globalThis.fetch = async () => withHeader(JWT_B)
   await m.api('/api/fleet')
   assert.equal(cell.value, JWT_B, 'the renewed session must be STORED, or tomorrow logs the phone out again')
+  // AuthGate reads this to tell "renewal stopped working" apart from "this server never renews"
+  assert.ok(m.lastRenewalAt() > 0, 'an accepted renewal is an OBSERVED fact the banner can use')
 }
 {
   // silence changes nothing: an older server sends no such header, and a session must
@@ -211,6 +213,7 @@ const withHeader = value => ({
   globalThis.fetch = async () => withHeader(null)
   await m.api('/api/fleet')
   assert.equal(cell.value, JWT_A)
+  assert.equal(m.lastRenewalAt(), 0, 'an older server that never renews must not look like one that stopped')
 }
 {
   // a header with NO stored token is ignored: we never had a session to renew, and

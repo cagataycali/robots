@@ -284,6 +284,20 @@ export function authRefusedRecently(withinMs = 60_000, now: number = Date.now())
  *   currently WORKING. A renewal is an improvement or it is nothing.
  * Returns true only when the stored token actually changed (what a test can read).
  */
+let lastRenewalAtS = 0
+
+/**
+ * When this page last had a session renewal accepted (seconds, 0 = never).
+ *
+ * Deliberately an OBSERVATION, not a copy of the server's renewal policy: the cap and the
+ * TTL live in auth.py, and a second copy here would drift. What the UI needs to know is
+ * narrower and answerable locally — "is this server renewing me at all?" An older build
+ * (the one running on :8090 right now) sends no X-Session-Token and leaves this at 0.
+ */
+export function lastRenewalAt(): number {
+  return lastRenewalAtS
+}
+
 export function absorbRenewedSession(res: { headers?: { get(name: string): string | null } } | null): boolean {
   let offered: string | null = null
   try {
@@ -297,6 +311,7 @@ export function absorbRenewedSession(res: { headers?: { get(name: string): strin
   if (!current || fresh === current) return false
   if (fresh.split('.').length !== 3) return false
   setAuthToken(fresh)
+  lastRenewalAtS = Date.now() / 1000
   return true
 }
 

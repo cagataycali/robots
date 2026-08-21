@@ -32,7 +32,7 @@
  * the trigger; the server is the judge.
  */
 import { useEffect, useRef, useState } from 'react'
-import { api, setAuthToken, authToken, authRefusedRecently, HttpError } from '../lib/endpoints'
+import { api, setAuthToken, authToken, authRefusedRecently, HttpError, lastRenewalAt } from '../lib/endpoints'
 import { sessionVerdict } from '../lib/sessionExpiry'
 import {
   fetchAuthStatus, enroll, webauthnReady, type AuthStatus,
@@ -84,7 +84,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     let alive = true
     const check = () => {
       if (!alive) return
-      const v = sessionVerdict(authToken(), Date.now() / 1000)
+      const v = sessionVerdict(authToken(), Date.now() / 1000, lastRenewalAt())
       if (v.refusesUntilSignIn) {
         setExpiring('')
         setError(v.text ?? 'this sign-in has expired')

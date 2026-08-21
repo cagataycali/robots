@@ -95,7 +95,11 @@ export function humaniseSeconds(s: number): string {
  *   token: the stored credential (`getAuthToken()`), whatever shape it is in.
  *   nowS: current time in SECONDS (JWT units), so tests need no clock.
  */
-export function sessionVerdict(token: string | null | undefined, nowS: number): SessionVerdict {
+export function sessionVerdict(
+  token: string | null | undefined,
+  nowS: number,
+  renewedAtS = 0,
+): SessionVerdict {
   const raw = (token ?? '').trim()
   if (!raw) {
     return { state: 'none', expiresInS: null, text: null, refusesUntilSignIn: false }
@@ -120,8 +124,17 @@ export function sessionVerdict(token: string | null | undefined, nowS: number): 
     return {
       state: 'expiring',
       expiresInS: left,
-      text: `this sign-in lapses in ${humaniseSeconds(left)} — sign in again before starting a `
-        + 'recording, or it will be refused part-way through.',
+      // U21 made this sentence conditional. A dashboard that renews itself must not tell
+      // the operator to go and sign in — but a page whose renewals are NOT landing must
+      // not claim to be safe either, and only one of the two is happening at a time.
+      // `renewedAtS` is what this page has OBSERVED (endpoints.lastRenewalAt), never a
+      // guess about the server's policy.
+      text: renewedAtS > 0
+        ? `this sign-in lapses in ${humaniseSeconds(left)} and is no longer being renewed — `
+          + 'this page renewed it automatically before, so the connection is now being refused '
+          + 'or the session hit its 30-day maximum. Sign in again before starting a recording.'
+        : `this sign-in lapses in ${humaniseSeconds(left)} — sign in again before starting a `
+          + 'recording, or it will be refused part-way through.',
       refusesUntilSignIn: false,
     }
   }

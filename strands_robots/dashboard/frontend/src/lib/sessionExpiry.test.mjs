@@ -88,3 +88,35 @@ for (const token of ['!!!.!!!.!!!', 'ey.%%%%.zz', '..', jwt({}) + '.extra']) {
 
 console.log('sessionExpiry: 6 assertions groups ok — the measured 19.3h-expired token is named, and a '
   + 'missing/opaque/valid credential stays silent')
+
+// --- U21 follow-up: the expiring banner must not prescribe a remedy it cannot know is needed ---
+// Sliding renewal (auth.renewal_verdict + endpoints.absorbRenewedSession) means a healthy page
+// re-issues its own session on any request, and App polls every 60s. So a page that has SEEN a
+// renewal and is STILL 5 minutes from lapsing is not in the ordinary "go sign in" case — either
+// the server stopped accepting it or the 30-day cap was reached. Telling that operator the same
+// thing as someone on an older server (which never renews) hides the diagnosis.
+{
+  const NOW = 1787300000
+  const soon = jwt({ sub: 'cred1', iat: NOW - 86000, exp: NOW + 120 })
+  const never = sessionVerdict(soon, NOW, 0)
+  const renewed = sessionVerdict(soon, NOW, NOW - 3600)
+  assert.equal(never.state, 'expiring')
+  assert.equal(renewed.state, 'expiring', 'the STATE is unchanged - only the sentence differs')
+  assert.equal(never.refusesUntilSignIn, renewed.refusesUntilSignIn, 'wording is not permission')
+  assert.ok(!never.text.includes('renewed it automatically'),
+    'an older server never renews - promising renewal there would be a lie')
+  assert.ok(renewed.text.includes('no longer being renewed'),
+    'a page that HAS renewed must say the renewal stopped, or the operator hunts the wrong fault')
+  assert.ok(renewed.text.includes('30-day maximum') && renewed.text.includes('Sign in again'),
+    'both real causes and the one available action')
+  // the default keeps every existing caller (App, CameraTile, useMesh) on the old sentence
+  assert.equal(sessionVerdict(soon, NOW).text, never.text)
+}
+{
+  // and it changes nothing outside the expiring window: a valid or expired session reads the
+  // same whether renewals have been seen or not.
+  const T = 1787300000
+  assert.equal(sessionVerdict(jwt({ exp: T + 86400 }), T, T - 60).state, 'valid')
+  assert.equal(sessionVerdict(jwt({ exp: T - 60 }), T, T - 60).refusesUntilSignIn, true)
+}
+console.log('sessionExpiry.test.mjs: U21 expiring sentence ok')
