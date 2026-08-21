@@ -81,7 +81,16 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation-duration: .001s !important; transition-duration: .001s !important; }
+  /* Q163: the iteration count is the half that was missing, and without it this rule made things
+   * WORSE than no rule at all. A duration of .001s on a FINITE animation is "instantly done" —
+   * correct. On `infinite alternate` it is a 1000Hz STROBE: the amber busy dot and the live mic
+   * ring kept flipping opacity every millisecond. People set Reduce Motion for vestibular reasons
+   * and for PHOTOSENSITIVITY, so the shortcut aimed at them produced the one effect they most need
+   * not to see. Four rules elsewhere say `animation: none` by hand and were escaping exactly this,
+   * which is the tell: a global rule that individual rules keep having to opt out of is wrong.
+   * Capping the count stills every loop after one 1ms cycle, and no meaning is lost — both pulsing
+   * indicators also carry colour and a glow, so they still say "busy" and "live" while standing still. */
+  * { animation-duration: .001s !important; animation-iteration-count: 1 !important; transition-duration: .001s !important; }
 }
 
 .stage { min-height: 100dvh; display: flex; flex-direction: column; }

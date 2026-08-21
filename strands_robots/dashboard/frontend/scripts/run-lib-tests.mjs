@@ -134,6 +134,10 @@ if (!filter) {
     //   drifts invisibly — a developer without the preference set sees nothing wrong, and the people
     //   who do have it set meet the sign-in card first.
     'check-reduced-transparency.mjs',
+    //   check-reduced-motion — Q163: an INFINITE animation sped up to .001s is not stilled, it is a
+    //   ~1000Hz strobe, aimed at the very people (photosensitivity, vestibular) the preference exists
+    //   for. A global rule that individual rules keep opting out of is the tell.
+    'check-reduced-motion.mjs',
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {
