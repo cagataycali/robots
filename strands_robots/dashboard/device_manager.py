@@ -1311,6 +1311,77 @@ def _camera_option_names() -> tuple[str, ...]:
     return tuple(sorted(f.name for f in dataclasses.fields(OpenCVCameraConfig)))
 
 
+#: The ENUMERATED camera option values lerobot publishes, as a fallback for when lerobot cannot be
+#: imported (same contract as _CAMERA_OPTION_FIELDS above, and a test asserts it matches the real
+#: enums wherever lerobot IS importable). MEASURED 2026-08-22 against the installed lerobot rather
+#: than guessed: rotation's domain is {0, 90, 180, -90} -- writing the obvious "270" here would have
+#: refused a legal spelling and admitted an illegal one, which is why this list is read, never assumed.
+_CAMERA_ENUM_VALUES: dict[str, tuple[str, ...]] = {
+    "color_mode": ("bgr", "rgb"),
+    "rotation": ("-90", "0", "90", "180"),
+}
+
+
+def _camera_option_values() -> dict[str, tuple[str, ...]]:
+    """The admitted spellings per enumerated camera option, read from lerobot's own enums.
+
+    Read rather than copied, so a lerobot release that gains a colour mode or a rotation is admitted
+    here with no change -- the same reasoning the SDK applies to torch device strings (upstream #2563).
+    """
+    try:
+        from lerobot.cameras.configs import ColorMode, Cv2Rotation
+    except Exception:  # noqa: BLE001 - no lerobot here: the frozen list is the best truth available
+        return dict(_CAMERA_ENUM_VALUES)
+    return {
+        "color_mode": tuple(sorted(str(m.value) for m in ColorMode)),
+        "rotation": tuple(str(r.value) for r in Cv2Rotation),
+    }
+
+
+def camera_option_value_problem(
+    option: str, value: Any, admitted: dict[str, tuple[str, ...]] | None = None
+) -> str | None:
+    """Why this ENUMERATED option's value cannot work, or None.
+
+    The name half of this promise was already kept: an unknown option key is refused before a process
+    exists, because a reconfigure despawns the working arm FIRST and the child's ValueError arrives in
+    a log ring buffer after the robot is gone. The VALUE half was missing, and it fails in exactly the
+    same place -- hardware_robot coerces neither of these options (verified: it never mentions them),
+    so ``color_mode="RGB"`` reaches lerobot verbatim, where ColorMode("RGB") raises (measured: the
+    enum is lowercase and refuses the uppercase spelling) and the respawned arm is dead on arrival.
+
+    Only the SPELLING is graded, never whether this camera can honour it: a camera that cannot rotate
+    is a runtime fact this function has no way to know, and pretending otherwise would refuse a
+    configuration that works. An option with no published enumeration (fps, width, backend...) is not
+    this function's business and returns None -- those are graded by the numeric ranges above.
+
+    Ints are accepted by their string spelling, so rotation=90 and rotation="90" are both admitted:
+    the dashboard's own form sends strings and a remembered profile round-trips through JSON, so
+    demanding one of the two shapes would refuse a profile the child accepts.
+    """
+    table = _camera_option_values() if admitted is None else admitted
+    allowed = table.get(option)
+    if not allowed:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return (
+            f"{option} must be one of {', '.join(allowed)}, "
+            f"got {type(value).__name__} - lerobot reads this option as an enumerated value"
+        )
+    given = str(value).strip()
+    if given in allowed:
+        return None
+    close = difflib.get_close_matches(given.lower(), [a.lower() for a in allowed], n=1, cutoff=0.6)
+    # Compared against the spelling AS GIVEN, not its lowercase form: a case-only mistake ("RGB")
+    # is the likeliest one an operator makes here, and folding the case first made close[0] equal the
+    # normalised input, which silently swallowed the hint for exactly that case (caught by its test).
+    hint = f" Did you mean {close[0]!r}?" if close and close[0] != given else ""
+    return (
+        f"{option}={value!r} is not one of {', '.join(allowed)}.{hint} "
+        f"lerobot refuses the spelling itself, so the child would die at connect"
+    )
+
+
 def requested_camera_names(cameras: Any) -> list[str]:
     """The camera names a spawn ASKED for, sorted, or [] if it asked for none.
 
@@ -1444,6 +1515,13 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
                     f"Refused before anything is stopped - a reconfigure despawns the robot first."
                 )
             }
+        # ...and an option whose NAME is right but whose VALUE is not in lerobot's enumeration dies in
+        # the same place, after the despawn. Graded here beside the numeric ranges (upstream #2559
+        # bounded the same two vocabularies on the tool side; this is the dashboard's half).
+        for option in sorted(cfg):
+            problem = camera_option_value_problem(option, cfg[option])
+            if problem:
+                return {"error": f"camera {name!r}: {problem}"}
     return None
 
 
