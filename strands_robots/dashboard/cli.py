@@ -265,9 +265,21 @@ def main() -> None:
     # carries its JWT in the query string and uvicorn's access log wrote it verbatim -
     # 63k live bearer tokens in a world-readable /tmp file, measured. Installed before
     # uvicorn so its own loggers are covered from the first request.
-    from strands_robots.dashboard.log_redaction import install_redaction
+    from strands_robots.dashboard.log_redaction import install_redaction, register_secret
 
     install_redaction()
+    # Q117: the patterns above recognise a credential by its SHAPE, and five realistic log shapes
+    # (argv, an env assignment, a JSON body, a custom header, prose) printed this dashboard's own
+    # token verbatim. A registered literal cannot be out-guessed, so hand the rail the values this
+    # process actually holds - registered here, before uvicorn logs its first line.
+    from strands_robots.dashboard import settings as _settings
+
+    for _secret in (
+        _settings.get("security", "auth_token"),
+        os.getenv("STRANDS_DASHBOARD_BOOTSTRAP_TOKEN", ""),
+        os.getenv("STRANDS_DASHBOARD_TOKEN", ""),
+    ):
+        register_secret(_secret if isinstance(_secret, str) else None)
 
     import uvicorn
 

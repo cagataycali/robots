@@ -27,16 +27,58 @@ import logging
 import re
 
 #: query parameters whose VALUE is a credential
-_SECRET_QUERY_KEYS = ("token", "access_code", "api_key", "apikey", "password", "secret", "code")
+_SECRET_QUERY_KEYS = ("token", "access_code", "api_key", "apikey", "password", "secret")
+#: `code` is an oauth credential AND the commonest word in an HTTP log. Redacted only at credential
+#: LENGTH so a status stays readable - measured, `response code=404 detail=...` was being logged as
+#: `code=<redacted:3>`, which hides the one thing that line exists to say.
+_LONG_ONLY_QUERY_KEYS = ("code",)
 
 _QUERY_RE = re.compile(
     r"(?P<key>\b(?:" + "|".join(_SECRET_QUERY_KEYS) + r")=)(?P<val>[^\s&\"'#]+)",
+    re.IGNORECASE,
+)
+_LONG_QUERY_RE = re.compile(
+    r"(?P<key>\b(?:" + "|".join(_LONG_ONLY_QUERY_KEYS) + r")=)(?P<val>[^\s&\"'#]{8,})",
     re.IGNORECASE,
 )
 #: `Authorization: Bearer xyz`, and the bare `Bearer xyz` some clients log
 _BEARER_RE = re.compile(r"(?i)(?P<key>bearer\s+)(?P<val>[A-Za-z0-9._\-~+/]{8,}=*)")
 #: a JWT sitting loose in a message, with no key to hang the redaction on
 _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
+
+#: Q117. MEASURED against this machine's LIVE token in nine realistic log shapes: five printed it
+#: verbatim. Every fixture this file was built from shared one incidental property - the secret sat
+#: after `key=` or `Bearer ` - so the rules were tested against that property rather than against
+#: "a credential must not reach a log". The shapes that leaked: an env assignment
+#: (STRANDS_DASHBOARD_TOKEN=...), a JSON body ({"token": "..."}), a custom header
+#: (X-Auth-Token: ...), an argv list (--token', '...') and prose with the value in parentheses.
+#:
+#: Rail 1 - the key may be PREFIXED (X-Auth-, STRANDS_DASHBOARD_) and separated by `=` or `:`, with
+#: optional quotes around either side. `code` stays QUERY-ONLY on purpose: "code: 200" is an HTTP
+#: status in a thousand log lines and redacting it would buy nothing and cost readability.
+_KEYED_WORDS = ("token", "secret", "password", "passwd", "passphrase", "api_key", "apikey",
+                "access_code", "auth", "authorization", "credential")
+_KEYED_RE = re.compile(
+    r"(?i)(?P<key>[\w.\-]*(?:" + "|".join(_KEYED_WORDS) + r")[\w.\-]*\"?'?\s*[:=]\s*\"?'?)"
+    r"(?P<val>[A-Za-z0-9._\-~+/]{8,}=*)"
+)
+
+#: Rail 2, and the one that cannot be out-guessed: the process's OWN credentials, registered as
+#: literals when they are loaded. A pattern must recognise a shape; this only has to match bytes it
+#: was handed, so it covers argv, prose, a filename in parentheses - every shape nobody thought of.
+#: Short values are ignored: redacting a 4-character string would scribble over ordinary words.
+_known: set[str] = set()
+
+
+def register_secret(value: str | None) -> None:
+    """Redact ``value`` from every future log line, whatever shape it appears in."""
+    if value and len(value.strip()) >= 12:
+        _known.add(value.strip())
+
+
+def forget_secrets() -> None:
+    """Test-only: drop the registered literals (a leaked registration outlives one test)."""
+    _known.clear()
 
 
 def fingerprint(secret: str) -> str:
@@ -59,8 +101,20 @@ def redact_secrets(message: str) -> str:
         return m.group("key") + fingerprint(m.group("val"))
 
     out = _QUERY_RE.sub(_q, message)
+    out = _LONG_QUERY_RE.sub(_q, out)
+    # The keyed rail runs AFTER the query rail so `?token=x` keeps its narrower, well-tested
+    # handling (it must stop at & and #, which a generic value pattern does not know about).
+    out = _KEYED_RE.sub(_q, out)
     out = _BEARER_RE.sub(lambda m: m.group("key") + fingerprint(m.group("val")), out)
-    return _JWT_RE.sub(lambda m: fingerprint(m.group(0)), out)
+    out = _JWT_RE.sub(lambda m: fingerprint(m.group(0)), out)
+    # Rail 2 LAST, deliberately: a fingerprint's own text ("<redacted:43:8aco>") matches the value
+    # pattern, so replacing literals FIRST let the keyed rail redact the LABEL and print a wrong
+    # length ("?token=<redacted:18:aco>>"). Patterns first, then whatever they missed - argv, prose,
+    # a value in parentheses, any shape nobody thought of.
+    for secret in sorted(_known, key=len, reverse=True):
+        if secret in out:
+            out = out.replace(secret, fingerprint(secret))
+    return out
 
 
 class RedactingFilter(logging.Filter):
