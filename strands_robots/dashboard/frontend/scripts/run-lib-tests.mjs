@@ -158,7 +158,11 @@ if (!filter) {
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {
-    const w = spawnSync(process.execPath, [new URL(guard, import.meta.url).pathname], { encoding: 'utf8' })
+    // A guard may carry ARGUMENTS ('gen-bundle-routes.mjs --check'): resolve the file, pass the rest.
+    // new URL() percent-encodes the space into the FILENAME, so the old shape turned an argument into
+    // a module-not-found — a structural failure whose message blames a missing file.
+    const [gfile, ...gargs] = guard.trim().split(/\s+/)
+    const w = spawnSync(process.execPath, [new URL(gfile, import.meta.url).pathname, ...gargs], { encoding: 'utf8' })
     process.stdout.write(w.stdout || '')
     process.stderr.write(w.stderr || '')
     if (w.status !== 0) structural = 1
