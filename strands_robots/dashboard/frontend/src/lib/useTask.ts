@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { deriveTaskFlags, nextPhase, reportedTaskStatus } from './taskPhase'
+import { interpretRun, interpretStop } from './taskResponse'
+import type { Outcome } from './taskResponse'
 import type { TaskPhase } from './taskPhase'
 import type { Peer, StopResult } from '../types'
 import { HttpError, post } from './endpoints'
@@ -16,16 +18,8 @@ import type { RunBody } from '../components/RunForm'
  */
 export type { TaskPhase } from './taskPhase'
 
-export interface Outcome {
-  ok: boolean
-  text: string
-  detail?: string
-  /** The request failed WITHOUT telling us whether it landed: the arm may be
-   *  moving (run) or may still be moving (stop). Rendered louder than a plain
-   *  refusal, because the two demand different behaviour from a human standing
-   *  next to the hardware. */
-  ambiguous?: boolean
-}
+// The verdict shape lives with the code that decides it, so the two cannot drift apart.
+export type { Outcome } from './taskResponse'
 
 /**
  * Run/stop for one peer, shared by the card and the detail view so both report
@@ -88,12 +82,12 @@ export function useTask(peer: Peer) {
         { ...body, confirmed: true },
       )
       if (!mounted.current) return
-      const err = res.result?.error ?? res.result?.result?.error
-      setOutcome(res.ok
-        ? { ok: true, text: `running${res.routed_to ? ` via ${res.routed_to}` : ''}${res.mirrored_to_twin ? ' + twin' : ''}` }
-        : { ok: false, text: err ? String(err) : 'refused', detail: JSON.stringify(res.result).slice(0, 300) })
-      setPhase(res.ok ? 'running' : 'failed')
-      if (!res.ok) setConsent(findConsent(res))
+      // ./taskResponse decides what the response SAYS (tested there). Q88: an `error` inside the
+      // payload refuses the run even when the envelope says ok.
+      const v = interpretRun(res)
+      setOutcome(v.outcome)
+      setPhase(v.phase)
+      if (!v.outcome.ok) setConsent(findConsent(res))
     } catch (e) {
       if (!mounted.current) return
       setOutcome(physicalFail(e, 'run')); setPhase('failed')
@@ -115,11 +109,9 @@ export function useTask(peer: Peer) {
       const res = await post<StopResult>(`/api/robots/${encodeURIComponent(peer.peer_id)}/stop`)
       if (!mounted.current) return
       // stopped / not_stopped / no_answer - never a bare "stopped" on silence.
-      const text = res.state === 'stopped' ? 'stopped'
-        : res.state === 'no_answer' ? 'no answer - robot may still be moving'
-        : `not stopped: ${typeof res.detail === 'string' ? res.detail : JSON.stringify(res.detail ?? {})}`
-      setOutcome({ ok: res.state === 'stopped', text })
-      setPhase(res.state === 'stopped' ? 'idle' : 'failed')
+      const v = interpretStop(res)
+      setOutcome(v.outcome)
+      setPhase(v.phase)
     } catch (e) {
       if (!mounted.current) return
       setOutcome(physicalFail(e, 'stop')); setPhase('failed')
