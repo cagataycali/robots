@@ -458,9 +458,19 @@ def _pop_challenge(cid: str, kind: str) -> Dict[str, Any]:
 
 # --- JWT sessions ------------------------------------------------------------
 
-def issue_token(subject: str, name: str = "") -> str:
+def issue_token(
+    subject: str, name: str = "", iat0: int | None = None, exp: int | None = None
+) -> str:
+    """A session token. `iat0` is the ORIGINAL sign-in, carried unchanged through every
+    renewal so the absolute cap in renewal_verdict() cannot be reset by re-issuing."""
     now = int(time.time())
-    payload = {"sub": subject, "name": name, "iat": now, "exp": now + _token_ttl()}
+    payload = {
+        "sub": subject,
+        "name": name,
+        "iat": now,
+        "iat0": int(iat0) if iat0 else now,
+        "exp": int(exp) if exp else now + _token_ttl(),
+    }
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
 
 
@@ -549,6 +559,31 @@ def verify_token(token: str) -> Dict[str, Any]:
         raise HTTPException(401, "session expired")
     except jwt.PyJWTError:
         raise HTTPException(401, "invalid session")
+
+
+def renew_if_due(token: str, now: float | None = None) -> Optional[str]:
+    """A fresh token if this one is past its half-life, else None (U21).
+
+    None means "keep what you have" for every reason: still fresh, already expired,
+    past the absolute cap, unreadable. The caller never has to distinguish, because
+    the only action available to it is to pass a new token along or not — the
+    REASONS matter to auth/status, which can afford to explain them.
+    """
+    if not token:
+        return None
+    try:
+        claims = verify_token(token)
+    except HTTPException:
+        return None  # an expired or forged token is a login problem, not a renewal one
+    verdict = renewal_verdict(claims, time.time() if now is None else now)
+    if not verdict.get("renew"):
+        return None
+    return issue_token(
+        str(claims.get("sub") or ""),
+        str(claims.get("name") or ""),
+        iat0=verdict.get("iat0"),
+        exp=verdict.get("exp"),
+    )
 
 
 def session_is_valid(token: str) -> bool:

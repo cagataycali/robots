@@ -101,3 +101,89 @@ def test_every_reason_is_written_for_a_person():
     assert len(seen) == 5, "each refusal must be distinguishable, or the UI cannot explain it"
     for r in seen:
         assert r == r.strip() and "{" not in r and "Traceback" not in r
+
+
+# --- the plumbing: renew_if_due, and the header the browser must be able to read ----
+import asyncio
+
+from strands_robots.dashboard import auth, server as srv
+
+
+def test_renew_if_due_preserves_who_you_are_and_when_you_signed_in(monkeypatch):
+    monkeypatch.setenv("STRANDS_DASH_JWT_SECRET", "test-secret-for-renewal")
+    token = auth.issue_token("cred1", name="phone")
+    first = auth.verify_token(token)
+    assert first["iat0"] == first["iat"], "a first sign-in is its own origin"
+
+    assert auth.renew_if_due(token) is None, "a token issued a second ago is fresh"
+
+    fresh = auth.renew_if_due(token, now=first["iat"] + 50_000)  # past the 24h half-life
+    assert fresh and fresh != token
+    after = auth.verify_token(fresh)
+    assert after["sub"] == "cred1" and after["name"] == "phone", "renewal is not a new identity"
+    assert after["iat0"] == first["iat0"], "the ORIGINAL sign-in rides along, or the cap resets"
+    assert after["exp"] > first["exp"]
+
+
+def test_renew_if_due_says_nothing_for_a_token_it_cannot_trust(monkeypatch):
+    monkeypatch.setenv("STRANDS_DASH_JWT_SECRET", "test-secret-for-renewal")
+    assert auth.renew_if_due("") is None
+    assert auth.renew_if_due("not.a.jwt") is None
+    # An expired session is a LOGIN problem; renewing it would make expiry meaningless.
+    old = auth.issue_token("cred1")
+    assert auth.renew_if_due(old, now=auth.verify_token(old)["exp"] + 1) is None
+
+
+def _run(scope, headers):
+    """Drive the auth middleware over one request and collect what it sent."""
+    sent: list = []
+
+    async def app(scope, receive, send):  # the protected app behind the guard
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    guard = srv.TokenAuthMiddleware(app)
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(guard(scope, receive, send))
+    finally:
+        loop.close()
+    return sent
+
+
+def _header(sent, name: bytes):
+    for m in sent:
+        if m["type"] == "http.response.start":
+            for k, v in m["headers"]:
+                if k.lower() == name:
+                    return v
+    return None
+
+
+def test_a_renewed_token_rides_home_on_the_response(monkeypatch):
+    monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "true")
+    monkeypatch.setenv("STRANDS_DASH_JWT_SECRET", "test-secret-for-renewal")
+    monkeypatch.setattr(srv.settings, "get", lambda *a, **k: None)
+    token = auth.issue_token("cred1", name="phone")
+    aged = auth.issue_token("cred1", name="phone", exp=int(__import__("time").time()) + 100)
+
+    scope = {
+        "type": "http", "path": "/api/fleet", "method": "GET", "client": ("192.168.1.9", 5000),
+        "headers": [(b"x-dashboard-token", aged.encode())],
+    }
+    sent = _run(scope, None)
+    got = _header(sent, b"x-session-token")
+    assert got, "a session about to expire must be handed a new one, or the phone is locked out daily"
+    renewed = auth.verify_token(got.decode())
+    assert renewed["sub"] == "cred1"
+    assert _header(sent, b"access-control-expose-headers"), "a header the browser cannot read is no renewal"
+
+    # and a fresh session gets NO header: the client's credential is not rewritten per request
+    scope["headers"] = [(b"x-dashboard-token", token.encode())]
+    assert _header(_run(scope, None), b"x-session-token") is None

@@ -123,6 +123,42 @@ class TokenAuthMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
 
+    def _renewing(self, scope, send, dash_auth, presented):
+        """`send`, with a renewed session token attached if one is due (U21).
+
+        Only for http: a websocket has no response headers to carry it, and the
+        client's next ordinary request renews the session anyway — so a socket that
+        outlives the token is covered by the polling the page already does, without
+        inventing a second renewal channel inside the frame protocol.
+
+        A failure here must never cost the request its response: the caller is
+        already authenticated, and refusing to serve them because a *renewal*
+        raised would turn a convenience into an outage.
+        """
+        if scope.get("type") != "http":
+            return send
+        try:
+            fresh = dash_auth.renew_if_due(presented)
+        except Exception as exc:  # pragma: no cover - defence in depth
+            logger.warning("[auth] session renewal failed (%r)", exc)
+            return send
+        if not fresh:
+            return send
+
+        async def _send(message):
+            if message.get("type") == "http.response.start":
+                headers = list(message.get("headers") or [])
+                names = {k.lower() for k, _ in headers}
+                headers.append((b"x-session-token", fresh.encode()))
+                # Without this the browser can SEE nothing: a header the fetch layer
+                # cannot read is a renewal that silently never happens.
+                if b"access-control-expose-headers" not in names:
+                    headers.append((b"access-control-expose-headers", b"X-Session-Token"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        return _send
+
     @staticmethod
     def _note_refusal(scope: dict[str, Any], path: str, kind: str) -> None:
         """Count a refused handshake (Q88). Never allowed to affect the refusal itself.
@@ -243,7 +279,9 @@ class TokenAuthMiddleware:
                 await self.app(scope, receive, send)
                 return
             if dash_auth is not None and dash_auth.session_is_valid(presented):
-                await self.app(scope, receive, send)
+                # U21: a session past its half-life is renewed on the response it is
+                # already waiting for, so an active session never dies mid-use.
+                await self.app(scope, receive, self._renewing(scope, send, dash_auth, presented))
                 return
         self._note_refusal(scope, path, "credential")
         if scope["type"] == "websocket":
