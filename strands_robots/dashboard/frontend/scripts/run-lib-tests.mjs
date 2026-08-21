@@ -129,6 +129,10 @@ if (!filter) {
     //   because the only guard for it drives a browser against a running :8090 and therefore
     //   never runs on an ordinary day.
     'check-consent-kinds-have-rows.mjs',
+    //   gen-bundle-routes --check — the generated list of routes this bundle calls (Q124's dark-feature
+    //   banner reads it). A generated file nobody regenerates is just a stale hand-written one, and
+    //   this repo's hand-maintained lists have gone stale twice.
+    'gen-bundle-routes.mjs --check',
     //   check-live-regions — Q145: the e-stop verdict and the record refusal are ANSWERS to a tap; they
     //   must announce themselves, or they are seen and never heard.
     'check-live-regions.mjs',

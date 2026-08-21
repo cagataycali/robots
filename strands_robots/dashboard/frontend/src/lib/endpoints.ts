@@ -196,6 +196,12 @@ let _liveRoutesAt = 0
  */
 export const LIVE_ROUTES_TTL_MS = 60_000
 
+/** The running server's route table (openapi.json), cached with a TTL. Exported so the page can ask
+ *  "which of the routes I call are missing HERE" proactively (lib/darkFeatures) instead of only
+ *  explaining each 404 after the operator has already clicked. Same cache, so the proactive check
+ *  costs no extra request when a 404 explanation has already fetched it, and vice versa. */
+export async function serverRoutePaths(): Promise<string[] | null> { return liveRoutes() }
+
 async function liveRoutes(): Promise<string[] | null> {
   if (_liveRoutesTried && Date.now() - _liveRoutesAt < LIVE_ROUTES_TTL_MS) return _liveRoutes
   _liveRoutesTried = true

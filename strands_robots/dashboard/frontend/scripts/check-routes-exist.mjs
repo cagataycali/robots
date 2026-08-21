@@ -53,7 +53,12 @@ const asRegex = p => new RegExp('^' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').r
 const matchers = routes.map(r => ({ ...r, rx: asRegex(r.path) }))
 
 // ── the paths the frontend names ───────────────────────────────────────────────────────────────
-const tsFiles = walk(SRC).filter(f => /\.tsx?$/.test(f) && !f.includes('.test.'))
+// bundleRoutes.generated.ts is EXCLUDED: it is not a call site, it is a DERIVED LIST of the call sites
+// this same tree already contains (scripts/gen-bundle-routes.mjs writes it for the Q124 dark-feature
+// banner). Scanning it would double-count every path and, worse, judge its normalised '{p}' parameter
+// names against python's real ones — a typo report about a file no human wrote.
+const tsFiles = walk(SRC).filter(f => /\.tsx?$/.test(f) && !f.includes('.test.')
+  && !f.endsWith('bundleRoutes.generated.ts'))
 const used = new Map()
 /**
  * Comments are stripped first. A JSDoc line that MENTIONS a route in markdown backticks

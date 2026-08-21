@@ -3,10 +3,11 @@ import { useMesh } from './lib/useMesh'
 import { usePwa } from './lib/usePwa'
 import { linkHealth, estopPosture } from './lib/linkHealth'
 import LanHint from './components/LanHint'
+import { darkRoutes, darkFeatureMessage } from './lib/darkFeatures'
 import { lockoutBanner } from './lib/lockoutBadge'
 import { reloadImpact } from './lib/swUpdate'
 import { ConfigProvider } from './lib/useConfig'
-import { authToken, backendKey, backendLabel, setAuthToken } from './lib/endpoints'
+import { authToken, backendKey, backendLabel, setAuthToken, serverRoutePaths } from './lib/endpoints'
 import { sessionVerdict } from './lib/sessionExpiry'
 import { serverNotice, staleServerNotice, fleetFieldGaps, type RefusedHandshakes } from './lib/serverNotice'
 import FleetBar from './components/FleetBar'
@@ -141,6 +142,19 @@ function Dashboard() {
     peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length }))), [list])
 
   useEffect(() => { void pwa.keepAwake(anyRunning) }, [anyRunning])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Q124: which features on this page does the server answering here NOT have? lib/serverAge explains
+     one 404 AFTER the click; on this very machine the running dashboard lacked ten routes the UI calls
+     for three days, so ten features refused a click each and nothing said so first. Asked ONCE per
+     backend, from the same cached openapi.json a 404 explanation would fetch, and silent when the
+     answer is unknown (darkRoutes returns [] for that — our own missing fetch must never be rendered
+     as an accusation about the server). */
+  const [dark, setDark] = useState<string[]>([])
+  useEffect(() => {
+    let live = true
+    void serverRoutePaths().then(paths => { if (live) setDark(darkRoutes(paths)) }).catch(() => {})
+    return () => { live = false }
+  }, [backendKey()])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let live = true
     void getRecordApi().then(a => { if (live) setRecordMock(a.mock) }).catch(() => {})
@@ -292,6 +306,20 @@ function Dashboard() {
       {link.headline && (
         <div className={`toast ${link.commandsWork ? '' : 'warn'}`} role="status">
           <b>{link.headline}</b> {link.detail}
+        </div>
+      )}
+
+      {/* Q124: the dark-feature banner. BELOW the link banner on purpose — when this page cannot
+          command the fleet at all, that is the sentence that matters, and an older server is a
+          calmer problem than a dead one. <details> keeps the route list out of the glance while
+          keeping it available for a bug report. */}
+      {dark.length > 0 && (
+        <div className="toast warn" role="status">
+          <b>Older server.</b> {darkFeatureMessage(dark)}
+          <details>
+            <summary className="muted small">which {dark.length === 1 ? 'one' : 'ones'}</summary>
+            <ul className="muted small">{dark.map(p => <li key={p}>{p}</li>)}</ul>
+          </details>
         </div>
       )}
 
