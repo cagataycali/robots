@@ -11,7 +11,20 @@
  * The rule: a name is never evidence. It is shown, and where it contradicts a measurement the
  * contradiction is stated — the memory is still correct to reuse (the calibration file lives under
  * that id), so this is a note, never a refusal.
+ *
+ * The SECOND trap, found on the live rig 2026-08-21: the memory can hold a calibration id lerobot
+ * cannot load at all. `so101-leader` was remembered with `robot_id: 'leader'`, which exists only as
+ * `teleoperators/so101_leader/leader.json`; a robot in real mode loads `robots/<type>/<id>.json`, so
+ * every spawn from that memory dies with "has no calibration registered" and comes up with presence
+ * and zero joints. One click, the same failure, no warning — and the row said "last spawned as
+ * so101-leader · calibration id leader" as if that were reassuring. So the row now runs the
+ * remembered id through the SAME verdict the spawn form uses (lib/calibrationMatch), and reports it
+ * separately from the name/role note: a name that lies is worth reusing anyway, an id that cannot
+ * load is not.
  */
+
+import { calibrationVerdict } from './calibrationMatch'
+import type { CalibrationEntry } from './calibration'
 
 export interface RememberedSpawn {
   peer_id: string
@@ -38,11 +51,22 @@ export interface RememberedLine {
   calibrationId?: string
   /** present when a remembered NAME contradicts the measured role — a note, never a refusal */
   warning?: string
+  /**
+   * present when the remembered calibration ID would not load: the respawn is not merely
+   * mislabelled, it will reproduce a known failure. Kept apart from `warning` because the two call
+   * for opposite responses.
+   */
+  idProblem?: string
 }
 
 export function rememberedLine(
   r: RememberedSpawn | null | undefined,
-  facts: { role?: string | null; role_volts?: number | null } = {},
+  facts: {
+    role?: string | null
+    role_volts?: number | null
+    /** the machine's calibration files; undefined/null = not read, and then nothing is claimed */
+    calibrations?: CalibrationEntry[] | null
+  } = {},
 ): RememberedLine | null {
   if (!r || !r.peer_id) return null
   const role = (facts.role ?? '').trim().toLowerCase()
@@ -66,6 +90,17 @@ export function rememberedLine(
       `${named} while this bus measures ${volts} = ${role}. The measurement is the fact and the ` +
       `name is what is wrong — reuse the memory anyway (the calibration file lives under that id), ` +
       `but do not let the name convince you this is the other arm`
+  }
+
+  // Whether the remembered id can actually be LOADED, asked of the same rule the spawn form uses so
+  // one id cannot get two verdicts on two screens. Silent unless there is something to say, and
+  // silent whenever the calibration list has not arrived: accusing a memory on absent evidence would
+  // scare an operator away from the one button that fixes their board.
+  if (r.robot_id && facts.calibrations != null) {
+    const v = calibrationVerdict(r.robot_id, facts.calibrations, r.robot_name ?? '')
+    if (v.warn) {
+      line.idProblem = `${v.note} — spawning this memory as it stands repeats that failure`
+    }
   }
   return line
 }

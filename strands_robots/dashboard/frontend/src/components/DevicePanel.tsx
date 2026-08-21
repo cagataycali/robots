@@ -720,13 +720,18 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                       // disagree the row says so - iteration 135 shipped this line without that,
                       // which is how "calibration id leader_arm" ended up sitting under a badge
                       // reading "follower · 12.6V" with nothing to explain it.
-                      const mem = rememberedLine(p.remembered, p)!
+                      const mem = rememberedLine(p.remembered, { ...p, calibrations: calibIds })!
                       return (
                       <div className="row between remembered">
                         <span className="muted small">
                           last spawned as <b>{mem.summary}</b>
                           {mem.calibrationId ? ` · calibration id ${mem.calibrationId}` : ''}
                           {mem.warning && <span className="warn small"> ⚠ {mem.warning}</span>}
+                          {/* An id that cannot load is a different kind of news from a name that
+                              lies: this respawn will fail the way it failed last time. role=alert
+                              because it appears without the operator asking anything. */}
+                          {mem.idProblem &&
+                            <span className="warn small" role="alert"> ⚠ {mem.idProblem}</span>}
                           {/* Q43: the saved camera indices are the least stable part of the memory.
                               Said HERE, next to the button, because the alternative is learning it
                               from a child's log after an arm came up streaming joints only — which

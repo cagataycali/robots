@@ -67,4 +67,54 @@ assert.equal(nameClaimsOtherRole('LEADER_ARM', 'follower'), true)
   assert.match(l.warning, /its measured voltage = follower/)
 }
 
+// --- THE SECOND TRAP: a remembered id lerobot cannot load (measured on the live rig) ---
+const CALS = [
+  { id: 'leader', deviceType: 'teleoperators', model: 'so101_leader', motors: 6 },
+  { id: 'follower', deviceType: 'robots', model: 'so101_follower', motors: 6 },
+  { id: 'leader_arm', deviceType: 'robots', model: 'so101_follower', motors: 6 },
+]
+{
+  // so101-leader's real profile: robot_id 'leader', which exists only teleoperator-side.
+  const l = rememberedLine(
+    { peer_id: 'so101-leader', robot_name: 'so101', mode: 'real', robot_id: 'leader', cameras: ['main'] },
+    { calibrations: CALS })
+  assert.match(l.idProblem, /calibrated as a teleoperator/)
+  assert.match(l.idProblem, /repeats that failure/, 'the point is that ONE CLICK reproduces it')
+  assert.match(l.idProblem, /leader_arm/, 'and which ids would work instead')
+  assert.equal(l.warning, undefined, 'nothing was measured here, so no name/role claim is made')
+}
+{
+  // A loadable id says nothing at all - this row is dense already.
+  const l = rememberedLine(
+    { peer_id: 'so101-follower', robot_id: 'follower', cameras: [] }, { calibrations: CALS })
+  assert.equal(l.idProblem, undefined)
+}
+{
+  // An id that exists on NEITHER side is just as doomed, and gets named too.
+  const l = rememberedLine({ peer_id: 'a', robot_id: 'nope', cameras: [] }, { calibrations: CALS })
+  assert.match(l.idProblem, /no calibration named "nope"/)
+}
+{
+  // The list has not arrived: claim nothing. Accusing a memory on absent evidence would scare an
+  // operator off the one button that fixes their board.
+  for (const cals of [undefined, null]) {
+    const l = rememberedLine({ peer_id: 'a', robot_id: 'leader', cameras: [] }, { calibrations: cals })
+    assert.equal(l.idProblem, undefined)
+  }
+}
+{
+  // No remembered id at all: the spawn form's "no id" warning belongs to the form, not to a row
+  // describing what once happened.
+  const l = rememberedLine({ peer_id: 'a', cameras: [] }, { calibrations: CALS })
+  assert.equal(l.idProblem, undefined)
+}
+{
+  // The two notes are INDEPENDENT: a measured board whose name lies AND whose id cannot load says both.
+  const l = rememberedLine(
+    { peer_id: 'so101-leader', robot_id: 'leader', cameras: [] },
+    { role: 'follower', role_volts: 12.6, calibrations: CALS })
+  assert.match(l.warning, /12.6V = follower/)
+  assert.match(l.idProblem, /calibrated as a teleoperator/)
+}
+
 console.log('rememberedBoard: ok')
