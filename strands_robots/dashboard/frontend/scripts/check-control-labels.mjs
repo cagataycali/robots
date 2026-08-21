@@ -17,6 +17,15 @@
  * accused TrainingTab's episode box, which has carried an aria-label all along. This walks forward from
  * the tag name tracking brace depth and quotes, so the tag ends where JSX says it ends.
  *
+ * SECOND SECTION (Q148) — buttons whose entire label is a bare GLYPH: <button>✕</button>. Q146 established
+ * that a button's name usually cannot be judged from source, because it is a dynamic expression, and homed
+ * that check in a browser audit. But that audit walks the six nav screens, so a control living only inside a
+ * MODAL is outside it — and a close button is exactly that shape. This covers the statically CERTAIN subset:
+ * inner content with no expression braces, no JSX child and no ASCII letters cannot be anything but a glyph,
+ * wherever it renders. Measured 0 unnamed (all 147 already carry aria-label or title), so it is fatal on
+ * arrival rather than carrying a baseline. The two checks are complements, not duplicates: source sees every
+ * modal, the browser sees every dynamic label, and neither alone would have been enough.
+ *
  * Run: node scripts/check-control-labels.mjs
  */
 import fs from 'node:fs'
@@ -38,6 +47,21 @@ function tagAttrs(src, start) {
     i++
   }
   return src.slice(start)
+}
+
+/** index of the '>' that closes the tag opened at `start` (same brace/quote rules as tagAttrs). */
+function tagEnd(src, start) {
+  let i = start, depth = 0, quote = null
+  while (i < src.length) {
+    const c = src[i]
+    if (quote) { if (c === quote) quote = null }
+    else if (c === '"' || c === "'" || c === '`') quote = c
+    else if (c === '{') depth++
+    else if (c === '}') depth--
+    else if (c === '>' && depth === 0) return i
+    i++
+  }
+  return src.length
 }
 
 let total = 0
@@ -64,6 +88,31 @@ for (const f of files) {
   }
 }
 
+/* Q148: a button labelled only by a glyph, in any file — including the sheets no page audit opens. */
+let buttons = 0
+const glyphOnly = []
+for (const f of files) {
+  const raw = fs.readFileSync(path.join(SRC, String(f)), 'utf8')
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '))
+  for (const m of src.matchAll(/<button[\s/>]/g)) {
+    const end = tagEnd(src, m.index + 7)
+    const close = src.indexOf('</button>', end)
+    if (close < 0) continue
+    buttons++
+    const attrs = src.slice(m.index + 7, end)
+    const inner = src.slice(end + 1, close).trim()
+    const named = /aria-label(?:ledby)?[=\s]/.test(attrs) || /\btitle=/.test(attrs)
+    if (!named && inner.length && !/[{<]/.test(inner) && !/[A-Za-z]/.test(inner))
+      glyphOnly.push({ where: `${f}:${src.slice(0, m.index).split('\n').length}`, inner })
+  }
+}
+if (glyphOnly.length) {
+  console.error(`FAIL  ${glyphOnly.length} button(s) whose whole label is a glyph, with no aria-label or `
+    + 'title — the operator has to click it to learn what it does, and a screen reader reads the glyph:')
+  for (const g of glyphOnly) console.error(`  - ${g.where}  <button>${g.inner}</button>`)
+  process.exit(1)
+}
+
 if (anonymous.length) {
   console.error(`FAIL  ${anonymous.length} of ${total} form control(s) have NO accessible name — a `
     + 'placeholder vanishes as soon as the operator types, and a screen reader reads them as "edit text":')
@@ -72,4 +121,5 @@ if (anonymous.length) {
   console.error('  Wrap it in a <label>, or give it aria-label — whichever suits the layout.')
   process.exit(1)
 }
-console.log(`control labels: ${total} form control(s), every one has an accessible name`)
+console.log(`control labels: ${total} form control(s) named · ${buttons} button(s), none labelled by a `
+  + 'bare glyph alone')
