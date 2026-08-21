@@ -180,15 +180,26 @@ export interface RecordApi {
   uploadPreflight(): Promise<UploadPreflight>
 }
 
-const EMPTY: RecordSession = {
-  dataset: null, task: '', leader: null, follower: null,
-  target_episodes: 10, episodes: [], phase: 'idle', fps: 30,
+/**
+ * A FRESH empty session, built per call.
+ *
+ * This was a module-level constant, and `{ ...EMPTY }` is a SHALLOW copy: every session the mock
+ * started shared one `episodes` array with the constant, so a single push before `open()` replaced it
+ * would have appended a phantom take to every later session on the page — and to the constant itself,
+ * for the rest of the page's life. Nothing reached that today (startEpisode refuses without a
+ * dataset); a factory means nothing can.
+ */
+function emptySession(): RecordSession {
+  return {
+    dataset: null, task: '', leader: null, follower: null,
+    target_episodes: 10, episodes: [], phase: 'idle', fps: 30,
+  }
 }
 
 /* ------------------------------ mock ------------------------------ */
 
 function makeMock(): RecordApi {
-  let s: RecordSession = { ...EMPTY }
+  let s: RecordSession = emptySession()
   let startedAt = 0
   const clone = () => JSON.parse(JSON.stringify(s)) as RecordSession
   return {
@@ -206,7 +217,7 @@ function makeMock(): RecordApi {
       // `...opts` would write fps: undefined when the caller omits it, and the mock's frame tick
       // multiplies by it - so the rehearsal would count NaN frames. Absent means the backend's
       // default, the same reading the real route applies.
-      s = { ...EMPTY, ...opts, fps: opts.fps ?? EMPTY.fps, episodes: [], phase: 'idle' }
+      s = { ...emptySession(), ...opts, fps: opts.fps ?? emptySession().fps, episodes: [], phase: 'idle' }
       return clone()
     },
     async startEpisode() {
@@ -235,12 +246,17 @@ function makeMock(): RecordApi {
       return clone()
     },
     async discard(index) {
+      // The real route REFUSES both of these (record_worker.discard: _require_open, then KeyError ->
+      // HTTP 404). A rehearsal that quietly succeeds where the backend 404s is worse than no
+      // rehearsal: it is where the UI's error path gets declared unnecessary.
+      if (!s.dataset) throw new Error('no open session')
       const ep = s.episodes.find(e => e.index === index)
-      if (ep) ep.discarded = true
+      if (!ep) throw new Error(`no saved episode with index ${index}`)
+      ep.discarded = true
       return clone()
     },
     async close() {
-      s = { ...EMPTY }
+      s = emptySession()
       return { ok: true, detail: 'mock session closed (nothing was written)' }
     },
     async uploadPreflight() {
