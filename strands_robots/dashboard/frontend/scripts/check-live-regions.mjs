@@ -39,6 +39,12 @@ const PINNED = [
     find: /className="cs-error" role="alert"/ },
   { file: 'components/ConsentSheet.tsx', what: 'the approval verdict (saved / retrying / respawn needed)',
     find: /className="cs-note" role="status"/ },
+  // Q154: revoking. A revoke that FAILED leaves a permission with physical reach in force while the
+  // operator believes it is gone — the gravest silent answer in the consent family.
+  { file: 'components/ConsentSettings.tsx', what: 'the revoke failed (the permission is STILL in force)',
+    find: /className="cs-error" role="alert"/ },
+  { file: 'components/ConsentSettings.tsx', what: 'the revoke outcome (revoked / nothing to revoke)',
+    find: /className="cs-note" role="status"/ },
 ]
 
 const missing = []

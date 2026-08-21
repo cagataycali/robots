@@ -226,8 +226,13 @@ export default function ConsentSettings() {
         </div>
       ))}
 
-      {note ? <p className="cs-note">{note}</p> : null}
-      {error ? <p className="cs-error">{error}</p> : null}
+      {/* Q154: the answers to pressing "revoke". The failure is the graver of the two in this file:
+          Q153's unsaved GRANT merely refuses again the next time, but a revoke that did not happen
+          leaves a permission with physical reach STILL IN FORCE while the operator believes it is
+          gone — and the row it was pressed on re-renders from a reload that also failed. So the
+          outcome announces politely and the failure interrupts. */}
+      {note ? <p className="cs-note" role="status">{note}</p> : null}
+      {error ? <p className="cs-error" role="alert">{error}</p> : null}
       <p className="hint">
         Revoking applies to robots started from now on: a peer that is already running keeps the
         permission it was started with until you respawn it.
