@@ -1170,33 +1170,7 @@ body::before {
   .glass.quiet { background: var(--panel); }
   body::before { opacity: .5; }
 }
-@media (prefers-reduced-transparency: reduce) {
-  .glass, .gbtn, .ginput { background: var(--glass-solid); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .card, .bubble.agent { background: var(--glass-solid); border-color: var(--border); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .fleetbar, .dock-bar, .dock-panel { background: var(--panel); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .dock-bar input, .mic { background: var(--panel2); border-color: var(--border); backdrop-filter: none; }
-  /* the recede trick hides outlines; without transparency, keep them visible */
-  .card .twinbtn, .card .controls select, .card .controls input, .card .camswitch .chip { border-color: var(--border); }
-  .glass::before { background: none; }
-  body::before { display: none; }
-  /* Q162: the surfaces that were MISSING from this list, each found by asking the stylesheet
-   * which selectors apply a backdrop-filter and comparing. Eight components hand-roll the
-   * glass look instead of wearing the .glass kit, so this list is maintained by hand — and it
-   * had drifted exactly where it hurts most: the sign-in card (the FIRST thing a person with
-   * this preference set ever sees), the training sheet, the session warning, and every modal
-   * backdrop. A preference the OS forwards and the app ignores is worse than one it never had. */
-  .authcard, .train-sheet, .sessionwarn { background: var(--glass-solid); border-color: var(--border); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  /* The backdrops keep DIMMING (that is how a modal says "the page behind is not yours right
-   * now") and lose only the blur — removing the dim would leave the sheet floating on live
-   * content, which is a comprehension problem, not a transparency one. */
-  .detail-backdrop, .drawer-backdrop, .sheet-backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .camtile:not(.cam-live) .camstate { background: var(--panel2); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .dock-send:disabled { backdrop-filter: none; -webkit-backdrop-filter: none; }
-  /* Found by the guard, not by reading: the Q53 pacing notice. It is the one surface a person
-   * with this preference is MOST likely to be staring at, because it appears when the picture
-   * has gone slow and they are looking for the reason. */
-  .camtile .campaced { background: var(--panel2); backdrop-filter: none; -webkit-backdrop-filter: none; }
-}
+
 
 /* ── joint history strips (U6) ─────────────────────── */
 /* The bar says where the joint is; the trace to its right says where it has
@@ -1877,3 +1851,36 @@ pre.startsnip {
 .btn.linklike { min-width: 0; padding: 8px 2px; background: none; border: none; color: var(--accent);
   font-size: var(--fs-small); text-decoration: underline; text-underline-offset: 2px; }
 .btn.linklike:hover { color: color-mix(in srgb, var(--accent) 78%, var(--text)); }
+
+/* Q166: the preference blocks live at the END on purpose. A media query adds no specificity, so a
+ * plain rule LATER in the file outranks it: this exact block sat at line 1173 while .authcard is
+ * declared at 1336, and the sign-in card kept its blur for every person who had asked the OS for
+ * less transparency. Two of its siblings worked, which is what made it invisible — the block was
+ * 80% effective and looked entirely correct. Proven in a browser now, not just asserted here. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .gbtn, .ginput { background: var(--glass-solid); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .card, .bubble.agent { background: var(--glass-solid); border-color: var(--border); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .fleetbar, .dock-bar, .dock-panel { background: var(--panel); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .dock-bar input, .mic { background: var(--panel2); border-color: var(--border); backdrop-filter: none; }
+  /* the recede trick hides outlines; without transparency, keep them visible */
+  .card .twinbtn, .card .controls select, .card .controls input, .card .camswitch .chip { border-color: var(--border); }
+  .glass::before { background: none; }
+  body::before { display: none; }
+  /* Q162: the surfaces that were MISSING from this list, each found by asking the stylesheet
+   * which selectors apply a backdrop-filter and comparing. Eight components hand-roll the
+   * glass look instead of wearing the .glass kit, so this list is maintained by hand — and it
+   * had drifted exactly where it hurts most: the sign-in card (the FIRST thing a person with
+   * this preference set ever sees), the training sheet, the session warning, and every modal
+   * backdrop. A preference the OS forwards and the app ignores is worse than one it never had. */
+  .authcard, .train-sheet, .sessionwarn { background: var(--glass-solid); border-color: var(--border); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  /* The backdrops keep DIMMING (that is how a modal says "the page behind is not yours right
+   * now") and lose only the blur — removing the dim would leave the sheet floating on live
+   * content, which is a comprehension problem, not a transparency one. */
+  .detail-backdrop, .drawer-backdrop, .sheet-backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .camtile:not(.cam-live) .camstate { background: var(--panel2); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .dock-send:disabled { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  /* Found by the guard, not by reading: the Q53 pacing notice. It is the one surface a person
+   * with this preference is MOST likely to be staring at, because it appears when the picture
+   * has gone slow and they are looking for the reason. */
+  .camtile .campaced { background: var(--panel2); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}

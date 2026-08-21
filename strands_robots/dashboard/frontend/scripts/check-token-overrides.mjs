@@ -41,7 +41,8 @@ const depthAt = (upto) => {
     else if (css[i] === '}' && --d < 0 && firstNegative === null) firstNegative = css.slice(0, i).split('\n').length
   }
   if (d !== 0 || firstNegative !== null) {
-    console.log(`token overrides: FAIL — styles.css braces do not balance (final depth ${d}` +
+
+console.log(`token overrides: FAIL — styles.css braces do not balance (final depth ${d}` +
       (firstNegative ? `, first stray closer at line ${firstNegative}` : '') + ').')
     console.log('  A CSS parser recovers silently from this: the rules AFTER the break end up scoped inside')
     console.log('  whatever block is still open, which is how a whole screen ends up behind a media query.')
@@ -71,11 +72,60 @@ for (const r of roots.filter(r => r.inMedia)) {
   }
 }
 
-console.log(`token overrides: ${roots.filter(r => r.inMedia).length} media :root block(s), ${dead.length} dead override(s)`)
+/* Q166 GENERALISES Q165: it is not only custom properties. ANY declaration inside a preference block
+ * loses to a plain rule with the same selector later in the file. That is how the sign-in card kept its
+ * blur: the reduced-transparency block sat at line 1173 and .authcard was declared at 1336, so five of
+ * six surfaces obeyed the preference and one did not — a block that is 80% effective looks entirely
+ * correct in review, and only a browser with the preference set can tell you otherwise.
+ *
+ * Preference blocks therefore belong at the END of the stylesheet, and this proves it rather than
+ * asking anyone to remember. */
+const PREF = /@media[^{]*(prefers-|forced-colors)/
+const spans = []
+{
+  let d = 0
+  for (let i = 0; i < css.length; i++) {
+if (css[i] === '@' && d === 0) {
+  const head = css.slice(i, css.indexOf('{', i) + 1)
+  if (PREF.test(head)) {
+    let k = css.indexOf('{', i), dd = 0
+    for (; k < css.length; k++) {
+      if (css[k] === '{') dd++
+      else if (css[k] === '}' && --dd === 0) break
+    }
+    spans.push({ start: i, end: k, line: css.slice(0, i).split('\n').length })
+  }
+}
+if (css[i] === '{') d++
+else if (css[i] === '}') d--
+  }
+}
+
+const inSpan = (at) => spans.some(s => at > s.start && at < s.end)
+const shadowed = []
+for (const span of spans) {
+  const body = css.slice(css.indexOf('{', span.start) + 1, span.end)
+  for (const [, sel, decls] of body.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+const selector = sel.trim()
+if (!selector || selector === ':root') continue           // custom properties handled above
+const props = [...decls.matchAll(/(^|;)\s*([a-z-]+)\s*:/g)].map(m => m[2])
+for (const m of css.matchAll(new RegExp(`(^|\\})\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'g'))) {
+  const at = m.index
+  if (at <= span.end || inSpan(at)) continue
+  const hit = props.filter(pr => new RegExp(`(^|;)\\s*${pr}\\s*:`).test(m[2]))
+  if (hit.length) shadowed.push(`${selector} { ${hit.join(', ')} } — preference block at line ${span.line}, ` +
+    `plain rule wins at line ${css.slice(0, at).split('\n').length}`)
+}
+  }
+}
+if (shadowed.length) dead.push(...shadowed)
+
+console.log(`token overrides: ${roots.filter(r => r.inMedia).length} media :root block(s), ${spans.length} preference block(s), ${dead.length} dead override(s)`)
 if (dead.length) {
   console.log('  FAIL  these preference overrides are silently ignored — a media query adds no specificity,')
-  console.log('        so a later plain :root wins and the preference does nothing:')
+  console.log('        so a plain :root or rule LATER in the file wins and the preference does nothing:')
   for (const d of dead) console.log(`        ${d}`)
-  console.log('  Move the media block BELOW the last plain :root that defines those tokens.')
+  console.log('  Move the media block BELOW the last plain declaration it means to override — preference')
+  console.log('  blocks belong at the END of the stylesheet, which is where this file now keeps them.')
   process.exit(1)
 }
