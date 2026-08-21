@@ -127,11 +127,11 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
               return (
                 <div key={i}>
                   <div className="cam-config-row">
-                    <input placeholder="name (top / wrist)" value={r.name} onChange={e => edit(i, { name: e.target.value })} />
-                    <input placeholder="index or path" value={r.indexOrPath} onChange={e => edit(i, { indexOrPath: e.target.value })} />
-                    <input placeholder="fps" inputMode="numeric" value={r.fps} onChange={e => edit(i, { fps: e.target.value })} />
-                    <input placeholder="width" inputMode="numeric" value={r.width} onChange={e => edit(i, { width: e.target.value })} />
-                    <input placeholder="height" inputMode="numeric" value={r.height} onChange={e => edit(i, { height: e.target.value })} />
+                    <input placeholder="name (top / wrist)" aria-label={`camera ${i + 1} name`} value={r.name} onChange={e => edit(i, { name: e.target.value })} />
+                    <input placeholder="index or path" aria-label={`camera ${i + 1} index or path`} value={r.indexOrPath} onChange={e => edit(i, { indexOrPath: e.target.value })} />
+                    <input placeholder="fps" aria-label={`camera ${i + 1} fps`} inputMode="numeric" value={r.fps} onChange={e => edit(i, { fps: e.target.value })} />
+                    <input placeholder="width" aria-label={`camera ${i + 1} width`} inputMode="numeric" value={r.width} onChange={e => edit(i, { width: e.target.value })} />
+                    <input placeholder="height" aria-label={`camera ${i + 1} height`} inputMode="numeric" value={r.height} onChange={e => edit(i, { height: e.target.value })} />
                     <button className="btn ghost" title="detach this camera" onClick={() => remove(i)}>detach</button>
                   </div>
                   {idx !== null && (

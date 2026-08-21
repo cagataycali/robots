@@ -91,7 +91,7 @@ export default function CheckpointPicker({ value, onPick, disabled }: {
   return (
     <div className="ckpt" ref={rootRef}>
       <input
-        placeholder="search checkpoints… (e.g. smolvla, act so101)"
+        placeholder="search checkpoints… (e.g. smolvla, act so101)" aria-label="search checkpoints"
         value={query}
         onChange={e => { setQuery(e.target.value); onPick(e.target.value, null); searchNow(e.target.value) }}
         onFocus={() => { if (rows.length) setOpen(true); else searchNow(query) }}

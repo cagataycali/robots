@@ -445,7 +445,7 @@ function TokenPrompt() {
       className="tokenprompt"
       onSubmit={e => { e.preventDefault(); setAuthToken(token); location.reload() }}
     >
-      <input type="password" value={token} placeholder="dashboard token"
+      <input type="password" value={token} placeholder="dashboard token" aria-label="dashboard token"
              onChange={e => setToken(e.target.value)} />
       <button className="btn go" type="submit" disabled={!token.trim()}>unlock</button>
     </form>

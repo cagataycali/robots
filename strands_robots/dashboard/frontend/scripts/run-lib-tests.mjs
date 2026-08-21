@@ -120,6 +120,9 @@ if (!filter) {
   //   ships to every visitor and makes the stylesheet read like a design system that is in use.
   for (const guard of ['check-lib-wired.mjs', 'check-css-wired.mjs', 'check-class-defined.mjs',
     'check-dead-rules.mjs',
+    //   check-control-labels — Q144: a form control with no accessible name. A placeholder is not a
+    //   label: it vanishes the moment the operator types, and a screen reader reads "edit text".
+    'check-control-labels.mjs',
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {

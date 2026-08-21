@@ -171,7 +171,7 @@ export default function EstopSheet({
                 <div className="resume-row">
                   <input
                     type="password"
-                    placeholder="operator override code"
+                    placeholder="operator override code" aria-label="operator override code"
                     value={code}
                     onChange={e => setCode(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && resume()}
