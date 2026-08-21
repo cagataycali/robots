@@ -38,7 +38,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from strands_robots.dashboard import camera_liveness
+from strands_robots.dashboard import camera_liveness, record_joints
 from strands_robots.dashboard import record_crash
 from strands_robots.dashboard import disk_headroom
 from strands_robots.dashboard.dataset_check import _as_int, record_target_verdict
@@ -248,6 +248,19 @@ class RecordController:
             leader = self._managed(leader_id, role="leader")
             follower = self._managed(follower_id, role="follower")
 
+            # Joints BEFORE cameras: a missing camera view is a degraded dataset, positions that
+            # cannot be read are an empty one. Both arms, because the follower's positions are the
+            # observations and the leader's are the actions. Skipped entirely when the snapshot is
+            # absent or stale (record_joints refuses to treat old silence as evidence).
+            _now = time.time()
+            for _role, _pid in (("leader", leader_id), ("follower", follower_id)):
+                bad_joints = record_joints.refusal(
+                    role=_role, peer_id=_pid, peer=self._peer_snapshot(_pid),
+                    problem=self._joint_problem(_pid), now=_now,
+                )
+                if bad_joints:
+                    raise HTTPException(409, bad_joints)
+
             # A dataset is the expensive artifact here: an hour of hand-guiding an
             # arm, discovered to be useless at training time. A camera whose last
             # capture is hours old (measured: arm-1's wrist, 10.4h) would record a
@@ -399,6 +412,30 @@ class RecordController:
         except Exception:  # noqa: BLE001 - a probe must not break the session
             logger.debug("[record] could not read camera evidence for %s", peer_id)
             return {}
+
+    def _peer_snapshot(self, peer_id: str) -> Any:
+        """This peer's entry in the live mesh snapshot, or None when we cannot see it."""
+        try:
+            bridge = self._bridge
+            if bridge is None:
+                return None
+            return (bridge.snapshot().get("peers") or {}).get(peer_id)
+        except Exception:  # noqa: BLE001 - a probe must not break the session
+            logger.debug("[record] could not read the mesh snapshot for %s", peer_id)
+            return None
+
+    def _joint_problem(self, peer_id: str) -> Any:
+        """The classified reason this peer publishes no joints, if the dashboard has one.
+
+        Read from the SAME annotation hook the fleet view renders (DeviceManager.annotations_by_peer),
+        so the refusal and the robot card cannot give the operator two different explanations.
+        """
+        try:
+            fields = self._devices.annotations_by_peer().get(peer_id) or {}
+            return fields.get("joint_problem")
+        except Exception:  # noqa: BLE001
+            logger.debug("[record] could not read the joint annotation for %s", peer_id)
+            return None
 
     def _managed(self, peer_id: str, *, role: str) -> Any:
         if not peer_id:
