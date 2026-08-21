@@ -70,10 +70,6 @@ from webauthn.helpers.structs import (
 _ENV = "STRANDS_DASH_AUTH_"
 
 
-def _bool_env(key: str, default: bool) -> bool:
-    return os.getenv(key, str(default)).strip().lower() in ("1", "true", "yes", "on")
-
-
 def auth_enabled() -> bool:
     """Whether passkey auth guards the API.
 

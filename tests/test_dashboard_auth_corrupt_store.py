@@ -109,3 +109,86 @@ def test_a_genuinely_new_dashboard_is_unaffected(tmp_path):
     opts = auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="fresh")
     assert opts.get("challenge_id")
     assert auth.store_corruption() is None
+
+
+class TestTheLastNineLines:
+    """The defensive branches of this module, which had no coverage at all (2026-08-21).
+
+    Each of these is a filesystem or request failing in a way that is rare and consequential: the
+    module's whole promise is that auth cannot be dropped by an accident, and an untested `except`
+    is exactly where that promise is usually broken.
+    """
+
+    def test_a_quarantine_that_CANNOT_move_the_file_still_records_the_damage(
+        self, tmp_path, monkeypatch
+    ):
+        """The flag, not the backup, is what re-seals enrollment.
+
+        On a read-only or full volume the rename fails - and if the code gave up there, the
+        credential-less window would open with nobody recorded as responsible: a stranger through the
+        tunnel could seize a dashboard whose owner still has a passkey on disk. So the move is
+        best-effort and the FLAG is mandatory.
+        """
+        _corrupt_store(tmp_path)
+        monkeypatch.setattr(
+            auth.os, "replace",
+            lambda *a, **k: (_ for _ in ()).throw(OSError(30, "Read-only file system")),
+        )
+        auth._cache_key = None
+        auth._load()
+        damage = auth.store_corruption()
+        assert damage, "an unmovable corrupt store must still be REPORTED as corrupt"
+        assert damage["backup"] == "", "and honest that no backup file exists"
+        assert "JSONDecodeError" in damage["reason"] or "Expecting" in damage["reason"]
+        # ... and the narrowing it exists for still applies, naming the missing backup gracefully.
+        with pytest.raises(HTTPException) as err:
+            auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="stranger")
+        assert err.value.status_code == 403
+        assert "a backup" in str(err.value.detail), (
+            "the refusal must read sensibly when there is no backup path to name"
+        )
+
+    def test_a_store_that_cannot_be_chmodded_is_still_saved(self, tmp_path, monkeypatch):
+        """0600 is a wish, not a precondition - some filesystems have no such concept.
+
+        Refusing to save would mean a dashboard that cannot enroll a passkey at all on such a
+        volume, which is a worse outcome than a file with the volume's own permissions.
+        """
+        monkeypatch.setattr(
+            auth.os, "chmod",
+            lambda *a, **k: (_ for _ in ()).throw(OSError(45, "Operation not supported")),
+        )
+        auth._save({"credentials": [], "note": "kept"})
+        assert json.loads((tmp_path / "auth.json").read_text())["note"] == "kept"
+
+    def test_a_store_that_vanishes_between_write_and_stat_invalidates_the_cache(
+        self, tmp_path, monkeypatch
+    ):
+        """The cache key is (path, mtime, size). If stat fails there is no key to trust.
+
+        Setting it to None means the next _load re-reads from disk - the safe direction. Keeping a
+        stale key would serve a remembered store for a file somebody else has replaced.
+        """
+        real_stat = auth.Path.stat
+
+        def flaky_stat(self, *a, **k):
+            if self.name == "auth.json":
+                raise OSError(2, "No such file or directory")
+            return real_stat(self, *a, **k)
+
+        monkeypatch.setattr(auth.Path, "stat", flaky_stat)
+        auth._save({"credentials": []})
+        assert auth._cache_key is None
+        assert auth._cache == {"credentials": []}, "the write itself still happened"
+
+    def test_a_request_whose_headers_explode_still_returns_a_status(self, tmp_path):
+        """status() feeds the login screen. A diagnostic that raises takes the screen with it."""
+
+        class Hostile:
+            @property
+            def headers(self):
+                raise RuntimeError("no headers on this transport")
+
+        out = auth.status(Hostile())
+        assert out["setup_required"] is True and out["enabled"] is False
+        assert "rp_id" not in out, "an undiscoverable rp_id is absent, never guessed"
