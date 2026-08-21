@@ -1011,10 +1011,21 @@ hatch run format            # ruff check --fix, ruff format
    unresolved thread or a failing check (the author), a missing approval (any
    reviewer), an approval only its own pusher supplied (a different reviewer,
    per #1905), a required check absent because a fork run is held at
-   `action_required` (a maintainer), a check still running (nobody), or no
-   unsatisfied rule at all, which is the #2574 case and the one worth saying out
-   loud. A conflict or a draft is reported as *gating*: the rules behind it
-   cannot be assessed, so an approval there is necessary but not sufficient.
+   `action_required` (a maintainer), a check still running (nobody), a
+   mergeability GitHub has not finished computing (nobody, until a re-read), or
+   no unsatisfied rule at all, which is the #2574 case and the one worth saying
+   out loud. A conflict, a draft, or an uncomputed mergeability is reported as
+   *gating*: the rules behind it cannot be assessed, so an approval there is
+   necessary but not sufficient.
+
+   That last one is why the sweep is worth re-reading rather than trusting once.
+   `mergeable` is `bool | None`, and a merge into `main` invalidates the cached
+   value for **every** open pull request -- so a sweep run just after a merge is
+   exactly when the null appears, which is also when a health pass is most likely
+   to run. #1035 was measured reading `pusher-only-approval` (owed by a reviewer)
+   while it was in fact `CONFLICTING`/`DIRTY`, and an otherwise-satisfied pull
+   request in the same state read `no-unsatisfied-rule`, whose printed remedy is
+   to attempt the merge. Both are now `merge-state-unknown`. See #2585.
 
    It composes `check_last_push_approval.py` rather than restating it, so what
    counts as a current approval has one owner. Neither script gates a merge.
