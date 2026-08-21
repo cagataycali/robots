@@ -38,6 +38,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -361,6 +362,48 @@ def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
             "api", "despawn", target=peer_id,
             detail="USB auto-spawn (board unplugged)", ok=True,
         )
+
+
+def static_cache_control(path: str) -> str:
+    """Cache-Control for one built-frontend file, as a pure function of its name.
+
+    MEASURED 2026-08-21 on the running dashboard: /index.html and /sw.js came back with an ETag and
+    NO Cache-Control at all, and so did every hashed asset. That is the wrong way round twice over,
+    and it is the structural other half of the eleven-hour-old bundle a phone in Seattle was running
+    (see lib/swUpdate.ts):
+
+    - With no Cache-Control, a browser is ALLOWED to invent freshness from Last-Modified (the usual
+      heuristic is 10% of the file's age), so a reload can serve index.html out of the HTTP cache
+      without ever asking this server. A dist built ten hours ago buys about an hour of silence -
+      which is exactly the "no fix we ship can reach that phone" symptom, and no amount of service
+      worker polling can cure it, because the poll never gets to happen.
+    - Meanwhile the /assets files carry a content hash in their NAME, so they can never go stale and
+      should be cached for a year. Revalidating each of them costs a round trip per asset per load,
+      which on a phone over a tunnel is the slow cold start cagatay sees.
+
+    So: hashed assets are immutable, and every entry point is `no-cache`. `no-cache` means REVALIDATE,
+    not "do not store" - the ETag above still turns an unchanged file into a 304, so this is honest
+    without being wasteful. no-store would throw the bytes away and make every reload a full download.
+    """
+    name = path.rsplit("/", 1)[-1]
+    # A vite content hash is HYPHEN-separated and base62-ish: index-BB6lyXA6.css,
+    # workbox-e97c6ee1.js, workbox-window.prod.es5-BqEJf4Xk.js. Only a name that CHANGES when its
+    # content changes may be cached for a year, so the hash is required to be the LAST
+    # hyphen-separated segment, at least 8 characters, and to contain a digit.
+    #
+    # Two mistakes of mine are pinned by the test, because both were silent: a dot-separated pattern
+    # matched NONE of the real filenames (everything stayed no-cache, so the bug looked fixed and
+    # changed nothing), and allowing a hyphen INSIDE the hash matched apple-touch-icon.png, which is
+    # not hashed at all - a year-long cache on a file whose name never changes is unfixable from the
+    # server. Missing a real hash only costs a revalidation, so the pattern errs that way on purpose.
+    if re.fullmatch(
+        r".+-(?=[A-Za-z0-9_]*[0-9])[A-Za-z0-9_]{8,}\.(?:js|css|woff2?|png|svg|jpg|jpeg|webp|ico)",
+        name,
+    ):
+        return "public, max-age=31536000, immutable"
+    # Entry points: the html, the service worker, its registration shim, the manifest. Getting any of
+    # these from a cache pins the whole app at an old build.
+    return "no-cache"
 
 
 def create_app(bridge: MeshBridge | None = None) -> FastAPI:
@@ -2179,7 +2222,17 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     if FRONTEND_DIST.exists():
         from fastapi.staticfiles import StaticFiles
 
-        app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+        class _CachedStatic(StaticFiles):
+            """StaticFiles that labels what may be cached (see static_cache_control)."""
+
+            def file_response(self, *args: Any, **kwargs: Any) -> Response:
+                resp = super().file_response(*args, **kwargs)
+                resp.headers.setdefault(
+                    "Cache-Control", static_cache_control(getattr(resp, "path", "") or ""),
+                )
+                return resp
+
+        app.mount("/assets", _CachedStatic(directory=FRONTEND_DIST / "assets"), name="assets")
 
         @app.get("/{path:path}")
         async def spa(path: str) -> Response:
@@ -2198,8 +2251,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 )
             candidate = FRONTEND_DIST / path
             if path and candidate.is_file():
-                return FileResponse(candidate)
-            return FileResponse(FRONTEND_DIST / "index.html")
+                return FileResponse(
+                    candidate, headers={"Cache-Control": static_cache_control(path)},
+                )
+            # An SPA route falls back to the entry point, so it is labelled like one.
+            return FileResponse(
+                FRONTEND_DIST / "index.html",
+                headers={"Cache-Control": static_cache_control("index.html")},
+            )
     else:
 
         @app.get("/")
