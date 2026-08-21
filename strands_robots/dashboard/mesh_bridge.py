@@ -200,6 +200,21 @@ def command_succeeded(response: dict[str, Any] | None) -> bool:
             return False
         if str(result.get("status", "")).lower() in ("error", "failed"):
             return False
+        # An ``error`` INSIDE the payload is the peer's own refusal, and it arrives with no ``ok``
+        # key and no ``status`` at all -- a plain ``{"error": "gripper jammed"}`` from a tool. This
+        # check was missing (Q88), and the two callers below turned that omission into a lie:
+        # ``/api/robots/{id}/task`` answered ``ok: true`` so the card said "running" above the
+        # robot's own readable error, and ``stop_outcome`` classified the same shape as "stopped" --
+        # the exact failure this function's docstring says it exists to prevent. Widening it can only
+        # move a verdict from success to refusal, which is the safe direction for the estop counts
+        # that read ``stop_outcome``: fewer false "all_stopped", never a false "not_stopped".
+        if result.get("error"):
+            return False
+        # A peer that wraps a tool result nests it once more. Both depths are real -- the dashboard's
+        # own reader has always looked at ``result.error ?? result.result.error``.
+        inner = result.get("result")
+        if isinstance(inner, dict) and inner.get("error"):
+            return False
     return True
 
 
