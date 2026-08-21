@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { planRetry } from './cameraRetry'
-import { frameProvesLiveness } from './liveness'
+import { mergeMeshEvent, sweepStale } from './meshPeers'
 import type { ActivityEntry, MeshEvent, MeshInfo, Peer } from '../types'
 import { authToken, wsUrl } from './endpoints'
 import { sessionVerdict } from './sessionExpiry'
@@ -99,36 +99,18 @@ export function useMesh(): MeshStore {
         switch (ev.type) {
           case 'snapshot':
             setDashboardId(ev.dashboard_peer_id)
-            setPeers(ev.peers)
+            // Peer merging lives in ./meshPeers as pure functions (tested there; inside this
+            // handler it needed a live websocket). The snapshot's last_seen values are the
+            // SERVER's clock, so mergeMeshEvent rebases them by AGE into this browser's.
+            setPeers(p => mergeMeshEvent(p, ev, Date.now() / 1000))
             if (ev.mesh) setMesh(ev.mesh)
             setLoaded(true)
             break
           case 'presence':
-            setPeers(p => ({ ...p, [ev.peer_id]: { ...p[ev.peer_id], peer_id: ev.peer_id, presence: ev.data, last_seen: Date.now() / 1000, stale: false } }))
-            break
           case 'state':
-            setPeers(p => ({ ...p, [ev.peer_id]: { ...p[ev.peer_id], peer_id: ev.peer_id, state: ev.data, last_seen: Date.now() / 1000, stale: false } }))
-            break
           case 'stream':
-            setPeers(p => ({ ...p, [ev.peer_id]: { ...p[ev.peer_id], peer_id: ev.peer_id, stream: ev.data, last_seen: Date.now() / 1000, stale: false } }))
-            break
           case 'camera_meta':
-            setPeers(p => {
-              const peer = p[ev.peer_id] ?? { peer_id: ev.peer_id }
-              // A camera frame only vouches for the peer if the PEER captured it
-              // recently. The server replays a camera's last cached frame to
-              // every new subscriber, so mounting a tile used to resurrect a peer
-              // that died hours ago: last_seen refreshed, stale cleared, card
-              // green. The frame's own capture time settles it.
-              const fresh = frameProvesLiveness({ frameT: (ev.data as any)?.t, nowS: Date.now() / 1000 })
-              const cameras = { ...peer.cameras, [ev.cam]: ev.data }
-              return {
-                ...p,
-                [ev.peer_id]: fresh
-                  ? { ...peer, cameras, last_seen: Date.now() / 1000, stale: false }
-                  : { ...peer, cameras },
-              }
-            })
+            setPeers(p => mergeMeshEvent(p, ev, Date.now() / 1000))
             break
           case 'safety':
             setSafetyFlash(ev.kind)
@@ -142,7 +124,7 @@ export function useMesh(): MeshStore {
             // The session was re-pointed under us: the old peer list belongs to
             // the old mesh, so drop it rather than show ghosts.
             setMesh(ev.mesh)
-            setPeers({})
+            setPeers(p => mergeMeshEvent(p, ev, Date.now() / 1000))
             break
         }
       }
@@ -152,15 +134,7 @@ export function useMesh(): MeshStore {
     // stale sweep every 5s
     const sweep = setInterval(() => {
       const now = Date.now() / 1000
-      setPeers(p => {
-        let changed = false
-        const next = { ...p }
-        for (const [id, peer] of Object.entries(next)) {
-          const stale = now - (peer.last_seen ?? 0) > 15
-          if (stale !== peer.stale) { next[id] = { ...peer, stale }; changed = true }
-        }
-        return changed ? next : p
-      })
+      setPeers(p => sweepStale(p, now))
     }, 5000)
 
     return () => {
