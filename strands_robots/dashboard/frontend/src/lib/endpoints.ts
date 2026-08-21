@@ -12,6 +12,7 @@
  */
 
 import { routeKnown, staleRouteMessage, unroutedByDetail } from './serverAge'
+import { detailSentence } from './detailSentence'
 
 const BASE_KEY = 'strands.backend'
 const TOKEN_KEY = 'strands.token'
@@ -220,7 +221,11 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   try { body = text ? JSON.parse(text) : null } catch { /* keep raw text */ }
   if (!res.ok) {
     const detail = (body && (body.detail ?? body.error)) || text || res.statusText
-    let message = typeof detail === 'string' ? detail : JSON.stringify(detail)
+    // Q99: the server's richest errors arrive as an OBJECT ({error, hint, and the alternatives that
+    // exist}) — JSON.stringify put braces and quotes on the screen and buried the answer in the middle
+    // of them. detailSentence composes the sentence it was written to be, and falls back to the JSON
+    // for a shape it does not recognise, so nothing is ever quietly dropped.
+    let message = detailSentence(detail) || text || res.statusText
     // Q79: a 404 on a route this server does not have at all is the server being older than the
     // bundle, not the resource being absent. Only ever ADDS an explanation - the server's own words
     // stay, because when the route does exist they are the truth.
@@ -257,9 +262,11 @@ export async function apiBlob(path: string): Promise<string> {
   }
   if (!res.ok) {
     const text = await res.text()
-    let detail = text || res.statusText
+    let detail: unknown = text || res.statusText
     try { detail = JSON.parse(text).detail ?? detail } catch { /* raw text */ }
-    throw new HttpError(res.status, typeof detail === 'string' ? detail : JSON.stringify(detail))
+    // Same rail as api(): a camera preview refused with a structured detail (409 PermissionError,
+    // 503 with the driver's words) is read by a person too.
+    throw new HttpError(res.status, detailSentence(detail) || text || res.statusText)
   }
   return URL.createObjectURL(await res.blob())
 }
