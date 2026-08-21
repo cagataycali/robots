@@ -1608,7 +1608,7 @@ def _image_exists(image_name: str) -> bool:
             check=False,
         )
         return result.returncode == 0
-    except (FileNotFoundError, OSError):
+    except OSError:
         return False
 
 
@@ -1630,7 +1630,7 @@ def _container_state(name: str) -> str:
         if result.returncode != 0:
             return "absent"
         return result.stdout.strip() or "absent"
-    except (FileNotFoundError, OSError):
+    except OSError:
         return "absent"
 
 
@@ -1858,7 +1858,7 @@ def _container_has_wrapper_mount(name: str) -> bool:
         if result.returncode != 0:
             return False
         return _DETERMINISTIC_WRAPPER_CONTAINER_PATH in result.stdout.split()
-    except (FileNotFoundError, OSError):
+    except OSError:
         return False
 
 

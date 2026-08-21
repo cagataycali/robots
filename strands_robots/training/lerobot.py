@@ -520,7 +520,7 @@ class LerobotTrainer(Trainer):
         try:
             with open(info, encoding="utf-8") as f:
                 return int(json.load(f).get("total_episodes"))
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        except (OSError, ValueError, TypeError):
             return None
 
     def _resume_config_path(self, output_dir: str) -> str | None:

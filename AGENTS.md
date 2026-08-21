@@ -1407,7 +1407,13 @@ Corrections from code review that apply to all future contributions:
 
 ### Exception Clauses Must Be Narrow
 - **`except Exception` is forbidden** for non-recovery code paths. Use the smallest superset of expected exception types.
-- **`except (ImportError, Exception)` is a bug** - `Exception` is a superclass of `ImportError`, so the tuple collapses to `except Exception`. Lint/review will catch this; don't write it.
+- **`except (ImportError, Exception)` is a bug** - `Exception` is a superclass of `ImportError`, so the tuple collapses to `except Exception`. The same collapse happens for any member another member already covers: `except (FileNotFoundError, OSError)` is `except OSError`, and with it `PermissionError`, `TimeoutError` and the whole `ConnectionError` family. The covered name contributes no scope, only the impression of a smaller superset than the handler has - and where the prose on the handler enumerates the tuple, that impression becomes a claim the handler does not keep. No linter reports it: ruff's `B014` covers a *duplicate* member only, and the full
+  catalogue (`--select ALL`) reports neither `(FileNotFoundError, OSError)` nor
+  `(ImportError, Exception)`. Drop the covered member - that changes no behaviour. Narrowing the
+  handler's real surface is a separate behaviour change, one per site. Pinned by
+  tests/test_except_tuples_state_their_real_scope.py, over builtins, the standard library and
+  this package; a third-party tree is left alone because a dependency can re-parent its classes
+  between releases, so naming both it and a builtin superclass is a hedge.
 - **USB / hardware probing** - use `except (ImportError, OSError)`. `PermissionError` is an `OSError`, `FileNotFoundError` is an `OSError`, etc.
 
 ### Actuators: a joint pose goes only where `ctrl` IS a joint pose
