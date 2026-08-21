@@ -21,6 +21,10 @@ const TOKEN = fs.readFileSync(
   process.env.STRANDS_DASH_TOKEN_FILE ?? `${process.env.HOME}/.strands_dashboard/local_api_token.txt`, 'utf8').trim()
 const BASE = process.env.STRANDS_DASH_URL ?? 'http://127.0.0.1:8090'
 const failures = []
+// Q130: the same audit at phone size. VIEWPORT=390x844 checks that a refusal an operator must
+// ANSWER is reachable on the screen they actually hold — the record form is the densest one in the
+// dashboard, and a tick that needs a horizontal scroll to find is a tick nobody ticks.
+const [VW, VH] = (process.env.VIEWPORT ?? '1280x1100').split('x').map(Number)
 
 // The server's real sentence, copied from camera_liveness.drift_refusal. Deliberately not
 // paraphrased: the page's tick is derived from these words, so a reworded fixture would prove
@@ -69,8 +73,8 @@ const IDLE = {
 const browser = await chromium.launch()
 
 /** Open the record screen with /api/record/open answering `detail` as a 409, and return the page. */
-async function recordScreen(detail) {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 1100 }, serviceWorkers: 'block' })
+async function recordScreen(detail, vp = { width: VW, height: VH }) {
+  const ctx = await browser.newContext({ viewport: vp, serviceWorkers: 'block' })
   const page = await ctx.newPage()
   const thrown = []
   const sent = []
@@ -231,6 +235,53 @@ async function attemptRecording(page) {
   await ctx.close()
 }
 
+// ---- 4. Q130: on a phone, is the tick FINDABLE? Playwright scrolls a target into view before it
+// clicks, so section 1 passing at 390x844 proves the tick EXISTS on a phone, not that a human can
+// see it. The mobile failure to fear is horizontal overflow: a tick parked past the right edge is
+// reached by a scroll gesture nobody thinks to make on a form that already scrolls vertically.
+// Unconditional: run-audits.mjs passes no env, so a phone check gated behind VIEWPORT= would never
+// run in the sweep that matters. It opens its own 390x844 context instead.
+const PHONE = { width: 390, height: 844 }
+{
+  const { ctx, page } = await recordScreen(DRIFT, PHONE)
+  if (await attemptRecording(page)) {
+    const over = await page.evaluate(() => {
+      const d = document.documentElement
+      return { scroll: d.scrollWidth, client: d.clientWidth }
+    })
+    // 1px of slack: sub-pixel layout rounding is not a defect.
+    if (over.scroll > over.client + 1) {
+      failures.push(`the record screen scrolls SIDEWAYS at ${PHONE.width}px (${over.scroll} > ${over.client}) — `
+        + 'a refusal answered by a tick off the right edge is a refusal nobody answers')
+    }
+    const box = await page.locator('.ackrow').first().boundingBox()
+    if (!box) failures.push('the consent row has no box at phone width')
+    else if (box.x < 0 || box.x + box.width > PHONE.width + 1) {
+      failures.push(`the consent row sits outside the ${PHONE.width}px viewport (x=${Math.round(box.x)}, `
+        + `w=${Math.round(box.width)})`)
+    }
+    // The tick must still SAY what it admits at this width: a CLIPPED sentence is consent collected
+    // for words the operator could not read. Checked as clipping, not as a keyword — the first
+    // version of this looked for "identity"/"changed hands" in a label that reads "my cameras really
+    // are at these indices — record with them as they stand", i.e. it invented a defect out of its
+    // own wrong expectation. Wrapping is fine; overflow being hidden is not.
+    const clip = await page.locator('.ackrow').first().evaluate(el => ({
+      text: el.innerText,
+      clippedX: el.scrollWidth > el.clientWidth + 1,
+      clippedY: el.scrollHeight > el.clientHeight + 1,
+      overflow: getComputedStyle(el).overflow,
+    }))
+    if (clip.clippedX || clip.clippedY) {
+      failures.push(`the consent row's words are CLIPPED at ${PHONE.width}px (overflow: ${clip.overflow}) — `
+        + 'consent collected for a sentence the operator cannot finish reading')
+    }
+    if (!/cameras/i.test(clip.text)) {
+      failures.push(`the consent row lost its subject at phone width: ${JSON.stringify(clip.text.slice(0, 90))}`)
+    }
+  }
+  await ctx.close()
+}
+
 await browser.close()
 
 if (failures.length) {
@@ -238,5 +289,6 @@ if (failures.length) {
   process.exit(1)
 }
 console.log('record refusal: a 409 naming ignore_camera_identity reaches the DOM with the server\'s own words, '
+  + 'is answerable at 390x844 without a sideways scroll or a clipped sentence, '
   + 'grows one tick that states the claim AND the cost, and the retry carries exactly that flag — '
   + 'while a refusal naming two overrides grows none')
