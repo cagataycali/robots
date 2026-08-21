@@ -13,10 +13,12 @@ import TelemetryStrip from './TelemetryStrip'
 import RunForm from './RunForm'
 import ConsentSheet from './ConsentSheet'
 
-export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }: {
+export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange, hostsChildren}: {
   peer: Peer
   /** a '<id>-twin' peer is live in the fleet (App reads the same snapshot) */
   twinLive?: boolean
+  /** Q150: children this peer hosts, when it is a process rather than an arm. */
+  hostsChildren?: string[] | null
   onOpen?: (peerId: string) => void
   onBusyChange?: (peerId: string, running: boolean) => void
 }) {
@@ -49,6 +51,7 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
     // Silence is not stillness: a peer with no joint stream must not earn a
     // green "safe to approach".
     jointsSeen: telemetry.jointsSeen,
+    hostsChildren,
     stateAgeS: telemetry.stateAgeS,
     // Q95: the lockout is the REASON a locked arm is still, so the sentence says it instead of
     // contradicting the badge two rows above it.

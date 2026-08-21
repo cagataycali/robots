@@ -41,6 +41,9 @@ export interface StatusFacts {
    * and very different sentences to a human.
    */
   jointsSeen?: boolean | null
+  /** Q150: peer ids of children this peer HOSTS (from armHosts). A host process publishes no joints
+   *  BY DESIGN, so silence must not be read to it as "an arm that might move". */
+  hostsChildren?: string[] | null
   /** seconds since the last state-topic sample (null = no samples yet) */
   stateAgeS: number | null
   /**
@@ -215,6 +218,20 @@ export function statusSentence(f: StatusFacts): StatusLine {
   // null), and refused again here, because two layers agreeing is what keeps the
   // green sentence honest if either one is edited later.
   if (f.moving == null || f.jointsSeen === false) {
+    if (f.jointsSeen === false && f.hostsChildren && f.hostsChildren.length) {
+      // A PROCESS IS NOT AN ARM (armHosts' law, which until now only the record screen knew). The
+      // simulator parent reports zero joints while its child publishes six, so the warn sentence below
+      // accused the one peer whose silence is correct — and every false warning spends the credibility
+      // of the true one beside it, which is the whole reason the mute arms are worth flagging at all.
+      const kids = f.hostsChildren
+      return {
+        severity: 'ok',
+        word: 'process',
+        text: kids.length === 1
+          ? `hosts ${kids[0]} — this is the process, not an arm; the joints are on that card`
+          : `hosts ${kids.length} robots (${kids.join(', ')}) — this is the process, not an arm`,
+      }
+    }
     if (f.jointsSeen === false) {
       return {
         severity: 'warn',

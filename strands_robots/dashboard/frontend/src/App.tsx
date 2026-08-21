@@ -12,6 +12,7 @@ import { serverNotice, type RefusedHandshakes } from './lib/serverNotice'
 import FleetBar from './components/FleetBar'
 import { getRecordApi } from './lib/recordApi'
 import RobotCard from './components/RobotCard'
+import { armHosts } from './lib/armHosts'
 import RobotDetail from './components/RobotDetail'
 import AgentDock from './components/AgentDock'
 import SettingsDrawer from './components/SettingsDrawer'
@@ -132,6 +133,12 @@ function Dashboard() {
       .catch(() => { if (alive) setBoards(null) })
     return () => { alive = false }
   }, [fleetEmpty, boards])
+
+  // Q150: the record screen's evidence rule, now on the fleet screen too — a parent that HAS a child
+  // while reporting no joints itself is the host process, whose silence is correct. Computed once for
+  // the whole list, because it is a fact about the fleet's shape rather than about any single card.
+  const fleetHosts = useMemo(() => armHosts(list.map(q => ({
+    peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length }))), [list])
 
   useEffect(() => { void pwa.keepAwake(anyRunning) }, [anyRunning])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -387,6 +394,7 @@ function Dashboard() {
               key={p.peer_id}
               peer={p}
               twinLive={liveTwins.has(`${p.peer_id}-twin`)}
+              hostsChildren={fleetHosts[p.peer_id]?.children ?? null}
               onOpen={setDetail}
               onBusyChange={(id, running) => setBusyPeers(s => (s[id] === running ? s : { ...s, [id]: running }))}
             />

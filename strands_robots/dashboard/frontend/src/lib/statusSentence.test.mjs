@@ -218,3 +218,37 @@ assert.equal(statusSentence({ ...base, lockout: 'locked', stale: true }).word, '
 assert.equal(statusSentence({ ...base, lockout: 'locked', hwConnected: false }).word, 'no hw')
 
 console.log('statusSentence: Q95 lockout assertions ok')
+
+// ---------------------------------------------------------------------------
+// Q150: a process is not an arm — on the FLEET screen, not only the record screen.
+//
+// armHosts' rule lived only in RecordPanel, so the fleet card read the simulator PARENT's
+// by-design silence as "an arm that might move": severity warn, "treat the arm as able to
+// move", on the one peer whose silence is correct. Every false warning spends the credibility
+// of the true one beside it — and on this fleet the true ones are two real mute arms.
+{
+  const base = { stale: false, lastSeenAgoS: 2, hwConnected: true, taskStatus: 'idle',
+    moving: null, jointsSeen: false, stateAgeS: 1 }
+
+  const host = statusSentence({ ...base, hostsChildren: ['sim-a__so101'] })
+  assert(host.severity === 'ok', `a host process must not be a warning, got ${host.severity}`)
+  assert(host.word === 'process', `word should name what it is, got ${host.word}`)
+  assert(/hosts sim-a__so101/.test(host.text), `the sentence must name the child: ${host.text}`)
+  assert(!/able to move/.test(host.text), 'a process must not be described as able to move')
+
+  const many = statusSentence({ ...base, hostsChildren: ['a__x', 'a__y'] })
+  assert(/2 robots \(a__x, a__y\)/.test(many.text), `plural form should list them: ${many.text}`)
+
+  // The mute ARM keeps its warning — this is the whole point of not diluting it.
+  const arm = statusSentence({ ...base, hostsChildren: [] })
+  assert(arm.severity === 'warn', 'a childless jointless peer is still a broken arm')
+  assert(/able to move/.test(arm.text), `the true warning must survive: ${arm.text}`)
+  const armNull = statusSentence({ ...base, hostsChildren: null })
+  assert(armNull.severity === 'warn', 'absent host info must not soften the warning')
+
+  // A parent that DOES publish joints is not silent at all, so this branch never applies:
+  // jointsSeen true takes the ordinary path even with children.
+  const busyParent = statusSentence({ ...base, jointsSeen: true, moving: false,
+    hostsChildren: ['a__x'] })
+  assert(busyParent.word !== 'process', 'a peer publishing joints is an arm, whatever it hosts')
+}
