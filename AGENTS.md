@@ -1930,6 +1930,12 @@ Corrections from code review that apply to all future contributions:
   returns a `frozenset` so the dual-pin grace period is expressible. Any future
   pinned fingerprint (other roots, signing keys) should follow the same
   multi-value shape so rotation never requires a flag-day deploy.
+- **A cited runbook is graded, not assumed.** The runbook heading above, the
+  four ordered steps, and the two env vars they distinguish are checked
+  against README.md, and every pin refusal is checked to name the runbook -
+  so a procedure that only exists in this file cannot pass for a published
+  one. The dual-pin state the runbook depends on stays pinned beside it.
+  Pinned by tests/mesh/test_iot_ca_pin_rotation.py.
 
 ## Review Learnings (PR-6 - mesh core safety hardening)
 
