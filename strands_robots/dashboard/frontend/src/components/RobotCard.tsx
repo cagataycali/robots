@@ -110,7 +110,8 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
                   disabled={twinBusy} title={twin.title} aria-label={twin.aria}
                   aria-pressed={twin.pressed}>{twin.label}</button>
         )}
-        <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'}
+        <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'} role="img"
+              aria-label={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'}
               title={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'} />
       </div>
 

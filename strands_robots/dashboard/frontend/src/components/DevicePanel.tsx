@@ -500,7 +500,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
             <ul className="devlist">
               {managed.map(m => (
                 <li key={m.peer_id} className={m.alive ? '' : 'dead'}>
-                  <span className={m.alive ? 'dot on' : 'dot off'} />
+                  <span className={m.alive ? 'dot on' : 'dot off'} role="img"
+                        aria-label={m.alive ? 'process running' : 'process exited'}
+                        title={m.alive ? 'process running' : 'process exited'} />
                   <b>{m.peer_id}</b>
                   <span className="meta">
                     {m.robot_name} · {m.mode}{m.port ? ` · ${m.port}` : ''}

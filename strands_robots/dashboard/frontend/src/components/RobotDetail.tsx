@@ -91,7 +91,12 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, onC
         <header className="detail-head">
           <span className={`typebadge ${p?.robot_type ?? '?'}`}>{p?.robot_type ?? '?'}</span>
           <h2>{peer.peer_id}</h2>
-          <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'} />
+          {/* Q164: three states told apart by COLOUR ALONE said nothing to a screen reader and
+              nothing under forced colours. The words are the same ones RobotCard uses, and role
+              makes aria-label announceable on a span that has no text of its own. */}
+          <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'} role="img"
+                aria-label={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'}
+                title={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'} />
           {p?.hostname && <span className="host">{p.hostname}</span>}
           {p?.robot_type === 'robot' && !peer.peer_id.endsWith('-twin') && (
             <button className={`twinbtn${twin.cls ? ` ${twin.cls}` : ''}`} onClick={toggleTwin}

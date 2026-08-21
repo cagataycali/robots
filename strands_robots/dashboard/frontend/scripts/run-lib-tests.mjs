@@ -138,6 +138,9 @@ if (!filter) {
     //   ~1000Hz strobe, aimed at the very people (photosensitivity, vestibular) the preference exists
     //   for. A global rule that individual rules keep opting out of is the tell.
     'check-reduced-motion.mjs',
+    //   check-state-dots — Q164: a status mark whose states differ only in HUE. Empty to a screen
+    //   reader, identical under forced colours — and the fleet's on/busy/off dot was both.
+    'check-state-dots.mjs',
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {

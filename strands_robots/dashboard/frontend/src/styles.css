@@ -162,6 +162,17 @@ body {
 .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .dot.off { background: var(--dim); }
 .dot.busy { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: pulse .8s infinite alternate; }
+/* Q164: under forced colours (Windows High Contrast, and the OS-level contrast themes) the browser
+ * REPLACES background-color with its own palette, so three dots that differ only in hue render
+ * identically — "live", "working" and "gone" become the same mark. Shape survives what colour does
+ * not: filled, accented, and a dashed hollow ring. box-shadow is dropped in that mode by the UA,
+ * which is why the glow is not the distinguishing signal here. */
+@media (forced-colors: active) {
+  .dot { border: 1px solid CanvasText; background: Canvas; }
+  .dot.on { background: CanvasText; }
+  .dot.busy { background: Highlight; border-color: Highlight; }
+  .dot.off { background: Canvas; border-style: dashed; border-color: GrayText; }
+}
 
 .btn {
   min-width: 42px; border: none; border-radius: var(--r2); font-size: 15px; cursor: pointer;
