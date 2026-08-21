@@ -14,6 +14,7 @@ import { armHosts } from '../lib/armHosts'
 import { noArmsVerdict, type RememberedBoard } from '../lib/noArms'
 import { episodeTarget } from '../lib/episodeTarget'
 import { fpsField, fpsSuggestion } from '../lib/recordFps'
+import AuthedImg from './AuthedImg'
 import { nameVerdict, type KnownDataset } from '../lib/datasetName'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
 import { overrideOffered, nextAcknowledged, overrideBodyFlags } from '../lib/recordRefusal'
@@ -668,7 +669,9 @@ export default function RecordPanel(
               {Object.entries(ep.thumbnails).length > 0 && (
                 <div className="rec-thumbs">
                   {Object.entries(ep.thumbnails).slice(0, 3).map(([cam, url]) => (
-                    <img key={cam} src={url} alt={`${cam} thumbnail of episode ${ep.index}`} loading="lazy" />
+                    /* Q127: authed fetch, not a bare <img src> — the URL is one of this
+                       dashboard's own routes and 401s without the bearer token. */
+                    <AuthedImg key={cam} path={url} alt={`${cam} thumbnail of episode ${ep.index}`} />
                   ))}
                 </div>
               )}
