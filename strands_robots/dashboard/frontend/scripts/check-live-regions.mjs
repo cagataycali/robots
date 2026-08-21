@@ -33,6 +33,12 @@ const PINNED = [
     find: /\{check\.error && <div className="result bad" role="alert">[\s\S]{0,160}?\{error && <div className="result bad" role="alert">/ },
   { file: 'components/CameraConfigSheet.tsx', what: 'the reconfigure result (a respawn finished)',
     find: /<div className="result ok" role="status">\{done\}<\/div>/ },
+  // Q153: the security-grant dialog. Its failure line is the one that must never be missed — an
+  // unsaved grant looks exactly like a saved one once the sheet is closed.
+  { file: 'components/ConsentSheet.tsx', what: 'the approval failed (the grant was NOT saved)',
+    find: /className="cs-error" role="alert"/ },
+  { file: 'components/ConsentSheet.tsx', what: 'the approval verdict (saved / retrying / respawn needed)',
+    find: /className="cs-note" role="status"/ },
 ]
 
 const missing = []
