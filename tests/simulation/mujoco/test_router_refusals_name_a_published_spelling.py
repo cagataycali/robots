@@ -75,6 +75,31 @@ _VAR_KEYWORD_ACTIONS: frozenset[str] = frozenset(
 )
 
 
+def _required_parameters(action: str) -> list[str]:
+    """Named parameters of *action*'s method that carry no default."""
+    method = getattr(MuJoCoSimEngine, MuJoCoSimEngine._ACTION_ALIASES.get(action, action), None)
+    if method is None:  # pragma: no cover - every published action resolves today
+        return []
+    return [
+        name
+        for name, p in inspect.signature(method).parameters.items()
+        if name != "self"
+        and p.default is inspect.Parameter.empty
+        and p.kind not in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+    ]
+
+
+# Actions the router refuses before the method body runs, because the payload is
+# missing a parameter the signature requires. Only these may be dispatched bare:
+# an action whose parameters all carry defaults BINDS, so ``sim(action=X)``
+# executes it on the live world instead of producing the refusal under test --
+# which for ``start_recording`` means creating a dataset in the shared cache
+# (rule 15) and for ``open_viewer`` means reaching ``launch_passive``.
+_REQUIRED_PARAM_ACTIONS: frozenset[str] = frozenset(
+    action for action in _SPEC["properties"]["action"]["enum"] if _required_parameters(action)
+)
+
+
 @pytest.fixture
 def sim() -> Generator[Simulation, None, None]:
     """A world holding one body, so a refusal is the only thing under test."""
@@ -187,6 +212,77 @@ class TestAVectorRefusalNamesTheFieldTheCallerSent:
         assert "Parameter 'torque' must be a list of 3 numbers, got 2." in _text(result)
 
 
+class TestTheBareDispatchSweepCannotExecuteAnAction:
+    """A sweep that dispatches bare may only name actions the router refuses.
+
+    ``sim(action=X)`` with no other key is a refusal probe, but it is only a
+    probe for an action whose signature requires something: when every parameter
+    carries a default the payload BINDS, and the method runs against the live
+    world. Two of those reach outside the test process -- ``start_recording``
+    resolves ``repo_id="local/sim_recording"`` with no ``root`` and creates it
+    under ``$HF_LEROBOT_HOME`` (AGENTS.md rule 15, whose measured cost is one
+    planted dataset turning 133 passes into 22 ``FileExistsError`` failures in
+    unrelated modules), and ``open_viewer`` reaches
+    ``mujoco.viewer.launch_passive`` on any host that is not headless. Neither is
+    visible on CI, where ``DISPLAY`` is unset and no dataset exists yet.
+
+    So the filter is a property of the sweep, not a convenience, and these tests
+    fail if it is widened back to the published enum.
+    """
+
+    def test_no_graded_action_can_be_called_with_no_arguments(self) -> None:
+        """The mechanical form of "the router refuses it before the body runs".
+
+        Binding the signature with nothing but ``self`` is what
+        ``_dispatch_action`` effectively attempts for a bare payload; a method
+        that binds is a method that executes.
+        """
+        bindable = []
+        for action in sorted(_REQUIRED_PARAM_ACTIONS):
+            method = getattr(MuJoCoSimEngine, MuJoCoSimEngine._ACTION_ALIASES.get(action, action))
+            try:
+                inspect.signature(method).bind(object())
+            except TypeError:
+                continue
+            bindable.append(action)
+        assert not bindable, f"bare dispatch would execute these on the live world: {bindable}"
+
+    @pytest.mark.parametrize(
+        ("action", "effect"),
+        [
+            ("start_recording", "creates a dataset under $HF_LEROBOT_HOME (rule 15)"),
+            ("open_viewer", "reaches mujoco.viewer.launch_passive on a host with a display"),
+        ],
+    )
+    def test_an_action_with_a_side_effect_outside_the_process_is_not_swept(self, action: str, effect: str) -> None:
+        """Named individually, because these are the two the filter exists for."""
+        assert action in _SPEC["properties"]["action"]["enum"], f"premise: {action} is published"
+        assert action not in _REQUIRED_PARAM_ACTIONS, (
+            f"{action} would be dispatched bare by the sweep above, which {effect}"
+        )
+
+    def test_the_bare_dispatch_sweep_is_parametrized_over_the_filtered_set(self) -> None:
+        """Pins the decorator, not just the set it is derived from.
+
+        The two tests above grade what :data:`_REQUIRED_PARAM_ACTIONS` contains,
+        which stays true if the sweep is widened back to the published enum
+        beside them. This reads the sweep's own parametrization, so that edit is
+        what fails rather than the next developer's cache.
+        """
+        suite = TestARefusalAdvertisesOnlyPublishedSpellings
+        sweep = suite.test_a_missing_required_parameter_is_named_by_a_published_spelling
+        marks = [m for m in getattr(sweep, "pytestmark", []) if m.name == "parametrize"]
+        assert len(marks) == 1, marks
+        argnames, argvalues = marks[0].args
+        assert argnames == "action", argnames
+        assert sorted(argvalues) == sorted(_REQUIRED_PARAM_ACTIONS), sorted(argvalues)
+
+    def test_the_filter_still_grades_most_of_the_published_surface(self) -> None:
+        """Non-vacuity: a derivation that collapsed to nothing would report clean."""
+        assert len(_REQUIRED_PARAM_ACTIONS) >= 20, sorted(_REQUIRED_PARAM_ACTIONS)
+        assert _REQUIRED_PARAM_ACTIONS <= set(_SPEC["properties"]["action"]["enum"])
+
+
 class TestARefusalAdvertisesOnlyPublishedSpellings:
     """Whatever a refusal offers as a remedy, a model has to be able to emit it."""
 
@@ -226,21 +322,23 @@ class TestARefusalAdvertisesOnlyPublishedSpellings:
         assert {"bucket", "run_id"} <= offered, sorted(offered)
         assert not ({"bucket", "run_id"} & _PUBLISHED), "premise: neither may be a published property"
 
-    @pytest.mark.parametrize("action", sorted(_SPEC["properties"]["action"]["enum"]))
+    @pytest.mark.parametrize("action", sorted(_REQUIRED_PARAM_ACTIONS))
     def test_a_missing_required_parameter_is_named_by_a_published_spelling(self, sim: Simulation, action: str) -> None:
         """The required-parameter refusal reports a signature name too.
 
         No required parameter is aliased away today, so this sweep passes either
         way - it is here so that the day one is, the refusal names a field the
         caller can supply rather than the day the report is read.
+
+        Dispatched bare, so it is parametrized over the actions the router
+        refuses before the method body runs; see :data:`_REQUIRED_PARAM_ACTIONS`
+        for why the rest are not swept here.
         """
         result = sim(action=action)
-        if result["status"] != "error":
-            pytest.skip(f"action {action!r} needs no required parameter")
+        assert result["status"] == "error", result
         text = _text(result)
         match = re.search(r"requires parameter '([A-Za-z_][A-Za-z0-9_]*)'", text)
-        if match is None:
-            pytest.skip(f"action {action!r} was refused for another reason: {text}")
+        assert match is not None, f"action {action!r} was refused for another reason: {text}"
         assert match.group(1) not in _ALIASED_AWAY, text
 
 
