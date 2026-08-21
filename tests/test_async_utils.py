@@ -108,8 +108,12 @@ class TestTheOffloadReportsWhatTheCoroutineRaised:
 
         try:
             asyncio.run(driver())
-        except BaseException as caught:  # noqa: BLE001 - the value under test
+        except Exception as caught:  # noqa: BLE001 - the value under test
             return caught
+        except BaseException as unexpected:
+            # Nothing under test raises outside Exception; surfacing it beats
+            # returning it for the caller to assert on.
+            raise AssertionError(f"unexpected {type(unexpected).__name__} from the offload") from unexpected
         raise AssertionError(f"expected {type(exc).__name__} to propagate")
 
     @pytest.mark.parametrize(
