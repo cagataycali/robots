@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { activityLine } from '../lib/activityLine'
+import { activityAnnouncement } from '../lib/activityAnnounce'
 import type { ActivityEntry } from '../types'
 import { api } from '../lib/endpoints'
 
@@ -33,6 +34,13 @@ export default function ActivityLog({ live, open, onClose }: {
   useDialogFocus(sheetRef, open)
   const [filter, setFilter] = useState<string>('all')
   const [now, setNow] = useState(() => Date.now() / 1000)
+  /* Q158: the moment this sheet opened. The websocket carries events from before that and
+   * the server's ring buffer carries far more, so `sinceT` is what keeps the announcement
+   * from reading a page of history aloud the instant someone opens the sheet. */
+  const openedAt = useRef(0)
+  useEffect(() => { if (open) openedAt.current = Date.now() / 1000 }, [open])
+  const newest = live.reduce<ActivityEntry | undefined>(
+    (best, e) => (best && best.t >= e.t ? best : e), undefined)
 
   // The websocket only carries events since this tab connected; the ring buffer
   // on the server outlives page reloads.
@@ -92,7 +100,14 @@ export default function ActivityLog({ live, open, onClose }: {
               job — from this UI, the agent, or voice — lands here with what the robot answered.
             </p>
           )}
-          <ul className="activity">
+          {/* Q158: entries append WHOLE and seconds apart, the opposite of the chat dock's
+              per-token stream — but the list itself stays live=off and one atomic region below
+              speaks the newest line, so an e-stop storm cannot queue a paragraph of speech that
+              outlives the emergency. */}
+          <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {activityAnnouncement(newest, openedAt.current)}
+          </div>
+          <ul className="activity" role="log" aria-label="activity — every command that left this dashboard" aria-live="off">
             {entries.map((e, i) => (
               <li key={`${e.t}-${i}`} className={activityLine(e).tone}>
                 <span className="when" title={new Date(e.t * 1000).toLocaleString()}>
