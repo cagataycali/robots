@@ -47,7 +47,7 @@ import secrets
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import jwt  # PyJWT
 from fastapi import HTTPException
@@ -462,6 +462,84 @@ def issue_token(subject: str, name: str = "") -> str:
     now = int(time.time())
     payload = {"sub": subject, "name": name, "iat": now, "exp": now + _token_ttl()}
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
+
+
+def _session_max_age() -> int:
+    """Absolute lifetime of a session, however often it is renewed (default 30 days)."""
+    try:
+        return int(os.getenv(_ENV + "SESSION_MAX_AGE", "2592000"))
+    except ValueError:
+        return 2592000
+
+
+def renewal_verdict(
+    claims: Mapping[str, Any] | None,
+    now: float,
+    ttl: int | None = None,
+    max_age: int | None = None,
+) -> Dict[str, Any]:
+    """Should this session be handed a fresh token? (U21 — pure, so the clock is testable.)
+
+    The dashboard's JWT lives 24h and had no renewal path at all, so a phone that
+    signed in on Monday was locked out on Tuesday with a passkey ceremony as the
+    only way back. Measured consequence: a 44h websocket reconnect storm,
+    18,968 refusals, from the one device cagatay uses to check the lab remotely
+    (Q109). Expiry is not an edge case here — it is a DAILY event.
+
+    SLIDING, not longer: a valid token past its half-life earns a new one, so an
+    active session never dies mid-use, while the window a STOLEN token stays
+    useful in remains one TTL. A blunt 30-day `exp` would have widened exactly
+    that window instead.
+
+    The refusals are the security of it, and each is a way sessions go wrong:
+    * an EXPIRED token is never renewed. "Almost valid" is how a session becomes
+      unrevokable — revocation works by waiting a TTL out.
+    * renewal cannot outlive `iat0` + max_age (default 30d), carried as its own
+      claim so it survives every re-issue. Without that cap a session renewed by
+      a background poller is immortal, and the authenticator is never asked again.
+    * a token BEFORE its half-life is left alone: re-issuing on every request
+      would rewrite the client's credential dozens of times a minute and make
+      the absolute cap the only real limit.
+    * no claims, or claims with no `exp`, earn nothing. A renewal decision needs
+      evidence.
+
+    Returns ``{"renew": bool, "reason": str, "exp": int|None, "iat0": int|None}``
+    — `reason` is written to be shown to a person, because a session that
+    silently refuses to renew is the bug this is fixing.
+    """
+    ttl = _token_ttl() if ttl is None else ttl
+    max_age = _session_max_age() if max_age is None else max_age
+    if not isinstance(claims, Mapping):
+        return {"renew": False, "reason": "no session claims to renew", "exp": None, "iat0": None}
+    try:
+        exp = float(claims["exp"])
+    except (KeyError, TypeError, ValueError):
+        return {"renew": False, "reason": "session has no expiry to extend", "exp": None, "iat0": None}
+    if exp <= now:
+        return {"renew": False, "reason": "session already expired - sign in again", "exp": None, "iat0": None}
+    # The original sign-in: `iat0` once a session has been renewed, `iat` the first time,
+    # and `exp - ttl` for a token issued before this claim existed (a session already in
+    # a phone's storage must not be treated as brand new, which would restart its cap).
+    try:
+        iat0 = float(claims.get("iat0") or claims.get("iat") or (exp - ttl))
+    except (TypeError, ValueError):
+        iat0 = exp - ttl
+    hard_deadline = iat0 + max_age
+    if now >= hard_deadline:
+        return {
+            "renew": False,
+            "reason": "this session has reached its maximum age - sign in with your passkey again",
+            "exp": None,
+            "iat0": int(iat0),
+        }
+    if now < exp - ttl / 2:
+        return {"renew": False, "reason": "session still fresh", "exp": int(exp), "iat0": int(iat0)}
+    # Never past the cap, and never SHORTER than what the client already holds: a renewal
+    # that shaved time off would be a downgrade the client cannot refuse.
+    new_exp = int(min(now + ttl, hard_deadline))
+    if new_exp <= exp:
+        return {"renew": False, "reason": "renewal would not extend this session", "exp": int(exp), "iat0": int(iat0)}
+    return {"renew": True, "reason": "past half-life, extended", "exp": new_exp, "iat0": int(iat0)}
 
 
 def verify_token(token: str) -> Dict[str, Any]:
