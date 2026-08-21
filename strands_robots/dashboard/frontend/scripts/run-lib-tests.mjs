@@ -106,7 +106,11 @@ if (!filter) {
   //                       honestly without a line of per-route code.
   //   check-retry-inputs — a retrying socket handed only PART of the evidence planRetry reads, which
   //     is how Q102 shipped wired to one of two sockets and cost a second iteration.
-  for (const guard of ['check-lib-wired.mjs', 'check-one-fetcher.mjs', 'check-retry-inputs.mjs', 'check-clamp-pairing.mjs']) {
+  //   check-routes-exist — an /api path no route serves (Q125). serverAge.ts answers this against
+  //     the LIVE server, which cannot tell a typo from an old server: both are 404, and the UI then
+  //     explains the wrong one ("restart the dashboard" about a route that never existed).
+  for (const guard of ['check-lib-wired.mjs', 'check-one-fetcher.mjs', 'check-retry-inputs.mjs',
+                       'check-clamp-pairing.mjs', 'check-routes-exist.mjs']) {
     const w = spawnSync(process.execPath, [new URL(guard, import.meta.url).pathname], { encoding: 'utf8' })
     process.stdout.write(w.stdout || '')
     process.stderr.write(w.stderr || '')
