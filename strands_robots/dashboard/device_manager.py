@@ -2133,7 +2133,25 @@ class DeviceManager:
         logger.info("spawned %s (%s, pid=%s)", peer_id, mode, proc.pid)
         if remember and mode == "real" and port:
             self.remember_profile(cfg)
-        return {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
+        out = {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
+        # A real arm whose robot_id has no calibration where lerobot will look comes up with
+        # presence connected:true and ZERO joints, and the reason lives only in the child's log
+        # (measured on the live fleet 2026-08-20: robot_id "leader" against a calibration that
+        # exists only under teleoperators/). The filesystem knows this before the child does, so
+        # say it here. A WARNING, not a refusal: the calibration cache can be moved or absent, and
+        # a false refusal would stop an arm coming back after a replug - what the profile memory
+        # exists to guarantee. The helper stays silent whenever it cannot be sure.
+        if mode == "real" and robot_id:
+            try:
+                from strands_robots.dashboard.calibration import robot_calibration_gap
+
+                gap = robot_calibration_gap(robot_name, robot_id)
+            except Exception:  # a diagnostic must never be able to break a spawn
+                gap = None
+            if gap:
+                logger.warning("%s: %s", peer_id, gap)
+                out["calibration_warning"] = gap
+        return out
 
     def settle(
         self,

@@ -121,3 +121,68 @@ def payload(info: dict[str, Any]) -> dict[str, Any]:
         "motor_count": info.get("motor_count"),
         "motors": rows,
     }
+
+
+def robot_calibration_gap(
+    robot_name: str,
+    robot_id: str | None,
+    *,
+    root: Path | str | None = None,
+) -> str | None:
+    """Why a REAL robot spawned as ``robot_id`` will refuse to read its motors, or None.
+
+    The live failure this exists for (2026-08-20, measured on cagatay's fleet): an arm was
+    spawned as a real robot with ``robot_id="leader"``. lerobot then looks for
+    ``robots/so101_follower/leader.json``, which does not exist -- the ``leader`` calibration on
+    that machine lives under ``teleoperators/so101_leader/``, because it was recorded for the
+    TELEOPERATOR side. The bus raised ``has no calibration registered``, and the visible result
+    was an arm whose presence said ``connected: true`` while the fleet snapshot carried **zero
+    joints**, with the reason only in a child log. Nothing in the UI could distinguish that from
+    a slow probe.
+
+    So this answers the question at spawn time, from the filesystem, in words that name the
+    remedy. Deliberately NOT a refusal: the calibration root is a cache that can be moved or
+    absent, and a false refusal would stop an arm coming back after a replug -- the one thing the
+    profile memory exists to guarantee. An UNKNOWN root therefore returns None (silence is not
+    evidence), and so does an id whose file is exactly where lerobot will look.
+    """
+    if not robot_id or not robot_name:
+        return None
+    base = Path(root) if root is not None else default_root()
+    if not base.is_dir():
+        return None  # no cache to judge; the child will speak for itself
+    robots_dir = base / "robots"
+    if not robots_dir.is_dir():
+        return None
+    # lerobot's model directory is the robot's own name plus a role suffix (so101 ->
+    # so101_follower), so match by prefix rather than hard-coding the suffix: a robot type this
+    # dashboard has never seen must not produce a confident wrong sentence.
+    models = sorted(
+        p for p in robots_dir.iterdir()
+        if p.is_dir() and (p.name == robot_name or p.name.startswith(f"{robot_name}_"))
+    )
+    if not models:
+        return None  # unknown layout for this robot type - say nothing rather than guess
+    for model in models:
+        if (model / f"{robot_id}{_SUFFIX}").is_file():
+            return None  # exactly where it will be looked for
+    elsewhere = [c for c in candidates(robot_id, root=base) if c["device_type"] != "robots"]
+    have = sorted({f.stem for model in models for f in model.glob(f"*{_SUFFIX}")})
+    where = ", ".join(f"{m.name}" for m in models)
+    if elsewhere:
+        first = elsewhere[0]
+        return (
+            f"robot_id {robot_id!r} has a calibration, but as a "
+            f"{first['device_type'].rstrip('s')}: {first['path']}. A robot in real mode loads "
+            f"robots/{where}/{robot_id}{_SUFFIX}, which does not exist, so the bus will refuse "
+            f"with 'has no calibration registered' and the arm will report presence with no "
+            f"joints. Calibrate this id as a robot, or spawn it with one that already is"
+            + (f": {', '.join(have)}" if have else "")
+        )
+    return (
+        f"robot_id {robot_id!r} has no calibration under robots/{where}, so the bus will refuse "
+        f"with 'has no calibration registered' and the arm will report presence with no joints. "
+        + (f"Ids that do have one: {', '.join(have)}. " if have else "")
+        + "Calibrate this arm from the devices screen, or spawn it under an id that is already "
+        "calibrated."
+    )
