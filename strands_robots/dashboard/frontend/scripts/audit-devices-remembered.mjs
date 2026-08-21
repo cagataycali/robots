@@ -22,6 +22,27 @@ const failures = []
 
 const FREE = '/dev/cu.usbmodemFREE1'
 const BUSY = '/dev/cu.usbmodemBUSY1'
+const TELEOP = '/dev/cu.usbmodemTELEOP1'
+
+/* The calibration files, in the exact markdown /api/calibration returns — INJECTED so the audit says
+   the same thing on any machine. Mirrors cagatay's real store, where the trap lives: `leader` exists
+   ONLY as a teleoperator, while `leader_arm` and `arm_1` exist robot-side and are therefore loadable
+   by a robot in real mode. */
+const CALIBRATION_MD = [
+  '**LeRobot Calibrations**',
+  'Location: `/tmp/audit-calibration`',
+  '',
+  '## **Teleoperators**',
+  '### **so101_leader** (2 calibrations)',
+  '  - `leader` *(2025-11-23 22:18:06, 0.9KB, 6 motors)*',
+  '  - `leader_arm` *(2025-11-17 22:47:29, 0.9KB, 6 motors)*',
+  '',
+  '## **Robots**',
+  '### **so101_follower** (3 calibrations)',
+  '  - `arm_1` *(2025-11-23 22:17:33, 0.9KB, 6 motors)*',
+  '  - `follower` *(2025-11-23 22:17:33, 0.9KB, 6 motors)*',
+  '  - `leader_arm` *(2025-11-17 22:40:09, 0.9KB, 6 motors)*',
+].join('\n')
 
 const doc = {
   serial_ports: [
@@ -41,6 +62,14 @@ const doc = {
     // The REAL profile on cagatay's desk: measured 12.6V = follower, saved id says "leader_arm".
     { device: BUSY, serial_number: 'SERIALBUSY', role: 'follower', role_volts: 12.6, role_source: 'measured',
       remembered: { peer_id: 'so101-arm-2', robot_name: 'so101', mode: 'real', cameras: [], robot_id: 'leader_arm' } },
+    /* The OTHER real profile, and the one that has an arm dead on the rig right now: remembered with
+       robot_id 'leader', which exists only under teleoperators/. A robot in real mode loads
+       robots/<type>/<id>.json, so this memory spawns "has no calibration registered" — presence, zero
+       joints — every single time it is clicked. Nothing measured on this bus, deliberately: the news
+       here is about the FILES, and it must not need a voltage reading to be told. */
+    { device: TELEOP, serial_number: 'SERIALTELEOP', likely_robot: 'so101',
+      remembered: { peer_id: 'so101-leader', robot_name: 'so101', mode: 'real', cameras: ['main'],
+                    robot_id: 'leader', saved_at: 1787115801 } },
     // A board nobody configured: no `remembered` key at all, and the screen must invent nothing.
     { device: '/dev/cu.usbmodemNEW1', serial_number: 'SERIALNEW' },
   ],
@@ -63,6 +92,8 @@ page.on('pageerror', e => thrown.push(String(e.message).slice(0, 160)))
 await page.route('**/api/devices/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }))
 await page.route('**/api/devices?**', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(doc) }))
 await page.route('**/api/devices', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(doc) }))
+await page.route('**/api/calibration', r => r.fulfill({ status: 200, contentType: 'application/json',
+  body: JSON.stringify({ status: 'success', text: CALIBRATION_MD }) }))
 await page.route('**/api/devices/spawn-remembered', async r => {
   spawns.push(JSON.parse(r.request().postData() ?? '{}'))
   await r.fulfill({ status: 200, contentType: 'application/json',
@@ -82,6 +113,7 @@ const rows = (await ports.count()) ? ports.locator('li') : page.locator('li')
 const rowFor = (dev) => rows.filter({ hasText: dev }).first()
 const freeRow = rowFor(FREE)
 const busyRow = rowFor(BUSY)
+const teleopRow = rowFor(TELEOP)
 const newRow = rowFor('/dev/cu.usbmodemNEW1')
 
 // ---- the free board: what it was, in words the operator recognises
@@ -137,6 +169,39 @@ if (await busyRow.locator('.remembered').count()) {
   if (!/reuse the memory anyway/.test(text)) failures.push('the warning reads as a refusal instead of a note')
 }
 
+// ---- THE MEMORY THAT CANNOT LOAD: a respawn that will fail says so BEFORE the click
+if (!(await teleopRow.locator('.remembered').count())) {
+  failures.push('the teleoperator-id board lost its memory line entirely')
+} else {
+  const text = (await teleopRow.locator('.remembered').innerText()).replace(/\s+/g, ' ')
+  if (!/calibrated as a teleoperator/.test(text)) {
+    failures.push(`a memory whose id only exists under teleoperators/ reads as fine: ${text.slice(0, 200)}`)
+  }
+  if (!/no joints/.test(text)) failures.push('the row does not say what the failed spawn LOOKS like (presence, no joints)')
+  if (!/repeats that failure/.test(text)) failures.push('the row does not say that clicking reproduces it')
+  if (!/leader_arm/.test(text)) failures.push('the row names no id that would actually load')
+  // A name/role note must NOT appear: nothing was measured on this bus, and the id verdict is about
+  // FILES. Conflating the two would let an unmeasured board be accused of being the other arm.
+  if (/name is what is wrong/.test(text)) failures.push('an unmeasured board was given a role contradiction')
+  // NOT a gate, on purpose: the calibration list was read once, and an operator who has since run
+  // lerobot-calibrate is right and this page is stale. It explains; the decision stays theirs.
+  const btn = teleopRow.locator('.remembered button')
+  if (await btn.isDisabled()) {
+    failures.push('an unloadable calibration id disabled the respawn button — this is a warning, not a refusal (a calibration may have been created since the list was read)')
+  }
+}
+
+// ---- the control: a loadable id says NOTHING about calibration on its row
+{
+  const free = (await freeRow.locator('.remembered').innerText()).replace(/\s+/g, ' ')
+  const busy = (await busyRow.locator('.remembered').innerText()).replace(/\s+/g, ' ')
+  for (const [name, text] of [['arm_1 (robots/)', free], ['leader_arm (robots/ too)', busy]]) {
+    if (/repeats that failure|no calibration named/.test(text)) {
+      failures.push(`a loadable id was accused of not loading — ${name}: ${text.slice(0, 200)}`)
+    }
+  }
+}
+
 // ---- a board nobody configured invents nothing
 if (await newRow.locator('.remembered').count()) {
   failures.push('an unconfigured board shows a spawn memory — absence must render as nothing')
@@ -164,4 +229,4 @@ if (failures.length) {
   console.error('FAIL\n' + failures.map(f => ` - ${f}`).join('\n'))
   process.exit(1)
 }
-console.log('devices remembered: summary names peer/family/mode/camera NAMES; a blocked saved index is stated with its consequence + remedy and does NOT gate the spawn; a contradicting calibration id is called out; a busy bus refuses; an unconfigured board shows nothing; the click sends only the port')
+console.log('devices remembered: an id that only exists teleoperator-side is called out with its consequence and a loadable alternative WITHOUT gating the button, loadable ids stay quiet; summary names peer/family/mode/camera NAMES; a blocked saved index is stated with its consequence + remedy and does NOT gate the spawn; a contradicting calibration id is called out; a busy bus refuses; an unconfigured board shows nothing; the click sends only the port')
