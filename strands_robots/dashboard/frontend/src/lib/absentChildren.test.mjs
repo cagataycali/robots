@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { absentNotice, shortCause } from '/tmp/absentChildren.mjs'
+import { absentNotice, quietNotice, shortCause } from '/tmp/absentChildren.mjs'
 
 // --- THE DEFECT: a killed robot vanished with no word anywhere ---------------------
 {
@@ -62,4 +62,30 @@ import { absentNotice, shortCause } from '/tmp/absentChildren.mjs'
   assert.equal(shortCause(-9), 'killed (SIGKILL)')
   assert.equal(shortCause(0), shortCause(0).split(' — ')[0], 'idempotent on a clause-free phrase')
 }
+// --- quietNotice (Q155b): alive, ours, and absent -----------------------------------
+{
+  assert.equal(quietNotice(undefined), null, 'an older server that sends no field claims nothing')
+  assert.equal(quietNotice([]), null, 'no quiet children is not news')
+  assert.equal(quietNotice(['', null]), null, 'blank ids are not robots')
+
+  const one = quietNotice(['sim-a'])
+  assert.ok(one && one.count === 1)
+  assert.match(one.headline, /^sim-a /, 'the name comes first — the operator is hunting one robot')
+  assert.doesNotMatch(one.headline, /gone|died|crashed|killed/,
+    'THE POINT: this process is ALIVE, and calling it gone sends the operator to the wrong remedy')
+  assert.match(one.detail, /process is running/, 'the tooltip must say what is true of it')
+
+  const many = quietNotice(['sim-a', 'sim-b'])
+  assert.match(many.headline, /^2 robots/)
+  assert.equal(many.detail.split('\n').length, 2, 'one tooltip line per robot')
+
+  // Disjointness, defended on this side too: the server cannot put an id in both lists,
+  // but if it ever did, one robot must not produce two chips.
+  const both = quietNotice(['sim-a'], [{ peer_id: 'sim-a', returncode: -9 }])
+  assert.equal(both, null, 'death is the more specific claim and wins')
+  const mixed = quietNotice(['sim-a', 'sim-b'], [{ peer_id: 'sim-a', returncode: 1 }])
+  assert.ok(mixed && mixed.count === 1 && mixed.headline.startsWith('sim-b'),
+    'only the genuinely quiet one survives the overlap')
+}
+
 console.log('absentChildren: ok')

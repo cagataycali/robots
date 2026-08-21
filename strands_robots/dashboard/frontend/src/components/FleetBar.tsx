@@ -3,7 +3,7 @@ import type { ConnState } from '../lib/useMesh'
 import { backendLabel } from '../lib/endpoints'
 import { connBadge } from '../lib/connBadge'
 import { recordNavFlag } from '../lib/rehearsalNav'
-import { absentNotice, type AbsentChild } from '../lib/absentChildren'
+import { absentNotice, quietNotice, type AbsentChild } from '../lib/absentChildren'
 import StrandsMark from './StrandsMark'
 
 interface Props {
@@ -23,6 +23,7 @@ interface Props {
   onActivity: () => void
   /** dead children this dashboard started, already pruned from the mesh (U22) */
   absentChildren?: readonly AbsentChild[]
+  quietChildren?: readonly string[]
   onDevices: () => void
   onTraining: () => void
   onRecord: () => void
@@ -31,13 +32,16 @@ interface Props {
 
 export default function FleetBar({
   conn, peerCount, dashboardId, safetyFlash, mesh, online, installable,
-  activityCount, recordMock, absentChildren, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
+  activityCount, recordMock, absentChildren, quietChildren, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
   onHelp,
 }: Props) {
   // The mesh session and this browser's socket fail independently: the page can
   // be LIVE while the robot mesh is down, and vice versa. Showing only one of
   // them is how "why is the fleet empty" becomes unanswerable.
   const absentDeath = absentNotice(absentChildren)
+  // Q155b: alive, ours, absent. Deliberately a DIFFERENT chip and a different verb from
+  // the death one — the process needs reading, not restarting.
+  const quiet = quietNotice(quietChildren, absentChildren)
   const meshDown = mesh.online === false
   // UX_REVIEW #3: the badge used to print a bare 'LIVE' for this browser's
   // socket — one line above camera tiles reading "connecting", and even while
@@ -85,6 +89,13 @@ export default function FleetBar({
         {/* U22: a robot the operator started died and the fleet only got shorter. One quiet
             line, pointing at the drawer that holds the exit status and the log ring — not a
             corpse card on the grid, because every command on such a card would refuse. */}
+        {quiet && (
+          <button
+            className="chip warn"
+            onClick={onDevices}
+            title={`${quiet.detail}\n\nOpen devices for its log — the refusal that kept it out of the fleet is in there (a missing calibration, a busy servo bus), and despawn is there too.`}
+          >🫥 {quiet.headline}</button>
+        )}
         {absentDeath && (
           <button
             className="chip warn"

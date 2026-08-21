@@ -24,6 +24,8 @@ export interface MeshStore {
    *  older server that never sends the field also yields [] - absentNotice treats
    *  both as "nothing to say", never as "all present". */
   absentChildren: AbsentChild[]
+  /** Q155b: ids we hold a live child process for that the fleet has never heard of. */
+  quietChildren: string[]
   /** true once the socket has opened at least once this session */
   everOpen: boolean
 }
@@ -38,6 +40,7 @@ export function useMesh(): MeshStore {
   const [safetyFlash, setSafetyFlash] = useState<string | null>(null)
   const [mesh, setMesh] = useState<MeshInfo>({})
   const [absentChildren, setAbsentChildren] = useState<AbsentChild[]>([])
+  const [quietChildren, setQuietChildren] = useState<string[]>([])
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [loaded, setLoaded] = useState(false)
   // When the last frame arrived, and whether the socket ever opened this
@@ -119,6 +122,9 @@ export function useMesh(): MeshStore {
             // Replaced wholesale, never merged: the list IS the current answer, so a child
             // that came back must disappear from it on the very next snapshot.
             setAbsentChildren(Array.isArray(ev.absent_children) ? ev.absent_children : [])
+            // An older server sends no field; [] means "nothing to say", which quietNotice
+            // renders as nothing rather than as "all children reported in".
+            setQuietChildren(Array.isArray(ev.managed_no_presence) ? ev.managed_no_presence : [])
             setLoaded(true)
             break
           case 'presence':
@@ -161,5 +167,5 @@ export function useMesh(): MeshStore {
     }
   }, [])
 
-  return { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, loaded, lastEventAt, everOpen }
+  return { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, quietChildren, loaded, lastEventAt, everOpen }
 }

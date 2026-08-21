@@ -43,7 +43,7 @@ function initialPanel(): Panel {
 }
 
 function Dashboard() {
-  const { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, loaded, lastEventAt, everOpen } = useMesh()
+  const { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, quietChildren, loaded, lastEventAt, everOpen } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
   /* The verdict of copying the first-run snippet. Never a bare boolean: on a non-secure origin
@@ -249,6 +249,7 @@ function Dashboard() {
         installable={pwa.installable}
         activityCount={activity.length}
         absentChildren={absentChildren}
+        quietChildren={quietChildren}
         recordMock={recordMock}
         onInstall={() => void pwa.install()}
         onSettings={() => { setSettingsTab(undefined); setPanel('settings') }}
