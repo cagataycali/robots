@@ -37,6 +37,7 @@ from typing import Any
 
 from ..utils import non_negative_whole_number_error
 from . import arm_roles
+from . import camera_liveness
 from . import cameras as camera_facts
 from . import joint_silence
 
@@ -1362,8 +1363,25 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
         # child would refuse is refused here, before a process exists"; unknown keys broke that promise.
         # Not dropped silently either: a discarded option reports success while the camera streams at
         # the default (AGENTS.md > Review Learnings #86, the same rule hardware_robot follows).
+        # The dashboard's OWN bookkeeping keys are legal here and nowhere else. device_name is the
+        # roster name an index carried when it was configured (camera_liveness.stamp_device_names):
+        # it is written into the remembered profile, and a profile is handed straight back to spawn
+        # by autospawn and reconfigure -- so refusing it here would make a stamped arm refuse to
+        # come back with "unknown option 'device_name'", i.e. the memory would break the fleet it
+        # exists to protect. The child never sees it (without_annotations strips it before Popen).
+        for key in camera_liveness.ANNOTATION_KEYS:
+            if key in cfg and not isinstance(cfg[key], str):
+                return {
+                    "error": (
+                        f"camera {name!r}: {key} is the dashboard's note of which device this index "
+                        f"was, so it must be a string, got {type(cfg[key]).__name__}"
+                    )
+                }
         accepted = _camera_option_names()
-        unknown = sorted(k for k in cfg if k not in accepted and k != "type")
+        unknown = sorted(
+            k for k in cfg
+            if k not in accepted and k != "type" and k not in camera_liveness.ANNOTATION_KEYS
+        )
         if unknown:
             hints = []
             for key in unknown:
@@ -1677,6 +1695,29 @@ class DeviceManager:
             for f in ("role", "role_volts", "role_source")
             if profile.get(f) is not None
         }
+
+    #: A roster older than this is not evidence of anything. Same number and same reason as the
+    #: record gate's ROSTER_MAX_AGE_S: this morning's scan can easily omit a camera plugged in since.
+    ROSTER_MAX_AGE_S = 300.0
+
+    def _roster_for_stamp(self) -> list[dict[str, Any]]:
+        """The camera roster this manager ALREADY has, or [] - never a fresh scan.
+
+        A scan shells out to ffmpeg with a 10s timeout and can OPEN cameras, so triggering one from
+        inside spawn would put that delay in front of the spawn button and could take the very index
+        the arm is about to open. The stamp is a nice-to-have note; it must never cost or contend for
+        hardware. No cache, a stale one, or a broken one all read as no evidence, and
+        stamp_device_names then writes nothing rather than inventing a name.
+        """
+        try:
+            roster = self._camera_names_cache
+            taken_at = float(self._camera_names_cache_t or 0.0)
+            if not roster or taken_at <= 0 or time.time() - taken_at > self.ROSTER_MAX_AGE_S:
+                return []
+            return list(roster)
+        except Exception:  # noqa: BLE001 - a note is never worth breaking a spawn for
+            logger.debug("[devices] could not read the camera roster for the identity stamp")
+            return []
 
     def _camera_names(self, refresh: bool = False) -> list[dict[str, Any]]:
         """Cached roster of camera names (see scan_camera_names on ordering)."""
@@ -2026,9 +2067,20 @@ class DeviceManager:
                 conflict = bus_claim.bus_conflict(port, bus_claim.bus_holders(port), tracked)
                 if conflict:
                     return {"error": conflict}
+            # Stamp each numeric camera index with the device that answers it RIGHT NOW, while the
+            # operator's choice and the machine's numbering are still known to agree. This is the
+            # only moment they are: an index is a position in a list that closes up on an unplug, so
+            # without this note a renumbered index still opens, still streams, and records the wrong
+            # view (camera_liveness.identity_drift is what later reads it back).
+            cameras = camera_liveness.stamp_device_names(cameras, self._roster_for_stamp())
             cfg = {"robot_name": robot_name, "mode": mode, "peer_id": peer_id, "port": port, "cameras": cameras, "robot_id": robot_id}
             proc = subprocess.Popen(
-                [sys.executable, "-c", _SPAWNER, _json.dumps(cfg)],
+                # The child gets the camera config with the dashboard's own notes REMOVED:
+                # _build_camera_config refuses any key OpenCVCameraConfig does not declare, so a
+                # forwarded device_name would not degrade one camera, it would kill every camera on
+                # the arm. The stamp stays in cfg (remembered profile) and in ManagedRobot.
+                [sys.executable, "-c", _SPAWNER,
+                 _json.dumps({**cfg, "cameras": camera_liveness.without_annotations(cameras)})],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
             managed = ManagedRobot(
