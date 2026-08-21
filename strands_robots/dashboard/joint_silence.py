@@ -43,6 +43,25 @@ _PROBE_LINE = re.compile(r"state probe '?\"?hw_joints'?\"?.*?(failed|still faili
 #: recovery"); a child running older code still emits none, so absence of a recovery proves nothing.
 _RECOVERED_LINE = re.compile(r"state probe '?\"?hw_joints'?\"?.*?recovered", re.I)
 
+#: The cure's own fingerprint (bus_access logs it when it clears a stranded in-use flag). Its presence
+#: proves this child runs code that heals itself, which changes the advice completely: the flag is no
+#: longer the suspect, so an arm still silent AFTER this line has a fault the recovery could not fix.
+#: Absence proves nothing about the build - the flag may simply never have stranded - so it only ever
+#: sharpens the verdict, never weakens it.
+_FLAG_CLEARED_LINE = re.compile(r"marked in-use by an exchange that never finished", re.I)
+
+#: Said when that fingerprint IS present: the stale-flag explanation is spent, and the remaining
+#: causes are a real owner or a bus that stopped answering.
+_PORT_IN_USE_AFTER_SELF_HEAL = (
+    "This arm has already un-stranded its own bus at least once this session, so a stale flag is no "
+    "longer the explanation - the recovery ran and the port was busy again immediately. That means a "
+    "REAL second owner or a bus that has stopped answering: `/usr/sbin/lsof /dev/cu.usbmodem*` names "
+    "every holder (two means an orphaned child from an earlier spawn - stop that one), and if this "
+    "process is the only holder, check the cable and the hub. A bus that keeps stranding is failing "
+    "hardware, not bad luck - the card's \u201cbus healed\u201d count is the evidence. "
+    "Respawning masks it for a while."
+)
+
 #: Ordered: the FIRST match wins, so the specific readings are tried before the generic one.
 _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -60,9 +79,12 @@ _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
         "this arm's serial port is held - by another process, or by its own aborted read",
         "Ask the OS who holds it first: `/usr/sbin/lsof /dev/cu.usbmodem*` names every holder. "
         "TWO holders means an orphaned child from an earlier spawn - stop that one. ONE holder, "
-        "this arm's own process, means the port is busy INSIDE it (a read that died mid-exchange "
-        "leaves the motor bus marked in-use and nothing clears it) - respawn this arm from devices; "
-        "there is no other owner to hunt. Replugging and recalibrating change nothing either way.",
+        "this arm's own process, means the port is busy INSIDE it: a read that died mid-exchange "
+        "left the motor bus marked in-use. Current code CLEARS that by itself on the next read "
+        "(Q81), so an arm that stays silent is either running an older build - respawn it from "
+        "devices to pick up the self-healing - or its recovery was refused, which points at a real "
+        "second owner rather than a stale flag. Replugging and recalibrating change nothing either "
+        "way.",
     ),
     (
         "uncalibrated",
@@ -98,6 +120,8 @@ def classify(log_lines: Any) -> dict[str, str] | None:
             continue
         matched = _match(line)
         if matched is not None:
+            if matched["kind"] == "port_in_use" and _self_healed(log_lines):
+                matched = {**matched, "remedy": _PORT_IN_USE_AFTER_SELF_HEAL}
             return {**matched, "detail": _tail(line)}
         return {
             "kind": "probe_failed",
@@ -107,6 +131,17 @@ def classify(log_lines: Any) -> dict[str, str] | None:
             "detail": _tail(line),
         }
     return None
+
+
+def _self_healed(log_lines: Any) -> bool:
+    """Whether this child's log shows it clearing a stranded in-use flag (see Q81).
+
+    Read from the WHOLE log rather than the failing line, because the recovery and the failure are
+    different events: the cure logs a warning at the moment it clears the flag, and the failure we are
+    explaining may be the one that came after the cure gave up. One occurrence anywhere is enough to
+    retire the stale-flag explanation, since a build that heals once heals always.
+    """
+    return any(_FLAG_CLEARED_LINE.search(str(x)) for x in log_lines)
 
 
 def _tail(line: str, limit: int = 240) -> str:

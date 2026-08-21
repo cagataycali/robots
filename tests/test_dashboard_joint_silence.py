@@ -268,3 +268,68 @@ def test_port_in_use_does_not_send_the_operator_hunting_a_process_that_does_not_
         "process sends the operator hunting something that does not exist"
     )
     assert "respawn" in remedy.lower(), "the single-holder cure is a respawn of this same child"
+
+
+# ---------------------------------------------------------------------------
+# Q81 aftermath: the port-busy verdict must describe the world it now lives in
+# ---------------------------------------------------------------------------
+
+_PROBE_BUSY = (
+    "WARNING:strands_robots.mesh.core:state probe 'hw_joints' failed: "
+    "ConnectionError: Failed to sync read 'Present_Position' after 3 tries. [TxRxResult] Port is in use!"
+)
+_CURE_RAN = (
+    "WARNING:strands_robots.bus_access:so101-arm-1: the motor bus was left marked in-use by an "
+    "exchange that never finished; cleared that flag while holding this arm's bus lock and read again "
+    "(2 time(s) this session)."
+)
+
+
+def test_port_busy_no_longer_claims_nothing_clears_the_flag() -> None:
+    """The old remedy said "nothing clears it", which stopped being true at commit 665c4617.
+
+    Advice that describes a world the code left behind sends the operator to respawn an arm that would
+    have healed on its own - and worse, teaches them that respawning is what fixed it.
+    """
+    verdict = joint_silence.classify([_PROBE_BUSY])
+    assert verdict is not None and verdict["kind"] == "port_in_use"
+    remedy = verdict["remedy"]
+    assert "nothing clears it" not in remedy
+    assert "CLEARS that by itself" in remedy, "say that the flag heals itself now"
+    assert "older build" in remedy, "an arm that stays silent may simply predate the cure"
+
+
+def test_a_log_showing_the_cure_RAN_retires_the_stale_flag_explanation() -> None:
+    """Evidence in the same log changes the diagnosis, which is the whole point of reading it.
+
+    If the child has already cleared a stranded flag, the flag is spent as an explanation: the
+    recovery ran, and the port was busy again immediately. What remains is a real second owner or a
+    bus that stopped answering - a completely different set of actions.
+    """
+    verdict = joint_silence.classify([_CURE_RAN, _PROBE_BUSY])
+    assert verdict is not None and verdict["kind"] == "port_in_use"
+    remedy = verdict["remedy"]
+    assert "no longer the explanation" in remedy
+    assert "REAL second owner" in remedy
+    assert "lsof" in remedy, "still name the command that identifies a holder"
+    assert "failing hardware, not bad luck" in remedy
+    assert "Respawning masks it" in remedy, "do not recommend the action that hides the fault"
+    assert "older build" not in remedy, "this child demonstrably runs the curing code"
+
+
+def test_the_cure_line_only_sharpens_the_port_busy_verdict() -> None:
+    """A recovery in the log must not rewrite an unrelated diagnosis.
+
+    The two events are independent: an arm can heal a stranded flag at 12:00 and lose its calibration
+    at 12:05, and the calibration answer is still the right one.
+    """
+    uncal = joint_silence.classify(
+        [_CURE_RAN, "state probe 'hw_joints' failed: no calibration registered for so101"]
+    )
+    assert uncal is not None and uncal["kind"] == "uncalibrated"
+    assert "Calibrate this arm" in uncal["remedy"]
+
+
+def test_a_healthy_log_with_a_recovery_still_reports_nothing() -> None:
+    """A cured flag is not a fault: healing and then working is the success case, badge-free."""
+    assert joint_silence.classify([_PROBE_BUSY, _CURE_RAN, "state probe 'hw_joints' recovered"]) is None
