@@ -34,23 +34,28 @@ page.on('pageerror', e => console.log('  PAGEERROR:', String(e).slice(0, 200)))
 const calls = []
 page.on('request', r => { if (r.url().includes('/api/')) calls.push(r.url().split('/api/')[1].split('?')[0]) })
 page.on('requestfailed', r => { if (r.url().includes('/api/')) console.log('  REQUESTFAILED:', r.url().split('/api/')[1].split('?')[0], r.failure()?.errorText) })
+let firstRefusalAt = null
+const rotatedAt = Date.now()
 const refusals = []
 page.on('response', r => {
   if (!r.url().includes('/api/')) return
   const tag = `${r.url().split('/api/')[1].split('?')[0]}=${r.status()}${r.fromServiceWorker() ? '(sw)' : ''}`
+  if ((r.status() === 401 || r.status() === 403) && firstRefusalAt === null) firstRefusalAt = Date.now()
   refusals.push(tag)
 })
 
 // Nudge the watcher the way a returning phone would, then let its 30s timer be irrelevant.
 await page.evaluate(() => window.dispatchEvent(new Event('focus')))
 let text = ''
-for (let i = 0; i < 40; i++) {
+const t0 = Date.now()
+for (let i = 0; i < 75; i++) {
   await page.waitForTimeout(1000)
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   text = await page.evaluate(() => document.body.innerText)
-  if (/not signed in any more|sign in|passkey/i.test(text)) break
+  if (/not signed in any more|passkey/i.test(text)) { console.log(`  gate returned after ${((Date.now() - t0) / 1000).toFixed(1)}s`); break }
 }
 
+console.log(`  first guarded refusal: ${firstRefusalAt === null ? 'NONE in the window' : ((firstRefusalAt - rotatedAt) / 1000).toFixed(1) + 's after the rotation'}`)
 console.log('  api calls after rotation:', [...new Set(calls)].join(', ').slice(0, 200))
 console.log(`refused calls seen: ${refusals.length ? refusals.slice(0, 4).join(', ') : 'none'}`)
 const gated = /not signed in any more/i.test(text)
