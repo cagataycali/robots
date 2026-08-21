@@ -139,6 +139,19 @@ class ConsentRequest:
     message: str = ""
     grants: tuple[str, ...] = field(default_factory=tuple)
 
+    @property
+    def grantable(self) -> bool:
+        """Would approving this actually change the environment?
+
+        Q120. The UI had to guess this, and it guessed with a kind list: canApprove required a
+        subject for ``hf_repo_allow`` (where the grant IS the subject) and said yes to everything
+        else that named an env var. Correct until Q119 added two more allowlist kinds - after which
+        a ``policy_host_allow`` with an unreadable host offered an ENABLED Approve button that
+        would have written nothing, i.e. a security dialog claiming to have helped. The server owns
+        env_patch, so the server answers the question; the client stops maintaining a list.
+        """
+        return bool(env_patch(self, {}))
+
     def as_dict(self) -> dict:
         return {
             "kind": self.kind,
@@ -149,6 +162,11 @@ class ConsentRequest:
             "subject": self.subject,
             "message": self.message,
             "grants": list(self.grants),
+            # Computed against an EMPTY env deliberately: the question is "is there a grant here at
+            # all", not "is it already in place on this machine" - which env_patch answers for the
+            # live env at approval time, and which must not disable the button (a refusal from a
+            # process started before the last approval still needs its explanation).
+            "grantable": self.grantable,
         }
 
 

@@ -79,3 +79,34 @@ assert.equal(afterApproval({ granted: false, already_granted: true }, 'spawn').r
 assert.equal(afterApproval({ granted: true, note: 'server says' }, 'peer').note, 'server says')
 
 console.log('consent: all assertions passed')
+
+// ── Q120: approvability is the SERVER's answer, not a list this file maintains ──
+// Added as a SECTION (the file already had 38 assertions and they all still matter): the rule above
+// was correct for four kinds and silently wrong when consent.py grew to six, which is precisely why
+// the client should not hold the list at all.
+assert.equal(canApprove(need({ grantable: true, subject: null })), true, 'server says yes: yes')
+assert.equal(canApprove(need({ grantable: false, env_var: 'X', grants: ['x'] })), false,
+  'server says no even though it named a variable AND a grant — it owns env_patch, we do not')
+// the enabled-but-useless button, which is what Q120 actually fixes
+assert.equal(canApprove(need({ kind: 'policy_host_allow', grantable: false, subject: null })), false)
+assert.equal(canApprove(need({ kind: 'policy_host_allow', grantable: true, subject: 'gpu.lan' })), true)
+// a server older than the field: allowlist kinds still need a subject
+assert.equal(canApprove(need({ kind: 'policy_type_allow', subject: null })), false, 'legacy fallback')
+assert.equal(canApprove(need({ kind: 'policy_type_allow', subject: 'smolvla_x' })), true)
+assert.equal(canApprove(need({ kind: 'policy_host_allow', subject: 'gpu.lan' })), true)
+// grantable must win over the legacy rule, in both directions
+assert.equal(canApprove(need({ kind: 'policy_host_allow', subject: 'gpu.lan', grantable: false })), false)
+assert.equal(canApprove(need({ kind: 'hf_repo_allow', subject: null, grantable: true })), true)
+
+// ── the blocked sentence must not give advice about the wrong thing ──
+const hostReason = blockedReason(need({ kind: 'policy_host_allow', grantable: false }))
+assert.ok(/host/i.test(hostReason), 'names what could not be read')
+assert.ok(!/model path/i.test(hostReason), 'never sends a host problem to the model path')
+const typeReason = blockedReason(need({ kind: 'policy_type_allow', grantable: false }))
+assert.ok(/policy type or provider/i.test(typeReason))
+assert.ok(!/model path/i.test(typeReason))
+
+// ── severity: one name on a list is bounded; another machine driving the arms is not ──
+assert.equal(severity(need({ kind: 'policy_type_allow' })), 'warn')
+assert.equal(severity(need({ kind: 'policy_host_allow' })), 'danger',
+  'a host that receives frames and returns actions is a capability, not a value')

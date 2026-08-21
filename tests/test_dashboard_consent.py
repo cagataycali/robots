@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from strands_robots.dashboard.consent import (
+    build_request,
     ConsentRequest,
     attach_consent,
     classify_refusal,
@@ -125,4 +126,14 @@ def test_as_dict_is_json_shaped():
         "subject",
         "message",
         "grants",
+        # Q120: the client used to decide approvability from a hardcoded kind list, which went
+        # stale the moment consent.py grew two more allowlist kinds (an ENABLED Approve button for
+        # a host the server could not read). The server owns env_patch, so it ships the answer.
+        "grantable",
     }
+    assert payload["grantable"] is True
+    # And the case the field exists for: an allowlist kind whose subject could not be read safely
+    # names its refusal honestly, but says plainly that there is nothing to grant.
+    unreadable = build_request("policy_host_allow", "gpu lan; rm -rf /", "refused").as_dict()
+    assert unreadable["grantable"] is False
+    assert unreadable["subject"] is None

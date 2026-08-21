@@ -22,6 +22,8 @@ export interface ConsentNeed {
   env_var?: string
   subject?: string | null
   grants?: string[]
+  /** Q120: the server's own answer to "would approving change anything". Absent on older servers. */
+  grantable?: boolean
   message?: string
 }
 
@@ -76,9 +78,15 @@ export function findConsent(payload: any, depth = 3): ConsentNeed | null {
  * disabled rather than lying about having helped.
  */
 export function canApprove(need: ConsentNeed): boolean {
-  // A SUBJECT is required only where the grant IS the subject: an allowlist entry with no readable
-  // repository name would add nothing.
-  if (need.kind === 'hf_repo_allow') return !!need.subject
+  // Q120: ASK THE SERVER. It owns env_patch, so it knows whether a grant exists here; the rule
+  // below was right for the kinds that existed when it was written and wrong the moment Q119 added
+  // two more allowlist kinds, offering an enabled button for a host the server could not read. A
+  // boolean the guard computes cannot drift from the guard.
+  if (typeof need.grantable === 'boolean') return need.grantable
+  // Fallback for a server older than that field: a subject is required wherever the grant IS the
+  // subject — every allowlist kind, not just the model repository.
+  if (need.kind === 'hf_repo_allow' || need.kind === 'policy_type_allow'
+      || need.kind === 'policy_host_allow') return !!need.subject
   // Otherwise: approvable when the server named something it would actually set. This used to be
   // `kind === 'trust_remote_code'` — a closed list of ONE — so the two guards added since
   // (teleop_degree_units, agent_physical_motion; consent.py KINDS has four) arrived with a complete,
@@ -101,6 +109,16 @@ export function blockedReason(need: ConsentNeed): string {
     return 'The repository name in this refusal could not be read safely, so there is nothing to '
       + 'allow. Check the model path and try again.'
   }
+  // Named separately because "check the model path" is false advice for these two, and a security
+  // dialog's explanation is what the operator carries away (this function's own reason for existing).
+  if (need.kind === 'policy_type_allow') {
+    return 'The policy name in this refusal could not be read safely, so there is nothing to allow. '
+      + 'Check the policy type or provider you asked for and try again.'
+  }
+  if (need.kind === 'policy_host_allow') {
+    return 'The address in this refusal could not be read as a host, so there is nothing to allow. '
+      + 'Use a plain hostname or IP (optionally with a port) and try again.'
+  }
   return 'This refusal did not say what approving would change, so there is nothing to grant from '
     + 'here. It may come from a newer guard than this page — reload, and if it persists, grant it '
     + 'in the environment instead.'
@@ -120,7 +138,11 @@ export function blockedReason(need: ConsentNeed): string {
  * that should be presented as routine.
  */
 const OPEN_ENDED: ReadonlySet<string> = new Set(['trust_remote_code', 'agent_physical_motion'])
-const BOUNDED: ReadonlySet<string> = new Set(['hf_repo_allow', 'teleop_degree_units'])
+// policy_type_allow is bounded in the same way hf_repo_allow is: one name added to one list.
+// policy_host_allow is deliberately NOT here — it stays 'danger' by the unknown-kind rule, because
+// approving it sends camera frames and joint states to another machine and lets what that machine
+// returns drive the arms. That is a capability handed over, not a value widened.
+const BOUNDED: ReadonlySet<string> = new Set(['hf_repo_allow', 'teleop_degree_units', 'policy_type_allow'])
 
 export function severity(need: ConsentNeed): 'danger' | 'warn' {
   if (OPEN_ENDED.has(need.kind)) return 'danger'
