@@ -82,8 +82,10 @@ if (missing.length === 0) {
   // a reader of a green "every route present" line would conclude the server is current when a whole
   // feature is still dark. The rule in this repo: a check that can be narrower than its headline must
   // say so where the headline is printed.
-  console.log('        → SCOPE: paths only. A new FIELD on an existing route cannot be detected here;')
-  console.log('          RESTART_NOTES.md carries the field-level list (e.g. /api/config security.notice).')
+  console.log('        → SCOPE: paths only. A new FIELD on an existing route, or a new response')
+  console.log('          HEADER (U21 renewal rides on X-Session-Token, no route of its own), cannot be')
+  console.log('          detected here — silence about them is NOT evidence of delivery.')
+  console.log('          RESTART_NOTES.md carries that list (fields + headers, with a verify command).')
 }
 // Honesty about the scan's own limits: a module with SEVERAL routers cannot be attributed by regex, and
 // silently dropping those routes would turn them into phantom "server only" entries — the exact bug this
