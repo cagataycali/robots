@@ -116,7 +116,10 @@ if (!filter) {
   //   check-class-defined — Q137's disease generalised: markup naming a class NO stylesheet defines.
   //     Ten were already undefined when it was written; they are a listed, visible queue so the
   //     ELEVENTH fails today instead of after another arc of silence.
+  //   check-dead-rules — Q143, the mirror of the one above: a RULE that nothing renders. Dead CSS
+  //   ships to every visitor and makes the stylesheet read like a design system that is in use.
   for (const guard of ['check-lib-wired.mjs', 'check-css-wired.mjs', 'check-class-defined.mjs',
+    'check-dead-rules.mjs',
                        'check-one-fetcher.mjs',
                        'check-retry-inputs.mjs',
                        'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {
