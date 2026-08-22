@@ -76,6 +76,19 @@ export function configFromRows(rows: CamRow[]): { cameras: CamConfig | null; err
   return { cameras: out }
 }
 
+/**
+ * Which row (and field) the sheet should focus when opened FROM a camera on the robot
+ * surface: an add lands on the new row's name, a named camera lands on its fps.
+ */
+export function focusTarget(
+  rows: CamRow[], focusCam: string | null, adding: boolean,
+): { index: number; field: 'name' | 'fps' } | null {
+  if (adding) return rows.length ? { index: rows.length - 1, field: 'name' } : null
+  if (!focusCam) return null
+  const index = rows.findIndex(r => r.name === focusCam)
+  return index >= 0 ? { index, field: 'fps' } : null
+}
+
 /** What the confirm sheet must say — the cost is a respawn, named plainly. */
 export function applySummary(rows: CamRow[], peerId: string): string {
   const { cameras } = configFromRows(rows)

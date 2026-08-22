@@ -64,3 +64,25 @@ console.log('cameraConfig: all assertions passed')
   assert.ok(previewRateNote(30, null)?.includes(`${DEFAULT_MESH_CAMERA_HZ}/s`))
   assert.ok(previewRateNote(30, 0)?.includes(`${DEFAULT_MESH_CAMERA_HZ}/s`), 'a nonsense hz is not a rate')
 }
+
+// --- focusTarget: opening the sheet from a camera tile lands on THAT camera
+{
+  const { focusTarget } = await import('/tmp/cameraConfig.mjs')
+  const rows = [
+    { name: 'top', indexOrPath: '0', fps: '', width: '', height: '' },
+    { name: 'wrist', indexOrPath: '1', fps: '30', width: '', height: '' },
+  ]
+  // a named camera focuses its own row's fps — the setting the click was about
+  assert.deepEqual(focusTarget(rows, 'wrist', false), { index: 1, field: 'fps' })
+  assert.deepEqual(focusTarget(rows, 'top', false), { index: 0, field: 'fps' })
+  // adding focuses the NEW (last) row's name
+  assert.deepEqual(focusTarget([...rows, { name: '', indexOrPath: '', fps: '', width: '', height: '' }], null, true),
+    { index: 2, field: 'name' })
+  // adding with no rows at all claims nothing (nothing to focus)
+  assert.deepEqual(focusTarget([], null, true), null)
+  // a camera that no longer exists in the config focuses nothing rather than the wrong row
+  assert.equal(focusTarget(rows, 'gone', false), null)
+  // generic open (header button): no claim
+  assert.equal(focusTarget(rows, null, false), null)
+  console.log('focusTarget: all assertions passed')
+}

@@ -12,8 +12,10 @@ interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: 
 /** What a struggling viewer asks for: one frame a second still shows a moving arm. */
 const DEGRADED_FPS = 1
 
-export default function CameraTile({ peerId, cam, big = false, meta }: {
+export default function CameraTile({ peerId, cam, big = false, meta, onConfigure }: {
   peerId: string; cam: string; big?: boolean; meta?: Meta
+  /** offered only for a robot this dashboard manages: opens this camera's settings */
+  onConfigure?: () => void
 }) {
   const imgRef = useRef<HTMLImageElement>(null)
   const [status, setStatus] = useState<CamStatus>(() =>
@@ -171,6 +173,13 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
         {status.live && fps > 0 && <em> {fps.toFixed(0)}fps</em>}
         {shape && <em> {shape}</em>}
       </span>
+      {onConfigure && (
+        <button className="camcfg" onClick={onConfigure}
+                aria-label={`adjust ${cam} camera settings`}
+                title={`adjust ${cam} — fps, size, device (applying restarts the robot)`}>
+          ⚙
+        </button>
+      )}
       {pacedNote && (
         // Subdued, and NOT in the error overlay: the tile is alive. Announced politely
         // because a rate change explains a jerky picture a sighted user can see.

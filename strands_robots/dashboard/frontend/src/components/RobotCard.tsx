@@ -8,6 +8,7 @@ import { peerStatusFields, ribbonDetail, statusSentence } from '../lib/statusSen
 import { twinButtonCopy } from '../lib/twinButton'
 import { deadCameraNote, stoppedCameras } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
+import CameraConfigSheet from './CameraConfigSheet'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
 import RunForm from './RunForm'
@@ -27,6 +28,8 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
   // The sheet opens on request: a refusal must not steal focus from an
   // operator who is watching an arm move.
   const [sheet, setSheet] = useState(false)
+  // Camera settings straight from the card: which camera, or an add.
+  const [camSheet, setCamSheet] = useState<{ cam: string | null; add: boolean } | null>(null)
 
   const p = peer.presence
   const type = p?.robot_type ?? '?'
@@ -124,13 +127,33 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
         return note ? <div className="cam-dead-note" role="status">{note}</div> : null
       })()}
 
-      {cams.length > 0 && (
-        <div className={cams.length > 1 ? 'cams multi' : 'cams'}>
-          {cams.slice(0, 4).map(c => (
-            <CameraTile key={c} peerId={peer.peer_id} cam={c} meta={peer.cameras?.[c]} />
-          ))}
-        </div>
-      )}
+      {(() => {
+        // Same gate as RobotDetail's cameras button: a robot started elsewhere has no
+        // local process to restart, so the affordance is not offered.
+        const canConfig = type === 'robot' && peer.origin !== 'external'
+        return (
+          <>
+            {cams.length > 0 && (
+              <div className={cams.length > 1 ? 'cams multi' : 'cams'}>
+                {cams.slice(0, 4).map(c => (
+                  <CameraTile key={c} peerId={peer.peer_id} cam={c} meta={peer.cameras?.[c]}
+                              onConfigure={canConfig ? () => setCamSheet({ cam: c, add: false }) : undefined} />
+                ))}
+              </div>
+            )}
+            {canConfig && (
+              <button className="chip addcam" onClick={() => setCamSheet({ cam: null, add: true })}
+                      title="attach another camera to this robot (applying restarts it)">
+                + add camera
+              </button>
+            )}
+            {camSheet && (
+              <CameraConfigSheet peerId={peer.peer_id} focusCam={camSheet.cam} startAdding={camSheet.add}
+                                 onClose={() => setCamSheet(null)} />
+            )}
+          </>
+        )
+      })()}
 
       <JointStrip state={peer.state} presence={p} problem={peer.joint_problem} peerStale={peer.stale} />
       <TelemetryStrip peer={peer} />

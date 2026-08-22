@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, post } from '../lib/endpoints'
-import { CamRow, applySummary, configFromRows, parseIndexOrPath, previewRateNote, rowsFromConfig } from '../lib/cameraConfig'
+import { CamRow, applySummary, configFromRows, focusTarget, parseIndexOrPath, previewRateNote, rowsFromConfig } from '../lib/cameraConfig'
 import { useConfig } from '../lib/useConfig'
 import { forgetJointFailure } from '../lib/useJointFailure'
 
@@ -8,7 +8,14 @@ interface Detected { index: number; label?: string | null; in_use_by?: string | 
 interface Mode { width: number; height: number; fps: number }
 interface Probe { busy?: boolean; error?: string; modes?: Mode[] }
 
-export default function CameraConfigSheet({ peerId, onClose }: { peerId: string; onClose: () => void }) {
+export default function CameraConfigSheet({ peerId, onClose, focusCam = null, startAdding = false }: {
+  peerId: string
+  onClose: () => void
+  /** opened from a specific camera on the robot surface: land on that row */
+  focusCam?: string | null
+  /** opened from an "add camera" affordance: start with a fresh row */
+  startAdding?: boolean
+}) {
   const { config } = useConfig()
   const [rows, setRows] = useState<CamRow[] | null>(null)
   // The fastest capture rate the operator has asked for — the one a slower
@@ -22,6 +29,10 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
+  // Captured once: the sheet is remounted per open, and a re-render must not re-add a row.
+  const opened = useRef({ focusCam, startAdding })
+  // Autofocus belongs to the FIRST paint of the loaded rows only — edits remount nothing.
+  const focus = rows !== null ? focusTarget(rows, opened.current.focusCam, opened.current.startAdding) : null
 
   useEffect(() => {
     let alive = true
@@ -29,7 +40,14 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
       if (!alive) return
       const m = doc?.managed?.[peerId]
       if (!m) { setNotManaged(true); setRows([]) }
-      else setRows(rowsFromConfig(m.cameras ?? {}))
+      else {
+        const base = rowsFromConfig(m.cameras ?? {})
+        // The affordances the sheet was opened FROM (a tile's gear, an add button)
+        // are applied once, on the config as loaded.
+        setRows(opened.current.startAdding
+          ? [...base, { name: '', indexOrPath: '', fps: '', width: '', height: '' }]
+          : base)
+      }
       setDetected((doc?.cameras ?? []).map((c: any) => ({
         index: c.index, label: c.label ?? c.name ?? null, in_use_by: c.claimed_by ?? null,
       })))
@@ -114,9 +132,13 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
               return (
                 <div key={i}>
                   <div className="cam-config-row">
-                    <input placeholder="name (top / wrist)" aria-label={`camera ${i + 1} name`} value={r.name} onChange={e => edit(i, { name: e.target.value })} />
+                    <input placeholder="name (top / wrist)" aria-label={`camera ${i + 1} name`} value={r.name}
+                           autoFocus={focus?.index === i && focus.field === 'name'}
+                           onChange={e => edit(i, { name: e.target.value })} />
                     <input placeholder="index or path" aria-label={`camera ${i + 1} index or path`} value={r.indexOrPath} onChange={e => edit(i, { indexOrPath: e.target.value })} />
-                    <input placeholder="fps" aria-label={`camera ${i + 1} fps`} inputMode="numeric" value={r.fps} onChange={e => edit(i, { fps: e.target.value })} />
+                    <input placeholder="fps" aria-label={`camera ${i + 1} fps`} inputMode="numeric" value={r.fps}
+                           autoFocus={focus?.index === i && focus.field === 'fps'}
+                           onChange={e => edit(i, { fps: e.target.value })} />
                     <input placeholder="width" aria-label={`camera ${i + 1} width`} inputMode="numeric" value={r.width} onChange={e => edit(i, { width: e.target.value })} />
                     <input placeholder="height" aria-label={`camera ${i + 1} height`} inputMode="numeric" value={r.height} onChange={e => edit(i, { height: e.target.value })} />
                     <button className="btn ghost" title="detach this camera" onClick={() => remove(i)}>detach</button>

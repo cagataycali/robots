@@ -97,7 +97,8 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
   }
   const sheetRef = useRef<HTMLElement | null>(null)
   useDialogFocus(sheetRef)
-  const [camConfig, setCamConfig] = useState(false)
+  const [camConfig, setCamConfig] = useState<{ cam: string | null; add: boolean } | null>(null)
+  const canConfig = peer.presence?.robot_type === 'robot' && peer.origin !== 'external'
   const [steps, setSteps] = useState<StreamStep[]>([])
   const lastStep = useRef<number | null>(null)
 
@@ -165,7 +166,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             </span>
           )}
           {p?.robot_type === 'robot' && (
-            <button className="btn ghost" onClick={() => setCamConfig(true)}
+            <button className="btn ghost" onClick={() => setCamConfig({ cam: null, add: false })}
                     disabled={peer.origin === 'external'}
                     title={peer.origin === 'external'
                       ? 'this robot was started outside the dashboard, so it has no local process to '
@@ -283,7 +284,10 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
           </div>
         )}
 
-        {camConfig && <CameraConfigSheet peerId={peer.peer_id} onClose={() => setCamConfig(false)} />}
+        {camConfig && (
+          <CameraConfigSheet peerId={peer.peer_id} focusCam={camConfig.cam} startAdding={camConfig.add}
+                             onClose={() => setCamConfig(null)} />
+        )}
 
         <div className="detail-body">
           <div className="detail-stage">
@@ -302,9 +306,9 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                     </div>
                   )
                 })()}
-            {cams.length > 1 && (
+            {(cams.length > 1 || canConfig) && (
               <div className="camswitch">
-                {cams.map(c => (
+                {cams.length > 1 && cams.map(c => (
                   /**
                    * aria-pressed, not colour alone: `.chip.on` is the ONLY thing that said which camera is on
                    * screen, so a screen reader announced two identical "wrist, button" controls and voice
@@ -313,6 +317,12 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                   <button key={c} className={c === active ? 'chip on' : 'chip'}
                           aria-pressed={c === active} onClick={() => setCam(c)}>{c}</button>
                 ))}
+                {canConfig && (
+                  <button className="chip addcam" onClick={() => setCamConfig({ cam: null, add: true })}
+                          title="attach another camera to this robot (applying restarts it)">
+                    + add camera
+                  </button>
+                )}
               </div>
             )}
             <TelemetryStrip peer={peer} />
