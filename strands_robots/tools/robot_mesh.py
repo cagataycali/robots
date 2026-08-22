@@ -1223,17 +1223,25 @@ def robot_mesh(
                 f"action '{action}' requires a human-in-the-loop interrupt. Interrupts are not available here: {exc}"
             )
 
-        if not _interrupt_approves(response):
+        approved = _interrupt_approves(response)
+        # Record the human's verdict as soon as it is known, before any later
+        # refusal can return. The rate-limit re-check below can reject an
+        # APPROVED action (a concurrent invocation took the last slot while the
+        # operator was deciding), and recording after it left that path with no
+        # operator row at all: the audit log carried only ``rate_limit_race``,
+        # which does not say a human authorised a physical actuation. One
+        # unconditional site, matching use_ros and lerobot_train.
+        #
+        # #322: the operator's literal interrupt response is recorded in
+        # the LOCAL audit row (full fidelity for forensics) but MUST NOT be
+        # echoed back to the LLM. Echoing it turns the human operator into a
+        # content side-channel: a prompt-injected agent could phrase the
+        # approval reason so the operator's typed reply leaks data back into
+        # the model context. Return a flat, fixed sentinel instead.
+        log_operator_response(_AUDIT_SOURCE, action, target, approved=approved, response=response)
+        if not approved:
             # Declined approval does NOT consume a rate-limit slot -
             # see _rate_limit_check docstring for the safety rationale.
-            #
-            # #322: the operator's literal interrupt response is recorded in
-            # the LOCAL audit row (full fidelity for forensics) but MUST NOT be
-            # echoed back to the LLM. Echoing it turns the human operator into a
-            # content side-channel: a prompt-injected agent could phrase the
-            # approval reason so the operator's typed reply leaks data back into
-            # the model context. Return a flat, fixed sentinel instead.
-            log_operator_response(_AUDIT_SOURCE, action, target, approved=False, response=response)
             return _err(f"action '{action}' was declined by the operator interrupt.")
         # Approval granted. Re-check under the lock and consume the
         # slot atomically -- a concurrent invocation that ALSO passed
@@ -1244,7 +1252,6 @@ def robot_mesh(
         if rl_race_err is not None:
             _audit_tool_action(action, target, False, f"rate_limit_race: {rl_race_err}")
             return _err(rl_race_err)
-        log_operator_response(_AUDIT_SOURCE, action, target, approved=True, response=response)
     else:
         # No interrupt required for this action - reserve the slot with the
         # same atomic check+record the approved path uses above. The pre-gate
