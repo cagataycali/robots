@@ -316,6 +316,36 @@ def _agent_tool_base() -> type:
     return AgentTool
 
 
+#: Q185: verbs that are NEVER refused by the staleness gate. House law: a stale
+#: presence read makes stopping MORE urgent, not less (Q178 marked both REAL
+#: arms stale 1430s while they were streaming — a refusal there lands on a
+#: possibly MOVING arm). stop-class commands and status reads are attempted and
+#: their real outcome reported, with a staleness NOTE attached; only actions
+#: that START motion (execute/start) stay refused on stale presence.
+NEVER_GATED: frozenset[str] = frozenset({"stop", "emergency_stop", "stop_all", "status"})
+
+
+def stale_note(peer_id: str, peer: Mapping[str, Any] | None) -> str | None:
+    """Q185: the staleness caveat attached to a stop/status that was SENT anyway.
+
+    Returns None when presence is fresh. Never a refusal — the command has
+    already been (or will be) delivered; this only tells the model the ack may
+    not arrive and why, so a timeout reads as a presence gap, not a robot fault.
+    """
+    if not peer or not peer.get("stale"):
+        return None
+    age = peer.get("last_seen_age")
+    if age is None:
+        age = peer.get("age")
+    when = f" (no presence for {float(age):.0f}s)" if isinstance(age, (int, float)) else ""
+    return (
+        f"NOTE: peer '{peer_id}' was STALE on the mesh when this command was sent{when}. "
+        "The command was delivered anyway — stop-class and status commands are never refused "
+        "on staleness — but the acknowledgement may be missing or delayed. Treat a timeout as "
+        "a presence gap, not a robot fault."
+    )
+
+
 def stale_refusal(peer_id: str, peer: Mapping[str, Any] | None) -> str | None:
     """Q179: why a command to this peer must not be sent, or None to proceed.
 
@@ -326,7 +356,10 @@ def stale_refusal(peer_id: str, peer: Mapping[str, Any] | None) -> str | None:
     connected and streaming the whole time, and it self-healed with no restart). Dropping tools on
     that would delete the agent's entire arm surface mid-blackout and rebuild it minutes later.
 
-    So the proxy STAYS and the invocation refuses, for every action: a stale peer answers nothing,
+    So the proxy STAYS and the invocation refuses — for MOTION-STARTING actions only (Q185:
+    stop-class verbs and status reads in ``NEVER_GATED`` are always attempted, with a
+    ``stale_note`` attached, because refusing a stop on a stale-but-possibly-moving arm inverts
+    the safety direction). A stale peer answers nothing,
     so ``send_cmd`` can only burn its 30s timeout and hand the model a bare timeout, which reads as
     a robot fault. The refusal names presence as the suspect instead.
 
@@ -407,26 +440,37 @@ def build_peer_tools(
                     {"toolUseId": tool_use_id, "status": "error", "content": [{"text": err}]}
                 )
                 return
+            staleness_note: str | None = None
             if peer_state is not None:
                 try:
                     live = peer_state(self._peer_id)
                 except Exception:  # noqa: BLE001 - an unreadable snapshot must not block a command
                     live = None
-                refusal = stale_refusal(self._peer_id, live)
-                if refusal is not None:
-                    yield ToolResultEvent(
-                        {"toolUseId": tool_use_id, "status": "error",
-                         "content": [{"text": refusal}]}
-                    )
-                    return
+                # Q185: stop-class verbs and status reads are NEVER refused on
+                # staleness — the raw requested action decides (a sim's stop maps
+                # to sim_call, so cmd["action"] would hide it).
+                requested = str((tool_use.get("input") or {}).get("action") or "").strip()
+                if requested in NEVER_GATED:
+                    staleness_note = stale_note(self._peer_id, live)
+                else:
+                    refusal = stale_refusal(self._peer_id, live)
+                    if refusal is not None:
+                        yield ToolResultEvent(
+                            {"toolUseId": tool_use_id, "status": "error",
+                             "content": [{"text": refusal}]}
+                        )
+                        return
             try:
                 res = send_cmd(self._peer_id, cmd, timeout=30.0, source="agent")
             except Exception as exc:  # noqa: BLE001 - the wire's failure IS the result
+                fail = f"mesh send to '{self._peer_id}' failed: {exc}"
+                if staleness_note:
+                    fail = f"{fail}\n{staleness_note}"
                 yield ToolResultEvent(
                     {
                         "toolUseId": tool_use_id,
                         "status": "error",
-                        "content": [{"text": f"mesh send to '{self._peer_id}' failed: {exc}"}],
+                        "content": [{"text": fail}],
                     }
                 )
                 return
@@ -435,6 +479,8 @@ def build_peer_tools(
             content = res.get("content")
             if not isinstance(content, list):
                 content = [{"text": json.dumps(res, default=str)[:8000]}]
+            if staleness_note:
+                content = list(content) + [{"text": staleness_note}]
             yield ToolResultEvent(
                 {
                     "toolUseId": tool_use_id,

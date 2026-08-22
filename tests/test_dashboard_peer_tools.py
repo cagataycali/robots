@@ -399,7 +399,8 @@ class TestStalePresence:
             "staleness must not churn the agent: it is time-dependent and checked at invocation"
         )
 
-    def test_a_stale_peer_refuses_before_the_wire(self):
+    def test_a_stale_peer_refuses_motion_before_the_wire(self):
+        # Q185 narrowed Q179: only MOTION-STARTING actions are refused on stale presence.
         sent: list = []
 
         def fake_send(peer, cmd, timeout=30.0, source=""):
@@ -412,12 +413,65 @@ class TestStalePresence:
             peer_state=lambda pid: {"stale": True, "last_seen_age": 90},
         )
         arm = next(t for t in tools if t.tool_name == "so101_real_689")
-        events = _run(_collect(arm.stream({"toolUseId": "t9", "input": {"action": "status"}}, {})))
-        assert sent == [], "a stale peer must not burn the 30s timeout"
+        events = _run(_collect(arm.stream(
+            {"toolUseId": "t9", "input": {"action": "execute", "instruction": "wave"}}, {})))
+        assert sent == [], "a stale peer must not burn the 30s timeout on motion"
         blob = json.dumps(
             [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e))
              for e in events], default=str)
         assert "STALE" in blob and "error" in blob
+
+    def test_q185_stop_is_delivered_to_a_stale_peer_with_a_note(self):
+        # Q185 house law: stop is NEVER refused — Q178 marked both real arms stale 1430s
+        # while streaming, so the refusal would land on a possibly MOVING arm.
+        sent: list = []
+
+        def fake_send(peer, cmd, timeout=30.0, source=""):
+            sent.append((peer, cmd["action"]))
+            return {"status": "success", "content": [{"text": "stopped"}]}
+
+        tools = pt.build_peer_tools(
+            FLEET,
+            send_cmd=fake_send,
+            peer_state=lambda pid: {"stale": True, "last_seen_age": 1430.4},
+        )
+        arm = next(t for t in tools if t.tool_name == "so101_real_689")
+        events = _run(_collect(arm.stream({"toolUseId": "ts", "input": {"action": "stop"}}, {})))
+        assert sent == [("so101-real-689", "stop")], "stop must reach the wire on a stale peer"
+        blob = json.dumps(
+            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e))
+             for e in events], default=str)
+        assert "stopped" in blob, "the real outcome must be reported"
+        assert "STALE" in blob and "1430" in blob, "the staleness note must ride along"
+        assert '"status": "error"' not in blob, "a delivered stop is a success, not a refusal"
+
+    def test_q185_status_read_is_delivered_to_a_stale_peer_with_a_note(self):
+        sent: list = []
+        tools = pt.build_peer_tools(
+            FLEET,
+            send_cmd=lambda peer, cmd, timeout=30.0, source="": (
+                sent.append((peer, cmd["action"])) or {"status": "success",
+                                                       "content": [{"text": "joints"}]}),
+            peer_state=lambda pid: {"stale": True, "last_seen_age": 90},
+        )
+        arm = next(t for t in tools if t.tool_name == "so101_real_689")
+        events = _run(_collect(arm.stream({"toolUseId": "tq", "input": {"action": "status"}}, {})))
+        assert sent == [("so101-real-689", "status")]
+        blob = json.dumps(
+            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e))
+             for e in events], default=str)
+        assert "joints" in blob and "STALE" in blob
+
+    def test_q185_never_gated_table_holds_the_stop_class(self):
+        # The house law as a table any future verb must join explicitly.
+        assert {"stop", "emergency_stop", "stop_all", "status"} <= pt.NEVER_GATED
+        assert "execute" not in pt.NEVER_GATED and "start" not in pt.NEVER_GATED
+
+    def test_q185_fresh_peer_stop_carries_no_note(self):
+        assert pt.stale_note("x", {"stale": False}) is None
+        assert pt.stale_note("x", None) is None
+        note = pt.stale_note("x", {"stale": True, "last_seen_age": 12.0})
+        assert note and "12" in note and "not a robot fault" in note
 
     def test_without_peer_state_behaviour_is_unchanged(self):
         sent: list = []
