@@ -75,11 +75,18 @@ def _macos_tmp_shape(tmp_path):
 
 
 def test_symlink_refusal_names_the_destination_it_will_not_follow(tmp_path):
-    """The refusal names where the link points, not just that it is a link."""
+    """The refusal names where the link points, not just that it is a link.
+
+    The verdict must not soften into advice either: naming a way forward is an
+    addition to the refusal, not a replacement for it, so "refusing to follow"
+    still has to be in the message a caller reads.
+    """
     link, real = _macos_tmp_shape(tmp_path)
     with pytest.raises(ValueError, match="symlink") as excinfo:
         validate_output_path(str(link), sandbox_root=None, allow_abs=True, label="output_dir")
-    assert str(real) in str(excinfo.value), str(excinfo.value)
+    message = str(excinfo.value)
+    assert "refusing to follow" in message, message
+    assert str(real) in message, message
 
 
 def test_the_path_the_symlink_refusal_offers_is_one_this_call_accepts(tmp_path):
