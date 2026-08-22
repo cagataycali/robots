@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent import futures
 
 from strands_robots.bus_access import bus_lock, read_observation, write_action
 
@@ -69,26 +70,19 @@ class RefusingBusRobot:
 
 
 def _run_all(fns: list) -> list[BaseException]:
-    """Run callables in parallel threads, collecting whatever they raise."""
-    errors: list[BaseException] = []
-    lock = threading.Lock()
+    """Run callables in parallel threads, collecting whatever they raise.
 
-    def wrap(fn):
-        def inner():
-            try:
-                fn()
-            except BaseException as exc:  # noqa: BLE001 - collected for the test
-                with lock:
-                    errors.append(exc)
-
-        return inner
-
-    threads = [threading.Thread(target=wrap(fn)) for fn in fns]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=10)
-    return errors
+    Delegated to ``ThreadPoolExecutor`` rather than marshalled by hand:
+    ``Future.exception()`` already reports whatever the worker raised,
+    ``BaseException`` included, so collecting them needs no ``except`` clause
+    of its own. ``max_workers`` is the whole set because a callable left
+    queued for a free worker never overlaps the others, and overlap is the
+    condition under test.
+    """
+    with futures.ThreadPoolExecutor(max_workers=len(fns)) as pool:
+        submitted = [pool.submit(fn) for fn in fns]
+    # The context manager joined every worker, so no future is still pending.
+    return [exc for fut in submitted if (exc := fut.exception()) is not None]
 
 
 def test_the_live_bug_reproduces_without_the_lock():
