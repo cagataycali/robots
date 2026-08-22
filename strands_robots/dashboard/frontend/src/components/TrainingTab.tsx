@@ -4,6 +4,7 @@ import { numField } from '../lib/numField'
 import { trainingFreshness } from '../lib/trainingFreshness'
 import { api, post, HttpError } from '../lib/endpoints'
 import { extraFields, missingForProvider } from '../lib/providerFields'
+import { suggestOutputDir } from '../lib/outputDirSuggest'
 import { holdout } from '../lib/holdout'
 import { labelsGate, labelSummary, labelRowLine, type LabelView } from '../lib/episodeLabels'
 import { fieldSupport } from '../lib/serverFields'
@@ -436,13 +437,21 @@ export default function TrainingTab({ onClose, prefill }: {
             ))}
           </select>
         </label>
-        {/* One line per DISTINCT reason, names grouped: two providers refused for the same reason must not print the same long sentence twice, and two refused for different reasons must not be merged under one. */}
-        {[...new Set(Object.values(unsupported))].map(reason => (
-          <p className="hint" key={reason}>
-            {Object.keys(unsupported).filter(k => unsupported[k] === reason).sort().join(' and ')}
-            {' cannot be trained from here: '}{reason}.
-          </p>
-        ))}
+        {/* The refusal reasons MOVED behind a disclosure (scannability law: prose is not default
+            furniture). Nothing is lost: each refused option still says so inline, and its title
+            carries the reason on hover — this is the same sentences, one tap away. */}
+        {Object.keys(unsupported).length > 0 && (
+          <details className="hint">
+            <summary>{Object.keys(unsupported).length} provider{Object.keys(unsupported).length === 1 ? ' is' : 's are'} not trainable from this form — why?</summary>
+            {/* One line per DISTINCT reason, names grouped: same reason never printed twice, different reasons never merged. */}
+            {[...new Set(Object.values(unsupported))].map(reason => (
+              <p className="hint" key={reason}>
+                {Object.keys(unsupported).filter(k => unsupported[k] === reason).sort().join(' and ')}
+                {' cannot be trained from here: '}{reason}.
+              </p>
+            ))}
+          </details>
+        )}
         <label className="field"><span>dataset</span>
           <input value={dsQuery} onChange={e => setDsQuery(e.target.value)} disabled={busy}
                  placeholder="search this machine and the Hub — e.g. pusht, so101, your org" />
@@ -495,6 +504,17 @@ export default function TrainingTab({ onClose, prefill }: {
           <input value={form.output_dir} onChange={e => set('output_dir', e.target.value)} disabled={busy}
                  placeholder="/tmp/my_policy_ckpt" aria-describedby="train-outdir-say"
                  aria-invalid={outSay.blocked || outSay.confirmable} />
+          {/* the one hand-typed path on the golden path, offered as one click — never
+              silently written, and the output-dir verdict re-judges whatever lands here */}
+          {(() => {
+            const sug = suggestOutputDir(form, form.output_dir)
+            return sug ? (
+              <button type="button" className="btn ghost suggest" disabled={busy}
+                      onClick={() => set('output_dir', sug)}>
+                use {sug}
+              </button>
+            ) : null
+          })()}
           {/* a run into an existing directory DELETES it (the trainer rmtree's a dir with no resumable checkpoint). */}
           <span id="train-outdir-say" className={`fieldsay${outSay.tone === 'info' ? '' : ' bad'}`} role="status" aria-live="polite">
             {outSay.text ?? ''}
