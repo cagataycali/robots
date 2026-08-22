@@ -50,9 +50,9 @@ MESH_ENV_VAR = "STRANDS_MESH"
 #: Spellings that opt a bare ``Robot()`` into the mesh.
 AFFIRMATIVE = ("true", "1", "yes")
 
-#: Spellings that trip the hard kill switch. Re-exported as
-#: ``strands_robots.mesh.core._MESH_KILL_SWITCH_VALUES``, which is the name the
-#: kill-switch regression test parametrizes over.
+#: Spellings that trip the hard kill switch. The kill-switch regression test
+#: parametrizes over this tuple directly; ``mesh.core`` deliberately keeps no
+#: copy of it, and the vocabulary guard asserts that it does not.
 NEGATIVE = ("false", "0", "no")
 
 #: Unrecognized values already reported. Keyed by the offending value, so a
