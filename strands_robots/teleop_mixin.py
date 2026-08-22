@@ -303,6 +303,64 @@ class TeleopMixin:
             ],
         }
 
+    def stop_teleop(self, device_name: str | None = None) -> dict[str, Any]:
+        """Stop all or a specific teleop publisher/receiver (host-agnostic).
+
+        Q183: this lived only on the hardware ``Robot``, so a sim following a
+        leader stream could START (``start_teleop_receive`` is on this mixin)
+        but never STOP — mesh ``teleop_stop`` answered ``{"error": "robot does
+        not support stop_teleop"}`` and the only way out was killing the
+        process. The state it touches (``_input_publishers`` /
+        ``_input_receivers``) is created by this mixin and by
+        ``start_teleop_publish``, guarded with ``hasattr`` either way, so the
+        lifecycle's closing half is as host-agnostic as its opening half.
+
+        Args:
+            device_name: If provided, stop only the named publisher/receiver.
+                If None, stop all.
+
+        Returns:
+            Stats from stopped sessions.
+        """
+        results = []
+
+        # Stop publishers
+        if hasattr(self, "_input_publishers"):
+            if device_name:
+                pub = self._input_publishers.pop(device_name, None)
+                if pub:
+                    results.append(pub.stop())
+            else:
+                for _name, pub in list(self._input_publishers.items()):
+                    results.append(pub.stop())
+                self._input_publishers.clear()
+
+        # Stop receivers
+        if hasattr(self, "_input_receivers"):
+            if device_name:
+                # Match by device name suffix
+                to_remove = [k for k in self._input_receivers if k.endswith(f"/{device_name}")]
+                for k in to_remove:
+                    results.append(self._input_receivers.pop(k).stop())
+            else:
+                for _key, rcv in list(self._input_receivers.items()):
+                    results.append(rcv.stop())
+                self._input_receivers.clear()
+
+        if not results:
+            return {"status": "success", "content": [{"text": "No active teleop sessions."}]}
+
+        stats_text = "\n".join(
+            f"  {r.get('device', r.get('source', '?'))}: "
+            f"{r.get('frames', r.get('frames_received', 0))} frames, "
+            f"{r.get('hz_actual', 0):.1f} Hz"
+            for r in results
+        )
+        return {
+            "status": "success",
+            "content": [{"text": f"Teleop stopped:\n{stats_text}"}],
+        }
+
     def send_action(self, action: ActionDict, robot_name: str | None = None) -> dict[str, Any]:
         """Apply ``action`` to the host robot/sim. Implemented by the host."""
         raise NotImplementedError(
