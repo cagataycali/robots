@@ -1641,6 +1641,72 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         out.update(calib.payload(info) if info else {k: target[k] for k in target})
         return out
 
+    # ------------------------------------------------------------------
+    # Calibration wizard — the interactive lerobot-calibrate flow, run as a
+    # managed pty session so the operator never needs a terminal. Calibration
+    # is torque-OFF (the dashboard commands no motion; the operator's hand does),
+    # so the gate is the wizard's own confirm sheet, not the motion rail.
+    # ------------------------------------------------------------------
+
+    @app.post("/api/calibration/run")
+    async def calibration_run_start(payload: dict[str, Any]) -> dict[str, Any]:
+        from strands_robots.dashboard import calibration_run as cr
+
+        port = str(payload.get("port") or "").strip()
+        owner = app.state.devices.port_owner(port)
+        if owner:
+            raise HTTPException(409, {
+                "error": f"{port} is held by the running robot {owner!r} — two owners on one "
+                "servo bus is the 'Port is in use!' collision, and the wizard would measure "
+                "a bus that is mid-conversation",
+                "remedy": f"despawn {owner} first (its profile is remembered, respawn after)",
+            })
+        try:
+            run = cr.start(
+                role=str(payload.get("role") or ""),
+                model=str(payload.get("model") or ""),
+                device_id=str(payload.get("device_id") or ""),
+                port=port,
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(409, str(e)) from e
+        return run.status()
+
+    @app.get("/api/calibration/run/{sid}")
+    async def calibration_run_status(sid: str) -> dict[str, Any]:
+        from strands_robots.dashboard import calibration_run as cr
+
+        run = cr.get(sid)
+        if run is None:
+            raise HTTPException(404, f"no calibration session {sid!r} — it may have been "
+                                     "superseded; start a new one from the devices drawer")
+        return run.status()
+
+    @app.post("/api/calibration/run/{sid}/key")
+    async def calibration_run_key(sid: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from strands_robots.dashboard import calibration_run as cr
+
+        run = cr.get(sid)
+        if run is None:
+            raise HTTPException(404, f"no calibration session {sid!r}")
+        try:
+            run.press(str(payload.get("key") or ""))
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(409, str(e)) from e
+        return run.status()
+
+    @app.post("/api/calibration/run/{sid}/cancel")
+    async def calibration_run_cancel(sid: str) -> dict[str, Any]:
+        from strands_robots.dashboard import calibration_run as cr
+
+        run = cr.get(sid)
+        if run is None:
+            raise HTTPException(404, f"no calibration session {sid!r}")
+        await asyncio.to_thread(run.cancel)
+        return run.status()
+
     @app.get("/api/frame/{peer_id}/{cam}")
     async def frame(peer_id: str, cam: str) -> Response:
         f = app.state.bridge.latest_frame(peer_id, cam)
