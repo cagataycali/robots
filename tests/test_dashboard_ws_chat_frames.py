@@ -193,3 +193,65 @@ def test_known_types_keep_their_silence():
     for payload in ({"type": "chat"}, {"type": "chat", "text": "   "}):
         prompt, reply = parse_chat_frame(_text(json.dumps(payload)))
         assert prompt is None and reply is None, payload
+
+
+# --- interrupt_response: answering a motion confirm ----------------------------
+
+def test_interrupt_response_frame_yields_a_resume_turn():
+    turn, reply = parse_chat_frame(_text(json.dumps(
+        {"type": "interrupt_response", "id": " int-1 ", "response": {"approve": True}},
+    )))
+    assert reply is None
+    assert turn == {"interrupt_id": "int-1", "response": {"approve": True}}
+
+
+def test_interrupt_response_no_is_carried_verbatim():
+    turn, reply = parse_chat_frame(_text(json.dumps(
+        {"type": "interrupt_response", "id": "int-1", "response": False},
+    )))
+    assert reply is None and turn["response"] is False
+
+
+def test_interrupt_response_requires_a_string_id():
+    for bad in ({}, {"id": ""}, {"id": 42}, {"id": None}):
+        turn, reply = parse_chat_frame(_text(json.dumps(
+            {"type": "interrupt_response", "response": True, **bad},
+        )))
+        assert turn is None, bad
+        assert reply["type"] == "error" and "id" in reply["error"], bad
+
+
+def test_interrupt_response_requires_a_response_field():
+    turn, reply = parse_chat_frame(_text(json.dumps({"type": "interrupt_response", "id": "int-1"})))
+    assert turn is None
+    assert reply["type"] == "error" and "response" in reply["error"]
+
+
+def test_interrupt_response_reaches_resume_not_run(monkeypatch, tmp_path):
+    """Through the real route: the frame dispatches to resume_interrupt_blocking."""
+    _isolate(monkeypatch, tmp_path)
+    from starlette.testclient import TestClient
+
+    from strands_robots.dashboard import agent_bridge, auth
+    auth._cache_key = None
+    auth._cache = {}
+
+    resumed: list = []
+
+    def fake_resume(interrupt_id, response, q, cancel=None):
+        resumed.append((interrupt_id, response))
+        q.put({"type": "done", "text": "continued"})
+        q.put({"type": "__END__"})
+
+    def fake_run(prompt, q, cancel=None):
+        raise AssertionError("a confirm answer must never become a fresh prompt")
+
+    monkeypatch.setattr(agent_bridge, "resume_interrupt_blocking", fake_resume)
+    monkeypatch.setattr(agent_bridge, "run_turn_blocking", fake_run)
+    app = srv.create_app(bridge=_StubBridge())
+    client = TestClient(app)
+    with client.websocket_connect("/ws/chat") as ws:
+        ws.send_text(json.dumps({"type": "interrupt_response", "id": "int-9", "response": True}))
+        ev = ws.receive_json()
+        assert ev == {"type": "done", "text": "continued"}
+    assert resumed == [("int-9", True)]

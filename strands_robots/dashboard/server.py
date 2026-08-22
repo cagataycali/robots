@@ -210,13 +210,14 @@ class TokenAuthMiddleware:
 # : The frame types /ws/chat implements.
 _REFUSALS = RefusalTally()
 
-_CHAT_FRAME_TYPES = frozenset({"chat", "ping"})
+_CHAT_FRAME_TYPES = frozenset({"chat", "ping", "interrupt_response"})
 
 CHAT_MAX_FRAME_BYTES = 32 * 1024  # a generous chat turn; 2 MB frames ran real model turns
 
-def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
-    """One /ws/chat frame -> ``(prompt, reply)``. Exactly one of the two is non-None, or both are None
-    (nothing to do).
+def parse_chat_frame(message: dict[str, Any]) -> tuple[str | dict[str, Any] | None, dict[str, Any] | None]:
+    """One /ws/chat frame -> ``(turn, reply)``. Exactly one of the two is non-None, or both are None
+    (nothing to do). ``turn`` is a prompt string, or a dict ``{"interrupt_id", "response"}`` answering
+    a pending motion confirm.
     """
     if message.get("type") == "websocket.disconnect":
         raise WebSocketDisconnect(int(message.get("code") or 1000))
@@ -238,6 +239,13 @@ def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any
         return None, {"type": "error", "error": "frame must be a JSON object"}
     if msg.get("type") == "ping":
         return None, {"type": "pong"}
+    if msg.get("type") == "interrupt_response":
+        iid = msg.get("id")
+        if not isinstance(iid, str) or not iid.strip():
+            return None, {"type": "error", "error": 'interrupt_response requires a string "id"'}
+        if "response" not in msg:
+            return None, {"type": "error", "error": 'interrupt_response requires a "response" field'}
+        return {"interrupt_id": iid.strip(), "response": msg.get("response")}, None
     ftype = msg.get("type")
     if ftype is not None and ftype not in _CHAT_FRAME_TYPES:
         return None, {
@@ -1765,17 +1773,21 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         import queue as _queue
         import threading as _threading
 
-        from strands_robots.dashboard.agent_bridge import _turn_lock, run_turn_blocking
+        from strands_robots.dashboard.agent_bridge import (
+            _turn_lock,
+            resume_interrupt_blocking,
+            run_turn_blocking,
+        )
 
         await ws.accept()
         try:
             while True:
                 message = await ws.receive()
-                prompt, reply = parse_chat_frame(message)
+                turn, reply = parse_chat_frame(message)
                 if reply is not None:
                     await ws.send_text(json.dumps(reply))
                     continue
-                if prompt is None:
+                if turn is None:
                     continue
                 if _turn_lock.locked():
                     await ws.send_text(json.dumps({
@@ -1784,9 +1796,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     }))
                 q: _queue.Queue = _queue.Queue()
                 cancel = _threading.Event()
-                _threading.Thread(
-                    target=run_turn_blocking, args=(prompt, q, cancel), daemon=True,
-                ).start()
+                if isinstance(turn, dict):
+                    # A yes/no on the pending motion confirm: resume the parked turn.
+                    args = (turn["interrupt_id"], turn["response"], q, cancel)
+                    worker = resume_interrupt_blocking
+                else:
+                    args = (turn, q, cancel)
+                    worker = run_turn_blocking
+                _threading.Thread(target=worker, args=args, daemon=True).start()
                 try:
                     while True:
                         ev = await asyncio.to_thread(q.get)

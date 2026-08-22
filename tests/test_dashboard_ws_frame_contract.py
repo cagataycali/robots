@@ -113,6 +113,7 @@ def test_the_ignore_list_only_holds_types_that_are_really_emitted() -> None:
 _CLIENT_FRAMES = {
     "chat": ("server.py", "_CHAT_FRAME_TYPES"),
     "ping": ("server.py", "_CHAT_FRAME_TYPES"),
+    "interrupt_response": ("server.py", "_CHAT_FRAME_TYPES"),
     "stop": ("voice.py", '"stop"'),
 }
 
