@@ -34,6 +34,9 @@ It is deliberately one-directional and under-reports rather than over-reports:
 
 * Only a **literal** key is graded. A removal whose key is a variable (a loop
   purging ``mujoco*``, say) is out of reach of a static read and is not claimed.
+* Every name bound to ``sys`` in the file is followed, so an aliased
+  ``import sys as _sys`` is graded on both sides of the rule - four files use
+  that spelling, all of them with the restoring idiom.
 * Any ``finally``, ``patch.dict``, ``monkeypatch.setitem`` or re-assignment in
   the same function counts as restoring, without checking that it restores the
   same key.
@@ -122,7 +125,16 @@ def protected_modules() -> dict[str, set[str]]:
     return protected
 
 
-def _own_scope_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[int, str]]:
+def _sys_aliases(tree: ast.Module) -> set[str]:
+    """Every name bound to the ``sys`` module in this file, at any scope."""
+    aliases = {"sys"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            aliases.update(alias.asname or "sys" for alias in node.names if alias.name == "sys")
+    return aliases
+
+
+def _own_scope_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: set[str]) -> list[tuple[int, str]]:
     """``(lineno, key)`` for each literal-key removal in *fn*'s own scope."""
     found: list[tuple[int, str]] = []
 
@@ -133,7 +145,7 @@ def _own_scope_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tupl
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "pop"
-            and ast.unparse(node.func.value) == "sys.modules"
+            and ast.unparse(node.func.value) in registries
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
@@ -143,7 +155,7 @@ def _own_scope_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tupl
             for target in node.targets:
                 if (
                     isinstance(target, ast.Subscript)
-                    and ast.unparse(target.value) == "sys.modules"
+                    and ast.unparse(target.value) in registries
                     and isinstance(target.slice, ast.Constant)
                     and isinstance(target.slice.value, str)
                 ):
@@ -156,25 +168,27 @@ def _own_scope_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tupl
     return found
 
 
-def _restores(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _restores(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: set[str]) -> bool:
     """Whether *fn* puts something back. Permissive on purpose - see the module docstring."""
     source = ast.unparse(fn)
-    return (
-        "finally" in source
-        or "patch.dict" in source
-        or "setitem(sys.modules" in source
-        or "sys.modules.update" in source
-        or ("sys.modules[" in source and "] =" in source)
+    if "finally" in source or "patch.dict" in source:
+        return True
+    return any(
+        f"setitem({registry}" in source
+        or f"{registry}.update" in source
+        or (f"{registry}[" in source and "] =" in source)
+        for registry in registries
     )
 
 
 def unrestored_removals(tree: ast.Module) -> list[tuple[int, str, str]]:
     """``(lineno, function, key)`` for each literal removal *tree* never undoes."""
+    registries = {f"{alias}.modules" for alias in _sys_aliases(tree)}
     reported: list[tuple[int, str, str]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or _restores(node):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or _restores(node, registries):
             continue
-        reported.extend((lineno, node.name, key) for lineno, key in _own_scope_removals(node))
+        reported.extend((lineno, node.name, key) for lineno, key in _own_scope_removals(node, registries))
     return reported
 
 
@@ -269,6 +283,19 @@ class TestTheScanIsSpecific:
             ["import sys", "def test_x(monkeypatch):", "    monkeypatch.setitem(sys.modules, 'boto3', None)"]
         )
         assert unrestored_removals(ast.parse(source)) == []
+
+    def test_an_aliased_sys_is_followed_on_both_sides(self) -> None:
+        """Four files spell it ``import sys as _sys``; the rule must not lose them."""
+        removal = "\n".join(["import sys as _sys", "def test_x():", "    _sys.modules.pop('boto3', None)"])
+        restored = "\n".join(
+            [
+                "import sys as _sys",
+                "def test_x(monkeypatch):",
+                "    monkeypatch.setitem(_sys.modules, 'boto3', None)",
+            ]
+        )
+        assert unrestored_removals(ast.parse(removal)) == [(3, "test_x", "boto3")]
+        assert unrestored_removals(ast.parse(restored)) == []
 
     def test_a_dynamic_key_is_not_claimed(self) -> None:
         """A key a static read cannot resolve is out of scope rather than guessed at."""
