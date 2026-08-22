@@ -249,7 +249,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     [camNums.fps, camNums.width, camNums.height].find(v => v?.problem)?.problem ?? camField.problem
   // A correction we make must be admitted, not just the refusals: 12.5 fps becomes 12, and the
   // operator who typed 12.5 would otherwise never learn which of the two the camera was given.
-  const camNote = [camNums.fps, camNums.width, camNums.height].map(v => v?.note).filter(Boolean).join(' · ') || null
+  const camNote = [
+    ...[camNums.fps, camNums.width, camNums.height].map(v => v?.note),
+    camField.note, // shared-index warning: sendable, but said out loud
+  ].filter(Boolean).join(' · ') || null
   const anyCam = camRows.some(r => r.index !== '')
 
   /* Judged against BOTH the live children and the remembered profiles: a name that collides with
@@ -564,13 +567,15 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                             rows.map((r, j) => (j === i ? { ...r, index: e.target.value } : r)))}>
                     <option value="">none</option>
                     {(doc?.cameras ?? []).map(c => (
-                      <option key={c.index} value={c.index}
-                              disabled={!!c.claimed_by
-                                        || camRows.some((o, j) => j !== i && o.index === String(c.index))}>
+                      // claimed-by-a-robot is disabled; an index another ROW picked stays
+                      // selectable — that case warns below instead of blocking (the operator
+                      // may know something we don't).
+                      <option key={c.index} value={c.index} disabled={!!c.claimed_by}>
                         index {c.index}
                         {c.width ? ` — ${c.width}×${c.height}` : ''}
                         {c.fps ? ` @ ${c.fps}fps` : ''}
                         {c.claimed_by ? ` — claimed by ${c.claimed_by}` : ''}
+                        {camRows.some((o, j) => j !== i && o.index === String(c.index)) ? ' — also picked above' : ''}
                       </option>
                     ))}
                   </select>

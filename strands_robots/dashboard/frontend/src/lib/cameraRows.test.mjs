@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { camerasField } from '/tmp/cameraRows.mjs'
 
 // ── nothing filled in = spawn without cameras, never an error ──
-assert.deepEqual(camerasField([]), { value: null, problem: null })
-assert.deepEqual(camerasField([{ name: 'main', index: '' }]), { value: null, problem: null },
+assert.deepEqual(camerasField([]), { value: null, problem: null, note: null })
+assert.deepEqual(camerasField([{ name: 'main', index: '' }]), { value: null, problem: null, note: null },
   'an unfilled row is not an error — it is the form at rest')
 
 // ── one camera: the mapping shape the server refused a bare int for ──
@@ -48,10 +48,15 @@ assert.match(
   camerasField([{ name: 'main', index: '0' }, { name: 'MAIN', index: '1' }]).problem,
   /two cameras named/,
   'case-insensitive: "MAIN" and "main" would collide in any sane config reader')
-assert.match(
-  camerasField([{ name: 'main', index: '1' }, { name: 'wrist', index: '1' }]).problem,
-  /index 1 is used by both/,
-  'one physical camera cannot feed two capture threads')
+{
+  // a shared index WARNS but does not block — the operator may know something we don't
+  const f = camerasField([{ name: 'main', index: '1' }, { name: 'wrist', index: '1' }])
+  assert.equal(f.problem, null, 'sendable: a warning is not a wall')
+  assert.match(f.note, /index 1 is claimed by both/, 'but it is said out loud')
+  assert.deepEqual(Object.keys(f.value), ['main', 'wrist'], 'both entries survive')
+}
+assert.match(camerasField([{ name: 'device_name', index: '1' }]).problem, /bookkeeping key/,
+  "the dashboard's annotation key must never become a camera name — validate_cameras won't catch it")
 assert.match(camerasField([{ name: 'main', index: 'usb0' }]).problem, /not a camera index/)
 assert.match(camerasField([{ name: 'main', index: '-1' }]).problem, /not a camera index/)
 assert.match(camerasField([{ name: 'main', index: '1.5' }]).problem, /not a camera index/,
