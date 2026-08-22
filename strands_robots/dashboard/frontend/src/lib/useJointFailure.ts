@@ -1,0 +1,67 @@
+import { useEffect, useState } from 'react'
+import { api } from './endpoints'
+import { jointFailure, jointFailureLine, jointFailureBadge, type JointFailure } from './jointFailure'
+
+/**
+ * "Why does this arm report no joints?" — asked ONCE per peer, shared by every screen that asks.
+ *
+ * The fleet grid renders a card per peer, so a naive fetch-per-card would ask the same question again on
+ * every remount and every card of a jointless fleet at once. The answer is also nearly static: the cause is
+ * a line already written in a ring buffer, and mesh/core repeats it at DEBUG only, so re-asking learns
+ * nothing. Hence a module-level cache with in-flight de-duplication — and it is keyed by peer, so a
+ * respawned arm that fails DIFFERENTLY needs `forgetJointFailure` (called by the code that respawns).
+ */
+type Entry = { line: string | null; badge: string | null }
+const CACHE = new Map<string, Entry>()
+const INFLIGHT = new Map<string, Promise<Entry>>()
+const LISTENERS = new Set<() => void>()
+
+/** A log we could not read is not a diagnosis — but silence on screen would be worse than saying so. */
+const NO_LOG: Entry = {
+  line: 'no joints, and no log to read — this arm was started outside the dashboard, so its reason is in the console that launched it',
+  badge: 'no log to read — started outside the dashboard',
+}
+
+async function load(peerId: string): Promise<Entry> {
+  const cached = CACHE.get(peerId)
+  if (cached) return cached
+  const running = INFLIGHT.get(peerId)
+  if (running) return running
+  const p = (async () => {
+    let entry: Entry
+    try {
+      const r = await api<{ lines?: string[] }>(`/api/devices/logs/${encodeURIComponent(peerId)}`)
+      const f: JointFailure | null = jointFailure(r?.lines)
+      entry = { line: jointFailureLine(f), badge: jointFailureBadge(f) }
+    } catch {
+      entry = NO_LOG
+    }
+    CACHE.set(peerId, entry)
+    INFLIGHT.delete(peerId)
+    for (const l of LISTENERS) l()
+    return entry
+  })()
+  INFLIGHT.set(peerId, p)
+  return p
+}
+
+/** Called when an arm is respawned: the next question must reach the NEW log, not the old verdict. */
+export function forgetJointFailure(peerId?: string): void {
+  if (peerId) CACHE.delete(peerId); else CACHE.clear()
+}
+
+/** @param enabled ask only when the joints are actually missing — a healthy arm needs no explanation. */
+export function useJointFailure(peerId: string, enabled: boolean): Entry {
+  const [entry, setEntry] = useState<Entry>(() => CACHE.get(peerId) ?? { line: null, badge: null })
+  useEffect(() => {
+    if (!enabled) { setEntry({ line: null, badge: null }); return }
+    let live = true
+    const seen = CACHE.get(peerId)
+    if (seen) setEntry(seen)
+    void load(peerId).then(e => { if (live) setEntry(e) })
+    const onChange = () => { const e = CACHE.get(peerId); if (live && e) setEntry(e) }
+    LISTENERS.add(onChange)
+    return () => { live = false; LISTENERS.delete(onChange) }
+  }, [peerId, enabled])
+  return entry
+}

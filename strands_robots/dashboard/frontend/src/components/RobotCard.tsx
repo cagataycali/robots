@@ -12,6 +12,7 @@ import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
 import RunForm from './RunForm'
 import ConsentSheet from './ConsentSheet'
+import { useJointFailure } from '../lib/useJointFailure'
 
 export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange, hostsChildren}: {
   peer: Peer
@@ -48,6 +49,19 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
 
   // The app keeps a screen wake lock while anything is moving.
   useEffect(() => { onBusyChange?.(peer.peer_id, running) }, [running, peer.peer_id])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* The CAUSE beside the claim. The ribbon has said "no joint data on this peer" for three days on two
+
+     arms without ever saying WHY, so the operator's next move was to open each arm and read a log.
+
+     A few words only — the remedy lives in the detail view, and a card that holds a paragraph stops
+
+     being scannable. Shared cache: one request per peer for the whole grid, and the same answer the
+
+     detail panel gives. */
+
+  const { badge: whyMute } = useJointFailure(peer.peer_id, Object.keys(peer.state?.joints ?? {}).length === 0)
+
 
   return (
     <div className={`card${offline ? ' stale' : ''}${phase === 'failed' ? ' failed' : ''}${running ? ' running' : ''}`}>
@@ -114,6 +128,12 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
               aria-label={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'}
               title={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'} />
       </div>
+
+      {whyMute && (
+
+        <div className="small warn" role="status">no joints — {whyMute}</div>
+
+      )}
 
       {status && (
         <div className={`status-ribbon ${status.severity}`} role="status">

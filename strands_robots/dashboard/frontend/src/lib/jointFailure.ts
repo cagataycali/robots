@@ -61,6 +61,18 @@ export function jointFailure(lines: string[] | null | undefined): JointFailure |
   return out
 }
 
+/**
+ * CARD-SIZED: the cause in a few words, for the fleet grid where an operator looks FIRST. The remedy is
+ * deliberately left to the detail view — a card that tries to hold a paragraph stops being scannable, and
+ * the point here is only to turn "no joint data" into "no joint data, and here is which kind of problem".
+ */
+export function jointFailureBadge(f: JointFailure | null): string | null {
+  if (!f) return null
+  if (/holds .*serial port|holds \/dev/.test(f.headline)) return 'the serial port is held by something else'
+  if (/no calibration file/.test(f.headline)) return 'its robot id has no calibration file'
+  return f.kind ? `${f.kind} — open it for the arm's own words` : "open it for the arm's own words"
+}
+
 /** One line for a screen. */
 export function jointFailureLine(f: JointFailure | null): string | null {
   if (!f) return null

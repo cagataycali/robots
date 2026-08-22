@@ -1,7 +1,7 @@
 /** Why an arm reports no joints, read from its own ring buffer.
  *  Subject: npx esbuild src/lib/jointFailure.ts --bundle --format=esm --outfile=/tmp/jointFailure.mjs */
 import assert from 'node:assert/strict'
-import { jointFailure, jointFailureLine } from '/tmp/jointFailure.mjs'
+import { jointFailure, jointFailureLine, jointFailureBadge } from '/tmp/jointFailure.mjs'
 
 // VERBATIM from this fleet (GET /api/devices/logs/so101-follower), including the reassuring tail that
 // postdates the failure — the reason a dead arm looks healthy on every other surface.
@@ -50,4 +50,14 @@ assert.equal(jointFailure(null), null)
 assert.equal(jointFailure(['13:58:52 hardware connected', '13:58:52 online']), null, 'a healthy log explains nothing')
 assert.equal(jointFailure([`x state probe 'hw_joints' failed, omitted: `]), null, 'a failure with no exception text is not a sentence')
 assert.equal(jointFailureLine(null), null)
+// THE CARD FORM: a few words, no remedy — a card holding a paragraph stops being scannable. Both real
+// causes on this fleet must be distinguishable at a glance, and an unknown one must not pretend to know.
+assert.equal(jointFailureBadge(jointFailure(FOLLOWER)), 'the serial port is held by something else')
+assert.equal(jointFailureBadge(jointFailure(LEADER)), 'its robot id has no calibration file')
+assert.match(jointFailureBadge(odd), /TimeoutError/)
+assert.match(jointFailureBadge(odd), /own words/, 'an unrecognised cause points at the log, it does not summarise it')
+assert.equal(jointFailureBadge(null), null)
+for (const b of [jointFailureBadge(jointFailure(FOLLOWER)), jointFailureBadge(jointFailure(LEADER))])
+  assert.ok(b.length < 60, `a card badge must stay scannable, got ${b.length} chars`)
+
 console.log('jointFailure: all assertions passed')
