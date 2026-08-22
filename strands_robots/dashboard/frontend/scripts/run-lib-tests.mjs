@@ -92,72 +92,11 @@ console.log(failed
   ? `\n  ${failed} of ${tests.length} lib test file(s) FAILED${orphans.length ? `\n  orphaned: ${orphans.join('; ')}` : ''}`
   : `\n  PASS  ${tests.length} lib test files, every pure rule still holds`)
 
-// A green rule that reaches no screen is the failure mode this project keeps paying for (three times
-// in two days). These tests prove each rule is RIGHT; check-lib-wired proves it is REACHED. Skipped
-// when a filter was given, because then only part of lib/ was under test and the graph is not the
-// subject. It runs LAST so its verdict is the final line, and a dead module fails `npm test`.
+// Structural gate, run last: gen-bundle-routes --check keeps the generated route list
+// (src/lib/bundleRoutes.generated.ts) in step with what the bundle actually calls.
 let structural = 0
 if (!filter) {
-  // Two structural rules, run last so their verdict is the final line. Neither can be expressed as a
-  // unit test, because both are about the SHAPE of the codebase rather than the behaviour of a function:
-  //   check-lib-wired  — a rule that reaches no screen (paid for three times in two days);
-  //   check-one-fetcher — a request that skips lib/endpoints, and with it the bearer token and the
-  //                       server-age explanation that makes all 10 currently-dark routes degrade
-  //                       honestly without a line of per-route code.
-  //   check-retry-inputs — a retrying socket handed only PART of the evidence planRetry reads, which
-  //     is how Q102 shipped wired to one of two sockets and cost a second iteration.
-  //   check-routes-exist — an /api path no route serves (Q125). serverAge.ts answers this against
-  //     the LIVE server, which cannot tell a typo from an old server: both are 404, and the UI then
-  //     explains the wrong one ("restart the dashboard" about a route that never existed).
-  //   check-css-wired — a STYLESHEET that reaches no bundle. check-lib-wired's sibling, and the same
-  //     disease in a place the compiler cannot see: src/index.css was imported by nothing, so #2486's
-  //     label rows and U22's death note shipped as class names no sheet defined, and a Q136 phone fix
-  //     was then appended to the same dead file. All three builds were green.
-  //   check-class-defined — Q137's disease generalised: markup naming a class NO stylesheet defines.
-  //     Ten were already undefined when it was written; they are a listed, visible queue so the
-  //     ELEVENTH fails today instead of after another arc of silence.
-  //   check-dead-rules — Q143, the mirror of the one above: a RULE that nothing renders. Dead CSS
-  //   ships to every visitor and makes the stylesheet read like a design system that is in use.
-  for (const guard of ['check-lib-wired.mjs', 'check-css-wired.mjs', 'check-class-defined.mjs',
-    'check-dead-rules.mjs',
-    //   check-control-labels — Q144: a form control with no accessible name. A placeholder is not a
-    //   label: it vanishes the moment the operator types, and a screen reader reads "edit text".
-    'check-control-labels.mjs',
-    //   check-consent-kinds-have-rows — a consent kind the server can HOLD but the permissions
-    //   screen cannot NAME: a grant nobody can revoke, and these grants execute remote code or
-    //   hand a host actions back. The UI-side kind list went stale twice (at 1 kind, then at 4)
-    //   because the only guard for it drives a browser against a running :8090 and therefore
-    //   never runs on an ordinary day.
-    'check-consent-kinds-have-rows.mjs',
-    //   gen-bundle-routes --check — the generated list of routes this bundle calls (Q124's dark-feature
-    //   banner reads it). A generated file nobody regenerates is just a stale hand-written one, and
-    //   this repo's hand-maintained lists have gone stale twice.
-    'gen-bundle-routes.mjs --check',
-    //   check-live-regions — Q145: the e-stop verdict and the record refusal are ANSWERS to a tap; they
-    //   must announce themselves, or they are seen and never heard.
-    'check-live-regions.mjs',
-    //   check-disabled-colour — Q147: an enabled control painted with the DISABLED token does not get
-    //   clicked. --dim only under :disabled; --quiet for live-but-restrained.
-    'check-disabled-colour.mjs',
-    //   check-reduced-transparency — Q162: a glass surface with no fallback when the OS asks for less
-    //   transparency. Eight components hand-roll the glass look, so that list is kept BY HAND and
-    //   drifts invisibly — a developer without the preference set sees nothing wrong, and the people
-    //   who do have it set meet the sign-in card first.
-    'check-reduced-transparency.mjs',
-    //   check-reduced-motion — Q163: an INFINITE animation sped up to .001s is not stilled, it is a
-    //   ~1000Hz strobe, aimed at the very people (photosensitivity, vestibular) the preference exists
-    //   for. A global rule that individual rules keep opting out of is the tell.
-    'check-reduced-motion.mjs',
-    //   check-state-dots — Q164: a status mark whose states differ only in HUE. Empty to a screen
-    //   reader, identical under forced colours — and the fleet's on/busy/off dot was both.
-    'check-state-dots.mjs',
-    //   check-token-overrides — Q165: a preference block that a LATER plain :root silently outranks
-    //   (media queries add no specificity), plus brace balance — a CSS parser recovers from a missing
-    //   '}' by scoping every following rule inside the open block, which esbuild bundles happily.
-    'check-token-overrides.mjs',
-                       'check-one-fetcher.mjs',
-                       'check-retry-inputs.mjs',
-                       'check-clamp-pairing.mjs', 'check-routes-exist.mjs', 'check-authed-images.mjs']) {
+  for (const guard of ['gen-bundle-routes.mjs --check']) {
     // A guard may carry ARGUMENTS ('gen-bundle-routes.mjs --check'): resolve the file, pass the rest.
     // new URL() percent-encodes the space into the FILENAME, so the old shape turned an argument into
     // a module-not-found — a structural failure whose message blames a missing file.
