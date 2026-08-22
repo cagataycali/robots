@@ -42,6 +42,16 @@ silently grading nothing.
 The scan walks modules by AST, so it needs none of the optional hardware
 dependencies installed, and :class:`TestTheScanIsNonVacuous` fails if a
 re-narrowed scan reports a clean sweep over less than the tool package.
+
+Reading from source is also what makes the grading independent of import order.
+:mod:`strands_robots.tools` exports each tool lazily through module
+``__getattr__``, and the import system rebinds that package attribute to the
+**submodule** as soon as anything imports the submodule directly - which five
+sibling test modules do. A read of ``tools.pose_tool`` is then a module, and its
+docstring is the module's, not the tool's; a docstring read that way answers
+correctly when this file runs alone and wrongly in a suite run.
+:class:`TestTheGuardReadsDocstringsFromSource` pins that no read here takes that
+route.
 """
 
 from __future__ import annotations
@@ -146,6 +156,35 @@ def dispatched_actions(tree: ast.Module) -> frozenset[str]:
     return frozenset(found)
 
 
+def tool_docstring(module: str, function: str) -> str:
+    """The docstring of a ``@tool`` function, read from its source.
+
+    Read by AST rather than through :mod:`strands_robots.tools`, for the same
+    reason every graded surface above is: the package exports each tool lazily
+    via module ``__getattr__``, and the import system rebinds that package
+    attribute to the **submodule** as soon as anything imports the submodule
+    directly. Five sibling test modules do exactly that
+    (``from strands_robots.tools.pose_tool import pose_tool``), so in a suite run
+    the cached binding is a module, ``__getattr__`` is never consulted again, and
+    a read of the package attribute returns the *module* docstring - which
+    carries none of the tool's own prose. Reading from source is the same answer
+    whatever has been imported first.
+
+    Args:
+        module: A file name under the tool package, e.g. ``"pose_tool.py"``.
+        function: A ``@tool`` function defined at that module's top level.
+
+    Returns:
+        The function's docstring, dedented as :func:`ast.get_docstring` returns
+        it, or ``""`` when it has none.
+    """
+    tree = ast.parse((_TOOLS_ROOT / module).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == function:
+            return ast.get_docstring(node) or ""
+    raise AssertionError(f"{module} defines no top-level function {function!r}")
+
+
 def _graded_surfaces() -> list[tuple[str, frozenset[str], frozenset[str]]]:
     """Every tool module carrying an ``Actions:`` block, with both vocabularies.
 
@@ -217,7 +256,7 @@ class TestPoseToolDescribesItselfConsistently:
         ``lerobot_teleoperate`` sets the convention: a tool that does not own
         calibration names the one that does.
         """
-        doc = inspect.getdoc(getattr(tools_package.pose_tool, "__wrapped__", tools_package.pose_tool)) or ""
+        doc = tool_docstring("pose_tool.py", "pose_tool")
         assert "lerobot_calibrate" in doc, "pose_tool no longer says where stored calibrations are managed"
 
 
@@ -302,6 +341,107 @@ class TestThePlantedDefectsAreReported:
     def test_every_dispatch_shape_is_collected(self, source: str) -> None:
         """A tool dispatching by membership or ``match`` is graded too."""
         assert dispatched_actions(ast.parse(source)) == frozenset({"a", "b"})
+
+
+class TestTheGuardReadsDocstringsFromSource:
+    """Every docstring read here is import-order independent.
+
+    A read through the tools package attribute answers correctly when this file
+    runs alone and wrongly once any sibling has imported the submodule directly,
+    so the failure is invisible to this file's own run and appears only in the
+    suite - which is what the required check runs. The lazy-import guard in
+    ``tests/tools/test_tools_lazy_import.py`` drops the cached binding before
+    each read for this reason; reading from source needs no such dance.
+    """
+
+    def test_no_tool_is_read_through_the_package_without_dropping_the_cache(self) -> None:
+        """A shadowable name reached through the package is the whole defect.
+
+        Both spellings are graded - ``tools.pose_tool`` and
+        ``getattr(tools, "pose_tool")`` reach the same rebound attribute - and
+        both are accepted only where the enclosing test first drops the cached
+        binding, which is what forces ``__getattr__`` to resolve the tool again.
+        That is the form ``tests/tools/test_tools_lazy_import.py`` uses, and the
+        reason it has to.
+        """
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        aliases = {
+            alias.asname or "strands_robots"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+            if alias.name == "strands_robots.tools"
+        }
+        assert aliases, "premise: this module no longer imports the tools package"
+        shadowable = {name for name in tools_package._LAZY_IMPORTS if (_TOOLS_ROOT / f"{name}.py").exists()}
+        assert shadowable, "premise: no lazily exported name is also a submodule"
+
+        def reads_in(node: ast.AST) -> list[tuple[int, str]]:
+            """Every package-attribute read of a shadowable name under ``node``."""
+            found: list[tuple[int, str]] = []
+            for child in ast.walk(node):
+                if (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id in aliases
+                    and child.attr in shadowable
+                ):
+                    found.append((child.lineno, ast.unparse(child)))
+                elif (
+                    isinstance(child, ast.Call)
+                    and isinstance(child.func, ast.Name)
+                    and child.func.id == "getattr"
+                    and child.args
+                    and isinstance(child.args[0], ast.Name)
+                    and child.args[0].id in aliases
+                    and len(child.args) > 1
+                    and isinstance(child.args[1], ast.Constant)
+                    and child.args[1].value in shadowable
+                ):
+                    found.append((child.lineno, ast.unparse(child)))
+            return found
+
+        def drops_the_cache(node: ast.AST) -> bool:
+            """Whether ``node`` calls ``vars(<tools>).pop(...)`` anywhere inside."""
+            return any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "pop"
+                and isinstance(call.func.value, ast.Call)
+                and isinstance(call.func.value.func, ast.Name)
+                and call.func.value.func.id == "vars"
+                and any(isinstance(a, ast.Name) and a.id in aliases for a in call.func.value.args)
+                for call in ast.walk(node)
+            )
+
+        unguarded = sorted(
+            f"line {line}: {read}"
+            for function in ast.walk(tree)
+            if isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef) and not drops_the_cache(function)
+            for line, read in reads_in(function)
+        )
+        assert not unguarded, (
+            "a tool is resolved through the tools package attribute without first dropping the "
+            "cached binding, and the import system rebinds that attribute to the submodule as "
+            f"soon as any sibling imports it directly: {unguarded}"
+        )
+
+    def test_the_source_read_matches_what_the_lazy_export_resolves_to(self) -> None:
+        """Reading from source is a faithful substitute, not merely a safe one.
+
+        Dropping the cached binding forces the lazy path, so this compares the
+        two readings of the same docstring rather than whatever a prior import
+        happened to leave behind.
+        """
+        vars(tools_package).pop("pose_tool", None)
+        resolved = getattr(tools_package, "pose_tool")
+        runtime = inspect.getdoc(getattr(resolved, "__wrapped__", resolved)) or ""
+        assert runtime.strip() == tool_docstring("pose_tool.py", "pose_tool").strip()
+
+    def test_a_missing_function_is_reported_rather_than_read_as_empty(self) -> None:
+        """A rename must fail here, not grade an empty docstring."""
+        with pytest.raises(AssertionError, match="defines no top-level function"):
+            tool_docstring("pose_tool.py", "renamed_away")
 
 
 class TestTheScanIsNonVacuous:
