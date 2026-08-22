@@ -1079,6 +1079,17 @@ class Robot(TeleopMixin, AgentTool):
         try:
             ConfigClass = RobotConfig.get_choice_class(robot_type)
         except KeyError:
+            # A leader arm is a teleoperator, not a robot, and lerobot keeps the
+            # two in separate registries. Listing the robot types for a leader
+            # name is the retry that torque-enables the arm a human is holding,
+            # so name the kind it really is instead. ``Robot()``'s own registry
+            # guard does this for an unregistered ``*_leader`` name; a leader
+            # that IS registered -- as itself, which is the honest thing to
+            # register -- reaches this site instead.
+            from strands_robots.teleoperator import _other_lerobot_kind_refusal
+
+            if other := _other_lerobot_kind_refusal(robot_type, wanted="robot"):
+                raise ValueError(other) from None
             available = sorted(RobotConfig.get_known_choices().keys())
             # ``from None`` -- the KeyError is an internal detail of
             # lerobot's draccus registry; suppress the chained traceback
