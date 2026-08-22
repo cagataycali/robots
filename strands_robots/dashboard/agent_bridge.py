@@ -206,6 +206,40 @@ def set_bridge(bridge: Any) -> None:
     global _bridge
     _bridge = bridge
 
+def _peers_snapshot() -> dict:
+    """Current fleet peers for the motion gate - read at call time, never cached."""
+    if _bridge is None:
+        return {}
+    try:
+        return (_bridge.snapshot() or {}).get("peers") or {}
+    except Exception:  # noqa: BLE001 - unreadable snapshot means UNKNOWN, i.e. metal
+        return {}
+
+# --- pending HITL interrupt (one at a time: one agent, one turn lock) ---------
+_pending_lock = threading.Lock()
+_pending_interrupt: dict[str, Any] | None = None
+
+def pending_interrupt() -> dict[str, Any] | None:
+    """The unanswered motion confirm, or None. Surfaced in agent_status for reloads."""
+    with _pending_lock:
+        return dict(_pending_interrupt) if _pending_interrupt else None
+
+def _set_pending(value: dict[str, Any] | None) -> None:
+    global _pending_interrupt
+    with _pending_lock:
+        _pending_interrupt = value
+
+def _abandon_pending() -> None:
+    """A new prompt arrived over an unanswered confirm: drop the parked turn.
+
+    History was never saved mid-interrupt, so rebuilding the agent restores the
+    conversation from disk - the pre-turn boundary. Nothing wedges.
+    """
+    _set_pending(None)
+    global _agent
+    with _agent_lock:
+        _agent = None
+
 def _make_fleet_tool() -> Any:
     from strands import tool
 
@@ -246,6 +280,7 @@ def _make_fleet_tool() -> Any:
         if action == "task":
             if not target or not instruction:
                 return {"status": "error", "content": [{"text": "task requires target and instruction"}]}
+            from strands_robots.dashboard.agent_hitl import consume_grant
             from strands_robots.dashboard.agent_motion import agent_motion_allowed
 
             snap_peers = {}
@@ -253,12 +288,18 @@ def _make_fleet_tool() -> Any:
                 snap_peers = _bridge.snapshot().get("peers") or {}
             except Exception:  # noqa: BLE001 - an unreadable snapshot means UNKNOWN, i.e. metal
                 snap_peers = {}
-            verdict = agent_motion_allowed(
-                "task", peer=snap_peers.get(target), target=target,
+            # A human yes on the interrupt confirm deposits a one-shot grant;
+            # consuming it satisfies the backstop without weakening it.
+            approved = consume_grant(
+                "fleet", {"action": "task", "target": target, "instruction": instruction},
             )
-            if not verdict["allowed"]:
-                _notify_refusal(verdict["reason"])
-                return {"status": "error", "content": [{"text": verdict["reason"]}]}
+            if not approved:
+                verdict = agent_motion_allowed(
+                    "task", peer=snap_peers.get(target), target=target,
+                )
+                if not verdict["allowed"]:
+                    _notify_refusal(verdict["reason"])
+                    return {"status": "error", "content": [{"text": verdict["reason"]}]}
             cmd = {
                 "action": "execute", "instruction": instruction,
                 "policy_provider": policy_provider, "duration": float(duration),
@@ -303,12 +344,14 @@ def _build_agent() -> Any:
     from strands import Agent
 
     from strands_robots.dashboard import settings
+    from strands_robots.dashboard.agent_hitl import MotionInterruptHook
 
     cfg = settings.load()["agent"]
     kwargs: dict[str, Any] = {
         "tools": [_make_fleet_tool()],
         "system_prompt": cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT,
         "callback_handler": None,
+        "hooks": [MotionInterruptHook(_peers_snapshot)],
     }
     if cfg.get("model_id"):
         kwargs["model"] = cfg["model_id"]
@@ -463,6 +506,35 @@ def run_turn_blocking(
     """Run one agent turn in a worker thread, streaming events into q. ``cancel`` is set by the
     websocket handler when its client goes away.
     """
+    if pending_interrupt() is not None:
+        # A fresh prompt over an unanswered confirm: the human moved on.
+        _abandon_pending()
+        q.put({"type": "notice", "text": "the pending motion confirm was dismissed - nothing was sent"})
+    _run_agent_input(prompt, q, cancel)
+
+def resume_interrupt_blocking(
+    interrupt_id: str,
+    response: Any,
+    q: "queue.Queue[dict]",
+    cancel: "threading.Event | None" = None,
+) -> None:
+    """Answer a pending motion confirm and continue the SAME turn."""
+    pending = pending_interrupt()
+    if pending is None or pending.get("id") != interrupt_id:
+        q.put({
+            "type": "error",
+            "error": "no pending confirm with that id - it may have been dismissed or already answered",
+        })
+        q.put({"type": "__END__"})
+        return
+    payload = [{"interruptResponse": {"interruptId": interrupt_id, "response": response}}]
+    _run_agent_input(payload, q, cancel)
+
+def _run_agent_input(
+    agent_input: Any,
+    q: "queue.Queue[dict]",
+    cancel: "threading.Event | None" = None,
+) -> None:
     acquired = False
     try:
         if cancel is not None and cancel.is_set():
@@ -475,14 +547,15 @@ def run_turn_blocking(
             agent = get_agent()
             agent.callback_handler = WSStreamHandler(q, cancel)
             try:
-                result = agent(prompt)
+                result = agent(agent_input)
             except TurnCancelled:
                 raise
             except Exception as exc:
                 # Self-heal instead of failing every future turn: drop the
                 # restored history, rebuild, and try once more from a clean
-                # conversation.
-                if not (agent.messages and _is_history_poisoned(exc)):
+                # conversation. Resumes are not retried - the parked turn is
+                # what the retry would destroy.
+                if not isinstance(agent_input, str) or not (agent.messages and _is_history_poisoned(exc)):
                     raise
                 logger.warning("turn failed on restored history (%s) - clearing and retrying", exc)
                 clear_history()
@@ -493,7 +566,16 @@ def run_turn_blocking(
                 agent.callback_handler = WSStreamHandler(q, cancel)
                 agent.messages = []
                 q.put({"type": "notice", "text": "previous conversation was unusable and has been cleared"})
-                result = agent(prompt)
+                result = agent(agent_input)
+            if getattr(result, "stop_reason", None) == "interrupt" and getattr(result, "interrupts", None):
+                # The motion gate paused the turn. Park it: history is NOT
+                # saved, so a reload restores the pre-turn boundary.
+                it = result.interrupts[0]
+                event = {"type": "interrupt", "id": it.id, "name": it.name, "reason": it.reason}
+                _set_pending({"id": it.id, "name": it.name, "reason": it.reason})
+                q.put(event)
+                return
+            _set_pending(None)
             try:
                 _save_history(list(agent.messages))
             except Exception:
