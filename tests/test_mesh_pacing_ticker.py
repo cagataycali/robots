@@ -15,12 +15,19 @@ two environments is exactly the failure mode that hides this bug.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import pathlib
 import threading
 import time
+from typing import Any
 
+import numpy as np
 import pytest
 
+import strands_robots
 from strands_robots.mesh.pacing import Ticker, sleep_penalty_s
+from strands_robots.utils import positive_finite_number_error
 
 
 class TestARefusedPeriodCannotBusySpinAHardwareLoop:
@@ -198,3 +205,172 @@ class TestTheCalibrationHelperIsUsableByOtherTests:
         # ~0.01. Anything that returns the total is broken in the direction that
         # makes every calibrated ceiling too generous.
         assert sleep_penalty_s(0.01) < 1.0
+
+
+#: Values that do not name a cadence, one per way of failing to be one. Only
+#: ``True``, ``"0.05"``, ``None``, a list and a value past the float64 range were
+#: new here: the rest a bare positivity test already refused. The point is that
+#: this list is not maintained here at all -- it is the same set
+#: ``tests/test_wait_budget_domain.py`` holds for the bridges' ``poll_period``,
+#: because it is the same quantity.
+NOT_A_CADENCE: list[Any] = [
+    0,
+    0.0,
+    -1,
+    -0.001,
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    True,  # int subclass: a bare positivity test admits it as a 1-second period
+    False,
+    "0.05",  # a numeric string is not a real number
+    None,
+    [0.05],
+    10**400,  # positive and finite, but past the float64 range
+]
+
+#: Values that do name a cadence, spanning the fractional and whole cases.
+A_CADENCE: list[float] = [0.001, 0.02, 0.5, 1, 2.5]
+
+
+class TestThePeriodIsHeldToTheSharedDomain:
+    """One domain decides which values pace a loop, wherever the value enters.
+
+    A period reaching this constructor has usually already been validated by the
+    surface that produced it -- ``HardwareRtpsBridge.poll_period``, or an ``hz``
+    a loop inverts -- against
+    :func:`~strands_robots.utils.positive_finite_number_error`. The check written
+    here instead was narrower than the values that reach it, and narrower in the
+    direction that pages nobody: ``True`` became a silent one-second period on a
+    camera loop, and ``None`` or ``10**400`` got a bare ``TypeError`` /
+    ``OverflowError`` out of the conversion rather than the ``ValueError`` this
+    constructor documents.
+    """
+
+    @pytest.mark.parametrize("value", NOT_A_CADENCE, ids=repr)
+    def test_a_period_that_names_no_cadence_is_refused(self, value: Any) -> None:
+        with pytest.raises(ValueError, match="period"):
+            Ticker(value)
+
+    @pytest.mark.parametrize("value", NOT_A_CADENCE, ids=repr)
+    def test_a_slice_that_names_no_cadence_is_refused(self, value: Any) -> None:
+        with pytest.raises(ValueError, match="slice_s"):
+            Ticker(0.1, slice_s=value)
+
+    @pytest.mark.parametrize("value", NOT_A_CADENCE, ids=repr)
+    def test_the_verdict_is_the_shared_domains_verdict(self, value: Any) -> None:
+        """Parity, so the two cannot come to disagree about one quantity.
+
+        Asserted as an equivalence rather than as two lists: a value this
+        constructor refuses and the domain accepts would be just as much a
+        divergence as the one that was here.
+        """
+        assert positive_finite_number_error(value, "period", "Ticker") is not None
+        with pytest.raises(ValueError):
+            Ticker(value)
+
+    @pytest.mark.parametrize("value", A_CADENCE, ids=repr)
+    def test_a_period_that_paces_a_loop_is_still_accepted(self, value: float) -> None:
+        assert positive_finite_number_error(value, "period", "Ticker") is None
+        with Ticker(value) as ticker:
+            assert ticker.period == pytest.approx(float(value))
+
+    def test_a_numpy_scalar_is_accepted_and_stored_as_a_builtin_float(self) -> None:
+        """Why the conversion has to happen after the guard, not before it.
+
+        The shared domain accepts any real scalar, so a ``np.float32`` read from
+        a config array is a usable period -- but it is not what
+        :meth:`selectors.BaseSelector.select` can be handed, so the value has to
+        be converted once it is known to be usable.
+        """
+        # Bound through ``Any`` for the same reason the bridges' own numpy case
+        # is: ``period`` is annotated ``float``, and the subject here is what the
+        # runtime does with a scalar the shared domain accepts, which is not what
+        # the annotation describes.
+        value: Any = np.float32(0.02)
+        assert positive_finite_number_error(value, "period", "Ticker") is None
+        with Ticker(value) as ticker:
+            assert type(ticker.period) is float
+            assert type(ticker.slice_s) is float
+
+    def test_the_refusal_still_says_what_an_unusable_period_would_do(self) -> None:
+        """The domain names the value; this constructor names the consequence."""
+        with pytest.raises(ValueError, match="busy-spins the loop") as refused:
+            Ticker(0)
+        assert "period must be" in str(refused.value)
+
+
+def _package_root() -> pathlib.Path:
+    """The installed package directory, derived from an imported symbol."""
+    return pathlib.Path(inspect.getfile(strands_robots)).parent
+
+
+def _ticker_constructions(source: str) -> list[tuple[int, bool]]:
+    """``(lineno, acquired_with_with)`` for every ``Ticker(...)`` in ``source``."""
+    tree = ast.parse(source)
+    acquired = {
+        id(item.context_expr)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With | ast.AsyncWith)
+        for item in node.items
+    }
+    return [
+        (node.lineno, id(node) in acquired)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Ticker"
+    ]
+
+
+class TestEveryPacedLoopAcquiresItsTickerWithWith:
+    """A ticker owns a selector and a self-pipe, so its release is structural.
+
+    Every one of these loops first spelled the release as ``try: ... finally:
+    ticker.close()``, which is correct exactly as long as each of the seven
+    writes it -- and this module exists because that is the kind of rule six
+    loops get right and the seventh does not. ``with`` moves it from a
+    discipline to the language, and it is checked here rather than left to
+    review because the loops live in five files.
+    """
+
+    def test_no_paced_loop_hand_rolls_the_release(self) -> None:
+        adrift = [
+            f"{path.relative_to(_package_root())}:{lineno}"
+            for path in sorted(_package_root().rglob("*.py"))
+            for lineno, with_stmt in _ticker_constructions(path.read_text())
+            if not with_stmt
+        ]
+        assert not adrift, (
+            "these tickers are constructed outside a ``with``, so their selector and "
+            f"self-pipe are released only if the loop remembers to: {adrift}"
+        )
+
+    def test_the_scan_finds_every_paced_loop(self) -> None:
+        """Non-vacuity: a scan that reached nothing would report a clean sweep."""
+        found = sum(len(_ticker_constructions(path.read_text())) for path in sorted(_package_root().rglob("*.py")))
+        assert found >= 7, f"expected the mesh, teleop and RTPS publish loops, found {found}"
+
+    def test_the_scan_reports_a_hand_rolled_release(self) -> None:
+        """A scanner that matched nothing would pass the sweep vacuously."""
+        planted = (
+            "def loop(self):\n"
+            "    ticker = Ticker(0.02, self._stop)\n"
+            "    try:\n"
+            "        pass\n"
+            "    finally:\n"
+            "        ticker.close()\n"
+        )
+        assert _ticker_constructions(planted) == [(2, False)]
+
+    def test_the_scan_accepts_an_acquired_ticker(self) -> None:
+        planted = "def loop(self):\n    with Ticker(0.02, self._stop) as ticker:\n        pass\n"
+        assert _ticker_constructions(planted) == [(2, True)]
+
+    def test_the_documented_usage_shows_the_shape_the_loops_use(self) -> None:
+        """The class docstring taught the hand-rolled release it was flagged for.
+
+        A reader following the example wrote the shape this guard bans, which is
+        how it arrived at seven call sites at once.
+        """
+        example = Ticker.__doc__ or ""
+        assert "with Ticker(period, stop_event) as ticker:" in example
+        assert "finally:" not in example

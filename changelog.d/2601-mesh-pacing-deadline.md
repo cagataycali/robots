@@ -42,3 +42,21 @@ stop flag, in any statement position -- so "no pacer was missed" is checked
 rather than claimed. That breadth is load-bearing: the teleop loop's event is
 named `_teleop_stop_event`, and a `_stop_event`-only scan misses it entirely
 while its eleven siblings look fixed.
+
+The ticker is acquired with `with` at all seven call sites rather than released
+in a hand-rolled `finally`. It owns a selector and a self-pipe, so this moves the
+release from a discipline each of the seven loops has to remember into the
+language, and a guard scans the package for a construction outside a `with` so an
+eighth loop cannot reintroduce the shape. The class docstring taught the
+hand-rolled form, which is how it arrived at seven call sites at once.
+
+The period is held to `positive_finite_number_error`, the domain the surfaces
+that hand a period down already use for it -- `HardwareRtpsBridge.poll_period`, a
+loop's `1 / hz`. The check written inside the ticker instead was narrower than
+the values that reach it, in the direction that reports nothing: `True` is an
+`int` subclass a bare positivity test admits, so it became a silent one-second
+period on a camera loop, and `"0.05"` was accepted as a period, while `None` or a
+value past the float64 range got a bare `TypeError` / `OverflowError` out of the
+conversion rather than the `ValueError` the constructor documents. The conversion
+to a builtin float now happens after the guard, because the shared domain accepts
+a NumPy scalar and the selector cannot be handed one.
