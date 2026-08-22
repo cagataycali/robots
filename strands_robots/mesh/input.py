@@ -491,7 +491,7 @@ class InputReceiver:
         # eavesdrops a teleop stream can store frames and replay them hours/days
         # later (different session/ZID, stale timestamps) and the follower
         # repeats the captured motion -- the rate cap (100Hz) and value bound
-        # (4pi) still pass because the replayed frames are legitimate-shaped.
+        # still pass because the replayed frames are legitimate-shaped.
         # Every frame already carries a wall-clock ``t`` (set by
         # InputPublisher._publish_loop), so we just have to CHECK it. We reuse
         # the same freshness/forward-skew env knobs as the resume/e-stop replay
