@@ -48,7 +48,14 @@ def prune_peers(
 # : Transport low-pass filter on ``**/cmd`` (_zenoh_config.DEFAULT_MAX_CMD_BYTES). : Anything
 # larger is dropped pre-deserialise and the sender only ever sees a : timeout, so we check
 # before publishing and return a real error instead.
-MAX_CMD_BYTES = int(os.getenv("STRANDS_MESH_MAX_CMD_BYTES", str(16 * 1024)))
+# One parser, the SDK's: this was a hand copy of the default (16*1024) that
+# would silently diverge the day _zenoh_config changes DEFAULT_MAX_CMD_BYTES —
+# the pre-publish check here MUST agree with the transport's drop filter or a
+# command passes the check and vanishes into the documented timeout anyway.
+# cmd_bytes_cap() also refuses a garbage env value with an actionable message.
+from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
+
+MAX_CMD_BYTES = _cmd_bytes_cap()
 
 #: How many fleet actions to keep for the activity panel.
 ACTIVITY_CAP = 300

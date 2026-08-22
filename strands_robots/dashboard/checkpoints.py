@@ -22,19 +22,60 @@ _CACHE_TTL_S = 300.0
 _CACHE: TTLCache[list[dict[str, Any]]] = TTLCache(_CACHE_TTL_S)
 
 # lerobot policy family names that can appear in checkpoint tags/names.
-_FAMILY_RE = re.compile(
-    r"\b(smolvla|act|diffusion|pi0[-_]?fast|pi05|pi0|tdmpc|vqbet|groot|molmoact2?|sac|xvla|wall_x|eo1|evo1)\b",
-    re.IGNORECASE,
+# FALLBACK ONLY — the live list is read from lerobot's own choice registry
+# (see _family_matcher). This copy drifted, measured 2026-08-22: it missed 6
+# of lerobot's 19 registered families (fastwam, gaussian_actor, lingbot_va,
+# multi_task_dit, vla_jepa, wall_x), and its own ``wall_x`` literal could
+# NEVER match — _guess_policy_type normalizes ``_``→``-`` before searching,
+# so the underscore in the pattern was unreachable. A hand list keyed to an
+# upstream registry is only as true as the day it was written.
+_FALLBACK_FAMILIES = (
+    "smolvla", "act", "diffusion", "pi0_fast", "pi05", "pi0", "tdmpc",
+    "vqbet", "groot", "molmoact2", "molmoact", "sac", "xvla", "wall_x",
+    "eo1", "evo1",
 )
+
+def _build_family_matcher(names: tuple[str, ...]) -> tuple[re.Pattern[str], dict[str, str]]:
+    """Compile a separator-tolerant matcher + squashed-name → canonical map.
+
+    Longest-first so ``pi0_fast`` wins over ``pi0``; each ``_`` in a family
+    name becomes ``-?`` because callers normalize ``_``→``-`` (word-boundary
+    ``\\b`` misses ``smolvla_base`` otherwise) and Hub names also write
+    ``pi0fast`` with no separator at all.
+    """
+    alts = sorted(names, key=len, reverse=True)
+    pattern = "|".join(re.escape(n).replace("_", "-?") for n in alts)
+    regex = re.compile(rf"\b({pattern})\b", re.IGNORECASE)
+    canonical = {n.replace("_", "").lower(): n for n in names}
+    return regex, canonical
+
+_FAMILY_MATCHER: tuple[re.Pattern[str], dict[str, str]] | None = None
+
+def _family_matcher() -> tuple[re.Pattern[str], dict[str, str]]:
+    """The registry-derived matcher, built once; fallback list if lerobot is absent."""
+    global _FAMILY_MATCHER
+    if _FAMILY_MATCHER is None:
+        names: tuple[str, ...] = ()
+        try:
+            import lerobot.policies  # noqa: F401 — importing registers the config subclasses
+            from lerobot.configs.policies import PreTrainedConfig
+
+            names = tuple(PreTrainedConfig.get_known_choices())
+        except Exception:  # noqa: BLE001 — checkpoint browsing must survive a broken lerobot
+            names = ()
+        _FAMILY_MATCHER = _build_family_matcher(names or _FALLBACK_FAMILIES)
+    return _FAMILY_MATCHER
 
 def _guess_policy_type(repo_id: str, tags: list[str]) -> str | None:
     """Best-effort policy family from repo name + tags (form prefill only)."""
+    regex, canonical = _family_matcher()
     for source in (*tags, repo_id):
         # underscores are word chars, so \bsmolvla\b misses 'smolvla_base' -
         # normalize separators before matching.
-        m = _FAMILY_RE.search((source or "").replace("_", "-"))
+        m = regex.search((source or "").replace("_", "-"))
         if m:
-            return m.group(1).lower().replace("-", "_").replace("pi0fast", "pi0_fast")
+            squashed = m.group(1).lower().replace("-", "")
+            return canonical.get(squashed, squashed)
     return None
 
 def _hf_cache_root() -> Path:
