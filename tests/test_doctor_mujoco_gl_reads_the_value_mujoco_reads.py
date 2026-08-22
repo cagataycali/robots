@@ -139,7 +139,15 @@ class TestADisabledGLContextIsNotAWorkingConfiguration:
             f"MUJOCO_GL={value!r} makes MuJoCo build no GL context at all (DISPLAY={display!r}), "
             f"so the verdict cannot be {_marker(verdict)}: {_plain(verdict)!r}"
         )
-        assert value in _plain(verdict), f"the verdict has to name the value that disabled it: {_plain(verdict)!r}"
+        headline = _headline(verdict)
+        assert value in headline, f"the verdict has to name the value that disabled it: {headline!r}"
+        # MuJoCo accepts this family and simply builds no context, so reporting it
+        # as a value MuJoCo refuses at import would name the wrong cause.
+        assert "refuses" not in headline, (
+            f"MuJoCo accepts {value!r} and builds no GL context from it, so the verdict must not "
+            f"report it as a value MuJoCo refuses: {headline!r}"
+        )
+        assert "render" in headline, f"the verdict has to name the consequence - that nothing can render: {headline!r}"
 
     def test_a_disabled_gl_context_is_not_reported_as_unset(self, linux_headless) -> None:
         from strands_robots.doctor import check_mujoco_gl
