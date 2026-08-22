@@ -118,7 +118,7 @@ def read_observation(device: Any) -> Any:
             handle hardware errors, and the lock is released either way.
     """
     with bus_lock(device):
-        return _read_recovering_a_stale_flag(device, getattr(device, "bus", None), lambda: device.get_observation())
+        return device.get_observation()
 
 
 def write_action(device: Any, action: Any) -> Any:
@@ -136,12 +136,7 @@ def write_action(device: Any, action: Any) -> Any:
         Whatever the driver's ``send_action()`` returns.
     """
     with bus_lock(device):
-        try:
-            return device.send_action(action)
-        except Exception as exc:  # noqa: BLE001 - re-raised, only better explained
-            if port_busy_action(exc, already_recovered=False) != "clear_and_retry":
-                raise
-            raise ConnectionError(write_refusal(device, exc)) from exc
+        return device.send_action(action)
 
 
 #: Register every SO-101-family bus reports positions from. Named here so the
@@ -207,7 +202,7 @@ def read_joints(device: Any) -> Any:
             return bus.sync_read(_POSITION_REGISTER)
 
     with bus_lock(device):
-        raw = _read_recovering_a_stale_flag(device, bus, _sync_read)
+        raw = _sync_read()
     if not isinstance(raw, Mapping):
         # A ``bus`` that answers ``sync_read`` with something other than a
         # mapping is not a motor bus this function can read: a wrapper, a proxy,
@@ -222,151 +217,3 @@ def read_joints(device: Any) -> Any:
     # ``.pos`` is lerobot's own suffix (see SOFollower.get_observation) and the
     # shape the rest of this codebase already parses.
     return {f"{motor}.pos": value for motor, value in raw.items()}
-
-
-_PORT_BUSY_SIGNATURE = "Port is in use!"
-
-
-def port_busy_action(error: Any, already_recovered: bool) -> str:
-    """Decide what a port-busy failure means, given whether we already recovered once.
-
-    Measured on real hardware: both arms published ZERO joints for hours with healthy presence,
-    because one read had failed with ``[TxRxResult] Port is in use!`` and
-    every read after it failed identically. The mechanism is in the vendored SDK: ``txPacket`` sets
-    ``port.is_using = True``, and the callers clear it with a bare ``port.is_using = False`` AFTER
-    the call - there is no ``try``/``finally`` anywhere in that file. So an exception, a timeout or a
-    cancellation between those two lines leaves the flag set for the LIFE OF THE PROCESS, and the
-    arm is mute until someone notices and respawns it. Retrying cannot help: the flag is checked
-    before the port is touched.
-
-    Clearing that flag is safe only under a proof, never on a hunch, because clearing a flag a
-    concurrent exchange genuinely holds would interleave two conversations on one UART and hand back
-    positions that were never measured. The proof this module can offer is its own lock: every read
-    and write here happens inside :func:`bus_lock`, so while we hold it a port that still claims to
-    be in use is either stale (its owner died mid-exchange) or held by a reader that bypasses the
-    lock. The first is recoverable; the second is a bug that must be SAID OUT LOUD, not smoothed
-    over. Hence: clear once, and if the very next read is busy again, report a real owner - the
-    second failure is the evidence that distinguishes them.
-    """
-    if _PORT_BUSY_SIGNATURE not in str(error):
-        return "reraise"
-    return "report_real_owner" if already_recovered else "clear_and_retry"
-
-
-def clear_stale_port_busy(bus: Any) -> bool:
-    """Clear the SDK's in-use flag, only if it is actually set. Returns whether it was.
-
-    Deliberately narrow: it touches one boolean on the port handler and nothing else - no reopen, no
-    reconnect, no write to a motor. A bus that does not expose a port handler (a stub, a sim, a
-    future driver) is left alone and reported as unrecovered, so the caller re-raises the original
-    error rather than claiming a repair it did not make.
-    """
-    handler = getattr(bus, "port_handler", None)
-    if handler is None or not getattr(handler, "is_using", False):
-        return False
-    handler.is_using = False
-    return True
-
-
-def _read_recovering_a_stale_flag(device: Any, bus: Any, do_read: Any) -> Any:
-    """Run a READ, and if the port is merely marked in-use by a dead exchange, clear it once.
-
-    Must be called with :func:`bus_lock` already held - that lock IS the proof (see
-    :func:`port_busy_action`). Shared by every read path here so a stranded flag cannot mute one
-    caller while another recovers; a read is the only operation that can do this safely, because
-    re-reading a position changes nothing in the world.
-    """
-    try:
-        return do_read()
-    except Exception as exc:  # noqa: BLE001 - re-raised unless provably recoverable
-        if port_busy_action(exc, already_recovered=False) != "clear_and_retry":
-            raise
-        if not clear_stale_port_busy(bus):
-            raise
-        count = _record_recovery(device, bus)
-        logger.warning(
-            "%s: the motor bus was left marked in-use by an exchange that never finished; cleared "
-            "that flag while holding this arm's bus lock and read again (%d time(s) this session). "
-            "Nothing else can recover it, and every later read would have failed the same way.",
-            getattr(device, "name", None) or type(device).__name__,
-            count,
-        )
-        try:
-            return do_read()
-        except Exception as second:  # noqa: BLE001
-            if port_busy_action(second, already_recovered=True) == "report_real_owner":
-                raise ConnectionError(
-                    "the motor bus reports in-use again immediately after that flag was cleared, "
-                    "while this process holds the bus lock - so the port has a REAL owner outside "
-                    "bus_access (another process, or a reader that skips the lock). Ask the OS who "
-                    f"holds it: /usr/sbin/lsof {getattr(bus, 'port', '')} ({second})"
-                ) from second
-            raise
-
-
-def write_refusal(device: Any, error: Any) -> str:
-    """Explain a port-busy WRITE, which this module deliberately does not recover.
-
-    A read may clear a stranded in-use flag (see :func:`port_busy_action`): re-reading a position
-    changes nothing in the world, so the worst case of being wrong is a bad number, and the retry is
-    bounded at one. A WRITE is not symmetrical, and the asymmetry is the point:
-
-    * The exchange that stranded the flag may itself have been a write. Part of a goal-position packet
-      may already be on the wire, so the motors' commanded target is UNKNOWN - and the first thing to
-      do with an arm in an unknown commanded state is READ it, not send it another target.
-    * Re-sending an action is motion. This module cannot know whether the action in hand is still the
-      one the operator wants, or a frame from a teleop stream that has since moved on; replaying a
-      stale target is exactly how an arm jumps.
-
-    So the write says what happened, and points at the operation that legitimately clears the flag -
-    any read, which the state probe performs every cycle anyway. That makes recovery automatic within
-    about a second of telemetry WITHOUT this module ever choosing to move a real arm.
-    """
-    name = getattr(device, "name", None) or type(device).__name__
-    return (
-        f"{name}: refusing to re-send this action. The motor bus is marked in-use by an exchange "
-        "that never finished, so the arm's commanded position is unknown, and re-sending motion "
-        "after an aborted write is not a decision this layer makes. A READ clears that flag safely "
-        "(the state probe does it every cycle, so telemetry alone recovers it in about a second) - "
-        f"then command the arm again. Original error: {error}"
-    )
-
-
-#: How many stranded in-use flags each port has needed cleared, this process's lifetime.
-_RECOVERIES: dict[str, int] = {}
-_RECOVERIES_LOCK = threading.Lock()
-
-
-def _recovery_key(device: Any, bus: Any) -> str:
-    """Identify the PORT, because that is what strands - falling back to the device's name."""
-    port = getattr(bus, "port", None) or getattr(device, "port", None)
-    return str(port or getattr(device, "name", None) or type(device).__name__)
-
-
-def _record_recovery(device: Any, bus: Any) -> int:
-    key = _recovery_key(device, bus)
-    with _RECOVERIES_LOCK:
-        count = _RECOVERIES.get(key, 0) + 1
-        _RECOVERIES[key] = count
-    return count
-
-
-def recovery_count(device: Any, bus: Any = None) -> int:
-    """How many times a stranded in-use flag has been cleared for this device's port.
-
-    Exists because the cure is SILENT: from the moment :func:`read_joints` learned to clear a stranded
-    flag, an arm that would have gone mute for hours now heals inside one telemetry cycle - which is
-    the right behaviour and the wrong amount of information. A flag gets stranded when an exchange
-    dies mid-conversation, and the usual reasons for that are physical: a marginal USB cable, a hub
-    browning out under load, a connector working loose as the arm moves. Recovering silently would
-    hide a degrading rig behind healthy-looking telemetry until the day the recovery itself fails.
-
-    So the count is kept per PORT (what actually strands) and published with the arm's state, where a
-    rising number is the evidence a human needs: once is a hiccup, dozens is hardware to replace. It
-    is a session counter, not a total - it resets with the process that owns the port, and that is
-    honest, because a fresh process cannot know what happened before it.
-    """
-    if bus is None:
-        bus = getattr(device, "bus", None)
-    with _RECOVERIES_LOCK:
-        return _RECOVERIES.get(_recovery_key(device, bus), 0)

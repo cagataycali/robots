@@ -10,6 +10,7 @@
   `RLock` on the DEVICE so wrappers in different modules share it. The state
   probe also reads the joints DIRECTLY, because a camera raising inside
   lerobot's `get_observation()` used to discard the joint positions it had
-  already read. A bus left flagged in-use by an exchange that never finished now
-  recovers on the next read, once, under the lock, and the peer publishes
-  `bus_recoveries` so a degrading cable is visible instead of silently healed.
+  already read, so one dead USB camera erased an arm's entire joint telemetry.
+  A driver is taken to have no readable motor bus, and so falls back to the full
+  observation, both when it exposes no `bus.sync_read` and when that call answers
+  with something other than a mapping.

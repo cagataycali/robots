@@ -23,7 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from strands_robots._mesh_switch import mesh_env_request
-from strands_robots.bus_access import read_joints, read_observation, recovery_count
+from strands_robots.bus_access import read_joints, read_observation
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.sensors import SensorLoopsMixin
@@ -1123,12 +1123,6 @@ class Mesh(SensorLoopsMixin):
                         joints[key] = value
                 if joints:
                     snapshot["joints"] = joints
-                    # A stranded in-use flag now heals inside one telemetry
-                    # cycle, so without this count a degrading cable or a
-                    # browning-out hub hides behind healthy-looking joints.
-                    recoveries = recovery_count(inner)
-                    if recoveries:
-                        snapshot["bus_recoveries"] = recoveries
         except Exception:
             pass
 
