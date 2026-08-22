@@ -1199,11 +1199,24 @@ body::before {
 /* the live bar keeps priority over the history on narrow cards */
 .joint .jbar { flex: 1 1 60px; }
 @media (max-width: 420px) {
-  .estop-layer .estop { padding: 6px 9px; font-size: var(--fs-tiny); }
-  .fleetbar { padding-right: 104px; }
-  .drawer-head { padding-right: 116px; }
-  .detail-head { padding-right: 116px; }
+  /* THUMB ZONE (brief: "estop always thumb-reachable"): on a phone the top-right
+   * corner is the hardest reach there is, and the old rule SHRANK the button
+   * there — the control a scared human aims at got smaller exactly where aiming
+   * is hardest. It now sits bottom-right above the agent dock, full size
+   * (44px min-height from the base rule, untouched). z-index 200 supremacy is
+   * unchanged — the corner was incidental, the always-on-top law is not.
+   * The dock bar is ~64px tall; 76px + safe-area clears it. */
+  .estop-layer {
+    top: auto; right: 14px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+  /* the top-right clearances existed only to dodge the estop up there;
+   * with it gone the heads get their width back on the smallest screens */
   .jhist { flex-basis: 60px; min-width: 40px; }
+  /* full-bleed sheets scroll their actions clear of the relocated estop, so a
+   * wide ▶ button's right edge can never sit under the brake at tap time */
+  .train-sheet { padding-bottom: calc(140px + env(safe-area-inset-bottom)); }
+  .detail-body { padding-bottom: calc(140px + env(safe-area-inset-bottom)); }
 }
 
 /* ── camera truth states (U13) ──────────────────────── */
