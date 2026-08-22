@@ -56,10 +56,23 @@ export function mergeMeshEvent(
       return {}
     case 'presence':
     case 'state':
-    case 'stream': {
+    case 'stream':
+    // The SensorLoops topics vouch for a peer exactly as presence/state do: the frame exists
+    // only because the robot published it, so it lands on its own key and refreshes liveness.
+    case 'pose':
+    case 'health':
+    case 'imu':
+    case 'odom': {
       if (!id) return peers
-      const key = ev.type === 'presence' ? 'presence' : ev.type === 'state' ? 'state' : 'stream'
-      return { ...peers, [id]: { ...peers[id], peer_id: id, [key]: ev.data, last_seen: nowS, stale: false } }
+      return { ...peers, [id]: { ...peers[id], peer_id: id, [ev.type]: ev.data, last_seen: nowS, stale: false } }
+    }
+    case 'lidar': {
+      // One type, two documents. Merged under `lidar` rather than assigned, so a summary
+      // arriving does not erase the state the UI is still showing (and vice versa).
+      if (!id) return peers
+      const kind = ev.kind === 'state' ? 'state' : 'summary'
+      const lidar = { ...peers[id]?.lidar, [kind]: ev.data }
+      return { ...peers, [id]: { ...peers[id], peer_id: id, lidar, last_seen: nowS, stale: false } }
     }
     case 'camera_meta': {
       if (!id) return peers

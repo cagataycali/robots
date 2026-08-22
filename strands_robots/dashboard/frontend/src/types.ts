@@ -37,6 +37,57 @@ export interface StreamStep {
   action: Record<string, number | number[]>
 }
 
+/** `strands/{peer}/pose` — SE(3) pose from a provider, SLAM or odometry. */
+export interface PosePayload {
+  peer_id: string
+  t?: number
+  x?: number; y?: number; z?: number
+  theta?: number
+  quat?: number[]
+  /** which estimator answered: 'provider' | 'slam' | 'odom' */
+  source?: string
+  frame?: string
+  [key: string]: unknown
+}
+
+/** `strands/{peer}/health` — every reading the robot could take, any of them absent. */
+export interface HealthPayload {
+  peer_id: string
+  t?: number
+  battery_pct?: number | null
+  charging?: boolean
+  temps?: Record<string, number>
+  cpu_load?: number
+  disk_free_gb?: number
+  mem_pct?: number
+  uptime_s?: number
+  [key: string]: unknown
+}
+
+/** `strands/{peer}/imu` — downsampled from the hardware rate. */
+export interface ImuPayload {
+  peer_id: string
+  t?: number
+  accel?: number[]
+  gyro?: number[]
+  [key: string]: unknown
+}
+
+/** `strands/{peer}/odom` — body-frame velocities. */
+export interface OdomPayload {
+  peer_id: string
+  t?: number
+  vx?: number; vy?: number; wz?: number
+  [key: string]: unknown
+}
+
+/** `strands/{peer}/lidar/{summary,state}` — two documents, kept apart. */
+export interface LidarPayload {
+  peer_id: string
+  t?: number
+  [key: string]: unknown
+}
+
 export interface Peer {
   peer_id: string
   last_seen?: number
@@ -81,6 +132,15 @@ export interface Peer {
   state?: PeerState
   stream?: StreamStep
   cameras?: Record<string, { t?: number; shape?: number[] }>
+  /** SensorLoops topics, each absent until the robot publishes it. An arm publishes none of
+   *  them and is not broken, so absence is never rendered as a fault (lib/sensorFreshness). */
+  pose?: PosePayload
+  health?: HealthPayload
+  imu?: ImuPayload
+  odom?: OdomPayload
+  /** Two documents share the lidar topic; they are kept apart so neither overwrites the
+   *  other's fields. */
+  lidar?: { summary?: LidarPayload; state?: LidarPayload }
 }
 
 export interface ActivityEntry {
@@ -218,6 +278,11 @@ export type MeshEvent =
   | { type: 'state'; peer_id: string; data: PeerState }
   | { type: 'stream'; peer_id: string; data: StreamStep }
   | { type: 'camera_meta'; peer_id: string; cam: string; data: { t?: number; shape?: number[] } }
+  | { type: 'pose'; peer_id: string; data: PosePayload }
+  | { type: 'health'; peer_id: string; data: HealthPayload }
+  | { type: 'imu'; peer_id: string; data: ImuPayload }
+  | { type: 'odom'; peer_id: string; data: OdomPayload }
+  | { type: 'lidar'; peer_id: string; kind: 'summary' | 'state'; data: LidarPayload }
   | { type: 'safety'; kind: 'estop' | 'resume'; data: Record<string, unknown> }
   | { type: 'activity'; data: ActivityEntry }
   | { type: 'mesh_reconfigured'; ok: boolean; mesh: MeshInfo }

@@ -110,6 +110,13 @@ export function useMesh(): MeshStore {
           case 'state':
           case 'stream':
           case 'camera_meta':
+          // SensorLoops topics: pose/health/imu/odom/lidar all merge the same way, which keeps
+          // this switch a router and leaves the rules in ./meshPeers where they are tested.
+          case 'pose':
+          case 'health':
+          case 'imu':
+          case 'odom':
+          case 'lidar':
             setPeers(p => mergeMeshEvent(p, ev, Date.now() / 1000))
             break
           case 'safety':

@@ -110,3 +110,52 @@ assert.equal(sweepStale({ x: { peer_id: 'x' } }, NOW).x.stale, true,
              'unknown age keeps the conservative verdict, not a green card')
 
 console.log('meshPeers: Q94 conjured-peer assertions ok')
+
+// ── 6. SensorLoops topics vouch for a peer the same way presence/state do ──────
+// They were published and nothing consumed them, so a rover rendered as a name and a camera.
+for (const type of ['pose', 'health', 'imu', 'odom']) {
+  const out = mergeMeshEvent({}, { type, peer_id: 'rover-1', data: { peer_id: 'rover-1', t: 9 } }, NOW)
+  assert.equal(out['rover-1'].peer_id, 'rover-1', `${type} creates an unknown peer`)
+  assert.deepEqual(out['rover-1'][type], { peer_id: 'rover-1', t: 9 }, `${type} lands under its own key`)
+  assert.equal(out['rover-1'].last_seen, NOW, `${type} refreshes last_seen`)
+  assert.equal(out['rover-1'].stale, false, `${type} clears stale`)
+  assert.deepEqual(mergeMeshEvent({}, { type, data: { t: 1 } }, NOW), {},
+    `${type} with no peer_id is not a peer`)
+}
+
+// A sensor frame must not erase the peer's other blocks.
+{
+  const before = { 'rover-1': { peer_id: 'rover-1', presence: { hw: 'rover' }, state: { t: 1 } } }
+  const out = mergeMeshEvent(before, { type: 'pose', peer_id: 'rover-1', data: { x: 1 } }, NOW)
+  assert.deepEqual(out['rover-1'].presence, { hw: 'rover' })
+  assert.deepEqual(out['rover-1'].state, { t: 1 })
+  assert.deepEqual(out['rover-1'].pose, { x: 1 })
+}
+
+// ── 7. lidar is TWO documents on one type, and neither may erase the other ─────
+{
+  let peers = mergeMeshEvent({}, {
+    type: 'lidar', kind: 'summary', peer_id: 'rover-1', data: { t: 1, min_range: 0.4 },
+  }, NOW)
+  assert.deepEqual(peers['rover-1'].lidar, { summary: { t: 1, min_range: 0.4 } })
+
+  peers = mergeMeshEvent(peers, {
+    type: 'lidar', kind: 'state', peer_id: 'rover-1', data: { t: 2, scanning: true },
+  }, NOW)
+  assert.deepEqual(peers['rover-1'].lidar.summary, { t: 1, min_range: 0.4 },
+    'the state document must not overwrite the summary')
+  assert.deepEqual(peers['rover-1'].lidar.state, { t: 2, scanning: true })
+
+  // A newer summary replaces only the summary.
+  peers = mergeMeshEvent(peers, {
+    type: 'lidar', kind: 'summary', peer_id: 'rover-1', data: { t: 3, min_range: 0.9 },
+  }, NOW)
+  assert.equal(peers['rover-1'].lidar.summary.min_range, 0.9)
+  assert.deepEqual(peers['rover-1'].lidar.state, { t: 2, scanning: true })
+
+  // An unknown/absent kind is read as a summary rather than dropped or trusted blindly.
+  const odd = mergeMeshEvent({}, { type: 'lidar', peer_id: 'r2', data: { t: 4 } }, NOW)
+  assert.deepEqual(odd['r2'].lidar, { summary: { t: 4 } })
+}
+
+console.log('ok meshPeers sensor frames')

@@ -14,6 +14,7 @@ import { useTelemetry } from '../lib/useTelemetry'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
+import SensorStrip from './SensorStrip'
 import RunForm from './RunForm'
 import CameraConfigSheet from './CameraConfigSheet'
 
@@ -488,6 +489,9 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
           </div>
 
           <div className="side">
+            {/* Above Joints because a rover has no joints and every one of these instead: the
+                strip renders nothing at all on an arm, so this costs an arm's card nothing. */}
+            <SensorStrip peer={peer} />
             <h3>Joints ({joints.length})</h3>
             <JointStrip state={peer.state} presence={p} problem={peer.joint_problem} peerStale={peer.stale} />
             {joints.length > 0 && (

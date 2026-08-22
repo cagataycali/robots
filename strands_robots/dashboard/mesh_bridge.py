@@ -264,6 +264,18 @@ def stop_outcome(response: dict[str, Any] | None) -> dict[str, Any]:
 COALESCE_HZ: dict[str, float] = {
     "presence": float(os.getenv("STRANDS_DASHBOARD_PRESENCE_HZ", "1.0")),
     "camera_meta": float(os.getenv("STRANDS_DASHBOARD_CAMERA_META_HZ", "2.0")),
+    # The SensorLoops rates these mirror are pose/imu/odom 10 Hz each and lidar
+    # summary 5 Hz, so one rover publishing all of them is ~36 events/s -- the
+    # order of the 34.7 Hz for a single arm this coalescer was built for. A
+    # CHANGED reading is never delayed, so a moving robot still streams; the
+    # rate is the floor for a repeat that says nothing new.
+    "pose": float(os.getenv("STRANDS_DASHBOARD_POSE_HZ", "1.0")),
+    "imu": float(os.getenv("STRANDS_DASHBOARD_IMU_HZ", "1.0")),
+    "odom": float(os.getenv("STRANDS_DASHBOARD_ODOM_HZ", "1.0")),
+    "lidar": float(os.getenv("STRANDS_DASHBOARD_LIDAR_HZ", "1.0")),
+    # Health already publishes at 0.5 Hz upstream; the floor matches it rather
+    # than inventing a slower one.
+    "health": float(os.getenv("STRANDS_DASHBOARD_HEALTH_HZ", "0.5")),
 }
 
 #: Fields that tick on their own and therefore say nothing about whether the
@@ -296,7 +308,13 @@ class EventCoalescer:
         self.forwarded = 0
 
     def key(self, event: dict) -> tuple:
-        return (event.get("type"), event.get("peer_id"), event.get("cam"))
+        # `kind` separates two streams that share a type: lidar publishes both a
+        # summary and a state document, and without it their alternating
+        # payloads read as a change every tick and coalesce to nothing. A strict
+        # no-op for the types that predate it -- `allow` returns before ever
+        # calling this when a type carries no rate, and neither rated type
+        # (presence, camera_meta) sets `kind`.
+        return (event.get("type"), event.get("peer_id"), event.get("cam"), event.get("kind"))
 
     def allow(self, event: dict, now: float) -> bool:
         hz = self.rates.get(event.get("type") or "")
@@ -450,6 +468,15 @@ class MeshBridge:
             sub("strands/*/state", self._on_state),
             sub("strands/*/stream", self._on_stream),
             sub("strands/*/camera/**", self._on_camera),
+            # SensorLoops publishes these and nothing here consumed them, so a
+            # rover or a humanoid rendered as a name and a camera. Same
+            # raw-zenoh shape as state: one subscriber per topic, the payload
+            # forwarded as the SDK wrote it.
+            sub("strands/*/pose", self._on_pose),
+            sub("strands/*/health", self._on_health),
+            sub("strands/*/imu", self._on_imu),
+            sub("strands/*/odom", self._on_odom),
+            sub("strands/*/lidar/**", self._on_lidar),
             sub("strands/safety/estop", self._on_safety),
             sub("strands/safety/resume", self._on_safety),
             sub(f"strands/{self.peer_id}/response/**", self._on_response),
@@ -669,6 +696,80 @@ class MeshBridge:
         cams[cam] = meta
         # Lightweight notification (no pixels) so the UI knows a frame arrived.
         self._emit({"type": "camera_meta", "peer_id": peer_id, "cam": cam, "data": meta})
+
+    def _sensor_sample(self, sample: Any, slot: str) -> tuple[str | None, dict[str, Any]]:
+        """Decode a sensor topic and file its payload under ``slot`` on the peer.
+
+        The four scalar sensor topics differ only in which key they land on, so
+        the decode/attribute/store steps live here once. The frame itself is
+        built at each call site with a literal type, because the guard asking
+        for a frontend reader for every emitted frame type reads those literals
+        out of the AST: a type assembled from a variable would leave that guard
+        passing while covering nothing.
+
+        Args:
+            sample: The raw zenoh sample.
+            slot: Key on the peer entry to store the payload under.
+
+        Returns:
+            ``(peer_id, data)``, or ``(None, {})`` when the sample carries no
+            usable payload or names no peer to attribute it to.
+        """
+        data = self._decode(sample)
+        if not data:
+            return None, {}
+        peer_id = data.get("peer_id")
+        if not isinstance(peer_id, str):
+            return None, {}
+        entry = self._touch_peer(peer_id)
+        entry[slot] = data
+        return peer_id, data
+
+    def _on_pose(self, sample: Any) -> None:
+        peer_id, data = self._sensor_sample(sample, "pose")
+        if peer_id is None:
+            return
+        self._emit({"type": "pose", "peer_id": peer_id, "data": data})
+
+    def _on_health(self, sample: Any) -> None:
+        peer_id, data = self._sensor_sample(sample, "health")
+        if peer_id is None:
+            return
+        self._emit({"type": "health", "peer_id": peer_id, "data": data})
+
+    def _on_imu(self, sample: Any) -> None:
+        peer_id, data = self._sensor_sample(sample, "imu")
+        if peer_id is None:
+            return
+        self._emit({"type": "imu", "peer_id": peer_id, "data": data})
+
+    def _on_odom(self, sample: Any) -> None:
+        peer_id, data = self._sensor_sample(sample, "odom")
+        if peer_id is None:
+            return
+        self._emit({"type": "odom", "peer_id": peer_id, "data": data})
+
+    def _on_lidar(self, sample: Any) -> None:
+        """One type, two documents: ``lidar/summary`` and ``lidar/state``.
+
+        They are kept apart under ``lidar`` rather than filed on one key,
+        because a summary landing on top of a state (or the reverse) would show
+        an operator a field the other document never carried.
+        """
+        data = self._decode(sample)
+        if not data:
+            return
+        peer_id = data.get("peer_id")
+        if not isinstance(peer_id, str):
+            return
+        key = str(getattr(sample, "key_expr", ""))
+        kind = "state" if key.endswith("/state") else "summary"
+        entry = self._touch_peer(peer_id)
+        with self._peers_lock:
+            lidar = dict(entry.get("lidar") or {})
+            lidar[kind] = data
+            entry["lidar"] = lidar
+        self._emit({"type": "lidar", "kind": kind, "peer_id": peer_id, "data": data})
 
     def _on_safety(self, sample: Any) -> None:
         data = self._decode(sample)
