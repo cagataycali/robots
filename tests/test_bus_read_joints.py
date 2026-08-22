@@ -166,13 +166,58 @@ class TestDriverVariations:
         assert dev.reads == 1
         assert obs["shoulder_pan.pos"] == 1.0
 
-    def test_a_bus_returning_something_odd_is_passed_through_unshaped(self) -> None:
+    def test_a_bus_answering_with_a_non_mapping_takes_the_observation_fallback(self) -> None:
+        """A ``bus`` that is not a motor bus is detected, not trusted.
+
+        Handing the non-mapping straight back was worse than useless: this
+        function documents a mapping and every joints consumer iterates it, so
+        the caller failed on ``.items()`` a frame later with nothing naming the
+        cause. Measured on the state probe, which swallowed the resulting
+        ``TypeError`` and published no state message at all -- so the fleet saw
+        a peer that had gone quiet rather than one with an unreadable bus.
+        ``bus`` is an attribute name a wrapper or a proxy can also use, so this
+        is reachable without a mock.
+        """
+
         class _Weird(_Bus):
             def sync_read(self, register: str, num_retry: int | None = None):
                 return ["not", "a", "mapping"]
 
-        out = read_joints(_Arm(_Weird({})))
-        assert out == ["not", "a", "mapping"]
+        class _WeirdBusArm:
+            def __init__(self) -> None:
+                self.bus = _Weird({})
+                self.config = _Cfg(3)
+                self.is_connected = True
+                self.observation_calls = 0
+
+            def get_observation(self):
+                self.observation_calls += 1
+                return {"shoulder_pan.pos": 1.0, "top": object()}
+
+        dev = _WeirdBusArm()
+        out = read_joints(dev)
+
+        assert isinstance(out, dict), "a non-mapping bus answer must not reach the caller"
+        assert out["shoulder_pan.pos"] == 1.0
+        assert dev.observation_calls == 1, "the fallback observation is what produced the reading"
+
+    def test_the_fallback_reports_the_drivers_own_error_rather_than_a_non_mapping(self) -> None:
+        """The fallback is a route to the reading, not a way to swallow a failure.
+
+        A device with an unreadable bus AND a raising ``get_observation()`` has
+        nothing to give, and the honest answer is the driver's own exception --
+        which is what a caller can act on. Returning the non-mapping instead
+        reported success and failed later somewhere else.
+        """
+
+        class _Weird(_Bus):
+            def sync_read(self, register: str, num_retry: int | None = None):
+                return ["not", "a", "mapping"]
+
+        arm = _Arm(_Weird({}))  # its get_observation() raises the dead-camera error
+
+        with pytest.raises(RuntimeError, match="OpenCVCamera"):
+            read_joints(arm)
 
 
 # ---------------------------------------------------------------------------

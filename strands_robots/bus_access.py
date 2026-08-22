@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -183,6 +184,9 @@ def read_joints(device: Any) -> Any:
         A mapping of ``"<motor>.pos"`` -> position, shaped exactly like the joint
         half of ``get_observation()`` so callers need no new branch. On the
         fallback path, whatever ``get_observation()`` returns (frames included).
+        A driver is taken to have no readable motor bus - and so takes that
+        fallback - both when it exposes no ``bus.sync_read`` and when that call
+        answers with something other than a mapping.
 
     Raises:
         Exception: Anything the driver raises, unchanged.
@@ -204,8 +208,17 @@ def read_joints(device: Any) -> Any:
 
     with bus_lock(device):
         raw = _read_recovering_a_stale_flag(device, bus, _sync_read)
-    if not isinstance(raw, dict):
-        return raw
+    if not isinstance(raw, Mapping):
+        # A ``bus`` that answers ``sync_read`` with something other than a
+        # mapping is not a motor bus this function can read: a wrapper, a proxy,
+        # or a driver using that attribute name for something else entirely.
+        # Returning it would hand back a value this function documents as a
+        # mapping and every joints consumer iterates, so the caller would fail
+        # on ``.items()`` one frame later with nothing naming the cause. Fall
+        # back to the full observation, which is already the answer given to a
+        # driver that exposes no bus at all -- the bus is being detected here,
+        # not trusted, and the same rule decides both halves of that detection.
+        return read_observation(device)
     # ``.pos`` is lerobot's own suffix (see SOFollower.get_observation) and the
     # shape the rest of this codebase already parses.
     return {f"{motor}.pos": value for motor, value in raw.items()}
