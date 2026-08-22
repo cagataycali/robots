@@ -30,6 +30,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.bus_access import write_action
 from strands_robots.mesh.security import (
     ValidationError,
     input_frame_slew_violation,
@@ -647,8 +648,11 @@ class InputReceiver:
 
     @staticmethod
     def _default_apply(robot: Any, action: dict[str, float]) -> None:
-        """Default: calls robot.send_action()."""
+        """Default: calls robot.send_action() under the device's bus lock."""
+        # The same lock the readers take: a write that interleaves with a
+        # sync-read corrupts both halves of the exchange, and teleop moving an
+        # arm while a probe reads its position is the common case.
         if hasattr(robot, "send_action"):
-            robot.send_action(action)
+            write_action(robot, action)
         elif hasattr(robot, "robot") and hasattr(robot.robot, "send_action"):
-            robot.robot.send_action(action)
+            write_action(robot.robot, action)
