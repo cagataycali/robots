@@ -288,17 +288,30 @@ def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
             detail="USB auto-spawn (board unplugged)", ok=True,
         )
 
+_HASHED_EXT = r"(?:js|css|woff2?|png|svg|jpg|jpeg|webp|ico)"
+# A hash with no '-' in it: a digit or mixed case is tell enough (Q116 - one vite hash in four has
+# no digit at all, so "must contain a digit" refused a real main bundle).
+_HASHED_NAME = re.compile(
+    r".+-(?=[A-Za-z0-9_]*(?:[0-9]|[a-z][A-Za-z0-9_]*[A-Z]|[A-Z][A-Za-z0-9_]*[a-z]))"
+    r"[A-Za-z0-9_]{8,}\." + _HASHED_EXT
+)
+# Q177: vite hashes are base64URL, so '-' appears INSIDE the hash - index-BBNIi-aw.js, the real main
+# bundle of this dist, which the charset above cannot parse. A hyphen is also what hand-written
+# kebab-case names are made of, so this variant demands MIXED CASE (an upper AND a lower letter):
+# camera-preview-2x.png and apple-touch-icon-192.png are lowercase+digit and stay revalidated, while
+# a year-long immutable cache on a name that never changes would be unfixable from here.
+_HASHED_BASE64URL = re.compile(
+    r".+-(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])[A-Za-z0-9_-]{8,}\." + _HASHED_EXT
+)
+
+
 def static_cache_control(path: str) -> str:
     """Cache-Control for one built-frontend file, as a pure function of its name."""
     name = path.rsplit("/", 1)[-1]
     parts = path.replace("\\", "/").split("/")
     if len(parts) >= 2 and parts[-2] == "assets":
         return "public, max-age=31536000, immutable"
-    if re.fullmatch(
-        r".+-(?=[A-Za-z0-9_]*(?:[0-9]|[a-z][A-Za-z0-9_]*[A-Z]|[A-Z][A-Za-z0-9_]*[a-z]))"
-        r"[A-Za-z0-9_]{8,}\.(?:js|css|woff2?|png|svg|jpg|jpeg|webp|ico)",
-        name,
-    ):
+    if _HASHED_NAME.fullmatch(name) or _HASHED_BASE64URL.fullmatch(name):
         return "public, max-age=31536000, immutable"
     # Entry points: the html, the service worker, its registration shim, the manifest. Getting any of
     # these from a cache pins the whole app at an old build.

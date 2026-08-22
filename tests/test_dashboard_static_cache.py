@@ -35,6 +35,13 @@ HASHED = [
     # URL sub-path), and this is the shape a Windows path arrives in.
     "assets/whatever-vite-emits-next.js",
     r"C:\\dist\\assets\\index-BGRlFtdn.js",
+    # Q177, THE RED THAT MADE THIS FILE'S COLOUR A FUNCTION OF THE LAST npm run build: vite hashes are
+    # base64URL, so a '-' or '_' can land INSIDE the hash. These two are the real main bundle and css
+    # of the dist on this machine - the charset [A-Za-z0-9_]{8,} could not parse the first one, so the
+    # app's own entry chunk was served revalidate-on-every-load while the guard reported a defect.
+    "index-BBNIi-aw.js",
+    "index-8Y9f9e6n.css",
+    "index-BB_NIi-aw.js",
     "index-BB6lyXA6.css",
     "index-CxO2NtX_.js",
     "workbox-window.prod.es5-BqEJf4Xk.js",
@@ -55,7 +62,12 @@ UNHASHED = ["apple-touch-icon.png", "maskable-192.png", "icon-192.png", "icon.sv
             # charset only because of the digit rule, and maskable-192.png survives a dropped digit
             # rule only because "192" is short - so a name with BOTH a hyphenated tail and a digit is
             # the case that needs stating outright, or neither guard is really pinned.
-            "apple-touch-icon-192.png", "camera-preview-2x.png"]
+            "apple-touch-icon-192.png", "camera-preview-2x.png",
+            # The cases that pin the Q177 widening: once '-' is allowed INSIDE the hash, a
+            # hyphenated hand-written name is only kept out by the MIXED-CASE demand. All-lowercase
+            # with a digit is what a person writes; upper+lower is what a base64url hash has.
+            "camera-preview-fullscreen.png", "sw-registration-helper-2.js",
+            "robot-arm-preview-192.png"]
 
 
 @pytest.mark.parametrize("name", HASHED)
