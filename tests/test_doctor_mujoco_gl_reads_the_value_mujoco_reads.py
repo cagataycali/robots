@@ -225,7 +225,7 @@ class TestThePlatformDecidesWhichBackendsAreValid:
     def test_the_macos_native_backend_is_accepted(self, macos) -> None:
         from strands_robots.doctor import check_mujoco_gl
 
-        macos.setenv("MUJOCO_GL", "cgl")
+        macos.setenv("MUJOCO_GL", _DARWIN_ONLY[0])  # cgl, MuJoCo's macOS backend
         assert _marker(check_mujoco_gl()) != "FAIL", "cgl is MuJoCo's macOS backend"
 
     def test_an_unset_variable_is_not_a_failure_on_macos(self, macos) -> None:
