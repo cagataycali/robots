@@ -202,8 +202,8 @@ def _record_problem(key: str, record: Any, context: str) -> str | None:
     if not isinstance(record, dict):
         return f"{context}: episodes[{key!r}] is {type(record).__name__}, expected a JSON object."
 
-    block = record.get("deterministic")
-    if block is not None:
+    if "deterministic" in record:
+        block = record["deterministic"]
         if not isinstance(block, dict):
             return f"{context}: episodes[{key!r}]['deterministic'] is {type(block).__name__}, expected a JSON object."
         for required in _REQUIRED_DETERMINISTIC_KEYS:
@@ -218,8 +218,8 @@ def _record_problem(key: str, record: Any, context: str) -> str | None:
             ):
                 return msg
 
-    judge = record.get("judge")
-    if judge is not None:
+    if "judge" in record:
+        judge = record["judge"]
         if not isinstance(judge, dict):
             return f"{context}: episodes[{key!r}]['judge'] is {type(judge).__name__}, expected a JSON object."
         for required in _REQUIRED_JUDGE_KEYS:

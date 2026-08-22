@@ -351,9 +351,20 @@ class TestReadLabelsRefusesAnUnreadableRecord:
             read_labels(root)
 
     @pytest.mark.parametrize("block", ["deterministic", "judge"])
-    def test_a_block_that_is_not_an_object_is_refused(self, dataset_root, block):
-        """A non-object block reached readers as ``TypeError`` / ``AttributeError``."""
-        root = self._sidecar(dataset_root, lambda d: d["episodes"]["1"].update({block: "not-an-object"}))
+    @pytest.mark.parametrize("value", ["not-an-object", None, 3, [], True], ids=["str", "null", "int", "list", "bool"])
+    def test_a_block_that_is_not_an_object_is_refused(self, dataset_root, block, value):
+        """A non-object block reached readers as ``TypeError`` / ``AttributeError``.
+
+        ``null`` is the spelling worth naming: it is the most plausible external-writer
+        spelling of "predicates not yet run", and a guard keyed on the value
+        (``if block is not None``) admits it while every downstream reader distinguishes
+        it from an absent key. Measured on a sidecar this function had accepted,
+        ``deterministic_verdict`` raised ``TypeError: 'NoneType' object is not iterable``.
+        Keying the guard on key presence refuses both spellings alike, and refuses them
+        for ``judge`` too -- the two blocks must not reach different verdicts for one
+        spelling.
+        """
+        root = self._sidecar(dataset_root, lambda d: d["episodes"]["1"].update({block: value}))
         with pytest.raises(ValueError, match=block):
             read_labels(root)
 
