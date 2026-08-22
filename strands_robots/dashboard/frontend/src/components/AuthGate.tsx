@@ -151,7 +151,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     setBusy(true); setError('')
     try {
       const token = await fn()
-      setAuthToken(token) // remounts App via backendKey(); gate re-checks and opens
+      setAuthToken(token) // notifies subscribeAuth -> App remounts with the new key
+      setMode('open')     // and this gate instance opens NOW, not on the next refresh
     } catch (e) {
       const msg = e instanceof HttpError ? (e.body?.detail ?? e.message) : (e as Error).message
       setError(String(msg || 'the passkey ceremony failed'))

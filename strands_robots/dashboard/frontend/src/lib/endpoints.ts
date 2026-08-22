@@ -65,10 +65,22 @@ export function authToken(): string {
   return (localStorage.getItem(TOKEN_KEY) ?? '').trim()
 }
 
+// Auth/backend changes must reach React: localStorage writes emit no event in the
+// writing tab, so components subscribe here (App keys ConfigProvider off backendKey()).
+const authListeners = new Set<() => void>()
+export function subscribeAuth(fn: () => void): () => void {
+  authListeners.add(fn)
+  return () => { authListeners.delete(fn) }
+}
+function notifyAuth(): void {
+  for (const fn of authListeners) fn()
+}
+
 export function setAuthToken(token: string): void {
   const value = token.trim()
   if (value) localStorage.setItem(TOKEN_KEY, value)
   else localStorage.removeItem(TOKEN_KEY)
+  notifyAuth()
 }
 
 /** Human label for the connection chip. */
@@ -88,6 +100,7 @@ export function setBackendBase(raw: string): void {
   else localStorage.removeItem(BASE_KEY)
   // The route list belongs to the server we were talking to.
   forgetLiveRoutes()
+  notifyAuth() // backendKey() changed
 }
 
 export function apiUrl(path: string): string {

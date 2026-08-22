@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useMesh } from './lib/useMesh'
 import { usePwa } from './lib/usePwa'
 import { linkHealth, estopPosture } from './lib/linkHealth'
@@ -7,7 +7,7 @@ import { darkRoutes, darkFeatureMessage } from './lib/darkFeatures'
 import { lockoutBanner } from './lib/lockoutBadge'
 import { reloadImpact } from './lib/swUpdate'
 import { ConfigProvider } from './lib/useConfig'
-import { authToken, backendKey, backendLabel, setAuthToken, serverRoutePaths } from './lib/endpoints'
+import { authToken, backendKey, backendLabel, setAuthToken, subscribeAuth, serverRoutePaths } from './lib/endpoints'
 import { sessionVerdict } from './lib/sessionExpiry'
 import { serverNotice, staleServerNotice, fleetFieldGaps, type RefusedHandshakes } from './lib/serverNotice'
 import FleetBar from './components/FleetBar'
@@ -407,7 +407,7 @@ function TokenPrompt() {
   return (
     <form
       className="tokenprompt"
-      onSubmit={e => { e.preventDefault(); setAuthToken(token); location.reload() }}
+      onSubmit={e => { e.preventDefault(); setAuthToken(token) }}
     >
       <input type="password" value={token} placeholder="dashboard token" aria-label="dashboard token"
              onChange={e => setToken(e.target.value)} />
@@ -418,9 +418,10 @@ function TokenPrompt() {
 
 export default function App() {
   // Remount everything when the backend or token changes: sockets, peer maps and frame buffers
-  // all belong to one backend.
+  // all belong to one backend. subscribeAuth makes the key reactive — localStorage alone is not.
+  const key = useSyncExternalStore(subscribeAuth, backendKey)
   return (
-    <ConfigProvider key={backendKey()}>
+    <ConfigProvider key={key}>
       <AuthGate>
         <Dashboard />
       </AuthGate>
