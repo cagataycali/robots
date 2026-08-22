@@ -528,10 +528,13 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                     </datalist>
                   </label>
                 </div>
-                <p className="hint">
-                  A real robot moves as soon as a task runs. The calibration id must match the one
-                  used by <code>lerobot-calibrate</code>, or the joint limits will be wrong.
-                </p>
+                <details className="hint">
+                  <summary>why the calibration id matters</summary>
+                  <p className="hint">
+                    A real robot moves as soon as a task runs. The calibration id must match the one
+                    used by <code>lerobot-calibrate</code>, or the joint limits will be wrong.
+                  </p>
+                </details>
                 {(() => {
                   // The prose above was the ONLY check until now: this compares the
                   // typed id against the files that actually exist. A warning, never
@@ -642,22 +645,29 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
             <CameraGallery cameras={doc?.cameras ?? []} names={doc?.camera_names ?? []}
                            problem={doc?.camera_problem ?? null}
                            scanned={doc !== null} error={error} />
-            <p className="hint">
-              Camera indices owned by a running robot are never re-probed — opening one steals
-              frames from its capture thread mid-episode.
-            </p>
+            <details className="hint">
+              <summary>why some cameras are not previewed</summary>
+              <p className="hint">
+                Camera indices owned by a running robot are never re-probed — opening one steals
+                frames from its capture thread mid-episode.
+              </p>
+            </details>
           </section>
 
           <CalibrationSection />
 
           <section>
             <h3>Servo boards</h3>
-            <p className="hint">
-              A follower arm runs a 12V servo bus, a leader 7.4V — so the role can be read off the
-              hardware instead of inherited from a name. The read touches one register
-              (<code>Present_Voltage</code>) and cannot move the arm. A servo bus has a single owner,
-              so an arm that is running must be despawned before it can be measured.
-            </p>
+            <p className="hint">leader ↔ follower is measured off the bus voltage (7.4V vs 12V), never guessed from a name.</p>
+            <details className="hint">
+              <summary>how the measurement works</summary>
+              <p className="hint">
+                A follower arm runs a 12V servo bus, a leader 7.4V — so the role can be read off the
+                hardware instead of inherited from a name. The read touches one register
+                (<code>Present_Voltage</code>) and cannot move the arm. A servo bus has a single owner,
+                so an arm that is running must be despawned before it can be measured.
+              </p>
+            </details>
             <ul className="boardlist">
               {/* `no servo board detected` used to appear whenever this array was empty — including while the first scan was in flight and when it FAILED (401 through the tunnel, dead dashboard). */}
               {freePorts.length === 0 && (() => {
