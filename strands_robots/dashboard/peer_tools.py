@@ -1,0 +1,382 @@
+"""Per-peer proxy AgentTools: every fleet robot becomes a NATIVE tool on the dashboard agent.
+
+Users of strands_robots write ``Agent(tools=[Robot('so101')])`` and the robot IS a tool.
+The dashboard cannot do that literally: its robots are CHILD PROCESSES holding the
+serial buses / sim state, and a second in-process ``Robot('so101')`` would collide on
+the bus. So "native" here means a PROXY that is indistinguishable to the agent: for
+each fleet peer we build an AgentTool named for it whose tool_spec mirrors what that
+peer really is — ``hardware_robot.Robot``'s execute/start/status/stop spec for a real
+arm, the MuJoCo published-action spec for a sim — and whose invocation routes over the
+mesh rails that already exist (``sim_call`` for sim actions; the validated
+execute/start/status/stop command family for robots), via the dashboard bridge's
+``send_cmd``.
+
+Gating stays ONE layer: these proxies do NOT gate themselves. ``MotionInterruptHook``
+(agent_hitl) gates them by tool name + action, peer-aware through ``peer_is_physical``
+— which is why :func:`map_invocation` guarantees a ``target`` field is always present
+in the reason the hook derives (the proxy binds it). sim actions ask nothing (the peer
+is provably a sim), stop/status are never gated (not in MOTION_ACTIONS).
+
+Everything above the wire is a PURE rule in this module, tested without a mesh.
+"""
+
+from __future__ import annotations
+
+import json
+import keyword
+import re
+from pathlib import Path
+from typing import Any, AsyncGenerator, Callable, Mapping
+
+# ── classification ──────────────────────────────────────────────────────────
+
+#: Robot kinds a proxy can represent. ``skip`` = build no tool for this peer.
+KIND_REAL = "real"
+KIND_SIM = "sim"
+KIND_HOST = "host"  # a robot process with no joints announced (yet): status/stop only
+KIND_SKIP = "skip"
+
+#: Sim actions the mesh refuses on the sim_call rail (mesh/security.py
+#: SIM_CALL_BLOCKED_ACTIONS): rollouts must ride execute/start, whose
+#: provider/HF-repo/host allowlists would otherwise be bypassed. The proxy
+#: spec must not advertise what the wire will refuse.
+SIM_CALL_BLOCKED: frozenset[str] = frozenset(
+    {"run_policy", "start_policy", "replay_episode", "eval_policy"}
+)
+
+_SIM_TYPES = ("sim", "simulation", "mujoco")
+
+
+def classify_peer(peer_id: str, peer: Mapping[str, Any] | None) -> str:
+    """What kind of tool should represent this peer?
+
+    Mirrors ``agent_motion.peer_is_physical``'s reading of presence, but with
+    the opposite default posture: the GATE fails closed (unknown = metal), a
+    TOOL FACTORY fails quiet (unknown/gateway/dashboard = no tool at all) —
+    a tool for a peer we cannot describe would advertise a spec we invented.
+    """
+    if not peer_id or peer is None:
+        return KIND_SKIP
+    presence = peer.get("presence") or {}
+    kind = str(presence.get("kind") or peer.get("kind") or "").strip().lower()
+    if kind in ("gateway", "dashboard"):
+        return KIND_SKIP
+    robot_type = str(presence.get("robot_type") or "").strip().lower()
+    if robot_type in _SIM_TYPES or presence.get("sim") is True or presence.get("mode") == "sim":
+        return KIND_SIM
+    # A child peer of a sim world (``<parent>__<robot>``) is itself a sim
+    # robot even when its own presence is sparse: core delegates its sim_call
+    # to the parent Simulation.
+    if "__" in peer_id and str(peer.get("parent") or presence.get("parent") or "").strip():
+        return KIND_SIM
+    state = peer.get("state") or {}
+    joints = state.get("joints") or presence.get("joints") or {}
+    n_joints = len(joints) if isinstance(joints, Mapping) else int(joints or 0)
+    hw = presence.get("hw")
+    if n_joints > 0 or (isinstance(hw, str) and hw.strip()) or peer.get("role"):
+        return KIND_REAL
+    if kind == "robot" or presence:
+        return KIND_HOST
+    return KIND_SKIP
+
+
+# ── naming ───────────────────────────────────────────────────────────────────
+
+_NAME_OK = re.compile(r"[^A-Za-z0-9_]")
+
+
+def sanitize_tool_name(peer_id: str, taken: frozenset[str] | set[str] = frozenset()) -> str:
+    """Peer id -> identifier-safe, unique tool name.
+
+    Peer ids carry dashes (``so101-real-689``); tool names must be
+    identifier-safe (``so101_real_689``). Collisions (two peers sanitizing to
+    one name) get a numeric suffix — deterministic in iteration order.
+    """
+    name = _NAME_OK.sub("_", peer_id.strip()) or "peer"
+    if name[0].isdigit():
+        name = f"p_{name}"
+    if keyword.iskeyword(name):
+        name = f"{name}_"
+    base, n = name, 2
+    while name in taken:
+        name = f"{base}_{n}"
+        n += 1
+    return name
+
+
+# ── tool specs ───────────────────────────────────────────────────────────────
+
+_SIM_SPEC_PATH = Path(__file__).resolve().parents[1] / "simulation" / "mujoco" / "tool_spec.json"
+_sim_schema_cache: dict[str, Any] | None = None
+
+
+def _sim_input_schema() -> dict[str, Any]:
+    """The MuJoCo published-action schema, with wire-refused actions removed."""
+    global _sim_schema_cache
+    if _sim_schema_cache is None:
+        raw = json.loads(_SIM_SPEC_PATH.read_text())
+        actions = [a for a in raw["properties"]["action"]["enum"] if a not in SIM_CALL_BLOCKED]
+        schema = json.loads(json.dumps(raw))  # deep copy; the file is trusted JSON
+        schema["properties"]["action"]["enum"] = actions
+        schema["properties"]["action"]["description"] = (
+            "Published simulation action to invoke on this sim peer. Policy rollouts "
+            "(run_policy/start_policy/replay_episode/eval_policy) are not carried on "
+            "this rail — use the execute/start actions of a robot tool instead."
+        )
+        _sim_schema_cache = schema
+    return _sim_schema_cache
+
+
+def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | None:
+    """The ToolSpec a proxy presents for this peer — mirrors what the peer IS."""
+    if kind == KIND_SIM:
+        return {
+            "name": tool_name,
+            "description": (
+                f"Simulation peer '{peer_id}' as a native tool. Invokes the sim's own "
+                f"published actions (add_object, add_camera, list_objects, raycast, "
+                f"register_urdf, ...) over the mesh sim_call rail — world building and "
+                f"inspection, never real hardware. Parameters beyond 'action' are that "
+                f"action's own keyword arguments."
+            ),
+            "inputSchema": {"json": _sim_input_schema()},
+        }
+    if kind == KIND_REAL:
+        return {
+            "name": tool_name,
+            "description": (
+                f"Real robot peer '{peer_id}' as a native tool (routed over the mesh; the "
+                f"robot process holds the hardware). Actions: execute (blocking policy "
+                f"rollout), start (async), status, stop. execute/start move REAL metal and "
+                f"raise a human confirmation; status/stop are never gated."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "execute (blocking), start (async), status, stop",
+                            "enum": ["execute", "start", "status", "stop"],
+                            "default": "status",
+                        },
+                        "instruction": {
+                            "type": "string",
+                            "description": "Natural language instruction (required for execute/start)",
+                        },
+                        "policy_port": {
+                            "type": "integer",
+                            "description": "Policy service port (required for execute/start)",
+                        },
+                        "policy_host": {
+                            "type": "string",
+                            "description": "Policy service host (default: localhost)",
+                        },
+                        "policy_provider": {
+                            "type": "string",
+                            "description": "Policy provider (groot, openai, ...)",
+                        },
+                        "duration": {
+                            "type": "number",
+                            "description": "Maximum execution time in seconds (positive, finite)",
+                        },
+                    },
+                    "required": ["action"],
+                }
+            },
+        }
+    if kind == KIND_HOST:
+        return {
+            "name": tool_name,
+            "description": (
+                f"Robot peer '{peer_id}' (no joints announced yet) as a native tool. "
+                f"Only status and stop are offered until it says what it is."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["status", "stop"],
+                            "default": "status",
+                        }
+                    },
+                    "required": ["action"],
+                }
+            },
+        }
+    return None
+
+
+# ── invocation -> mesh command (pure) ────────────────────────────────────────
+
+#: Fields the real-robot rail forwards. Everything else is refused by
+#: mesh/security.validate_command anyway; dropping them here makes the
+#: refusal happen with a better sentence and no wire round trip.
+_REAL_FIELDS: dict[str, tuple[str, ...]] = {
+    "execute": ("instruction", "policy_port", "policy_host", "policy_provider", "duration"),
+    "start": ("instruction", "policy_port", "policy_host", "policy_provider", "duration"),
+    "status": (),
+    "stop": (),
+}
+
+
+def map_invocation(
+    peer_id: str, kind: str, tool_input: Mapping[str, Any] | None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Proxy tool input -> the validated mesh command to send this peer.
+
+    Returns ``(command, error)`` — exactly one is non-None. The command is a
+    dict for ``bridge.send_cmd(peer_id, command)``; its shape is what
+    ``mesh/security.validate_command`` accepts (execute/start/status/stop for
+    robots, the sim_call envelope for sims).
+    """
+    tool_input = dict(tool_input or {})
+    action = str(tool_input.pop("action", "") or "").strip()
+    if not action:
+        return None, "input needs an 'action'"
+
+    if kind == KIND_SIM:
+        if action in SIM_CALL_BLOCKED:
+            return None, (
+                f"{action!r} is a policy rollout and does not ride the sim_call rail "
+                f"(its provider/repo allowlists live on execute/start). Ask the robot "
+                f"tool to execute instead."
+            )
+        params = {k: v for k, v in tool_input.items() if v is not None}
+        cmd: dict[str, Any] = {"action": "sim_call", "sim_action": action, "sim_params": params}
+        # robot_name is a validated top-level field, not a sim param.
+        if "robot_name" in params:
+            cmd["robot_name"] = params.pop("robot_name")
+        return cmd, None
+
+    if kind in (KIND_REAL, KIND_HOST):
+        allowed = _REAL_FIELDS if kind == KIND_REAL else {"status": (), "stop": ()}
+        if action not in allowed:
+            return None, f"unknown action {action!r} for this robot. Valid: {', '.join(sorted(allowed))}"
+        cmd = {"action": action}
+        for field in allowed[action]:
+            if tool_input.get(field) is not None:
+                cmd[field] = tool_input[field]
+        return cmd, None
+
+    return None, f"peer kind {kind!r} carries no tool"
+
+
+# ── the AgentTool proxy ──────────────────────────────────────────────────────
+
+
+def _agent_tool_base() -> type:
+    from strands.types.tools import AgentTool  # local import: keep this module importable in tests
+
+    return AgentTool
+
+
+def build_peer_tools(
+    peers: Mapping[str, Mapping[str, Any]],
+    send_cmd: Callable[..., dict[str, Any]],
+) -> list[Any]:
+    """One proxy AgentTool per tool-worthy fleet peer, names collision-free.
+
+    ``send_cmd(peer_id, command, timeout=..., source="agent")`` is the
+    dashboard bridge's sender — injected so the factory stays pure and the
+    proxies stay testable with a fake.
+    """
+    AgentTool = _agent_tool_base()
+
+    class PeerProxyTool(AgentTool):  # type: ignore[misc,valid-type]
+        """A fleet peer, presented to the agent as the robot itself."""
+
+        def __init__(self, peer_id: str, kind: str, spec: dict[str, Any]) -> None:
+            super().__init__()
+            self._peer_id = peer_id
+            self._kind = kind
+            self._spec = spec
+
+        @property
+        def tool_name(self) -> str:
+            return self._spec["name"]
+
+        @property
+        def tool_spec(self) -> dict[str, Any]:
+            return self._spec
+
+        @property
+        def tool_type(self) -> str:
+            return "robot"
+
+        @property
+        def peer_id(self) -> str:
+            """The fleet peer this proxy is bound to — the motion gate's target."""
+            return self._peer_id
+
+        @property
+        def peer_kind(self) -> str:
+            return self._kind
+
+        async def stream(
+            self, tool_use: Mapping[str, Any], invocation_state: dict[str, Any], **kwargs: Any
+        ) -> AsyncGenerator[Any, None]:
+            from strands.types._events import ToolResultEvent
+
+            tool_use_id = tool_use.get("toolUseId", "")
+            cmd, err = map_invocation(self._peer_id, self._kind, tool_use.get("input") or {})
+            if err is not None:
+                yield ToolResultEvent(
+                    {"toolUseId": tool_use_id, "status": "error", "content": [{"text": err}]}
+                )
+                return
+            try:
+                res = send_cmd(self._peer_id, cmd, timeout=30.0, source="agent")
+            except Exception as exc:  # noqa: BLE001 - the wire's failure IS the result
+                yield ToolResultEvent(
+                    {
+                        "toolUseId": tool_use_id,
+                        "status": "error",
+                        "content": [{"text": f"mesh send to '{self._peer_id}' failed: {exc}"}],
+                    }
+                )
+                return
+            res = res if isinstance(res, dict) else {"result": res}
+            status = str(res.get("status") or ("error" if res.get("error") else "success"))
+            content = res.get("content")
+            if not isinstance(content, list):
+                content = [{"text": json.dumps(res, default=str)[:8000]}]
+            yield ToolResultEvent(
+                {
+                    "toolUseId": tool_use_id,
+                    "status": "success" if status == "success" else "error",
+                    "content": content,
+                }
+            )
+
+    tools: list[Any] = []
+    taken: set[str] = set()
+    for peer_id, peer in peers.items():
+        kind = classify_peer(peer_id, peer)
+        if kind == KIND_SKIP:
+            continue
+        name = sanitize_tool_name(peer_id, taken)
+        spec = peer_tool_spec(peer_id, kind, name)
+        if spec is None:
+            continue
+        taken.add(name)
+        tools.append(PeerProxyTool(peer_id, kind, spec))
+    return tools
+
+
+def motion_actions_for(tools: list[Any]) -> dict[str, frozenset[str]]:
+    """The MOTION_ACTIONS entries these proxies need — derived, never hand-kept.
+
+    Only REAL-arm proxies appear, and only their motion verbs: sims never
+    enter the table (their rail is structurally sim-only and peer_is_physical
+    exempts them anyway), host proxies offer no motion verbs, and stop/status
+    are never gated. Deriving the table from the built tools means the gate
+    and the tool surface cannot drift apart.
+    """
+    return {
+        t.tool_name: frozenset({"execute", "start"})
+        for t in tools
+        if getattr(t, "peer_kind", None) == KIND_REAL
+    }
