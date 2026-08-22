@@ -188,8 +188,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     <div className="authgate">
       <div className="authcard" role="dialog" aria-labelledby="authgate-title">
         <StrandsMark size={40} />
-        {/* Identity on the gate: an anonymous credential prompt is what a
-            phishing page looks like. Say what is being guarded, and where. */}
+        {/* Identity on the gate: an anonymous credential prompt is what a phishing page looks like. */}
         <p className="authhost">strands robots · {window.location.host}</p>
         <h1 id="authgate-title">
           {mode === 'unreachable' ? 'backend unreachable'

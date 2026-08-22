@@ -383,8 +383,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
               {scan.text}
             </div>
           )}
-          {/* The child started; this says why the arm may still show no joints. Kept next to the
-              spawn form because that is where the id that caused it was typed. */}
+          {/* The child started; this says why the arm may still show no joints. */}
           {notice && (
             <div className="result warn" role="status">
               ⚠ {notice.text}
@@ -403,12 +402,9 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
           )}
 
           <section>
-            {/* No count before the scan answers: `(0)` is a claim, and an unanswered request
-                would make the heading agree with the empty list about a fleet that may be running. */}
+            {/* No count before the scan answers: `(0)` is a claim, and an unanswered request would make the heading agree with the empty list about a fleet that may be running. */}
             <h3>Managed robots{doc !== null ? ` (${managed.length})` : ''}</h3>
-            {/* `None.` used to render from `doc?.managed ?? {}`, so a failed /api/devices reported
-                zero children while children were running, publishing to the mesh and holding serial
-                ports — and the (0) in the heading agreed with it. */}
+            {/* `None.` used to render from `doc?.managed ?? {}`, so a failed /api/devices reported zero children while children were running, publishing to the mesh and holding serial ports — and the (0) in the heading agreed with it. */}
             {managed.length === 0 && (() => {
               const line = managedListEmptyLine({ scanned: doc !== null, error })
               return <p className="hint" role="status">{line.message}</p>
@@ -506,8 +502,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                         </option>
                       ))}
                     </select>
-                    {/* Q77: said where the choice was made, instead of arriving from a serial driver
-                        inside a child process minutes later. */}
+                    {/* said where the choice was made, instead of arriving from a serial driver inside a child process minutes later. */}
                     {(portVerdict.kind === 'vanished' || portVerdict.kind === 'claimed') && (
                       <em className="field-err" role="alert">
                         ⚠ {portVerdict.detail} — {portVerdict.remedy}
@@ -520,10 +515,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                            list="calib-ids"
                            onChange={e => setRobotId(e.target.value)} />
                     <datalist id="calib-ids">
-                      {/* A SUGGESTION IS AN ENDORSEMENT: an id whose own name says the value was
-                          missing (None/null — see lib/calibration idProblem) is never offered here,
-                          because picking it would hand a real arm limits from that accident. The
-                          calibration list still shows the file, marked, so it can be inspected. */}
+                      {/* A SUGGESTION IS AN ENDORSEMENT: an id whose own name says the value was missing (None/null — see lib/calibration idProblem) is never offered here, because picking it would hand a real arm limits from that accident. */}
                       {(calibIds ?? []).filter(c => c.id && !c.problem).map(c => (
                         <option key={`${c.deviceType}/${c.model}/${c.id}`} value={c.id}>{c.model}</option>
                       ))}
@@ -628,10 +620,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
               so an arm that is running must be despawned before it can be measured.
             </p>
             <ul className="boardlist">
-              {/* `no servo board detected` used to appear whenever this array was empty — including
-                  while the first scan was in flight and when it FAILED (401 through the tunnel, dead
-                  dashboard). With two arms plugged in, a failed request told the operator their boards
-                  were gone. lib/boardList lets only an ANSWERED scan speak about hardware. */}
+              {/* `no servo board detected` used to appear whenever this array was empty — including while the first scan was in flight and when it FAILED (401 through the tunnel, dead dashboard). */}
               {freePorts.length === 0 && (() => {
                 const line = boardListEmptyLine({ scanned: doc !== null, error })
                 return <li className="muted" role="status">{line.message}</li>
@@ -669,10 +658,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                         {calibFor === p.device ? 'hide calibrate command' : 'calibrate…'}
                       </button>
                     </div>
-                    {/* Q41: after a restart `managed` is empty and this board reads as unknown
-                        hardware, though its whole spawn payload is on disk. Say what it was, and
-                        offer exactly one click to bring it back — but never while something is
-                        already driving that bus. */}
+                    {/* after a restart `managed` is empty and this board reads as unknown hardware, though its whole spawn payload is on disk. */}
                     {p.remembered && (() => {
                       // The line, and the trap inside it: the memory's id and peer name are just names someone
                       // typed, while the badge above is a MEASUREMENT.
@@ -683,16 +669,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                           last spawned as <b>{mem.summary}</b>
                           {mem.calibrationId ? ` · calibration id ${mem.calibrationId}` : ''}
                           {mem.warning && <span className="warn small"> ⚠ {mem.warning}</span>}
-                          {/* An id that cannot load is a different kind of news from a name that
-                              lies: this respawn will fail the way it failed last time. role=alert
-                              because it appears without the operator asking anything. */}
+                          {/* An id that cannot load is a different kind of news from a name that lies: this respawn will fail the way it failed last time. role=alert because it appears without the operator asking anything. */}
                           {mem.idProblem &&
                             <span className="warn small" role="alert"> ⚠ {mem.idProblem}</span>}
-                          {/* Q43: the saved camera indices are the least stable part of the memory.
-                              Said HERE, next to the button, because the alternative is learning it
-                              from a child's log after an arm came up streaming joints only — which
-                              looks healthy and records episodes with no pictures in them. The button
-                              stays enabled: spawning is still the right move, just informed. */}
+                          {/* the saved camera indices are the least stable part of the memory. */}
                           {p.remembered.camera_health?.text &&
                             <span className="warn small"> ⚠ {p.remembered.camera_health.text}</span>}
                           {(p.remembered.camera_health?.cameras ?? [])
@@ -701,10 +681,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                               <span key={c.name} className="hint small"> {c.name}: {c.remedy}</span>
                             ))}
                         </span>
-                        {/* Q123: reads the SAME remembered payload the respawn button uses, so the
-                            file and the button can never describe different rigs. Always enabled —
-                            writing a file touches no hardware, and it is most useful precisely when
-                            the bus is busy (that is when you are deploying the rig elsewhere). */}
+                        {/* reads the SAME remembered payload the respawn button uses, so the file and the button can never describe different rigs. */}
                         <button className="btn ghost" title="write the Python file that recreates this rig on another machine"
                                 onClick={() => void writeSnippet(p)}>deploy .py</button>
                         <button className="btn ghost" disabled={acting || claimedPorts.has(p.device)}
@@ -840,11 +817,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
           <section>
             <h3>Detected hardware</h3>
             <dl className="kv">
-              {/* This is the row someone screenshots when asking why their arm is missing, so it is
-                  the last place that may overstate: both values said `none` while the request was in
-                  flight or had failed. `none` is now reserved for an ANSWERED scan (lib/boardList),
-                  and it derives `scanned` from the same fact as the lists above, so the inventory and
-                  the lists cannot contradict each other in one screenshot. */}
+              {/* This is the row someone screenshots when asking why their arm is missing, so it is the last place that may overstate: both values said `none` while the request was in flight or had failed. */}
               <dt>serial</dt>
               <dd className="mono">
                 {hardwareSummaryValue({

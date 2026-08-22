@@ -19,17 +19,11 @@ export default function TelemetryStrip({ peer }: { peer: Peer }) {
       <svg className="spark" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden>
         <polyline points={points} />
       </svg>
-      {/* UX_REVIEW #6: a bare "9.7 Hz" next to a camera tile is ambiguous — say
-          WHICH rate it is on screen, not only in a tooltip. */}
+      {/* UX_REVIEW #6: a bare "9.7 Hz" next to a camera tile is ambiguous — say WHICH rate it is on screen, not only in a tooltip. */}
       <span className="metric" title="measured rate of this robot's state topic (nominal 10 Hz)">
         state {hz.toFixed(1)} Hz
       </span>
-      {/* ...and "is it moving RIGHT NOW" is the question an operator asks before
-          reaching over the desk, so it gets a chip with a dot instead of one more
-          grey word in a row of grey words.
-
-          THREE states, not two: `moving` is a tri-state and `moving ? … : 'still'`
-          rendered "not measured" as a green "still". */}
+      {/* ...and "is it moving RIGHT NOW" is the question an operator asks before reaching over the desk, so it gets a chip with a dot instead of one more grey word in a row of grey words. */}
       {(() => {
         const chip = motionChip(moving, { jointsSeen })
         return (

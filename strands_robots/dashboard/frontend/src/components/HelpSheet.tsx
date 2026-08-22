@@ -38,9 +38,7 @@ export default function HelpSheet({ open, onClose }: { open: boolean; onClose: (
               </li>
             ))}
           </ul>
-          {/* Paths, not links: these pages are in the repo but not on the
-              deployed site yet, and a 404 handed to a confused operator is
-              worse than no link at all. */}
+          {/* Paths, not links: these pages are in the repo but not on the deployed site yet, and a 404 handed to a confused operator is worse than no link at all. */}
           <p className="hint">In this repository (not published yet):</p>
           <ul className="help-paths">
             {REPO_DOC_PATHS.map(p => <li key={p}><code>{p.split(' — ')[0]}</code> — {p.split(' — ')[1]}</li>)}

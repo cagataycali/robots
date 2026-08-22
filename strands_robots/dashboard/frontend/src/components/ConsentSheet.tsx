@@ -68,10 +68,7 @@ export default function ConsentSheet({ need, target, onCancel, onRetry }: Props)
           <p className="cs-blocked">{blockedReason(need)}</p>
         ) : null}
 
-        {/* Q153: both of these are ANSWERS TO PRESSING "approve", rendered inside a modal — the shape
-            EstopSheet and (Q152) CameraConfigSheet already fixed. The verdict is reassuring, so it
-            announces politely; the failure means the grant was NOT saved, so the operator must not
-            walk away believing the opposite, and it interrupts. */}
+        {/* both of these are ANSWERS TO PRESSING "approve", rendered inside a modal — the shape EstopSheet and CameraConfigSheet already fixed. */}
         {note ? <p className="cs-note" role="status">{note}</p> : null}
         {error ? <p className="cs-error" role="alert">could not save the approval: {error}</p> : null}
 

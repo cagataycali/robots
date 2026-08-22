@@ -187,10 +187,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
             <button className="btn ghost" onClick={clearHistory} title="Forget the conversation">clear</button>
             {onSettings && <button className="btn ghost" onClick={onSettings} title="Model & prompt">⚒</button>}
           </div>
-          {/* Q157: a `log` (a transcript that appends), NAMED so it can be found, and with live
-              updates explicitly OFF. patchAgent appends deltas token by token, so a live region
-              here would stutter the reply word by word and re-interrupt itself for its whole
-              length — unstoppable and unreadable. The settled turn is announced below instead. */}
+          {/* a `log` (a transcript that appends), NAMED so it can be found, and with live updates explicitly OFF. patchAgent appends deltas token by token, so a live region here would stutter the reply word by word and re-interrupt itself for its whole length — unstoppable and unreadable. */}
           <div
             className="dock-scroll"
             ref={scrollRef}
@@ -206,10 +203,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
                 <em>"tell {exampleRobot ?? 'so101-arm-1'} to wave hello"</em><br />
                 <em>"everyone stop" — the safety brake, it halts every robot</em>
                 <p className="hint">
-                  {/* Q80: this line used to read "it can start and stop real robots", which was true
-                      and was the problem — that path had no confirmation of any kind. The agent may
-                      now stop anything, and start motion on a SIM peer; starting a real arm is the
-                      human pressing ▶, where the confirm sheet and the fit check live. */}
+                  {/* this line used to read "it can start and stop real robots", which was true and was the problem — that path had no confirmation of any kind. */}
                   It can stop any robot, and start tasks in simulation. Starting a real arm stays with
                   you — press ▶ on its card. Everything it does is recorded in Activity.
                 </p>
@@ -239,8 +233,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
               )
             ))}
           </div>
-          {/* One sentence per finished turn — the only thing spoken automatically. aria-atomic
-              because a partial re-read of a reply is not a reply. */}
+          {/* One sentence per finished turn — the only thing spoken automatically. aria-atomic because a partial re-read of a reply is not a reply. */}
           <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
             {turnAnnouncement({ busy, last: msgs[msgs.length - 1], error: connError })}
           </div>
@@ -265,9 +258,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
           onKeyDown={e => { if (e.key === 'Enter') void send() }}
           disabled={busy}
         />
-        {/* "↑" is not a name. HelpSheet's ✕ and this dock's own hide/show button already carry
-            one; the send button did not, so a screen reader reached the end of the agent's input
-            row and announced an unlabelled "button". */}
+        {/* "↑" is not a name. */}
         <button className="dock-send" onClick={() => void send()} disabled={busy || !input.trim()}
                 aria-label="send to the agent" title="send to the agent">↑</button>
         <button className="dock-min" onClick={() => setOpen(o => !o)}
@@ -277,10 +268,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
         </button>
       </div>
 
-      {/* The refusal names a permission; this makes it a decision, in the place the operator was
-          already looking. target='spawn' because a chat turn CAN simply be re-sent once the grant
-          lands — no process holds a stale env (the fleet tool reads it per call), unlike a running
-          peer that needs a respawn. */}
+      {/* The refusal names a permission; this makes it a decision, in the place the operator was already looking. target='spawn' because a chat turn CAN simply be re-sent once the grant lands — no process holds a stale env (the fleet tool reads it per call), unlike a running peer that needs a respawn. */}
       {(need ?? voice.need) ? (
         <ConsentSheet
           need={(need ?? voice.need) as ConsentNeed}

@@ -199,13 +199,7 @@ function Dashboard() {
 
   return (
     <div className="stage">
-      {/* FIRST IN THE DOM, therefore the FIRST TAB STOP on every screen
-          (JOURNEYS #12: measured 14 to 30+ tab stops to reach it, and on the
-          training screen it was unreachable inside 30). It is position:fixed in
-          its own layer, so moving it to the top of the document changes nothing
-          visually and no overlay can swallow the stop. A keyboard user's brake
-          must not be behind the fleet bar's chips, a robot card's controls, or
-          whatever a drawer happens to render today. */}
+      {/* FIRST IN THE DOM, therefore the FIRST TAB STOP on every screen (JOURNEYS #12: measured 14 to 30+ tab stops to reach it, and on the training screen it was unreachable inside 30). */}
       <EstopButton onClick={() => setPanel('estop')} posture={estopPosture(link)} />
 
       <FleetBar
@@ -233,32 +227,22 @@ function Dashboard() {
       {pwa.needRefresh && (
         <div className="toast">
           A new dashboard version is ready
-          {/* Say how long they have been on the old one: a phone left open beside
-              the arms used to sit on an 11-hour-old bundle without ever being asked. */}
+          {/* Say how long they have been on the old one: a phone left open beside the arms used to sit on an 11-hour-old bundle without ever being asked. */}
           {pwa.bundleAge() ? ` — this tab loaded ${pwa.bundleAge()}` : ''}.
           <button className="btn go" onClick={pwa.update}>reload</button>
-          {/* Q97: what reloading costs RIGHT NOW. The static hint that used to live here printed the
-              same sentence at the safest moment and the worst one; the app already knows which is
-              which, and this decision was deliberately left to the operator. */}
+          {/* what reloading costs RIGHT NOW. */}
           <span className="hint">{reloadImpact(Object.keys(busyPeers).filter(id => busyPeers[id])).text}</span>
         </div>
       )}
 
-      {/* One judgment for all the ways this page can stop being attached to the
-          fleet (lib/linkHealth): this device's network, a refused token, a dead
-          API, a mute socket. The old toast covered only the first — yet the
-          measured outage was the API dying twice in 30 minutes, which showed a
-          frozen fleet and a brake that looked fine. */}
+      {/* One judgment for all the ways this page can stop being attached to the fleet (lib/linkHealth): this device's network, a refused token, a dead API, a mute socket. */}
       {link.headline && (
         <div className={`toast ${link.commandsWork ? '' : 'warn'}`} role="status">
           <b>{link.headline}</b> {link.detail}
         </div>
       )}
 
-      {/* Q124: the dark-feature banner. BELOW the link banner on purpose — when this page cannot
-          command the fleet at all, that is the sentence that matters, and an older server is a
-          calmer problem than a dead one. <details> keeps the route list out of the glance while
-          keeping it available for a bug report. */}
+      {/* the dark-feature banner. */}
       {dark.length > 0 && (
         <div className="toast warn" role="status">
           <b>Older server.</b> {darkFeatureMessage(dark)}
@@ -269,18 +253,14 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Q88: somebody ELSE is being refused in a loop. Deliberately below the link banner and
-          only when the link is healthy — when this page cannot command the fleet, that is the
-          sentence that matters, and two stacked warnings compete for the same glance. */}
+      {/* somebody ELSE is being refused in a loop. */}
       {notice.text && !link.headline && (
         <div className="toast warn" role="status">
           <b>A client is being refused repeatedly</b> {notice.text}
         </div>
       )}
 
-      {/* The server is older than the bundle it is serving, AND that is costing the operator
-          something visible. Last in this stack on purpose: a refusal loop and a dead link are
-          both more urgent than a missing badge, and only one banner should compete for a glance. */}
+      {/* The server is older than the bundle it is serving, AND that is costing the operator something visible. */}
       {stale.text && !notice.text && !link.headline && (
         <div className="toast" role="status">
           <b>This server is older than this page</b> {stale.text}
@@ -324,26 +304,13 @@ function Dashboard() {
           ) : (
             <>
               <h2>{loaded ? 'No robots on the mesh yet' : 'Loading the fleet…'}</h2>
-              {/* Q45: the same sentence the record screen learned, from the same module — after a
-                  restart the arms are not unplugged, just not running, and this machine remembers
-                  them by USB serial. It goes ABOVE the snippet because "bring your own arm back" beats
-                  "here is how to write a new one" for someone who already has two, and it uses
-                  `route` rather than `text` because the heading above just said the mesh is empty. */}
+              {/* the same sentence the record screen learned, from the same module — after a restart the arms are not unplugged, just not running, and this machine remembers them by USB serial. */}
               {loaded && homeRoute && (
                 <p className="hint" role="status">{homeRoute}</p>
               )}
               <p>Start one anywhere on your network:</p>
-              {/* Q46: this used to hardcode port="/dev/ttyACM0" — a Linux path, on a Mac whose arms
-                  live at /dev/cu.usbmodem*. The one piece of code the dashboard hands you could not
-                  run on the machine you copied it from. Now it names a detected port when there is
-                  one, and admits the placeholder when there is not. */}
-              {/* Q136: this <pre> was `white-space: pre` in a 340px column at phone width — measured
-                  scrollWidth 453 vs clientWidth 340, so the `mode="real", port=…` line, the whole
-                  point of the second line, sat outside the box behind a horizontal scroll nobody
-                  discovers. The calibrate panel already had to learn this (its audit asserts the
-                  command wraps COMPLETE inside 390px with its copy button in reach); the one snippet
-                  a brand-new user meets FIRST was still failing that law. Wrapping keeps python
-                  valid to read, and the copy button means a phone never has to select it by hand. */}
+              {/* this used to hardcode port="/dev/ttyACM0" — a Linux path, on a Mac whose arms live at /dev/cu.usbmodem*. */}
+              {/* this <pre> was `white-space: pre` in a 340px column at phone width — measured scrollWidth 453 vs clientWidth 340, so the `mode="real", port=…` line, the whole point of the second line, sat outside the box behind a horizontal scroll nobody discovers. */}
               <pre className="startsnip">{snippet.code}</pre>
               <p className="row">
                 <button className="btn ghost tiny" onClick={async () => {
@@ -365,12 +332,8 @@ function Dashboard() {
         </div>
       ) : (
         <main className="grid">
-          {/* Q43: the fleet-wide lockout line. Measured - both arms sat e-stop locked for
-              ten hours while their cards looked healthy, so the per-card badge is not
-              enough: an operator arriving at this screen must be told before they reach
-              for a control. Silent unless a safety event actually happened. */}
-          {/* Q52: local viewers should not stream camera frames out to the internet and
-              back. Silent unless the server can prove it. */}
+          {/* the fleet-wide lockout line. */}
+          {/* local viewers should not stream camera frames out to the internet and back. */}
           <LanHint />
           {(() => {
             const lb = lockoutBanner(list)

@@ -54,8 +54,7 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
         <button className="peername" title={`open ${peer.peer_id}`} onClick={() => onOpen?.(peer.peer_id)}>
           {peer.peer_id}
         </button>
-        {/* Which arm this IS, measured off its bus - the swap the operator
-            reported was visible here first, where a name was the only clue. */}
+        {/* Which arm this IS, measured off its bus - the swap the operator reported was visible here first, where a name was the only clue. */}
         {peer.role && (
           <span className={`rolebadge ${peer.role}`}
                 title={peer.role_volts
@@ -64,24 +63,14 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
             {peer.role}
           </span>
         )}
-        {/* The e-stop lockout (Q43). Loud when locked - a locked arm used to render
-            as a healthy green card with live joints, and the operator only found out
-            when a command was refused. Quiet 'e-stop?' when the dashboard genuinely
-            cannot tell, and NOTHING when it has simply seen no safety event: a badge on
-            every card at every startup is how a safety marker becomes decoration. */}
+        {/* The e-stop lockout. */}
         {(() => {
           const lb = lockoutBadge(peer.lockout)
           return lb.label ? (
             <span className={`lockbadge ${lb.tone}`} title={lb.title}>{lb.label}</span>
           ) : null
         })()}
-        {/* U15: a robot the user started from their own script is a full
-            citizen here - same card, same telemetry, same commands. The one
-            thing it cannot have is a local child process, so this marker
-            exists to say WHY logs, camera reconfigure and despawn are missing
-            for it, before those are reached. Robots only: labelling every
-            gateway "started elsewhere" would be noise, and none of the three
-            gaps apply to one. */}
+        {/* U15: a robot the user started from their own script is a full citizen here - same card, same telemetry, same commands. */}
         {type === 'robot' && peer.origin === 'external' && (
           <span className="originbadge"
                 title={'started outside this dashboard (your own script, or another machine).\n'
@@ -90,9 +79,7 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
             external
           </span>
         )}
-        {/* Q81: the bus cure is silent by design, so the count is the only evidence a
-            cable is failing. Absent/zero renders nothing - a healthy arm earns no
-            ornament - and the tone escalates once it stops looking like bad luck. */}
+        {/* the bus cure is silent by design, so the count is the only evidence a cable is failing. */}
         {(() => {
           const bus = busRecoveryBadge(peer.state?.bus_recoveries)
           return bus ? (
@@ -132,12 +119,6 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
         </div>
       )}
 
-      {/* Q45 follow-up, measured on the live rig: so101-arm-1 advertised `wrist` for 11.7h
-          after its reader thread died, and the only place that said so was the dimmed tile
-          itself. Scanning a fleet grid, a dim tile among four is not a message. This names
-          the camera and its age on the CARD - the same reasoning as the lockout banner:
-          an operator arriving at this screen must be told before they act. Silent unless
-          there is positive evidence of death (no history is not death). */}
       {(() => {
         const note = deadCameraNote(stoppedCameras(peer.cameras ?? {}, Date.now() / 1000), cams.length)
         return note ? <div className="cam-dead-note" role="status">{note}</div> : null
@@ -170,14 +151,12 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
         onStop={stop}
       />
 
-      {/* ambiguous = the command may have reached the arm; '✗ failed' would be a
-          guess with a hand in the workspace behind it (lib/taskOutcome.ts). */}
+      {/* ambiguous = the command may have reached the arm; '✗ failed' would be a guess with a hand in the workspace behind it (lib/taskOutcome.ts). */}
       {outcome && (
         <div className={outcome.ok ? 'result ok' : 'result bad'}>
           <span>{outcome.ok ? '✓' : outcome.ambiguous ? '⚠ unknown —' : '✗'} {outcome.text}</span>
           {outcome.detail && <details><summary>details</summary><pre>{outcome.detail}</pre></details>}
-          {/* The refusal is answerable: offer the decision where the error is,
-              not in a settings screen the operator has to go find. */}
+          {/* The refusal is answerable: offer the decision where the error is, not in a settings screen the operator has to go find. */}
           {consent && (
             <button className="btn small" onClick={() => setSheet(true)}>review permission…</button>
           )}

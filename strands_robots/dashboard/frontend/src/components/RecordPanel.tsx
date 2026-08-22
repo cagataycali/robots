@@ -284,11 +284,7 @@ export default function RecordPanel(
         </div>
       )}
 
-      {/* Q40: a session the dashboard died inside used to be silence — an empty form over a
-          half-written dataset, with both arms left despawned by the parking step. The server sends
-          the sentence (it has the facts); this renders it, and renders the next actions as WORDS.
-          No button here deletes a dataset: destroying an hour of hand-guiding is not a thing a
-          screen should offer next to a form the operator is about to fill in. */}
+      {/* a session the dashboard died inside used to be silence — an empty form over a half-written dataset, with both arms left despawned by the parking step. */}
       {!open && s?.interrupted && (
         <div className="artifact-hold" role="status">
           <div>⏹ {s.interrupted.text}</div>
@@ -316,9 +312,7 @@ export default function RecordPanel(
             <input value={form.dataset} placeholder="cagatay/so101-pick-cube"
                    onChange={e => set('dataset', e.target.value)} />
           </label>
-          {/* Not a validator: it never blocks the submit and never rewrites the field. The
-              suggestion is one tap because someone naming a dataset twice usually wants "-2",
-              not a lecture. */}
+          {/* Not a validator: it never blocks the submit and never rewrites the field. */}
           {nameWarn && (
             <div className="train-msg" role="status">
               ⚠ {nameWarn.message}
@@ -363,8 +357,7 @@ export default function RecordPanel(
               <input inputMode="numeric" value={form.fps} placeholder="30"
                      aria-invalid={!!rate.problem} aria-describedby="rec-fps-say"
                      onChange={e => set('fps', e.target.value)} />
-              {/* The rate the dataset DECLARES. Empty = the backend's 30, said out loud rather
-                  than left as a hidden default nobody could see or change. */}
+              {/* The rate the dataset DECLARES. */}
               <span id="rec-fps-say" className={`fieldsay${rate.problem ? ' bad' : ''}`}>
                 {rate.problem ?? rate.note ?? 'timestamps are derived from this — match your real capture rate'}
               </span>
@@ -373,9 +366,7 @@ export default function RecordPanel(
               <input inputMode="numeric" value={form.target_episodes}
                      aria-invalid={!!wanted.problem} aria-describedby="rec-episodes-say"
                      onChange={e => set('target_episodes', e.target.value)} />
-              {/* The old expression was Math.max(1, Number(raw) || 20): a typo like "3o" opened a
-                  TWENTY-episode session, "0" and "-5" became 1, and nothing said so — while the
-                  arms had already left the fleet and the follower was energised. */}
+              {/* The old expression was Math.max(1, Number(raw) || 20): a typo like "3o" opened a TWENTY-episode session, "0" and "-5" became 1, and nothing said so — while the arms had already left the fleet and the follower was energised. */}
               <span id="rec-episodes-say" className={`fieldsay${wanted.problem ? ' bad' : ''}`}>
                 {wanted.problem ?? wanted.note ?? ''}
               </span>
@@ -386,10 +377,7 @@ export default function RecordPanel(
               paired from the servo buses — measured, not guessed from the names.
             </div>
           )}
-          {/* Q44: "no arms on the mesh" was true and a dead end. After a restart the arms are not
-              unplugged, just not running — and the devices screen knows them by USB serial with a
-              one-click respawn. Name that route here instead of making the operator hunt for a
-              feature we shipped. A sentence plus an offer, never a redirect. */}
+          {/* "no arms on the mesh" was true and a dead end. */}
           {noArms
             ? <div className="train-msg rec-hint" role="status">
                 {noArms.text}
@@ -414,8 +402,7 @@ export default function RecordPanel(
               </span>
             </label>
           )}
-          {/* No acknowledgement offered, unlike the camera warnings: the server's refusal for this
-              has no override flag, and a tick that cannot change the outcome is a lie. */}
+          {/* No acknowledgement offered, unlike the camera warnings: the server's refusal for this has no override flag, and a tick that cannot change the outcome is a lie. */}
           {jointWarnings.map(({ slot, msg }) => (
             <div key={`joints-${slot}`} className="train-msg warn" role="alert">⚠ {msg}</div>
           ))}
@@ -434,8 +421,7 @@ export default function RecordPanel(
             not sure which is which? the leader is the lighter 7.4V arm (no gearbox load —
             easy to move by hand); the follower is the stronger 12V arm that mirrors it.
           </div>
-          {/* R1: the consequence is stated BEFORE the click, because this is the
-              moment two real arms change state — not after, in a toast. */}
+          {/* R1: the consequence is stated BEFORE the click, because this is the moment two real arms change state — not after, in a toast. */}
           <div className={`train-msg rec-hint${openCopy.cls ? ' warn' : ''}`}>{openCopy.hint}</div>
           <div className="train-actions">
             <button className={`btn go wide${openCopy.cls ? ` ${openCopy.cls}` : ''}`} type="submit"
@@ -449,28 +435,14 @@ export default function RecordPanel(
               {openCopy.label}
             </button>
           </div>
-          {/* Only a real collision. Both slots start EMPTY now, and '' === '' was
-              firing this warning at rest - scolding the operator before they had
-              chosen anything. */}
+          {/* Only a real collision. */}
           {!!form.leader && form.leader === form.follower &&
             <div className="train-msg">⚠ leader and follower must be different arms</div>}
         </form>
       )}
 
-      {/*
-        A camera that never opened, said out loud BEFORE the episodes are
-        collected. role=alert (not aria-live=polite) because it changes what
-        the operator should do next: every episode will look successful and the
-        finished dataset will have no image channel to train on.
-      */}
-      {/*
-        Q92: the disk. Rendered whether or not a session is open — unlike the three notices below
-        it, which are properties of a running recording. This one is a property of the MACHINE, and
-        the reason it is not gated on `open` is that the volume drains DURING a session: measured
-        ~2Gi/h to macOS swap on this rig, so a session that began comfortable can be in trouble by
-        episode 20. Mid-session the advice deliberately changes (diskNotice.ts) — telling someone
-        holding a leader arm to "free space first" is advice they cannot take.
-      */}
+      {/* A camera that never opened, said out loud BEFORE the episodes are collected. role=alert (not aria-live=polite) because it changes what the operator should do next: every episode will look successful and the finished dataset will have no image channel to train on. */}
+      {/* the disk. */}
       {(() => {
         const d = diskNoticeView(s?.disk_notice, { recording: open })
         if (!d) return null
@@ -490,17 +462,11 @@ export default function RecordPanel(
         </div>
       )}
 
-      {/* The captured rate, when it disagrees with the rate this dataset
-          DECLARES. LeRobot timestamps a frame as frame_index/fps, so the gap
-          leaves no trace in the artifact — if it is not said here, while the
-          operator can still stop and re-open, it is never said at all. A
-          notice, never a block: they are holding a leader arm. */}
+      {/* The captured rate, when it disagrees with the rate this dataset DECLARES. */}
       {open && s?.fps_notice && (
         <div className="train-msg warn rec-fps-notice" role="alert">
           ⚠ {s.fps_notice.detail}
-          {/* Q54: the notice used to end here — a warning about a number no screen could change.
-              The remedy is future-tense on purpose: this session's episodes are already stamped,
-              and offering to "fix" them would be one lie deeper. */}
+          {/* the notice used to end here — a warning about a number no screen could change. */}
           {(() => {
             const sug = fpsSuggestion(s.fps_notice)
             if (!sug) return null
@@ -515,15 +481,7 @@ export default function RecordPanel(
         </div>
       )}
 
-      {/*
-        The follower has not moved for the whole window. role=alert like the two
-        above, and for the same reason: every counter looks perfect while the
-        dataset being written is one pose repeated, so if this is not said while
-        the operator can still redo the episode it is discovered at training time
-        or never. A NOTICE - holding still is legitimate (lining the arms up,
-        holding a grasp), and stopping recording here would throw away real
-        episodes to prevent a suspicion.
-      */}
+      {/* The follower has not moved for the whole window. role=alert like the two above, and for the same reason: every counter looks perfect while the dataset being written is one pose repeated, so if this is not said while the operator can still redo the episode it is discovered at training time or never. */}
       {open && s?.motion_notice && (
         <div className="train-msg warn rec-motion-notice" role="alert">
           ⚠ {s.motion_notice.message}
@@ -543,8 +501,7 @@ export default function RecordPanel(
                   {' '}· {s.fps_achieved} captured
                 </span>
               )}
-              {/* A healthy-looking rate is exactly what a frozen arm produces, so
-                  the pair itself carries the doubt rather than only the banner. */}
+              {/* A healthy-looking rate is exactly what a frozen arm produces, so the pair itself carries the doubt rather than only the banner. */}
               {s.motion_notice && (
                 <span className="rec-rate-bad" title={s.motion_notice.message}>
                   {' '}· not moving
@@ -584,8 +541,7 @@ export default function RecordPanel(
 
       {open && s && episodes.length > 0 && (
         <div className="rec-strip" role="list" aria-label="recorded episodes">
-          {/* the last entry while recording is the take in flight - the live
-              counter on the stop button represents it, not a card */}
+          {/* the last entry while recording is the take in flight - the live counter on the stop button represents it, not a card */}
           {finished.slice().reverse().map(ep => (
             <div key={ep.index} role="listitem" className={`rec-ep${ep.discarded ? ' dead' : ''}`}>
               <div className="rec-ep-head">
@@ -639,8 +595,7 @@ export default function RecordPanel(
                   <input type="checkbox" checked={uploadForce}
                     onChange={e => setUploadForce(e.target.checked)} />
                   <span>
-                    {/* Q78: two different unknowns share this tick, and consenting to "I have write
-                        access" is not consenting to "replace the take already published there". */}
+                    {/* two different unknowns share this tick, and consenting to "I have write access" is not consenting to "replace the take already published there". */}
                     {pre.state === 'destination_exists'
                       ? <>Replace the dataset already published at <code>{pre.destination}</code> with this session</>
                       : <>I can write to <code>{pre.destination}</code> — publish there anyway</>}
@@ -674,9 +629,7 @@ export default function RecordPanel(
                 setBusy(false)
               })()
             }}>
-              {/* Q72: the button says what it is ABOUT to do. With the tick on but the push refused,
-                  "finish dataset" would quietly not upload — the operator's episodes are safe either
-                  way, so finishing stays allowed, but it must not be mistaken for a publish. */}
+              {/* the button says what it is ABOUT to do. */}
               ✓ {uploadBlocked ? 'finish WITHOUT uploading' : armedUpload ? 'finish + publish' : 'finish dataset'}
               {' '}({kept} kept{episodes.length - kept ? `, ${episodes.length - kept} discarded` : ''})
             </button>
@@ -686,13 +639,9 @@ export default function RecordPanel(
 
       {closed && !open && <div className="toast">✓ {closed}</div>}
 
-      {/* Q145: every refusal the operator can act on (dead camera, identity drift, taken
-          dataset name) arrives here, after a tap, asynchronously. role=alert so it is heard and not
-          only seen — a refusal nobody notices reads as a button that did nothing. */}
+      {/* every refusal the operator can act on (dead camera, identity drift, taken dataset name) arrives here, after a tap, asynchronously. role=alert so it is heard and not only seen — a refusal nobody notices reads as a button that did nothing. */}
       {err && <div className="train-msg" role="alert">✗ {err}</div>}
-      {/* The refusal's own words stay above, unrewritten - they were written next to
-          the check that knows why. This adds the answer: the admission in the first
-          person, the cost if the operator is wrong, and press start again. */}
+      {/* The refusal's own words stay above, unrewritten - they were written next to the check that knows why. */}
       {err && offered && (
         <label className="ackrow">
           <input type="checkbox" checked={refusalAck}

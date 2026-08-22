@@ -125,9 +125,7 @@ export default function ConsentSettings() {
         </div>
       ) : null}
 
-      {/* Not a grant — the only row here that makes this machine stricter, which is why it is shown
-          in BOTH states: an operator cannot choose a lock they have never been told exists, and the
-          ▶ button already sends the confirmation, so turning it on costs them nothing. */}
+      {/* Not a grant — the only row here that makes this machine stricter, which is why it is shown in BOTH states: an operator cannot choose a lock they have never been told exists, and the ▶ button already sends the confirmation, so turning it on costs them nothing. */}
       {state?.locks ? (
         <div className="cg-row">
           <div>
@@ -214,11 +212,7 @@ export default function ConsentSettings() {
         </div>
       ))}
 
-      {/* Q154: the answers to pressing "revoke". The failure is the graver of the two in this file:
-          Q153's unsaved GRANT merely refuses again the next time, but a revoke that did not happen
-          leaves a permission with physical reach STILL IN FORCE while the operator believes it is
-          gone — and the row it was pressed on re-renders from a reload that also failed. So the
-          outcome announces politely and the failure interrupts. */}
+      {/* the answers to pressing "revoke". */}
       {note ? <p className="cs-note" role="status">{note}</p> : null}
       {error ? <p className="cs-error" role="alert">{error}</p> : null}
       <p className="hint">

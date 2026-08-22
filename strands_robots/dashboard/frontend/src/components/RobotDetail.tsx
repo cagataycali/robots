@@ -146,9 +146,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
         <header className="detail-head">
           <span className={`typebadge ${p?.robot_type ?? '?'}`}>{p?.robot_type ?? '?'}</span>
           <h2>{peer.peer_id}</h2>
-          {/* Q164: three states told apart by COLOUR ALONE said nothing to a screen reader and
-              nothing under forced colours. The words are the same ones RobotCard uses, and role
-              makes aria-label announceable on a span that has no text of its own. */}
+          {/* three states told apart by COLOUR ALONE said nothing to a screen reader and nothing under forced colours. */}
           <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'} role="img"
                 aria-label={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'}
                 title={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'} />
@@ -190,8 +188,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             <b>teleop:</b> {teleop.headline}
             {teleop.streaming && <span className="muted small"> · frames are on the wire</span>}
             {teleop.detail && <div className="muted small">{teleop.detail}</div>}
-            {/* The envelope is a SAFETY bound: the screen names the consent that widens it and never
-                widens it here. ConsentSettings already renders this kind. */}
+            {/* The envelope is a SAFETY bound: the screen names the consent that widens it and never widens it here. */}
             {teleop.streaming && (
               stopArmed
                 ? (
@@ -205,10 +202,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                     stop teleop
                   </button>
             )}
-            {/* U22 slice 3a: what would it TAKE to teleop this arm? Answered from evidence the peers
-                carry, and only when the arm is not already streaming. The refusals matter more than the
-                offers here: on this fleet both real arms report no joints, which is why teleop has never
-                started — a fact that until now lived only in a child log. */}
+            {/* U22 slice 3a: what would it TAKE to teleop this arm? */}
             {!teleop.streaming && (fleet?.length ?? 0) > 0 && (() => {
               const opts = leaderOptions(peer.peer_id, fleet!)
               const usable = opts.filter(o => o.ok)
@@ -221,9 +215,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                       <> · starting asks for {plan.consents.join(' + ')} first, because frames move a real arm</>
                     )}
                     {plan?.notes.map((n, i) => <div key={i}>{n}</div>)}
-                    {/* One armed step per candidate leader. The confirm sentence says which arm MOVES —
-                        "start teleop" alone does not tell an operator standing next to two arms which of
-                        them is about to travel. */}
+                    {/* One armed step per candidate leader. */}
                     <div className="row small">
                       {usable.map(o => (startArmed === o.peer_id ? (
                         <span key={o.peer_id} className="row small">
@@ -254,19 +246,11 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             )}
           </div>
         )}
-        {/* THE VERDICT ABOUT MY OWN ACTION MUST NOT LIVE INSIDE THE ARM'S STATUS BLOCK. It did, and that
-            block only renders when the status could be RE-READ — so every failure path hid its own report:
-            a stop that was refused, a start that was refused, and a half-built chain that left the leader
-            publishing all end with the status 'unreachable', which is exactly when the operator most needs
-            the sentence. Sibling of the status now, not a child of it. (Found by scenario 4 rendering an
-            empty screen where a three-line explanation should have been.) */}
+        {/* THE VERDICT ABOUT MY OWN ACTION MUST NOT LIVE INSIDE THE ARM'S STATUS BLOCK. */}
         {stopped && (
           <div className={`small ${stopped.ok ? 'muted' : 'warn'}`} role="status">{stopped.line}</div>
         )}
-        {/* The result of a START must OUTLIVE the state it created. Rendered inside the "not streaming"
-            offer, this line vanished at the exact moment it had something to say — a success the
-            operator never saw, and a refusal (started, every frame rejected) hidden behind the very
-            streaming flag that made it true. Found by the audit the moment it could render a fleet. */}
+        {/* The result of a START must OUTLIVE the state it created. */}
         {started && (
           <div className={`small ${started.ok ? 'muted' : 'warn'}`} role="status">{started.line}</div>
         )}
@@ -281,9 +265,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             )}
           </div>
         )}
-        {/* Q151: the safety sentence belongs on THIS surface most — it is what an operator reads while
-            walking up to the arm. Same pure rule and same fields as the card, so the two cannot say
-            different things about the same robot. */}
+        {/* the safety sentence belongs on THIS surface most — it is what an operator reads while walking up to the arm. */}
         {whyNoJoints && (
           <p className="hint warn" role="status">{whyNoJoints}</p>
         )}

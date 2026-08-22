@@ -101,9 +101,7 @@ export default function EstopSheet({
 
         {error && (
           <>
-            {/* "Nothing was sent" was the old line for EVERY failure — including a
-                lost answer, where the stop may well have landed. The verdict
-                distinguishes them, because the two demand different next moves. */}
+            {/* "Nothing was sent" was the old line for EVERY failure — including a lost answer, where the stop may well have landed. */}
             <div className="result bad" role="alert">{error.headline}</div>
             <p className="hint warn">{error.advice}</p>
             <div className="sheet-actions">
@@ -117,10 +115,7 @@ export default function EstopSheet({
 
         {result && (
           <>
-            {/* Q145: the answer to "did every robot actually stop?" arrives asynchronously, and
-                until now it arrived SILENTLY — nothing announced it. role=alert on the unconfirmed
-                verdict, because "N peers NOT confirmed stopped" is the one sentence in this dashboard
-                that must interrupt whatever a screen reader was saying; the all-clear is polite. */}
+            {/* the answer to "did every robot actually stop?" arrives asynchronously, and until now it arrived SILENTLY — nothing announced it. role=alert on the unconfirmed verdict, because "N peers NOT confirmed stopped" is the one sentence in this dashboard that must interrupt whatever a screen reader was saying; the all-clear is polite. */}
             <div className={result.all_stopped ? 'result ok' : 'result bad'}
                  role={result.all_stopped ? 'status' : 'alert'}>
               {result.all_stopped
@@ -142,11 +137,7 @@ export default function EstopSheet({
                 skipped (no heartbeat, cannot be reached): <code>{result.stale_skipped.join(', ')}</code>
               </p>
             )}
-            {/* `No live peers were on the mesh.` was read one second after someone hit stop while
-                watching an arm move — and it is a claim about the ROOM made from this dashboard's
-                snapshot. A peer started elsewhere, one whose presence has not arrived, or one already
-                pruned as stale is invisible here and can still be holding a torqued servo (Q32: ghost
-                processes lived on this fleet for days). lib/estopReach says what did not happen. */}
+            {/* `No live peers were on the mesh.` was read one second after someone hit stop while watching an arm move — and it is a claim about the ROOM made from this dashboard's snapshot. */}
             {result.targeted.length === 0 && (() => {
               const reach = estopNothingTargeted({ staleSkipped: result.stale_skipped })
               return (

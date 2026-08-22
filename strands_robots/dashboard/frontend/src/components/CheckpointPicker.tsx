@@ -91,8 +91,7 @@ export default function CheckpointPicker({ value, onPick, disabled }: {
       {open && (
         <div className="ckpt-menu">
           {failed && <div className="ckpt-note bad">✗ search failed: {failed}</div>}
-          {/* When there are no rows the empty note carries this reason itself —
-              two lines saying "the Hub is down" is one line the eye skips. */}
+          {/* When there are no rows the empty note carries this reason itself — two lines saying "the Hub is down" is one line the eye skips. */}
           {!failed && hubProblem && rows.length > 0 && <div className="ckpt-note warn">⚠ {hubProblem}</div>}
           {!failed && hfAuth && (
             <div className={`ckpt-note ${hfAuth.authenticated ? 'ok' : ''}`}>

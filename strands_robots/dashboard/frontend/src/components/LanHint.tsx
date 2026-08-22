@@ -36,8 +36,7 @@ export default function LanHint() {
     <div className="lan-hint" role="status" style={{ gridColumn: '1 / -1' }}>
       <span aria-hidden="true">&#127968;</span>
       <span className="lan-hint-text">{verdict.text}</span>
-      {/* A plain link, not a redirect: leaving https for http is the operator's choice to
-          make, and a silent downgrade would be indefensible. */}
+      {/* A plain link, not a redirect: leaving https for http is the operator's choice to make, and a silent downgrade would be indefensible. */}
       <a className="lan-hint-go" href={verdict.url}>open the local address</a>
       <button className="lan-hint-dismiss" onClick={dismiss} aria-label="dismiss this hint">
         &times;

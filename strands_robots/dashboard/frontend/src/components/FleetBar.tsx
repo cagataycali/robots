@@ -78,9 +78,7 @@ export default function FleetBar({
           <button className="chip" onClick={onInstall} title="Install as an app">⤓ install</button>
         )}
         <button className="chip" onClick={onDevices} title="Local hardware and managed robots">⚙ devices</button>
-        {/* U22: a robot the operator started died and the fleet only got shorter. One quiet
-            line, pointing at the drawer that holds the exit status and the log ring — not a
-            corpse card on the grid, because every command on such a card would refuse. */}
+        {/* U22: a robot the operator started died and the fleet only got shorter. */}
         {quiet && (
           <button
             className="chip warn"
@@ -106,8 +104,7 @@ export default function FleetBar({
           ☰ activity{activityCount > 0 ? ` (${activityCount})` : ''}
         </button>
         <button className="chip" onClick={onSettings} title="Settings">⚒ settings</button>
-        {/* JOURNEYS #7: the page had 0 links and 0 onboarding words. One labelled
-            affordance, present on every screen, keyboard shortcut "?". */}
+        {/* JOURNEYS #7: the page had 0 links and 0 onboarding words. */}
         <button
           className="chip"
           onClick={onHelp}

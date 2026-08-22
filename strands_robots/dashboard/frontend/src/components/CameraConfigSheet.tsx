@@ -158,16 +158,9 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
               Blank fps/size = the driver's defaults (640×480 @ 30). Detaching all cameras is allowed —
               the robot streams joints only.
             </p>
-            {/* The fps field is the CAMERA's capture rate; what this dashboard
-                receives is the mesh publish rate. Without this line an operator
-                who picks a 30 fps mode and sees a ~5/s preview concludes the
-                config was ignored. Shown only when the two can disagree. */}
+            {/* The fps field is the CAMERA's capture rate; what this dashboard receives is the mesh publish rate. */}
             {rateNote && <p className="hint">⏱ {rateNote}</p>}
-            {/* Q152: a sheet is focus-trapped, so a refusal that renders silently reads as "the button
-                did nothing" — the exact defect EstopSheet fixed with role=alert on its failure headline.
-                Same shape here: the probe's failure and the 409 refusal are both ANSWERS to a press.
-                alert, not status: this sheet's whole purpose is a decision, and a decision that was
-                refused must interrupt rather than wait for the operator to notice. */}
+            {/* a sheet is focus-trapped, so a refusal that renders silently reads as "the button did nothing" — the exact defect EstopSheet fixed with role=alert on its failure headline. */}
             {check.error && <div className="result bad" role="alert">✗ {check.error}</div>}
             {error && <div className="result bad" role="alert">⚠ {error}</div>}
             {!confirming ? (
@@ -192,8 +185,7 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
         )}
         {done && (
           <>
-            {/* The success half announces too, politely: the respawn it reports takes seconds, and an
-                operator who cannot see the sheet has no other signal that it finished. */}
+            {/* The success half announces too, politely: the respawn it reports takes seconds, and an operator who cannot see the sheet has no other signal that it finished. */}
             <div className="result ok" role="status">{done}</div>
             <div className="sheet-actions">
               <button className="btn ghost" onClick={onClose}>close</button>

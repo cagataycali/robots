@@ -347,9 +347,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                   <button className="btn ghost" onClick={() => { setBase(''); setToken(''); setConnVerdict(null) }}>clear</button>
                 )}
               </div>
-              {/* Q74: a credential belongs to a host. This is the one moment the pairing changes, so
-                  it is the only honest place to say so — and it offers the alternative rather than
-                  making "OK" the only way forward. */}
+              {/* a credential belongs to a host. */}
               {connVerdict && connVerdict.kind !== 'ok' && (
                 <div className="result bad" role="alert">
                   <b>{connVerdict.kind === 'unparseable' ? 'That address cannot be dialled' : 'Send this token there?'}</b>
@@ -468,8 +466,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
             <section>
               <h3>Mesh</h3>
               <dl className="kv">
-                {/* Same tri-state trap as the motion chip: `online` is optional,
-                    and a ternary reported a MISSING field as a definite "offline". */}
+                {/* Same tri-state trap as the motion chip: `online` is optional, and a ternary reported a MISSING field as a definite "offline". */}
                 <dt>status</dt><dd>{mesh.online === false
                   ? 'offline'
                   : mesh.online
@@ -585,9 +582,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
               <p className="hint">
                 Written to <code>{config.env_file}</code> (chmod 600). Secrets show masked; leaving a
                 mask untouched leaves the stored value alone.{' '}
-                {/* Q75: clearing a field writes KEY= — set and EMPTY, which almost nothing treats
-                    like absent (getenv returns "", an empty token authenticates as an empty token).
-                    That used to be the only removal gesture available. */}
+                {/* clearing a field writes KEY= — set and EMPTY, which almost nothing treats like absent (getenv returns "", an empty token authenticates as an empty token). */}
                 Clearing a value stores an <em>empty</em> value; use <b>unset</b> to remove the
                 variable entirely.
               </p>
@@ -606,9 +601,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                       {row.key}
                       {row.secret && <em title="masked on read"> 🔒</em>}
                       {!row.in_file && row.set && <em title="from the process environment"> (env)</em>}
-                      {/* Q50: .env is loaded at startup, but a value exported into the launch
-                          environment WINS. Saying so is the difference between "your file is
-                          wrong" and a screen that silently shows the losing value. */}
+                      {/* .env is loaded at startup, but a value exported into the launch environment WINS. */}
                       {row.shadowed && (
                         <em className="warn" title="this process was launched with a different value, which wins over .env until it is restarted without it">
                           {' '}(shell overrides .env)
@@ -682,14 +675,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                   ? '✓ a token is required on /api and /ws'
                   : '⚠ no auth: anyone who can reach this port can move motors'}
               </div>
-              {/*
-                "A token is required" can be TRUE and still not safe: the token itself may be
-                sitting in this process's argv, where `ps` shows it to every local user (found
-                exactly that way on this Mac — a pgrep for the pid printed the live token). So the
-                notice sits directly under the green tick it qualifies, not in a corner.
-                Rendered only when the server sends one: an older server omits the field, and
-                inventing "probably fine" from silence is how a security screen starts lying.
-              */}
+              {/* "A token is required" can be TRUE and still not safe: the token itself may be sitting in this process's argv, where `ps` shows it to every local user (found exactly that way on this Mac — a pgrep for the pid printed the live token). */}
               {config.security.notice?.text && (
                 <div className="result warn" data-notice={config.security.notice.kind}>
                   <span>⚠ {config.security.notice.text}</span>
@@ -751,8 +737,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
               </p>
               {/* The consent sheet promises a way back; this is it (U18). */}
               <ConsentSettings />
-              {/* Q124: the same question as the permissions list, about a sharper subject — which
-                  DEVICES hold a key to this dashboard. */}
+              {/* the same question as the permissions list, about a sharper subject — which DEVICES hold a key to this dashboard. */}
               <PasskeyList authRequired={Boolean(config?.security?.auth_enabled)} />
             </section>
           )}

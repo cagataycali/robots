@@ -238,24 +238,15 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
           aria-label="Policy — what will drive this robot"
           title={provider ? `${policyLabel(provider.name)} (${provider.name}) — ${provider.description}` : 'Policy — what will drive this robot'}
         >
-          {/* Only when the policy list has not loaded: name what mock IS —
-              the bare word next to live telemetry reads as "this is fake". */}
+          {/* Only when the policy list has not loaded: name what mock IS — the bare word next to live telemetry reads as "this is fake". */}
           {policies.length === 0 && <option value="mock">{policyLabel('mock')}</option>}
-          {/* UX_REVIEW #1: registry identifiers (cosmos3, wbc_gait, lerobot_async)
-              are not names a person recognises, and the groups say what the
-              choice COSTS — a checkpoint, a server that must be up, or nothing
-              at all. lib/policyLabels.ts never invents a label: an unknown
-              provider renders verbatim under "Other" rather than being dressed
-              up as something it might not be. */}
+          {/* UX_REVIEW #1: registry identifiers (cosmos3, wbc_gait, lerobot_async) are not names a person recognises, and the groups say what the choice COSTS — a checkpoint, a server that must be up, or nothing at all. lib/policyLabels.ts never invents a label: an unknown provider renders verbatim under "Other" rather than being dressed up as something it might not be. */}
           {groupPolicies(policies, p => p.name).map(g => (
             <optgroup key={g.group} label={g.group}>
               {g.items.map(p => (
                 <option key={p.name} value={p.name} disabled={!p.wire_safe}>
                   {p.wire_safe ? '' : '🔒 '}{policyLabel(p.name)}
-                  {/* JOURNEYS #13: the option line says what the operator must HAVE
-                      ("needs a checkpoint + policy family"), not the constructor
-                      kwarg names. The identifiers stay in the options drawer, where
-                      they are next to the input that carries them. */}
+                  {/* JOURNEYS #13: the option line says what the operator must HAVE ("needs a checkpoint + policy family"), not the constructor kwarg names. */}
                   {p.requires.length ? ` — needs ${requirementSummary(p.requires)}` : ''}
                 </option>
               ))}
@@ -299,8 +290,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
         </button>
       )}
 
-      {/* The duration box only exists inside options, so a bad value there would otherwise disable
-          ▶ with its reason hidden in a tooltip — which a touch screen never shows. */}
+      {/* The duration box only exists inside options, so a bad value there would otherwise disable ▶ with its reason hidden in a tooltip — which a touch screen never shows. */}
       {wantedDuration.problem && !advanced && (
         <button className="needs" onClick={() => setAdvanced(true)}>
           duration: {wantedDuration.problem} → open options
@@ -324,9 +314,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
 
           {wireFields.map(f => (
             <label className={f.required && !String(value(f.key, f.default)).trim() ? 'field missing' : 'field'} key={f.key}>
-              {/* Label in words, identifier kept beside it: operators paste
-                  `f.key` into their own scripts, so replacing it would trade one
-                  comprehension bug for a copy-paste one. */}
+              {/* Label in words, identifier kept beside it: operators paste `f.key` into their own scripts, so replacing it would trade one comprehension bug for a copy-paste one. */}
               <span>
                 {fieldCopy(f.key).label}{f.required && <b title="required"> *</b>}
                 {fieldCopy(f.key).known && <code className="ident" title="the API field name">{f.key}</code>}

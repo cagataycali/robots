@@ -89,10 +89,7 @@ export default function ActivityLog({ live, open, onClose }: {
               job — from this UI, the agent, or voice — lands here with what the robot answered.
             </p>
           )}
-          {/* Q158: entries append WHOLE and seconds apart, the opposite of the chat dock's
-              per-token stream — but the list itself stays live=off and one atomic region below
-              speaks the newest line, so an e-stop storm cannot queue a paragraph of speech that
-              outlives the emergency. */}
+          {/* entries append WHOLE and seconds apart, the opposite of the chat dock's per-token stream — but the list itself stays live=off and one atomic region below speaks the newest line, so an e-stop storm cannot queue a paragraph of speech that outlives the emergency. */}
           <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
             {activityAnnouncement(newest, openedAt.current)}
           </div>
@@ -106,10 +103,7 @@ export default function ActivityLog({ live, open, onClose }: {
                 <span className="what">
                   <b>{e.action}</b> → <code>{activityLine(e).target}</code>
                   {e.elapsed != null && <em> {e.elapsed.toFixed(1)}s</em>}
-                  {/* The facts that decide what a row MEANS (who fired an e-stop,
-                      whether anything acknowledged it, whether the robot answered
-                      at all) belong on the visible line, not inside a collapsed
-                      <details> nobody opens during an incident. */}
+                  {/* The facts that decide what a row MEANS (who fired an e-stop, whether anything acknowledged it, whether the robot answered at all) belong on the visible line, not inside a collapsed <details> nobody opens during an incident. */}
                   {activityLine(e).note && <span className="actnote"> {activityLine(e).note}</span>}
                 </span>
                 <span className="verdict" title={activityLine(e).title}>{activityLine(e).glyph}</span>

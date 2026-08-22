@@ -69,8 +69,7 @@ export default function CameraGallery(
 
   return (
     <div>
-      {/* Said once, loudly: when every camera fails for the same systemic
-          reason, per-card reasons are correct and universally missed. */}
+      {/* Said once, loudly: when every camera fails for the same systemic reason, per-card reasons are correct and universally missed. */}
       {problem && (
         <div className="result bad camproblem">
           <b>⚠ {problem.message}</b>

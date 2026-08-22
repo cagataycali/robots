@@ -423,9 +423,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <p className={`train-story${datasetPicked ? '' : ' empty'}`}>{story}</p>
         <label className="field"><span>provider</span>
           <select value={form.provider} onChange={e => set('provider', e.target.value)} disabled={busy}>
-            {/* Still LISTED, so the capability is not hidden and nobody hunts for a
-                provider they know exists — but not selectable, with the reason attached
-                rather than delivered as an error after the fact. */}
+            {/* Still LISTED, so the capability is not hidden and nobody hunts for a provider they know exists — but not selectable, with the reason attached rather than delivered as an error after the fact. */}
             {trainers.map(t => (
               <option key={t} disabled={t in unsupported}
                       title={unsupported[t] ?? undefined}>
@@ -434,9 +432,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             ))}
           </select>
         </label>
-        {/* One line per DISTINCT reason, names grouped: two providers refused for the same
-            reason must not print the same long sentence twice, and two refused for different
-            reasons must not be merged under one. */}
+        {/* One line per DISTINCT reason, names grouped: two providers refused for the same reason must not print the same long sentence twice, and two refused for different reasons must not be merged under one. */}
         {[...new Set(Object.values(unsupported))].map(reason => (
           <p className="hint" key={reason}>
             {Object.keys(unsupported).filter(k => unsupported[k] === reason).sort().join(' and ')}
@@ -446,9 +442,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <label className="field"><span>dataset</span>
           <input value={dsQuery} onChange={e => setDsQuery(e.target.value)} disabled={busy}
                  placeholder="search this machine and the Hub — e.g. pusht, so101, your org" />
-          {/* Selecting sets EXACTLY ONE of dataset_root / dataset_repo_id: a
-              local dataset trains from its path, a Hub one from its repo id,
-              and sending both would leave the trainer to pick for you. */}
+          {/* Selecting sets EXACTLY ONE of dataset_root / dataset_repo_id: a local dataset trains from its path, a Hub one from its repo id, and sending both would leave the trainer to pick for you. */}
           <select value={selectionKey(form)}
                   onChange={e => {
                     const sel = selectDataset(datasets, e.target.value)
@@ -459,9 +453,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               <optgroup label="on this machine">
                 {datasets.filter(d => d.local !== false).map(d => (
                   <option key={dsKey(d)} value={dsKey(d)}>
-                    {/* Q37: an abandoned recording's folder lists as a dataset for ever. Marked
-                        IN THE OPTION, because the picker is where the choice is made - a warning
-                        that only appears after selecting arrives one decision too late. */}
+                    {/* an abandoned recording's folder lists as a dataset for ever. */}
                     {datasetMark(d).glyph}{d.repo_id} ({d.total_episodes ?? '?'} eps{d.robot_type && d.robot_type !== 'unknown' ? `, ${d.robot_type}` : ''})
                   </option>
                 ))}
@@ -477,8 +469,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
               </optgroup>
             )}
           </select>
-          {/* ONE verdict, so the rows, the failure and the sentence cannot
-              describe three different moments (lib/datasetHint.ts). */}
+          {/* ONE verdict, so the rows, the failure and the sentence cannot describe three different moments (lib/datasetHint.ts). */}
           {(() => {
             const h = datasetHint({
               query: dsQuery, shownQuery: dsShownQuery, count: datasets.length,
@@ -500,9 +491,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
           <input value={form.output_dir} onChange={e => set('output_dir', e.target.value)} disabled={busy}
                  placeholder="/tmp/my_policy_ckpt" aria-describedby="train-outdir-say"
                  aria-invalid={outSay.blocked || outSay.confirmable} />
-          {/* Q58: a run into an existing directory DELETES it (the trainer rmtree's a dir with no
-              resumable checkpoint). This line is the only warning that exists before the loss, so
-              it names the count and the files rather than saying "not empty". */}
+          {/* a run into an existing directory DELETES it (the trainer rmtree's a dir with no resumable checkpoint). */}
           <span id="train-outdir-say" className={`fieldsay${outSay.tone === 'info' ? '' : ' bad'}`} role="status" aria-live="polite">
             {outSay.text ?? ''}
           </span>
@@ -515,9 +504,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             <span>{outSay.confirmLabel}</span>
           </label>
         )}
-        {/* Q49: appears only for the provider that needs it. GR00T's validate() refuses without
-            an embodiment tag; before this the form had no field for it at all, so `groot` was a
-            selectable option that could not be submitted whatever you typed. */}
+        {/* appears only for the provider that needs it. */}
         {extraFields(form.provider).map(f => (
           <label className="field" key={f.key}><span>{f.label}</span>
             <input value={form[f.key]} onChange={e => set(f.key, e.target.value)} disabled={busy}
@@ -561,15 +548,11 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         {msg && <div className="train-msg">{msg}</div>}
-        {/* Not started, and not blocked either. The reason is the server's own sentence, which
-            names the physical event (a session that opened and recorded nothing, frames that
-            never landed) rather than calling the dataset invalid. */}
+        {/* Not started, and not blocked either. */}
         {dsWarn && dsWarn.key === selectionKey(form) && (
           <div className="train-msg warn artifact-hold" role="alert">
             <div>{dsWarn.recording ? '⏺' : '⚠'} not started: {dsWarn.reason}</div>
-            {/* Q38: for a LIVE session the useful next move is the record screen, not another
-                dataset — and this tab cannot navigate, so it says where to look rather than
-                pretending to take them there. */}
+            {/* for a LIVE session the useful next move is the record screen, not another dataset — and this tab cannot navigate, so it says where to look rather than pretending to take them there. */}
             {dsWarn.recording && <div className="jstate">the record screen shows this session's progress; training can start the moment it closes</div>}
             <div className="artifact-hold-actions">
               <button className="btn ghost" onClick={() => { setDsWarn(null); setDsOverride(null) }}>pick another dataset</button>
@@ -582,9 +565,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         )}
-        {/* Held back, not blocked. The reason names the physical event (a config with no
-            weights beside it, an unmounted volume) so the operator can decide whether they
-            know better than the check - and the button says what they are overriding. */}
+        {/* Held back, not blocked. */}
         {stageAnyway && (
           <div className="train-msg warn artifact-hold" role="alert">
             <div>⚠ not staged: {stageAnyway.message}</div>
@@ -663,17 +644,14 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             <div className="train-job-head">
               <b>{d.repo_id}</b>
               <span className="jstate">
-                {/* Q38: "0 eps" on a dataset being recorded right now reads as empty when it is
-                    filling — the count is a snapshot of flushed metadata, not of the session. */}
+                {/* "0 eps" on a dataset being recorded right now reads as empty when it is filling — the count is a snapshot of flushed metadata, not of the session. */}
                 {d.recording ? '⏺ recording now' : d.root
                   ? `${d.total_episodes ?? '?'} eps · ${d.fps ?? '?'} fps`
                   : `Hub${d.downloads ? ` · ${d.downloads.toLocaleString()} downloads` : ''}`}
               </span>
             </div>
             <div className="train-job-actions">
-              {/* Replay reads an episode off this disk, so it is offered only for
-                  what is actually here — a disabled button with the reason beats
-                  a click that dies inside a dataset loader. */}
+              {/* Replay reads an episode off this disk, so it is offered only for what is actually here — a disabled button with the reason beats a click that dies inside a dataset loader. */}
               <input className="ep-box" type="number" min={0} inputMode="numeric"
                 value={episodeBox[dsKey(d)] ?? ''}
                 placeholder={typeof d.total_episodes === 'number' && d.total_episodes > 0 ? `0–${d.total_episodes - 1}` : '0'}
@@ -689,8 +667,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
                   : episodeChoice(d, episodeBox[dsKey(d)]).reason}>
                 🎬 replay in sim
               </button>
-              {/* #2486: what was each episode judged to be? Read-only — annotate_episode refuses an
-                  episode with no deterministic verdict, so the panel explains rather than offers. */}
+              {/* #2486: what was each episode judged to be? */}
               <button className="btn ghost" onClick={() => openLabels(d)} disabled={!labelsGate(d).ok}
                 title={labelsGate(d).reason} aria-expanded={labelsFor === dsKey(d)}>
                 🏷 labels
@@ -720,8 +697,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         <h3>Jobs</h3>
         {/* The only automatic speech on this screen: one atomic sentence when a run ends. */}
         <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{jobSay}</div>
-        {/* Rendered for ANY count: a partial list is the dangerous case, because
-            the cards that survived make it look complete. */}
+        {/* Rendered for ANY count: a partial list is the dangerous case, because the cards that survived make it look complete. */}
         {(() => {
           const notice = jobsLedgerNotice({ count: jobs.length, problem: jobsProblem })
           return notice.text ? (
@@ -740,8 +716,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
             <div className={`train-job${fresh.stale ? ' stalefeed' : ''}`} key={job.job_id ?? Math.random()}>
               <div className="train-job-head">
                 <b>{job.provider}</b>
-                {/* The chip is the word an operator trusts for hours, so it says
-                    how old that word is - always, not only when it goes stale. */}
+                {/* The chip is the word an operator trusts for hours, so it says how old that word is - always, not only when it goes stale. */}
                 <span className={`jstate ${state}`} title={fresh.title}>{state}</span>
                 {fresh.stale && <span className="jstale" title={fresh.title}>
                   as of {fresh.ageS != null && fresh.ageS < 90 ? `${Math.round(fresh.ageS)}s` : `${Math.round((fresh.ageS ?? 0) / 60)}m`} ago
