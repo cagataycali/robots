@@ -46,6 +46,49 @@ SIM_CALL_BLOCKED: frozenset[str] = frozenset(
 
 _SIM_TYPES = ("sim", "simulation", "mujoco")
 
+#: Peer types that coordinate rather than move: no tool at all. Read off
+#: ``robot_type`` because that is the field the WIRE carries —
+#: ``mesh/core.py`` builds presence as ``{"robot_id", "robot_type": peer_type,
+#: "hostname", "timestamp", ...}`` (core.py:1008) and
+#: ``robot_mesh._gateway_mesh()`` joins with ``peer_type="gateway"``, as does
+#: ``mesh_bridge``'s safety peer. Nothing publishes a ``kind`` field: reading
+#: ``presence["kind"]`` skipped nothing at all, so throwaway ``gateway-*``
+#: sessions became AgentTools described to the model as "Robot peer" and
+#: ``fleet_signature`` churned the agent on every probe's birth and death
+#: (BUGS.md Q180 — 4 of 8 live tools were coordinator debris).
+_SKIP_TYPES = ("gateway", "dashboard")
+
+#: Belt #1: a coordinator's peer id. ``_gateway_mesh`` names itself
+#: ``gateway-<host>-<hex>``; the dashboard's own peer/safety session likewise.
+_SKIP_ID_PREFIXES = ("gateway-", "dashboard-")
+
+
+def _is_coordinator(peer_id: str, peer: Mapping[str, Any], presence: Mapping[str, Any]) -> bool:
+    """Is this peer a mesh coordinator (gateway/dashboard) rather than a robot?
+
+    Three independent reads, so a presence payload that drops or renames its
+    type field still cannot mint a motion tool for something with no hardware:
+    the published ``robot_type``, the peer id's own prefix, and the topic
+    advertisement (a robot-less ``Mesh`` announces ``topics == ["health"]``
+    only — core.py appends "health" unconditionally and every other topic
+    needs a hardware attribute).
+    """
+    robot_type = str(presence.get("robot_type") or "").strip().lower()
+    kind = str(presence.get("kind") or peer.get("kind") or "").strip().lower()
+    if robot_type in _SKIP_TYPES or kind in _SKIP_TYPES:
+        return True
+    if robot_type or kind:
+        return False  # it named itself something else: believe it
+    pid = peer_id.strip().lower()
+    if pid.startswith(_SKIP_ID_PREFIXES):
+        return True
+    topics = presence.get("topics")
+    if isinstance(topics, (list, tuple)) and [str(t).strip().lower() for t in topics] == ["health"]:
+        state = peer.get("state") or {}
+        if not (state.get("joints") or presence.get("joints") or peer.get("cameras")):
+            return True
+    return False
+
 
 def classify_peer(peer_id: str, peer: Mapping[str, Any] | None) -> str:
     """What kind of tool should represent this peer?
@@ -59,7 +102,7 @@ def classify_peer(peer_id: str, peer: Mapping[str, Any] | None) -> str:
         return KIND_SKIP
     presence = peer.get("presence") or {}
     kind = str(presence.get("kind") or peer.get("kind") or "").strip().lower()
-    if kind in ("gateway", "dashboard"):
+    if _is_coordinator(peer_id, peer, presence):
         return KIND_SKIP
     robot_type = str(presence.get("robot_type") or "").strip().lower()
     if robot_type in _SIM_TYPES or presence.get("sim") is True or presence.get("mode") == "sim":

@@ -34,6 +34,47 @@ SIM_CHILD = {"presence": {"kind": "robot", "parent": "twin-1"}, "state": {"joint
 GATEWAY = {"presence": {"kind": "gateway"}, "state": {}}
 HOST = {"presence": {"kind": "robot"}, "state": {"joints": {}}}
 
+# ── the REAL wire payloads, transcribed from a live mesh (BUGS.md Q180) ──────
+# Nothing on the mesh publishes a "kind" field: mesh/core.py:1008 builds
+# presence as robot_id/robot_type/hostname/timestamp and appends topics. The
+# fixtures above are synthetic, which is exactly how the gateway skip came to
+# test a field that never arrives — these pin the payload as measured.
+WIRE_GATEWAY = {
+    "presence": {
+        "robot_id": "gateway-cagatays-Mac-mini-1f3a",
+        "robot_type": "gateway",
+        "hostname": "cagatays-Mac-mini.local",
+        "timestamp": 1787412345.6,
+        "topics": ["health"],
+    },
+    "state": {},
+    "cameras": {},
+}
+WIRE_REAL_ARM = {
+    "presence": {
+        "robot_id": "so101-real-689",
+        "robot_type": "robot",
+        "hostname": "cagatays-Mac-mini.local",
+        "timestamp": 1787412345.6,
+        "connected": True,
+        "hw": "so101 on /dev/cu.usbmodem5AB01584281",
+        "topics": ["health"],
+    },
+    "state": {"joints": {f"j{i}": 0.0 for i in range(6)}},
+    "cameras": {"top": {}, "wrist": {}},
+}
+WIRE_SIM_CHILD = {
+    "presence": {
+        "robot_id": "so101-real-689-twin__so101",
+        "robot_type": "sim",
+        "hostname": "cagatays-Mac-mini.local",
+        "timestamp": 1787412345.6,
+        "topics": ["health"],
+    },
+    "state": {"joints": {f"j{i}": 0.0 for i in range(6)}},
+    "cameras": {"front": {}, "wrist": {}},
+}
+
 
 class TestClassification:
     def test_real_arm_by_hw(self):
@@ -55,6 +96,49 @@ class TestClassification:
 
     def test_gateway_gets_no_tool(self):
         assert pt.classify_peer("gateway-mac-1", GATEWAY) == pt.KIND_SKIP
+
+    # ── Q180: the wire's own payload, not a field we invented ────────────────
+    def test_wire_gateway_gets_no_tool(self):
+        # THE REGRESSION THIS PINS: the skip tested presence["kind"], which no
+        # peer publishes, so a throwaway gateway session became an AgentTool
+        # described to the model as a "Robot peer".
+        assert pt.classify_peer("gateway-cagatays-Mac-mini-1f3a", WIRE_GATEWAY) == pt.KIND_SKIP
+
+    def test_wire_gateway_carries_no_kind_field_at_all(self):
+        # If a future presence payload starts carrying "kind", this test tells
+        # the next reader that the ORIGINAL skip was reading a ghost.
+        assert "kind" not in WIRE_GATEWAY["presence"]
+
+    def test_wire_real_arm_is_still_real(self):
+        assert pt.classify_peer("so101-real-689", WIRE_REAL_ARM) == pt.KIND_REAL
+
+    def test_wire_sim_child_is_still_sim(self):
+        assert pt.classify_peer("so101-real-689-twin__so101", WIRE_SIM_CHILD) == pt.KIND_SIM
+
+    def test_gateway_is_absent_from_the_fleet_signature(self):
+        # The churn half of Q180: a probe's birth/death rebuilt the agent
+        # because its (peer_id, kind) pair entered the signature.
+        peers = {"so101-real-689": WIRE_REAL_ARM, "gateway-cagatays-Mac-mini-1f3a": WIRE_GATEWAY}
+        assert pt.fleet_signature(peers) == pt.fleet_signature({"so101-real-689": WIRE_REAL_ARM})
+
+    def test_gateway_builds_no_tool(self):
+        tools = pt.build_peer_tools(
+            {"so101-real-689": WIRE_REAL_ARM, "gateway-cagatays-Mac-mini-1f3a": WIRE_GATEWAY},
+            send_cmd=lambda *a, **k: {"status": "ok"},
+        )
+        assert [t.tool_name for t in tools] == ["so101_real_689"]
+
+    def test_health_only_topics_without_a_type_is_a_coordinator(self):
+        # Belt: a coordinator whose presence lost its robot_type still cannot
+        # mint a motion tool — no joints, no cameras, health-only topics.
+        peer = {"presence": {"topics": ["health"], "timestamp": 1.0}, "state": {}}
+        assert pt.classify_peer("some-coordinator", peer) == pt.KIND_SKIP
+
+    def test_health_only_topics_with_joints_is_not_skipped(self):
+        # ...but a real robot advertising only health while publishing joints
+        # is a robot: the belts must not swallow the fleet.
+        peer = {"presence": {"topics": ["health"]}, "state": {"joints": {"j0": 0.0}}}
+        assert pt.classify_peer("so101-quiet", peer) == pt.KIND_REAL
 
     def test_jointless_robot_is_host(self):
         assert pt.classify_peer("mystery-bot", HOST) == pt.KIND_HOST
