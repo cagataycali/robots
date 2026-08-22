@@ -129,6 +129,30 @@ always agree: both describe the full rotation for every orientation, including
 the half of SO(3) past 120 degrees that a robot turning back the way it came
 lands in.
 
+### Rejoining the mesh
+
+`stop()` then `start()` is how a peer leaves and rejoins - after a config
+change, or a hub that went away and came back. The peer keeps its identity
+across it: the `peer_id` is unchanged, and an engaged e-stop lockout stays
+engaged, so a network blip is not a way to forget a stop.
+
+What does not survive is your own `subscribe()` topics. `start()` re-declares
+the peer's built-in topics from the table above; the subscribers `subscribe()`
+returned are undeclared with the session reference and their callbacks are not
+retained, so a rejoining consumer re-declares its own. `stop()` reports at INFO
+how many it dropped and their names, and `subscribe()` says at WARNING when it
+refuses - naming the topic and whether the peer is off the mesh, has no session,
+or had the declare itself fail - so a rejoin that has not finished is visible
+rather than a silent `None`.
+
+```python
+sim.mesh.stop()
+sim.mesh.start()
+name = sim.mesh.subscribe("strands/*/state", callback=on_state)
+if name is None:
+    ...  # the WARNING says which of the three refusals it was
+```
+
 ## Agent-driven mesh
 
 ```python
