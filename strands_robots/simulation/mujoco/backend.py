@@ -102,6 +102,39 @@ def _mujoco_gl_valid_values(system: str | None = None) -> frozenset[str]:
     return _MUJOCO_GL_ANY_PLATFORM | _MUJOCO_GL_PLATFORM_ONLY.get(name, frozenset())
 
 
+def _mujoco_gl_disables_rendering(value: str) -> bool:
+    """Whether a folded ``MUJOCO_GL`` value builds no GL context at all.
+
+    MuJoCo accepts this family and then defines no ``GLContext``, so rendering is
+    unavailable rather than misconfigured. It is a different answer from a value
+    MuJoCo refuses at import, and naming the wrong one sends a caller after the
+    wrong remedy.
+
+    Args:
+        value: A value already folded by :func:`_mujoco_gl_value`.
+
+    Returns:
+        True when MuJoCo will skip GL context creation entirely.
+    """
+    return value in _MUJOCO_GL_DISABLE
+
+
+def _mujoco_gl_offscreen_values(system: str | None = None) -> frozenset[str]:
+    """Accepted values that render on a platform with no display server.
+
+    Empty on a platform whose only backend draws through the window server, which
+    is what a caller needs in order not to recommend a value MuJoCo refuses there.
+
+    Args:
+        system: Platform name as :func:`platform.system` reports it. Defaults to
+            the running platform.
+
+    Returns:
+        The offscreen backends that platform accepts.
+    """
+    return _MUJOCO_GL_OFFSCREEN & _mujoco_gl_valid_values(system)
+
+
 # glvnd EGL vendor ICD payload that points at the NVIDIA EGL library, plus the
 # standard directories glvnd scans for vendor ICD JSON files. When MUJOCO_GL is
 # "egl", libglvnd loads the first vendor whose ICD JSON is registered here; an

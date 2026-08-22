@@ -184,9 +184,9 @@ def check_mujoco_gl() -> str:
     rather than restated here.
     """
     from strands_robots.simulation.mujoco.backend import (
-        _MUJOCO_GL_DISABLE,
-        _MUJOCO_GL_OFFSCREEN,
         _is_headless,
+        _mujoco_gl_disables_rendering,
+        _mujoco_gl_offscreen_values,
         _mujoco_gl_valid_values,
         _mujoco_gl_value,
     )
@@ -200,9 +200,9 @@ def check_mujoco_gl() -> str:
     # What to recommend has to be valid here: on a platform whose only backend
     # draws through the window server there is no offscreen value to offer, and
     # naming one would send the reader after a value MuJoCo refuses.
-    offscreen_here = sorted(_MUJOCO_GL_OFFSCREEN & valid)
+    offscreen_here = sorted(_mujoco_gl_offscreen_values())
 
-    if value in _MUJOCO_GL_DISABLE:
+    if _mujoco_gl_disables_rendering(value):
         fix = (
             f"export MUJOCO_GL={offscreen_here[0]}  # or unset it for the platform default"
             if offscreen_here
@@ -217,7 +217,7 @@ def check_mujoco_gl() -> str:
             fix=f"export MUJOCO_GL=<one of: {offered}>  # or unset it for the platform default",
         )
 
-    if value in _MUJOCO_GL_OFFSCREEN:
+    if value in offscreen_here:
         return _pass(shown)
 
     # Every remaining accepted value routes MuJoCo to a backend that draws through
