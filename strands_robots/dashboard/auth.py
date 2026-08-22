@@ -323,10 +323,12 @@ def _pop_challenge(cid: str, kind: str) -> Dict[str, Any]:
 # --- JWT sessions ------------------------------------------------------------
 
 def issue_token(
-    subject: str, name: str = "", iat0: int | None = None, exp: int | None = None
+    subject: str, name: str = "", iat0: int | None = None, exp: int | None = None,
+    via: str | None = None,
 ) -> str:
     """A session token. `iat0` is the ORIGINAL sign-in, carried unchanged through every
-    renewal so the absolute cap in renewal_verdict() cannot be reset by re-issuing."""
+    renewal so the absolute cap in renewal_verdict() cannot be reset by re-issuing.
+    `via` marks how the token was minted (e.g. "handoff") for later forensics."""
     now = int(time.time())
     payload = {
         "sub": subject,
@@ -335,6 +337,8 @@ def issue_token(
         "iat0": int(iat0) if iat0 else now,
         "exp": int(exp) if exp else now + _token_ttl(),
     }
+    if via:
+        payload["via"] = via
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
 
 def _session_max_age() -> int:
@@ -419,6 +423,48 @@ def session_is_valid(token: str) -> bool:
         return True
     except HTTPException:
         return False
+
+# --- LAN handoff tokens -------------------------------------------------------
+
+def handoff_ttl() -> int:
+    """Lifetime of a handoff token (default 5 minutes). It rides in a URL, so it must be
+    short: URLs land in history, logs and screenshots."""
+    try:
+        return int(os.getenv(_ENV + "HANDOFF_TTL", "300"))
+    except ValueError:
+        return 300
+
+def handoff_verdict(
+    claims: Mapping[str, Any] | None, now: float, ttl: int | None = None,
+) -> Dict[str, Any]:
+    """May this session be copied into a short-lived URL token, and until when?
+    The handoff never outlives the session it came from."""
+    ttl = handoff_ttl() if ttl is None else ttl
+    if not isinstance(claims, Mapping):
+        return {"ok": False, "reason": "no session claims to hand off"}
+    try:
+        exp = float(claims["exp"])
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False, "reason": "session has no expiry"}
+    if exp <= now:
+        return {"ok": False, "reason": "session already expired - sign in again"}
+    return {"ok": True, "exp": int(min(now + ttl, exp))}
+
+def issue_handoff(claims: Mapping[str, Any], now: float | None = None) -> Dict[str, Any]:
+    """Mint the short-lived token handoff_verdict() approved, carrying the session's
+    identity (sub/name/iat0) so renewal caps survive the copy."""
+    now = time.time() if now is None else now
+    verdict = handoff_verdict(claims, now)
+    if not verdict.get("ok"):
+        raise HTTPException(401, verdict.get("reason", "cannot mint a handoff token"))
+    token = issue_token(
+        str(claims.get("sub") or ""),
+        str(claims.get("name") or ""),
+        iat0=claims.get("iat0") or claims.get("iat"),
+        exp=verdict["exp"],
+        via="handoff",
+    )
+    return {"token": token, "exp": verdict["exp"], "expires_in": max(0, int(verdict["exp"] - now))}
 
 def client_is_loopback(client_host: Optional[str]) -> bool:
     """True when the connecting client is this machine. Used so that

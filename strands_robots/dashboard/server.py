@@ -532,6 +532,29 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def auth_credential_delete(cred_id: str) -> dict[str, Any]:
         return _require_auth_module().delete_credential(cred_id)
 
+    @app.post("/api/auth/handoff")
+    async def auth_handoff(request: Request) -> dict[str, Any]:
+        """A short-lived token that carries THIS signed-in session to the LAN address in a
+        URL (plain-http LAN = no WebAuthn, so the passkey cannot follow). Guarded path:
+        the middleware admitted a static token, a valid session, or an open loopback."""
+        mod = _require_auth_module()
+        presented = _session_presented(request)
+        static = settings.get("security", "auth_token")
+        if static and hmac.compare_digest(presented, str(static)):
+            # A static token holds no claims; mint a fresh short session for the trip.
+            now = int(time.time())
+            ttl = mod.handoff_ttl()
+            return {
+                "token": mod.issue_token("static-token", name="handoff", exp=now + ttl, via="handoff"),
+                "exp": now + ttl,
+                "expires_in": ttl,
+            }
+        if not mod.session_is_valid(presented):
+            # Open-loopback mode: the LAN page opens without a token too — say so
+            # instead of minting a credential nobody needs in a URL.
+            return {"token": None, "why": "auth is not enabled here - the local address opens without a token"}
+        return mod.issue_handoff(mod.verify_token(presented))
+
     @app.get("/api/robots/registry")
     async def registry() -> dict[str, Any]:
         from strands_robots.registry import list_robots
