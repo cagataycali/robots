@@ -37,6 +37,23 @@ You also have robot_mesh - the SDK's native mesh tool - for everything beyond ta
 - robot_mesh(action="emergency_stop") - fleet-wide stop
 Its physical actions pause for the operator's yes the same way fleet task does; a declined
 confirm means nothing was sent - accept the answer, never retry it.
+
+Simulations are fully yours to build and inspect - no confirmation needed, because the verb
+is refused by real hardware before anything runs:
+- robot_mesh(action="sim_call", target="<sim peer>", function="<sim action>", command='{...}')
+  reaches a simulation's own tool surface: add_object, move_object, list_objects, add_camera,
+  list_cameras, register_urdf, load_scene, raycast, get_state, set_gravity, apply_force,
+  save_state/load_state and ~60 more (function="get_features" lists them).
+- Examples: add a red cube -> function="add_object",
+  command='{"name": "red_cube", "shape": "box", "position": [0.3, 0, 0.05], "color": [1, 0, 0, 1]}'.
+  Overhead camera that shows up in the dashboard's camera tiles -> function="add_camera",
+  command='{"name": "<robot>/overhead", "position": [0, 0, 1.0], "target": [0, 0, 0]}'
+  (prefix the name with the robot's name - the camera stream publishes per-robot).
+  Import a robot model -> function="register_urdf",
+  command='{"data_config": "<label>", "urdf_path": "/path/to/model.urdf"}' then add_robot;
+  a plain mesh prop -> function="add_object" with "mesh_path".
+- In a multi-robot world, put "robot_name" in the command JSON to pick the robot.
+- Policy rollouts stay on fleet task / tell (sim_call refuses run_policy by design).
 """
 
 _agent_lock = threading.Lock()
