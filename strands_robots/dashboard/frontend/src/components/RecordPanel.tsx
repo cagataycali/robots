@@ -16,6 +16,7 @@ import { episodeTarget } from '../lib/episodeTarget'
 import { fpsField, fpsSuggestion } from '../lib/recordFps'
 import AuthedImg from './AuthedImg'
 import { nameVerdict, type KnownDataset } from '../lib/datasetName'
+import { suggestDatasetName } from '../lib/datasetNameSuggest'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
 import { overrideOffered, nextAcknowledged, overrideBodyFlags } from '../lib/recordRefusal'
 import { trainHandoff, type CloseReceipt } from '../lib/recordHandoff'
@@ -331,6 +332,20 @@ export default function RecordPanel(
               )}
             </div>
           )}
+          {/* the second hand-invented field on the golden path, derived from the task
+              sentence in one click — mutually exclusive with nameWarn (blank vs non-blank
+              field), and nameVerdict re-judges whatever lands here */}
+          {(() => {
+            const sug = suggestDatasetName(form.task, form.dataset, known)
+            return sug ? (
+              <div className="train-msg rec-hint">
+                <button type="button" className="btn ghost suggest"
+                        onClick={() => set('dataset', sug)}>
+                  name it {sug}
+                </button>
+              </div>
+            ) : null
+          })()}
           <label className="field"><span>task — what the arm is being taught</span>
             <input value={form.task} placeholder="pick up the red cube and place it in the bin"
                    onChange={e => set('task', e.target.value)} />
@@ -424,10 +439,13 @@ export default function RecordPanel(
               </span>
             </label>
           )}
-          <div className="train-msg rec-hint">
-            not sure which is which? the leader is the lighter 7.4V arm (no gearbox load —
-            easy to move by hand); the follower is the stronger 12V arm that mirrors it.
-          </div>
+          <details className="rec-hint">
+            <summary>not sure which arm is which?</summary>
+            <div className="train-msg rec-hint">
+              the leader is the lighter 7.4V arm (no gearbox load — easy to move by hand);
+              the follower is the stronger 12V arm that mirrors it.
+            </div>
+          </details>
           {/* R1: the consequence is stated BEFORE the click, because this is the moment two real arms change state — not after, in a toast. */}
           <div className={`train-msg rec-hint${openCopy.cls ? ' warn' : ''}`}>{openCopy.hint}</div>
           <div className="train-actions">
