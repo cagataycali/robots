@@ -18,6 +18,7 @@ a member a future interpreter adds is unclassified and fails here instead of
 becoming a silent hole.
 """
 
+from collections.abc import Hashable
 from typing import Any
 
 import pytest
@@ -232,8 +233,17 @@ class TestTheProbeStaysATransparentStandIn:
         assert _probe() == EPISODE
 
     def test_it_is_unhashable_exactly_as_a_dict_is(self):
-        with pytest.raises(TypeError):
-            hash(_probe())
+        """``consulted`` is instrumentation, not identity, so hashing stays refused.
+
+        Stated through ``Hashable`` rather than by calling ``hash()``: parity
+        with the wrapped ``dict`` is the contract, and asserting it this way
+        says so directly - including that the mapping it stands in for is
+        unhashable too - instead of pinning one raise.
+        """
+        assert not isinstance(_probe(), Hashable)
+        assert not isinstance(EPISODE, Hashable), "premise: the wrapped dict is unhashable too"
+        assert _KeyRecordingEpisode.__hash__ is None
+        assert dict.__hash__ is None
 
     @pytest.mark.parametrize(
         ("spelling", "call"),
