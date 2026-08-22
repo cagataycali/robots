@@ -9,7 +9,8 @@ Two hard-won rules are baked in rather than remembered:
   the server is always the SAME code this command was invoked from — never a second venv
   or a stale site-packages copy.
 - ``start`` wants a real TTY: macOS grants camera access only to terminal-started
-  processes; a daemon-started dashboard is blind fleet-wide. ``--no-tty`` overrides.
+  processes; a daemon-started dashboard is blind fleet-wide. Elsewhere the same
+  refusal stands as a conservative default. ``--no-tty`` overrides.
 """
 
 from __future__ import annotations
@@ -60,6 +61,48 @@ def guard_ok(unauth_status: int, auth_status: int) -> bool:
 def logs_to_prune(names: list[str], keep: int = 5) -> list[str]:
     """Oldest-first names beyond the newest ``keep`` (names sort by timestamp)."""
     return sorted(names)[:-keep] if len(names) > keep else []
+
+
+ARM_BUS_MARKERS = ("cu.usbmodem", "ttyACM", "ttyUSB")
+"""Arm serial buses, by platform device naming.
+
+macOS calls a USB CDC device ``/dev/cu.usbmodemXXXX``; Linux calls the same arm
+``/dev/ttyACM*`` (CDC-ACM) or ``/dev/ttyUSB*`` (a USB-serial bridge such as the
+CH341 in an SO-arm). The macOS marker is unchanged, so a mac keeps matching
+exactly what it matched before -- the Linux names are additional, not a swap.
+"""
+
+
+def arm_bus_holder_pids(lsof_output: str) -> set[int]:
+    """PIDs holding an arm serial bus, read from ``lsof -nP`` output.
+
+    A marker is matched as a device path (``/dev/`` + marker), not anywhere on
+    the line: a regular file named ``ttyUSB0.log`` is not a bus, and killing
+    whoever holds it is not something a stop is entitled to do. ``lsof`` reports
+    the resolved device node, so an arm opened through ``/dev/serial/by-id/...``
+    still reads as ``/dev/ttyACM*`` here.
+    """
+    pids: set[int] = set()
+    for line in lsof_output.splitlines():
+        if not any(f"/dev/{marker}" in line for marker in ARM_BUS_MARKERS):
+            continue
+        fields = line.split()
+        if len(fields) < 2 or not fields[1].isdigit():
+            continue  # not an lsof file row: a header, or a truncated capture
+        pids.add(int(fields[1]))
+    return pids
+
+
+def tty_refusal_reason(platform_name: str) -> str:
+    """Why a TTY-less start is refused, in terms that hold on THIS platform.
+
+    macOS has a mechanism to name: TCC grants camera access only to a
+    terminal-started process. Elsewhere the refusal is a conservative default,
+    and says so rather than borrowing a reason from another operating system.
+    """
+    if platform_name == "darwin":
+        return "macOS never grants camera access to a daemon-started process."
+    return "a daemon-started start is refused by default rather than assumed camera-capable."
 
 
 def calibration_verdicts(profiles: dict, has_calibration) -> list[str]:
@@ -175,15 +218,14 @@ def stop(port: int) -> int:
     tool = _lsof()
     if tool:
         out = subprocess.run([tool, "-nP"], capture_output=True, text=True).stdout
-        holders = {ln.split()[1] for ln in out.splitlines() if "cu.usbmodem" in ln}
-        for h in holders:
+        for h in arm_bus_holder_pids(out):
             print(f"arm bus held by orphan pid {h} -> SIGKILL (reader, moves nothing)")
             try:
-                os.kill(int(h), signal.SIGKILL)
-            except (ProcessLookupError, ValueError):
+                os.kill(h, signal.SIGKILL)
+            except ProcessLookupError:
                 pass
         out = subprocess.run([tool, "-nP"], capture_output=True, text=True).stdout
-        if "cu.usbmodem" in out:
+        if arm_bus_holder_pids(out):
             print("WARNING: a bus is STILL held — unplug/replug the arm before spawning")
         else:
             print("ports and arm buses free")
@@ -197,7 +239,7 @@ def start(port: int, allow_no_tty: bool, wait: bool = True) -> int:
         print(f"already running (pid {_pgrep()[0]}) — use restart")
         return 1
     if not os.isatty(0) and not allow_no_tty:
-        print("REFUSED: no TTY. macOS never grants camera access to a daemon-started process.", file=sys.stderr)
+        print(f"REFUSED: no TTY. {tty_refusal_reason(sys.platform)}", file=sys.stderr)
         print("Run from a terminal, or pass --no-tty for a camera-less start.", file=sys.stderr)
         return 3
 
