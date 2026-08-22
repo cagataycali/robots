@@ -1,0 +1,161 @@
+"""Human-in-the-loop gate for agent tool calls that would move real hardware.
+
+The hook pauses the agent (SDK interrupt) instead of refusing, so a human
+yes resumes the SAME turn and the tool executes. Stopping is never gated.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+from typing import Any, Callable, Mapping
+
+from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
+
+from strands_robots.dashboard.agent_motion import MOTION_ENV, peer_is_physical
+
+logger = logging.getLogger(__name__)
+
+INTERRUPT_NAME = "physical_motion"
+
+#: tool name -> actions that can put a real robot in motion. Absent tool = never gated.
+#: stop / emergency_stop / status / peers are deliberately NOT here: stopping is never gated.
+MOTION_ACTIONS: dict[str, frozenset[str]] = {
+    "fleet": frozenset({"task"}),
+    "robot_mesh": frozenset({"send", "broadcast"}),
+}
+
+_TRUE = ("1", "true", "yes", "on")
+
+
+def _granted(env: Mapping[str, str] | None = None) -> bool:
+    env = os.environ if env is None else env
+    return str(env.get(MOTION_ENV, "")).strip().lower() in _TRUE
+
+
+def motion_intent(
+    tool_name: str,
+    tool_input: Mapping[str, Any] | None,
+    peers: Mapping[str, Any] | None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any] | None:
+    """Would this tool call start physical motion needing a human yes?
+
+    Returns the structured interrupt reason, or None when the call may proceed
+    (not a motion action, target is a sim, or the always-allow grant is set).
+    """
+    actions = MOTION_ACTIONS.get(tool_name)
+    if actions is None:
+        return None
+    tool_input = tool_input or {}
+    action = str(tool_input.get("action") or "").strip()
+    if action not in actions:
+        return None
+    if _granted(env):
+        return None  # the always-allow fast lane: no interrupt is raised
+
+    target = str(tool_input.get("target") or "").strip()
+    peer = (peers or {}).get(target)
+    physical, why = peer_is_physical(peer)
+    if not physical:
+        return None
+
+    reason: dict[str, Any] = {
+        "tool": tool_name,
+        "action": action,
+        "target": target or "(unnamed peer)",
+        "instruction": str(tool_input.get("instruction") or tool_input.get("message") or ""),
+        "why_physical": why,
+    }
+    if tool_input.get("duration") is not None:
+        try:
+            reason["duration"] = float(tool_input["duration"])
+        except (TypeError, ValueError):
+            pass
+    return reason
+
+
+def response_approves(response: Any) -> bool:
+    """Interpret a human interrupt response. Anything but an explicit yes is a no."""
+    if isinstance(response, bool):
+        return response
+    if isinstance(response, Mapping):
+        return response_approves(response.get("approve"))
+    if isinstance(response, str):
+        return response.strip().lower() in _TRUE + ("y", "approve", "approved")
+    return False
+
+
+# --- one-shot approval grants ------------------------------------------------
+# The fleet tool's own agent_motion_allowed() gate stays as a backstop; a human
+# yes deposits a grant here that the tool consumes for exactly one call.
+
+_grants_lock = threading.Lock()
+_grants: set[str] = set()
+
+
+def _grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
+    tool_input = tool_input or {}
+    return "|".join((
+        tool_name,
+        str(tool_input.get("action") or ""),
+        str(tool_input.get("target") or ""),
+        str(tool_input.get("instruction") or tool_input.get("message") or ""),
+    ))
+
+
+def deposit_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> None:
+    with _grants_lock:
+        _grants.add(_grant_key(tool_name, tool_input))
+
+
+def consume_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> bool:
+    """True exactly once per deposited grant for this call's shape."""
+    key = _grant_key(tool_name, tool_input)
+    with _grants_lock:
+        if key in _grants:
+            _grants.discard(key)
+            return True
+    return False
+
+
+def cancel_sentence(reason: Mapping[str, Any]) -> str:
+    """What the model relays when the human says no."""
+    return (
+        f"the human declined: {reason.get('target')} was NOT sent "
+        f"{reason.get('instruction') or 'that instruction'!r}. Nothing moved. "
+        f"Ask them what they would like instead."
+    )
+
+
+class MotionInterruptHook(HookProvider):
+    """Pause before any tool call that would start physical motion.
+
+    ``peers_snapshot`` is a callable returning the current fleet peers dict, so
+    the physicality verdict is read at call time, never cached.
+    """
+
+    def __init__(self, peers_snapshot: Callable[[], Mapping[str, Any]]) -> None:
+        self._peers_snapshot = peers_snapshot
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        registry.add_callback(BeforeToolCallEvent, self._gate)
+
+    def _gate(self, event: BeforeToolCallEvent) -> None:
+        tool_use = event.tool_use or {}
+        name = str(tool_use.get("name") or "")
+        tool_input = tool_use.get("input") or {}
+        try:
+            peers = self._peers_snapshot() or {}
+        except Exception:  # noqa: BLE001 - unreadable snapshot means UNKNOWN, i.e. metal
+            peers = {}
+        reason = motion_intent(name, tool_input, peers)
+        if reason is None:
+            return
+        # Raises InterruptException on first pass; returns the human response on resume.
+        response = event.interrupt(INTERRUPT_NAME, reason=reason)
+        if response_approves(response):
+            deposit_grant(name, tool_input)
+            return
+        event.cancel_tool = cancel_sentence(reason)
