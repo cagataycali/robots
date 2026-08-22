@@ -285,3 +285,26 @@ function LIVE_ROUTES_TTL_MS_FROM(m) {
 }
 
 console.log('endpoints.test.mjs: U21 sliding session ok')
+
+// ── absorbUrl scrubs the credential off the address bar (history.replaceState) ──
+{
+  globalThis.location = {
+    search: '?token=ridetok&backend=robot.lan:9000&view=fleet',
+    host: 'lan.local', origin: 'http://lan.local', pathname: '/', hash: '#top',
+  }
+  const calls = []
+  globalThis.history = { replaceState: (...a) => calls.push(a) }
+  const fresh = await import('/tmp/endpoints.mjs?case=scrub')
+  assert.equal(fresh.authToken(), 'ridetok', 'the token is absorbed before the scrub')
+  assert.equal(calls.length, 1, 'the URL is rewritten exactly once')
+  assert.equal(calls[0][2], '/?view=fleet#top',
+    'token and backend are gone; unrelated params and the hash survive')
+  // and a URL with NOTHING to absorb is never rewritten (no pointless history churn)
+  globalThis.location = { search: '?view=fleet', host: 'lan.local', origin: 'http://lan.local', pathname: '/', hash: '' }
+  const idle = []
+  globalThis.history = { replaceState: (...a) => idle.push(a) }
+  const clean = await import('/tmp/endpoints.mjs?case=noscrub')
+  clean.authToken()
+  assert.equal(idle.length, 0, 'nothing absorbed, nothing rewritten')
+  console.log('absorbUrl scrub: all assertions passed')
+}

@@ -69,3 +69,21 @@ assert.equal(sameOrigin('http://1.2.3.4:80', 'http://1.2.3.4'), true)
 assert.equal(sameOrigin('nonsense', 'http://1.2.3.4'), false)
 
 console.log('lanHint: all assertions passed')
+
+// --- handoffHref: the sign-in rides the link, and every failure is the plain link
+{
+  const { handoffHref } = await import('/tmp/lanHint.mjs')
+  const url = 'http://192.168.1.166:8090'
+  // a minted token rides in ?token= (AuthGate's absorbUrl reads exactly this)
+  assert.equal(handoffHref(url, { token: 'abc.def.ghi' }), 'http://192.168.1.166:8090/?token=abc.def.ghi')
+  // auth off (token:null), old server (no body), refusal (undefined) — all degrade to the plain link
+  assert.equal(handoffHref(url, { token: null, why: 'auth is not enabled' }), url)
+  assert.equal(handoffHref(url, null), url)
+  assert.equal(handoffHref(url, undefined), url)
+  assert.equal(handoffHref(url, {}), url)
+  // whitespace is not a token
+  assert.equal(handoffHref(url, { token: '  ' }), url)
+  // a malformed candidate must not become a malformed navigation
+  assert.equal(handoffHref('not a url', { token: 'abc' }), 'not a url')
+  console.log('handoffHref: all assertions passed')
+}

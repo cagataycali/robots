@@ -8,6 +8,7 @@ export const BUNDLE_ROUTES: readonly string[] = [
   '/api/agent/reset',
   '/api/auth/credentials',
   '/api/auth/credentials/{p}',
+  '/api/auth/handoff',
   '/api/auth/login/',
   '/api/auth/login/begin',
   '/api/auth/login/finish',

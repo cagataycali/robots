@@ -42,6 +42,16 @@ function absorbUrl(): void {
     const fromToken = params.get('token')
     if (fromToken) localStorage.setItem(TOKEN_KEY, fromToken)
     urlBase = params.get('backend')
+    // Scrub what was absorbed: a ?token= URL outlives its token in history,
+    // share sheets and screenshots, and must not be re-sent on reload.
+    if (fromToken !== null || urlBase !== null) {
+      try {
+        params.delete('token')
+        params.delete('backend')
+        const rest = params.toString()
+        history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash || ''}`)
+      } catch { /* no history (a test stub): the values are absorbed either way */ }
+    }
   } catch {
     urlBase = null // no location (a test, a worker): the stored values are the whole truth
   }

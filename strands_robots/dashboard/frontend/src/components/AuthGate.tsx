@@ -207,6 +207,9 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           <p className="authwarn">
             Passkeys need a secure context. Open this page over <code>https://</code> or{' '}
             <code>http://localhost</code> - on a plain LAN address the browser disables WebAuthn.
+            {' '}Already signed in on the <code>https://</code> address? Use its{' '}
+            <em>open the local address</em> link instead of typing this address — it carries
+            your sign-in here in the URL, so no ceremony is needed.
           </p>
         )}
 

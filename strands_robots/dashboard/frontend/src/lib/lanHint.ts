@@ -54,6 +54,24 @@ export function sameOrigin(a: string, b: string): boolean {
   }
 }
 
+/**
+ * The href the hint actually navigates to, given the handoff answer. The LAN address is
+ * plain http (no WebAuthn), so a minted token rides in the URL and AuthGate absorbs it;
+ * anything else — old server (404), auth off (token:null), refusal — degrades to the
+ * plain link, which is exactly today's behavior, never a broken one.
+ */
+export function handoffHref(url: string, res: { token?: string | null } | null | undefined): string {
+  const token = res && typeof res.token === 'string' && res.token.trim() ? res.token.trim() : null
+  if (!token) return url
+  try {
+    const u = new URL(url)
+    u.searchParams.set('token', token)
+    return u.toString()
+  } catch {
+    return url // a malformed candidate must not become a malformed navigation
+  }
+}
+
 export function readDismissed(store: Pick<Storage, 'getItem'> | null): string[] {
   try {
     const raw = store?.getItem(DISMISS_KEY)
