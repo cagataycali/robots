@@ -2,10 +2,11 @@
 
 Two modules resolve that variable and neither can report a typo on its own.
 :func:`strands_robots.robot._mesh_env_opt_in` reads the affirmative spellings to
-decide whether a bare ``Robot()`` opts in; :func:`strands_robots.mesh.core.
-mesh_disabled_by_env` reads the negative ones to decide whether an explicit
-``mesh=True`` is overridden, and answers the same question for the robot-less
-gateway peer in :mod:`strands_robots.tools.robot_mesh`.
+decide whether a bare ``Robot()`` opts in, while
+:func:`strands_robots.mesh.core.mesh_disabled_by_env`
+reads the negative ones to decide whether an explicit ``mesh=True`` is
+overridden, and answers the same question for the robot-less gateway peer in
+:mod:`strands_robots.tools.robot_mesh`.
 
 Each half correctly treats the other's spellings as none of its business: to the
 opt-in reader ``false`` is simply not an opt-in, and to the kill switch ``true``
