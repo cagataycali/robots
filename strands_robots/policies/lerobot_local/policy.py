@@ -405,10 +405,19 @@ class LerobotLocalPolicy(Policy):
             (e.g. "observation.images.top"). When omitted, cameras are
             routed by exact short-name match and then by declared order
             with a warning on mismatch.
-        strict_keys: When True, raise (instead of warning + positional
-            fallback) if any camera name cannot be matched to a declared
-            policy image key by exact name and no ``camera_key_map`` covers
-            it. Defaults to False (positional fallback).
+        strict_keys: When True, raise (instead of warning + a degraded
+            binding) wherever a key cannot be bound by name. It governs BOTH
+            halves of the key binding, not cameras alone:
+
+            * cameras - a camera name matching no declared policy image key by
+              exact name, with no ``camera_key_map`` entry covering it
+              (positional fallback otherwise);
+            * joint state - configured ``robot_state_keys`` that the observation
+              does not carry, whether none of them match or only some (an
+              observation-derived ordering, or a zero-fill in place, otherwise).
+
+            Defaults to False. A robot whose cameras and joints all bind by
+            name reaches neither refusal, so the flag is a no-op there.
         pad_short_actions: When the model emits FEWER action values than the
             robot declares actuator keys, command the unmatched actuators to
             ``0.0`` instead of omitting them. Defaults to False: an omitted
@@ -2576,7 +2585,8 @@ class LerobotLocalPolicy(Policy):
             declared image features by exact name first - either the prefixed
             form (``image`` → ``observation.images.image``) or a BARE declared
             key (``base`` → ``base``, as VLAs like MolmoAct2 declare them);
-            otherwise images fill remaining declared image slots in order.
+            otherwise images fill remaining declared image slots in order -
+            or, under ``strict_keys=True``, raise rather than fill.
           * Remaining scalar joint values are collected (in ``robot_state_keys``
             order when available, else insertion order) into ``observation.state``.
 
@@ -2873,7 +2883,9 @@ class LerobotLocalPolicy(Policy):
              directly-declared ``top``) when the policy declares that key.
           3. Positional fallback: remaining cameras fill the remaining declared
              image slots in declaration order, with a WARN that the names did
-             not match (so a wrong wiring is loud, not silent).
+             not match (so a wrong wiring is loud, not silent). Under
+             ``strict_keys=True`` this rung raises instead of falling back, so
+             a camera never reaches a slot it was not named for.
 
         Args:
             cam_names: Camera names present in the observation.
@@ -2884,7 +2896,8 @@ class LerobotLocalPolicy(Policy):
 
         Raises:
             ValueError: If an explicit mapping targets an undeclared image key,
-                or the robot supplies fewer cameras than the policy requires.
+                if ``strict_keys`` is set and a camera cannot be bound by name,
+                or if the robot supplies fewer cameras than the policy requires.
         """
         targets = self._policy_image_keys()
         result: dict[str, str] = {}
