@@ -4,6 +4,10 @@ import { post, wsUrl, authRefusedRecently } from '../lib/endpoints'
 import { useConfig } from '../lib/useConfig'
 import { sendFailureVerdict, interruptionNotice, bubbleLabel } from '../lib/chatDelivery'
 import { turnAnnouncement } from '../lib/agentAnnounce'
+import {
+  type MotionConfirm, parseInterruptEvent, parseStatusInterrupt,
+  confirmQuestion, confirmDetail, answerNotice,
+} from '../lib/interruptConfirm'
 import ConsentSheet from './ConsentSheet'
 import { type ConsentNeed } from '../lib/consent'
 
@@ -46,6 +50,8 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
   const scrollRef = useRef<HTMLDivElement>(null)
   // A refused turn: the guard's decision, plus the sentence to re-send if it is granted.
   const [need, setNeed] = useState<ConsentNeed | null>(null)
+  // The agent is PAUSED on a motion confirm: its turn resumes with the answer.
+  const [confirm, setConfirm] = useState<MotionConfirm | null>(null)
   const refusedPrompt = useRef<string>('')
   const voice = useVoice()
   const { config, reload } = useConfig()
@@ -60,6 +66,34 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
   }, [msgs])
 
   useEffect(() => { busyRef.current = busy }, [busy])
+
+  // A reload with a confirm parked server-side re-renders the question instead of wedging.
+  // Answered ids are remembered so a stale /api/config snapshot cannot resurrect the dialog.
+  const answeredIds = useRef<Set<string>>(new Set())
+  const statusInterrupt = (agent as any)?.interrupt
+  useEffect(() => {
+    if (!statusInterrupt || busy) return
+    const c = parseStatusInterrupt(statusInterrupt)
+    if (c && !answeredIds.current.has(c.id)) { setConfirm(prev => prev ?? c); setOpen(true) }
+  }, [statusInterrupt, busy])
+
+  /** Answer the motion confirm: the SAME turn resumes with the decision. */
+  const answer = async (approve: boolean) => {
+    const c = confirm
+    if (!c) return
+    answeredIds.current.add(c.id)
+    setConfirm(null)
+    setMsgs(prev => [...prev, { role: 'notice', text: answerNotice(c, approve) }])
+    setBusy(true)
+    try {
+      const ws = await ensureWs()
+      ws.send(JSON.stringify({ type: 'interrupt_response', id: c.id, response: { approve } }))
+    } catch (e: any) {
+      setBusy(false)
+      setConfirm(c) // the question is still pending server-side - keep it answerable
+      setConnError(e?.message ?? String(e))
+    }
+  }
 
   /** Append to the trailing agent bubble, creating one if the last is not ours. */
   const patchAgent = (fn: (m: ChatMsg) => void) => {
@@ -98,6 +132,12 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
         return
       }
       if (ev.type === 'pong') return
+      if (ev.type === 'interrupt') {
+        // The turn is parked server-side; the question replaces the spinner.
+        const c = parseInterruptEvent(ev)
+        if (c) { setConfirm(c); setBusy(false); setOpen(true) }
+        return
+      }
       if (ev.type === 'tool' && ev.needs_consent) setNeed(ev.needs_consent as ConsentNeed)
       patchAgent(last => {
         if (ev.type === 'token') last.text += ev.data
@@ -233,6 +273,20 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
               )
             ))}
           </div>
+          {confirm && (
+            <div className="dock-notice confirm" role="alertdialog" aria-label="motion confirmation">
+              <div><strong>▶ {confirmQuestion(confirm)}</strong></div>
+              {confirmDetail(confirm) && <div className="hint">{confirmDetail(confirm)}</div>}
+              <div className="bubble-foot">
+                <button className="btn" onClick={() => void answer(true)} autoFocus>
+                  yes, run it
+                </button>
+                <button className="btn ghost" onClick={() => void answer(false)}>
+                  no — nothing moves
+                </button>
+              </div>
+            </div>
+          )}
           {/* One sentence per finished turn — the only thing spoken automatically. aria-atomic because a partial re-read of a reply is not a reply. */}
           <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
             {turnAnnouncement({ busy, last: msgs[msgs.length - 1], error: connError })}
@@ -250,16 +304,16 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
           {voice.state === 'live' ? '🔴' : voice.state === 'connecting' ? '⏳' : '🎙'}
         </button>
         <input
-          placeholder={`ask the fleet agent… (e.g. '${exampleRobot ?? 'so101-arm-1'}, wave hello')`}
+          placeholder={confirm ? 'answer the motion confirm above first' : `ask the fleet agent… (e.g. '${exampleRobot ?? 'so101-arm-1'}, wave hello')`}
           aria-label="message to the fleet agent"
           value={input}
           onFocus={() => setOpen(true)}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') void send() }}
-          disabled={busy}
+          disabled={busy || !!confirm}
         />
         {/* "↑" is not a name. */}
-        <button className="dock-send" onClick={() => void send()} disabled={busy || !input.trim()}
+        <button className="dock-send" onClick={() => void send()} disabled={busy || !!confirm || !input.trim()}
                 aria-label="send to the agent" title="send to the agent">↑</button>
         <button className="dock-min" onClick={() => setOpen(o => !o)}
                 aria-label={open ? 'hide the conversation' : 'show the conversation'}
