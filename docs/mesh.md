@@ -97,6 +97,15 @@ that peer has timed out (10s), which peer the registry evicts when it hits
 move. So bringing a robot's clock into sync to satisfy the forward bound above
 will not make the next heartbeat tick drop every peer it can still hear.
 
+**Nor are those durations the measured peer's to report.** `age` is *your*
+process's reading of when it last heard from a peer, and the `peer_id` a peer is
+filed under is the one its topic and certificate bind - not a field inside the
+payload. A presence payload is merged into what you read about a peer so you get
+its capabilities (`tool_name`, `connected`, `cameras`, ...), and those four
+locally decided keys - `peer_id`, `type`, `hostname`, `age` - win a name
+collision with it. A peer heartbeating `"age": 0` does not report itself fresh,
+and one naming another peer's id does not answer a lookup for that peer.
+
 Repeated wrong codes arm a brute-force cooldown
 (`STRANDS_MESH_RESUME_MAX_FAILS`, `STRANDS_MESH_RESUME_BACKOFF_S`): during the
 cooldown even the correct code is refused, so wait it out rather than retrying in
