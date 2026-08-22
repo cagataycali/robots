@@ -7,6 +7,7 @@ import { twinButtonCopy } from '../lib/twinButton'
 import { statusSentence, peerStatusFields } from '../lib/statusSentence'
 import { teleopView, stopVerdict, startVerdict, type TeleopView } from '../lib/teleopView'
 import { leaderOptions, pairPlan, type PairInput } from '../lib/teleopPair'
+import { jointFailure, jointFailureLine } from '../lib/jointFailure'
 import { api } from '../lib/endpoints'
 import { useTelemetry } from '../lib/useTelemetry'
 import CameraTile from './CameraTile'
@@ -150,6 +151,30 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
   const p = peer.presence
   const offline = !!peer.stale
   const joints = Object.entries(peer.state?.joints ?? {})
+
+  /* AN ARM WITH NO JOINTS IS THE MOST IMPORTANT SENTENCE ON THIS SCREEN, and until now it was the one
+     sentence nowhere on it. Both real arms on this fleet have been jointless for three days while presence
+     said connected and camera frames kept flowing; the cause is a WARNING in the middle of their ring
+     buffer, under a tail that reads "hardware connected … online". Fetched ONCE per peer, only when the
+     joints are actually missing, because a healthy arm needs no explanation. */
+  const [whyNoJoints, setWhyNoJoints] = useState<string | null>(null)
+  useEffect(() => {
+    setWhyNoJoints(null)
+    if (joints.length) return
+    let live = true
+    void (async () => {
+      try {
+        const r = await api<{ lines?: string[] }>(`/api/devices/logs/${encodeURIComponent(peer.peer_id)}`)
+        if (!live) return
+        setWhyNoJoints(jointFailureLine(jointFailure(r?.lines)))
+      } catch {
+        // A 404 here is not a fault: only robots the dashboard started have a ring buffer to read.
+        if (live) setWhyNoJoints('no joints, and no log to read — this arm was started outside the dashboard, so its reason is in the console that launched it')
+      }
+    })()
+    return () => { live = false }
+  }, [peer.peer_id, joints.length])
+
   const telemetry = useTelemetry(peer)
   // Q151: THE SAFETY SENTENCE BELONGS HERE MOST. This is the surface an operator has open while
   // walking up to the arm, and it said nothing about whether the stillness on screen is measured —
@@ -318,6 +343,9 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
         {/* Q151: the safety sentence belongs on THIS surface most — it is what an operator reads while
             walking up to the arm. Same pure rule and same fields as the card, so the two cannot say
             different things about the same robot. */}
+        {whyNoJoints && (
+          <p className="hint warn" role="status">{whyNoJoints}</p>
+        )}
         {status && (
           <div className={`status-ribbon ${status.severity}`} role="status">
             <b>{status.word}</b> {status.text}
