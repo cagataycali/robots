@@ -363,6 +363,16 @@ class RecordWorker:
         notice = getattr(self._backend, "camera_notice", None)
         self._backend.close()
         result = {"ok": True, "detail": detail, "discarded_indices": [e.index for e in dropped]}
+        # Where the dataset now LIVES — the receipt the training screen can be handed.
+        # Without this, the operator must re-find their minutes-old dataset by memory.
+        result["dataset"] = self.dataset
+        result["episodes_kept"] = len(kept)
+        try:
+            from strands_robots.dataset_recorder import resolve_dataset_dir
+
+            result["root"] = str(resolve_dataset_dir(self.dataset))
+        except Exception:  # noqa: BLE001 - the receipt is still useful without the path
+            pass
         if notice:
             missing = ", ".join(notice.get("missing") or ())
             result["camera_notice"] = notice

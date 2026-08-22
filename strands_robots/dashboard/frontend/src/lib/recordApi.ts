@@ -110,8 +110,10 @@ export interface RecordApi {
   /** stop and immediately discard the in-flight episode (redo) */
   redoEpisode(): Promise<RecordSession>
   discard(index: number): Promise<RecordSession>
-  /** close the session; upload=true pushes the dataset to the HF Hub */
-  close(opts?: { upload?: boolean; repo_id?: string }): Promise<{ ok: boolean; detail?: string }>
+  /** close the session; upload=true pushes the dataset to the HF Hub.
+   * The receipt carries where the dataset LIVES (dataset/root/episodes_kept) —
+   * the record→train handoff is built from it (lib/recordHandoff). */
+  close(opts?: { upload?: boolean; repo_id?: string }): Promise<import('./recordHandoff').CloseReceipt>
   uploadPreflight(): Promise<UploadPreflight>
 }
 

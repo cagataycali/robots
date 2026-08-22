@@ -18,12 +18,17 @@ import AuthedImg from './AuthedImg'
 import { nameVerdict, type KnownDataset } from '../lib/datasetName'
 import { stoppedCameras, cameraWarning } from '../lib/cameraFreshness'
 import { overrideOffered, nextAcknowledged, overrideBodyFlags } from '../lib/recordRefusal'
+import { trainHandoff, type CloseReceipt } from '../lib/recordHandoff'
 import type { RecordOverrideFlag } from '../lib/recordRefusal'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 
 export default function RecordPanel(
-  { peers, onClose, onDevices }: { peers: Peer[]; onClose: () => void; onDevices?: () => void },
+  { peers, onClose, onDevices, onTrain }: {
+    peers: Peer[]; onClose: () => void; onDevices?: () => void
+    /** open the training screen seeded with a freshly finished dataset */
+    onTrain?: (prefill: { dataset_root: string }) => void
+  },
 ) {
   const peerIds = peers.map(p => p.peer_id)
   const [api, setApi] = useState<RecordApi | null>(null)
@@ -99,6 +104,8 @@ export default function RecordPanel(
   }, [])
   const nameWarn = nameVerdict(form.dataset, known)
   const [closed, setClosed] = useState<string | null>(null)
+  // the whole close receipt: the record→train handoff is derived from it
+  const [receipt, setReceipt] = useState<CloseReceipt | null>(null)
   // When did a session read last ARRIVE (not: last get attempted)? A hung
   // request would otherwise keep this screen looking live forever.
   const [lastOkAt, setLastOkAt] = useState<number | null>(null)
@@ -612,6 +619,7 @@ export default function RecordPanel(
                 try {
                   const r = await api!.close(armedUpload ? { upload: true } : {})
                   setClosed(r.detail ?? (r.ok ? `dataset finished with ${kept} episode(s)` : 'close failed'))
+                  setReceipt(r)
                   setS(await api!.session())
                 } catch (e) {
                   // Finishing reaches outside this machine when upload is ticked:
@@ -637,7 +645,25 @@ export default function RecordPanel(
         </div>
       )}
 
-      {closed && !open && <div className="toast">✓ {closed}</div>}
+      {closed && !open && (() => {
+        const h = trainHandoff(receipt)
+        return (
+          <div className="toast" role="status">
+            ✓ {closed}
+            {h && (
+              <>
+                {receipt?.root && <div className="hint mono small">{receipt.root}</div>}
+                {h.caveat && <div className="hint warn">⚠ {h.caveat}</div>}
+                {onTrain && (
+                  <div className="row">
+                    <button className="btn" onClick={() => onTrain(h.prefill)}>{h.label}</button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )
+      })()}
 
       {/* every refusal the operator can act on (dead camera, identity drift, taken dataset name) arrives here, after a tap, asynchronously. role=alert so it is heard and not only seen — a refusal nobody notices reads as a button that did nothing. */}
       {err && <div className="train-msg" role="alert">✗ {err}</div>}

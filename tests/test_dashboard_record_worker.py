@@ -202,6 +202,12 @@ def test_discard_marks_saved_episode_and_close_reports_it(tmp_path):
     assert "1 episode(s) kept" in r["detail"] and "1 discarded" in r["detail"]
     assert r["discarded_indices"] == [0]
     assert recorder.finalized and backend.closed
+    # the close receipt says WHERE the dataset lives — the training screen is handed
+    # this, so the operator never re-finds a minutes-old dataset by memory
+    assert r["dataset"] == w.dataset
+    assert r["episodes_kept"] == 1
+    assert r.get("root"), "the resolved on-disk path rides with the receipt"
+    assert w.dataset.split("/")[-1] in r["root"]
 
 
 def test_close_mid_recording_keeps_nothing_half_written():

@@ -43,6 +43,8 @@ function Dashboard() {
   const { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, quietChildren, loaded, lastEventAt, everOpen } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
+  // the record screen's parting gift: the dataset it just finished, seeded into training
+  const [trainPrefill, setTrainPrefill] = useState<{ dataset_root?: string } | undefined>(undefined)
   /** The verdict of copying the first-run snippet. */
   const [snipCopied, setSnipCopied] = useState<string | null>(null)
   const [boards, setBoards] = useState<(RememberedBoard & DetectedBoard)[] | null | undefined>(undefined)
@@ -220,7 +222,7 @@ function Dashboard() {
         onWireSecurity={() => { setSettingsTab('mesh'); setPanel('settings') }}
         onActivity={() => setPanel('activity')}
         onDevices={() => setPanel('devices')}
-        onTraining={() => setPanel('training')}
+        onTraining={() => { setTrainPrefill(undefined); setPanel('training') }}
         onRecord={() => setPanel('record')}
         onHelp={() => setPanel('help')}
       />
@@ -381,13 +383,14 @@ function Dashboard() {
         linkWarning={link.commandsWork ? null : link.estopReason} />
       {panel === 'training' && (
         <ErrorBoundary label="the training screen" onDismiss={() => setPanel(null)}>
-          <TrainingTab onClose={() => setPanel(null)} />
+          <TrainingTab onClose={() => setPanel(null)} prefill={trainPrefill} />
         </ErrorBoundary>
       )}
       {panel === 'record' && (
         <ErrorBoundary label="the record screen" onDismiss={() => setPanel(null)}>
           <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => setPanel(null)}
-            onDevices={() => setPanel('devices')} />
+            onDevices={() => setPanel('devices')}
+            onTrain={prefill => { setTrainPrefill(prefill); setPanel('training') }} />
         </ErrorBoundary>
       )}
 

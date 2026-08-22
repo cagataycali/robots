@@ -38,7 +38,11 @@ function guessPolicyType(baseModel: string | undefined): string | null {
   return m ? m[1].toLowerCase().replace('-', '_').replace('pi0fast', 'pi0_fast') : null
 }
 
-export default function TrainingTab({ onClose }: { onClose: () => void }) {
+export default function TrainingTab({ onClose, prefill }: {
+  onClose: () => void
+  /** seed from the record screen's close receipt — the dataset the operator JUST made */
+  prefill?: { dataset_root?: string }
+}) {
   const [trainers, setTrainers] = useState<string[]>([])
   const [unsupported, setUnsupported] = useState<Record<string, string>>({})
   const [srvFields, setSrvFields] = useState<string[] | null>(null)
@@ -54,7 +58,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [pollFail, setPollFail] = useState<Record<string, { n: number; msg: string }>>({})
   const [nowS, setNowS] = useState(() => Date.now() / 1000)
   const [traces, setTraces] = useState<Record<string, LossPoint[]>>({})
-  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora', embodiment: '', val_episodes: '' })
+  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: prefill?.dataset_root ?? '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora', embodiment: '', val_episodes: '' })
   // R6: the picker searches the Hub as you type.
   const [dsQuery, setDsQuery] = useState('')
   const [dsProblem, setDsProblem] = useState<string | null>(null)
