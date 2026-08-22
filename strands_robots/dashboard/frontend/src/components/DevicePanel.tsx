@@ -3,6 +3,7 @@ import { boardListEmptyLine, managedListEmptyLine, hardwareSummaryValue } from '
 import { deathVerdict, retainedOutputIsStartup } from '../lib/childDeath'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { numField } from '../lib/numField'
+import { type CameraRow, camerasField } from '../lib/cameraRows'
 import { findConsent, type ConsentNeed } from '../lib/consent'
 import { spawnNotice, type SpawnNotice } from '../lib/spawnNotice'
 import ConsentSheet from './ConsentSheet'
@@ -92,7 +93,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [robotName, setRobotName] = useState('')
   const [mode, setMode] = useState<'sim' | 'real'>('sim')
   const [port, setPort] = useState('')
-  const [camIndex, setCamIndex] = useState('')
+  const [camRows, setCamRows] = useState<CameraRow[]>([{ name: 'main', index: '' }])
   const [camFps, setCamFps] = useState('')
   const [camW, setCamW] = useState('')
   const [camH, setCamH] = useState('')
@@ -238,10 +239,18 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     width: camW === '' ? null : numField(camW, { what: 'pixels wide', min: 64, max: 7680 }),
     height: camH === '' ? null : numField(camH, { what: 'pixels high', min: 64, max: 4320 }),
   }
-  const camProblem = [camNums.fps, camNums.width, camNums.height].find(v => v?.problem)?.problem ?? null
+  // The composed rows judged into the spawn payload — or a refusal in words, before the button.
+  const camField = camerasField(camRows, {
+    fps: camNums.fps && !camNums.fps.problem ? camNums.fps.value : null,
+    width: camNums.width && !camNums.width.problem ? camNums.width.value : null,
+    height: camNums.height && !camNums.height.problem ? camNums.height.value : null,
+  })
+  const camProblem =
+    [camNums.fps, camNums.width, camNums.height].find(v => v?.problem)?.problem ?? camField.problem
   // A correction we make must be admitted, not just the refusals: 12.5 fps becomes 12, and the
   // operator who typed 12.5 would otherwise never learn which of the two the camera was given.
   const camNote = [camNums.fps, camNums.width, camNums.height].map(v => v?.note).filter(Boolean).join(' · ') || null
+  const anyCam = camRows.some(r => r.index !== '')
 
   /* Judged against BOTH the live children and the remembered profiles: a name that collides with
      either is the 409 the server would answer, and it costs nothing to say so before the button. */
@@ -267,15 +276,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     port: mode === 'real' ? port || null : null,
     // The camera config must be a MAPPING per entry ({index_or_path: N, ...}); a bare int here is
     // the exact ValueError an operator once hit live: "Camera 'main' config must be a mapping ...
-    // got int: 3".
-    cameras: camIndex === '' ? null : {
-      main: {
-        index_or_path: Number(camIndex),
-        ...(camNums.fps ? { fps: camNums.fps.value } : {}),
-        ...(camNums.width ? { width: camNums.width.value } : {}),
-        ...(camNums.height ? { height: camNums.height.value } : {}),
-      },
-    },
+    // got int: 3". camerasField owns that shape (and every name/index collision) in one place.
+    cameras: camField.problem ? null : camField.value,
     robot_id: robotId || null,
   })), 'spawned')
 
@@ -544,21 +546,52 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                 })()}
               </>
             )}
-            <label className="field">
-              <span>Camera</span>
-              <select value={camIndex} onChange={e => setCamIndex(e.target.value)}>
-                <option value="">none</option>
-                {(doc?.cameras ?? []).map(c => (
-                  <option key={c.index} value={c.index} disabled={!!c.claimed_by}>
-                    index {c.index}
-                    {c.width ? ` — ${c.width}×${c.height}` : ''}
-                    {c.fps ? ` @ ${c.fps}fps` : ''}
-                    {c.claimed_by ? ` — claimed by ${c.claimed_by}` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {camIndex !== '' && (
+            {/* One row per camera the robot will carry: a NAME (the lerobot config key —
+                main, wrist, top…) plus a physical index. An arm with two cameras is the
+                normal case here, not the exotic one. */}
+            {camRows.map((row, i) => (
+              <div className="row" key={i}>
+                <label className="field">
+                  <span>{i === 0 ? 'Camera name' : `Camera ${i + 1} name`}</span>
+                  <input type="text" value={row.name} placeholder={i === 0 ? 'main' : 'wrist'}
+                         onChange={e => setCamRows(rows =>
+                           rows.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))} />
+                </label>
+                <label className="field">
+                  <span>index</span>
+                  <select value={row.index}
+                          onChange={e => setCamRows(rows =>
+                            rows.map((r, j) => (j === i ? { ...r, index: e.target.value } : r)))}>
+                    <option value="">none</option>
+                    {(doc?.cameras ?? []).map(c => (
+                      <option key={c.index} value={c.index}
+                              disabled={!!c.claimed_by
+                                        || camRows.some((o, j) => j !== i && o.index === String(c.index))}>
+                        index {c.index}
+                        {c.width ? ` — ${c.width}×${c.height}` : ''}
+                        {c.fps ? ` @ ${c.fps}fps` : ''}
+                        {c.claimed_by ? ` — claimed by ${c.claimed_by}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {camRows.length > 1 && (
+                  <button type="button" className="btn ghost tiny" aria-label={`remove camera ${i + 1}`}
+                          onClick={() => setCamRows(rows => rows.filter((_, j) => j !== i))}>
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+            {/* the next unclaimed name is offered, so add-click-add composes main → wrist → top */}
+            <button type="button" className="btn ghost tiny"
+                    onClick={() => setCamRows(rows => [...rows, {
+                      name: ['main', 'wrist', 'top'].find(n => !rows.some(r => r.name.trim().toLowerCase() === n)) ?? '',
+                      index: '',
+                    }])}>
+              + add camera
+            </button>
+            {anyCam && (
               <>
                 <div className="row">
                   <label className="field">
