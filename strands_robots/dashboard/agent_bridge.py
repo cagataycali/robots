@@ -54,6 +54,15 @@ is refused by real hardware before anything runs:
   a plain mesh prop -> function="add_object" with "mesh_path".
 - In a multi-robot world, put "robot_name" in the command JSON to pick the robot.
 - Policy rollouts stay on fleet task / tell (sim_call refuses run_policy by design).
+
+Every online robot is ALSO attached to you as its own native tool, named for its peer id
+with dashes as underscores: so101_real_689(action="status"), so101_leader(action="execute",
+instruction=..., policy_port=...), and a sim twin's tool carries the full simulation surface
+directly (twin_tool(action="add_object", name="red_cube", shape="box", ...)) - no sim_call
+envelope needed. The tool list follows the mesh: robots joining or leaving refresh it on the
+next turn. Real-arm execute/start pause for the operator's yes exactly like fleet task;
+status/stop and every sim action run immediately. When asked what tools or robots you have,
+name these per-robot tools.
 """
 
 _agent_lock = threading.Lock()
@@ -380,6 +389,28 @@ def _robot_mesh_tool() -> Any:
         logger.warning("robot_mesh tool unavailable - agent runs with fleet only", exc_info=True)
         return None
 
+def _peer_proxy_tools() -> list:
+    """One native tool per tool-worthy fleet peer, routed through the bridge.
+
+    Robots are CHILD PROCESSES holding the serial buses / sim state, so
+    Agent(tools=[Robot(...)]) in-process would collide on the bus; the proxy
+    is indistinguishable to the agent and rides the validated mesh rails
+    (peer_tools.py). No bridge yet = no proxies - the agent still builds.
+    """
+    if _bridge is None:
+        return []
+    try:
+        from strands_robots.dashboard.peer_tools import build_peer_tools
+
+        return build_peer_tools(_peers_snapshot(), send_cmd=_bridge.send_cmd)
+    except Exception:  # noqa: BLE001 - the agent must build even if proxies cannot
+        logger.warning("peer proxy tools unavailable - agent runs without them", exc_info=True)
+        return []
+
+
+_agent_fleet_sig: Any = None
+
+
 def _build_agent() -> Any:
     os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
 
@@ -389,11 +420,26 @@ def _build_agent() -> Any:
     from strands_robots.dashboard.agent_hitl import MotionInterruptHook
 
     cfg = settings.load()["agent"]
+    proxies = _peer_proxy_tools()
+    proxy_motion: dict[str, Any] = {}
+    proxy_targets: dict[str, str] = {}
+    if proxies:
+        from strands_robots.dashboard.peer_tools import motion_actions_for
+
+        proxy_motion = dict(motion_actions_for(proxies))
+        proxy_targets = {t.tool_name: t.peer_id for t in proxies}
+    global _agent_fleet_sig
+    try:
+        from strands_robots.dashboard.peer_tools import fleet_signature
+
+        _agent_fleet_sig = fleet_signature(_peers_snapshot())
+    except Exception:  # noqa: BLE001 - a signature failure must not block the build
+        _agent_fleet_sig = None
     kwargs: dict[str, Any] = {
-        "tools": [t for t in (_make_fleet_tool(), _robot_mesh_tool()) if t is not None],
+        "tools": [t for t in (_make_fleet_tool(), _robot_mesh_tool()) if t is not None] + list(proxies),
         "system_prompt": cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT,
         "callback_handler": None,
-        "hooks": [MotionInterruptHook(_peers_snapshot)],
+        "hooks": [MotionInterruptHook(_peers_snapshot, proxy_motion, proxy_targets)],
     }
     if cfg.get("model_id"):
         kwargs["model"] = cfg["model_id"]
@@ -431,6 +477,19 @@ def _build_agent() -> Any:
 def get_agent() -> Any:
     global _agent
     with _agent_lock:
+        if _agent is not None and pending_interrupt() is None:
+            # The tool list follows the mesh: a robot joining or leaving since
+            # the build rebuilds the agent (history is restored from disk, so
+            # this costs one build, not the conversation). Never mid-interrupt:
+            # a parked turn must resume against the agent that raised it.
+            try:
+                from strands_robots.dashboard.peer_tools import fleet_signature
+
+                if fleet_signature(_peers_snapshot()) != _agent_fleet_sig:
+                    logger.info("fleet changed since agent build - refreshing its tools")
+                    _agent = None
+            except Exception:  # noqa: BLE001 - an unreadable fleet never blocks a turn
+                pass
         if _agent is None:
             _agent = _build_agent()
         return _agent
@@ -463,7 +522,13 @@ def agent_status() -> dict[str, Any]:
         with contextlib.suppress(Exception):
             messages = len(agent.messages)
     else:
-        tools = ["fleet"]
+        # Not built yet: report what the build WOULD produce (pure rules on the
+        # live fleet), not a hardcoded guess - the old ['fleet'] badge lied.
+        tools = ["fleet", "robot_mesh"]
+        with contextlib.suppress(Exception):
+            from strands_robots.dashboard.peer_tools import expected_tool_names
+
+            tools += expected_tool_names(_peers_snapshot())
         messages = len(_load_history())
     return {
         "ready": True,

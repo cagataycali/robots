@@ -366,6 +366,40 @@ def build_peer_tools(
     return tools
 
 
+def expected_tool_names(peers: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """The proxy tool names this fleet would produce — pure, no strands import.
+
+    Lets agent_status answer honestly BEFORE the agent is lazily built
+    (the badge used to hardcode ['fleet'], which lied until the first turn).
+    """
+    names: list[str] = []
+    taken: set[str] = set()
+    for peer_id, peer in peers.items():
+        kind = classify_peer(peer_id, peer)
+        if kind == KIND_SKIP:
+            continue
+        name = sanitize_tool_name(peer_id, taken)
+        taken.add(name)
+        names.append(name)
+    return names
+
+
+def fleet_signature(peers: Mapping[str, Mapping[str, Any]]) -> frozenset[tuple[str, str]]:
+    """What the proxy surface depends on: the set of (peer_id, kind).
+
+    get_agent compares this at call time against the signature the agent was
+    built with — a changed fleet (join/leave/reclassify) rebuilds the agent so
+    the tool list follows the mesh. Presence details beyond kind do not
+    matter to the tools, so they do not churn the agent.
+    """
+    out = set()
+    for peer_id, peer in peers.items():
+        kind = classify_peer(peer_id, peer)
+        if kind != KIND_SKIP:
+            out.add((peer_id, kind))
+    return frozenset(out)
+
+
 def motion_actions_for(tools: list[Any]) -> dict[str, frozenset[str]]:
     """The MOTION_ACTIONS entries these proxies need — derived, never hand-kept.
 

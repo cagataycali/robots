@@ -42,6 +42,9 @@ def motion_intent(
     tool_input: Mapping[str, Any] | None,
     peers: Mapping[str, Any] | None,
     env: Mapping[str, str] | None = None,
+    *,
+    extra_actions: Mapping[str, frozenset[str]] | None = None,
+    bound_targets: Mapping[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Would this tool call start physical motion needing a human yes?
 
@@ -49,6 +52,10 @@ def motion_intent(
     (not a motion action, target is a sim, or the always-allow grant is set).
     """
     actions = MOTION_ACTIONS.get(tool_name)
+    if actions is None and extra_actions is not None:
+        # per-peer proxy tools: their gate rows are DERIVED per agent build
+        # (peer_tools.motion_actions_for), never hand-kept here.
+        actions = extra_actions.get(tool_name)
     if actions is None:
         return None
     tool_input = tool_input or {}
@@ -59,6 +66,10 @@ def motion_intent(
         return None  # the always-allow fast lane: no interrupt is raised
 
     target = str(tool_input.get("target") or "").strip()
+    if not target and bound_targets is not None:
+        # a proxy tool IS its peer: the binding names the target, the model
+        # cannot write (or omit) its way around it.
+        target = str(bound_targets.get(tool_name) or "").strip()
     peer = (peers or {}).get(target)
     physical, why = peer_is_physical(peer)
     if not physical:
@@ -139,8 +150,15 @@ class MotionInterruptHook(HookProvider):
     the physicality verdict is read at call time, never cached.
     """
 
-    def __init__(self, peers_snapshot: Callable[[], Mapping[str, Any]]) -> None:
+    def __init__(
+        self,
+        peers_snapshot: Callable[[], Mapping[str, Any]],
+        proxy_motion: Mapping[str, frozenset[str]] | None = None,
+        proxy_targets: Mapping[str, str] | None = None,
+    ) -> None:
         self._peers_snapshot = peers_snapshot
+        self._proxy_motion = dict(proxy_motion or {})
+        self._proxy_targets = dict(proxy_targets or {})
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         registry.add_callback(BeforeToolCallEvent, self._gate)
@@ -153,7 +171,13 @@ class MotionInterruptHook(HookProvider):
             peers = self._peers_snapshot() or {}
         except Exception:  # noqa: BLE001 - unreadable snapshot means UNKNOWN, i.e. metal
             peers = {}
-        reason = motion_intent(name, tool_input, peers)
+        reason = motion_intent(
+            name,
+            tool_input,
+            peers,
+            extra_actions=self._proxy_motion,
+            bound_targets=self._proxy_targets,
+        )
         if reason is None:
             return
         # Raises InterruptException on first pass; returns the human response on resume.
