@@ -149,7 +149,10 @@ class TestEveryRaisingStopPathAnswers:
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.If) and "action == 'stop'" in ast.unparse(node.test):
                 return node
-        pytest.fail("could not locate the action=='stop' branch of Mesh._dispatch")
+        # raise rather than pytest.fail: fail() is only terminal at runtime, so a
+        # helper that returns a value and calls it mixes an explicit return with
+        # an implicit one. Raising makes every path return or raise.
+        raise AssertionError("could not locate the action=='stop' branch of Mesh._dispatch")
 
     @classmethod
     def _stop_calls(cls) -> list[tuple[str, bool]]:
