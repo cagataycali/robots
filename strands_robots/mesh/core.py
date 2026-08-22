@@ -352,10 +352,12 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
 def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
     """Identify responders that explicitly reported they did NOT stop.
 
-    An emergency stop is only as trustworthy as its accounting. A peer whose
-    registered robot exposes no ``stop_task`` answers ``{"ok": False, ...}``
-    (see ``Mesh._dispatch``), and a peer whose ``stop_task`` itself failed
-    answers ``{"status": "error", ...}``. Counting either as an acknowledgement
+    An emergency stop is only as trustworthy as its accounting. Three shapes
+    from ``Mesh._dispatch`` report a stop that did not happen: a peer whose
+    registered robot exposes no ``stop_task`` answers ``{"ok": False, ...}``, a
+    hardware stop that failed answers ``{"ok": False, "error": "stop_task
+    failed: ..."}``, and a sim peer whose ``stop_policy`` refused answers
+    ``{"status": "error", ...}``. Counting any of them as an acknowledgement
     tells the operator the fleet halted while a robot is still executing.
 
     Deliberately conservative: only responses that AFFIRMATIVELY report failure
@@ -1845,7 +1847,25 @@ class Mesh(SensorLoopsMixin):
             if r is None:
                 return {"ok": True, "stopped": [], "note": "no robot registered on this peer"}
             if hasattr(r, "stop_task"):
-                return dict(r.stop_task())
+                # A hardware stop that fails must ANSWER, exactly as the two sim
+                # branches below do ("stop must answer, not raise"). An exception
+                # escaping here reaches ``_exec_cmd``, which publishes
+                # ``{"type": "error", "error": "dispatch error"}`` -- an envelope
+                # carrying no ``result``, so :func:`_peers_that_did_not_stop`
+                # finds neither ``ok`` nor ``status`` and ``emergency_stop``
+                # counts the peer as having halted. Raising is the ONLY way a
+                # hardware stop reports failure: both return paths of
+                # ``Robot.stop_task`` answer ``status="success"``.
+                try:
+                    return dict(r.stop_task())
+                except Exception as exc:  # noqa: BLE001 - stop must answer, not raise
+                    logger.error(
+                        "[safety] %s: stop_task() failed; NOTHING was stopped on this peer: %s",
+                        self.peer_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    return {"ok": False, "error": f"stop_task failed: {exc}"}
             # Sim peer: route to stop_policy (cooperative cancellation).
             # Without this branch every sim peer was UNSTOPPABLE over the
             # mesh - {"action": "stop"} answered "peer exposes no stop_task"
