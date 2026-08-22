@@ -22,6 +22,7 @@ import torch
 
 from ...utils import name_list_error, positive_count_error
 from .. import Policy, align_action_values, chunk_count_error
+from .._state_keys import drop_velocity_siblings
 from .embodiment import (
     ZeroActionMonitor,
     diagnose_action_dim,
@@ -144,8 +145,6 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
 # what identifies a placeholder.
 _GENERIC_STATE_KEY_PREFIX = "joint_"
 
-_VELOCITY_SUFFIX = ".vel"
-
 
 def _undeclared_image_feature_error(
     targets: list[str],
@@ -217,41 +216,6 @@ def _undeclared_image_feature_error(
         f"{declared[0]!r}}}}} for EVERY key you declared, so each declared feature is a "
         f"rename target."
     )
-
-
-def _drop_velocity_siblings(scalar_keys: list[str]) -> list[str]:
-    """Drop each ``<joint>.vel`` whose ``<joint>`` position companion is present.
-
-    Used only for the OBSERVATION-DERIVED state ordering (see
-    :meth:`LerobotLocalPolicy._resolve_state_order`), which is built from the
-    observation's own insertion order. The MuJoCo backend emits a velocity
-    sibling beside every joint position (``simulation/mujoco/rendering.py``:
-    ``obs[jnt_name] = qpos`` then ``obs[f"{jnt_name}.vel"] = qvel``), so that
-    order alternates ``[pos0, vel0, pos1, vel1, ...]``. Feeding it to a policy
-    trained on positions puts a velocity in every other slot of
-    ``observation.state`` and, once truncated to the model's state dim, drops
-    the trailing joints entirely - a wrong state vector with no error raised.
-    The producer documents ``<name>.vel`` as an ADDITIVE key that position-only
-    consumers are unaffected by; this restores that contract here.
-
-    A ``.vel`` key with NO position companion is KEPT, because some embodiments
-    legitimately declare velocity state and dropping it would corrupt those
-    instead: ``embodiments.json`` gives LeKiwi body-frame base velocities
-    ``x.vel`` / ``y.vel`` / ``theta.vel`` with no ``x`` / ``y`` / ``theta``
-    position key. Pairing is therefore decided per key, not by suffix alone.
-
-    Explicitly configured ``robot_state_keys`` are NOT filtered - an operator
-    naming ``elbow.vel`` is stating the model's input, and this only cleans up
-    an ordering inferred from whatever the observation happened to contain.
-
-    Args:
-        scalar_keys: Candidate state keys in observation insertion order.
-
-    Returns:
-        The same list, order preserved, minus the paired velocity siblings.
-    """
-    present = set(scalar_keys)
-    return [k for k in scalar_keys if not (k.endswith(_VELOCITY_SUFFIX) and k[: -len(_VELOCITY_SUFFIX)] in present)]
 
 
 # Fallback control rate used ONLY when RTC runs without the runtime having
@@ -2441,8 +2405,9 @@ class LerobotLocalPolicy(Policy):
         Any ordering derived from the observation (both the fallback above and
         the no-``robot_state_keys`` case) is position-only: a ``<joint>.vel``
         sibling of a present ``<joint>`` is dropped by
-        :func:`_drop_velocity_siblings`, so a MuJoCo observation does not
-        interleave velocities into ``observation.state``. An unpaired ``.vel``
+        :func:`~strands_robots.policies._state_keys.drop_velocity_siblings` - the
+        rule every provider that infers an ordering this way shares - so a MuJoCo
+        observation does not interleave velocities into ``observation.state``. An unpaired ``.vel``
         key (LeKiwi's base velocities) is kept, and an explicitly configured
         ``robot_state_keys`` ordering is returned untouched.
 
@@ -2461,7 +2426,7 @@ class LerobotLocalPolicy(Policy):
                 matches the observation.
         """
         if not self.robot_state_keys:
-            return _drop_velocity_siblings(scalar_keys)
+            return drop_velocity_siblings(scalar_keys)
         if any(k in observation_dict for k in self.robot_state_keys):
             return self.robot_state_keys
         shown = self.robot_state_keys[:8]
@@ -2486,7 +2451,7 @@ class LerobotLocalPolicy(Policy):
         if not self._state_key_mismatch_warned:
             logger.warning(msg)
             self._state_key_mismatch_warned = True
-        return _drop_velocity_siblings(scalar_keys)
+        return drop_velocity_siblings(scalar_keys)
 
     def _collect_state_values(self, observation_dict: dict[str, Any], order: list[str]) -> list[float]:
         """Pull the joint-state vector from ``observation_dict`` in ``order``.
