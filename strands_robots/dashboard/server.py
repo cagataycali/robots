@@ -1,33 +1,4 @@
-"""FastAPI app for the Strands Robots Dashboard.
-
-Endpoints:
-    GET  /api/health                     liveness + mesh status (always public)
-    GET  /api/fleet                      current fleet snapshot
-    GET  /api/robots/registry            registered robot names (spawnable)
-    GET  /api/policies                   full provider catalog (run-form schema)
-    POST /api/policies/validate          pre-flight a provider config
-    POST /api/robots/{peer}/task         start a task on a peer
-    POST /api/robots/{peer}/stop         stop the running task on a peer
-    POST /api/robots/{peer}/teleop/publish  publish a leader's own joints
-    POST /api/safety/estop               fleet-wide emergency stop
-    GET  /api/config                     agent / voice / mesh / env config
-    POST /api/config                     apply config (hot where possible)
-    GET  /api/mesh/config                mesh endpoints + wire-security posture
-    POST /api/mesh/config                re-point the mesh (optional restart)
-    GET  /api/agent/status               fleet-agent readiness
-    POST /api/agent/reset                rebuild the agent / clear history
-    GET  /api/activity                   recent fleet commands + safety events
-    GET  /api/frame/{peer}/{cam}         latest JPEG frame (poll)
-    WS   /ws/mesh                        live event stream
-    WS   /ws/camera/{peer}/{cam}         binary JPEG stream for one camera tile
-    /                                    static PWA (frontend/dist)
-
-Auth: when ``security.auth_token`` is configured (settings or
-``DASHBOARD_AUTH_TOKEN``) every /api and /ws request must present it. With no
-token configured the server stays open - the LAN-dev posture the dashboard was
-built with - and the UI shows an explicit "unauthenticated" warning rather than
-pretending otherwise.
-"""
+"""FastAPI app for the Strands Robots Dashboard."""
 
 from __future__ import annotations
 
@@ -72,25 +43,16 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
-#: These two have to outlive individual SOCKETS to be able to count them - that is the whole
-#: requirement, and app.state satisfies it. Module level made them outlive the APP as well, which
-#: nothing asked for and which cost a day of confusion (Q63): one test's deliberate reopen storm
-#: exhausted the close-log budget for a peer/camera name, so a LATER test in the same process saw
-#: its close line silently suppressed and reported "the verdict never reached the log". A dashboard
-#: process serves one app, so per-app state is identical in production and honest under test.
-#: Kept as module attributes too: create_app() rebinds fresh instances onto app.state, and the
-#: fallbacks below mean a caller holding an app built elsewhere still gets a working throttle.
+# : These two have to outlive individual SOCKETS to be able to count them - that is the whole
+# : requirement, and app.state satisfies it.
 _CAMERA_CLOSE_LOG = CloseLogThrottle()
-# Q46: the client-side churn cure only reaches clients that RELOAD. Measured: a tab kept
-# reopening one camera 1.53x/s for twelve hours after both cures landed, last asset request
-# an hour earlier. So the server carries its own, and it survives any client.
 _CAMERA_CHURN = ChurnGuard()
 
-#: Reachable without a token: liveness (so a client can discover that auth is
-#: required at all), the WebAuthn ceremony endpoints (you cannot log in from
-#: behind a wall that requires being logged in), and the static shell (which
-#: renders the login prompt). /api/auth/register/* gates ITSELF: once a
-#: passkey exists, enrolling another requires a valid session.
+# : Reachable without a token: liveness (so a client can discover that auth is : required at
+# all), the WebAuthn ceremony endpoints (you cannot log in from : behind a wall that requires
+# being logged in), and the static shell (which : renders the login prompt).
+# /api/auth/register/* gates ITSELF: once a : passkey exists, enrolling another requires a
+# valid session.
 PUBLIC_PATHS = {
     "/api/health",
     "/api/auth/status",
@@ -105,37 +67,13 @@ try:  # passkey auth is optional at import time (needs webauthn + PyJWT)
 except Exception:  # pragma: no cover - deps missing in minimal installs
     dash_auth = None  # type: ignore[assignment]
 
-
 class TokenAuthMiddleware:
-    """Bearer-token gate for /api and /ws, as raw ASGI.
-
-    Raw ASGI rather than ``BaseHTTPMiddleware`` because WebSocket scopes never
-    reach an HTTP middleware - and /ws/mesh, /ws/chat and /ws/voice are exactly
-    the endpoints that drive motors and spend money.
-
-    Accepted credentials, in order: the static ``security.auth_token``, then a
-    WebAuthn session JWT minted by ``dashboard.auth``. With NEITHER configured
-    the open posture is LOCAL-ONLY: loopback clients pass (the LAN-dev
-    workflow), anything else is refused - an unauthenticated dashboard
-    commands real motors, so "auth disabled" must never mean "open to the
-    network".
-    """
+    """Bearer-token gate for /api and /ws, as raw ASGI."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
 
     def _renewing(self, scope, send, dash_auth, presented):
-        """`send`, with a renewed session token attached if one is due (U21).
-
-        Only for http: a websocket has no response headers to carry it, and the
-        client's next ordinary request renews the session anyway — so a socket that
-        outlives the token is covered by the polling the page already does, without
-        inventing a second renewal channel inside the frame protocol.
-
-        A failure here must never cost the request its response: the caller is
-        already authenticated, and refusing to serve them because a *renewal*
-        raised would turn a convenience into an outage.
-        """
         if scope.get("type") != "http":
             return send
         try:
@@ -162,12 +100,6 @@ class TokenAuthMiddleware:
 
     @staticmethod
     def _note_refusal(scope: dict[str, Any], path: str, kind: str) -> None:
-        """Count a refused handshake (Q88). Never allowed to affect the refusal itself.
-
-        A refused request that raises inside the bookkeeping would turn a correct 401 into a
-        500 - and a counter is never worth that. The tally lives on app.state (per app, the
-        Q63 lesson) with a module-level fallback for an ASGI mount that has no app in scope.
-        """
         try:
             state = getattr(scope.get("app"), "state", None)
             tally = getattr(state, "refusals", None) if state is not None else None
@@ -185,9 +117,7 @@ class TokenAuthMiddleware:
 
     @staticmethod
     def _client_is_local(scope: dict[str, Any]) -> bool:
-        # A reverse proxy (cloudflared tunnel) connects FROM loopback on behalf
-        # of the whole internet. Any forwarding header means the ORIGINAL
-        # client is remote, so "local" must be false no matter the socket peer.
+        # A reverse proxy (cloudflared tunnel) connects FROM loopback on behalf of the whole internet.
         headers = {k.decode().lower() for k, _ in scope.get("headers") or []}
         if headers & {"cf-connecting-ip", "x-forwarded-for", "x-real-ip"}:
             return False
@@ -215,16 +145,7 @@ class TokenAuthMiddleware:
 
     @staticmethod
     def _cross_origin_refused(scope: dict[str, Any]) -> bool:
-        """True when a BROWSER cross-origin request must be refused.
-
-        CORS only protects responses; the SIDE EFFECT of a mutating request
-        fires before the browser hides the reply, and a no-header POST (e.g.
-        an e-stop, which needs no body) is a "simple request" the browser
-        sends without any preflight. So the guard itself refuses writes and
-        websocket handshakes whose Origin disagrees with the request host and
-        is not explicitly allow-listed. Non-browser clients (curl, scripts,
-        the spawn watcher) send no Origin header and are untouched.
-        """
+        """True when a BROWSER cross-origin request must be refused."""
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers") or []}
         origin = headers.get("origin", "").strip()
         if not origin:
@@ -233,11 +154,7 @@ class TokenAuthMiddleware:
         netloc = urlsplit(origin).netloc.strip().lower()
         if netloc and netloc == host:
             return False  # same-origin
-        # A WILDCARD IS NOT A WRITE PERMIT. "*" is a reasonable answer to
-        # "who may READ this API", and it is what older installs persisted into
-        # settings.json - but honouring it here would let any tab the operator
-        # happens to have open POST /api/robots/{peer}/task and move the arms
-        # (Q20). Mutations and websockets need an origin named EXPLICITLY.
+        # A WILDCARD IS NOT A WRITE PERMIT.
         allowed = settings.get("security", "cors_origins", []) or []
         named = {str(a).rstrip("/") for a in allowed if str(a) != "*"}
         if origin.rstrip("/") in named:
@@ -280,8 +197,6 @@ class TokenAuthMiddleware:
                 await self.app(scope, receive, send)
                 return
             if dash_auth is not None and dash_auth.session_is_valid(presented):
-                # U21: a session past its half-life is renewed on the response it is
-                # already waiting for, so an active session never dies mid-use.
                 await self.app(scope, receive, self._renewing(scope, send, dash_auth, presented))
                 return
         self._note_refusal(scope, path, "credential")
@@ -292,28 +207,16 @@ class TokenAuthMiddleware:
         response = JSONResponse({"detail": "unauthorized"}, status_code=401)
         await response(scope, receive, send)
 
-
-#: The frame types /ws/chat implements. A type outside this set is answered with a typed error rather
-#: than dropped (Q81); a frame with NO type at all stays acceptable, because "text" alone is what the
-#: oldest clients send and refusing it would break a working path to fix a silent one.
-#: Fallback tally for a guard running without an app in scope (a bare ASGI mount). create_app
-#: binds a fresh one onto app.state; this exists so the counter can never be the reason a
-#: refusal raises. See refusals.py.
+# : The frame types /ws/chat implements.
 _REFUSALS = RefusalTally()
 
 _CHAT_FRAME_TYPES = frozenset({"chat", "ping"})
 
 CHAT_MAX_FRAME_BYTES = 32 * 1024  # a generous chat turn; 2 MB frames ran real model turns
 
-
 def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
-    """One /ws/chat frame -> ``(prompt, reply)``.
-
-    Exactly one of the two is non-None, or both are None (nothing to do).
-    A protocol error is a typed ``error`` REPLY, never a prompt: junk frames
-    used to be promoted to prompts and billed as model turns (Q18), and a
-    binary frame or non-string ``text`` killed the socket outright (Q17).
-    Raises WebSocketDisconnect for a disconnect message.
+    """One /ws/chat frame -> ``(prompt, reply)``. Exactly one of the two is non-None, or both are None
+    (nothing to do).
     """
     if message.get("type") == "websocket.disconnect":
         raise WebSocketDisconnect(int(message.get("code") or 1000))
@@ -335,12 +238,6 @@ def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any
         return None, {"type": "error", "error": "frame must be a JSON object"}
     if msg.get("type") == "ping":
         return None, {"type": "pong"}
-    # An UNRECOGNISED type is refused out loud (Q81). A websocket frame has no status code, so a type
-    # this server does not implement is otherwise dropped in perfect silence: the operator taps a
-    # button, the socket stays open, nothing happens, and no surface anywhere says why. Measured on
-    # this bundle: it sends only 'chat' here and 'stop' on /ws/voice, so nothing legitimate lands in
-    # this branch today - it is the NEXT frame type, added to the UI before the server learns it, that
-    # this sentence is for. Naming the accepted set turns "the button is broken" into a one-line fix.
     ftype = msg.get("type")
     if ftype is not None and ftype not in _CHAT_FRAME_TYPES:
         return None, {
@@ -358,20 +255,8 @@ def parse_chat_frame(message: dict[str, Any]) -> tuple[str | None, dict[str, Any
     prompt = text.strip()
     return (prompt or None), None
 
-
 async def _client_gone(ws: WebSocket) -> None:
-    """Park on the socket's inbound channel until the client actually leaves.
-
-    Q50. A send-only websocket handler learns about a disconnect ONLY from a failing
-    send, so a handler that has nothing to send never learns at all: measured on the
-    live dashboard, 71,798 "connection open" lines and zero closes in 11.5 hours,
-    every one of those coroutines still parked in its loop. A camera with no frames
-    is precisely that case - and precisely the case Q42's close verdict was written
-    to explain, so the diagnostic could never fire for the failure it was for.
-
-    Reading the channel is also what makes the ASGI disconnect message get consumed,
-    which is how the server side of the socket is torn down at all.
-    """
+    """Park on the socket's inbound channel until the client actually leaves."""
     try:
         while True:
             message = await ws.receive()
@@ -380,15 +265,8 @@ async def _client_gone(ws: WebSocket) -> None:
     except (WebSocketDisconnect, RuntimeError):
         return
 
-
 def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
-    """Land the auto-spawn watcher's poll results in the activity trail.
-
-    The watcher spawns robots with NOBODY at the keyboard - the one actor
-    whose actions most need an audit trail. poll() already reports what it
-    did; without this, a board plugged in while the operator is away becomes
-    a moving arm with no recorded cause.
-    """
+    """Land the auto-spawn watcher's poll results in the activity trail."""
     if not did:
         return
     for peer_id in did.get("spawned") or []:
@@ -402,57 +280,12 @@ def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
             detail="USB auto-spawn (board unplugged)", ok=True,
         )
 
-
 def static_cache_control(path: str) -> str:
-    """Cache-Control for one built-frontend file, as a pure function of its name.
-
-    MEASURED 2026-08-21 on the running dashboard: /index.html and /sw.js came back with an ETag and
-    NO Cache-Control at all, and so did every hashed asset. That is the wrong way round twice over,
-    and it is the structural other half of the eleven-hour-old bundle a phone in Seattle was running
-    (see lib/swUpdate.ts):
-
-    - With no Cache-Control, a browser is ALLOWED to invent freshness from Last-Modified (the usual
-      heuristic is 10% of the file's age), so a reload can serve index.html out of the HTTP cache
-      without ever asking this server. A dist built ten hours ago buys about an hour of silence -
-      which is exactly the "no fix we ship can reach that phone" symptom, and no amount of service
-      worker polling can cure it, because the poll never gets to happen.
-    - Meanwhile the /assets files carry a content hash in their NAME, so they can never go stale and
-      should be cached for a year. Revalidating each of them costs a round trip per asset per load,
-      which on a phone over a tunnel is the slow cold start cagatay sees.
-
-    So: hashed assets are immutable, and every entry point is `no-cache`. `no-cache` means REVALIDATE,
-    not "do not store" - the ETag above still turns an unchanged file into a 304, so this is honest
-    without being wasteful. no-store would throw the bytes away and make every reload a full download.
-    """
+    """Cache-Control for one built-frontend file, as a pure function of its name."""
     name = path.rsplit("/", 1)[-1]
-    # Q116, measured on a real build: vite emitted `index-BGRlFtdn.js` and the digit rule below
-    # REFUSED IT, so the main bundle - the biggest file the app loads - was revalidated on every
-    # page load. A vite hash is 8 base64 characters and only 10 of the 64 are digits, so roughly
-    # one build in four rolls an all-letter hash: the defect appears and disappears with the hash,
-    # which is why it survived the test that exists to catch it.
-    # THE DIRECTORY IS EVIDENCE AND THE NAME IS A GUESS. vite content-hashes everything it puts in
-    # assets/ (build.rollupOptions output naming), and both call sites pass a path that contains
-    # that directory - StaticFiles hands us the file's real path, the fallback route the URL
-    # sub-path. So ask the structure first and keep the name pattern only for hashed files that
-    # live at the dist ROOT (workbox-e97c6ee1.js).
     parts = path.replace("\\", "/").split("/")
     if len(parts) >= 2 and parts[-2] == "assets":
         return "public, max-age=31536000, immutable"
-    # A vite content hash is HYPHEN-separated and base62-ish: index-BB6lyXA6.css,
-    # workbox-e97c6ee1.js, workbox-window.prod.es5-BqEJf4Xk.js. Only a name that CHANGES when its
-    # content changes may be cached for a year, so the hash is required to be the LAST
-    # hyphen-separated segment, at least 8 characters, and to contain a digit.
-    #
-    # Two mistakes of mine are pinned by the test, because both were silent: a dot-separated pattern
-    # matched NONE of the real filenames (everything stayed no-cache, so the bug looked fixed and
-    # changed nothing), and allowing a hyphen INSIDE the hash matched apple-touch-icon.png, which is
-    # not hashed at all - a year-long cache on a file whose name never changes is unfixable from the
-    # server. Missing a real hash only costs a revalidation, so the pattern errs that way on purpose.
-    # A hash-shaped segment is one that could not have been TYPED by a person: it carries a digit
-    # (workbox-e97c6ee1) or mixes case (BGRlFtdn). Requiring a digit alone rejected a real hash;
-    # allowing any 8+ letters would accept `favicon-original.png`, whose name never changes, and a
-    # year-long cache on that is unfixable from the server. Missing a hash costs one revalidation,
-    # so where neither signal is present this still errs toward no-cache.
     if re.fullmatch(
         r".+-(?=[A-Za-z0-9_]*(?:[0-9]|[a-z][A-Za-z0-9_]*[A-Z]|[A-Z][A-Za-z0-9_]*[a-z]))"
         r"[A-Za-z0-9_]{8,}\.(?:js|css|woff2?|png|svg|jpg|jpeg|webp|ico)",
@@ -463,11 +296,8 @@ def static_cache_control(path: str) -> str:
     # these from a cache pins the whole app at an old build.
     return "no-cache"
 
-
 def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app = FastAPI(title="strands-robots dashboard")
-    # Q50: .env was written by the Env tab and never read by anything. Load it here, before
-    # any provider resolves a credential, with the launch environment winning.
     from strands_robots.dashboard.config_api import load_env_file
 
     exported, shadowed = load_env_file()
@@ -498,10 +328,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app.add_middleware(TokenAuthMiddleware)
 
     app.state.bridge = bridge or MeshBridge()
-    # Per-app, not per-process: see the note on _CAMERA_CLOSE_LOG (Q63).
     app.state.camera_close_log = CloseLogThrottle()
-    # Q88: refused handshakes, counted so a retry storm is visible in /api/health instead of
-    # only in a 34 MB log. Per app for the same reason as the close log.
     app.state.refusals = RefusalTally()
     app.state.camera_churn = ChurnGuard()
     app.state.mesh_online = False
@@ -524,14 +351,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app.state.bridge.protected_peer_ids = lambda: {
         pid for pid, m in list(app.state.devices.robots.items()) if m.alive()
     }
-    # The measured leader/follower role travels with the fleet snapshot (both
-    # rails), so a card can say which arm it IS instead of leaving the operator to
-    # infer it from a name. Cached server-side; /api/fleet is polled ~1Hz.
-    # Role AND requested-camera names ride the same hook, so the fleet route and every websocket
-    # client see one story about a peer (see DeviceManager.annotations_by_peer).
     app.state.bridge.peer_annotations = app.state.devices.annotations_by_peer
-    # U22: and who this dashboard started that is now dead. managed_children() does no
-    # serial scan (devices() does), which matters on a snapshot built ~1Hz.
     app.state.bridge.managed_children = app.state.devices.managed_children
 
     @app.on_event("startup")
@@ -579,15 +399,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/network/hint")
     async def network_hint(request: Request) -> dict[str, Any]:
-        """Q52: tell a viewer in the same house to stop streaming through Cloudflare.
-
-        The client address must come from the tunnel's forwarded header - every socket
-        this process sees is 127.0.0.1 (cloudflared), so trusting request.client here
-        would report "local" for every remote viewer on earth. CF-Connecting-IP is set by
-        Cloudflare itself and is the address the access log already shows; a direct LAN
-        visitor has no such header and falls back to the peer address, which for them IS
-        the truth.
-        """
         fwd = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for")
         client_ip = (fwd.split(",")[0].strip() if fwd else None) or (
             request.client.host if request.client else None
@@ -609,34 +420,24 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "mesh_online": app.state.mesh_online,
             "dashboard_peer_id": app.state.bridge.peer_id,
             "peers": len(app.state.bridge.peers),
-            # How much /ws/mesh fan-out the coalescer avoided. Reported rather
-            # than asserted: a saving nobody can measure is a claim, and this is
-            # the number the perf lens should be able to check on a live fleet.
+            # How much /ws/mesh fan-out the coalescer avoided.
             "mesh_coalesce": app.state.bridge.coalesce_stats(),
-            # Q149: "peers: 4" read HEALTHY for forty-four hours while three of those
-            # four arms published no joints at all. Present only when something IS
-            # silent (the refused_handshakes law), so a poller gets news without a
-            # second request - and absent on a fleet that is actually streaming.
             **(
                 {"joint_streams": js}
                 if (js := silent_arms(app.state.bridge.peers)) is not None
                 else {}
             ),
-            # Which build is answering. ALWAYS present, unlike the news-only blocks above:
-            # its ABSENCE is how a client learns the server predates this stamp, which is the
-            # question every "the UI renders nothing for that field" report turns out to be.
+            # Which build is answering.
             "build": build_info(),
             "t": time.time(),
-            # Q88: present ONLY when something was actually refused (see refusals.summary) -
-            # a section that is always there is a section nobody reads.
             **(
                 {"refused_handshakes": s}
                 if (
                     s := app.state.refusals.summary(
                         time.time(),
-                        # /api/health is public BY DESIGN (the caretaker polls it, the LAN hint
-                        # needs it before any sign-in), so the identities in this block are
-                        # withheld from a caller who has not authenticated. See refusals.summary.
+                        # /api/health is public BY DESIGN (the caretaker polls it, the LAN hint needs it before any
+                        # sign-in), so the identities in this block are withheld from a caller who has not
+                        # authenticated.
                         detailed=_health_reader_is_trusted(request),
                     )
                 )
@@ -667,12 +468,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         return request.query_params.get("token", "").strip()
 
     def _health_reader_is_trusted(request: Request) -> bool:
-        """May this caller see WHO is being refused?
-
-        Yes for a valid static token or session, and yes on loopback with auth off — the LAN-dev
-        posture where every /api is already open, so withholding here would only hide the news
-        from the one operator who can act on it. Everyone else gets counts without identities.
-        """
+        """May this caller see WHO is being refused?"""
         presented = _session_presented(request)
         token = settings.get("security", "auth_token")
         if token and hmac.compare_digest(presented, str(token)):
@@ -748,27 +544,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/policies")
     async def policies() -> dict[str, Any]:
-        """Full provider catalog - the schema the run form is generated from.
-
-        ``requires``/``config_keys``/``defaults`` come straight from
-        ``registry/policies.json``, so a provider that needs a port or a
-        checkpoint says so instead of failing mid-run.
-        """
+        """Full provider catalog - the schema the run form is generated from."""
         catalog = await asyncio.to_thread(config_api._policy_catalog)
         if not catalog:
             raise HTTPException(500, "policy registry unavailable")
         return {"providers": catalog, "names": [p["name"] for p in catalog]}
 
     def require_peer(peer_id: str) -> None:
-        """404 for a peer that was never in the fleet, before spending the RPC.
-
-        Every /api/robots/{peer}/* route used to send the command and wait out its
-        whole timeout -- 10s for stop, up to duration+10 for a task -- then answer
-        200 with state "no_answer". That is the SAME word a real robot that went
-        quiet produces, so a typo and a wedged arm were indistinguishable, on the
-        stop path of all places. A known-but-stale peer is still addressed: "it
-        went quiet, try stopping it anyway" is a real thing to want.
-        """
+        """404 for a peer that was never in the fleet, before spending the RPC."""
         from strands_robots.dashboard.mesh_bridge import peer_is_known
 
         bridge = app.state.bridge
@@ -784,25 +567,23 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/robots/{peer_id}/teleop")
     async def teleop_status(peer_id: str) -> dict[str, Any]:
-        """Live teleop health for one peer: publisher/receiver rates, drops,
-        slew rejections - the counters InputPublisher/InputReceiver already
-        keep. Works on hardware AND sim peers (TeleopMixin lift)."""
+        """Live teleop health for one peer: publisher/receiver rates, drops, slew rejections - the counters
+        InputPublisher/InputReceiver already keep.
+        """
         require_peer(peer_id)
         result = await app.state.bridge.send_cmd_async(peer_id, {"action": "teleop_status"}, timeout=10.0)
-        # The counters alone lied: a follower refusing EVERY frame reported
-        # running:true, and the reason existed only in its child log. health turns
-        # the counters (+ that log, when the peer is ours) into a sentence, and a
-        # refusal we can continue from arrives with its consent request attached.
+        # The counters alone lied: a follower refusing EVERY frame reported running:true, and the
+        # reason existed only in its child log. health turns the counters (+ that log, when the peer
+        # is ours) into a sentence, and a refusal we can continue from arrives with its consent
+        # request attached.
         inner = result.get("result") if isinstance(result, dict) else None
         log_tail = None
         managed = app.state.devices.robots.get(peer_id)
         if managed is not None:
             log_tail = list(getattr(managed, "logs", []) or [])[-40:]
         health = teleop_health(inner if inner is not None else result, log_tail)
-        # "Nothing is arriving" is not yet an answer: it could be a leader that
-        # never started, or two peers that are not meeting. Ask the named leader
-        # ONLY in that case - one extra round trip, and only when it decides
-        # which end of the problem the operator should look at.
+        # "Nothing is arriving" is not yet an answer: it could be a leader that never started, or two
+        # peers that are not meeting.
         silent = {k: v for k, v in health.get("receivers", {}).items() if v.get("state") == "silent"}
         if silent:
             counted: dict[str, int] = {}
@@ -833,16 +614,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/robots/{peer_id}/teleop/publish")
     async def teleop_publish(peer_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Make a peer a teleop SOURCE from its own joints (U3, leader half).
-
-        Until this existed the chain was half-built: /teleop/receive could point
-        a follower at a leader stream, but nothing on the mesh could make that
-        stream exist, so the follower waited out its subscribe budget and
-        answered with a shrug.
-
-        Read-only on the arm named here - it publishes what it measures and moves
-        nothing. The mover is whoever is pointed at this stream.
-        """
         require_peer(peer_id)
         body = body or {}
         cmd: dict[str, Any] = {"action": "teleop_publish"}
@@ -887,12 +658,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/collect")
     async def collect_episodes(body: dict[str, Any]) -> dict[str, Any]:
-        """Collect a policy-driven dataset in a one-shot mesh sim.
-
-        run_policy drives exactly n_episodes rollouts with per-episode
-        parquet boundaries and reports parquet-truth counts. The dataset
-        lands under dataset_root, where /api/training/datasets discovers it
-        - closing the record -> train -> deploy loop entirely in the UI.
+        """Collect a policy-driven dataset in a one-shot mesh sim. run_policy drives exactly n_episodes
+        rollouts with per-episode parquet boundaries and reports parquet-truth counts.
         """
         dataset_root = (body.get("dataset_root") or "").strip()
         if not dataset_root:
@@ -923,19 +690,10 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/replay")
     async def replay_episode(body: dict[str, Any]) -> dict[str, Any]:
-        """Replay a recorded LeRobotDataset episode in a one-shot mesh sim.
-
-        The replay peer appears in the fleet grid with live cameras while
-        the recorded actions drive real MuJoCo physics; it exits when the
-        episode ends. Datasets come from /api/training/datasets.
-        """
+        """Replay a recorded LeRobotDataset episode in a one-shot mesh sim."""
         repo_id = (body.get("repo_id") or "").strip()
         if not repo_id:
             raise HTTPException(422, "repo_id required")
-        # Values go to the validator UNCOERCED: int("banana") here was a 500
-        # wearing a stack trace, and int() would also quietly turn 5.9 into 5
-        # before anything could refuse it. validate_replay judges the actual
-        # request; a bad one is a 422 naming what to change (Q5).
         from strands_robots.dashboard.device_manager import validate_replay
 
         bad = validate_replay(
@@ -962,35 +720,16 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def training_trainers() -> dict[str, Any]:
         from strands_robots.dashboard import training
 
-        # `trainers` keeps its shape (a list of names) forever: this app ships as a
-        # PWA and a cached older bundle renders that list directly - changing it to
-        # objects crashes those tabs. Q48's extra knowledge therefore arrives as a
-        # SEPARATE key, which an old bundle ignores.
+        # `trainers` keeps its shape (a list of names) forever: this app ships as a PWA and a cached
+        # older bundle renders that list directly - changing it to objects crashes those tabs.
         return {
             "trainers": await asyncio.to_thread(training.list_trainers),
             "unsupported": await asyncio.to_thread(training.form_unsupported),
-            # Q78: the vocabulary this SERVER accepts. A dashboard is long-lived - the one on
-            # this Mac had been up for days - so a freshly built bundle regularly talks to a
-            # server started before the field it is offering existed, and the operator gets
-            # "unknown field(s): val_episodes" with no way to read that as "restart me". The
-            # form asks instead of guessing. Same rule as `unsupported` above: a NEW key, so a
-            # cached older bundle ignores it and keeps working.
             "fields": list(training.SPEC_KEYS),
         }
 
     @app.get("/api/datasets/labels")
     async def dataset_labels(root: str) -> dict[str, Any]:
-        """Episode labels for one recorded dataset (#2486), read-only.
-
-        The dashboard could collect episodes and train on them but never SHOW what any episode was
-        judged to be, so an operator had no way to see (or even find out about) the two-stage
-        verdict the source records: deterministic benchmark predicates first, a judge annotation on
-        top. Read-only on purpose - `episode_labels.annotate_episode` refuses an episode with no
-        deterministic verdict, and a real-arm recording has none, so a WRITE control here would be
-        offered-but-undriveable for exactly the datasets this dashboard records. What ships instead
-        is the honest capability sentence (`can_annotate` + `why`), which is what tells the operator
-        whether labelling is even possible for this dataset and what would have to be true first.
-        """
         from pathlib import Path
 
         from strands_robots import episode_labels as _labels
@@ -1020,25 +759,10 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/training/datasets")
     async def training_datasets(q: str = "", hub: bool = True, limit: int = 12) -> dict[str, Any]:
-        """Datasets for the submit form's picker: local roots + a Hub search.
-
-        R6: training could always accept a Hub ``dataset_repo_id``, but nothing
-        here ever OFFERED one, so a machine with no local recording showed an
-        empty picker and a dead end. Local rows still come first and keep their
-        shape, so existing callers (and the U20 golden-path test) are unaffected;
-        the response merely gains ``problem``/counts alongside ``datasets``.
-
-        ``hub=false`` keeps the old local-only behaviour for a caller that must
-        not touch the network.
-        """
+        """Datasets for the submit form's picker: local roots + a Hub search."""
         from strands_robots.dashboard import training
         from strands_robots.dashboard.dataset_check import mark_live_recording
 
-        # Q38: a dataset in MID-RECORDING is indistinguishable from an abandoned one by metadata
-        # alone (episode 0 is not in meta/info.json until it is flushed), and Q37's advice for an
-        # empty folder is "delete it" - the one action that would destroy the session. Only this
-        # route can tell the difference, because only the server knows what the recorder is doing.
-        # Read defensively: a listing must not 500 because the record controller is mid-transition.
         active, captured = None, None
         try:
             session = getattr(app.state, "record", None)
@@ -1075,12 +799,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/training/output-dir")
     async def training_output_dir(path: str = "") -> dict[str, Any]:
-        """Q58: what would a run DO to this directory -- before the operator presses train.
-
-        A GET so the form can ask while typing. Read-only: it lists and classifies, it never
-        creates or clears anything (the delete itself lives in the trainer and is gated in
-        training.submit by confirm_clear).
-        """
         from strands_robots.dashboard import training
 
         if not path.strip():
@@ -1123,13 +841,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/checkpoints/search")
     async def checkpoints_search(q: str = "", limit: int = 15) -> dict[str, Any]:
-        """Type-ahead checkpoint search for the run form.
-
-        Merges the local HF cache (instant, marked ``local``) with a Hub
-        search of public LeRobot checkpoints ranked by downloads. Each row
-        is ready to drop into ``pretrained_name_or_path`` and carries a
-        best-effort ``policy_type`` prefill for lerobot_async's required
-        field.
+        """Type-ahead checkpoint search for the run form. Merges the local HF cache (instant, marked
+        ``local``) with a Hub search of public LeRobot checkpoints ranked by downloads.
         """
         from strands_robots.dashboard import checkpoints
 
@@ -1137,13 +850,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/checkpoints/features")
     async def checkpoint_features(repo_id: str = "") -> dict[str, Any]:
-        """Q79: what a checkpoint declares it was trained on -- so the run form can compare it with
-        the robot BEFORE play energises one.
-
-        Read-only, local only (the HF cache and local training outputs), no model load and no
-        network: a run form must never wait on the Hub. An unknown or unreadable checkpoint answers
-        `{}`, which the pure comparison treats as no evidence rather than as a match.
-        """
         from strands_robots.dashboard import checkpoints
 
         return await asyncio.to_thread(checkpoints.declared_features, repo_id)
@@ -1157,12 +863,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/policies/validate")
     async def validate_policy(body: dict[str, Any]) -> dict[str, Any]:
-        """Dry-run a provider config without touching a robot.
-
-        Answers "will this run?" locally - missing dep, unknown provider,
-        unreachable inference server, untrusted remote code - instead of making
-        the operator read it out of a peer's 30 s timeout.
-        """
+        """Dry-run a provider config without touching a robot."""
         provider = (body.get("policy_provider") or "").strip()
         if not provider:
             raise HTTPException(422, "policy_provider required")
@@ -1170,9 +871,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if not isinstance(config, dict):
             raise HTTPException(422, "policy_config must be an object")
 
-        # Preflight's most useful check compares the model's declared image
-        # inputs against the observation keys it will actually receive, so pass
-        # the target peer's real joints + cameras when we know them.
+        # Preflight's most useful check compares the model's declared image inputs against the
+        # observation keys it will actually receive, so pass the target peer's real joints + cameras
+        # when we know them.
         peer_id = body.get("peer_id") or ""
         peer = app.state.bridge.peers.get(peer_id) or {}
         observation_keys = set((peer.get("state") or {}).get("joints") or {})
@@ -1203,10 +904,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         result = await asyncio.to_thread(_check)
         result["policy_provider"] = provider
         result["observation_keys"] = sorted(observation_keys)
-        # An "ok" here means "no objection could be raised", which is NOT the same
-        # as "I checked the policy you are about to run on a real arm": with no
-        # checkpoint named there is no model for the preflight to inspect, and the
-        # form used to render that empty pass as a green "resolves".
         if result.get("ok"):
             from strands_robots.dashboard.validate_scope import validation_scope
 
@@ -1226,10 +923,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 "was not checked"
             )
 
-        # Q79: the provider preflight is a CLASS hook about camera routing, and only when the
-        # provider overrides it. It never reads what the CHECKPOINT says it was trained on - so a
-        # policy with a 2-value action passed this validate and then energised a 6-joint arm. The
-        # checkpoint declares its own features on disk; compare them with what this peer announces.
         try:
             from strands_robots.dashboard.checkpoints import declared_features
             from strands_robots.dashboard.policy_fit import policy_fit
@@ -1250,8 +943,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                         output_features=feats.get("output_features"),
                         joints=list((peer.get("state") or {}).get("joints") or {}),
                         cameras=list(peer.get("cameras") or {}),
-                        # The operator's own choice, checked against what the checkpoint declares
-                        # (upstream #2543 refuses it, but only after this arm is torqued).
                         norm_tag=config.get("norm_tag") if isinstance(config.get("norm_tag"), str) else None,
                         declared_norm_tags=feats.get("norm_tags"),
                         # runRisk's server-side twin: `hw` exists only when a real device object is
@@ -1275,17 +966,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/robots/{peer_id}/policy-fit")
     async def policy_fit_route(peer_id: str, repo_id: str = "", norm_tag: str = "") -> dict[str, Any]:
-        """Q79: does this checkpoint fit THIS robot? Asked while the form is being filled in.
-
-        Read-only and local: the checkpoint's own declared features (disk) against what the peer
-        announces on the mesh (its joints and camera names). Cheap enough for the run form to ask on
-        every checkpoint change, which is the point - the alternative is discovering that a 2-value
-        action cannot drive 6 joints after play has parked and torqued the arm.
-
-        `evidence: false` means the comparison could not be made (unknown checkpoint, or a peer that
-        has announced nothing yet). It is never a refusal: absence of evidence must not block a run
-        that has always been allowed.
-        """
         require_peer(peer_id)
         from strands_robots.dashboard.checkpoints import declared_features
         from strands_robots.dashboard.policy_fit import policy_fit
@@ -1317,7 +997,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(422, "instruction required")
         # An opt-in anti-accident lock (off unless the operator set it): a task POST that would start
         # REAL motion must carry the browser's confirmation. play sends it; a curl against the public
-        # tunnel does not. Checked BEFORE the command is built, so a refusal cannot half-send.
+        # tunnel does not.
         from strands_robots.dashboard.agent_motion import task_post_allowed
 
         verdict = task_post_allowed(
@@ -1336,26 +1016,21 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "policy_provider": body.get("policy_provider", "mock"),
             "duration": duration,
         }
-        # Only wire-settable keys: validate_command() builds its output from a
-        # strict per-action allowlist and *silently drops* everything else, so
-        # forwarding e.g. a policy_config dict would look accepted and arrive
-        # empty. config_api.WIRE_CMD_KEYS is that allowlist.
+        # Only wire-settable keys: validate_command() builds its output from a strict per-action
+        # allowlist and *silently drops* everything else, so forwarding e.g. a policy_config dict
+        # would look accepted and arrive empty. config_api.WIRE_CMD_KEYS is that allowlist.
         for opt in config_api.WIRE_CMD_KEYS:
             if body.get(opt) is not None:
                 cmd[opt] = body[opt]
-        # Child sim peers can't execute themselves:
-        # route "<parent>__<robot>" to the parent with robot_name here, so
-        # the card's Run button and every API caller get the fix - not just the
+        # Child sim peers can't execute themselves: route "<parent>__<robot>" to the parent with
+        # robot_name here, so the card's Run button and every API caller get the fix - not just the
         # agent's fleet tool.
         from strands_robots.dashboard.mesh_bridge import route_task_target
 
         target, cmd = route_task_target(peer_id, cmd)
-        # Two different waits: "start" is answered by an immediate ack (so waiting
-        # duration+10 meant a 1-hour run held Run in "starting" for 3610s if the peer
-        # never answered), while "execute" blocks until the rollout ends. The ack
-        # budget is still generous, because a cold checkpoint download happens
-        # BEFORE the ack and a premature "failed" on a policy that then loads and
-        # moves an arm is worse than waiting.
+        # Two different waits: "start" is answered by an immediate ack (so waiting duration+10 meant a
+        # 1-hour run held Run in "starting" for 3610s if the peer never answered), while "execute"
+        # blocks until the rollout ends.
         from strands_robots.dashboard.task_timeout import task_ack_budget, timeout_verdict
 
         timeout_s, timeout_kind = task_ack_budget(
@@ -1410,18 +1085,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/safety/estop")
     async def estop() -> dict[str, Any]:
-        """Fleet-wide stop: BOTH rails fire, results reported side by side.
-
-        Rail 1: broadcast {action: stop} to every live peer (works even for
-        peers that ignore the signed envelope). Rail 2: the signed
-        strands/safety/estop envelope, which engages the fleet-wide LOCKOUT
-        on every listening peer - they refuse all further commands until a
-        proofed resume (/api/safety/resume with the override code).
-
-        Only *live* peers are addressed, and every peer is classified
-        stopped / not_stopped / no_answer. A stale peer counted as "stopped"
-        is exactly the lie an e-stop must never tell.
-        """
+        """Fleet-wide stop: BOTH rails fire, results reported side by side."""
         bridge: MeshBridge = app.state.bridge
         peers = bridge.live_peers()
         stale = sorted(set(bridge.peers) - set(peers))
@@ -1441,11 +1105,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             detail=f"{counts['stopped']}/{len(peers)} confirmed stopped",
             ok=counts["stopped"] == len(peers) and bool(peers),
         )
-        # A6: fire the SIGNED safety rail too - the envelope engages the
-        # fleet-wide LOCKOUT on every listening peer (they refuse all further
-        # commands until a proofed resume), which per-peer stop commands
-        # cannot do. Signed rail failure must not degrade the broadcast-stop
-        # above; both fire, results are reported side by side.
+        # A6: fire the SIGNED safety rail too - the envelope engages the fleet-wide LOCKOUT on every
+        # listening peer (they refuse all further commands until a proofed resume), which per-peer
+        # stop commands cannot do.
         signed = await asyncio.to_thread(bridge.signed_estop)
         return {
             "targeted": peers,
@@ -1461,12 +1123,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/safety/resume")
     async def safety_resume(body: dict[str, Any]) -> dict[str, Any]:
-        """Clear the fleet e-stop lockout with the operator override code.
-
-        The code is verified locally (brute-force throttled) and the
-        HMAC-proofed resume envelope is published for every peer to
-        re-verify independently. The code itself never crosses the wire.
-        """
+        """Clear the fleet e-stop lockout with the operator override code."""
         code = (body.get("override_code") or "").strip()
         if not code:
             raise HTTPException(422, "override_code required")
@@ -1502,24 +1159,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/consent")
     async def get_consent() -> dict[str, Any]:
-        """What this machine currently grants, and what can be asked for (U18).
-
-        Built by consent.granted_state so it cannot drift from the guard again: this handler
-        listed two of the three kinds, which left the teleop envelope widening ungrantable-back.
-        """
         return {**consent.granted_state(os.environ), "env_file": str(config_api.ENV_FILE)}
 
     @app.post("/api/consent")
     async def post_consent(body: dict[str, Any]) -> dict[str, Any]:
-        """Approve one refusal, by kind + subject - nothing else is settable.
-
-        The browser never sends the variable or the value: the request is
-        REBUILT here from ``kind``/``subject`` so an approval can only ever
-        widen the exact guard the SDK named. A grant reaches this process'
-        environment (so the next spawned child inherits it) and .env (so it
-        survives a restart), and the answer says plainly whether the peer that
-        was refused needs a respawn to see it.
-        """
+        """Approve one refusal, by kind + subject - nothing else is settable."""
         request = consent.build_request(str(body.get("kind", "")), body.get("subject"))
         if request is None:
             raise HTTPException(422, f"unknown consent kind; expected one of {', '.join(consent.KINDS)}")
@@ -1568,13 +1212,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/consent/revoke")
     async def revoke_consent(body: dict[str, Any]) -> dict[str, Any]:
-        """Take one grant back - the other half of a promise the dialog makes.
-
-        Narrow in the same way the grant was: revoking one repository leaves the
-        rest of the allowlist untouched. Already-running children keep the
-        permission they were started with, and the answer says so instead of
-        implying the fleet was locked down retroactively.
-        """
+        """Take one grant back - the other half of a promise the dialog makes."""
         request = consent.build_request(str(body.get("kind", "")), body.get("subject"))
         if request is None:
             raise HTTPException(422, f"unknown consent kind; expected one of {', '.join(consent.KINDS)}")
@@ -1606,13 +1244,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         }
 
     async def _restart_mesh(*, force: bool = False) -> dict[str, Any]:
-        """Re-open the mesh session against the current settings.
-
-        Guarded because the session is a ref-counted module singleton: locally
-        spawned robots hold their own references and would keep talking to the
-        old endpoints, so re-pointing under them orphans them from the
-        dashboard's view of the fleet.
-        """
+        """Re-open the mesh session against the current settings."""
         dm: DeviceManager = app.state.devices
         managed = [pid for pid, r in dm.robots.items() if r.alive()]
         if managed and not force:
@@ -1674,12 +1306,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         return {"activity": app.state.bridge.activity_log(limit=max(1, min(limit, 300)))}
 
     def _live_camera_names() -> dict[str, list[str]]:
-        """peer_id -> camera names the mesh has actually seen frames for.
-
-        The evidence for "in use": a camera in a child's config that never
-        delivered a frame is assigned, not streaming, and only the frames can
-        tell the two apart.
-        """
+        """peer_id -> camera names the mesh has actually seen frames for."""
         snapshot = app.state.bridge.snapshot()
         return {
             peer_id: list((entry.get("cameras") or {}).keys())
@@ -1688,30 +1315,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/devices")
     async def devices(refresh: bool = False) -> dict[str, Any]:
-        """Local USB serial ports (servo buses) + cameras + managed robots.
-
-        Camera probe results are cached ~30s and indices owned by running
-        robots are never re-opened; ``?refresh=1`` forces a
-        fresh probe of the unclaimed indices.
-        """
-        # The mesh's frame bookkeeping is the evidence for "in use": a camera
-        # in a child's config that never delivered a frame is assigned, not
-        # streaming, and the difference is what the operator has to act on.
+        """Local USB serial ports (servo buses) + cameras + managed robots."""
+        # The mesh's frame bookkeeping is the evidence for "in use": a camera in a child's config that
+        # never delivered a frame is assigned, not streaming, and the difference is what the operator
+        # has to act on.
         return await asyncio.to_thread(app.state.devices.devices, refresh, _live_camera_names())
 
     @app.post("/api/devices/spawn-remembered")
     async def spawn_remembered(body: dict[str, Any]) -> dict[str, Any]:
-        """Bring a board back up exactly as it was last spawned (Q41).
-
-        `managed` lives in memory, so after a restart the devices screen knows nothing about the two
-        arms it was driving an hour ago - while profiles.json holds their whole payload. The payload
-        stays SERVER-SIDE: a client that re-typed it could not reproduce a two-camera config, and a
-        client that guessed one would open the wrong device.
-
-        The port is taken from the request (where the board is now), never from the memory: profiles
-        are keyed by USB serial because /dev names move, and re-using a stale path either finds
-        nothing or opens a different board with this arm's calibration id.
-        """
         from strands_robots.dashboard.device_manager import respawn_payload
 
         port = str(body.get("port") or "").strip()
@@ -1734,14 +1345,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/devices/camera/{index}/preview")
     async def camera_preview(index: int) -> Response:
-        """One JPEG frame from an unclaimed camera index.
-
-        The authoritative "which camera is index N" answer - device names are
-        listed in a different order than OpenCV indices on macOS, so the
-        picture is the identity. 409 when the index is streaming for a
-        running robot (watch that robot's card instead), 503 when the camera
-        will not produce a frame (unplugged, or another app holds it).
-        """
+        """One JPEG frame from an unclaimed camera index."""
         try:
             jpeg = await asyncio.to_thread(
                 app.state.devices.preview_frame, index, _live_camera_names(),
@@ -1755,14 +1359,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/devices/camera/{index}/modes")
     async def camera_modes(index: int) -> dict[str, Any]:
-        """Verified fps/resolution modes for an unclaimed camera (U19).
-
-        Each candidate mode is set and read back on the real device; only
-        combos the camera AGREED to (plus its native mode) come back, so the
-        reconfigure sheet's selects never offer a fantasy the driver would
-        silently ignore. 409 while the index streams for a running robot,
-        503 when the camera will not open.
-        """
         try:
             return await asyncio.to_thread(
                 app.state.devices.probe_modes, index, _live_camera_names(),
@@ -1774,22 +1370,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/devices/arm-role")
     async def arm_role(port: str, model: str = "sts3215") -> dict[str, Any]:
-        """Which role an arm actually IS, read off its servo bus (U2).
-
-        An SO-100/SO-101 follower runs a 12V bus, a leader 7.4V, and every
-        Feetech servo reports its own supply on the read-only Present_Voltage
-        register - so the role is measurable instead of inherited from whatever
-        name a profile was given. The operator's report was that the dashboard
-        has the two arms the wrong way round; a label cannot answer that, a
-        measurement can.
-
-        Register READS only: this cannot move an arm. 409 while a live child
-        holds the port - a servo bus has exactly one owner, and that child is it.
-        """
         try:
-            # Measures AND remembers (keyed by USB serial, never by /dev name -
-            # the OS reassigns those). A measurement that lives only in one HTTP
-            # response does not fix the label the operator sees next session.
+            # Measures AND remembers (keyed by USB serial, never by /dev name - the OS reassigns those).
             return await asyncio.to_thread(app.state.devices.measure_arm_role, port, model)
         except PermissionError as e:
             raise HTTPException(409, str(e)) from e
@@ -1801,11 +1383,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         robot_name = body.get("robot_name")
         if not robot_name:
             raise HTTPException(422, "robot_name required")
-        # An unspawnable mode or an unknown robot is a bad REQUEST, answered
-        # before any process exists. It used to reach Popen: the child raised, the
-        # route had already reported a pid, and mode="quantum" quietly produced a
-        # sim peer wearing "quantum" as its label (the spawner branches on
-        # mode == "real" and sims everything else, so "Real" did it too).
+        # An unspawnable mode or an unknown robot is a bad REQUEST, answered before any process
+        # exists.
         from strands_robots.dashboard.device_manager import validate_spawn
 
         checked = await asyncio.to_thread(validate_spawn, robot_name, body.get("mode", "sim"))
@@ -1824,10 +1403,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             body.get("cameras"),
             body.get("robot_id"),
         )
-        # A pid is not a running robot. Wait out the window in which a
-        # misconfigured child dies (wrong camera config, port held by another
-        # process, policy not installed) so the answer is what happened, not
-        # what was attempted. Returns early the moment the mesh sees the peer.
+        # A pid is not a running robot.
         peer_id = result.get("peer_id")
         if peer_id and "error" not in result:
             bridge = app.state.bridge
@@ -1841,9 +1417,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 # Surface it in the field every caller already reads, so a
                 # dead spawn cannot be mistaken for a live one by any client.
                 result["error"] = outcome.get("reason") or "the peer did not start"
-                # A refusal the operator can answer travels as needs_consent, so
-                # the UI offers "Approve & retry" instead of a wall of prose
-                # whose only remedy is a shell (U18).
                 consent.attach_consent(
                     result, result["error"], "\n".join(outcome.get("log_tail") or [])
                 )
@@ -1871,12 +1444,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/devices/profiles")
     async def device_profiles() -> dict[str, Any]:
-        """Remembered USB device profiles, keyed by board serial number.
-
-        A profile is written whenever a real (serial-port) robot is spawned
-        successfully, and it is what the auto-spawn watcher replays when that
-        exact board is plugged back in.
-        """
+        """Remembered USB device profiles, keyed by board serial number."""
         return {
             "profiles": app.state.devices.profiles.all(),
             "path": app.state.devices.profiles.path,
@@ -1885,15 +1453,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/deploy/snippet")
     async def deploy_snippet(body: dict[str, Any], request: Request) -> dict[str, Any]:
-        """U16: render a spawn payload/profile as a deployable Python script.
-
-        Body: ``{"serial": <profile key>}`` to render a remembered profile, or
-        ``{"payload": {...}}`` for live form state (the U4 form can offer the
-        snippet before the rig was ever spawned). Optional ``hub_host``
-        overrides the address edge devices reach this dashboard's zenoh hub on;
-        it defaults to the host the caller used to reach us, minus the port -
-        loopback is withheld (an edge device's "localhost" is itself).
-        """
         payload = body.get("payload")
         serial = body.get("serial")
         if serial and not payload:
@@ -1905,12 +1464,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         hub_host = body.get("hub_host")
         hub_note = None
         if hub_host is None:
-            # Q122: the browser's address answers "how do I reach the dashboard", not "how does a
-            # DIFFERENT machine reach its hub". deploy.hub_host_from_reached judges it and says why.
             hub_host, hub_note = deploy.hub_host_from_reached(request.url.hostname)
-        # Q53: the snippet mirrors the LIVE posture (mesh port, camera rate, whether wire
-        # security is disabled here) instead of a frozen table - "recreates this exact rig"
-        # is the file's whole promise.
         result = deploy.render_snippet(
             payload,
             hub_host=hub_host or None,
@@ -1935,16 +1489,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.post("/api/devices/{peer_id}/cameras")
     async def reconfigure_cameras(peer_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Respawn a managed peer with a new camera config (U19 v1).
-
-        Cameras are taken only at spawn, so attach/detach/fps/resolution is
-        honestly a respawn - one named atomic operation. The peer's streams
-        drop for the settle window; the UI's confirm dialog owns that consent.
-        ``cameras: null`` detaches everything; each entry is lerobot-shaped
-        ({name: {index_or_path, fps?, width?, height?}}). Invalid configs are
-        422 BEFORE the running peer is touched - a refusal must never cost the
-        operator the process they already had.
-        """
         if "cameras" not in body:
             raise HTTPException(422, "cameras required (a mapping, or null to detach all)")
         from strands_robots.dashboard.device_manager import validate_cameras
@@ -1985,10 +1529,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         """Child-process output for one managed robot (ring buffer)."""
         out = app.state.devices.logs(peer_id)
         if "error" in out:
-            # Q23, same errors-as-200 family as Q3: res.ok must not be true for a
-            # peer that does not exist. Only LOCALLY SPAWNED robots have logs at
-            # all, so the message says which ids qualify rather than implying the
-            # peer is unknown to the whole fleet.
             managed = sorted(getattr(app.state.devices, "robots", None) or {})
             raise HTTPException(404, {
                 "error": out["error"],
@@ -2029,21 +1569,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         device_type: str | None = None,
         device_model: str | None = None,
     ) -> dict[str, Any]:
-        """One calibration's per-motor detail.
-
-        This route used to call the tool POSITIONALLY, so ``name`` landed in
-        ``device_type`` and it answered "view action requires: device_type,
-        device_model, and device_id" for every input -- the drawer rendered that
-        sentence as if it were data.
-
-        A name is not an identity: ``leader_arm`` exists under three models on
-        this machine. With no ``device_model`` the route resolves it, and when the
-        name is ambiguous it answers **409 with the candidates** rather than
-        picking one -- showing ``so_follower``'s numbers to someone who meant
-        ``so101_follower`` is worse than a question. Returns structured
-        ``motors`` (the tool has always carried them; the UI was parsing
-        markdown) alongside the original ``text``.
-        """
+        """One calibration's per-motor detail."""
         from strands_robots.dashboard import calibration as calib
         from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
 
@@ -2108,10 +1634,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         try:
             await ws.send_text(json.dumps(bridge.snapshot()))
             while True:
-                # Q50: `await q.get()` alone parks forever when the mesh is quiet (no
-                # peers, or STRANDS_MESH=false), so the handler outlived the client and
-                # its queue was never detached - the bridge then serialised every event
-                # into queues nobody reads.
                 getter = asyncio.create_task(q.get())
                 done, _ = await asyncio.wait({getter, gone}, return_when=asyncio.FIRST_COMPLETED)
                 if gone in done:
@@ -2132,24 +1654,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         bridge: MeshBridge = app.state.bridge
         last_t: Any = None
         reported: str | None = None
-        # The close path used to be `except: pass`, which is why Q40 could produce 63,906
-        # opens and zero closes: a reconnect storm looked exactly like 63,906 happy
-        # viewers, and "did any of these sockets ever send a frame?" was unanswerable.
         frames_sent = 0
         bytes_sent = 0
         started_at = time.monotonic()
-        # Q52: measured 467 KB/s sustained (20.5 GB in 21h) to one phone on cellular,
-        # because 15 fps of full-size JPEG was the only thing on offer. A viewer that
-        # knows its link is failing can now ask for less - the server never guesses a
-        # cap, it only honours one, so a LAN operator is unaffected.
-        # Q46: what the viewer ASKED for, and what the server will give a viewer that has
-        # been reopening this camera in a loop. The lower of the two wins, so a stale
-        # bundle cannot talk its way back up to full rate.
         churn = getattr(ws.app.state, "camera_churn", _CAMERA_CHURN).note_open(
             viewer_identity(
-                # A JWT is per-login, so its digest identifies the viewer without the
-                # token ever entering a key or a log line. Behind the tunnel the address
-                # is 127.0.0.1 for everyone, which is why it is only the fallback.
+                # A JWT is per-login, so its digest identifies the viewer without the token ever entering a
+                # key or a log line.
                 subject=(
                     hashlib.sha256(ws.query_params.get("token", "").encode()).hexdigest()[:12]
                     if ws.query_params.get("token")
@@ -2163,19 +1674,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         cap = effective_cap(fps_cap(ws.query_params.get("max_fps")), churn.cap_fps)
         min_interval = None if cap is None else 1.0 / cap
         if churn.reason:
-            # Say it on the tile, not only in the log: a silent throttle is
-            # indistinguishable from a slow camera, and old bundles already render
-            # `camera_error` text - so even the tab that caused this can explain itself.
+            # Say it on the tile, not only in the log: a silent throttle is indistinguishable from a slow
+            # camera, and old bundles already render `camera_error` text - so even the tab that caused
+            # this can explain itself.
             with contextlib.suppress(Exception):
                 await ws.send_text(json.dumps({
                     "type": "camera_error", "peer_id": peer_id, "cam": cam,
                     "error": churn.reason, "throttled": True,
                 }))
         last_sent_at: float | None = None
-        # Q50: this loop sends only when a frame exists, so on a camera that publishes
-        # NOTHING there is no failing send to reveal that the viewer left - the handler
-        # spun at 15Hz forever and the close verdict below never ran. Watching the
-        # inbound channel is the only signal a send-only socket has.
         gone = asyncio.create_task(_client_gone(ws))
         try:
             while not gone.done():
@@ -2247,10 +1754,6 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     continue
                 if prompt is None:
                     continue
-                # Q19: turns are serialized by _turn_lock (chat + voice). The
-                # second client used to stare at a dead chat box for the whole
-                # first turn (measured 21.8s) - say so, in a 'notice' the
-                # frontend already renders.
                 if _turn_lock.locked():
                     await ws.send_text(json.dumps({
                         "type": "notice",
@@ -2291,9 +1794,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             except Exception:
                 pass
 
-    # ------------------------------------------------------------------
-    # Static PWA (built frontend). Fallback to index.html for SPA routes.
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Static PWA (built
+    # frontend).
 
     if FRONTEND_DIST.exists():
         from fastapi.staticfiles import StaticFiles
@@ -2312,13 +1814,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
         @app.get("/{path:path}")
         async def spa(path: str) -> Response:
-            # An unrouted /api path is a MISSING ENDPOINT, never a client-side
-            # route: answering it with index.html made every typo and every
-            # renamed endpoint look like a 200 to the browser, so a fetch()
-            # then died on "Unexpected token '<'" - or worse, a frontend
-            # feature-probe ("use the real backend if it answers") concluded
-            # the endpoint existed and fed HTML-shaped junk into its state.
-            # Same for /ws: an HTTP GET there is a wrong protocol, not a page.
+            # An unrouted /api path is a MISSING ENDPOINT, never a client-side route: answering it with
+            # index.html made every typo and every renamed endpoint look like a 200 to the browser, so a
+            # fetch() then died on "Unexpected token '<'" - or worse, a frontend feature-probe ("use the
+            # real backend if it answers") concluded the endpoint existed and fed HTML-shaped junk into
+            # its state.
             first = path.split("/", 1)[0]
             if first in ("api", "ws"):
                 return JSONResponse(

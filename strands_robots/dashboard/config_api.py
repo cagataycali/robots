@@ -1,20 +1,4 @@
-"""Configuration surface for the dashboard - the ``/api/config`` payload.
-
-Handles the parts of configuration that :mod:`strands_robots.dashboard.settings`
-deliberately does not: the ``.env`` file holding credentials, and assembling /
-applying the combined config document the UI edits.
-
-Secret hygiene (the rules exist because each one has a failure mode):
-
-* keys matching :data:`SECRET_RX` are **masked** on read, never sent in full;
-* a value that still *looks* masked is **skipped** on write - otherwise the UI
-  helpfully overwrites a live API key with its own bullet characters, which is
-  unrecoverable;
-* the env file is written with an order-preserving upsert (comments and
-  unrelated keys survive) and chmod 0600;
-* applied values also land in ``os.environ`` so providers pick them up without
-  a restart.
-"""
+"""Configuration surface for the dashboard - the ``/api/config`` payload."""
 
 from __future__ import annotations
 
@@ -64,30 +48,20 @@ INTERESTING_ENV = [
     "STRANDS_MESH_MULTICAST",
     "STRANDS_ROBOTS_VIDEO_ROOT",
     "STRANDS_ROBOTS_NO_DYLD_SHIM",
-    # Q81's opt-in lock: a guard nobody can find is a guard nobody uses. It is writable already (the
-    # STRANDS_ prefix), so listing it here is the difference between existing and being discoverable.
-    # The agent-motion GRANT is deliberately not listed: it has a real row with a revoke button on the
-    # permissions screen, and a second editable copy of it invites a hand-edit that screen cannot undo.
     "STRANDS_DASH_TASK_REQUIRES_CONFIRM",
 ]
-
 
 def is_secret(key: str) -> bool:
     return bool(SECRET_RX.search(key))
 
-
-#: .env is read by every process the dashboard spawns, so an unrestricted
-#: upsert is configuration -> code execution (PATH=/tmp/evil hijacks python/
-#: ffmpeg for every child). Only variables the dashboard actually owns are
-#: writable from the UI (Q13).
+# : .env is read by every process the dashboard spawns, so an unrestricted : upsert is
+# configuration -> code execution (PATH=/tmp/evil hijacks python/ : ffmpeg for every child).
 ALLOWED_ENV_PREFIXES: tuple[str, ...] = ("STRANDS_", "DASHBOARD_", "VOICE_", "HF_")
 ALLOWED_ENV_KEYS = frozenset(INTERESTING_ENV)
 ENV_VALUE_MAX_LEN = 4096
 
-
 def env_key_allowed(key: str) -> bool:
     return key in ALLOWED_ENV_KEYS or key.startswith(ALLOWED_ENV_PREFIXES)
-
 
 def env_entry_error(key: str, value: str) -> str | None:
     """Why this key/value pair must not reach the env file, or None if fine."""
@@ -106,7 +80,6 @@ def env_entry_error(key: str, value: str) -> str | None:
         return f"env value for {key} exceeds {ENV_VALUE_MAX_LEN} characters"
     return None
 
-
 def mask(value: str) -> str:
     """``sk-abc...xyz`` -> ``sk-••••••yz``. Short values are fully hidden."""
     if not value:
@@ -115,10 +88,8 @@ def mask(value: str) -> str:
         return "•" * 6
     return f"{value[:3]}{'•' * 6}{value[-2:]}"
 
-
 def looks_masked(value: Any) -> bool:
     return isinstance(value, str) and any(m in value for m in _MASK_MARKERS)
-
 
 # ----------------------------------------------------------------------
 # .env read / write
@@ -142,13 +113,8 @@ def read_env_file() -> dict[str, str]:
         logger.warning("could not read %s: %s", ENV_FILE, exc)
     return out
 
-
 def upsert_env_file(updates: dict[str, str]) -> list[str]:
-    """Order-preserving upsert into the env file. Returns the keys written.
-
-    Belt-and-braces: refuses disallowed keys and control characters itself,
-    so no future caller can reintroduce Q13 by skipping apply()'s checks.
-    """
+    """Order-preserving upsert into the env file. Returns the keys written."""
     if not updates:
         return []
     for key, value in updates.items():
@@ -176,23 +142,9 @@ def upsert_env_file(updates: dict[str, str]) -> list[str]:
         pass
     return list(updates)
 
-
 def split_env_patch(
     raw: Mapping[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
-    """Q75: separate "set this value" from "remove this variable".
-
-    ``null`` means REMOVE. It used to mean the empty string, which is a different
-    state and a trap: ``KEY=`` is *set and empty*, and almost nothing treats that
-    like absent. ``os.getenv("HF_TOKEN", default)`` returns ``""`` rather than the
-    default, an empty token authenticates as an empty token (401) instead of
-    falling back to anonymous, and an empty endpoint disables a client's own
-    discovery. Emptying the field was ALSO the only removal gesture the UI had, so
-    "take this key out" silently produced the one value most likely to break a
-    fallback path.
-
-    Pure: no file, no environ. Returns (updates, deletions).
-    """
     updates: dict[str, Any] = {}
     deletions: list[str] = []
     for key, value in raw.items():
@@ -203,14 +155,8 @@ def split_env_patch(
             updates[name] = value
     return updates, deletions
 
-
 def delete_env_keys(keys: Sequence[str]) -> list[str]:
-    """Remove keys from the env file, order-preserving. Returns those removed.
-
-    Only dashboard-managed keys, by the same allowlist that guards writing: a
-    caller who cannot set a variable must not be able to delete one either.
-    Comments and blank lines are kept -- this file is edited by hand too.
-    """
+    """Remove keys from the env file, order-preserving. Returns those removed."""
     wanted = [str(k).strip() for k in keys]
     allowed = [k for k in wanted if not env_entry_error(k, "")]
     if not allowed or not ENV_FILE.exists():
@@ -233,24 +179,10 @@ def delete_env_keys(keys: Sequence[str]) -> list[str]:
             pass
     return removed
 
-
 def bootstrap_env(
     from_file: Mapping[str, str], environ: Mapping[str, str]
 ) -> tuple[dict[str, str], list[str]]:
-    """(values to export, keys the process environment already decides).
-
-    Q50: the Env tab wrote .env and exported into ``os.environ`` in the same breath, so a
-    saved key worked... until the next start. NOTHING in this codebase ever read .env back:
-    no load_dotenv, no `set -a; source .env` in restart_dashboard.sh. After a restart the tab
-    still listed HF_TOKEN as set (it reads the FILE) while the process had never heard of it,
-    so Hub downloads 401'd and voice providers reported a missing credential the settings
-    screen swore was configured.
-
-    A key already in the process environment WINS and is reported as shadowed instead: the
-    operator who typed `HF_TOKEN=... ./restart_dashboard.sh` is making a deliberate statement
-    about this run, and a file written weeks ago must not overrule it. An identical value is
-    not a conflict and is not reported.
-    """
+    """(values to export, keys the process environment already decides)."""
     to_set: dict[str, str] = {}
     shadowed: list[str] = []
     for key, value in from_file.items():
@@ -261,14 +193,12 @@ def bootstrap_env(
             shadowed.append(key)
     return to_set, sorted(shadowed)
 
-
 def load_env_file() -> tuple[list[str], list[str]]:
     """Apply .env to this process (once, at startup). Returns (exported, shadowed)."""
     to_set, shadowed = bootstrap_env(read_env_file(), os.environ)
     for key, value in to_set.items():
         os.environ[key] = value
     return sorted(to_set), shadowed
-
 
 def env_view() -> list[dict[str, Any]]:
     """Masked env listing for the UI: .env contents + interesting live vars."""
@@ -281,10 +211,6 @@ def env_view() -> list[dict[str, Any]]:
     for key in keys:
         live = os.environ.get(key, "")
         in_file = key in from_file
-        # Q50: show what the PROCESS uses, not what the file says. Those differ only when
-        # something in the launch environment overrides the file, and in that case the file's
-        # value is the one nothing is acting on - displaying it made the screen a plausible
-        # liar precisely when an operator was debugging a credential.
         raw = live if live else from_file.get(key, "")
         shadowed = bool(in_file and live and live != from_file.get(key))
         secret = is_secret(key)
@@ -298,17 +224,12 @@ def env_view() -> list[dict[str, Any]]:
         })
     return rows
 
-
 # ----------------------------------------------------------------------
 # Combined document
 # ----------------------------------------------------------------------
 
-#: Keys ``mesh.security.validate_command()`` admits for execute/start, minus
-#: the ones the dashboard sets itself (action/instruction/policy_provider/
-#: duration). The validator builds its output from this allowlist and drops
-#: every other key *silently*, so a form field outside this set would look
-#: accepted and never reach the policy. Keep in sync with
-#: ``validate_command``'s execute/start branch.
+# : Keys ``mesh.security.validate_command()`` admits for execute/start, minus : the ones the
+# dashboard sets itself (action/instruction/policy_provider/ : duration).
 WIRE_CMD_KEYS: tuple[str, ...] = (
     "policy_host",
     "policy_port",
@@ -356,16 +277,8 @@ _WIRE_ALIASES = {
     "server_address": "server_address",
 }
 
-
 def _policy_catalog() -> list[dict[str, Any]]:
-    """Full provider objects from ``registry/policies.json``.
-
-    The registry IS the run-form schema: ``requires`` are the mandatory
-    inputs, ``config_keys`` the advanced set, ``defaults`` the prefill. Sending
-    only ``{instruction, policy_provider}`` for a provider that requires a port
-    or a checkpoint is a guaranteed failed run, so the UI builds
-    its form from this instead of a hardcoded list.
-    """
+    """Full provider objects from ``registry/policies.json``."""
     try:
         from strands_robots.registry.policies import get_policy_provider, list_policy_providers
     except Exception as exc:  # noqa: BLE001
@@ -423,7 +336,6 @@ def _policy_catalog() -> list[dict[str, Any]]:
         })
     return out
 
-
 def snapshot(*, bridge: Any = None, agent_status: dict[str, Any] | None = None) -> dict[str, Any]:
     """The ``GET /api/config`` document."""
     tree = settings.load(refresh=True)
@@ -452,10 +364,8 @@ def snapshot(*, bridge: Any = None, agent_status: dict[str, Any] | None = None) 
             # Never echo the token back - only whether one is configured.
             "auth_enabled": bool(tree["security"].get("auth_token")),
             "cors_origins": tree["security"].get("cors_origins") or ["*"],
-            # This process's own posture: a token passed as --auth-token is readable by every
-            # local user via `ps`. Absent key when there is nothing to say, so a screen renders
-            # nothing rather than an empty box, and /api/config is AUTHENTICATED - a public
-            # endpoint is the wrong place to describe how a credential is exposed.
+            # This process's own posture: a token passed as --auth-token is readable by every local user
+            # via `ps`.
             **({"notice": notice} if (notice := argv_token_notice(sys.argv)) else {}),
         },
         "policies": _policy_catalog(),
@@ -464,28 +374,13 @@ def snapshot(*, bridge: Any = None, agent_status: dict[str, Any] | None = None) 
         "settings_file": str(settings.SETTINGS_FILE),
     }
 
-
 #: Settings keys that only take effect on a new mesh session. Everything else
 #: is hot-applied, and the response says which is which per field rather than
 #: making the operator guess.
 _RESTART_KEYS = {"mesh.connect", "mesh.listen", "mesh.port", "mesh.backend"}
 
-#: Q51: keys a MESH RESTART cannot deliver, because nothing in this process reads them - the
-#: robot child processes do, once, at their own Mesh.start(). camera_hz resolves inside
-#: ``Mesh._resolve_camera_hz()`` when a robot starts its camera loop; the dashboard has no robot
-#: and publishes no frames, so re-pointing its session changes nothing at all. The remedy is a
-#: RESPAWN of the robots, and saying "needs a mesh restart" sent operators to a button that
-#: could only ever appear to work.
 _RESPAWN_KEYS = {"mesh.camera_hz"}
 
-#: Q52: keys only a SERVER START can deliver. security.cors_origins has TWO readers with
-#: different lifetimes: the CORSMiddleware is constructed in ``create_app()`` with the origin
-#: list baked in (so the browser-facing Access-Control-Allow-Origin header cannot change until
-#: a restart), while ``TokenAuthMiddleware._cross_origin_refused`` re-reads settings on every
-#: request. The asymmetry is worth stating because it runs the safe way: REMOVING an origin
-#: tightens the write/websocket gate immediately, ADDING one does nothing a browser can use
-#: until the process restarts. Reporting it as "applied" - which is what happened before -
-#: promised the half that does not work.
 _STARTUP_KEYS = {"security.cors_origins"}
 
 #: Body fields of ``POST /api/config`` that are NOT settings sections: the
@@ -496,7 +391,6 @@ _BODY_NON_SECTION_KEYS = frozenset(
 
 #: Changing these rebuilds the agent on the next turn.
 _AGENT_KEYS = {"agent.model_id", "agent.system_prompt", "agent.temperature", "agent.max_tokens"}
-
 
 def apply(body: dict[str, Any]) -> dict[str, Any]:
     """Apply a ``POST /api/config`` body.
@@ -546,12 +440,8 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
                 for key in ("connect", "listen"):
                     mesh_patch.pop(key, None)
 
-    # Names the schema does not know are dropped without an error, so without
-    # this the drawer says "nothing changed" for a patch that changed nothing
-    # BECAUSE IT WAS NOT UNDERSTOOD. Computed off the BODY, not the patch: an
-    # unknown SECTION never makes it into the patch at all. Non-section fields
-    # of the body ("env" and the action flags) are the caller's own vocabulary
-    # and are not settings names.
+    # Names the schema does not know are dropped without an error, so without this the drawer says
+    # "nothing changed" for a patch that changed nothing BECAUSE IT WAS NOT UNDERSTOOD.
     ignored = settings.unknown_keys(
         {
             key: value
@@ -572,7 +462,6 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
     env_removed: list[str] = []
     raw_env = body.get("env")
     if isinstance(raw_env, dict):
-        # Q75: null means REMOVE, not "the empty string" - see split_env_patch.
         raw_updates, deletions = split_env_patch(raw_env)
         updates: dict[str, str] = {}
         for key, value in raw_updates.items():

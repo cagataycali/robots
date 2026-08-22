@@ -1,17 +1,5 @@
-"""USB device + camera discovery and robot process lifecycle.
-
-Detects:
-* Serial servo buses (Feetech/Dynamixel USB adapters). Known VIDs:
-  - 0x1a86 WCH CH34x  (SO-100/SO-101 controller boards - enumerate as
-    "USB Single Serial" on macOS, so keyword matching alone misses them)
-  - 0x0403 FTDI
-* Local cameras via OpenCV index probe (the dashboard is the sole owner of
-  local USB cams - two readers on one index steal each other's frames; robots
-  opened by the dashboard get camera configs pointing at these indices).
-
-Robot lifecycle: spawns `Robot(..., mode="real"|"sim").run()`-style child
-processes and tracks them, so a detected arm becomes a mesh peer with one
-click from the UI.
+"""USB device + camera discovery and robot process lifecycle. Detects: * Serial servo buses
+(Feetech/Dynamixel USB adapters).
 """
 
 from __future__ import annotations
@@ -45,24 +33,16 @@ logger = logging.getLogger(__name__)
 
 LOG_TAIL_LINES = 200  # ring buffer per managed robot
 
-#: How long /api/devices/spawn watches a new child before answering. A spawn
-#: that reports success for a process that dies two seconds later is worse than
-#: a slow spawn: the operator walks away believing an arm is live.
+# : How long /api/devices/spawn watches a new child before answering.
 SPAWN_SETTLE_S = float(os.environ.get("STRANDS_DASHBOARD_SPAWN_SETTLE_S", "5") or 5)
 
-#: Lines that name a *consequence*, not the cause. A child that dies while
-#: building its cameras logs the real ValueError first and then a cleanup error
-#: from the half-built object -- reporting the last line blames teardown.
+# : Lines that name a *consequence*, not the cause.
 _CONSEQUENCE_MARKERS = ("cleanup error", "during handling of the above")
 
-# Where USB device profiles live. One JSON object keyed by USB serial number
-# (the only stable identity a board keeps across replug and across port
-# renumbering), value = the spawn payload that worked last time.
+# Where USB device profiles live.
 DEFAULT_PROFILES_PATH = os.path.join(Path.home(), ".strands_dashboard", "profiles.json")
 
-# Auto-spawn watcher cadence and unplug debounce. USB enumeration flaps: a
-# board can miss a single poll while the OS re-reads its descriptors, so one
-# absent poll must never tear down a running robot.
+# Auto-spawn watcher cadence and unplug debounce.
 AUTOSPAWN_POLL_S = 2.0
 AUTOSPAWN_MISSING_POLLS = 2
 
@@ -72,16 +52,13 @@ SERVO_VIDS = {0x1A86, 0x0403}
 SERVO_KEYWORDS = ("feetech", "dynamixel", "sts3215", "xl430", "xl330", "usb single serial", "ch340", "ch343")
 EXCLUDE_KEYWORDS = ("bluetooth", "debug", "internal", "apple", "modem-phone")
 
-
 @dataclass
 class ManagedRobot:
     peer_id: str
     robot_name: str
     mode: str                      # "real" | "sim"
     port: str | None = None
-    # The lerobot calibration id this child was started with. Kept because it is the ONLY thing that
-    # explains an "uncalibrated" arm whose calibration file exists: lerobot loads
-    # robots/<robot_type>/<robot_id>.json, so the id is half of the path that was not found.
+    # The lerobot calibration id this child was started with.
     robot_id: str | None = None
     cameras: dict[str, Any] = field(default_factory=dict)
     process: subprocess.Popen | None = None
@@ -90,38 +67,20 @@ class ManagedRobot:
     # with stdout=PIPE and no reader, the child blocks in print() once the
     # OS pipe buffer (~64KB) fills and the peer silently freezes.
     logs: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
-    # The Q80 joint verdict, REMEMBERED once seen. `logs` is a 200-line window (LOG_TAIL_LINES), so
-    # a child that prints more than that after its hw_joints failure rotates its own explanation
-    # away while the fault is unchanged - a record run logging per-episode lines does it easily - and the card silently returns to the healthy-looking-arm-with-no-joints state
-    # Q80 exists to end. Kept on the RECORD rather than in a dict keyed by peer id, so a respawn
-    # (a fresh record) starts blank: inheriting the dead process's complaint would be worse than
-    # having none.
     joint_problem_seen: dict[str, Any] | None = None
-    # What this process was started to DO ({"repo_id","episode"} for a replay,
-    # {"dataset_root"} for a collect). Without it "is this already running?"
-    # cannot be answered, and a second identical job silently starts.
+    # What this process was started to DO ({"repo_id","episode"} for a replay, {"dataset_root"}
+    # for a collect).
     job: dict[str, Any] = field(default_factory=dict)
 
     def alive(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-
-#: lerobot's calibration store. Listed (never read) so an "uncalibrated" verdict can tell an
-#: id/path mismatch from a genuinely uncalibrated arm — the difference between editing a spawn id
-#: and re-teaching a correctly calibrated arm by hand.
+# : lerobot's calibration store.
 _CALIBRATION_ROOT = Path.home() / ".cache" / "huggingface" / "lerobot" / "calibration"
 _CALIB_CACHE: dict[str, Any] = {"at": 0.0, "value": {}}
 
-
 def _calibrations_on_disk(ttl: float = 30.0) -> dict[str, list[str]]:
-    """``{"robots/so101_follower": ["follower", ...]}`` — the ids that HAVE a calibration file.
-
-    Called from the annotation path, which a 1 Hz poller drives, so the listing is cached for
-    ``ttl`` seconds: a diagnosis that stats a directory tree every tick would be a cost the fleet
-    view pays forever to answer a question that changes when a human calibrates something. Any
-    filesystem error yields {} — this is a HINT, and a hint that can break the fleet snapshot is
-    worse than no hint.
-    """
+    """``{"robots/so101_follower": ["follower", ...]}`` — the ids that HAVE a calibration file."""
     now = time.time()
     if now - float(_CALIB_CACHE["at"]) < ttl:
         return dict(_CALIB_CACHE["value"])
@@ -142,40 +101,8 @@ def _calibrations_on_disk(ttl: float = 30.0) -> dict[str, list[str]]:
     _CALIB_CACHE.update(at=now, value=found)
     return dict(found)
 
-
 def crash_reason(lines: Iterable[str]) -> str | None:
-    """The line that explains why a child died, or None if nothing does.
-
-    Two Python conventions decide where the answer lives, and both are easy to
-    get backwards -- the live spawn probe reported "Traceback (most recent call
-    last):" until this read them properly:
-
-    1. A traceback prints its frames first and the MESSAGE LAST. The header is
-       the first fault-shaped line and says nothing; the operator needs the
-       tail::
-
-           Traceback (most recent call last):
-             File ".../hardware_robot.py", line 177, in _build_camera_config
-               raise ValueError(
-           ValueError: Camera 'main' config must be a mapping ... got int: 3.
-
-    2. When exceptions chain ("During handling of the above exception..."), the
-       FIRST block holds the root cause and later blocks are the fallout of
-       unwinding a half-built object. Same for a trailing "Cleanup error", which
-       is true and useless -- it blames teardown for a configuration mistake.
-
-    So: the exception line of the first traceback, else the first fault-shaped
-    line for children that die without one (a bare "error: unknown option", a
-    usage message). Timestamps and ``LEVEL:logger:`` prefixes are stripped so the
-    result can be shown to a person as-is.
-
-    Args:
-        lines: Child output, oldest first (the ring buffer's natural order).
-
-    Returns:
-        A one-line reason, or None when the output blames nothing (a silent
-        exit, or a child killed from outside).
-    """
+    """The line that explains why a child died, or None if nothing does."""
     cleaned: list[str] = []
     for raw in lines:
         line = str(raw).strip()
@@ -213,13 +140,8 @@ def crash_reason(lines: Iterable[str]) -> str | None:
         return "the process died with a traceback (see the log)"
     return None
 
-
 def _strip_log_prefixes(line: str) -> str:
-    """Drop the drain thread's ``HH:MM:SS`` stamp and any ``LEVEL:logger:``.
-
-    Indentation after the stamp is preserved, because it is what distinguishes a
-    traceback frame from the exception line that ends it.
-    """
+    """Drop the drain thread's ``HH:MM:SS`` stamp and any ``LEVEL:logger:``."""
     body = line
     if len(body) > 9 and body[2] == ":" and body[5] == ":" and body[8] == " ":
         body = body[9:]
@@ -230,7 +152,6 @@ def _strip_log_prefixes(line: str) -> str:
             break
     return body
 
-
 def _looks_like_a_fault(text: str) -> bool:
     """True when a line reads like the reason a process stopped."""
     if not text:
@@ -240,7 +161,6 @@ def _looks_like_a_fault(text: str) -> bool:
         return True  # "ValueError: ..." / "ConnectionError: ..."
     low = text.lower()
     return low.startswith(("traceback (most recent", "fatal", "error:", "usage:"))
-
 
 def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
     """Continuously read child stdout so the pipe never fills."""
@@ -259,7 +179,6 @@ def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
             code = proc.poll()
         logs.append(f"[process exited code={code}]")
         logger.info("robot %s child exited (code=%s)", peer_id, code)
-
 
 def scan_serial_ports() -> list[dict[str, Any]]:
     """Enumerate candidate servo-bus serial ports."""
@@ -294,33 +213,15 @@ def scan_serial_ports() -> list[dict[str, Any]]:
         })
     return out
 
-
 def scan_cameras(max_index: int = 4, skip: set[int] | None = None) -> list[dict[str, Any]]:
-    """Probe OpenCV camera indices. Cheap open/read/release per index.
-
-    ``skip`` indices are NOT opened (probing an index owned by a
-    running robot's camera thread steals/flaps its frames mid-episode).
-    """
+    """Probe OpenCV camera indices. Cheap open/read/release per index."""
     cams, _ = scan_cameras_with_failures(max_index=max_index, skip=skip)
     return cams
-
 
 def scan_cameras_with_failures(
     max_index: int = 4, skip: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[int, str]]:
-    """Like :func:`scan_cameras`, but also says WHY each index failed.
-
-    ``isOpened() == False`` is returned for a missing camera, a busy camera and
-    a camera macOS is refusing to let us touch - the difference is only on
-    OpenCV's stderr, which a library write goes straight past the logging
-    module (it is printed by C++ code on fd 2). The failing indices are
-    therefore re-probed in a CHILD process, whose stderr is ours to read
-    cleanly: no dup2 juggling that would swallow this process's own log lines,
-    and a cv2 that wedges or aborts takes the child down instead of the
-    dashboard.
-
-    Only failures pay that cost, and the caller caches the result.
-    """
+    """Like :func:`scan_cameras`, but also says WHY each index failed."""
     try:
         import cv2
     except ImportError:
@@ -349,7 +250,6 @@ def scan_cameras_with_failures(
             failed.append(i)
     return cams, diagnose_camera_indices(failed)
 
-
 #: Re-probe one index and let OpenCV print its own complaint to stderr.
 _DIAGNOSE_SRC = (
     "import sys;import cv2;"
@@ -360,14 +260,8 @@ _DIAGNOSE_SRC = (
     "print('opened' if r else 'failed')"
 )
 
-
 def diagnose_camera_indices(indices: Sequence[int], timeout: float = 12.0) -> dict[int, str]:
-    """index -> the stderr OpenCV produced while failing to open it.
-
-    Best effort by design: a diagnosis that cannot be obtained must not remove
-    the camera from the list, so every failure path here returns an empty
-    string (which classifies as "absent") rather than raising.
-    """
+    """index -> the stderr OpenCV produced while failing to open it."""
     out: dict[int, str] = {}
     for index in indices:
         try:
@@ -384,7 +278,6 @@ def diagnose_camera_indices(indices: Sequence[int], timeout: float = 12.0) -> di
             logger.debug("camera diagnosis for index %s failed: %r", index, e)
             out[index] = ""
     return out
-
 
 #: Read Present_Voltage from each servo id on a Feetech bus. Register 62, one
 #: byte, read-only - this script physically cannot move an arm.
@@ -411,7 +304,6 @@ finally:
 print(json.dumps(out))
 """
 
-
 #: Resolutions worth asking a USB camera about - the ones lerobot configs
 #: actually use. The camera's answer, not this list, is what gets offered.
 CAMERA_MODE_CANDIDATES: tuple[tuple[int, int], ...] = (
@@ -419,19 +311,10 @@ CAMERA_MODE_CANDIDATES: tuple[tuple[int, int], ...] = (
 )
 CAMERA_FPS_CANDIDATES: tuple[int, ...] = (15, 30, 60)
 
-
 def modes_from_readbacks(
     native: Mapping[str, Any], readbacks: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Distill set/read-back probes into the modes a camera really has.
-
-    A mode is kept only when the read-back AGREED with the request (width and
-    height exact, fps within 1 - drivers report 29.97 for 30). Drivers that
-    ignore set() and answer their native mode for everything therefore
-    contribute nothing here, and the native mode itself is always included -
-    a camera with zero verified modes still has the one it wakes up in.
-    Deduped, sorted by area then fps, ready for a <select>.
-    """
+    """Distill set/read-back probes into the modes a camera really has."""
     keep: dict[tuple[int, int, int], dict[str, Any]] = {}
 
     def _add(w: Any, h: Any, fps: Any) -> None:
@@ -455,16 +338,9 @@ def modes_from_readbacks(
             continue
     return sorted(keep.values(), key=lambda m: (m["width"] * m["height"], m["fps"]))
 
-
 def scan_camera_names() -> list[dict[str, Any]]:
-    """Human names of the attached cameras, best effort per platform.
-
-    macOS: parsed from ffmpeg's AVFoundation device listing (if ffmpeg is
-    installed). Linux: read from /sys/class/video4linux. IMPORTANT: the
-    listing order is NOT guaranteed to match OpenCV index order (Continuity
-    cameras in particular renumber), so a name here is a roster entry, not
-    an index label - the preview endpoint is the authoritative way to tell
-    which index is which camera.
+    """Human names of the attached cameras, best effort per platform. macOS: parsed from ffmpeg's
+    AVFoundation device listing (if ffmpeg is installed).
     """
     names: list[dict[str, Any]] = []
     if sys.platform == "darwin":
@@ -507,7 +383,6 @@ def scan_camera_names() -> list[dict[str, Any]]:
             except (OSError, ValueError):
                 continue
     return names
-
 
 _SPAWNER = r'''
 import os, sys, time, json
@@ -563,7 +438,6 @@ else:
         time.sleep(0.2)
 '''
 
-
 _COLLECT_SPAWNER = r'''
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
@@ -616,7 +490,6 @@ time.sleep(3)
 os._exit(0)
 '''
 
-
 _REPLAY_SPAWNER = r'''
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
@@ -652,39 +525,16 @@ time.sleep(3)
 os._exit(0)
 '''
 
-
 def profile_key(port: dict[str, Any]) -> str:
-    """Stable identity for a detected serial board.
-
-    The USB serial number survives replug and port renumbering, so it is the
-    key. Boards that report no serial number fall back to their device path,
-    which is weaker (the path can move between reboots) but still lets a
-    single-adapter setup be remembered.
+    """Stable identity for a detected serial board. The USB serial number survives replug and port
+    renumbering, so it is the key.
     """
     serial = port.get("serial_number")
     if serial:
         return str(serial)
     return str(port.get("device") or "")
 
-
 def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
-    """What this board was last brought up as, in the shape a screen can show (Q41).
-
-    The devices screen is where the record screen sends an operator after an interrupted session
-    ("respawn them from devices"), and where an operator lands after any restart -- but ``managed``
-    is in-memory, so after a restart it is EMPTY and the two boards read as never-configured
-    hardware. Everything needed to bring them back is already on disk in profiles.json; it was
-    simply never sent to the screen.
-
-    Only fields that describe how the board comes UP, and only when the profile can actually be
-    respawned: a payload without a peer_id is not a spawn recipe, and pretending otherwise offers a
-    button that cannot work. ``{}`` means "nothing remembered" and must render as nothing -- a board
-    nobody has configured is a normal, honest state.
-
-    Camera names are listed rather than their config: the operator recognises "top, wrist", and the
-    indices behind them are exactly what may have moved since (macOS renumbers), so showing them
-    here would be the confident-but-stale kind of detail this dashboard keeps removing.
-    """
     if not profile:
         return {}
     peer_id = str(profile.get("peer_id") or "").strip()
@@ -707,30 +557,12 @@ def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
         out["robot_id"] = str(profile["robot_id"])
     return out
 
-
 def remembered_camera_health(
     cameras: Mapping[str, Any] | None,
     camera_rows: Sequence[Mapping[str, Any]],
     peer_id: str = "",
 ) -> dict[str, Any]:
-    """Are the cameras this board remembers usable RIGHT NOW? (Q43)
-
-    "spawn so101-arm-1 again" reuses a config naming camera indices 2 and 1. Those indices are the
-    least stable thing in the payload: macOS renumbers them between reboots, another app can hold
-    one, and on this machine the whole process tree can be denied camera access by TCC. Today the
-    operator learns that by clicking spawn and reading a child's log - the arm comes up having
-    silently DROPPED both cameras ("camera 'top' unavailable, dropped"), which looks like working
-    hardware until a dataset turns out to have no frames.
-
-    Judged from the camera rows /api/devices already computed, so this opens NOTHING: probing here
-    would steal a device from a running robot, and the answer is already in hand.
-
-    A camera claimed by the peer we are about to respawn is not a problem - it is the same arm's own
-    stream, seen a moment before its process went away.
-
-    Returns {} when there is nothing worth saying: every remembered camera is ready, or the memory
-    names no cameras at all. Silence is the common case and must stay silent.
-    """
+    """Are the cameras this board remembers usable RIGHT NOW?"""
     if not isinstance(cameras, Mapping) or not cameras:
         return {}
     by_index = {int(r["index"]): r for r in camera_rows if isinstance(r.get("index"), int)}
@@ -779,19 +611,7 @@ def remembered_camera_health(
         ),
     }
 
-
 def respawn_payload(profile: Mapping[str, Any] | None, port: str) -> dict[str, Any]:
-    """Turn a remembered profile into a spawn payload for the board at ``port`` NOW (Q41).
-
-    Returns ``{"error": ...}`` instead of a payload when there is nothing to spawn, so the caller
-    answers with a sentence rather than starting a process out of half a memory.
-
-    THE PORT IS ALWAYS THE CURRENT ONE. Profiles are keyed by USB serial precisely because /dev
-    names move: arm-1's saved payload says /dev/cu.usbmodem5AB01818061, and after a replug that same
-    board can be ...2. Re-using the remembered path would open a DIFFERENT board's bus with this
-    arm's calibration id - the one failure mode this whole feature exists to avoid - or, more often,
-    fail on a path nothing is behind. ``port_moved`` records the change so the screen can say it.
-    """
     if not profile:
         return {"error": (
             "no saved profile for this board, so there is nothing to bring back - spawn it once "
@@ -818,15 +638,8 @@ def respawn_payload(profile: Mapping[str, Any] | None, port: str) -> dict[str, A
         payload["port_moved"] = {"was": saved_port, "now": port}
     return payload
 
-
 class ProfileStore:
-    """USB device profiles on disk: serial number -> saved spawn payload.
-
-    A profile is written whenever the operator successfully spawns a real
-    (serial-port) robot, so the next time that exact board appears the
-    dashboard can bring it up with the same calibration id, camera mapping
-    and peer_id instead of asking again.
-    """
+    """USB device profiles on disk: serial number -> saved spawn payload."""
 
     def __init__(self, path: str | None = None) -> None:
         self.path = path or os.environ.get("STRANDS_DASHBOARD_PROFILES") or DEFAULT_PROFILES_PATH
@@ -861,17 +674,6 @@ class ProfileStore:
             return dict(entry) if entry is not None else None
 
     def record_role(self, key: str, verdict: Mapping[str, Any]) -> dict[str, Any] | None:
-        """Remember a measured leader/follower role against a board's serial.
-
-        Only a trustworthy verdict is written. An unpowered arm, a mixed bus or
-        a failed read must NOT overwrite a role that was measured earlier: the
-        operator switching a power supply off would otherwise delete what the
-        dashboard knows, and the next session would be back to guessing. A
-        refusal is not new information about the arm.
-
-        Writes a profile even for a board that was never spawned - the whole
-        point is to know the role BEFORE bringing it up.
-        """
         role = verdict.get("role")
         if role not in ("leader", "follower"):
             return None
@@ -890,31 +692,15 @@ class ProfileStore:
         self._persist(snapshot, key)
         return dict(entry)
 
-    #: Facts about the BOARD that a spawn payload knows nothing about, so they
-    #: survive being re-saved. Without this, one spawn wipes a measured role.
+    # : Facts about the BOARD that a spawn payload knows nothing about, so they : survive being
+    # re-saved.
     MEASURED_FIELDS = ("role", "role_volts", "role_source", "role_measured_at")
 
-    #: Things the OPERATOR chose, which a spawn payload may simply not mention. Same trap as
-    #: MEASURED_FIELDS, different victim: every spawn writes ``"cameras": cameras`` (device_manager
-    #: ~1930), so a camera-less spawn - the auto-spawn watcher on a replug, a joints-only spawn from
-    #: the run form, a CLI spawn - stored ``None`` and silently forgot the indices, fps and resolution
-    #: the operator had tuned in the U19 sheet. The next automatic respawn then brought the arm up
-    #: BLIND and the reconfigure editor opened blank, with nothing anywhere saying a choice had been
-    #: dropped. Absent or None means "not stated" and keeps the memory; an explicit ``{}`` forgets,
-    #: because going back to joints-only has to remain expressible.
+    # : Things the OPERATOR chose, which a spawn payload may simply not mention.
     REMEMBERED_FIELDS = ("cameras",)
 
     def save(self, key: str, payload: dict[str, Any], name: str | None = None) -> dict[str, Any]:
-        """Remember ``payload`` as the way to spawn the board at ``key``.
-
-        A spawn payload describes how to bring the board UP; a measured role
-        describes what the board IS. This used to replace the whole entry, so
-        the first spawn after a role measurement silently deleted it - the
-        measurement would have appeared to work and then evaporated. Measured
-        fields are carried over unless the caller states them explicitly, and so are the
-        operator's remembered cameras (see REMEMBERED_FIELDS - an explicit ``{}`` still forgets
-        them, because a deliberate joints-only spawn must remain sayable).
-        """
+        """Remember ``payload`` as the way to spawn the board at ``key``."""
         entry = dict(payload)
         with self._lock:
             previous = dict(self._data.get(key) or {})
@@ -948,39 +734,8 @@ class ProfileStore:
             # profile will not survive a restart.
             logger.warning("could not persist device profile %s to %s: %r", key, self.path, e)
 
-
-
 def autospawn_veto(env: Mapping[str, str]) -> str | None:
-    """Why USB auto-spawn must NOT bring boards up in this process, or None when it may.
-
-    Auto-spawn is the one dashboard feature that starts a REAL robot process, holding a REAL
-    serial port, without anybody clicking anything. That is right for the operator's dashboard and
-    catastrophic anywhere else, which Q81 measured the hard way:
-
-    Any test that builds the app with ``with TestClient(app)`` fires the startup hook, which starts
-    the watcher, which scans the real USB bus and spawns the saved profiles -- one such module, run
-    repeatedly, is all it takes. The test then passes and the pytest process
-    exits -- leaving its children orphaned (ppid=1) and still holding the arm ports. By 2026-08-20
-    **185 such orphans from ~30 runs of that one file** held cagatay's two SO-101 ports, and the
-    live arm child could no longer read a byte: ``[TxRxResult] Port is in use!``. The dashboard
-    reported a healthy connected arm with zero joints for hours (Q80 is that symptom's cure; this
-    is the cause's).
-
-    Two signals in those orphans' own environment said plainly that they should never have existed:
-
-    * ``PYTEST_CURRENT_TEST`` / ``PYTEST_VERSION`` -- this is a test run. A test may exercise the
-      watcher's LOGIC all it likes against a fake manager, and the suite does, but it must never
-      take a physical port. The suite cannot be trusted
-      to remember an env var it does not know it needs, so the refusal lives here, once.
-    * ``STRANDS_MESH=false`` -- the documented HARD kill switch. Q32 fixed the same class for the
-      mesh gateway: a process with the mesh switched off had still joined the fleet because one
-      code path constructed it directly instead of asking. Spawning a robot child while the mesh is
-      off is that bug wearing overalls.
-
-    ``STRANDS_DASHBOARD_AUTOSPAWN`` is still the operator's own switch, and an explicit truthy
-    value is an OVERRIDE: someone who deliberately wants boards to come up inside a test process
-    can say so, because a refusal with no way past it just gets patched out downstream.
-    """
+    """Why USB auto-spawn must NOT bring boards up in this process, or None when it may."""
     raw = str(env.get("STRANDS_DASHBOARD_AUTOSPAWN", "")).strip().lower()
     if raw in ("0", "false", "no", "off"):
         return "STRANDS_DASHBOARD_AUTOSPAWN is off"
@@ -998,28 +753,8 @@ def autospawn_veto(env: Mapping[str, str]) -> str | None:
         return "STRANDS_MESH is off (the hard kill switch): a robot child must not be started"
     return None
 
-
 class AutoSpawnWatcher:
-    """Brings known USB boards up (and unplugged ones down) on its own.
-
-    One poll of the serial bus per :data:`AUTOSPAWN_POLL_S`:
-
-    * a board APPEARS and has a saved profile -> spawn it with that payload
-    * a board appears with NO profile -> left alone (it only shows in
-      ``/api/devices`` as detected; auto-spawning an unknown board would
-      energise hardware nobody configured)
-    * a board this watcher spawned DISAPPEARS for
-      :data:`AUTOSPAWN_MISSING_POLLS` consecutive polls -> its child process
-      is terminated so the card goes away
-
-    Dedupe is deliberately paranoid, because double-spawning a real arm means
-    two processes driving one servo bus: a port already claimed by a managed
-    robot, or a profile whose ``peer_id`` is already a mesh peer, is skipped.
-    Robots the watcher did not spawn are never terminated by it - process
-    lifecycle the operator started stays the operator's.
-
-    ``STRANDS_DASHBOARD_AUTOSPAWN=0`` disables the whole thing.
-    """
+    """Brings known USB boards up (and unplugged ones down) on its own."""
 
     def __init__(
         self,
@@ -1036,23 +771,12 @@ class AutoSpawnWatcher:
         self.adopted: dict[str, str] = {}
         self._missing: dict[str, int] = {}
         self._stop = threading.Event()
-        # While True the watcher observes but never spawns/despawns. The
-        # record session controller sets this after it deliberately frees a
-        # board's port to record with it - otherwise the watcher would
-        # respawn the peer within one poll and two processes would drive
-        # one servo bus.
+        # While True the watcher observes but never spawns/despawns.
         self.suspended = False
 
     @staticmethod
     def enabled() -> bool:
-        """False when STRANDS_DASHBOARD_AUTOSPAWN is set to a falsey value.
-
-        Deliberately NOT the Q81 veto: this is the polling logic's own switch, and a test that
-        drives a watcher over a FAKE manager is exercising logic, not taking a serial port. The
-        veto guards the door to real hardware -- :meth:`DeviceManager.start_autospawn` -- so a
-        refusal there cannot be worked around by constructing a watcher directly, and the pure
-        tests keep testing the pure thing.
-        """
+        """False when STRANDS_DASHBOARD_AUTOSPAWN is set to a falsey value."""
         raw = os.environ.get("STRANDS_DASHBOARD_AUTOSPAWN", "1").strip().lower()
         return raw not in ("0", "false", "no", "off")
 
@@ -1152,29 +876,15 @@ class AutoSpawnWatcher:
         """Ask :meth:`run_forever` to return after the current sleep."""
         self._stop.set()
 
-
-#: The only modes the dashboard can spawn. The child spawner branches on
-#: ``mode == "real"`` and takes the sim path for everything else, so an
-#: unvalidated string does not fail -- it becomes a LABEL on a card whose peer is
-#: something other than what the label says.
+# : The only modes the dashboard can spawn.
 SPAWNABLE_MODES = ("sim", "real")
 
-
-#: What a caller-chosen peer_id may look like. A peer_id is a ZENOH KEY segment,
-#: not a label: ``*`` and ``**`` are key-expression WILDCARDS there, so a peer
-#: named ``*`` shadows the whole fleet's key space; ``/`` is the hierarchy
-#: separator and splices arbitrary levels into every topic built from the id;
-#: ``{}``/``$`` have DSL meanings in key expressions too. The allow-list is the
-#: character set every id this codebase generates already uses.
+# : What a caller-chosen peer_id may look like.
 _PEER_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
-
 def validate_peer_id(peer_id: Any) -> str | None:
-    """Refusal reason for a caller-supplied peer_id, or None if acceptable.
-
-    Only judges ids a CALLER chose (``None`` -- "generate one for me" -- is
-    fine). Found as Q3's unprobed corollary: the route accepted ``peer_id``
-    verbatim into zenoh key expressions, where ``*`` is a wildcard, not a name.
+    """Refusal reason for a caller-supplied peer_id, or None if acceptable. Only judges ids a CALLER
+    chose (``None`` -- "generate one for me" -- is fine).
     """
     if peer_id is None:
         return None
@@ -1188,26 +898,9 @@ def validate_peer_id(peer_id: Any) -> str | None:
         )
     return None
 
-
 def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, str]:
-    """Normalise and check what a spawn was asked for, BEFORE any process exists.
-
-    Returns ``(robot_name, mode)`` or an ``{"error": ...}`` dict.
-
-    Two failures used to survive all the way into a running process:
-
-    * ``mode="quantum"`` -- the spawner's ``if mode == "real"`` else-branch meant
-      any unknown mode quietly produced a SIM peer, wearing "quantum" as its
-      label in the fleet grid. Nothing ever said no.
-    * ``mode="Real"`` -- the SDK lowercases modes, the dashboard did not, so the
-      string missed the ``== "real"`` comparison by a capital letter and the
-      operator got a SIMULATION on a card that said Real. That is the direction
-      that matters: believing hardware is moving when it is not, or the reverse.
-
-    An unknown robot name reached ``Popen`` too, and the ValueError surfaced
-    inside a child whose pid had already been reported as success. The SDK's own
-    validator is used here so the message keeps naming the registry rather than
-    this file inventing a second vocabulary.
+    """Normalise and check what a spawn was asked for, BEFORE any process exists. Returns
+    ``(robot_name, mode)`` or an ``{"error": ...}`` dict.
     """
     mode_s = mode.strip().lower() if isinstance(mode, str) else mode
     if mode_s not in SPAWNABLE_MODES:
@@ -1235,40 +928,11 @@ def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, st
         return (name_s, mode_s)
     return (canonical, mode_s)
 
-
 def validate_replay(
     repo_id: Any, episode: Any, root: Any = None, speed: Any = 1.0
 ) -> dict[str, str] | None:
-    """Refusal reason for a replay request, or None - judged BEFORE any process.
-
-    Q5: a negative episode and a nonexistent dataset both answered 200 + pid,
-    and the truth arrived seconds later as a dead child in the log. Everything
-    knowable without touching the network is judged here:
-
-    * ``episode`` must be a non-negative integer. An episode index is a list
-      position; ``-5`` is not "the fifth from the end" anywhere downstream, it
-      is a KeyError wearing a pid.
-    * ``speed`` must be a finite positive number - 0 is a replay that never
-      advances (a live-looking card forever), and a negative speed is not
-      rewind, it is undefined.
-    * ``repo_id`` must look like a HuggingFace id (``org/name``) or name a
-      local dataset. When ``root`` is given it must EXIST - that is a
-      filesystem stat, not a network call, and a typo'd root is the most
-      common way "dataset not found" happens.
-
-    Hub existence is deliberately NOT probed here: that is a network round-trip
-    in a request path, and an offline dashboard must still replay from cache.
-    The child's log + the fleet card stay the honest surface for that case.
-    """
-    # The episode domain is the SHARED rule, not a second copy of it. This
-    # function used to hand-roll `isinstance(episode, int)`, which refused
-    # values the surfaces it hands them to accept: measured, PolicyRunner.replay
-    # and load_lerobot_episode take 3.0, np.int64(4) and np.float64(4.0) (any
-    # real scalar with an integral value - a length or index that came from
-    # arithmetic), while this returned "episode must be an integer" for a number
-    # that is one. A dashboard that refuses what its own runner accepts is the
-    # exact drift this shared helper exists to stop: the accepting surface
-    # defines the type, and this validator must not be narrower than it.
+    """Refusal reason for a replay request, or None - judged BEFORE any process."""
+    # The episode domain is the SHARED rule, not a second copy of it.
     episode_error = non_negative_whole_number_error(episode, "episode", "replay")
     if episode_error:
         return {"error": episode_error}
@@ -1290,16 +954,12 @@ def validate_replay(
             return {"error": f"root {root!r} does not exist on this machine - a replay from it can only fail"}
     return None
 
-
-
-#: The camera options lerobot's OpenCVCameraConfig declares, as a fallback for when lerobot cannot be
-#: imported (the dashboard must validate a config on a machine with no robot stack installed). A test
-#: asserts this matches the real dataclass wherever lerobot IS importable, so drift is caught rather
-#: than assumed -- a stale list here would refuse an option the child accepts perfectly well.
+# : The camera options lerobot's OpenCVCameraConfig declares, as a fallback for when lerobot
+# cannot be : imported (the dashboard must validate a config on a machine with no robot stack
+# installed).
 _CAMERA_OPTION_FIELDS = (
     "backend", "color_mode", "fourcc", "fps", "height", "index_or_path", "rotation", "warmup_s", "width",
 )
-
 
 def _camera_option_names() -> tuple[str, ...]:
     try:
@@ -1310,24 +970,16 @@ def _camera_option_names() -> tuple[str, ...]:
         return _CAMERA_OPTION_FIELDS
     return tuple(sorted(f.name for f in dataclasses.fields(OpenCVCameraConfig)))
 
-
-#: The ENUMERATED camera option values lerobot publishes, as a fallback for when lerobot cannot be
-#: imported (same contract as _CAMERA_OPTION_FIELDS above, and a test asserts it matches the real
-#: enums wherever lerobot IS importable). MEASURED 2026-08-22 against the installed lerobot rather
-#: than guessed: rotation's domain is {0, 90, 180, -90} -- writing the obvious "270" here would have
-#: refused a legal spelling and admitted an illegal one, which is why this list is read, never assumed.
+# : The ENUMERATED camera option values lerobot publishes, as a fallback for when lerobot
+# cannot be : imported (same contract as _CAMERA_OPTION_FIELDS above, and a test asserts it
+# matches the real : enums wherever lerobot IS importable).
 _CAMERA_ENUM_VALUES: dict[str, tuple[str, ...]] = {
     "color_mode": ("bgr", "rgb"),
     "rotation": ("-90", "0", "90", "180"),
 }
 
-
 def _camera_option_values() -> dict[str, tuple[str, ...]]:
-    """The admitted spellings per enumerated camera option, read from lerobot's own enums.
-
-    Read rather than copied, so a lerobot release that gains a colour mode or a rotation is admitted
-    here with no change -- the same reasoning the SDK applies to torch device strings (upstream #2563).
-    """
+    """The admitted spellings per enumerated camera option, read from lerobot's own enums."""
     try:
         from lerobot.cameras.configs import ColorMode, Cv2Rotation
     except Exception:  # noqa: BLE001 - no lerobot here: the frozen list is the best truth available
@@ -1337,28 +989,10 @@ def _camera_option_values() -> dict[str, tuple[str, ...]]:
         "rotation": tuple(str(r.value) for r in Cv2Rotation),
     }
 
-
 def camera_option_value_problem(
     option: str, value: Any, admitted: dict[str, tuple[str, ...]] | None = None
 ) -> str | None:
-    """Why this ENUMERATED option's value cannot work, or None.
-
-    The name half of this promise was already kept: an unknown option key is refused before a process
-    exists, because a reconfigure despawns the working arm FIRST and the child's ValueError arrives in
-    a log ring buffer after the robot is gone. The VALUE half was missing, and it fails in exactly the
-    same place -- hardware_robot coerces neither of these options (verified: it never mentions them),
-    so ``color_mode="RGB"`` reaches lerobot verbatim, where ColorMode("RGB") raises (measured: the
-    enum is lowercase and refuses the uppercase spelling) and the respawned arm is dead on arrival.
-
-    Only the SPELLING is graded, never whether this camera can honour it: a camera that cannot rotate
-    is a runtime fact this function has no way to know, and pretending otherwise would refuse a
-    configuration that works. An option with no published enumeration (fps, width, backend...) is not
-    this function's business and returns None -- those are graded by the numeric ranges above.
-
-    Ints are accepted by their string spelling, so rotation=90 and rotation="90" are both admitted:
-    the dashboard's own form sends strings and a remembered profile round-trips through JSON, so
-    demanding one of the two shapes would refuse a profile the child accepts.
-    """
+    """Why this ENUMERATED option's value cannot work, or None."""
     table = _camera_option_values() if admitted is None else admitted
     allowed = table.get(option)
     if not allowed:
@@ -1373,51 +1007,23 @@ def camera_option_value_problem(
         return None
     close = difflib.get_close_matches(given.lower(), [a.lower() for a in allowed], n=1, cutoff=0.6)
     # Compared against the spelling AS GIVEN, not its lowercase form: a case-only mistake ("RGB")
-    # is the likeliest one an operator makes here, and folding the case first made close[0] equal the
-    # normalised input, which silently swallowed the hint for exactly that case (caught by its test).
+    # is the likeliest one an operator makes here, and folding the case first made close[0] equal
+    # the normalised input, which silently swallowed the hint for exactly that case (caught by its
+    # test).
     hint = f" Did you mean {close[0]!r}?" if close and close[0] != given else ""
     return (
         f"{option}={value!r} is not one of {', '.join(allowed)}.{hint} "
         f"lerobot refuses the spelling itself, so the child would die at connect"
     )
 
-
 def requested_camera_names(cameras: Any) -> list[str]:
-    """The camera names a spawn ASKED for, sorted, or [] if it asked for none.
-
-    The dashboard knows something the mesh snapshot does not: what it requested when it started a child.
-    A robot that was spawned with ``{"top": ..., "wrist": ...}`` and now announces no cameras did not
-    "publish none" -- hardware_robot DROPS a camera it cannot open at connect, so those two names are the
-    difference between "a joints-only robot" and "two cameras failed to open", which is the question an
-    operator actually has (BUGS.md Q25: on this Mac macOS refused capture and both arms dropped both
-    cameras, reporting it only in a child log).
-
-    Only names are exposed. The full config carries indices and paths, which the fleet view has no use
-    for and which would then be broadcast to every websocket client.
-    """
+    """The camera names a spawn ASKED for, sorted, or [] if it asked for none."""
     if not isinstance(cameras, dict):
         return []
     return sorted(str(name) for name in cameras if name)
 
-
 def indices_beyond_roster(cameras: Any, roster_size: int) -> dict[str, int]:
-    """Requested camera indices this machine cannot possibly have, as {name: index}.
-
-    The refusal that reconfigure_cameras needs BEFORE it despawns a working arm: an index of 7 on a
-    machine with three capture devices is not a camera that might be busy, it is a camera that does not
-    exist, and finding that out from the respawned child costs the operator the process they had.
-
-    Deliberately uses only the COUNT of the enumerated roster, never its order. scan_camera_names' own
-    docstring warns that the listing order does not match OpenCV's index order (Continuity cameras
-    renumber), so "roster[3] is named X" proves nothing about index 3 -- but renumbering is a PERMUTATION,
-    and no permutation of N devices produces a valid index >= N. That makes this the strongest claim
-    available without opening a device, which the supervisor law forbids for streaming indices.
-
-    ``roster_size <= 0`` returns {} -- an empty roster means enumeration did not work (no ffmpeg, an
-    unsupported platform), and absence of evidence must not become a refusal. Non-integer entries
-    (a path like /dev/video0, a string) are not judged here either: only an index can be compared to a
-    count, and validate_cameras has already refused the shapes that are simply wrong.
-    """
+    """Requested camera indices this machine cannot possibly have, as {name: index}."""
     out: dict[str, int] = {}
     if not isinstance(cameras, dict) or roster_size <= 0:
         return out
@@ -1429,23 +1035,8 @@ def indices_beyond_roster(cameras: Any, roster_size: int) -> dict[str, int]:
             out[str(name)] = idx
     return out
 
-
 def validate_cameras(cameras: Any) -> dict[str, str] | None:
-    """Refusal reason for a spawn/reconfigure camera config, or None.
-
-    The child process used to be the first thing that judged this: a camera
-    entry of ``3`` instead of ``{"index_or_path": 3}`` raised inside the
-    spawned robot AFTER the route had answered 200 + pid (cagatay hit exactly
-    this live). Everything the child would refuse is refused here, before a
-    process exists.
-
-    Shape is lerobot's: ``{name: {index_or_path: int|str, fps?, width?,
-    height?, type?}}``. Bounds are deliberately generous - they refuse only
-    what no driver can mean (fps 0 divides a sleep, a 100000-pixel width is a
-    typo), not what a given camera happens to support: the probe-vs-fantasy
-    line belongs to the UI's mode discovery, and a camera that rejects a legal
-    setting still reports honestly through the settle window.
-    """
+    """Refusal reason for a spawn/reconfigure camera config, or None."""
     if cameras is None:
         return None
     if not isinstance(cameras, dict):
@@ -1476,18 +1067,7 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
             if not lo <= v <= hi:
                 return {"error": f"camera {name!r}: {field}={v} is outside {lo}..{hi}"}
         # An UNKNOWN option is refused HERE, because the child refuses it too -- and by the time the
-        # child speaks, reconfigure_cameras has already despawned the arm that was working. A typo
-        # ("framerate" for "fps") therefore cost the operator a live robot and left the respawn dead
-        # with a ValueError buried in a log ring. This function's docstring promises "everything the
-        # child would refuse is refused here, before a process exists"; unknown keys broke that promise.
-        # Not dropped silently either: a discarded option reports success while the camera streams at
-        # the default (AGENTS.md > Review Learnings #86, the same rule hardware_robot follows).
-        # The dashboard's OWN bookkeeping keys are legal here and nowhere else. device_name is the
-        # roster name an index carried when it was configured (camera_liveness.stamp_device_names):
-        # it is written into the remembered profile, and a profile is handed straight back to spawn
-        # by autospawn and reconfigure -- so refusing it here would make a stamped arm refuse to
-        # come back with "unknown option 'device_name'", i.e. the memory would break the fleet it
-        # exists to protect. The child never sees it (without_annotations strips it before Popen).
+        # child speaks, reconfigure_cameras has already despawned the arm that was working.
         for key in camera_liveness.ANNOTATION_KEYS:
             if key in cfg and not isinstance(cfg[key], str):
                 return {
@@ -1516,23 +1096,20 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
                 )
             }
         # ...and an option whose NAME is right but whose VALUE is not in lerobot's enumeration dies in
-        # the same place, after the despawn. Graded here beside the numeric ranges (upstream #2559
-        # bounded the same two vocabularies on the tool side; this is the dashboard's half).
+        # the same place, after the despawn.
         for option in sorted(cfg):
             problem = camera_option_value_problem(option, cfg[option])
             if problem:
                 return {"error": f"camera {name!r}: {problem}"}
     return None
 
-
-
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
     CAMERA_CACHE_TTL_S = 30.0  # don't re-open /dev cameras on every request
-    #: How long a port -> serial mapping is trusted. /api/fleet is polled about
-    #: once a second; enumerating the USB bus that often to answer "which arm is
-    #: the leader" would be absurd, and the answer only changes on a replug.
+    # : How long a port -> serial mapping is trusted. /api/fleet is polled about : once a second;
+    # enumerating the USB bus that often to answer "which arm is : the leader" would be absurd,
+    # and the answer only changes on a replug.
     PORT_SERIAL_TTL_S = 10.0
 
     def __init__(self, profiles_path: str | None = None) -> None:
@@ -1540,15 +1117,13 @@ class DeviceManager:
         self._lock = threading.Lock()
         self._camera_cache: list[dict[str, Any]] = []
         self._camera_cache_t = 0.0
-        #: index -> stderr from the last failed probe, and index -> last known
-        #: geometry. The second one is why a claimed camera can still say
-        #: 1920x1080 instead of going blank the moment a robot takes it.
+        # : index -> stderr from the last failed probe, and index -> last known : geometry.
         self._camera_failures: dict[int, str] = {}
         self._camera_memory: dict[int, dict[str, Any]] = {}
         self._camera_names_cache: list[dict[str, Any]] = []
-        # Each /api/devices call runs in its own worker thread, so probes are
-        # concurrent by default: separate locks because a name scan is cheap
-        # metadata while a probe OPENS the devices (see cameras.probe_needed).
+        # Each /api/devices call runs in its own worker thread, so probes are concurrent by default:
+        # separate locks because a name scan is cheap metadata while a probe OPENS the devices (see
+        # cameras.probe_needed).
         self._camera_probe_lock = threading.Lock()
         self._camera_names_lock = threading.Lock()
         self._camera_names_cache_t = 0.0
@@ -1561,13 +1136,7 @@ class DeviceManager:
         self.autospawn: AutoSpawnWatcher | None = None
 
     def _claimed_camera_indices(self) -> dict[int, str]:
-        """OpenCV indices owned by LIVE managed robots -> peer_id.
-
-        Camera configs are lerobot-shaped: {name: {type: "opencv",
-        index_or_path: <int|str>, ...}} (see robot.py docstring). Only
-        integer / digit-string index_or_path values claim an index; device
-        paths (/dev/video0) never collide with index probing on macOS.
-        """
+        """OpenCV indices owned by LIVE managed robots -> peer_id."""
         claimed: dict[int, str] = {}
         for m in self.robots.values():
             if not m.alive():
@@ -1583,12 +1152,8 @@ class DeviceManager:
         return claimed
 
     def _streaming_indices(self, live_cameras: Mapping[str, Iterable[str]] | None) -> set[int] | None:
-        """Which claimed indices are provably publishing frames.
-
-        ``live_cameras`` is peer_id -> camera NAMES the mesh has actually seen
-        frames for. Mapping a name back to an index uses the child's own config,
-        which is the only place the pairing exists. None in, None out: absence of
-        evidence must not become evidence of silence.
+        """Which claimed indices are provably publishing frames. ``live_cameras`` is peer_id -> camera
+        NAMES the mesh has actually seen frames for.
         """
         if live_cameras is None:
             return None
@@ -1615,19 +1180,10 @@ class DeviceManager:
         refresh: bool = False,
         live_cameras: Mapping[str, Iterable[str]] | None = None,
     ) -> list[dict[str, Any]]:
-        """Every camera this machine could have, each with its state and WHY.
-
-        A camera is never omitted because it could not be opened: dropping the
-        unopenable ones made "held by a running robot", "blocked by macOS
-        privacy" and "not plugged in" indistinguishable, all three rendering as
-        an absence. Geometry measured while an index was free is remembered and
-        carried into the in-use row, tagged as remembered rather than fresh.
-        """
+        """Every camera this machine could have, each with its state and WHY."""
         claimed = self._claimed_camera_indices()
         requested_at = time.time()
-        # One probe at a time. A request that waited may already have its answer
-        # (a probe finished after it arrived), and starting a second probe over
-        # the first would make each see the other's open camera as unavailable.
+        # One probe at a time.
         if camera_facts.probe_needed(
             refresh=refresh,
             requested_at=requested_at,
@@ -1661,11 +1217,8 @@ class DeviceManager:
         )
 
     def managed_children(self) -> list[dict[str, Any]]:
-        """The managed table, cheaply: no serial scan, no camera probe.
-
-        devices() rescans the USB ports and can probe cameras, so it must never be
-        called from /api/fleet (~1Hz). This returns only what a fleet-side memorial
-        needs (U22), read under the same lock the table is mutated under.
+        """The managed table, cheaply: no serial scan, no camera probe. devices() rescans the USB ports and
+        can probe cameras, so it must never be called from /api/fleet (~1Hz).
         """
         with self._lock:
             return [
@@ -1695,9 +1248,6 @@ class DeviceManager:
             for p in ports
             if p.get("device") and p.get("serial_number")
         }
-        # Q41: what each board was last spawned as. The measured role says what the board IS; this
-        # says how it comes UP - and after a restart it is the only copy of that, because `managed`
-        # lives in memory.
         remembered: dict[str, dict[str, Any]] = {}
         for p in ports:
             dev = p.get("device")
@@ -1707,9 +1257,6 @@ class DeviceManager:
             mem = remembered_spawn(profile)
             if not mem:
                 continue
-            # Q43: whether the remembered camera INDICES are usable right now, judged from the rows
-            # already computed above - nothing is opened here (probing would steal a device from a
-            # running robot), and a camera held by the very peer we would respawn is not a problem.
             health = remembered_camera_health(
                 (profile or {}).get("cameras"), cams, str(mem.get("peer_id") or ""),
             )
@@ -1717,9 +1264,6 @@ class DeviceManager:
                 mem["camera_health"] = health
             remembered[dev] = mem
         return {
-            # Each board carries what is KNOWN about its role (measured earlier,
-            # remembered by serial) so the devices screen can show it without a
-            # second round trip - and so a wrong label is visible at a glance.
             "serial_ports": [
                 {
                     **e,
@@ -1735,11 +1279,7 @@ class DeviceManager:
             # same reason repeated on every row (and missed on all of them).
             "camera_problem": camera_facts.blocked_verdict(cams),
             "camera_names": self._camera_names(refresh=refresh),
-            # The keys here are PEER IDS, not pids. The loop variable used to be
-            # named `pid`, which is very likely why the actual OS pid -- the one
-            # /api/robots/spawn hands back and an operator needs to `kill` or match
-            # in Activity Monitor -- was never in the payload: the name was already
-            # taken by something else.
+            # The keys here are PEER IDS, not pids.
             "managed": {
                 peer_id: {
                     "peer_id": m.peer_id, "robot_name": m.robot_name, "mode": m.mode,
@@ -1750,17 +1290,7 @@ class DeviceManager:
                     "pid": m.process.pid if m.process is not None else None,
                     "returncode": m.process.poll() if m.process is not None else None,
                     "log_tail": list(m.logs)[-20:],
-                    # The camera CONFIG this child was spawned with (name ->
-                    # {index_or_path, fps?, ...}) - the mesh snapshot only says
-                    # which streams exist, so without this the reconfigure
-                    # editor (U19) would open blank and "change the fps" would
-                    # mean re-typing everything from memory.
                     "cameras": dict(m.cameras or {}),
-                    # The measured role of the board this child is driving, so a
-                    # screen that pairs arms (record/teleop) can name the leader
-                    # from the HARDWARE instead of from the peer id. Absent when
-                    # nobody measured it - which must stay distinguishable from
-                    # "measured and unknown".
                     **roles.get(m.port, {}),
                 }
                 for peer_id, m in self.robots.items()
@@ -1785,29 +1315,12 @@ class DeviceManager:
         return self._port_serial_cache
 
     def annotations_by_peer(self) -> dict[str, dict[str, Any]]:
-        """Everything the DASHBOARD knows about a managed peer that the mesh cannot say.
-
-        One hook, because MeshBridge.peer_annotations is one callable and the route and the websocket
-        must never disagree about a peer (the U2 lesson: annotate inside snapshot(), not in a route).
-        Today that is the measured arm role plus the cameras the spawn asked for.
-
-        Absent keys mean "not known", never a value: a peer with no measured role and no requested
-        cameras contributes nothing, so an unmanaged peer looks exactly like itself rather than like a
-        robot with zero cameras.
-        """
+        """Everything the DASHBOARD knows about a managed peer that the mesh cannot say."""
         out: dict[str, dict[str, Any]] = {pid: dict(f) for pid, f in self.roles_by_peer().items()}
         for peer_id, m in self.robots.items():
             names = requested_camera_names(m.cameras)
             if names:
                 out.setdefault(peer_id, {})["cameras_requested"] = names
-            # WHY a connected arm publishes no joints (Q80). The reason is already in this child's
-            # log ring buffer; without carrying it here the fleet view shows a healthy-looking arm
-            # with an empty joint history and the operator has to go read logs to find out that the
-            # port is contended or the board is uncalibrated - two faults with opposite remedies.
-            # MeshBridge drops this again if the arm is actually publishing joints.
-            # The child's own name and id go WITH the listing: without them the remedy can only
-            # print every calibration on the machine (ten paths across three robot families here)
-            # and leave the operator to work out which one lerobot wanted.
             lines = list(m.logs)
             problem = joint_silence.classify(
                 lines, _calibrations_on_disk(),
@@ -1824,13 +1337,6 @@ class DeviceManager:
         return out
 
     def roles_by_peer(self) -> dict[str, dict[str, Any]]:
-        """Measured role per MANAGED peer id, for callers polled at 1Hz.
-
-        Cheap on purpose: the profiles are already in memory and the port ->
-        serial map is cached, so this touches no hardware. Peers whose board was
-        never measured are simply absent - the fleet must be able to say "not
-        measured" rather than inventing "unknown".
-        """
         serials = self._port_serials()
         out: dict[str, dict[str, Any]] = {}
         for peer_id, m in self.robots.items():
@@ -1842,11 +1348,6 @@ class DeviceManager:
 
     @staticmethod
     def _role_fields(profile: Mapping[str, Any] | None) -> dict[str, Any]:
-        """The measured-role fields of a profile, or {} when it has none.
-
-        Absent stays ABSENT: "nobody measured this board" must not arrive at the
-        UI looking like "measured, result unknown".
-        """
         if not profile:
             return {}
         return {
@@ -1860,14 +1361,7 @@ class DeviceManager:
     ROSTER_MAX_AGE_S = 300.0
 
     def _roster_for_stamp(self) -> list[dict[str, Any]]:
-        """The camera roster this manager ALREADY has, or [] - never a fresh scan.
-
-        A scan shells out to ffmpeg with a 10s timeout and can OPEN cameras, so triggering one from
-        inside spawn would put that delay in front of the spawn button and could take the very index
-        the arm is about to open. The stamp is a nice-to-have note; it must never cost or contend for
-        hardware. No cache, a stale one, or a broken one all read as no evidence, and
-        stamp_device_names then writes nothing rather than inventing a name.
-        """
+        """The camera roster this manager ALREADY has, or [] - never a fresh scan."""
         try:
             roster = self._camera_names_cache
             taken_at = float(self._camera_names_cache_t or 0.0)
@@ -1905,23 +1399,7 @@ class DeviceManager:
         index: int,
         live_cameras: Mapping[str, Iterable[str]] | None = None,
     ) -> bytes:
-        """One JPEG frame from a camera nobody is streaming.
-
-        This is the authoritative "which camera is index N" tool - names are
-        a roster in listing order, but a picture cannot lie.
-
-        Refuses an index whose owner is ACTUALLY streaming it (opening one
-        steals its frames mid-episode). An index a robot merely has in its
-        config while publishing nothing is NOT refused: on this machine both
-        arm cameras were configured and neither opened, so "watch it on that
-        robot's card instead" pointed at a card that will never show a picture
-        and left the operator no way at all to identify the camera.
-
-        Raises:
-            PermissionError: the index is streaming for a managed robot.
-            cameras.CameraUnavailable: it would not open - carrying the reason
-                and the remedy, not just "would not open".
-        """
+        """One JPEG frame from a camera nobody is streaming."""
         claimed = self._claimed_camera_indices()
         streaming = self._streaming_indices(live_cameras)
         if index in claimed and (streaming is None or index in streaming):
@@ -1958,19 +1436,6 @@ class DeviceManager:
         index: int,
         live_cameras: Mapping[str, Iterable[str]] | None = None,
     ) -> dict[str, Any]:
-        """Which fps/resolution combos camera ``index`` ACTUALLY delivers (U19).
-
-        The reconfigure sheet's selects must offer real modes, not fantasy:
-        a driver silently accepts any set() and then delivers whatever it
-        wants, so the only truth is the read-back. Each candidate is set and
-        then read back; a mode is reported only if the camera agreed to it
-        (or it is what the camera natively delivered). Same streaming guard
-        as preview_frame - probing steals the device on macOS.
-
-        Raises:
-            PermissionError: the index is streaming for a managed robot.
-            cameras.CameraUnavailable / RuntimeError: it would not open.
-        """
         claimed = self._claimed_camera_indices()
         streaming = self._streaming_indices(live_cameras)
         if index in claimed and (streaming is None or index in streaming):
@@ -2017,12 +1482,8 @@ class DeviceManager:
         return None
 
     def profile_for_port(self, port: str) -> dict[str, Any] | None:
-        """The remembered profile for the board at ``port``.
-
-        Profiles are keyed by USB SERIAL NUMBER, not by port - a /dev name is
-        reassigned by the OS, a serial is the board. Looking one up by port
-        would silently return None forever, which is how a mismatch check ends
-        up quietly checking nothing.
+        """The remembered profile for the board at ``port``. Profiles are keyed by USB SERIAL NUMBER, not
+        by port - a /dev name is reassigned by the OS, a serial is the board.
         """
         for entry in scan_serial_ports():
             if entry.get("device") == port and entry.get("serial_number"):
@@ -2036,22 +1497,8 @@ class DeviceManager:
         ids: Sequence[int] = (1, 2, 3, 4, 5, 6),
         timeout: float = 25.0,
     ) -> dict[str, Any]:
-        """Measure a Feetech bus's supply voltage and say which arm role it is.
-
-        READS ONLY - Present_Voltage (register 62, one byte, read-only in
-        lerobot's Feetech table). Nothing here writes torque, goal position or
-        any other register, so it cannot move an arm.
-
-        Runs in a CHILD process on purpose: opening the serial port in-process
-        would put a second owner on a bus the dashboard also talks to through
-        spawned children (the Q26 collision class), and a servo bus that stops
-        answering can hang a read for as long as the SDK's retries take. The
-        child cannot wedge the event loop, and its stderr comes back as the
-        reason.
-
-        Refuses while a live child holds the port: that child IS the bus owner,
-        and stealing the port mid-episode is exactly the failure this dashboard
-        already learned to avoid.
+        """Measure a Feetech bus's supply voltage and say which arm role it is. READS ONLY -
+        Present_Voltage (register 62, one byte, read-only in lerobot's Feetech table).
         """
         owner = self.port_owner(port)
         if owner is not None:
@@ -2087,14 +1534,7 @@ class DeviceManager:
         return verdict
 
     def measure_arm_role(self, port: str, model: str = "sts3215") -> dict[str, Any]:
-        """Read the role off the bus AND remember it against the board's serial.
-
-        The measurement is worth nothing if it lives only in one HTTP response:
-        the label the dashboard shows next session is what the operator acts on.
-        Keyed by serial, so a board keeps its role across /dev renumbering and
-        reboots. A refusal (unpowered / mixed / unread) is reported but NOT
-        written - see ProfileStore.record_role.
-        """
+        """Read the role off the bus AND remember it against the board's serial."""
         verdict = self.read_bus_role(port, model)
         serial = None
         for entry in scan_serial_ports():
@@ -2116,14 +1556,7 @@ class DeviceManager:
         return verdict
 
     def _camera_fault(self, index: int) -> camera_facts.CameraUnavailable:
-        """Ask OpenCV why, in a child process, and answer in the operator's terms.
-
-        A preview that fails is exactly the moment the diagnosis is worth its
-        ~1s: the operator just pressed a button and is looking at the result.
-        Without this the answer was "camera index 0 would not open" for a
-        missing camera, a busy camera and a macOS privacy denial alike - the
-        same conflation U14 removed from the devices list.
-        """
+        """Ask OpenCV why, in a child process, and answer in the operator's terms."""
         stderr = diagnose_camera_indices([index]).get(index, "")
         state, reason, remedy = camera_facts.classify_probe_stderr(stderr)
         if state == "absent":
@@ -2139,20 +1572,7 @@ class DeviceManager:
         return {"peer_id": peer_id, "alive": m.alive(), "lines": list(m.logs)}
 
     def _unique_peer_id(self, base: str) -> str:
-        """A peer id that is not already tracked, starting from ``base``.
-
-        Ids were minted as ``f"replay-{int(time.time()) % 100000}"``, so two
-        replays started in the SAME SECOND produced the same id and the second
-        one's ``self.robots[peer_id] = managed`` overwrote the first's entry.
-        The first process was then untracked: nothing could show its logs, stop
-        it, or despawn it, and it kept publishing to the mesh under an id that
-        now belonged to someone else -- two processes claiming to be one peer.
-
-        Dead-but-tracked ids are avoided too: their logs are still the record of
-        what happened, and the mesh may still hold the ghost until it ages out.
-
-        Caller must hold ``self._lock``.
-        """
+        """A peer id that is not already tracked, starting from ``base``."""
         if base not in self.robots:
             return base
         for n in range(2, 1000):
@@ -2185,9 +1605,9 @@ class DeviceManager:
     ) -> dict[str, Any]:
         import json as _json
 
-        # Refuse before a process exists: a pid reported for a child that is
-        # already raising is worse than a refusal, because the fleet grid shows
-        # a card for it and the operator waits out the settle window to find out.
+        # Refuse before a process exists: a pid reported for a child that is already raising is worse
+        # than a refusal, because the fleet grid shows a card for it and the operator waits out the
+        # settle window to find out.
         checked = validate_spawn(robot_name, mode)
         if isinstance(checked, dict):
             return checked
@@ -2199,9 +1619,6 @@ class DeviceManager:
         if bad_id:
             return {"error": bad_id}
 
-        # The camera config used to be judged first by the CHILD - a ValueError
-        # after the route had already answered 200 + pid (Q-class: the operator
-        # watched a card die instead of reading a refusal).
         bad_cams = validate_cameras(cameras)
         if bad_cams:
             return bad_cams
@@ -2212,11 +1629,6 @@ class DeviceManager:
         with self._lock:
             if peer_id in self.robots and self.robots[peer_id].alive():
                 return {"error": f"peer {peer_id} already running"}
-            # Q84: the check above is blind to every process that is not ours. It has to be -- it reads
-            # self.robots -- and that blindness cost ten hours of a fleet with no arms in it, because 185
-            # parentless holders were reading both buses while this dict was empty. Ask the machine
-            # instead, and refuse before Popen: a second owner on a half-duplex bus corrupts both
-            # conversations, and a child started blind reports a pid and then dies in the settle window.
             if mode == "real" and port:
                 tracked = {
                     r.process.pid: pid_key
@@ -2227,17 +1639,13 @@ class DeviceManager:
                 if conflict:
                     return {"error": conflict}
             # Stamp each numeric camera index with the device that answers it RIGHT NOW, while the
-            # operator's choice and the machine's numbering are still known to agree. This is the
-            # only moment they are: an index is a position in a list that closes up on an unplug, so
-            # without this note a renumbered index still opens, still streams, and records the wrong
-            # view (camera_liveness.identity_drift is what later reads it back).
+            # operator's choice and the machine's numbering are still known to agree.
             cameras = camera_liveness.stamp_device_names(cameras, self._roster_for_stamp())
             cfg = {"robot_name": robot_name, "mode": mode, "peer_id": peer_id, "port": port, "cameras": cameras, "robot_id": robot_id}
             proc = subprocess.Popen(
                 # The child gets the camera config with the dashboard's own notes REMOVED:
-                # _build_camera_config refuses any key OpenCVCameraConfig does not declare, so a
-                # forwarded device_name would not degrade one camera, it would kill every camera on
-                # the arm. The stamp stays in cfg (remembered profile) and in ManagedRobot.
+                # _build_camera_config refuses any key OpenCVCameraConfig does not declare, so a forwarded
+                # device_name would not degrade one camera, it would kill every camera on the arm.
                 [sys.executable, "-c", _SPAWNER,
                  _json.dumps({**cfg, "cameras": camera_liveness.without_annotations(cameras)})],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -2256,13 +1664,6 @@ class DeviceManager:
         if remember and mode == "real" and port:
             self.remember_profile(cfg)
         out = {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
-        # A real arm whose robot_id has no calibration where lerobot will look comes up with
-        # presence connected:true and ZERO joints, and the reason lives only in the child's log
-        # (measured on the live fleet 2026-08-20: robot_id "leader" against a calibration that
-        # exists only under teleoperators/). The filesystem knows this before the child does, so
-        # say it here. A WARNING, not a refusal: the calibration cache can be moved or absent, and
-        # a false refusal would stop an arm coming back after a replug - what the profile memory
-        # exists to guarantee. The helper stays silent whenever it cannot be sure.
         if mode == "real" and robot_id:
             try:
                 from strands_robots.dashboard.calibration import robot_calibration_gap
@@ -2287,23 +1688,9 @@ class DeviceManager:
     ) -> dict[str, Any]:
         """Watch a just-spawned peer long enough to answer honestly.
 
-        ``spawn()`` returns as soon as ``Popen`` hands back a pid, which is
-        always -- a robot whose camera config is wrong, whose port is taken, or
-        whose policy is not installed still gets a pid, dies a second later, and
-        the dashboard shows a card for a peer that will never appear. This
-        watches the gap.
-
-        Returns as soon as the answer is known, so a healthy peer costs only the
-        time it needs to announce itself:
-
-        - ``running``: the child is alive and ``is_up`` confirms the mesh has
-          seen it. The only status that means "it works".
-        - ``failed``: the child exited. Carries ``exit_code`` and ``reason``
-          (see :func:`crash_reason`).
-        - ``starting``: still alive at the deadline, not yet announced. Not a
-          failure and not a success -- slow hardware exists, and claiming
-          either would be a guess.
-        - ``gone``: no longer tracked (despawned while we watched).
+        ``spawn()`` returns as soon as ``Popen`` hands back a pid; a child that
+        dies a second later still got one, so this watches the gap and answers
+        ``running`` / ``failed`` / ``starting`` / ``gone``.
 
         Args:
             peer_id: The peer returned by :meth:`spawn`.
@@ -2351,11 +1738,8 @@ class DeviceManager:
             _sleep(min(poll, max(0.0, deadline - _now())))
 
     def remember_profile(self, payload: dict[str, Any]) -> dict[str, Any] | None:
-        """Save this spawn payload as the profile for the board behind its port.
-
-        Keyed by the port's USB serial number so a replug on a different
-        ``/dev/cu.*`` path still finds it. Returns the stored profile, or None
-        when the board is no longer enumerable (nothing to key on).
+        """Save this spawn payload as the profile for the board behind its port. Keyed by the port's USB
+        serial number so a replug on a different ``/dev/cu.*`` path still finds it.
         """
         port = payload.get("port")
         if not port:
@@ -2367,14 +1751,7 @@ class DeviceManager:
             return None
         info = detected.get(port)
         if info is None:
-            # The port is not in the scan at all, so there is no board to
-            # remember. The old fallback keyed the profile by the /dev string
-            # anyway, which wrote an entry that can never match anything again
-            # (found live: a failed test spawn left profile
-            # "/dev/cu.usbmodem5AB0181806" -> peer q1-bad, a path that does not
-            # even exist). A board that reports no serial still gets its path as
-            # a key via profile_key - that one IS matchable, because the scan
-            # produced it.
+            # The port is not in the scan at all, so there is no board to remember.
             logger.warning(
                 "not saving a profile for %s: it is not in the serial scan, so there is "
                 "no board to key it to", port,
@@ -2390,16 +1767,9 @@ class DeviceManager:
         list_ports: Callable[[], list[dict[str, Any]]] | None = None,
         peer_ids: Callable[[], Iterable[str]] | None = None,
     ) -> AutoSpawnWatcher | None:
-        """Create the USB auto-spawn watcher, or None when the environment forbids it.
-
-        This is the only path that points the watcher at the REAL serial scan, so it is where the
-        Q81 veto belongs: a pytest process, or one with the mesh kill switch engaged, must not
-        bring physical boards up. See :func:`autospawn_veto`.
-        """
+        """Create the USB auto-spawn watcher, or None when the environment forbids it."""
         veto = autospawn_veto(os.environ)
         if veto is not None:
-            # Say WHY, loudly enough to find in a log: "auto-spawn disabled" next to an arm that
-            # never came up is the kind of line that costs an hour (Q81).
             logger.warning("USB auto-spawn refused: %s", veto)
             return None
         self.autospawn = AutoSpawnWatcher(self, list_ports=list_ports, peer_ids=peer_ids)
@@ -2413,37 +1783,21 @@ class DeviceManager:
         speed: float = 1.0,
         robot_name: str = "so101",
     ) -> dict[str, Any]:
-        """One-shot replay sim: spawns a mesh sim peer, replays the episode
-        with real physics + cameras streaming on the mesh, exits when done.
-
-        The peer appears in the fleet grid like any sim while the replay
-        runs - the operator literally watches the recorded episode through
-        the mesh camera rail. replay_episode is in-process-only upstream
-        (not a wire action), so a dedicated short-lived process is the way
-        a robot-less dashboard can drive it.
+        """One-shot replay sim: spawns a mesh sim peer, replays the episode with real physics + cameras
+        streaming on the mesh, exits when done.
         """
         import json as _json
 
-        # Q5: everything knowable without a network call is refused BEFORE a
-        # process exists - a 200 + pid for a replay that cannot start is a lie
-        # with a delay on it.
         bad = validate_replay(repo_id, episode, root, speed)
         if bad:
             return bad
-        # Now that the shared rule is the judge, an accepted `episode` may be a
-        # float or a numpy scalar with an integral value. Coerce ONCE here, at
-        # the boundary where it stops being a number and becomes config: the cfg
-        # dict below is json.dumps'd for the child (which cannot serialise
-        # np.int64 at all) and the value is compared against running jobs, where
-        # 3 and 3.0 must not read as two different episodes. Safe precisely
-        # because the guard above already compared int(value) back to value.
+        # Now that the shared rule is the judge, an accepted `episode` may be a float or a numpy
+        # scalar with an integral value.
         episode = int(episode)
 
         with self._lock:
-            # Clicking Run twice is one click too many: a second sim of the same
-            # episode fights the first for the same mesh peer name and doubles
-            # the physics load for nothing. Point the operator at the card that
-            # is already showing what they asked for.
+            # Clicking Run twice is one click too many: a second sim of the same episode fights the first
+            # for the same mesh peer name and doubles the physics load for nothing.
             running = self._running_job("replay", repo_id=repo_id, episode=episode)
             if running is not None:
                 return {
@@ -2488,12 +1842,8 @@ class DeviceManager:
         duration: float = 10.0,
         fps: int = 30,
     ) -> dict[str, Any]:
-        """One-shot data collection: spawn a mesh sim, roll out a policy for
-        N recorded episodes (parquet-truth verified by the run_policy tool),
-        exit. The dataset lands where the Training tab's discovery scans.
-
-        This is scripted collection (policy demos); teleop-driven human
-        demos additionally need a leader arm attached to a real robot peer.
+        """One-shot data collection: spawn a mesh sim, roll out a policy for N recorded episodes
+        (parquet-truth verified by the run_policy tool), exit.
         """
         import json as _json
 
@@ -2511,9 +1861,9 @@ class DeviceManager:
                     "already_running": True,
                 }
             peer_id = self._unique_peer_id(f"collect-{int(time.time()) % 100000}")
-            # The id is reserved immediately, under the SAME lock as the guard:
-            # releasing it here would let two concurrent recorders both pass the
-            # check and both mint the same id -- the bug this method is fixing.
+            # The id is reserved immediately, under the SAME lock as the guard: releasing it here would
+            # let two concurrent recorders both pass the check and both mint the same id -- the bug this
+            # method is fixing.
             self.robots[peer_id] = ManagedRobot(
                 peer_id=peer_id, robot_name=robot_name, mode="collect",
                 started_at=time.time(), job={"dataset_root": dataset_root},
@@ -2554,28 +1904,13 @@ class DeviceManager:
         return {"peer_id": peer_id, "stopped": True}
 
     def reconfigure_cameras(self, peer_id: str, cameras: dict[str, Any] | None) -> dict[str, Any]:
-        """Respawn a managed peer with a new camera config (U19 v1).
-
-        Peers take cameras only at spawn, so "change the wrist camera's fps"
-        is honestly a RESPAWN - this makes it one atomic, named operation
-        instead of a despawn the operator must remember to follow up. The
-        streams the peer was publishing DO drop for the settle window; the
-        route's confirm dialog is where that is consented to, not here.
-
-        Only locally-managed children can be respawned: a peer that lives on
-        another machine shows up in the fleet but its process is not ours to
-        kill. ``remember=True`` persists the new config into the port profile,
-        so the auto-spawn watcher keeps the change across replugs (and the
-        profile store's MEASURED_FIELDS carry-over keeps the arm's measured
-        role through the rewrite).
-        """
         bad = validate_cameras(cameras)
         if bad:
             return bad
-        # A camera that CANNOT exist is refused before the despawn, not after the respawn: the arm that
-        # is streaming right now is the thing at stake, and "index 7 of 3 cameras" is knowable without
-        # opening anything (see indices_beyond_roster - count only, no probe, silent when enumeration
-        # itself failed).
+        # A camera that CANNOT exist is refused before the despawn, not after the respawn: the arm
+        # that is streaming right now is the thing at stake, and "index 7 of 3 cameras" is knowable
+        # without opening anything (see indices_beyond_roster - count only, no probe, silent when
+        # enumeration itself failed).
         roster = self._camera_names(refresh=True)
         impossible = indices_beyond_roster(cameras, len(roster))
         if impossible:

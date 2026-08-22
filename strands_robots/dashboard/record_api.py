@@ -1,26 +1,3 @@
-"""/api/record - the session controller behind the record screen (U8).
-
-The RecordController owns exactly one teleop recording session at a time and
-the fleet-side choreography around it:
-
-* Serial ports are exclusive, so the arms' managed fleet peers are STOPPED
-  before the session opens and RESPAWNED with their original configs after
-  it closes. The USB auto-spawn watcher is suspended for the whole session -
-  otherwise it would resurrect the peers within one poll and two processes
-  would drive one servo bus.
-
-* If opening fails halfway (a device refuses, lerobot missing), everything
-  already torn down is put back. A failed open must leave the fleet exactly
-  as it found it.
-
-* HTTP speaks the FRONTEND_HANDOFF.md contract the record screen was built
-  against; the state machine itself lives in
-  :mod:`strands_robots.dashboard.record_worker`.
-
-Factories for the backend and recorder are injectable for tests; the real
-defaults are :func:`record_worker.hardware_backend` and
-:class:`strands_robots.dataset_recorder.DatasetRecorder`.
-"""
 
 from __future__ import annotations
 
@@ -59,15 +36,8 @@ EMPTY_SESSION: dict[str, Any] = {
     "error": None,
 }
 
-
 def _target_facts(dataset: str) -> dict[str, Any]:
-    """What is on disk where this dataset would be written.
-
-    Read here rather than inside the verdict so the judgment stays pure and testable, and read
-    DEFENSIVELY: an unreadable dataset home must not stop a recording from opening. Silence here
-    means "no evidence of a collision", which is exactly what the old behaviour assumed - the
-    check can only ever add refusals it can prove.
-    """
+    """What is on disk where this dataset would be written."""
     name = (dataset or "").strip()
     if not name:
         return {}
@@ -92,14 +62,7 @@ def _target_facts(dataset: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 - a blind check must never block a recording
         return {}
 
-
 def _hub_facts(repo_id: str | None) -> dict[str, Any]:
-    """Q78: what is already published at this destination, or {} when it cannot be established.
-
-    Read DEFENSIVELY and never raise: no network, no token, a 5xx from the Hub, an unexpected
-    payload - all mean "no evidence", which is exactly how the check behaved before it existed. A
-    Hub lookup must not be able to stop a recording from being published.
-    """
     name = (repo_id or "").strip().strip("/")
     if not name or "/" not in name:
         return {}
@@ -121,7 +84,6 @@ def _hub_facts(repo_id: str | None) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         return {}
 
-
 def _default_recorder_factory(backend: Any) -> Callable[..., Any]:
     def make(*, repo_id: str, fps: int, task: str) -> Any:
         from strands_robots.dataset_recorder import DatasetRecorder
@@ -130,7 +92,6 @@ def _default_recorder_factory(backend: Any) -> Callable[..., Any]:
         return DatasetRecorder.create(repo_id=repo_id, fps=fps, task=task, **extra)
 
     return make
-
 
 class RecordController:
     """One recording session at a time, with fleet peers parked around it."""
@@ -145,11 +106,7 @@ class RecordController:
         bridge: Any | None = None,
     ) -> None:
         self._devices = devices
-        # Where the live per-camera frame evidence comes from. Optional and
-        # late-bound: an older caller (and every existing test) constructs this
-        # controller with devices alone, and a controller with no bridge simply
-        # has no evidence - which must mean "do not refuse", never "everything
-        # is dead".
+        # Where the live per-camera frame evidence comes from.
         self._bridge = bridge
         self._backend_factory = backend_factory or hardware_backend
         self._recorder_factory_factory = (
@@ -160,25 +117,15 @@ class RecordController:
         )
         self._lock = threading.Lock()
         self._worker: RecordWorker | None = None
-        #: Q40: proof that a session was open, for the next process to read.
         self._crumb = record_crash.crumb_path()
         self._parked: list[dict[str, Any]] = []
-        #: Q92: cached free-space verdict + when it was read.
         self._disk_cache: dict[str, Any] | None = None
         self._disk_seen: float | None = None
 
-    #: How long a free-space reading stays good enough (Q92). The record screen polls session() about
-    #: once a second; a statfs is cheap but not free, and disk pressure is a minutes-scale story.
     DISK_POLL_S = 20.0
 
     def _disk_notice(self) -> dict[str, Any] | None:
-        """The free-space warning for the volume datasets land on, or None.
-
-        Reported on EVERY session read, idle or recording, because Q91 was a RATE: the volume this
-        rig records into lost ~2Gi/h to swap growth, so a session that was comfortable when it opened
-        can be in trouble by episode 20. A check that only runs at open would have missed exactly
-        that. Cached, blind to failure, and silent when there is nothing to say.
-        """
+        """The free-space warning for the volume datasets land on, or None."""
         now = time.time()
         if self._disk_seen is not None and now - self._disk_seen < self.DISK_POLL_S:
             return self._disk_cache
@@ -196,10 +143,6 @@ class RecordController:
     def session(self) -> dict[str, Any]:
         with self._lock:
             if self._worker is None:
-                # Q40: "no session" is true but not the whole truth. A breadcrumb this dashboard
-                # wrote and never removed proves a session was open and did not close - so the
-                # screen can name the dataset and the arms instead of showing an empty form over a
-                # half-written take.
                 idle = dict(EMPTY_SESSION)
                 crumb = record_crash.read_crumb(self._crumb)
                 notice = record_crash.interrupted_notice(
@@ -212,9 +155,6 @@ class RecordController:
                     idle["disk_notice"] = disk
                 return idle
             live = self._worker.session()
-            # Q92: the worker owns the recording, not the machine it runs on, so the disk reading is
-            # attached here. Absent rather than null when there is nothing to say, matching every
-            # other *_notice on this document.
             disk = self._disk_notice()
             if disk:
                 live = {**live, "disk_notice": disk}
@@ -237,10 +177,6 @@ class RecordController:
             leader_id = str(body.get("leader", "")).strip()
             follower_id = str(body.get("follower", "")).strip()
 
-            # Q39: judge the dataset NAME first. Every failure after the parking step below
-            # reports through "could not open the arms: {exc}", so a name that is already taken
-            # sent the operator to check cables for what is a one-word rename - and by then both
-            # arms have been despawned and respawned for nothing.
             bad = record_target_verdict(dataset, **_target_facts(dataset))
             if bad:
                 raise HTTPException(409 if dataset.strip() else 422, bad)
@@ -248,10 +184,8 @@ class RecordController:
             leader = self._managed(leader_id, role="leader")
             follower = self._managed(follower_id, role="follower")
 
-            # Joints BEFORE cameras: a missing camera view is a degraded dataset, positions that
-            # cannot be read are an empty one. Both arms, because the follower's positions are the
-            # observations and the leader's are the actions. Skipped entirely when the snapshot is
-            # absent or stale (record_joints refuses to treat old silence as evidence).
+            # Joints BEFORE cameras: a missing camera view is a degraded dataset, positions that cannot be
+            # read are an empty one.
             _now = time.time()
             for _role, _pid in (("leader", leader_id), ("follower", follower_id)):
                 bad_joints = record_joints.refusal(
@@ -261,12 +195,8 @@ class RecordController:
                 if bad_joints:
                     raise HTTPException(409, bad_joints)
 
-            # A dataset is the expensive artifact here: an hour of hand-guiding an
-            # arm, discovered to be useless at training time. A camera whose last
-            # capture is hours old (measured: arm-1's wrist, 10.4h) would record a
-            # frozen or missing image stream, so it is worth one check now. Only
-            # POSITIVE evidence of death refuses - a camera with no frame history
-            # may simply never have been subscribed to (camera_liveness).
+            # A dataset is the expensive artifact here: an hour of hand-guiding an arm, discovered to be
+            # useless at training time.
             if not body.get("ignore_dead_cameras"):
                 dead = camera_liveness.dead_cameras(
                     follower.cameras, self._camera_meta(follower_id), now=time.time()
@@ -276,9 +206,8 @@ class RecordController:
                         409, camera_liveness.refusal(dead, peer_id=follower_id)
                     )
 
-            # The rail above judges frame AGE, so it is blind to a camera that never
-            # published at all - which is exactly a camera unplugged before the arm
-            # subscribed. The machine's own enumeration answers that independently.
+            # The rail above judges frame AGE, so it is blind to a camera that never published at all -
+            # which is exactly a camera unplugged before the arm subscribed.
             if not body.get("ignore_missing_cameras"):
                 missing = camera_liveness.missing_cameras(
                     follower.cameras, self._present_camera_indices()
@@ -288,11 +217,9 @@ class RecordController:
                         409, camera_liveness.missing_refusal(missing, peer_id=follower_id)
                     )
 
-            # The third shape, and the one both rails above call healthy: an index is a POSITION in
-            # a list that closes up when a device is removed, so pulling the camera at index 1
-            # slides index 2 into its place. The configured index still exists, still opens, still
-            # streams - with the wrong view, and the episodes look perfect until training. Only the
-            # name the index carried when it was configured (stamped at spawn) can say so.
+            # The third shape, and the one both rails above call healthy: an index is a POSITION in a list
+            # that closes up when a device is removed, so pulling the camera at index 1 slides index 2
+            # into its place.
             if not body.get("ignore_camera_identity"):
                 drift = camera_liveness.identity_drift(
                     follower.cameras, self._present_camera_roster()
@@ -345,9 +272,6 @@ class RecordController:
                     recorder_factory=self._recorder_factory_factory(backend),
                     thumb_dir=self._thumb_root,
                 )
-            # Q101: every path here restores the parked arms, and restoring can FAIL. Whatever the
-            # refusal says, it also has to say that - the operator is looking at this sentence, not
-            # at the server log, and a 4xx otherwise reads as "nothing happened to your fleet".
             except HTTPException as exc:
                 lost = self._unpark_locked()
                 if not lost:
@@ -368,22 +292,12 @@ class RecordController:
             record_crash.write_crumb(opened, path=self._crumb)
             return opened
 
-    #: How old an already-taken camera roster may be and still count as evidence. A roster from
-    #: this morning could omit a camera plugged in since, and refusing a session over that would be
-    #: this gate inventing a fault.
+    # : How old an already-taken camera roster may be and still count as evidence.
     ROSTER_MAX_AGE_S = 300.0
 
     def _present_camera_roster(self) -> tuple[dict[str, Any], ...]:
-        """The camera roster this machine ALREADY took, if it is still evidence.
-
-        Deliberately does not trigger a scan. Two reasons, and the second is the important one:
-        a fresh name scan shells out to ffmpeg with a 10s timeout, which would sit in front of the
-        record button; and any probe that *opens* cameras to enumerate them could itself take the
-        index the arm is about to use. So this reads the cache the devices screen has already
-        filled - and an empty or stale cache reads as no evidence, which cannot refuse anything.
-
-        Single source for both machine-side camera rails (absence and identity), so they can never
-        disagree about what this Mac is showing right now.
+        """The camera roster this machine ALREADY took, if it is still evidence. Deliberately does not
+        trigger a scan.
         """
         devices = self._devices
         try:
@@ -405,12 +319,7 @@ class RecordController:
         )
 
     def _camera_meta(self, peer_id: str) -> dict[str, Any]:
-        """What the fleet snapshot last saw from this peer's cameras.
-
-        Never raises and never guesses: a missing bridge, a peer the bridge has
-        not heard of, or a snapshot shaped differently all read as "no evidence",
-        and no evidence must not be able to refuse a recording.
-        """
+        """What the fleet snapshot last saw from this peer's cameras."""
         bridge = self._bridge
         if bridge is None:
             return {}
@@ -434,11 +343,7 @@ class RecordController:
             return None
 
     def _joint_problem(self, peer_id: str) -> Any:
-        """The classified reason this peer publishes no joints, if the dashboard has one.
-
-        Read from the SAME annotation hook the fleet view renders (DeviceManager.annotations_by_peer),
-        so the refusal and the robot card cannot give the operator two different explanations.
-        """
+        """The classified reason this peer publishes no joints, if the dashboard has one."""
         try:
             fields = self._devices.annotations_by_peer().get(peer_id) or {}
             return fields.get("joint_problem")
@@ -512,24 +417,11 @@ class RecordController:
                 # the fleet comes back whether or not finalize/upload worked -
                 # a hub hiccup must not leave the desk armless
                 self._worker = None
-                # Q40: cleared even if finalize threw. The breadcrumb answers "was a session left
-                # open when this process died", and a close that reached the worker answers it: no.
                 record_crash.clear_crumb(self._crumb)
                 self._unpark_locked()
             return result
 
     def _unpark_locked(self) -> list[str]:
-        """Put the parked arms back, and SAY which ones did not come back (Q101).
-
-        Opening a session despawns both arms before it builds the recorder, so every failure after
-        that point has to restore the fleet. Restoring is best effort - a port can still be held,
-        a spawn can refuse - and this used to swallow that into a ``logger.warning`` nobody reading
-        the record screen can see. The refusal then told the operator "the arms are untouched and
-        still in the fleet" while both cards were vanishing from it.
-
-        So return the losses instead of logging them alone: the caller puts them in the sentence it
-        raises, which is the one place the operator is already looking.
-        """
         lost: list[str] = []
         for cfg in self._parked:
             peer = str(cfg.get("peer_id") or "an arm")
@@ -553,14 +445,8 @@ class RecordController:
             watcher.suspended = False
         return lost
 
-
 def _with_lost_arms(detail: Any, lost: Sequence[str]) -> Any:
-    """Append the arms that did not come back to whatever the refusal was going to say.
-
-    A dict detail keeps its shape (the frontend reads `error`/`hint` fields), a string grows a
-    sentence. The remedy is named because it is not obvious: the arms are gone from the fleet and
-    only the Devices screen brings them back.
-    """
+    """Append the arms that did not come back to whatever the refusal was going to say."""
     if not lost:
         return detail
     note = (
@@ -573,7 +459,6 @@ def _with_lost_arms(detail: Any, lost: Sequence[str]) -> Any:
         merged["hint"] = f"{detail['hint']} {note}" if isinstance(detail.get("hint"), str) else note
         return merged
     return f"{detail} - {note}" if detail else note
-
 
 def build_router(
     controller: RecordController,
@@ -588,12 +473,6 @@ def build_router(
 
     @r.get("/upload-preflight")
     async def upload_preflight_route() -> dict[str, Any]:
-        """Q72: can this machine publish THIS session's dataset -- asked before the work, not after.
-
-        Read-only. Every failure `close(upload=True)` can report is knowable now, and knowing it
-        later costs a finished session that cannot be re-pushed from here. hf_auth_state() is
-        cached and local unless the token changed, so the record screen may poll this.
-        """
         from strands_robots.dashboard.checkpoints import hf_auth_state
         from strands_robots.dashboard.upload_preflight import upload_preflight
 
@@ -605,9 +484,6 @@ def build_router(
         def judge() -> dict[str, Any]:
             auth = hf_auth_state()
             user = auth.get("user") if isinstance(auth, dict) else None
-            # Q78: only ask the Hub once the destination is knowable AND the credential is good -
-            # an unauthenticated probe answers about public repos only, and the auth refusal is the
-            # one that matters first anyway.
             existing = None
             if isinstance(auth, dict) and auth.get("authenticated") is True:
                 existing = _hub_facts(destination(dataset or "", user if isinstance(user, str) else None))
@@ -618,9 +494,8 @@ def build_router(
     @r.post("/open")
     async def open_session(body: dict[str, Any]) -> dict[str, Any]:
         result = controller.open(body)
-        # Opening a session PARKS real arms into teleop - an audit-worthy
-        # moment: it is the record screen taking the robots away from the
-        # fleet. The hook is optional so the router stays testable alone.
+        # Opening a session PARKS real arms into teleop - an audit-worthy moment: it is the record
+        # screen taking the robots away from the fleet.
         if on_activity is not None:
             on_activity(
                 "record", "session_open",

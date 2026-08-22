@@ -1,24 +1,4 @@
-"""Is the thing training just called a checkpoint actually a policy on disk? (BUGS.md Q36)
-
-The training tab's export button reports success on the trainer's word alone, and the deploy
-button stages the very same path into a run form that will command a REAL ARM. What the word
-rests on: ``LeRobotTrainer.latest_checkpoint`` locates the loadable directory *from the resume
-config file's parent* -- so a directory is "loadable" because a CONFIG is in it. Nothing looks
-for weights. A run killed between writing ``train_config.json`` and ``model.safetensors`` (a
-crash, a full disk, an OOM, a laptop lid) therefore exports and stages happily, and the failure
-arrives when a policy is asked to drive hardware: the operator has already picked the robot and
-pressed Run.
-
-This module is the cheap disk-level check that should stand between those two moments. It
-deliberately does NOT load the model: importing torch and materialising weights takes seconds
-to minutes and can OOM a machine that is mid-training, and the dashboard would be doing it on a
-request thread. So the verdict's own wording is careful -- ``ok`` means "nothing objectionable
-on disk", never "this will load". Overclaiming here would just move the lie one step later.
-
-Every refusal names the physical event that produces it, because "invalid checkpoint" tells the
-operator nothing they can act on, while "a config with no weights next to it is what a run
-killed mid-save leaves behind" tells them to look at the training log and re-export.
-"""
+"""Is the thing training just called a checkpoint actually a policy on disk?"""
 
 from __future__ import annotations
 
@@ -49,31 +29,18 @@ WEIGHT_NAMES = ("model.safetensors", "pytorch_model.bin", "adapter_model.safeten
 #: finished. A real policy head is megabytes; 4KB is one filesystem block.
 MIN_WEIGHT_BYTES = 4096
 
-
 def _is_file(p: Path) -> bool:
-    """``Path.is_file`` that cannot raise.
-
-    On macOS a stat inside a directory with mode 000 raises PermissionError straight out of
-    ``is_file`` (it does not swallow EACCES from the parent), which would 500 the export
-    route on a permission bit. Its own test caught that.
-    """
+    """``Path.is_file`` that cannot raise."""
     try:
         return p.is_file()
     except OSError:
         return False
 
-
 def _is_weight(p: Path) -> bool:
     return p.name in WEIGHT_NAMES or p.suffix.lower() in WEIGHT_SUFFIXES
 
-
 def _weights(directory: Path) -> list[Path]:
-    """Weight files in this directory, plus one level down.
-
-    One level, not a full walk: DCP writes shards into a subdirectory, and a policy dir can
-    hold a nested ``pretrained_model``. A deep walk on a path the operator typed could
-    wander into a dataset cache and take minutes on a request thread.
-    """
+    """Weight files in this directory, plus one level down."""
     found: list[Path] = []
     try:
         for entry in sorted(directory.iterdir()):
@@ -90,13 +57,9 @@ def _weights(directory: Path) -> list[Path]:
         return []
     return found
 
-
 def artifact_verdict(path: str | os.PathLike[str] | None) -> dict[str, Any]:
-    """What can be said about an exported artifact WITHOUT loading it.
-
-    Returns ``{"ok": bool, "path": str, ...}``. ``ok`` means "nothing objectionable on
-    disk" and is not a promise that the policy loads -- ``note`` says so in the payload, so
-    a caller that renders the verdict cannot accidentally render a guarantee.
+    """What can be said about an exported artifact WITHOUT loading it. Returns ``{"ok": bool, "path":
+    str, ...}``.
     """
     if not path or not str(path).strip():
         return {
@@ -185,9 +148,9 @@ def artifact_verdict(path: str | os.PathLike[str] | None) -> dict[str, Any]:
         "note": "checked on disk only - nothing here loads the model",
     }
     if not configs:
-        # Weights with no config: some loaders infer the architecture, so this is not a
-        # refusal - but it is worth saying, because it is also what a half-written
-        # checkpoint looks like from the other side.
+        # Weights with no config: some loaders infer the architecture, so this is not a refusal - but
+        # it is worth saying, because it is also what a half-written checkpoint looks like from the
+        # other side.
         verdict["warning"] = (
             f"{p} has weights but no {CONFIG_NAMES[0]}/{CONFIG_NAMES[1]} - the policy family "
             "may have to be chosen by hand when this is run."

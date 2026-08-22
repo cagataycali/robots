@@ -1,20 +1,4 @@
-"""Fleet agent for the dashboard - one Strands Agent driving the whole mesh.
-
-The agent's toolset is the ``robot_mesh`` tool (peers/tell/send/broadcast/
-stop/emergency_stop/...) so a single natural-language instruction can target
-one robot or the whole fleet straight from the chat bar:
-
-    > everyone pick up your cube      -> robot_mesh broadcast
-    > tell so101-arm-1 to wave        -> robot_mesh tell target=so101-arm-1
-
-Chat turns stream over a queue (token / reasoning / tool events) drained by
-the /ws/chat websocket handler.
-
-HITL note: robot_mesh actuation actions are gated behind Strands interrupts
-by default and FAIL CLOSED outside an approving host. For the dashboard the
-human typed the instruction themselves, so we default the gate to "none"
-(overridable with STRANDS_MESH_HITL_ACTIONS).
-"""
+"""Fleet agent for the dashboard - one Strands Agent driving the whole mesh."""
 
 from __future__ import annotations
 
@@ -56,17 +40,10 @@ HISTORY_FILE = Path(os.getenv(
     os.path.join(tempfile.gettempdir(), "strands_dashboard", "chat_history.json"),
 ))
 
-
 HISTORY_LIMIT = 200
 
-
 def _is_plain_user_message(msg: Any) -> bool:
-    """A user message carrying only text - i.e. a safe conversation boundary.
-
-    A user turn that carries a ``toolResult`` block is the *second half* of an
-    assistant ``toolUse``; starting a restored conversation there leaves the
-    result orphaned and Bedrock rejects the whole request.
-    """
+    """A user message carrying only text - i.e. a safe conversation boundary."""
     if not isinstance(msg, dict) or msg.get("role") != "user":
         return False
     content = msg.get("content")
@@ -74,15 +51,9 @@ def _is_plain_user_message(msg: Any) -> bool:
         return False
     return all(isinstance(c, dict) and "toolResult" not in c and "toolUse" not in c for c in content)
 
-
 def _trim_history(messages: list) -> list:
-    """Trim to the limit on a user-message boundary.
-
-    A blind ``messages[-200:]`` can slice between an assistant ``toolUse`` and
-    its ``toolResult``. Because the file is reloaded on every restart, that one
-    bad slice then fails *every* subsequent turn until it is deleted by hand.
-    Cutting only at a plain user message keeps every tool pair
-    intact.
+    """Trim to the limit on a user-message boundary. A blind ``messages[-200:]`` can slice between an
+    assistant ``toolUse`` and its ``toolResult``.
     """
     if len(messages) <= HISTORY_LIMIT:
         return list(messages)
@@ -97,13 +68,8 @@ def _trim_history(messages: list) -> list:
             return messages[i:]
     return []
 
-
 def _json_safe(messages: list) -> list:
-    """Round-trip messages through JSON, dropping anything that won't.
-
-    ``default=str`` used to stringify non-serialisable content blocks, so they
-    came back as garbage strings instead of valid message content.
-    """
+    """Round-trip messages through JSON, dropping anything that won't."""
     safe = []
     for msg in messages:
         try:
@@ -111,7 +77,6 @@ def _json_safe(messages: list) -> list:
         except (TypeError, ValueError):
             logger.debug("dropping non-serialisable message from history")
     return safe
-
 
 def _tool_ids(msg: Any, key: str) -> set:
     """Ids of ``toolUse``/``toolResult`` blocks carried by one message."""
@@ -124,14 +89,8 @@ def _tool_ids(msg: Any, key: str) -> set:
                 out.add(tid)
     return out
 
-
 def _drop_orphan_tool_blocks(messages: list) -> list:
-    """Remove toolUse blocks with no toolResult and vice versa.
-
-    A half of a pair is what Bedrock rejects; the surrounding text is fine, so
-    only the orphaned block is dropped, and a message left with no content at
-    all goes with it.
-    """
+    """Remove toolUse blocks with no toolResult and vice versa."""
     used: set = set()
     resulted: set = set()
     for msg in messages:
@@ -156,21 +115,14 @@ def _drop_orphan_tool_blocks(messages: list) -> list:
             kept.append({**msg, "content": blocks})
     return kept
 
-
 def sanitize_history(messages: Any) -> list:
-    """Make a persisted conversation structurally safe to restore.
-
-    JSON round-trip, trim on a user boundary, drop orphaned tool pairs, then
-    drop any leading non-user prefix the pruning exposed. Returns ``[]`` rather
-    than anything a provider would reject.
-    """
+    """Make a persisted conversation structurally safe to restore."""
     if not isinstance(messages, list):
         return []
     out = _drop_orphan_tool_blocks(_trim_history(_json_safe(messages)))
     while out and not _is_plain_user_message(out[0]):
         out.pop(0)
     return out if _history_problem(out) is None else []
-
 
 def _history_problem(messages: list) -> str | None:
     """Why this conversation would be rejected, or None if it is valid."""
@@ -187,7 +139,6 @@ def _history_problem(messages: list) -> str | None:
         return f"orphaned tool blocks: {sorted(used ^ resulted)}"
     return None
 
-
 def _backup_history_file() -> Path | None:
     """Keep the poisoned file aside so it is inspectable, not just gone."""
     try:
@@ -199,7 +150,6 @@ def _backup_history_file() -> Path | None:
         logger.warning("could not back up chat history: %s", e)
     return None
 
-
 def _load_history() -> list:
     try:
         if HISTORY_FILE.exists():
@@ -210,14 +160,12 @@ def _load_history() -> list:
         logger.warning("could not load chat history: %s", e)
     return []
 
-
 def _save_history(messages: list) -> None:
     try:
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         HISTORY_FILE.write_text(json.dumps(sanitize_history(list(messages))))
     except Exception as e:
         logger.debug("could not save chat history: %s", e)
-
 
 def clear_history() -> bool:
     """Drop the persisted conversation. The self-heal escape hatch."""
@@ -228,19 +176,12 @@ def clear_history() -> bool:
         logger.warning("could not clear chat history: %s", e)
         return False
 
-# Set by server.py at startup - the dashboard's mesh gateway. robot_mesh
-# cannot be used here: it requires an in-process Robot()/Simulation() as its
-# Zenoh gateway, and the dashboard is a robot-less peer.
+# Set by server.py at startup - the dashboard's mesh gateway. robot_mesh cannot be used here:
+# it requires an in-process Robot()/Simulation() as its Zenoh gateway, and the dashboard is a
+# robot-less peer.
 _bridge: Any = None
 
-
-# Q80/voice: surfaces that cannot see a toolResult still have to be able to OFFER the grant.
-# The chat box reads refusals off the tool event (WSStreamHandler); the voice session forwards only
-# audio and transcript, so a refusal there is spoken once and gone - unactionable, and a spoken "yes"
-# must never be what grants a permission. Listeners get the refusal TEXT and decide for themselves;
-# the fleet tool's behaviour does not change and a listener that raises cannot break a turn.
 _refusal_listeners: list[Any] = []
-
 
 def add_refusal_listener(cb: Any) -> Any:
     """Register ``cb(text)`` for continuable refusals raised inside the fleet tool. Returns a remover."""
@@ -254,7 +195,6 @@ def add_refusal_listener(cb: Any) -> Any:
 
     return _remove
 
-
 def _notify_refusal(text: str) -> None:
     for cb in list(_refusal_listeners):
         try:
@@ -262,11 +202,9 @@ def _notify_refusal(text: str) -> None:
         except Exception:  # noqa: BLE001 - a listener is a notification, never a gate
             logger.debug("refusal listener failed", exc_info=True)
 
-
 def set_bridge(bridge: Any) -> None:
     global _bridge
     _bridge = bridge
-
 
 def _make_fleet_tool() -> Any:
     from strands import tool
@@ -280,22 +218,7 @@ def _make_fleet_tool() -> Any:
         duration: float = 15.0,
         robot_name: str = "",
     ) -> dict[str, Any]:
-        """Coordinate robots on the mesh (dashboard gateway).
-
-        Args:
-            action: One of:
-                - "peers": list every robot/sim online (id, type, cameras, task)
-                - "task": run a natural-language instruction on one robot
-                  (requires target + instruction; uses policy_provider + duration)
-                - "stop": stop the running task on one robot (requires target)
-                - "stop_all": stop every robot on the mesh
-                - "status": task status of one robot (requires target)
-            target: Peer id of the robot (from "peers"), e.g. "so101-arm-1".
-            instruction: Natural-language task, e.g. "pick up the red cube".
-            policy_provider: Policy backend (mock, lerobot_local, lerobot_async, groot, cosmos3).
-            duration: Seconds to run the policy for.
-            robot_name: Optional single robot inside a multi-robot sim world.
-        """
+        """Coordinate robots on the mesh (dashboard gateway)."""
         if _bridge is None:
             return {"status": "error", "content": [{"text": "mesh bridge offline"}]}
         import json as _json
@@ -323,10 +246,6 @@ def _make_fleet_tool() -> Any:
         if action == "task":
             if not target or not instruction:
                 return {"status": "error", "content": [{"text": "task requires target and instruction"}]}
-            # Q80: this line is the same send_cmd the play button makes - but play has a confirm sheet
-            # naming the word "physical" and a Q79 fit check, and typing a sentence into the chat
-            # box had neither. The gate belongs on the capability, so it lives here, before the
-            # command is built. Stopping is never gated; see agent_motion.py.
             from strands_robots.dashboard.agent_motion import agent_motion_allowed
 
             snap_peers = {}
@@ -378,7 +297,6 @@ def _make_fleet_tool() -> Any:
 
     return fleet
 
-
 def _build_agent() -> Any:
     os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
 
@@ -425,7 +343,6 @@ def _build_agent() -> Any:
             logger.warning("history restore failed: %s", e)
     return agent
 
-
 def get_agent() -> Any:
     global _agent
     with _agent_lock:
@@ -433,13 +350,8 @@ def get_agent() -> Any:
             _agent = _build_agent()
         return _agent
 
-
 def reset_agent(clear_history_too: bool = False, *, clear_history: bool | None = None) -> None:
-    """Drop the agent so the next turn rebuilds it from current settings.
-
-    Takes ``_turn_lock`` first: resetting mid-turn would swap the agent out
-    from under the worker thread that is streaming into a websocket.
-    """
+    """Drop the agent so the next turn rebuilds it from current settings."""
     global _agent
     if clear_history is not None:
         clear_history_too = clear_history
@@ -448,7 +360,6 @@ def reset_agent(clear_history_too: bool = False, *, clear_history: bool | None =
             _agent = None
         if clear_history_too:
             globals()["clear_history"]()
-
 
 def agent_status() -> dict[str, Any]:
     """Readiness for the dock badge - never builds the agent as a side effect."""
@@ -480,10 +391,8 @@ def agent_status() -> dict[str, Any]:
         "history_file": str(HISTORY_FILE),
     }
 
-
 class TurnCancelled(Exception):
     """The client that asked for this turn went away - abandon it."""
-
 
 class WSStreamHandler:
     """Strands callback handler -> thread-safe queue of UI events."""
@@ -529,13 +438,7 @@ class WSStreamHandler:
                         "type": "tool", "status": tr.get("status", "done"),
                         "id": tr.get("toolUseId", ""), "result_preview": full[:300],
                     }
-                    # A continuable refusal must be clickable WHERE IT HAPPENED. Every other seam
-                    # that turns a refusal into a decision (spawn, task) calls attach_consent on
-                    # its error payload; the chat box had no such seam, so the one guard whose
-                    # refusal only ever appears here (Q80 agent motion) could be granted solely by
-                    # hunting through Settings. Classify against the FULL text, never the 300-char
-                    # preview: the env var that identifies a refusal sits at the END of the
-                    # sentence, so classifying the truncation would silently recognise nothing.
+                    # A continuable refusal must be clickable WHERE IT HAPPENED.
                     if tr.get("status") == "error":
                         from strands_robots.dashboard.consent import classify_refusal
 
@@ -544,31 +447,21 @@ class WSStreamHandler:
                             event["needs_consent"] = need.as_dict()
                     self.q.put(event)
 
-
 def _is_history_poisoned(exc: Exception) -> bool:
-    """Does this failure look like a rejected restored conversation?
-
-    A split toolUse/toolResult pair comes back as a provider validation error
-    on the *whole* conversation, which then repeats on every turn because the
-    same file is reloaded each time.
-    """
+    """Does this failure look like a rejected restored conversation?"""
     text = str(exc).lower()
     return any(
         marker in text
         for marker in ("validationexception", "toolresult", "tooluse", "invalid conversation", "messages")
     )
 
-
 def run_turn_blocking(
     prompt: str,
     q: "queue.Queue[dict]",
     cancel: "threading.Event | None" = None,
 ) -> None:
-    """Run one agent turn in a worker thread, streaming events into q.
-
-    ``cancel`` is set by the websocket handler when its client goes away. The
-    lock is acquired/released explicitly in try/finally so no exit path -
-    including a cancelled or crashed turn - can leave it held by a ghost turn.
+    """Run one agent turn in a worker thread, streaming events into q. ``cancel`` is set by the
+    websocket handler when its client goes away.
     """
     acquired = False
     try:

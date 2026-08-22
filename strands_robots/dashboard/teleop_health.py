@@ -1,25 +1,4 @@
-"""Is teleop actually working? - the verdict, from the counters.
-
-Measured on real hardware (2026-08-19): a real SO-101 leader published 176 frames
-to a follower that accepted NONE of them. Everything the dashboard could see said
-success: /teleop/receive returned "Teleop receive started", the receiver reported
-``running: true``, and /api/fleet showed both peers healthy. The only place the
-truth existed was the FOLLOWER's child log:
-
-    input frame value for 'shoulder_lift.pos' out of range:
-    |-46.417582417582416| > 12.566370614359172
-
-The mesh's per-frame safety envelope is 4*pi -- a RADIAN assumption. An SO-101
-reports degrees (wrist_roll sits at 170) and a gripper in percent, so every real
-frame from a real arm is out of range. The SDK anticipated this and provides a
-knob (STRANDS_MESH_INPUT_VALUE_ABS), which is precisely why the failure must be
-diagnosable: the operator is one env var away from working teleop and has no way
-to learn it.
-
-So this module turns the raw counters into a sentence, and where the cause is a
-widenable envelope it produces a CONSENT request rather than widening a safety
-bound behind the operator's back (see dashboard/consent.py).
-"""
+"""Is teleop actually working? - the verdict, from the counters."""
 
 from __future__ import annotations
 
@@ -35,25 +14,14 @@ _RANGE_RE = re.compile(
 _SLEW_RE = re.compile(
     r"input frame slew for '([^']{1,120})' out of range: ([0-9.eE+\-]{1,40}) > ([0-9.eE+\-]{1,40})"
 )
-#: Q118. The SDK's slew check has TWO branches and this parser only knew one. When two frames carry
-#: the SAME timestamp (worst_dt <= 0) it cannot compute a speed, so it says "moved 30 units with no
-#: elapsed time since the last applied frame (bound 8 units/s)" - no number after the colon, so
-#: _SLEW_RE misses it and envelope_refusal returned None for the MOST extreme violation there is: an
-#: instantaneous jump. Verified by calling security.input_frame_slew_violation for both branches
-#: rather than by typing what I imagined the log says (the test does the same, so a reworded SDK
-#: message fails here instead of going quiet in a browser).
 _SLEW_NO_TIME_RE = re.compile(
     r"input frame slew for '([^']{1,120})' out of range: moved ([0-9.eE+\-]{1,40}) units with no "
     r"elapsed time.*?\(bound ([0-9.eE+\-]{1,40}) units/s\)"
 )
 
-
 def envelope_refusal(log_tail: Any) -> dict[str, Any] | None:
-    """The most recent value/slew refusal in a child's log, parsed.
-
-    Returns ``{"joint", "value", "bound", "kind"}`` or ``None``. The newest line
-    wins: an operator who has already widened the envelope once should see the
-    bound they are hitting NOW, not the first one they ever hit.
+    """The most recent value/slew refusal in a child's log, parsed. Returns ``{"joint", "value",
+    "bound", "kind"}`` or ``None``.
     """
     if not isinstance(log_tail, (list, tuple)):
         return None
@@ -75,9 +43,8 @@ def envelope_refusal(log_tail: Any) -> dict[str, Any] | None:
         m = _SLEW_NO_TIME_RE.search(line)
         if m:
             try:
-                # No elapsed time means the implied speed is unbounded, and inf is the honest
-                # value: any bound is exceeded. `delta` carries what the frame actually asked
-                # for, because that is the number an operator can compare to their own motion.
+                # No elapsed time means the implied speed is unbounded, and inf is the honest value: any bound
+                # is exceeded.
                 return {"kind": "slew", "joint": m.group(1), "value": float("inf"),
                         "bound": float(m.group(3)), "instant": True,
                         "delta": float(m.group(2))}
@@ -85,29 +52,12 @@ def envelope_refusal(log_tail: Any) -> dict[str, Any] | None:
                 continue
     return None
 
-
 def diagnose_receiver(
     stats: Mapping[str, Any],
     log_tail: Any = None,
     source_frames: int | None = None,
 ) -> dict[str, Any]:
-    """One receiver's counters -> a state and a sentence a human can act on.
-
-    States: ``following`` (frames are landing), ``refusing`` (frames arrive and
-    every one is thrown away -- the case that used to look like success),
-    ``silent`` (subscribed, nothing arriving), ``unrouted`` (nothing arriving
-    even though the leader IS publishing), ``stopped``.
-
-    Args:
-        stats: One receiver's counters.
-        log_tail: The follower's recent log lines, where the SDK writes the
-            reason a frame was refused.
-        source_frames: How many frames the NAMED LEADER says it has published,
-            when the caller could ask it. Without this, "nothing is arriving"
-            can only be blamed on the leader - and blaming the leader while it
-            publishes 200 frames a minute sends the operator to the wrong end
-            of the problem (measured, 2026-08-19: exactly this happened).
-    """
+    """One receiver's counters -> a state and a sentence a human can act on."""
     running = bool(stats.get("running"))
     got = int(stats.get("frames_received") or 0)
     rejected = int(stats.get("rejected") or 0)
@@ -127,9 +77,6 @@ def diagnose_receiver(
         out: dict[str, Any] = {"state": "refusing", "headline": "every frame is being refused",
                                "detail": detail, "refusal": refusal}
         if refusal and refusal.get("instant"):
-            # The degrees/radians story below cannot apply here: nothing was measured over time.
-            # Two frames arriving with the same timestamp is a CLOCK/publisher problem, and saying
-            # "reported at inf units/s" would be arithmetic, not an explanation.
             out["detail"] = (
                 f"{detail} Two frames carried the SAME timestamp, so the follower could not compute "
                 f"a speed for {refusal['joint']} and refused the jump of {refusal.get('delta', 0):g} "
@@ -179,13 +126,8 @@ def diagnose_receiver(
     return {"state": "following", "headline": note,
             "detail": ", ".join(extra) or None}
 
-
 def published_frames(status: Any, device_name: str) -> int | None:
-    """How many frames a peer's ``device_name`` publisher has sent, if it says.
-
-    ``None`` means "could not tell" - which must stay distinct from 0, because 0
-    is evidence about the leader and None is the absence of evidence.
-    """
+    """How many frames a peer's ``device_name`` publisher has sent, if it says."""
     payload = _status_payload(status)
     if payload is None:
         return None
@@ -200,7 +142,6 @@ def published_frames(status: Any, device_name: str) -> int | None:
     except (TypeError, ValueError):
         return None
 
-
 def _status_payload(status: Any) -> Mapping[str, Any] | None:
     """The counters block inside a tool-envelope status, or the block itself."""
     if not isinstance(status, Mapping):
@@ -212,19 +153,12 @@ def _status_payload(status: Any) -> Mapping[str, Any] | None:
             return block["json"]
     return None
 
-
 def teleop_health(
     status: Any,
     log_tail: Any = None,
     source_frames: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Verdict for a whole peer's teleop status payload.
-
-    ``status`` is the robot's ``get_teleop_status()`` result as it crosses the
-    mesh (a tool envelope whose ``content`` carries a ``json`` block). Anything
-    unrecognised yields an empty verdict rather than an exception: this decorates
-    a status endpoint and must never be the reason it fails.
-    """
+    """Verdict for a whole peer's teleop status payload."""
     payload = _status_payload(status)
     if payload is None:
         return {"receivers": {}, "publishers": {}, "worst": None}

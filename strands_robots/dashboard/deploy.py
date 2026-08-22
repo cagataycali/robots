@@ -1,16 +1,3 @@
-"""U16: UI selection -> a Python file that recreates the exact peer elsewhere.
-
-The dashboard's spawn form and the profile store both describe a rig as a
-payload dict (robot_name/mode/port/cameras/robot_id/peer_id). This renders
-that payload as a copy-pasteable ``strands_robots`` script whose factory call
-mirrors the dashboard's own child spawner (device_manager._SPAWNER) line for
-line - same env posture, same eager connect, same keep-alive - so "runs as a
-dashboard child" and "runs on an edge device" are the same object, not two
-programs that drift apart.
-
-Pure module: no I/O, no imports from the dashboard app. The route feeds it
-either a saved profile or the live form state; tests feed it dicts.
-"""
 
 from __future__ import annotations
 
@@ -36,25 +23,12 @@ _MESH_ENV: tuple[tuple[str, str], ...] = (
 #: Default zenoh port, mirroring ``mesh/session.py``.
 DEFAULT_HUB_PORT = 7447
 
-#: Q53: keys whose value must come from THIS dashboard's live posture rather than the frozen
-#: table above, because the file's whole promise is "recreates this exact rig".
 _LIVE_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_CAMERA_HZ", "STRANDS_MESH_MULTICAST"})
 
-#: Q53: a key that only ever LOOSENS security. STRANDS_MESH_LOCAL_DEV=1 disables mesh wire
-#: security, so it may be rendered only when this dashboard is itself running that way - never
-#: as a hardcoded default. Writing it into a file an operator runs on their LAN would disable
-#: encryption on a box they never chose to expose, and the peer would then fail to join a
-#: secured desk for a reason no message explains.
 _SECURITY_LOOSENING_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_LOCAL_DEV"})
 
-
 def resolve_mesh_env(env: Mapping[str, str] | None) -> list[tuple[str, str]]:
-    """The env block to render, taking live values over the frozen defaults.
-
-    Pure: the route passes ``os.environ`` (already carrying ``settings.apply_mesh_env()``'s
-    mesh keys), tests pass dicts. A key that loosens security is emitted ONLY when the live env
-    says so; every other key falls back to the default the dashboard's own spawner uses.
-    """
+    """The env block to render, taking live values over the frozen defaults."""
     live = env or {}
     out: list[tuple[str, str]] = []
     for key, default in _MESH_ENV:
@@ -69,20 +43,14 @@ def resolve_mesh_env(env: Mapping[str, str] | None) -> list[tuple[str, str]]:
             out.append((key, default))
     return out
 
-
 def snippet_filename(peer_id: str) -> str:
     """A filename safe to offer as a download, derived from the peer id."""
     safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in peer_id)
     return f"{safe or 'robot'}.py"
 
-
 def _fmt(value: Any, indent: int = 0) -> str:
-    """Render a payload value as Python source (JSON types only).
-
-    ``repr`` is almost right but renders dict one-line; camera configs are
-    nested and read better expanded. Only handles what a spawn payload can
-    legally contain - str/int/float/bool/None/dict - because the payload was
-    validated by the same rules the spawn route applies.
+    """Render a payload value as Python source (JSON types only). ``repr`` is almost right but renders
+    dict one-line; camera configs are nested and read better expanded.
     """
     if isinstance(value, Mapping):
         if not value:
@@ -92,26 +60,8 @@ def _fmt(value: Any, indent: int = 0) -> str:
         return "{\n" + items + ",\n" + " " * indent + "}"
     return repr(value)
 
-
 def hub_host_from_reached(reached_on: str | None) -> tuple[str | None, str | None]:
-    """Is the host the browser reached this dashboard on usable as a ZENOH hub address?
-
-    Q122. The snippet is copied onto ANOTHER machine, so the address in it must be reachable from
-    there - and the only address the server had was the one the browser used, which answers a
-    different question. Two ways that goes wrong, one already handled and one not:
-
-    * loopback - ``127.0.0.1`` on the edge device means the EDGE DEVICE. Already refused.
-    * a public hostname - the interesting case, and it is cagatay's own setup. This dashboard is
-      published through a Cloudflare tunnel (``robots.cagatay.my``) that proxies HTTP to :8090 and
-      NOTHING else. The zenoh hub is a raw TCP port; ``tcp/robots.cagatay.my:7447`` resolves to a
-      Cloudflare edge address that does not carry it, so the peer starts, connects to nothing and
-      never appears - the precise failure this file's port comment already warns about, arriving
-      through a different door. A snippet that states a wrong address is worse than one that states
-      none: it looks authoritative, and it is the file the operator runs on a machine they cannot see.
-
-    Returns ``(host, note)``: the host to use, or None plus a note explaining what was rejected.
-    A note is returned WITH a host only when something is worth saying about it - never silently.
-    """
+    """Is the host the browser reached this dashboard on usable as a ZENOH hub address?"""
     reached = (reached_on or "").strip().strip("[]").lower()
     if not reached:
         return None, None
@@ -140,7 +90,6 @@ def hub_host_from_reached(reached_on: str | None) -> tuple[str | None, str | Non
         "the internet. Use this machine's LAN address (the Mesh tab shows it)"
     )
 
-
 def _stamped_names(cameras: Any) -> dict[str, str]:
     """{camera: the roster name this index carried when it was configured}, for the cameras that have one."""
     if not isinstance(cameras, Mapping):
@@ -153,7 +102,6 @@ def _stamped_names(cameras: Any) -> dict[str, str]:
                 out[str(cam)] = was.strip()
     return out
 
-
 def render_snippet(
     payload: Mapping[str, Any],
     *,
@@ -163,16 +111,7 @@ def render_snippet(
     hub_port: int | str | None = None,
     now: float | None = None,
 ) -> dict[str, Any]:
-    """Render a spawn payload/profile as a deployable Python script.
-
-    Refuses (``{"error": ...}``) instead of guessing when the payload cannot
-    describe a runnable robot - a generated file that starts the WRONG rig is
-    worse than no file.
-
-    ``hub_host`` is the address edge devices reach THIS dashboard's zenoh hub
-    on; rendered into ``ZENOH_CONNECT``. None means same-machine deploy and
-    the line is emitted commented out, showing where the host goes.
-    """
+    """Render a spawn payload/profile as a deployable Python script."""
     robot_name = str(payload.get("robot_name") or "").strip()
     if not robot_name:
         return {"error": "payload has no robot_name"}
@@ -209,20 +148,11 @@ def render_snippet(
         lines.append("edge device. Re-check them there (lerobot-find-cameras opencv).")
         # The roster name this index carried when it was configured is the ONE thing that makes that
         # re-check possible: "index 0" is a position in a list that closes up when a device is
-        # unplugged, while "USB2.0_CAM1" is a camera. The dashboard stamps it into the config
-        # (camera_liveness.stamp_device_names) and it is stripped from the CODE below, because
-        # hardware_robot refuses an unknown camera option and would kill every camera on the arm --
-        # so it is said HERE, where a human reads it, instead of being thrown away.
+        # unplugged, while "USB2.0_CAM1" is a camera.
         for cam, was in sorted(_stamped_names(payload.get("cameras")).items()):
             lines.append(f'  {cam}: was "{was}" on the dashboard machine - check that camera is still that index.')
         lines.append("")
     if mode == "real":
-        # Q47: the file warned that camera INDICES are per-machine and said nothing about the
-        # port, which is the same class of identifier and the more certain to be wrong: this
-        # dashboard runs on macOS, where the arm is /dev/cu.usbmodem5AB0181806, and the edge
-        # device it is being deployed to is almost always Linux, where the same arm is
-        # /dev/ttyACM0. Left unsaid, the generated file fails on an open() of a path that never
-        # existed there - the exact failure Q46 removed from the home screen's snippet.
         serial = payload.get("serial_number")
         lines.append(f"The port below ({port}) is how THIS machine names that USB device.")
         lines.append("On Linux the same arm is usually /dev/ttyACM0 - check with")
@@ -242,9 +172,6 @@ def render_snippet(
     lines.append("# The mesh posture this dashboard runs with (setdefault: your own env wins).")
     for key, val in resolve_mesh_env(mesh_env):
         lines.append(f'os.environ.setdefault("{key}", "{val}")')
-    # Q53: the port comes from THIS dashboard's mesh settings. Hardcoding 7447 while the desk
-    # ran on another port produced a peer that starts, logs nothing wrong and never appears -
-    # the exact failure the Mesh tab warns about with "every robot on the desk must agree on it".
     try:
         port_txt = str(int(str(hub_port))) if hub_port not in (None, "") else str(DEFAULT_HUB_PORT)
     except (TypeError, ValueError):
@@ -275,10 +202,8 @@ def render_snippet(
         # STRIPPED, not rendered verbatim: a spawn payload or remembered profile carries the
         # dashboard's own bookkeeping key (device_name), the child never sees it (the spawner strips
         # it before Popen for exactly this reason), and hardware_robot refuses an unknown camera
-        # option BY NAME -- so a snippet generated for a camera-stamped arm produced a file that
-        # died at connect with "Unknown option(s) for camera 'main': ['device_name']". A generated
-        # file that starts the wrong rig is worse than no file, and this one started no rig at all.
-        # The name itself is not lost: it is in the docstring above, which is where it helps.
+        # option BY NAME -- so a snippet generated for a camera-stamped arm produced a file that died
+        # at connect with "Unknown option(s) for camera 'main': ['device_name']".
         lines.append(f"    cameras={_fmt(camera_liveness.without_annotations(cameras), 4)},")
     lines.append("    mesh=True,")
     lines.append(f"    peer_id={peer_id!r},")

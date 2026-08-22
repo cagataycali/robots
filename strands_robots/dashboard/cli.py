@@ -12,18 +12,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: Where an ``lsof`` binary is looked for. ``PATH`` first, then the two absolute
-#: locations it actually ships in, because ``/usr/sbin`` is missing from the
-#: ``PATH`` of a login-less shell (launchd jobs, CI runners, an agent's
-#: subprocess) on exactly the platform where ``lsof`` is the only owner lookup
-#: available to an unprivileged process.
+# : Where an ``lsof`` binary is looked for.
 _LSOF_CANDIDATES: tuple[str, ...] = ("/usr/sbin/lsof", "/usr/bin/lsof")
 
-#: Longest command line reproduced in the refusal. The point is recognition, not
-#: a full argv - a dashboard command line with mesh endpoints on it runs long
-#: enough to bury the pid that precedes it.
+# : Longest command line reproduced in the refusal.
 _COMMAND_CHARS = 120
-
 
 def _lsof_path() -> str | None:
     """Absolute path of an ``lsof`` binary, or ``None`` if none is installed."""
@@ -35,29 +28,8 @@ def _lsof_path() -> str | None:
             return candidate
     return None
 
-
 def _listening_pid(port: int) -> int | None:
-    """Pid of the process *listening* on ``port``, or ``None`` if not found.
-
-    Two lookups, in order of how much they can be trusted:
-
-    * ``psutil``, when it is installed *and* the platform lets an unprivileged
-      process enumerate another's sockets (macOS raises ``AccessDenied``
-      instead, which is why this is not the only route);
-    * ``lsof``, restricted to ``-sTCP:LISTEN``. The restriction is
-      load-bearing: a bare ``lsof -ti tcp:8090`` also returns every *client*
-      with an established connection to the port, so the first pid it printed on
-      this machine was a browser tab, not the server it was talking to.
-
-    Owner discovery is best-effort by construction - the refusal it decorates is
-    decided by the bind probe, never by whether a pid could be named.
-
-    Args:
-        port: TCP port to look up.
-
-    Returns:
-        The listening pid, or ``None`` when neither lookup can name one.
-    """
+    """Pid of the process *listening* on ``port``, or ``None`` if not found."""
     try:
         import psutil
     except ImportError:
@@ -89,7 +61,6 @@ def _listening_pid(port: int) -> int | None:
             continue
     return None
 
-
 def _process_command(pid: int) -> str | None:
     """Command line of ``pid``, truncated for a one-line message.
 
@@ -119,42 +90,8 @@ def _process_command(pid: int) -> str | None:
         return None
     return out.splitlines()[0][:_COMMAND_CHARS] if out else None
 
-
 def _port_in_use(port: int, host: str = "0.0.0.0") -> str | None:
-    """Describe whoever holds ``port``, or ``None`` when it is free to bind.
-
-    A second dashboard on a taken port does not fail cleanly: it initialises a
-    mesh peer and a zenoh session *before* uvicorn asks the kernel for the
-    socket, so the duplicate hub exists - and has already partitioned the mesh
-    it joined - by the time the bind error is printed. The guard therefore
-    probes the port itself, up front, rather than letting the server surface it.
-
-    The probe binds and closes a socket with ``SO_REUSEADDR`` *set* - the same
-    option uvicorn's own listener gets from asyncio on POSIX - on ``host`` plus
-    both wildcard and loopback: a listener on ``0.0.0.0`` and a listener on
-    ``127.0.0.1`` each conflict with the other, so one address alone reports a
-    free port that the server then cannot bind. ``SO_REUSEADDR`` matters
-    because without it the probe is *stricter than the server it fronts*: a
-    leftover ``CLOSE_WAIT``/``TIME_WAIT`` socket from the previous instance
-    (no listener at all) fails the bare bind with ``EADDRINUSE`` and the guard
-    refuses a restart that uvicorn would have completed happily. With the
-    option set, only a live LISTENer on the same address still collides -
-    which is exactly the pileup this guard exists to catch.
-    Only ``EADDRINUSE`` counts as occupied - ``EACCES`` on a privileged port and
-    ``EADDRNOTAVAIL`` on an address this host does not own are different
-    failures, and reporting them as a pileup would name an owner that does not
-    exist.
-
-    Args:
-        port: TCP port the dashboard was asked to serve on.
-        host: Address the dashboard was asked to bind, probed alongside the
-            wildcard and loopback addresses.
-
-    Returns:
-        A human-readable description of the holder (``"pid 28346 (python -m
-        strands_robots dashboard)"``, or ``"an unidentified process"`` when the
-        owner cannot be looked up), or ``None`` if the port is free.
-    """
+    """Describe whoever holds ``port``, or ``None`` when it is free to bind."""
     candidates = [host, "0.0.0.0", "127.0.0.1"]
     seen: set[str] = set()
     occupied = False
@@ -180,7 +117,6 @@ def _port_in_use(port: int, host: str = "0.0.0.0") -> str | None:
         return "an unidentified process"
     command = _process_command(pid)
     return f"pid {pid} ({command})" if command else f"pid {pid}"
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -240,9 +176,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Before anything joins the mesh: a second dashboard on a bound port creates
-    # a duplicate zenoh hub and partitions the fleet, and it does so during
-    # MeshBridge construction - well before uvicorn's bind would have failed.
+    # Before anything joins the mesh: a second dashboard on a bound port creates a duplicate zenoh
+    # hub and partitions the fleet, and it does so during MeshBridge construction - well before
+    # uvicorn's bind would have failed.
     if not args.force:
         owner = _port_in_use(args.port, args.host)
         if owner is not None:
@@ -261,17 +197,9 @@ def main() -> None:
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    # A browser cannot set headers on a WebSocket handshake, so every camera socket
-    # carries its JWT in the query string and uvicorn's access log wrote it verbatim -
-    # 63k live bearer tokens in a world-readable /tmp file, measured. Installed before
-    # uvicorn so its own loggers are covered from the first request.
     from strands_robots.dashboard.log_redaction import install_redaction, register_secret
 
     install_redaction()
-    # Q117: the patterns above recognise a credential by its SHAPE, and five realistic log shapes
-    # (argv, an env assignment, a JSON body, a custom header, prose) printed this dashboard's own
-    # token verbatim. A registered literal cannot be out-guessed, so hand the rail the values this
-    # process actually holds - registered here, before uvicorn logs its first line.
     from strands_robots.dashboard import settings as _settings
 
     for _secret in (
@@ -302,11 +230,9 @@ def main() -> None:
         patch["mesh"]["camera_hz"] = args.camera_hz
     cli_token: str | None = args.auth_token
     if args.auth_token_file is not None:
-        # JOURNEYS #15: a token in argv is readable by every local user via ps
-        # (this machine's audit literally lifted it that way). The file form
-        # keeps it out of process listings and shell history. Refusing on a
-        # missing/empty file beats silently starting open: the operator asked
-        # for auth and would not get it.
+        # JOURNEYS #15: a token in argv is readable by every local user via ps (this machine's audit
+        # literally lifted it that way). The file form keeps it out of process listings and shell
+        # history.
         try:
             file_token = Path(args.auth_token_file).read_text().strip().splitlines()[0].strip()
         except (OSError, IndexError):
@@ -318,15 +244,6 @@ def main() -> None:
         patch["security"]["cors_origins"] = args.cors_origin
     changed = settings.update({k: v for k, v in patch.items() if v})
 
-    # A token is NOT persisted like the other flags (BUGS.md Q49). It used to be,
-    # and that made every extra dashboard a credential rotation: a second instance
-    # started on another port - a rehearsal, a colleague's test, a stale terminal -
-    # rewrote `security.auth_token`, so the LIVE dashboard's next restart came up
-    # demanding a token nobody had. The flag means "require this token for this
-    # run"; a process-scoped override says exactly that and cannot outlive it.
-    # First run is the one exception: with nothing stored yet, saving is pure gain
-    # (a bare `strands-robots dashboard` afterwards still asks for auth instead of
-    # coming up open) and there is no existing secret to destroy.
     token_only_this_run = False
     if cli_token is not None:
         stored_token = str((settings.load().get("security") or {}).get("auth_token") or "")
@@ -350,14 +267,9 @@ def main() -> None:
     if resolved["security"].get("auth_token"):
         print("   auth: bearer token required on /api and /ws")
         if args.auth_token is not None:
-            # JOURNEYS #15, the half that is code: --auth-token-file exists and
-            # restart_dashboard.sh uses it, but nothing told an operator who
-            # typed --auth-token that the secret is now in every `ps` listing
-            # for the life of the process - and help text they already skipped
-            # is not a warning. This machine's own audit lifted a token that
-            # way, so the risk is measured, not theoretical. Printed even
-            # though the token IS working, because "auth: required" reads like
-            # the security question is settled.
+            # JOURNEYS #15, the half that is code: --auth-token-file exists and restart_dashboard.sh uses
+            # it, but nothing told an operator who typed --auth-token that the secret is now in every `ps`
+            # listing for the life of the process - and help text they already skipped is not a warning.
             print("   WARNING: the token came from the command line, so every local "
                   "user can read it: ps -eww | grep auth-token")
             print("      fix (next start): put it in a 0600 file and pass "
@@ -376,7 +288,6 @@ def main() -> None:
 
     app = create_app(MeshBridge(peer_id=args.peer_id))
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
-
 
 if __name__ == "__main__":
     main()

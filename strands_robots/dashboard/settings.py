@@ -1,23 +1,4 @@
-"""Persistent dashboard settings - the store behind ``/api/config``.
-
-Two stores, deliberately separate:
-
-* **this file** (``settings.json``) holds operator *preferences*: agent model /
-  prompt / sampling, voice provider, mesh endpoints, runtime toggles. Plain
-  JSON, safe to read, safe to commit to a bug report.
-* :mod:`strands_robots.dashboard.config_api` handles the ``.env`` file, which
-  holds *credentials*. Those are masked on read and chmod 0600 on write.
-
-Every setting resolves in the same order::
-
-    settings.json  ->  environment variable  ->  built-in default
-
-so an operator who exports ``DASHBOARD_SYSTEM_PROMPT`` still gets what they
-expect, and anything set in the UI wins over the env for the next agent build.
-Mesh settings additionally get pushed *into* ``os.environ`` before the first
-``get_session()`` call (:func:`apply_mesh_env`) because that is the only knob
-upstream reads - see ``mesh/session.py::_build_config``.
-"""
+"""Persistent dashboard settings - the store behind ``/api/config``."""
 
 from __future__ import annotations
 
@@ -68,11 +49,8 @@ _SCHEMA: dict[str, dict[str, tuple[str | None, Any]]] = {
         # When set, every /api and /ws request must present this token
         # (Authorization: Bearer <t>, X-Dashboard-Token, or ?token=).
         "auth_token": ("DASHBOARD_AUTH_TOKEN", None),
-        # Comma-separated origins allowed to make BROWSER cross-origin calls.
-        # Default: none - same-origin only. An API that moves motors must not
-        # answer a drive-by fetch from whatever tab the operator has open;
-        # LAN-dev against a separate frontend port opts in explicitly, e.g.
-        # DASHBOARD_CORS_ORIGINS=http://localhost:4319.
+        # Comma-separated origins allowed to make BROWSER cross-origin calls. Default: none -
+        # same-origin only.
         "cors_origins": ("DASHBOARD_CORS_ORIGINS", []),
     },
 }
@@ -89,7 +67,6 @@ _cache: dict[str, dict[str, Any]] | None = None
 # Process-scoped values that must never reach settings.json - see override().
 _overrides: dict[str, dict[str, Any]] = {}
 
-
 # ----------------------------------------------------------------------
 # Coercion
 # ----------------------------------------------------------------------
@@ -103,27 +80,20 @@ def _as_list(value: Any) -> list[str]:
         return [str(p).strip() for p in value if str(p).strip()]
     return []
 
-
 def _as_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in ("1", "true", "yes", "on")
-
 
 #: Public alias - other dashboard modules parse comma-separated endpoint
 #: strings with the same rules the settings store uses.
 def as_list(value: Any) -> list[str]:
     return _as_list(value)
 
-
 class CoercionError(ValueError):
-    """A settings value that must be REPORTED, not silently defaulted.
-
-    Raised only on the strict path (UI/API writes). The lenient path (env
-    vars / built-in defaults at import time) keeps the old degrade-to-None
-    behavior, because a typo'd env var must not kill startup.
+    """A settings value that must be REPORTED, not silently defaulted. Raised only on the strict path
+    (UI/API writes).
     """
-
 
 def _finite_float(key: str, value: Any) -> float:
     try:
@@ -136,33 +106,25 @@ def _finite_float(key: str, value: Any) -> float:
         raise CoercionError(f"{key}: {value!r} is not a finite number")
     return out
 
-
 def _coerce(section: str, key: str, value: Any, strict: bool = False) -> Any:
     try:
         return _coerce_strict(section, key, value)
     except CoercionError:
         if strict:
             raise
-        # Lenient degrade (env/CLI/file paths) must still degrade to the key's
-        # own SHAPE: a list key that fell back to a scalar poisons every
-        # comma-split consumer, which is worse than the empty default.
+        # Lenient degrade (env/CLI/file paths) must still degrade to the key's own SHAPE: a list key
+        # that fell back to a scalar poisons every comma-split consumer, which is worse than the empty
+        # default.
         if (section, key) in _LIST_KEYS:
             return []
         return None if key in ("temperature", "camera_hz", "max_tokens", "port") else value
 
-
-#: What "true" and "false" may be spelled like. Anything else is a typo the
-#: strict path reports rather than resolving to False (Q15: _as_bool("banana")
-#: silently disabled a setting the operator believed they turned on).
+# : What "true" and "false" may be spelled like.
 _TRUTHY = ("1", "true", "yes", "on")
 _FALSY = ("0", "false", "no", "off", "")
 
-
 def _coerce_strict(section: str, key: str, value: Any) -> Any:
     if (section, key) in _LIST_KEYS:
-        # Q15: cors_origins=5 became [] - silently REPLACING a security posture
-        # with a different one. A list key takes a list or a comma-separated
-        # string; any other type is the client's bug, reported as such.
         if value is not None and not isinstance(value, (str, list, tuple)):
             raise CoercionError(
                 f"{key}: expected a list or comma-separated string, got {type(value).__name__}"
@@ -206,16 +168,11 @@ def _coerce_strict(section: str, key: str, value: Any) -> Any:
         return out
     if value is None:
         return None
-    # The string fallback (model_id, auth_token, backend, ...) must not repr a
-    # structure into a value: str({'a': 1}) as auth_token locks the operator
-    # out of the UI that set it (Q15). Numbers are fine - ids are sometimes
-    # typed unquoted - but containers are always a client bug.
     if isinstance(value, (dict, list, tuple, set)):
         raise CoercionError(
             f"{key}: expected a string, got {type(value).__name__}"
         )
     return str(value)
-
 
 # ----------------------------------------------------------------------
 # Load / save
@@ -231,14 +188,12 @@ def _defaults() -> dict[str, dict[str, Any]]:
             out[section][key] = _coerce(section, key, raw if raw not in (None, "") else default)
     return out
 
-
 def _read_file() -> dict[str, Any]:
     try:
         if SETTINGS_FILE.exists():
-            # parse_constant fires only for NaN/Infinity, which are not JSON;
-            # a file poisoned by an old write must count as corrupt (browsers
-            # already refuse it), so it heals to defaults instead of being
-            # handed back to JSON.parse forever.
+            # parse_constant fires only for NaN/Infinity, which are not JSON; a file poisoned by an old
+            # write must count as corrupt (browsers already refuse it), so it heals to defaults instead of
+            # being handed back to JSON.parse forever.
             data = json.loads(
                 SETTINGS_FILE.read_text(),
                 parse_constant=lambda c: (_ for _ in ()).throw(ValueError(f"non-finite {c}")),
@@ -249,31 +204,19 @@ def _read_file() -> dict[str, Any]:
         logger.warning("could not read %s: %s (using defaults)", SETTINGS_FILE, exc)
     return {}
 
-
 def override(section: str, key: str, value: Any) -> None:
-    """Set a value for THIS PROCESS ONLY - never written to settings.json.
-
-    For a value the caller means for one run rather than forever. The case that
-    forced it (BUGS.md Q49): ``--auth-token`` was persisted like every other CLI
-    flag, so starting a second dashboard on another port silently rotated the
-    credential the *live* one would use at its next restart. A secret handed to
-    one process is not a new default for the machine.
-
-    Overrides sit ABOVE the file, because the alternative - relying on the env
-    layer - loses to a stored value and would leave the flag with no effect at
-    all whenever a token was already saved.
+    """Set a value for THIS PROCESS ONLY - never written to settings.json. For a value the caller means
+    for one run rather than forever.
     """
     with _lock:
         _overrides.setdefault(section, {})[key] = value
         globals()["_cache"] = None
-
 
 def clear_overrides() -> None:
     """Drop every process-scoped override (tests, and re-reading from scratch)."""
     with _lock:
         _overrides.clear()
         globals()["_cache"] = None
-
 
 def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
     """Full settings tree: overrides over file values over env/defaults."""
@@ -296,7 +239,6 @@ def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
         _cache = merged
         return copy.deepcopy(merged)
 
-
 def get(section: str, key: str | None = None, default: Any = None) -> Any:
     tree = load()
     if section not in tree:
@@ -306,34 +248,13 @@ def get(section: str, key: str | None = None, default: Any = None) -> Any:
     value = tree[section].get(key)
     return default if value in (None, "", []) else value
 
-
 def update(patch: dict[str, Any]) -> list[str]:
-    """Merge *patch* into the settings file. Returns the changed dotted keys.
-
-    Lenient (bad values degrade to None) - kept for the CLI path where flags
-    were already validated by argparse. UI/API writes go through
-    :func:`update_strict` so a bad value is an ERROR the user sees, not a
-    silent default (Q14/Q15).
-    """
+    """Merge *patch* into the settings file. Returns the changed dotted keys."""
     changed, _ = _update(patch, strict=False)
     return changed
 
-
 def unknown_keys(patch: dict[str, Any]) -> list[str]:
-    """Dotted names in ``patch`` that this schema does not know.
-
-    ``_update`` ``continue``s past an unknown section and an unknown key, so such
-    a name is neither stored NOR reported: it lands in no ``changed`` list and
-    raises no coercion error. The settings drawer builds its status line out of
-    those two lists, so a whole patch of names the backend does not recognise -
-    a frontend field renamed on one side only, a typo in an env-ish key, a
-    section that moved - produced the same reassuring "nothing changed" as
-    re-saving values that were already correct.
-
-    The two cases are not the same. This one names them so they can be said out
-    loud, without changing what gets stored: reporting is not enforcement, and a
-    caller sending an extra field must never be refused because of it.
-    """
+    """Dotted names in ``patch`` that this schema does not know."""
     out: list[str] = []
     for section, values in (patch or {}).items():
         if section not in _SCHEMA:
@@ -346,17 +267,11 @@ def unknown_keys(patch: dict[str, Any]) -> list[str]:
                 out.append(f"{section}.{key}")
     return sorted(out)
 
-
 def update_strict(patch: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Like :func:`update`, but invalid VALUES are reported, never stored.
-
-    Returns ``(changed, errors)`` where each error names the dotted key and
-    the reason. Valid keys in the same patch still apply. An unrecognised
-    section or key is a different thing - a name, not a value - and is skipped
-    here without an error; :func:`unknown_keys` is what names those.
+    """Like :func:`update`, but invalid VALUES are reported, never stored. Returns ``(changed,
+    errors)`` where each error names the dotted key and the reason.
     """
     return _update(patch, strict=True)
-
 
 def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
     changed: list[str] = []
@@ -386,7 +301,6 @@ def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
             load(refresh=True)
     return changed, errors
 
-
 def _write_file(data: dict[str, Any]) -> None:
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_FILE.with_suffix(".tmp")
@@ -398,7 +312,6 @@ def _write_file(data: dict[str, Any]) -> None:
         os.chmod(SETTINGS_FILE, 0o600)
     except OSError:
         pass
-
 
 # ----------------------------------------------------------------------
 # Mesh env application
@@ -414,15 +327,8 @@ MESH_ENV = {
     "policy_type_allow": "STRANDS_MESH_POLICY_TYPE_ALLOW",
 }
 
-
 def apply_mesh_env() -> dict[str, str]:
-    """Push mesh settings into ``os.environ``.
-
-    Upstream reads these at ``get_session()`` time only (``_build_config``
-    inserts ``connect/endpoints`` / ``listen/endpoints`` from ZENOH_CONNECT /
-    ZENOH_LISTEN, and ``STRANDS_MESH_PORT`` is read at session-open), so this
-    must run *before* ``MeshBridge.start()`` - and again before any re-open.
-    """
+    """Push mesh settings into ``os.environ``."""
     mesh = load()["mesh"]
     applied: dict[str, str] = {}
     for key, env_name in MESH_ENV.items():

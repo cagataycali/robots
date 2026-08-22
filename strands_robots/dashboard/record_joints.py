@@ -1,42 +1,12 @@
-"""Refuse a recording whose arms cannot report where they are.
-
-``/api/record/open`` has three camera gates — each one exists because a dataset is the expensive
-artifact here: an hour of hand-guiding an arm, discovered to be useless at training time. There was no
-gate at all on the JOINTS, which are the dataset's whole point: the follower's positions are the
-observations and the leader's are the actions. An arm that publishes no joint positions produces
-episodes with nothing to learn from.
-
-Measured on cagatay's rig 2026-08-21, with both real arms in exactly this state (one port-contended,
-one uncalibrated): every gate above passed, and the failure arrived from the opening code as
-``500 could not open the arms: <exception>`` — a raw traceback string for a fault the dashboard had
-already diagnosed and could already explain (:mod:`joint_silence`). This turns that into the same
-shape as the camera gates: a 409 the operator can read and act on, with the remedy attached.
-
-Deliberately NOT continuable. The camera refusals offer an override because a missing view is a
-degraded dataset; positions that cannot be read are not a degraded dataset, they are an empty one.
-
-The rule is evidence-first, and silent whenever the evidence is not there:
-
-* no snapshot for that peer, or an unreadable one -> None. A peer we cannot see is the ageing gate's
-  business, not ours, and refusing on absent evidence would block recording every time the mesh
-  bridge hiccups.
-* joints present -> None, whatever else is wrong.
-* a snapshot older than ``max_age_s`` -> None: "no joints" read from a stale snapshot is not evidence
-  about now, and this is the exact trap the fleet-view badge fell into before Q80.
-* joints missing in a FRESH snapshot -> refuse, naming the role, the peer, how old the reading is, and
-  the classified reason plus remedy when :mod:`joint_silence` has one.
-"""
+"""Refuse a recording whose arms cannot report where they are."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
-#: A snapshot older than this says nothing about the arm's present state. Same reasoning as
-#: DeviceManager.ROSTER_MAX_AGE_S, a shorter number because joints stream at ~1Hz: if the bridge has
-#: not heard from this peer in half a minute, the silence is about the mesh, not about the motors.
+# : A snapshot older than this says nothing about the arm's present state.
 MAX_AGE_S = 30.0
-
 
 def _joint_count(peer: Any) -> int | None:
     """How many joints this peer's snapshot reports, or None when there is nothing to read."""
@@ -54,7 +24,6 @@ def _joint_count(peer: Any) -> int | None:
         return len(joints)
     return None  # a shape we do not understand is not evidence of absence
 
-
 def _age_s(peer: Mapping, now: float) -> float | None:
     for key in ("last_seen",):
         try:
@@ -64,7 +33,6 @@ def _age_s(peer: Mapping, now: float) -> float | None:
         if seen > 0:
             return max(0.0, now - seen)
     return None
-
 
 def refusal(
     *,

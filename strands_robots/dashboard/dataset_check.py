@@ -1,26 +1,4 @@
-"""Is a listed dataset a dataset, or the folder an aborted recording left behind? (BUGS.md Q37)
-
-``training.local_datasets`` calls a directory a dataset when ``meta/info.json`` exists -- the same
-"discovered by its config" shape as Q36. And ``DatasetRecorder.create`` calls
-``LeRobotDataset.create()`` when a recording session OPENS, which writes ``meta/info.json``
-immediately, before a single episode is captured. So a session that was opened and then abandoned
-(the operator closed the sheet, the arms failed to connect, the process died) leaves a directory
-that lists as a dataset for ever after.
-
-Measured on this machine: ``local/sim_recording`` reports ``total_episodes: 0``, has no ``data/``
-directory at all, and the training tab offers it with a "replay in sim" button next to it. Picking
-it costs a training run that fails minutes in, or a replay that shows nothing.
-
-The verdict is computed from the metadata the listing already reads plus one directory probe, so
-listing 50 datasets does not become 50 dataset loads. It never opens a parquet file, and its
-wording says so: a dataset can be unusable in ways only a loader can see (a schema mismatch, a
-corrupt shard), and this check will pass those.
-
-What it must NOT do: compare the number of data FILES to the number of episodes. Measured on the
-same machine: a healthy 30-episode v3.0 dataset holds exactly ONE parquet file, because v3 packs
-many episodes per file (``data/chunk-000/file-000.parquet``). A count comparison would condemn
-every correct v3 dataset on disk.
-"""
+"""Is a listed dataset a dataset, or the folder an aborted recording left behind?"""
 
 from __future__ import annotations
 
@@ -32,29 +10,17 @@ __all__ = ["dataset_verdict", "MIN_EPISODES"]
 #: not "small", it is "nothing was ever recorded".
 MIN_EPISODES = 1
 
-
 def _as_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return int(value)
-
 
 def dataset_verdict(
     meta: Mapping[str, Any] | None,
     *,
     has_data_files: bool | None = None,
 ) -> dict[str, Any]:
-    """What can be said about a listed dataset without loading it.
-
-    ``meta`` is the parsed ``meta/info.json`` fields the listing already keeps
-    (``total_episodes``, ``total_frames``, ``fps``, ``robot_type``); an empty/None mapping means
-    the file could not be read. ``has_data_files`` is one directory probe by the caller -- ``None``
-    when it did not look, which is honestly reported as "not checked" rather than assumed either
-    way.
-
-    Returns ``{"usable": bool, ...}``. ``usable`` means "nothing visible from the metadata says
-    this is empty or missing its frames" -- never "this loads".
-    """
+    """What can be said about a listed dataset without loading it."""
     m = dict(meta or {})
     episodes = _as_int(m.get("total_episodes"))
     frames = _as_int(m.get("total_frames"))
@@ -111,23 +77,11 @@ def dataset_verdict(
         verdict["note"] += "; data/ was not checked"
     return verdict
 
-
-#: A row that a recorder is writing into right now. NOT the same claim as "broken": the folder is
-#: mid-flight, and the advice for an abandoned one ("delete it") would destroy a session in
-#: progress. Reported as its own reason so the UI can say so.
+# : A row that a recorder is writing into right now.
 RECORDING_REASON = "recording_in_progress"
 
-
 def _same_dataset(row: Mapping[str, Any], active: str) -> bool:
-    """Is this listing row the dataset the recorder named?
-
-    A recorder names a ``repo_id`` ("local/sim_recording"); a listing row carries both a
-    ``repo_id`` (relative to whichever root the scan walked) and an absolute ``root``. The two can
-    disagree - a dataset discovered under a remembered collect root lists as "sim_recording" while
-    the recorder calls it "local/sim_recording" - so a repo_id-only comparison would silently miss
-    the very session it exists to notice. The path tail is checked as well, with a separator
-    guard so "local/sim_recording" cannot match ".../not_sim_recording".
-    """
+    """Is this listing row the dataset the recorder named?"""
     if not active:
         return False
     repo = str(row.get("repo_id") or "")
@@ -138,25 +92,12 @@ def _same_dataset(row: Mapping[str, Any], active: str) -> bool:
         return root == active or root.endswith("/" + active.strip("/"))
     return False
 
-
 def mark_live_recording(
     rows: list[dict[str, Any]],
     active_dataset: str | None,
     *,
     episodes_so_far: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Re-judge the row a recording session is writing into (Q38).
-
-    A dataset in mid-recording looks EXACTLY like an abandoned one to a metadata check: episode 0
-    is not in ``meta/info.json`` until it is flushed, so a session that opened a minute ago reads
-    as "0 episodes - an abandoned session, record into it or delete it". That advice is not merely
-    unhelpful, it names the one action that would destroy the recording in progress.
-
-    Rows are returned as new dicts (the caller's cache is not mutated), and only the matching row
-    is touched. ``usable`` stays False for it: training would read a dataset that is still growing
-    and a replay would race the writer - but the REASON, and therefore the sentence the operator
-    reads, is now the true one.
-    """
     if not active_dataset:
         return rows
     out: list[dict[str, Any]] = []
@@ -179,7 +120,6 @@ def mark_live_recording(
         })
     return out
 
-
 def record_target_verdict(
     dataset: str,
     *,
@@ -188,22 +128,7 @@ def record_target_verdict(
     episodes: int | None = None,
     non_empty: bool = False,
 ) -> str | None:
-    """Can a NEW recording session write into this dataset name? (Q39)
-
-    Returned as a sentence to refuse with, or None to proceed. Called BEFORE the session parks the
-    arms, because everything after that point reports through ``could not open the arms: {exc}`` -
-    and a dataset name that is already taken is not a hardware fault. The operator was told to
-    check cables for what is a one-word rename.
-
-    The three real cases, kept apart because the right next action differs:
-      - the name is EMPTY: nothing downstream can resolve a path from it;
-      - the directory is a DATASET already (it has ``meta/``): ``LeRobotDataset.create`` raises
-        ``FileExistsError``, and the episode count is what decides whether the operator is about to
-        overwrite an hour of work or re-use a folder an abandoned session left behind (Q37);
-      - the directory exists but is NOT a dataset: recording there raises too, and the fix is a
-        different one (pick another name, or clear that directory yourself - this refuses rather
-        than deleting anything).
-    """
+    """Can a NEW recording session write into this dataset name?"""
     name = (dataset or "").strip()
     if not name:
         return (

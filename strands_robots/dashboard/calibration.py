@@ -1,19 +1,4 @@
-"""Finding and shaping one calibration, for the dashboard's calibration drawer.
-
-``GET /api/calibration/{name}`` could never succeed: it called the tool
-positionally (``lerobot_calibrate("view", name, device_type)``), so the
-calibration's name landed in ``device_type``, the query parameter in
-``device_model``, ``device_id`` stayed None, and the tool answered its own
-"**view** action requires: device_type, device_model, and device_id" every time.
-The drawer displayed that sentence as if it were data.
-
-The deeper problem the route papered over: **a calibration name is not an
-identity**. On this machine ``leader_arm`` exists three times --
-``robots/so101_follower``, ``robots/so_follower`` and
-``teleoperators/so101_leader`` -- so a route that takes only a name has to either
-guess or say so. These helpers are pure functions over a directory so the
-guessing is visible and testable.
-"""
+"""Finding and shaping one calibration, for the dashboard's calibration drawer."""
 
 from __future__ import annotations
 
@@ -24,13 +9,11 @@ from typing import Any
 #: Layout on disk: <root>/<device_type>/<device_model>/<device_id>.json
 _SUFFIX = ".json"
 
-
 def default_root() -> Path:
     """Where lerobot keeps calibrations, honouring the same env the tool does."""
     from strands_robots.tools.lerobot_calibrate import HF_LEROBOT_CALIBRATION
 
     return Path(HF_LEROBOT_CALIBRATION)
-
 
 def candidates(
     name: str,
@@ -39,16 +22,7 @@ def candidates(
     device_type: str | None = None,
     device_model: str | None = None,
 ) -> list[dict[str, str]]:
-    """Every calibration whose device_id is ``name``, narrowed by the filters.
-
-    Returns dicts of ``device_type``/``device_model``/``device_id``/``path``,
-    sorted so the answer is stable across calls (a directory listing is not).
-
-    An empty list means "no such calibration"; more than one means the caller
-    must say which, and the route reports the choice instead of picking for them
-    -- silently viewing ``so_follower``'s file when the operator meant
-    ``so101_follower`` is worse than a question.
-    """
+    """Every calibration whose device_id is ``name``, narrowed by the filters."""
     base = Path(root) if root is not None else default_root()
     if not name or "/" in name or name.startswith("."):
         return []  # a device id is one path segment, never a traversal
@@ -71,14 +45,9 @@ def candidates(
                 })
     return out
 
-
 def motors(data: Any) -> list[dict[str, Any]]:
-    """The per-motor rows, as a LIST so the UI keeps the file's own order.
-
-    A calibration's dict order is the motor order on the arm (shoulder_pan,
-    shoulder_lift, elbow_flex...). Handing the UI a mapping invites it to sort
-    alphabetically, which renders a plausible-looking arm that is not this arm.
-    Unknown fields are kept: this reads calibrations written by other tools.
+    """The per-motor rows, as a LIST so the UI keeps the file's own order. A calibration's dict order
+    is the motor order on the arm (shoulder_pan, shoulder_lift, elbow_flex...).
     """
     if not isinstance(data, dict):
         return []
@@ -92,14 +61,8 @@ def motors(data: Any) -> list[dict[str, Any]]:
         rows.append(row)
     return rows
 
-
 def payload(info: dict[str, Any]) -> dict[str, Any]:
-    """JSON-safe view of the tool's ``calibration_info``.
-
-    ``modified_time`` arrives as a ``datetime``, which is exactly the value that
-    made an earlier version of the dashboard reach for ``default=str`` and start
-    serialising unknown objects as their repr. Converted explicitly here.
-    """
+    """JSON-safe view of the tool's ``calibration_info``."""
     modified = info.get("modified_time")
     if isinstance(modified, datetime):
         modified_iso: str | None = modified.isoformat(timespec="seconds")
@@ -122,30 +85,13 @@ def payload(info: dict[str, Any]) -> dict[str, Any]:
         "motors": rows,
     }
 
-
 def robot_calibration_gap(
     robot_name: str,
     robot_id: str | None,
     *,
     root: Path | str | None = None,
 ) -> str | None:
-    """Why a REAL robot spawned as ``robot_id`` will refuse to read its motors, or None.
-
-    The live failure this exists for (2026-08-20, measured on cagatay's fleet): an arm was
-    spawned as a real robot with ``robot_id="leader"``. lerobot then looks for
-    ``robots/so101_follower/leader.json``, which does not exist -- the ``leader`` calibration on
-    that machine lives under ``teleoperators/so101_leader/``, because it was recorded for the
-    TELEOPERATOR side. The bus raised ``has no calibration registered``, and the visible result
-    was an arm whose presence said ``connected: true`` while the fleet snapshot carried **zero
-    joints**, with the reason only in a child log. Nothing in the UI could distinguish that from
-    a slow probe.
-
-    So this answers the question at spawn time, from the filesystem, in words that name the
-    remedy. Deliberately NOT a refusal: the calibration root is a cache that can be moved or
-    absent, and a false refusal would stop an arm coming back after a replug -- the one thing the
-    profile memory exists to guarantee. An UNKNOWN root therefore returns None (silence is not
-    evidence), and so does an id whose file is exactly where lerobot will look.
-    """
+    """Why a REAL robot spawned as ``robot_id`` will refuse to read its motors, or None."""
     if not robot_id or not robot_name:
         return None
     base = Path(root) if root is not None else default_root()

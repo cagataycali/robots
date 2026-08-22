@@ -1,25 +1,3 @@
-"""What a training run is about to DO to the directory you typed (Q58).
-
-The training form's ``output_dir`` is free text with placeholder ``/tmp/my_policy_ckpt``, and
-``LerobotTrainer.start()`` contains this fresh-start hygiene::
-
-    if not spec.resume and os.path.isdir(spec.output_dir):
-        if self.latest_checkpoint(spec.output_dir) is None:
-            shutil.rmtree(spec.output_dir, ignore_errors=True)
-
-So typing a path that already exists and holds no resumable checkpoint makes the dashboard
-**recursively delete that directory**, with nothing on screen saying so and no way to undo it. A
-mistyped or reused path -- a dataset dir, a notes folder, a previous run whose checkpoint was already
-exported and moved away -- is wiped by pressing "train".
-
-The opposite case fails differently and just as quietly: a directory that DOES hold a checkpoint is
-kept, and lerobot's own validate then refuses a non-resume run into an existing output_dir. The
-dashboard cannot ask for a resume at all (``resume`` is not in ``SPEC_KEYS``), and by then submit()
-has already returned success with a job id, so the refusal only exists in the run's log file.
-
-This module answers the question BEFORE the run: what is in there, and what will happen to it.
-Everything except :func:`inspect_output_dir` is pure.
-"""
 
 from __future__ import annotations
 
@@ -30,7 +8,6 @@ from typing import Any
 #: How many names to show. Enough to recognise a directory, few enough to read.
 SAMPLE = 5
 
-
 def classify_output_dir(
     *,
     exists: bool,
@@ -40,25 +17,8 @@ def classify_output_dir(
     total: int = 0,
     unreadable: str | None = None,
 ) -> dict[str, Any]:
-    """Verdict for one candidate ``output_dir``.
-
-    ``state`` is one of:
-
-    ``free``
-        nothing there (or an empty directory) -- the run creates it.
-    ``resumable``
-        a checkpoint lives there. NOT destructive, but this dashboard cannot resume, so the run
-        will be refused by lerobot itself. Needs a different directory, not a confirmation.
-    ``occupied``
-        real files with no checkpoint -- pressing train DELETES them. ``destructive`` is True and
-        ``needs_confirm`` is True: the operator must say yes to a named loss, not to a shrug.
-    ``not_a_dir``
-        the path is a FILE. Refused outright rather than confirmed: nothing in the training flow
-        wants to write a run into a file's name, so this is a typo, not a decision.
-    ``unknown``
-        the path could not be read. Never treated as ``free`` -- "I could not look" and "there is
-        nothing there" lead to opposite advice, and guessing the friendly one here is guessing
-        about a delete.
+    """Verdict for one candidate ``output_dir``. ``state`` is one of: ``free`` nothing there (or an
+    empty directory) -- the run creates it.
     """
     if unreadable:
         return {
@@ -118,15 +78,8 @@ def classify_output_dir(
         ),
     }
 
-
 def inspect_output_dir(path: str, *, has_checkpoint: Any = None) -> dict[str, Any]:
-    """Read the path and classify it. ``has_checkpoint`` may be a callable(path) -> bool.
-
-    The checkpoint test is injected because the authority on "is this resumable" is the trainer
-    (``LerobotTrainer.latest_checkpoint``, which recognises a checkpoint BY ITS CONFIG FILE) -- this
-    module must not grow a second, disagreeing definition of the thing that decides whether a
-    delete happens.
-    """
+    """Read the path and classify it. ``has_checkpoint`` may be a callable(path) -> bool."""
     p = Path(path).expanduser()
     verdict_path = str(p)
     try:
@@ -154,7 +107,6 @@ def inspect_output_dir(path: str, *, has_checkpoint: Any = None) -> dict[str, An
         out = classify_output_dir(exists=True, unreadable=type(exc).__name__)
     out["path"] = verdict_path
     return out
-
 
 def default_checkpoint_probe(path: str) -> bool:
     """The trainer's own answer, when it can be imported (torch-less installs say False)."""

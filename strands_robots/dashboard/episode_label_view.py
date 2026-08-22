@@ -1,32 +1,8 @@
-"""Reading a dataset's episode labels for the dashboard -- and saying honestly when it cannot label.
-
-#2486. ``strands_robots.episode_labels`` is a deliberate TWO-STAGE verdict: deterministic benchmark
-predicates are authoritative, and a judge (VLM or human) annotates ON TOP of one. That doctrine is
-structural, not advisory -- ``annotate_episode`` refuses an episode with no ``deterministic`` block
-because "an annotation layered on nothing would be a verdict in disguise".
-
-The consequence for this dashboard is sharp and easy to get wrong: a REAL-ARM recording has no
-predicate verdict (there is no simulator state to measure), so its episodes cannot be annotated at
-all. Two wrong ways to "fix" that in a dashboard, both of which I am refusing here:
-
-  * write the ``judge`` block ourselves and skip the check -- that is the exact verdict-in-disguise
-    the source refuses, and it would poison ``filter_episodes`` for training;
-  * synthesise a deterministic verdict (``success: true``) for a real recording -- a fabricated
-    measurement, which is worse than none: it reads as ground truth forever after.
-
-So this module reads what exists and reports the CAPABILITY truthfully, in the same posture as the
-rest of this dashboard's offered-but-undriveable work: never show a control that will 400, say what
-would have to be true instead. The gap belongs upstream (a human verdict source for real
-recordings); until then the operator gets an explanation, not a dead button.
-
-Pure: takes a sidecar document (or None) plus what we know about the dataset, returns a view.
-"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
-
 
 def label_view(
     document: Mapping[str, Any] | None,
@@ -34,15 +10,7 @@ def label_view(
     total_episodes: int | None = None,
     sidecar_error: str | None = None,
 ) -> dict[str, Any]:
-    """What the dashboard can say about one dataset's episode labels.
-
-    Args:
-        document: the parsed ``episode_labels.json`` sidecar, or None when there is none.
-        total_episodes: from ``meta/info.json``, so "0 of 12 labelled" is possible.
-        sidecar_error: the read failure, when the file exists but could not be parsed -- a corrupt
-            sidecar must not read as "no labels yet", which is the difference between "record
-            verdicts" and "your labels may be damaged".
-    """
+    """What the dashboard can say about one dataset's episode labels."""
     episodes = (document or {}).get("episodes") or {}
     rows: list[dict[str, Any]] = []
     for key, rec in sorted(episodes.items(), key=lambda kv: _as_int(kv[0])):
@@ -79,7 +47,6 @@ def label_view(
         "sidecar_error": sidecar_error,
     }
 
-
 def _capability(
     document: Mapping[str, Any] | None,
     rows: list[dict[str, Any]],
@@ -109,7 +76,6 @@ def _capability(
     if unjudged:
         return True, "%d episode(s) carry a verdict and are waiting for a quality grade" % len(unjudged)
     return True, "every episode with a verdict already carries a judge annotation"
-
 
 def _as_int(value: Any) -> int:
     try:

@@ -1,22 +1,4 @@
-"""Turn a safety refusal into something a human can answer.
-
-The SDK refuses two classes of request on purpose:
-
-* ``UntrustedRemoteCodeError`` - the provider would run code from a HuggingFace
-  repo (``trust_remote_code=True``), so it demands ``STRANDS_TRUST_REMOTE_CODE=1``.
-* the mesh command validator - ``pretrained_name_or_path`` is not covered by
-  ``STRANDS_MESH_HF_REPO_ALLOW``.
-
-Both are correct refusals and both arrive at the dashboard as *prose in an error
-string*, which is a dead end for the person clicking the button: the only way
-forward is a shell, an env var and a restart. This module parses that prose into
-a structured consent request the API can attach to the failure, so the UI can
-quote the risk and offer "Approve & retry" (U18).
-
-Everything here is pure: no env mutation, no I/O. The caller decides whether the
-human said yes, and :func:`env_patch` computes the *minimum* environment change
-that grants exactly what was asked for - never a wildcard.
-"""
+"""Turn a safety refusal into something a human can answer."""
 
 from __future__ import annotations
 
@@ -25,58 +7,38 @@ import re
 from dataclasses import dataclass, field
 from typing import Mapping
 
-#: Same charset the mesh allowlist validator accepts for one entry
-#: (``<org>`` or ``<org>/<repo>``). Duplicated deliberately: importing
-#: ``strands_robots.mesh.security`` here would drag the mesh stack into the
-#: dashboard's request path, and this module must stay import-cheap and pure.
+# : Same charset the mesh allowlist validator accepts for one entry : (``<org>`` or
+# ``<org>/<repo>``).
 _HF_ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}(/[A-Za-z0-9][A-Za-z0-9._-]{0,95})?$")
 
 _AGENT_TARGET_RE = re.compile(r"starting a task on ([A-Za-z0-9][A-Za-z0-9._:-]{0,63})")
 _TRUST_ENV = "STRANDS_TRUST_REMOTE_CODE"
 _HF_ENV = "STRANDS_MESH_HF_REPO_ALLOW"
-#: The teleop safety envelope: how far one frame may reach, and how fast a joint
-#: may be commanded to travel. Both are RADIAN-shaped by default (4*pi / 8*pi),
-#: so a degree-reporting arm (every SO-10x) has every frame refused.
-# Q80: the agent's own permission to START physical motion (dashboard/agent_motion.py owns the gate;
-# this module owns the grant, so it is revocable on the permissions screen like everything else).
+# : The teleop safety envelope: how far one frame may reach, and how fast a joint : may be
+# commanded to travel.
 _AGENT_MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
-#: Q81: the one entry here that is a LOCK, not a grant - a task POST must carry the browser's
-#: confirmation. Surfaced on the permissions screen because that is where an operator goes to ask
-#: what is different about this machine, and because a lock nobody can find is a lock nobody uses.
 _TASK_CONFIRM_ENV = "STRANDS_DASH_TASK_REQUIRES_CONFIRM"
 _TELEOP_VALUE_ENV = "STRANDS_MESH_INPUT_VALUE_ABS"
 _TELEOP_SLEW_ENV = "STRANDS_MESH_INPUT_SLEW_ABS"
-#: Q119. The SDK refuses FIVE things by allowlist and only ONE of them reached this module.
-#: Measured by calling security.validate_command for each: pretrained_name_or_path was classified,
-#: while policy_provider, policy_type and policy_host ended in a dead end - the exact complaint
-#: ("these validation errors should be something I can continue over the UI") that consent exists to
-#: answer. provider and type SHARE this variable, and the SDK's own sentence says so:
-#: "Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend (provider and policy_type share one allowlist)".
 _POLICY_TYPE_ENV = "STRANDS_MESH_POLICY_TYPE_ALLOW"
-#: Q119 part two, closing the family at 5 of 5. policy_host AND server_address's host check share
-#: this one variable (is_safe_server_address strips scheme/path/port and defers to
-#: is_safe_policy_host), so they are one kind here too.
 _POLICY_HOST_ENV = "STRANDS_MESH_POLICY_HOST_ALLOW"
-#: The SDK's own charset for an ENTRY in that variable (security._POLICY_HOST_ENTRY_RE), copied
-#: rather than imported so this module stays free of the mesh at import time. Hostnames, IP
-#: literals and CIDR ranges - and nothing shell-shaped.
+# : The SDK's own charset for an ENTRY in that variable (security._POLICY_HOST_ENTRY_RE),
+# copied : rather than imported so this module stays free of the mesh at import time.
 _POLICY_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9.:/_\-]{1,253}$")
-#: Degrees plus a percent gripper: 400 covers a multi-turn wrist with headroom
-#: and still refuses a runaway three orders of magnitude out. Not "unlimited" -
-#: the envelope is the point, only its UNIT was wrong.
+# : Degrees plus a percent gripper: 400 covers a multi-turn wrist with headroom : and still
+# refuses a runaway three orders of magnitude out.
 _TELEOP_DEGREE_VALUE = "400"
 _TELEOP_DEGREE_SLEW = "800"
 
 _PROVIDER_RE = re.compile(r"provider '([^']{1,120})'")
-#: Read the value WHOLE - up to the closing quote, or to whitespace when bare -
-#: and validate afterwards. A charset-limited capture would silently truncate
-#: ``'org/repo;rm -rf /'`` to ``org/repo``, i.e. grant a repository the operator
-#: never asked for, which is the opposite of what a consent dialog is for.
+# : Read the value WHOLE - up to the closing quote, or to whitespace when bare - : and
+# validate afterwards.
 _REPO_QUOTED_RE = re.compile(r"pretrained_name_or_path=(['\"])(.{0,250}?)\1")
 _REPO_BARE_RE = re.compile(r"pretrained_name_or_path=([^\s,]{1,250})")
 _PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-#: Taken only from the SDK's fixed `policy_provider=` / `policy_type=` prefix, quoted or bare, so a
-#: paraphrase wrapped around the refusal cannot become the subject (the _AGENT_TARGET_RE rule).
+# : Taken only from the SDK's fixed `policy_provider=` / `policy_type=` prefix, quoted or
+# bare, so a : paraphrase wrapped around the refusal cannot become the subject (the
+# _AGENT_TARGET_RE rule).
 _POLICY_HOST_SUBJECT_RE = re.compile(
     r"(policy_host|server_address)=(?:'([^']{1,300})'|\"([^\"]{1,300})\"|([^\s,]{1,300}))"
 )
@@ -85,25 +47,8 @@ _POLICY_SUBJECT_RE = re.compile(r"policy_(?:provider|type)=(?:'([^']{1,80})'|\"(
 #: The refusal text can be a whole traceback; keep the evidence bounded.
 _MAX_MESSAGE = 2000
 
-
 def _host_entry(raw: object, *, strip_url: bool = False) -> str | None:
-    """The allowlist ENTRY that grants ``raw``, or None if nothing safe can be derived.
-
-    ``strip_url`` distinguishes the two refusals that share this variable, and MEASUREMENT decided
-    it, not symmetry: is_safe_server_address strips scheme/path/port before checking, so a
-    ``server_address='http://gpu.lan:8000'`` is granted by the entry ``gpu.lan``. But
-    ``policy_host`` is matched LITERALLY, so ``policy_host='gpu.lan:8000'`` needs the entry
-    ``gpu.lan:8000`` - granting ``gpu.lan`` there produced an approval that left the command
-    refused, which is the exact "approval that changes nothing" this function exists to prevent. I
-    wrote the symmetric version first and the round-trip test caught it.
-
-    The refusal quotes what the operator sent - ``server_address='http://gpu.lan:8000'`` - but the
-    variable holds hosts, matched literally by :func:`security.is_safe_policy_host`. Appending the
-    URL verbatim would produce an entry that the SDK's own charset check rejects and that could
-    never match anything: an approval that changes nothing, which is worse than a refusal because
-    the operator believes they are through. So the scheme, path and port are stripped here, exactly
-    as is_safe_server_address strips them.
-    """
+    """The allowlist ENTRY that grants ``raw``, or None if nothing safe can be derived."""
     if not isinstance(raw, str):
         return None
     s = raw.strip()
@@ -125,7 +70,6 @@ def _host_entry(raw: object, *, strip_url: bool = False) -> str | None:
         return None
     return s
 
-
 @dataclass(frozen=True)
 class ConsentRequest:
     """One thing the operator can approve, with the risk in the SDK's own words."""
@@ -141,15 +85,7 @@ class ConsentRequest:
 
     @property
     def grantable(self) -> bool:
-        """Would approving this actually change the environment?
-
-        Q120. The UI had to guess this, and it guessed with a kind list: canApprove required a
-        subject for ``hf_repo_allow`` (where the grant IS the subject) and said yes to everything
-        else that named an env var. Correct until Q119 added two more allowlist kinds - after which
-        a ``policy_host_allow`` with an unreadable host offered an ENABLED Approve button that
-        would have written nothing, i.e. a security dialog claiming to have helped. The server owns
-        env_patch, so the server answers the question; the client stops maintaining a list.
-        """
+        """Would approving this actually change the environment?"""
         return bool(env_patch(self, {}))
 
     def as_dict(self) -> dict:
@@ -162,18 +98,14 @@ class ConsentRequest:
             "subject": self.subject,
             "message": self.message,
             "grants": list(self.grants),
-            # Computed against an EMPTY env deliberately: the question is "is there a grant here at
-            # all", not "is it already in place on this machine" - which env_patch answers for the
-            # live env at approval time, and which must not disable the button (a refusal from a
-            # process started before the last approval still needs its explanation).
+            # Computed against an EMPTY env deliberately: the question is "is there a grant here at all",
+            # not "is it already in place on this machine" - which env_patch answers for the live env at
+            # approval time, and which must not disable the button (a refusal from a process started
+            # before the last approval still needs its explanation).
             "grantable": self.grantable,
         }
 
-
-#: The only things an operator can be asked to approve. A client posting an
-#: approval names one of these and (at most) a subject - never an env var and
-#: never a value, because "which variable does this grant touch" is a decision
-#: this module owns.
+# : The only things an operator can be asked to approve.
 KINDS: tuple[str, ...] = (
     "trust_remote_code",
     "hf_repo_allow",
@@ -183,16 +115,8 @@ KINDS: tuple[str, ...] = (
     "policy_host_allow",
 )
 
-
 def build_request(kind: str, subject: object = None, message: str = "") -> ConsentRequest | None:
-    """Construct a consent request from ``kind`` + ``subject``, validating both.
-
-    This is the single constructor: :func:`classify_refusal` parses a refusal
-    into these two arguments, and the approval endpoint rebuilds the request the
-    same way from what the browser sent. So a hostile client can ask for an
-    allowlist entry, but it cannot ask for a *different variable* or smuggle a
-    value past :data:`_HF_ENTRY_RE`.
-    """
+    """Construct a consent request from ``kind`` + ``subject``, validating both."""
     if kind not in KINDS:
         return None
     text = message.strip()[:_MAX_MESSAGE] if isinstance(message, str) else ""
@@ -219,13 +143,7 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
 
     if kind == "agent_physical_motion":
         # Subject is the peer that was refused, for the wording only: the grant is MACHINE-wide,
-        # because the gate reads one env var. Saying "allow it for this arm" and then letting the
-        # agent drive the other one would be a lie about what was approved - the same reasoning as
-        # teleop_degree_units above.
-        # Null an unparseable name rather than only softening the WORDING: `subject` is echoed in
-        # as_dict() and is what the approval endpoint rebuilds the request from, so a hostile string
-        # kept here would travel further than the sentence that hid it. (trust_remote_code's rule;
-        # caught by test_a_hostile_subject_is_dropped_not_echoed.)
+        # because the gate reads one env var.
         if name is not None and not _PROVIDER_NAME_RE.match(name):
             name = None
         shown = name or "a real robot"
@@ -247,10 +165,8 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
         )
 
     if kind == "teleop_degree_units":
-        # Subject is the arm that was refused, for the dialog's wording only: the
-        # envelope is a MACHINE-wide setting, so the scope deliberately is not
-        # per-peer. Granting it for "this arm" and quietly applying it to every
-        # spawned child would be a lie about what was approved.
+        # Subject is the arm that was refused, for the dialog's wording only: the envelope is a
+        # MACHINE-wide setting, so the scope deliberately is not per-peer.
         shown = name if name and _PROVIDER_NAME_RE.match(name) else "this arm"
         return ConsentRequest(
             kind=kind,
@@ -300,9 +216,7 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
         )
 
     if kind == "policy_type_allow":
-        # One variable, two things the SDK refuses with it. The grant is deliberately NARROW - this
-        # name only - mirroring hf_repo_allow: an operator approving "lerobot_async" must not be
-        # opening every policy type the SDK can construct.
+        # One variable, two things the SDK refuses with it.
         if name is not None and not _PROVIDER_NAME_RE.match(name):
             name = None  # unparseable/hostile: ask, but grant nothing automatically
         shown = name or "the requested policy"
@@ -342,14 +256,8 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
         grants=(f"load {name}" if name else "nothing yet - the repository name could not be read",),
     )
 
-
 def classify_refusal(text: object) -> ConsentRequest | None:
-    """Recognise a *continuable* refusal in ``text``, else ``None``.
-
-    Detection keys off the env var the SDK itself names, because that string is
-    the refusal's contract with the operator - the surrounding wording changes
-    between versions, the variable does not.
-    """
+    """Recognise a *continuable* refusal in ``text``, else ``None``."""
     if not isinstance(text, str) or not text.strip():
         return None
     message = text.strip()[:_MAX_MESSAGE]
@@ -358,18 +266,17 @@ def classify_refusal(text: object) -> ConsentRequest | None:
         m = _PROVIDER_RE.search(message)
         return build_request("trust_remote_code", m.group(1) if m else None, message)
 
-    # The teleop refusal names no env var (it is a per-frame rejection, logged by
-    # the follower), so it is recognised by its own words. Both halves of the
-    # envelope lead to the same grant: they are one unit decision, not two.
+    # The teleop refusal names no env var (it is a per-frame rejection, logged by the follower),
+    # so it is recognised by its own words.
     if "input frame value for" in message and "out of range" in message:
         return build_request("teleop_degree_units", None, message)
     if "input frame slew for" in message and "out of range" in message:
         return build_request("teleop_degree_units", None, message)
 
     if _AGENT_MOTION_ENV in message:
-        # The refusal is ours (agent_motion.py), and it names the peer in the same breath as the
-        # words MOVE REAL HARDWARE; take the peer only from that fixed prefix so the model's own
-        # paraphrase around it cannot become the subject.
+        # The refusal is ours (agent_motion.py), and it names the peer in the same breath as the words
+        # MOVE REAL HARDWARE; take the peer only from that fixed prefix so the model's own paraphrase
+        # around it cannot become the subject.
         m = _AGENT_TARGET_RE.search(message)
         return build_request("agent_physical_motion", m.group(1) if m else None, message)
 
@@ -393,15 +300,8 @@ def classify_refusal(text: object) -> ConsentRequest | None:
 
     return None
 
-
 def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> dict[str, str]:
-    """The smallest env change that grants ``request``, given the current ``env``.
-
-    Returns ``{}`` when there is nothing safe to grant (an unparseable repo) or
-    when the grant is already in place - an empty patch is the caller's signal
-    that approving would change nothing, which usually means the refusal came
-    from a process started before the last approval.
-    """
+    """The smallest env change that grants ``request``, given the current ``env``."""
     env = env or {}
     if request.kind == "trust_remote_code":
         if str(env.get(_TRUST_ENV, "")).strip().lower() in ("1", "true", "yes"):
@@ -454,21 +354,8 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
 
     return {}
 
-
 def granted_state(env: Mapping[str, str] | None = None) -> dict:
-    """What this machine currently grants - every kind, in one place.
-
-    GET /api/consent used to build this inline and covered only two of the three kinds, so the
-    teleop envelope widening (the grant with actual physical reach: it raises how far a single
-    teleop frame may command an arm) was invisible on the permissions screen and therefore could
-    not be revoked there - while the consent dialog promised it could. A grant with no surface is
-    a grant nobody can take back.
-
-    ``teleop_degree_units`` reports what the environment ACTUALLY holds, not merely whether it
-    equals the value this module would have written: an operator who set a wider bound by hand
-    must see that, and a half-set pair (reach widened, speed bound untouched) is reported as
-    granted rather than hidden, because the widened half is already in force.
-    """
+    """What this machine currently grants - every kind, in one place."""
     env = os.environ if env is None else env
     allow = [e.strip() for e in str(env.get(_HF_ENV, "")).split(",") if e.strip()]
     value_abs = str(env.get(_TELEOP_VALUE_ENV, "")).strip()
@@ -488,8 +375,8 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
             e.strip() for e in str(env.get(_POLICY_TYPE_ENV, "")).split(",") if e.strip()
         ],
         # Loopback is allowed by the SDK's own default and is NOT listed: this key answers "what has
-        # this machine been opened up to", and printing localhost as a grant would bury the one
-        # entry that matters among defaults nobody approved.
+        # this machine been opened up to", and printing localhost as a grant would bury the one entry
+        # that matters among defaults nobody approved.
         "policy_host_allow": [
             e.strip() for e in str(env.get(_POLICY_HOST_ENV, "")).split(",") if e.strip()
         ],
@@ -502,9 +389,7 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
             "is_degree_preset": value_abs == _TELEOP_DEGREE_VALUE and slew_abs == _TELEOP_DEGREE_SLEW,
         },
         # Reported next to the grants but NOT as one: every other key here loosens something, this
-        # tightens it. Kept in the same payload because the operator's question is one question -
-        # "what is different about this machine?" - and answering half of it from another endpoint is
-        # how the teleop envelope stayed invisible (see this function's own history).
+        # tightens it.
         "locks": {
             "task_requires_confirm": (
                 str(env.get(_TASK_CONFIRM_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
@@ -513,20 +398,8 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
         },
     }
 
-
 def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> dict[str, str]:
-    """The env change that takes a grant BACK, given the current ``env``.
-
-    A promise the UI makes ("you can revoke this") has to be executable, so
-    revocation is computed by the same module that computes the grant - and it
-    is narrow in the same way: revoking one repository leaves the rest of the
-    allowlist exactly as it was. ``{}`` means there was nothing to take back.
-
-    An empty string is how a variable is *cleared* here rather than deleted,
-    because the .env file is the durable record: an absent line would let a
-    stale value from a shell profile or a launchd plist win the next restart,
-    which is a revocation that silently does not hold.
-    """
+    """The env change that takes a grant BACK, given the current ``env``."""
     env = env or {}
     if request.kind == "trust_remote_code":
         if str(env.get(_TRUST_ENV, "")).strip().lower() not in ("1", "true", "yes"):
@@ -583,14 +456,8 @@ def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) 
 
     return {}
 
-
 def attach_consent(payload: dict, *sources: object) -> dict:
-    """Add ``needs_consent`` to an error ``payload`` if any source is continuable.
-
-    Used at the seams where a refusal becomes an HTTP response (spawn failure,
-    task error), so a caller that never heard of consent still gets its old
-    body plus one extra key.
-    """
+    """Add ``needs_consent`` to an error ``payload`` if any source is continuable."""
     for source in sources:
         request = classify_refusal(source)
         if request is not None:

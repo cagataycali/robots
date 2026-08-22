@@ -1,19 +1,4 @@
-"""Zenoh mesh <-> asyncio bridge for the dashboard.
-
-Joins the shared mesh session (``strands_robots.mesh.session.get_session`` -
-inherits namespace / TLS / ACL config) and:
-
-* subscribes ``strands/*/presence``, ``strands/*/state``, ``strands/*/stream``,
-  ``strands/*/camera/**``, ``strands/safety/**``
-* maintains an in-memory fleet snapshot (peers keyed by peer_id)
-* fans events out to any number of async consumers (WebSocket handlers)
-* publishes commands to peers (``strands/<peer>/cmd``) with RPC correlation
-  on ``strands/<dash_id>/response/**`` - mirroring ``Mesh.send()``.
-
-Camera frames are kept OUT of the JSON event stream: they are stored in a
-latest-frame cache and served/fanned-out as binary (see server.py) so a
-phone on wifi is not decoding base64 JSON at 30 Hz.
-"""
+"""Zenoh mesh <-> asyncio bridge for the dashboard."""
 
 from __future__ import annotations
 
@@ -37,11 +22,8 @@ logger = logging.getLogger(__name__)
 
 PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
 
-#: How long a peer may stay quiet before it is dropped from the fleet snapshot
-#: entirely. A finished replay/collect peer stops heartbeating and never comes
-#: back, so without this it lingers as a permanently stale ghost card.
+# : How long a peer may stay quiet before it is dropped from the fleet snapshot : entirely.
 PEER_TTL_S = float(os.getenv("STRANDS_DASHBOARD_PEER_TTL_S", "300"))
-
 
 def prune_peers(
     peers: dict[str, dict[str, Any]],
@@ -50,13 +32,7 @@ def prune_peers(
     protected_ids: set[str] | frozenset[str] | None = None,
     stale_after: float = PEER_STALE_S,
 ) -> dict[str, dict[str, Any]]:
-    """Flag quiet peers stale and drop the ones that aged past ``ttl``.
-
-    Protected ids (peers backed by a LIVE managed local process) are always
-    kept: their state stream may hiccup while the process is perfectly fine,
-    and a card vanishing under a running robot is worse than a stale one.
-    A non-positive ``ttl`` disables ageing out.
-    """
+    """Flag quiet peers stale and drop the ones that aged past ``ttl``."""
     protected = protected_ids or frozenset()
     out: dict[str, dict[str, Any]] = {}
     for pid, entry in peers.items():
@@ -69,54 +45,30 @@ def prune_peers(
         out[pid] = {**entry, "stale": age > stale_after}
     return out
 
-
-#: Transport low-pass filter on ``**/cmd`` (_zenoh_config.DEFAULT_MAX_CMD_BYTES).
-#: Anything larger is dropped pre-deserialise and the sender only ever sees a
-#: timeout, so we check before publishing and return a real error instead.
+# : Transport low-pass filter on ``**/cmd`` (_zenoh_config.DEFAULT_MAX_CMD_BYTES). : Anything
+# larger is dropped pre-deserialise and the sender only ever sees a : timeout, so we check
+# before publishing and return a real error instead.
 MAX_CMD_BYTES = int(os.getenv("STRANDS_MESH_MAX_CMD_BYTES", str(16 * 1024)))
 
 #: How many fleet actions to keep for the activity panel.
 ACTIVITY_CAP = 300
-
 
 def peer_is_known(
     peer_id: str,
     peers: Mapping[str, Any] | Iterable[str],
     managed_ids: Iterable[str] = (),
 ) -> bool:
-    """Is this peer id something the fleet could plausibly answer for?
-
-    Used to refuse a command for a peer that was NEVER in the fleet before
-    spending the RPC timeout on it. ``/api/robots/{peer}/stop ghost_peer_zz``
-    burned 10 seconds and then answered ``state: "no_answer"`` -- which is the
-    same word a REAL robot that stopped answering produces, and that is the case
-    an operator must be able to tell apart. A typo and a wedged arm should not
-    look identical, least of all on the stop path.
-
-    Known means any of:
-
-    * the id is in the mesh peer table;
-    * it is a locally managed process (a peer inside its spawn/settle window has
-      a pid but no mesh presence yet -- refusing a task there would break the
-      spawn-then-drive sequence the UI performs);
-    * it is a ``"<parent>__<robot>"`` child of either of those, because child sim
-      peers live and die inside the parent's process and ``route_task_target``
-      forwards their commands to the parent anyway.
-
-    Deliberately NOT a liveness check: a stale-but-known peer stays addressable,
-    since "the arm went quiet, try stopping it anyway" is a real thing to want.
-    """
+    """Is this peer id something the fleet could plausibly answer for?"""
     if not peer_id:
         return False
     haystack = set(peers) | set(managed_ids)
     if peer_id in haystack:
         return True
-    # Both halves must be non-empty, matching route_task_target's own condition
-    # exactly: "arm-1__" does NOT get rerouted there, so calling it known here
-    # would hand it straight back to the timeout this guard exists to avoid.
+    # Both halves must be non-empty, matching route_task_target's own condition exactly: "arm-1__"
+    # does NOT get rerouted there, so calling it known here would hand it straight back to the
+    # timeout this guard exists to avoid.
     parent, _, child = peer_id.partition("__")
     return bool(parent and child) and parent in haystack
-
 
 def managed_without_presence(
     peers: Mapping[str, Mapping[str, Any]],
@@ -126,39 +78,6 @@ def managed_without_presence(
     now: float | None = None,
     grace_s: float = 20.0,
 ) -> list[str]:
-    """Which of OUR OWN children are not in the fleet at all (Q155b).
-
-    The complement of TWO rules that already exist, and deliberately disjoint from
-    both: :func:`silent_arms` answers "present but mute", and U22's absent-children
-    report answers "DEAD child, gone from the mesh" -- its
-    ``test_a_living_child_missing_from_the_mesh_is_never_a_death`` refuses this case
-    on purpose. This one is the third square: ALIVE, ours, and absent. Disjointness
-    is structural rather than agreed: the caller passes the same LIVE protected set
-    the ageing protection uses, which a dead child is not in. That one
-    answers "present but mute"; this one answers "we are holding a live child
-    process and the mesh has never heard of it" -- a peer that does not appear
-    cannot be rendered stale, cannot be rendered mute, and cannot be rendered at
-    all. Measured on the live rig: the sim twin was gone from ``/api/fleet``
-    while the child process the dashboard spawned for it was alive at 25h.
-
-    ``prune_peers`` protects a managed peer from ageing out, but protection can
-    only save a peer that ARRIVED; presence that never comes (or stops coming
-    while the process lives) leaves the dashboard with strictly more knowledge
-    than the fleet it renders -- it knows the pid -- and no place to say so.
-
-    Rules, each borrowed rather than invented:
-
-    * a managed id whose ``"<id>__<child>"`` child IS present counts as
-      reporting: sim children publish for themselves and the parent is the
-      process, exactly the demotion rule ``armHosts`` uses on the record screen.
-    * a child of a present parent counts as reporting, matching
-      :func:`peer_is_known`'s family rule (both halves non-empty).
-    * an id inside its spawn/settle window is OMITTED -- a child two seconds old
-      has not published yet, and calling that silence a fault would flag every
-      healthy spawn. Same grace ``peer_is_known`` extends, and the same law the
-      camera roster follows: no evidence is not evidence of absence. An id with
-      NO known spawn time is reported, because a missing timestamp is not youth.
-    """
     present = set(peers)
     stamps = spawn_times or {}
     clock = time.time() if now is None else now
@@ -177,31 +96,7 @@ def managed_without_presence(
         out.append(pid)
     return sorted(out)
 
-
 def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None:
-    """Which peers are present but publishing NO joints (Q149).
-
-    ``/api/health`` reported ``peers: 4`` for forty-four hours while three of
-    those four arms were mute: presence connected, cameras flowing, joints
-    absent. The number was true and the impression was false, and the only way
-    to learn the difference was to walk ``/api/fleet`` counting ``state.joints``
-    by hand -- which the caretaker did, every forty-five minutes, for days.
-
-    Two rules, both borrowed from places that already earned them:
-
-    * ``lib/armHosts.ts``: a process is not an arm. Peers are named
-      ``parent`` / ``parent__child``, and a parent that HAS a child while
-      reporting no joints itself is the simulator/host PROCESS -- silence is
-      correct for it. A jointless CHILDLESS peer is a broken arm. Evidence
-      above structure: the parent is demoted only when a child actually exists.
-    * A stale peer's silence is already explained by its staleness, so it is
-      counted separately rather than blamed for not streaming.
-
-    Returns ``None`` when nothing is silent, following the same law as
-    ``refused_handshakes``: a section that is always there is a section nobody
-    reads. When it IS there, the caretaker's poll has news without a second
-    request.
-    """
     ids = list(peers)
     streaming: list[str] = []
     silent: list[str] = []
@@ -230,36 +125,11 @@ def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None
         **({"stale": stale} if stale else {}),
     }
 
-
 def peer_origins(
     peer_ids: Mapping[str, Any] | Iterable[str],
     managed_ids: Iterable[str] = (),
 ) -> dict[str, str]:
-    """Label each peer ``"managed"`` (this dashboard spawned it) or ``"external"``.
-
-    U15's contract is that a robot defined in the user's OWN script --
-    ``Robot("so101", mode="real", ..., mesh=True)`` -- is a first-class citizen:
-    same card, same name, same telemetry, same commands as one the dashboard
-    spawned. That half holds because every card renders from the mesh snapshot,
-    which knows nothing about who started a process.
-
-    But three capabilities genuinely cannot exist for an external peer, because
-    the dashboard has no child process behind it: the log ring buffer, the
-    camera reconfigure (which is a respawn), and despawn. Today those refuse
-    only AFTER the operator clicks, with a 404. This label is the missing
-    premise -- it lets a card say "started elsewhere" up front and explain the
-    three gaps, instead of offering a button that cannot work.
-
-    So it is deliberately the *only* asymmetry the snapshot carries: an origin
-    badge, nothing more (PLAN.md U15). It is a fact about the PROCESS, never
-    about the robot's health -- an external peer is not lesser, just not ours.
-
-    ``managed_ids`` is the live-managed set the snapshot already computes for
-    ageing protection. A ``"<parent>__<robot>"`` child inherits its parent's
-    origin, the same rule :func:`prune_peers` and :func:`peer_is_known` use:
-    a child sim peer lives inside the parent's process, so if we started the
-    parent we started the child.
-    """
+    """Label each peer ``"managed"`` (this dashboard spawned it) or ``"external"``."""
     managed = set(managed_ids)
 
     def origin(pid: str) -> str:
@@ -272,36 +142,10 @@ def peer_origins(
 
     return {pid: origin(pid) for pid in peer_ids}
 
-
-
 def absent_children(
     peers: Mapping[str, Any] | Iterable[str],
     children: Iterable[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
-    """Managed children that are DEAD and no longer on the mesh (U22).
-
-    A peer that stops publishing is pruned from the snapshot, and that pruning
-    is right: it really is gone from the fleet. But the child process is still in
-    the manager's table with its exit status, which means the dashboard KNOWS a
-    robot the operator started is dead and says so nowhere the operator looks --
-    the peer list simply gets shorter. Measured on the live rig: the only peer
-    publishing joints was SIGKILLed and the fleet screen's answer was silence.
-
-    So this is deliberately NOT a peer. It is a separate list a screen may render
-    as a memorial, and every rule below exists to stop it becoming one:
-
-    * ``alive`` children are never included, even when they are missing from the
-      mesh. A child that has just been spawned has not published presence yet,
-      and calling that a death would alarm on every single spawn.
-    * a dead child still IN the snapshot is not included either: its card is on
-      the screen, and the devices drawer explains it (childDeath.ts).
-    * a dead PARENT whose child peer still publishes (``parent__child``) is not
-      absent, because that stream can only come from a living process -- the
-      same family rule prune_peers and peer_is_known use.
-
-    Only the facts a memorial needs are copied out; the log ring stays behind the
-    devices route, which is where a 20-line tail belongs.
-    """
     present = set(peers)
     families = {pid.split("__", 1)[0] for pid in present if "__" in pid}
     out: list[dict[str, Any]] = []
@@ -326,15 +170,7 @@ def absent_children(
     return out
 
 def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Route commands aimed at a child sim peer to its parent Simulation peer.
-
-    Child sim peers ("<parent>__<robot>") stream state/cameras but cannot
-    execute tasks themselves (upstream mesh._dispatch has no execute path on
-    SimRobot children). The parent's _dispatch_sim_policy
-    honors cmd["robot_name"], so we rewrite the target here. This is THE
-    choke point: the REST API, the card's Run button, and the
-    fleet agent tool all go through it.
-    """
+    """Route commands aimed at a child sim peer to its parent Simulation peer."""
     if "__" in target and not cmd.get("robot_name"):
         parent, _, robot_name = target.partition("__")
         if parent and robot_name:
@@ -342,17 +178,8 @@ def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, 
             target = parent
     return target, cmd
 
-
 def command_succeeded(response: dict[str, Any] | None) -> bool:
-    """Did a peer actually carry the command out?
-
-    The wire is layered - ``{"type": "response", "result": {...}}`` for a
-    dispatched command, ``{"type": "error", "error": ...}`` for a rejection -
-    and a *successful* response can still carry ``result.ok == False`` (e.g.
-    "peer exposes no stop_task; nothing was stopped"). Callers that only check
-    for transport errors therefore report success while nothing stopped, which
-    is how the Stop button came to lie.
-    """
+    """Did a peer actually carry the command out?"""
     if not isinstance(response, dict):
         return False
     if response.get("error") or response.get("type") == "error":
@@ -365,14 +192,8 @@ def command_succeeded(response: dict[str, Any] | None) -> bool:
             return False
         if str(result.get("status", "")).lower() in ("error", "failed"):
             return False
-        # An ``error`` INSIDE the payload is the peer's own refusal, and it arrives with no ``ok``
-        # key and no ``status`` at all -- a plain ``{"error": "gripper jammed"}`` from a tool. This
-        # check was missing (Q88), and the two callers below turned that omission into a lie:
-        # ``/api/robots/{id}/task`` answered ``ok: true`` so the card said "running" above the
-        # robot's own readable error, and ``stop_outcome`` classified the same shape as "stopped" --
-        # the exact failure this function's docstring says it exists to prevent. Widening it can only
-        # move a verdict from success to refusal, which is the safe direction for the estop counts
-        # that read ``stop_outcome``: fewer false "all_stopped", never a false "not_stopped".
+        # An ``error`` INSIDE the payload is the peer's own refusal, and it arrives with no ``ok`` key
+        # and no ``status`` at all -- a plain ``{"error": "gripper jammed"}`` from a tool.
         if result.get("error"):
             return False
         # A peer that wraps a tool result nests it once more. Both depths are real -- the dashboard's
@@ -382,13 +203,9 @@ def command_succeeded(response: dict[str, Any] | None) -> bool:
             return False
     return True
 
-
 def _raw_to_jpeg(raw: bytes, shape: Any) -> tuple[bytes | None, str | None]:
-    """Transcode raw pixel bytes to JPEG. Returns ``(jpeg, error)``.
-
-    Only called for frames whose ``encoding`` is not JPEG. Needs the shape the
-    publisher sent - without it the byte string is unreadable, and saying so is
-    more useful than a black rectangle.
+    """Transcode raw pixel bytes to JPEG. Returns ``(jpeg, error)``. Only called for frames whose
+    ``encoding`` is not JPEG.
     """
     if not (isinstance(shape, (list, tuple)) and len(shape) in (2, 3)):
         return None, f"encoding is not jpeg and shape {shape!r} is unusable"
@@ -419,14 +236,9 @@ def _raw_to_jpeg(raw: bytes, shape: Any) -> tuple[bytes | None, str | None]:
     except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the sub
         return None, f"raw frame transcode failed: {type(exc).__name__}: {exc}"
 
-
 def stop_outcome(response: dict[str, Any] | None) -> dict[str, Any]:
-    """Classify one peer's answer to a stop into the three honest states.
-
-    ``stopped`` / ``not_stopped`` (the peer answered but could not stop) /
-    ``no_answer`` (timeout). ``emergency_stop()`` upstream makes exactly this
-    distinction via ``peers_not_stopped``; the UI has to show it, because
-    "unstoppable peer" and "peer offline" need different human reactions.
+    """Classify one peer's answer to a stop into the three honest states. ``stopped`` / ``not_stopped``
+    (the peer answered but could not stop) / ``no_answer`` (timeout).
     """
     if not isinstance(response, dict):
         return {"state": "no_answer", "detail": "no response"}
@@ -441,18 +253,7 @@ def stop_outcome(response: dict[str, Any] | None) -> dict[str, Any]:
         detail = str(result.get("error") or result.get("status") or "")
     return {"state": "not_stopped", "detail": detail or str(error or "refused")}
 
-
-#: Per-type ceiling on UNCHANGED repeats, in Hz. Measured on a fleet of ONE arm and
-#: one client: /ws/mesh carried 34.7 Hz, of which presence re-sent ~6 Hz and
-#: camera_meta ~10 Hz although neither changes at that rate. Twelve clients meant
-#: ~420 JSON serializations/s to say nothing new.
-#:
-#: These are COALESCE rates, not dedupe: an event whose content actually changed is
-#: forwarded immediately, and an unchanged one still goes out at this rate as a
-#: liveness tick. That second half is not optional -- useMesh.ts sets
-#: `last_seen: Date.now(), stale: false` on EVERY event, so the client's staleness
-#: comes from arrival. Suppressing unchanged repeats outright would paint an idle
-#: peer (one that only publishes presence) as dead while it is alive.
+# : Per-type ceiling on UNCHANGED repeats, in Hz.
 COALESCE_HZ: dict[str, float] = {
     "presence": float(os.getenv("STRANDS_DASHBOARD_PRESENCE_HZ", "1.0")),
     "camera_meta": float(os.getenv("STRANDS_DASHBOARD_CAMERA_META_HZ", "2.0")),
@@ -464,7 +265,6 @@ _VOLATILE_FIELDS = frozenset({
     "t", "ts", "time", "timestamp", "last_seen", "seq", "frame", "frames",
     "frame_id", "count", "uptime", "uptime_s", "elapsed", "fps",
 })
-
 
 def _stable_content(data: Any) -> str:
     """A comparable rendering of an event payload, minus self-ticking fields."""
@@ -479,19 +279,8 @@ def _stable_content(data: Any) -> str:
     except Exception:  # noqa: BLE001 - never let bookkeeping drop an event
         return repr(data)[:2000]
 
-
 class EventCoalescer:
-    """Decides whether an event is worth another JSON serialization.
-
-    Rules, per (type, peer, cam):
-
-    * a type with no configured rate is ALWAYS forwarded -- ``state`` is real
-      telemetry (the joint traces plot it), ``safety`` must never be delayed by a
-      millisecond, and ``activity``/``snapshot`` are one-offs;
-    * changed content is forwarded immediately, so a stale flag flipping, a camera
-      error appearing or ``action_keys`` changing is never late;
-    * unchanged content is forwarded at the configured rate as a liveness tick.
-    """
+    """Decides whether an event is worth another JSON serialization."""
 
     def __init__(self, rates: dict | None = None) -> None:
         self.rates = dict(COALESCE_HZ if rates is None else rates)
@@ -531,7 +320,6 @@ class EventCoalescer:
             "rates_hz": dict(self.rates),
         }
 
-
 class MeshBridge:
     """Dashboard-side mesh peer. One instance per server process."""
 
@@ -556,9 +344,6 @@ class MeshBridge:
         self._coalesce_lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
 
-        # What we are entitled to SAY about the e-stop lockout (Q43). The mesh
-        # deliberately does not advertise lockout state, so this is memory of the
-        # events we saw plus per-peer proof from commands that were accepted.
         self._lockout = safety_state.Lockout()
         self._lockout_proof: dict[str, float] = {}
         # Signed safety rail (lazy - see _safety_mesh)
@@ -583,16 +368,7 @@ class MeshBridge:
         # bridge stays usable standalone.
         self.protected_peer_ids: Any | None = None
 
-        # Set by the server to a callable returning {peer_id: {role, ...}} for
-        # locally managed arms whose servo bus was MEASURED. Applied inside
-        # snapshot() on purpose: the UI reads the WEBSOCKET snapshot, so enriching
-        # only the /api/fleet route (my first attempt) put the answer on a rail
-        # nothing renders from.
         self.peer_annotations: Any | None = None
-        # U22: the managed table (DeviceManager.managed_children), so snapshot() can
-        # report children this dashboard started that are dead AND already pruned.
-        # Same lesson as the annotations above, relearned the same way: the /api/fleet
-        # route alone is a rail the UI never reads.
         self.managed_children: Any | None = None
 
     def _peer_annotations(self) -> dict[str, dict[str, Any]]:
@@ -606,10 +382,8 @@ class MeshBridge:
             return {}
 
     def _managed_children(self) -> list[Any]:
-        # getattr, not self.managed_children: snapshot() must keep working on a bridge
-        # that predates this hook. Three existing tests build one with __new__ and set
-        # only the attributes they need, and they were right to expect that to hold -
-        # a new optional feature may not turn into a required field.
+        # getattr, not self.managed_children: snapshot() must keep working on a bridge that predates
+        # this hook.
         hook = getattr(self, "managed_children", None)
         if hook is None:
             return []
@@ -644,14 +418,6 @@ class MeshBridge:
         settings.apply_mesh_env()
 
         self._loop = loop
-        # STRANDS_MESH=false is documented as a HARD kill switch, and this bridge used
-        # to ignore it: it called get_session() unconditionally, so the dashboard joined
-        # the live fleet with the mesh explicitly OFF. Same class as BUGS.md Q32, which
-        # fixed robot_mesh._gateway_mesh() and left the biggest session-opener in the
-        # tree unasked. Found by rehearsing a restart with the switch set, where it
-        # surfaced as a startup CRASH rather than a quiet violation (mTLS is the default
-        # auth mode, so building a config for a session nobody wanted raised
-        # "STRANDS_MESH_AUTH_MODE=mtls requires ..." and uvicorn exited).
         from strands_robots.mesh.core import mesh_kill_switch_engaged
 
         if mesh_kill_switch_engaged():
@@ -730,12 +496,7 @@ class MeshBridge:
         return info
 
     def restart(self) -> bool:
-        """Re-open the mesh session against the current settings.
-
-        The upstream session is a ref-counted module singleton, so a reopen
-        only picks up new endpoints once every consumer has released it -
-        stopping the bridge is what drops our reference.
-        """
+        """Re-open the mesh session against the current settings."""
         loop = self._loop
         if loop is None:
             return False
@@ -883,10 +644,7 @@ class MeshBridge:
             "shape": data.get("shape"),
             "encoding": data.get("encoding"),
         }
-        # A peer may publish raw pixel bytes instead of JPEG. Handing those to
-        # an <img> (or serving them as image/jpeg) produces a black tile that
-        # looks exactly like a dead camera, so transcode here and say so when we
-        # cannot.
+        # A peer may publish raw pixel bytes instead of JPEG.
         if str(meta["encoding"] or "jpeg").lower() not in ("jpeg", "jpg"):
             raw, error = _raw_to_jpeg(raw, meta.get("shape"))
             meta["converted"] = error is None
@@ -931,19 +689,10 @@ class MeshBridge:
                 self._responses[turn] = data
                 evt.set()
 
-    # ------------------------------------------------------------------
-    # Commands (dashboard -> robot). Human-initiated; bypasses LLM HITL
-    # gates by design (the human IS the loop - they clicked the button).
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Commands (dashboard ->
+    # robot).
 
-    # ------------------------------------------------------------------
-    # Signed safety rail (A6). The dashboard's raw zenoh session can only
-    # broadcast per-peer stop commands; the SIGNED strands/safety/estop
-    # envelope (SourceInfo zid binding + HMAC resume proof + fleet-wide
-    # lockout) needs a Mesh instance. Mesh accepts robot=None - a robot-less
-    # gateway signs and fans out exactly like a robot peer, it just has
-    # nothing of its own to stop.
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ Signed safety rail (A6).
 
     def _safety_mesh(self) -> Any | None:
         """Lazily start the robot-less Mesh used for signed safety envelopes."""
@@ -965,13 +714,7 @@ class MeshBridge:
                 return None
 
     def signed_estop(self) -> dict[str, Any]:
-        """Fleet e-stop over the SIGNED rail.
-
-        Publishes the strands/safety/estop envelope (SourceInfo zid binding)
-        which engages the LOCKOUT on every listening peer - they refuse all
-        non-status commands until a proofed resume - and aggregates the
-        per-peer stop responses the mesh's own broadcast collected.
-        """
+        """Fleet e-stop over the SIGNED rail."""
         m = self._safety_mesh()
         if m is None:
             return {"signed": False, "error": "safety mesh unavailable"}
@@ -984,12 +727,7 @@ class MeshBridge:
         }
 
     def signed_resume(self, override_code: str) -> dict[str, Any]:
-        """Clear the fleet lockout with the operator override code.
-
-        The local safety mesh verifies the code (brute-force throttled),
-        clears its own lockout, and publishes the HMAC-proofed resume
-        envelope every peer independently re-verifies.
-        """
+        """Clear the fleet lockout with the operator override code."""
         m = self._safety_mesh()
         if m is None:
             return {"signed": False, "error": "safety mesh unavailable"}
@@ -1039,9 +777,6 @@ class MeshBridge:
             else:
                 with self._rpc_lock:
                     result = self._responses.pop(turn, {"error": "response lost", "ok": False})
-            # A peer that ACCEPTED an action a lockout would have refused has proved its
-            # own lockout is not engaged - the only proof available, since the mesh
-            # answers a rejected command generically on purpose (Q43).
             if not result.get("error") and safety_state.proves_clear(str(cmd.get("action", ""))):
                 with self._peers_lock:
                     self._lockout_proof[target] = time.time()
@@ -1118,20 +853,11 @@ class MeshBridge:
             # only feeds the same ghosts back on every later snapshot.
             for pid in set(self.peers) - set(peers):
                 self.peers.pop(pid, None)
-                # Drop coalescing bookkeeping too, so a peer that comes BACK with
-                # the same content as when it left is forwarded at once instead of
-                # waiting out a rate window against a memory of its former self.
+                # Drop coalescing bookkeeping too, so a peer that comes BACK with the same content as when it
+                # left is forwarded at once instead of waiting out a rate window against a memory of its
+                # former self.
                 with self._coalesce_lock:
                     self._coalescer.forget(pid)
-        # Who STARTED each peer (U15). Applied before the mesh-blind annotations
-        # below and derived from the same live-managed set the pruning already
-        # used, so the origin badge cannot disagree with which peers are held
-        # alive as ours. Every peer gets a label: absent would read as unknown.
-        # Q155b: children WE hold that the fleet has never heard of. Derived from the
-        # SAME protected set as the origin badge and the ageing protection, so the
-        # three cannot disagree; spawn times come from the managed table so a child
-        # two seconds old is not called a fault. Never conjures a peer - it is a
-        # LIST beside the peers, because the whole point is that these have no peer.
         stamps: dict[str, float] = {}
         for m in self._managed_children():
             mid = getattr(m, "peer_id", None)
@@ -1142,13 +868,6 @@ class MeshBridge:
             peer = peers.get(pid)
             if isinstance(peer, dict):
                 peers[pid] = {**peer, "origin": origin}
-        # Facts about a peer that the MESH cannot know (today: the role measured
-        # off a local arm's servo bus). Copied onto the peer dict so both the WS
-        # snapshot and /api/fleet carry it, and only for peers already present -
-        # an annotation must never conjure a peer into the fleet.
-        # The e-stop lockout, per peer (Q43). Every peer gets the field: an ABSENT
-        # lockout reads as "fine", which is exactly the bug - a locked arm rendered as a
-        # healthy green card with six live joints for ten hours.
         try:
             with self._peers_lock:
                 fleet_lockout = getattr(self, "_lockout", None) or safety_state.Lockout()
@@ -1167,31 +886,19 @@ class MeshBridge:
         for pid, fields in self._peer_annotations().items():
             peer = peers.get(pid)
             if isinstance(peer, dict) and isinstance(fields, dict):
-                # joint_silence.merge drops a joint complaint the live state contradicts: mesh.core
-                # logs a degraded probe ONCE and never logs its recovery, so the log line outlives
-                # the fault and a log-driven badge would become permanent and start lying (Q80).
                 peers[pid] = {**peer, **joint_silence.merge(peer, fields)}
         return {
             "type": "snapshot",
-            # Q155b: our own children with no mesh presence at all (usually empty).
             "managed_no_presence": quiet,
             "dashboard_peer_id": self.peer_id,
             "peers": peers,
             "mesh": self.mesh_info(),
-            # U22: dead children already pruned from `peers` above. Here rather than in
-            # the route, because the UI renders from the WEBSOCKET snapshot and the two
-            # must tell one story about who is gone.
             "absent_children": absent_children(peers, self._managed_children()),
             "t": now,
         }
 
     def live_peers(self) -> list[str]:
-        """Peer ids with a fresh presence heartbeat.
-
-        Fleet-wide operations use this instead of every id we have ever seen:
-        gathering stops from dead peers just blocks the response for the full
-        RPC timeout and reports nothing useful.
-        """
+        """Peer ids with a fresh presence heartbeat."""
         now = time.time()
         with self._peers_lock:
             return [

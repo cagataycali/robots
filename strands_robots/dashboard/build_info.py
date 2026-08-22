@@ -1,23 +1,4 @@
-"""What build this dashboard process actually is — the one thing /api/health never said.
-
-Every diagnosis in this project has had to answer "is the running server older than the shipped
-bundle?" by hand: read the process start time, then guess which features that predates. Four days
-of notes say "waits for a terminal-started restart" because that guess is the only tool there was.
-A build stamp turns it into one request.
-
-Two design choices worth stating, because they are what makes the stamp trustworthy:
-
-* NO SUBPROCESS. Shelling out to `git` inside a request is a fork per poll, it inherits whatever
-  PATH the daemon had, and it fails in a way that looks like a broken endpoint. The refs are plain
-  files; reading them is a few bytes and cannot hang.
-* The stamp is ALWAYS present, unlike this endpoint's news-only blocks (joint_streams,
-  refused_handshakes). That is deliberate: absence is the signal. A server that answers /api/health
-  with no `build` key is, by construction, older than the commit that added it — which is exactly
-  the question a UI needs answered when a field it renders is missing.
-
-Unknowns are reported as None rather than guessed strings: "unknown commit" and "commit 0000000"
-both read like data, and a wrong build id is worse than a missing one.
-"""
+"""What build this dashboard process actually is — the one thing /api/health never said."""
 
 from __future__ import annotations
 
@@ -26,15 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-
 def read_commit(root: Path | str | None) -> str | None:
-    """The short sha of ``root``'s checkout, or None when it cannot be read honestly.
-
-    Handles the two shapes a HEAD file takes: a symbolic ref into refs/heads (a branch checkout,
-    which is how this repo is always used) and a detached HEAD holding the sha directly. A packed
-    ref is NOT chased - if refs/heads/<branch> is absent the answer is None, because a stamp that
-    silently reports the wrong commit is worse than one that admits ignorance.
-    """
+    """The short sha of ``root``'s checkout, or None when it cannot be read honestly."""
     if root is None:
         return None
     git = Path(root) / ".git"
@@ -57,7 +31,6 @@ def read_commit(root: Path | str | None) -> str | None:
         return None
     return head[:12]
 
-
 def package_version() -> str | None:
     """The installed strands-robots version, or None in a source checkout with nothing installed."""
     try:
@@ -73,11 +46,9 @@ def package_version() -> str | None:
             return None
     return None
 
-
 def stamp(*, commit: str | None, version: str | None, started: float) -> dict[str, Any]:
     """Assemble the payload. Pure, so the shape is testable without a filesystem or a clock."""
     return {"commit": commit, "version": version, "started": started}
-
 
 @lru_cache(maxsize=1)
 def build_info(root: str | None = None) -> dict[str, Any]:

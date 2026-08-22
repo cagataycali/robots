@@ -1,11 +1,5 @@
-"""Speech-to-speech fleet control - browser mic <-> Strands bidi agent.
-
-PCM16 audio flows over /ws/voice (binary in, base64 JSON out). The voice
-agent carries the same robot_mesh toolset as
-the chat agent, so "hey, make arm one pick up the red cube" actuates the
-mesh directly from speech.
-
-Providers (VOICE_PROVIDER env): openai (Realtime), nova_sonic, gemini.
+"""Speech-to-speech fleet control - browser mic <-> Strands bidi agent. PCM16 audio flows over
+/ws/voice (binary in, base64 JSON out).
 """
 
 from __future__ import annotations
@@ -32,7 +26,6 @@ robot. A spoken yes cannot grant it - only their tap can. Stopping is never
 refused, so always act on a stop request immediately."""
 
 _DEFAULT_VOICES = {"openai": "marin", "nova_sonic": "tiffany", "gemini": "Kore"}
-
 
 def _build_bidi_model(provider: str, voice: Optional[str] = None) -> Any:
     provider = provider.lower()
@@ -70,7 +63,6 @@ def _build_bidi_model(provider: str, voice: Optional[str] = None) -> Any:
 
     raise ValueError(f"unknown voice provider: {provider!r} (openai | nova_sonic | gemini)")
 
-
 def build_voice_agent(provider: str | None = None, voice: str | None = None) -> Any:
     """BidiAgent with the fleet toolset. Caller supplies browser audio IO."""
     os.environ.setdefault("STRANDS_MESH_HITL_ACTIONS", "none")
@@ -90,13 +82,9 @@ def build_voice_agent(provider: str | None = None, voice: str | None = None) -> 
         system_prompt=os.getenv("DASHBOARD_VOICE_PROMPT", VOICE_PROMPT),
     )
 
-
 async def run_voice_session(ws: Any) -> None:
-    """Bridge one /ws/voice websocket to a fresh BidiAgent session.
-
-    Browser -> binary PCM16 frames (16 kHz mono) or {"type":"stop"} text.
-    Server -> {"type":"voice_meta","rate":N} then {"type":"audio","data":b64}
-              plus {"type":"transcript","role":...,"text":...} when available.
+    """Bridge one /ws/voice websocket to a fresh BidiAgent session. Browser -> binary PCM16 frames (16
+    kHz mono) or {"type":"stop"} text.
     """
     import asyncio
     import json
@@ -121,11 +109,7 @@ async def run_voice_session(ws: Any) -> None:
     stop_evt = asyncio.Event()
 
     # A refusal raised inside the fleet tool is spoken once and gone: no transcript rail carries a
-    # decision, and the operator cannot grant a permission by talking. The listener hands the
-    # refusal text to the same classifier the chat box uses, so the browser can raise the SAME
-    # ConsentSheet and the grant stays a deliberate tap on a screen. The tool runs in whatever task
-    # or thread the bidi agent uses, so the hand-off is a thread-safe queue drained on this loop -
-    # never an await from inside the tool.
+    # decision, and the operator cannot grant a permission by talking.
     from strands_robots.dashboard.agent_bridge import add_refusal_listener
     from strands_robots.dashboard.consent import classify_refusal
 
@@ -190,9 +174,9 @@ async def run_voice_session(ws: Any) -> None:
     try:
         agent = build_voice_agent()
     except Exception as e:
-        # This return happens BEFORE the finally below exists, so the listener has to be dropped
-        # here too: one left behind would outlive the session, push into a queue nobody drains and
-        # pin this closure for every later turn on the machine.
+        # This return happens BEFORE the finally below exists, so the listener has to be dropped here
+        # too: one left behind would outlive the session, push into a queue nobody drains and pin this
+        # closure for every later turn on the machine.
         drop_listener()
         await ws.send_text(json.dumps({"type": "error", "error": f"voice agent: {e}"}))
         return

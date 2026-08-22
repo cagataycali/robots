@@ -1,34 +1,9 @@
-"""Q72: can this machine actually publish that dataset -- asked BEFORE the recording, not after it.
-
-The record screen's "upload to the Hugging Face Hub after finishing" tick is judged at the END of a
-session: `RecordWorker.close(upload=True)` calls push_to_hub and reports whatever comes back. Every way
-it can fail is knowable in advance, and every one of them costs the operator the same thing when it is
-not: a finished session (minutes of teleop, sometimes an hour), a "saved locally, upload FAILED" line,
-and no retry -- closing the session destroys the recorder, so a second attempt is a huggingface-cli job.
-
-What this decides, from facts already on hand (checkpoints.hf_auth_state() + the session's dataset name):
-
-* no credential at all -> the push CANNOT work. Not a warning: the tick is refused, because the only
-  thing ticking it can produce is that end-of-session failure.
-* a token that whoami REJECTS (revoked, expired) -> same refusal, different sentence. A revoked token is
-  not anonymity and must not be described as it (checkpoints.py learned this already).
-* a dataset name carrying someone else's namespace -> refused. `me/thing` publishes to me; `other/thing`
-  needs write access to `other`, and if the operator does not have it the Hub answers 403 after the work
-  is done. An org they DO belong to cannot be confirmed from here, so the refusal says so and stays
-  continuable (`force`) rather than pretending to know.
-* everything known-good -> allowed, and it states the FULL destination `user/dataset`. The old hint said
-  "publishes as <dataset>", which is not where it goes: the namespace is implicit and invisible.
-
-Pure and side-effect free (the auth dict is passed in) so the rules are testable without a network or a
-recorder. The endpoint layer supplies hf_auth_state().
-"""
 
 from __future__ import annotations
 
 from typing import Any, Mapping
 
 __all__ = ["upload_preflight", "destination"]
-
 
 def destination(dataset: str, user: str | None) -> str | None:
     """The repo id a push would really create, or None when it cannot be known yet."""
@@ -41,24 +16,13 @@ def destination(dataset: str, user: str | None) -> str | None:
         return None
     return f"{user}/{name}"
 
-
 def upload_preflight(
     *,
     dataset: str | None,
     auth: Mapping[str, Any] | None,
     existing: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Judge an upload before it is armed.
-
-    Returns ``{ok, state, detail, destination, user}``. ``ok`` False means the tick must not arm:
-    the failure it leads to is certain and expensive. ``needs_force`` marks refusals that are the
-    operator's call rather than a certainty.
-
-    ``existing`` (Q78) describes what is ALREADY published at the destination, when that could be
-    established: ``{"exists": True, "episodes": 40}``. Absence or ``{}`` means no evidence, and is
-    treated as "nothing there" exactly as before - a Hub lookup that failed must never block a
-    recording.
-    """
+    """Judge an upload before it is armed. Returns ``{ok, state, detail, destination, user}``."""
     name = (dataset or "").strip().strip("/")
     a = dict(auth or {})
     user = a.get("user") if isinstance(a.get("user"), str) else None
@@ -118,12 +82,6 @@ def upload_preflight(
 
     dest = destination(name, user)
 
-    # Q78: the destination repo already exists on the Hub. push_to_hub does NOT create a second
-    # repo and does not refuse - it uploads INTO that one. Recording refuses to reuse a local
-    # dataset directory (Q39), so the session being finished here is always a NEW, shorter dataset:
-    # publishing it rewrites meta/info.json over a longer history while the old episode files stay
-    # behind, leaving the published dataset describing fewer episodes than it contains. That is not
-    # a merge, and from the Hub's side it is indistinguishable from corruption.
     ex = dict(existing or {})
     if ex.get("exists") is True:
         n = ex.get("episodes") if isinstance(ex.get("episodes"), int) else None
