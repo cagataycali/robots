@@ -793,8 +793,7 @@ class TeleopMixin:
         # hardware paths that must not pull in the mesh package on import.
         from strands_robots.mesh.pacing import Ticker
 
-        ticker = Ticker(period, self._teleop_stop_event)
-        try:
+        with Ticker(period, self._teleop_stop_event) as ticker:
             while self._teleop_running and not self._teleop_stop_event.is_set():
                 # ``duration`` is an elapsed-time budget, so the deadline is
                 # compared on the clock it was built from. Read on ``time.time()``
@@ -866,8 +865,6 @@ class TeleopMixin:
 
                 if ticker.wait():
                     break
-        finally:
-            ticker.close()
 
         self._teleop_running = False
         logger.info("[teleop] loop stopped (%d frames, %d errors)", self._teleop_frames, self._teleop_errors)

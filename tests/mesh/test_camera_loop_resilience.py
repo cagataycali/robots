@@ -54,6 +54,14 @@ class _InstantTicker:
     def close(self):
         pass
 
+    # The loop enters the ticker with `with`, so the double carries the same
+    # protocol as the real one.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+
 
 def _bare_mesh(publish, stop):
     """A Mesh with just the attributes ``_camera_loop`` reads.

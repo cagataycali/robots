@@ -376,8 +376,7 @@ class HardwareRtpsBridge(RosTelemetryBase):
         asks for. Nothing here reported that: the loop keeps no rate counter,
         and ``take`` returning a batch makes a late poll look like a busy one.
         """
-        ticker = Ticker(self._poll_period, self._stop)
-        try:
+        with Ticker(self._poll_period, self._stop) as ticker:
             while not self._stop.is_set():
                 try:
                     for sample in self._command_reader.take(N=10):
@@ -386,8 +385,6 @@ class HardwareRtpsBridge(RosTelemetryBase):
                     logger.debug("HardwareRtpsBridge: command poll raised", exc_info=True)
                 if ticker.wait():
                     break
-        finally:
-            ticker.close()
 
     def _start_poll(self) -> None:
         if self._poll_thread is not None and self._poll_thread.is_alive():

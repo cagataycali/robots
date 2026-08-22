@@ -187,14 +187,11 @@ class SensorLoopsMixin:
             Once per tick. The ticker is closed when the caller's ``for`` ends,
             breaks, or unwinds on an exception.
         """
-        ticker = Ticker(period, self._stop_event)
-        try:
+        with Ticker(period, self._stop_event) as ticker:
             while self._running:
                 yield
                 if ticker.wait():
                     break
-        finally:
-            ticker.close()
 
     # Pose
 

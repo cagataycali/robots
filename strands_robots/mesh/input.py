@@ -266,11 +266,8 @@ class InputPublisher:
         """
         # ``hz`` is validated in __init__, so the division is safe.
         period = 1.0 / float(self.hz)
-        ticker = Ticker(period, self._stop_event)
-        try:
+        with Ticker(period, self._stop_event) as ticker:
             self._publish_ticks(ticker)
-        finally:
-            ticker.close()
 
     def _publish_ticks(self, ticker: Ticker) -> None:
         """Run the publish loop until stopped, pacing on ``ticker``.

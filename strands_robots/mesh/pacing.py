@@ -41,8 +41,9 @@ state and teleop frames:
    from the thread doing the stopping. A 30Hz loop must not take a third of a
    second to notice that the robot is going down.
 
-This module is deliberately dependency-free and has no mesh imports: it is pure
-timing, unit-testable without a session, a robot or a network.
+Apart from the package's shared numeric-domain helper this module is
+dependency-free, and it imports nothing from the mesh: it is pure timing,
+unit-testable without a session, a robot or a network.
 """
 
 from __future__ import annotations
@@ -51,6 +52,8 @@ import os
 import selectors
 import threading
 import time
+
+from strands_robots.utils import positive_finite_number_error
 
 __all__ = ["Ticker", "sleep_penalty_s"]
 
@@ -73,14 +76,11 @@ class Ticker:
 
     Use it exactly where ``stop_event.wait(period)`` used to be::
 
-        ticker = Ticker(period, stop_event)
-        try:
+        with Ticker(period, stop_event) as ticker:
             while running:
                 do_one_tick()
                 if ticker.wait():   # True == stopped, same sense as Event.wait
                     break
-        finally:
-            ticker.close()
 
     The return value keeps ``Event.wait``'s sense on purpose (``True`` means
     "stop"), so converting a loop is a one-line change and cannot invert a
@@ -93,15 +93,17 @@ class Ticker:
         stop_event: threading.Event | None = None,
         slice_s: float = _DEFAULT_SLICE_S,
     ) -> None:
+        # Both bounds go through the package's shared positive-finite domain rather
+        # than a hand-rolled check, so a bool (an int subclass that would read as a
+        # one-second period), a nan and an inf are refused here by the same rule
+        # every other numeric knob is held to -- and refused BEFORE the float()
+        # coercion, which would otherwise turn True into 1.0.
+        for _name, _value in (("period", period), ("slice_s", slice_s)):
+            _problem = positive_finite_number_error(_value, _name, "Ticker")
+            if _problem is not None:
+                raise ValueError(f"{_problem} A zero, negative or nan period busy-spins the loop that paces on it.")
         period = float(period)
-        if not period > 0 or period != period or period == float("inf"):
-            raise ValueError(
-                f"period must be a finite number of seconds > 0, got {period!r} "
-                "(a zero or nan period busy-spins the loop that paces on it)"
-            )
         slice_s = float(slice_s)
-        if not slice_s > 0 or slice_s != slice_s or slice_s == float("inf"):
-            raise ValueError(f"slice_s must be a finite number of seconds > 0, got {slice_s!r}")
         self.period = period
         self.slice_s = min(slice_s, period)
         self._stop_event = stop_event

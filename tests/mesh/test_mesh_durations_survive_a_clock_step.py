@@ -251,6 +251,15 @@ class _ScriptedTicker:
     def close(self) -> None:
         self.closed = True
 
+    # The loops enter the ticker with `with`, so the double carries the same
+    # protocol: a stand-in that is not a context manager would fail on the
+    # construct rather than on the cadence this test is about.
+    def __enter__(self) -> _ScriptedTicker:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
 
 class _LidarHost:
     """The minimum surface ``SensorLoopsMixin._lidar_loop`` reads.

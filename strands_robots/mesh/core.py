@@ -1018,8 +1018,7 @@ class Mesh(SensorLoopsMixin):
         appears in the fleet view, how recent "last seen" really is, and how
         promptly the pruning that shares this tick notices a peer that went away.
         """
-        ticker = Ticker(1.0 / HEARTBEAT_HZ, self._stop_event)
-        try:
+        with Ticker(1.0 / HEARTBEAT_HZ, self._stop_event) as ticker:
             while self._running:
                 try:
                     self.publish(f"strands/{self.peer_id}/presence", self._build_presence())
@@ -1028,8 +1027,6 @@ class Mesh(SensorLoopsMixin):
                     logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
                 if ticker.wait():
                     break
-        finally:
-            ticker.close()
 
     def _on_presence(self, sample: Any) -> None:
         """Handle a peer's presence broadcast.
@@ -1108,8 +1105,7 @@ class Mesh(SensorLoopsMixin):
         means stop -- and notices a stop within a 10ms slice rather than at the
         end of a tick.
         """
-        ticker = Ticker(1.0 / STATE_HZ, self._stop_event)
-        try:
+        with Ticker(1.0 / STATE_HZ, self._stop_event) as ticker:
             while self._running:
                 try:
                     state = self._read_state()
@@ -1119,8 +1115,6 @@ class Mesh(SensorLoopsMixin):
                     logger.debug("[mesh] %s: state tick error: %s", self.peer_id, exc)
                 if ticker.wait():
                     break
-        finally:
-            ticker.close()
 
     def _read_state(self) -> dict[str, Any] | None:
         r = self.robot
@@ -1233,8 +1227,7 @@ class Mesh(SensorLoopsMixin):
         ``hz`` is resolved by :meth:`_resolve_camera_hz`, which returns 0.0 for
         anything unusable and disables the loop, so the division is safe.
         """
-        ticker = Ticker(1.0 / hz, self._stop_event)
-        try:
+        with Ticker(1.0 / hz, self._stop_event) as ticker:
             while self._running:
                 try:
                     self._publish_cameras_once()
@@ -1242,8 +1235,6 @@ class Mesh(SensorLoopsMixin):
                     logger.debug("[mesh] %s: camera tick error: %s", self.peer_id, exc)
                 if ticker.wait():
                     break
-        finally:
-            ticker.close()
 
     def _publish_cameras_once(self) -> None:
         # Privacy kill switch. Operators on sensitive deployments set

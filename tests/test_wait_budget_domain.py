@@ -128,6 +128,13 @@ class _RecordingTicker:
     def close(self) -> None:
         self.closed = True
 
+    # The poll loop enters the ticker with `with`, so the double matches.
+    def __enter__(self) -> _RecordingTicker:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
 
 class TestWhyAnUnusablePeriodCannotPaceALoop:
     """Executable premise: what :meth:`threading.Event.wait` does with each value.
