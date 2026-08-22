@@ -65,10 +65,19 @@ def mesh_ingest(
         verdict = "no_peers"
     elif freshest is None:
         verdict = "unknown"  # peers exist but none carries last_seen: a bridge bug, not a fleet fact
-    elif freshest <= stale_after:
-        verdict = "flowing"
-    else:
+    elif freshest > stale_after:
         verdict = "stalled"
+    elif delta == 0 and since is not None and since >= 2.0:
+        # Q187: presence is published at 1Hz per peer, so with peers > 0 a live coalescer's
+        # forwarded counter CANNOT hold still across a multi-second window. Fresh presence +
+        # frozen fan-out is forwarding dead / ingest alive — the mirror image of the Q178
+        # blackout (which stays "stalled": stale presence wins above) — and the websocket the
+        # UI renders from is getting nothing. Never call it flowing; both numbers ride in the
+        # report so the reader can recompute the verdict. The first poll stays verdict-neutral
+        # by construction: delta is None until two samples exist.
+        verdict = "forwarding_frozen"
+    else:
+        verdict = "flowing"
 
     report: dict[str, Any] = {
         "verdict": verdict,

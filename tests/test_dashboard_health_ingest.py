@@ -54,6 +54,46 @@ def test_recovery_is_visible_as_a_positive_delta() -> None:
     assert rep["verdict"] == "flowing" and rep["forwarded_delta"] == 236
 
 
+def _fresh(at: float) -> dict:
+    return {
+        "so101-real-689": {"last_seen": at - 0.4, "stale": False},
+        "so101-leader": {"last_seen": at - 1.2, "stale": False},
+    }
+
+
+def test_q187_fresh_presence_with_a_frozen_counter_is_not_flowing() -> None:
+    # THE Q187 measurement: presence age 0.1s, forwarded 19814 on BOTH polls 30s apart —
+    # the landed code said "flowing". Presence is 1Hz per peer, so with peers > 0 a live
+    # coalescer's counter cannot hold still for 30s: forwarding is dead, ingest alive.
+    _, sample = mesh_ingest(_fresh(NOW), {"forwarded": 19814}, NOW)
+    rep, _ = mesh_ingest(_fresh(NOW + 30.0), {"forwarded": 19814}, NOW + 30.0, sample)
+    assert rep["verdict"] == "forwarding_frozen", "a frozen counter must never read as flowing"
+    assert rep["forwarded_delta"] == 0 and rep["delta_window_s"] == 30.0
+    assert rep["freshest_peer_age_s"] == 0.4, "both contradicting numbers stay attached"
+
+
+def test_q187_the_first_poll_stays_verdict_neutral() -> None:
+    # No delta exists yet — inventing one was correctly refused, so the verdict must not
+    # accuse forwarding on a single sample.
+    rep, _ = mesh_ingest(_fresh(NOW), {"forwarded": 19814}, NOW)
+    assert rep["verdict"] == "flowing" and "forwarded_delta" not in rep
+
+
+def test_q187_a_sub_2s_window_is_too_short_to_convict() -> None:
+    # Coalescing can legitimately hold the counter still for a moment; the rule needs >= 2s.
+    _, sample = mesh_ingest(_fresh(NOW), {"forwarded": 19814}, NOW)
+    rep, _ = mesh_ingest(_fresh(NOW + 1.0), {"forwarded": 19814}, NOW + 1.0, sample)
+    assert rep["verdict"] == "flowing"
+
+
+def test_q187_the_full_blackout_stays_stalled_not_forwarding_frozen() -> None:
+    # Q178's incident had BOTH halves dead (stale presence AND frozen counter): stale
+    # presence is the stronger, already-verified verdict and must keep its name.
+    _, sample = mesh_ingest(BLACKOUT, {"forwarded": 19814}, NOW)
+    rep, _ = mesh_ingest(BLACKOUT, {"forwarded": 19814}, NOW + 30.0, sample)
+    assert rep["verdict"] == "stalled"
+
+
 def test_an_empty_fleet_is_not_a_stall() -> None:
     rep, _ = mesh_ingest({}, {"forwarded": 0}, NOW)
     assert rep["verdict"] == "no_peers" and rep["freshest_peer_age_s"] is None
