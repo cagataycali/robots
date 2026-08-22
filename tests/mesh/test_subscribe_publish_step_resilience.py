@@ -242,7 +242,8 @@ class TestASubscriptionNeverSilentlyFailsToExist:
 
     def test_a_subscribe_after_a_stop_says_why(self, caplog, monkeypatch):
         """The rejoin path: a subscription dropped by stop() cannot be replaced silently."""
-        monkeypatch.setattr(mesh_core, "current_session", lambda: MagicMock())
+        session = MagicMock()
+        monkeypatch.setattr(mesh_core, "current_session", lambda: session)
         mesh = _running_mesh("rejoin-peer")
         attached = mesh.subscribe("strands/rejoin/topic", name="t")
         assert attached == "t", "premise: it subscribes while running"
@@ -287,7 +288,8 @@ class TestASubscriptionNeverSilentlyFailsToExist:
 
     def test_a_successful_subscribe_says_nothing_about_refusing(self, caplog, monkeypatch):
         """Control: the accepted path is not made noisy by the refusals above."""
-        monkeypatch.setattr(mesh_core, "current_session", lambda: MagicMock())
+        session = MagicMock()
+        monkeypatch.setattr(mesh_core, "current_session", lambda: session)
         mesh = _running_mesh("accepted-peer")
 
         with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
@@ -298,7 +300,8 @@ class TestASubscriptionNeverSilentlyFailsToExist:
 
     def test_stop_reports_the_subscriptions_it_dropped(self, caplog, monkeypatch):
         """A rejoining caller is told what it has to re-declare."""
-        monkeypatch.setattr(mesh_core, "current_session", lambda: MagicMock())
+        session = MagicMock()
+        monkeypatch.setattr(mesh_core, "current_session", lambda: session)
         mesh = _running_mesh("dropping-peer")
         first = mesh.subscribe("strands/a", name="a")
         second = mesh.subscribe("strands/b", name="b")
@@ -330,7 +333,8 @@ class TestASubscriptionNeverSilentlyFailsToExist:
         and both already survive ``stop()``. Pinned here so the reporting added
         beside them cannot be mistaken for - or grow into - a reset.
         """
-        monkeypatch.setattr(mesh_core, "current_session", lambda: MagicMock())
+        session = MagicMock()
+        monkeypatch.setattr(mesh_core, "current_session", lambda: session)
         mesh = _running_mesh("latched-peer")
         mesh._estop_lockout.set()
         mesh._last_estop_ts = 12345.0
