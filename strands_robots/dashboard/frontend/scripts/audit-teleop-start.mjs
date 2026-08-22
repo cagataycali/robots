@@ -1,15 +1,4 @@
 /**
- * PARKED — NOT YET PASSING, and deliberately named so run-audits does not collect it (a red audit in the
- * suite teaches everyone to ignore the suite). Rename back to audit-teleop-start.mjs when it goes green.
- *
- * WHERE IT STANDS after three runs: scenario 1 (a jointless leader can lead nothing, so no button exists)
- * is real and passes. Scenarios 2 and 3 cannot yet put a FIXTURED peer on the screen. Found on the way:
- * /api/fleet returns peers as a DICT keyed by peer id (a list fixture renders nothing), and the fleet is
- * fed by /ws/mesh via lib/useMesh.ts, not by the poll — so the fixture must arrive through the socket.
- * page.routeWebSocket exists (playwright 1.62) and mocking it does NOT crash, but the peers still do not
- * render, so the remaining unknown is the FRAME SHAPE useMesh accepts (read useMesh.ts's reducer next, and
- * confirm whether it needs an initial snapshot message kind before per-peer updates).
- *
  * U22 slice 3b: the one button on this dashboard whose effect is AN ARM IN MOTION.
  *
  * Every request is fixtured — the fleet, the teleop status, and both start routes — so this audit cannot
@@ -38,8 +27,13 @@ const peer = (id, joints, extra = {}) => ({
     joints: Object.fromEntries(Array.from({ length: joints }, (_, i) => [`j${i}`, 0.1])) },
   role: null, role_volts: null, role_source: null, ...extra,
 })
-const fleetDoc = list => ({ type: 'fleet', dashboard_peer_id: 'dash', mesh: { online: true },
-  t: Date.now() / 1000, peers: Object.fromEntries(list.map(p => [p.peer_id, p])) })
+/* The frame useMesh actually accepts is type:'snapshot' — NOT 'fleet' (its switch drops every unknown
+   type silently, which is why three runs rendered an empty fleet and looked like a UI defect). `t` is the
+   SERVER's clock: mergeMeshEvent rebases each peer's last_seen by AGE into browser time, so a fixture must
+   send both or every peer renders stale. */
+const fleetDoc = list => ({ type: 'snapshot', dashboard_peer_id: 'dash', mesh: { online: true },
+  t: Date.now() / 1000, peers: Object.fromEntries(list.map(p => [p.peer_id, p])),
+  absent_children: [], managed_no_presence: [] })
 const IDLE = { health: { receivers: {}, publishers: {} } }
 const REFUSING = { health: { worst: { state: 'refusing', headline: 'every frame is being refused', refusal: 'out of range' } } }
 const FOLLOWING = { health: { worst: { state: 'following', headline: 'following lead-arm at 9.8Hz' } } }
@@ -60,7 +54,12 @@ const open = async ({ fleet, afterStart }) => {
   await page.routeWebSocket(/\/ws\/mesh/, ws => {
     const send = () => ws.send(JSON.stringify(fleetDoc(fleet)))
     send()
+    /* Re-sent because a snapshot ages: peers rendered from one frame go stale while a scenario runs.
+       UNREF'd because a repeating timer keeps node's event loop open — this audit PASSED and then hung
+       forever after browser.close(), which in run-audits would stall the whole suite behind a green
+       result. An audit that cannot exit has not finished. */
     const t = setInterval(send, 1000)
+    t.unref?.()
     ws.onClose(() => clearInterval(t))
   })
   const calls = []

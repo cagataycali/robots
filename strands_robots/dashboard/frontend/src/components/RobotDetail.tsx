@@ -251,7 +251,6 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                         </button>
                       )))}
                     </div>
-                    {started && <div className={started.ok ? 'small muted' : 'small warn'} role="status">{started.line}</div>}
                   </div>
                 )
               }
@@ -264,6 +263,13 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             })()}
             {stopped && (
               <div className={`small ${stopped.ok ? 'muted' : 'warn'}`} role="status">{stopped.line}</div>
+            )}
+            {/* The result of a START must OUTLIVE the state it created. Rendered inside the "not streaming"
+                offer, this line vanished at the exact moment it had something to say — a success the
+                operator never saw, and a refusal (started, every frame rejected) hidden behind the very
+                streaming flag that made it true. Found by the audit the moment it could render a fleet. */}
+            {started && (
+              <div className={`small ${started.ok ? 'muted' : 'warn'}`} role="status">{started.line}</div>
             )}
             {teleop.consentKind && (
               <div className="muted small">every frame is outside the safety envelope — settings › consent › {teleop.consentKind} is where that bound is widened, deliberately and by you</div>
