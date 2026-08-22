@@ -2972,6 +2972,43 @@ class Mesh(SensorLoopsMixin):
                 )
 
     # RPC -- outgoing
+    def _cmd_topic_size_problem(self, msg: dict[str, Any]) -> str | None:
+        """Report why *msg* would be dropped by the cmd-topic byte cap.
+
+        The transport's ``low_pass_filter`` caps ``**/cmd`` AND
+        ``**/broadcast`` with one rule (``strands_cmd_size_cap``, default
+        16 KiB, ingress and egress) while the command validator admits a
+        ``world_update`` up to :data:`~strands_robots.mesh.security.MAX_WORLD_UPDATE_BYTES`
+        (64 KiB). A valid command in that gap is silently dropped, so both
+        publishers on that rule ask this before handing the payload over.
+
+        One owner rather than a copy per publisher: a second inline check is
+        how the two topics come to disagree about the cap they share.
+
+        Returns:
+            A reason naming the encoded size, the cap and the env var that
+            raises it, or ``None`` when the message fits -- and also ``None``
+            when the cap cannot be read at all. The check is a diagnostic, not
+            part of publishing: it turns a silent transport drop into a
+            reported one. If the config helper cannot be imported there is no
+            cap to compare against, so the caller publishes and an over-cap
+            message behaves as it did before this check existed. Failing every
+            command because an optional module is missing would be worse.
+        """
+        try:
+            from strands_robots.mesh._zenoh_config import cmd_bytes_cap
+        except ImportError:
+            return None
+        encoded_len = len(json.dumps(msg).encode("utf-8"))
+        cap = cmd_bytes_cap()
+        if encoded_len <= cap:
+            return None
+        return (
+            f"command message is {encoded_len} bytes; the transport drops "
+            f"cmd messages over {cap} bytes (STRANDS_MESH_MAX_CMD_BYTES). "
+            "Shrink world_update/instruction or raise the cap on BOTH peers."
+        )
+
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
         """Send a command to a single peer and return the first response.
 
@@ -3029,39 +3066,15 @@ class Mesh(SensorLoopsMixin):
                 raise ValueError("send: target may not equal BROADCAST_RESPONDER or contain NUL")
             self._expected_responders[turn] = target
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
-        # The transport's low-pass filter silently drops cmd-topic
-        # messages above its byte cap (default 16 KiB) BOTH ways, while the
-        # validator admits world_update payloads up to 64 KiB - a valid
-        # command in that gap timed out with zero diagnostics. Check the
-        # encoded size here and answer with a structured error instead.
-        try:
-            from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_cap
-
-            _encoded_len = len(json.dumps(msg).encode("utf-8"))
-            _cap = _cmd_cap()
-            if _encoded_len > _cap:
-                with self._rpc_lock:
-                    self._pending.pop(turn, None)
-                    self._responses.pop(turn, None)
-                    self._expected_responders.pop(turn, None)
-                return {
-                    "status": "error",
-                    "error": (
-                        f"command message is {_encoded_len} bytes; the transport drops "
-                        f"cmd messages over {_cap} bytes (STRANDS_MESH_MAX_CMD_BYTES). "
-                        "Shrink world_update/instruction or raise the cap on BOTH peers."
-                    ),
-                }
-        except ImportError:
-            # The size pre-check is a diagnostic, not part of sending: it turns
-            # a silent transport drop into a structured error naming the cap.
-            # If the config helper cannot be imported there is no cap to read,
-            # so skip the check and publish. An over-cap message then behaves as
-            # it did before the check existed - dropped by the low-pass filter,
-            # surfacing as the {"status": "timeout"} below - which is worse
-            # diagnostics but still a correct send. Raising instead would let a
-            # missing optional module fail every command on this path.
-            pass
+        # An over-cap command is dropped by the transport with no diagnostics,
+        # so report it here instead of publishing into the filter.
+        size_problem = self._cmd_topic_size_problem(msg)
+        if size_problem is not None:
+            with self._rpc_lock:
+                self._pending.pop(turn, None)
+                self._responses.pop(turn, None)
+                self._expected_responders.pop(turn, None)
+            return {"status": "error", "error": size_problem}
         try:
             self.publish(f"strands/{target}/cmd", msg)
             event.wait(timeout=timeout)
@@ -3099,6 +3112,19 @@ class Mesh(SensorLoopsMixin):
             # Sentinel -- broadcast accepts responses from any peer.
             self._expected_responders[turn] = BROADCAST_RESPONDER
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
+        # ``strands/broadcast`` shares the cmd-topic byte cap with ``**/cmd``
+        # (one ``strands_cmd_size_cap`` rule), so an over-cap broadcast is
+        # dropped by the filter and returns the same empty list a broadcast
+        # nobody answered returns. Report it the way this method already
+        # reports a client-side rejection: log the reason, return no responses.
+        size_problem = self._cmd_topic_size_problem(msg)
+        if size_problem is not None:
+            logger.warning("[mesh] %s: broadcast rejected client-side: %s", self.peer_id, size_problem)
+            with self._rpc_lock:
+                self._pending.pop(turn, None)
+                self._responses.pop(turn, None)
+                self._expected_responders.pop(turn, None)
+            return []
         try:
             self.publish("strands/broadcast", msg)
             # A broadcast has no single expected responder, so collect acks for
