@@ -1,7 +1,7 @@
 /** Why an arm reports no joints, read from its own ring buffer.
  *  Subject: npx esbuild src/lib/jointFailure.ts --bundle --format=esm --outfile=/tmp/jointFailure.mjs */
 import assert from 'node:assert/strict'
-import { jointFailure, jointFailureLine, jointFailureBadge } from '/tmp/jointFailure.mjs'
+import { jointFailure, jointFailureLine, jointFailureBadge, verdictIsStale, VERDICT_TTL_MS } from '/tmp/jointFailure.mjs'
 
 // VERBATIM from this fleet (GET /api/devices/logs/so101-follower), including the reassuring tail that
 // postdates the failure — the reason a dead arm looks healthy on every other surface.
@@ -59,5 +59,16 @@ assert.match(jointFailureBadge(odd), /own words/, 'an unrecognised cause points 
 assert.equal(jointFailureBadge(null), null)
 for (const b of [jointFailureBadge(jointFailure(FOLLOWER)), jointFailureBadge(jointFailure(LEADER))])
   assert.ok(b.length < 60, `a card badge must stay scannable, got ${b.length} chars`)
+
+// A CACHED VERDICT AGES. Fresh answers are reused (the cause of one running process never changes), but a
+// respawned arm can fail differently or be FIXED, and this server exposes no pid/started_at to notice the
+// restart with — so an old excuse must expire rather than outlive the fault it describes.
+const now = 1_800_000_000_000
+assert.equal(verdictIsStale(now - 1_000, now), false, 'a seconds-old verdict is still the truth')
+assert.equal(verdictIsStale(now - VERDICT_TTL_MS, now), true, 'at the limit it is re-asked, not kept')
+assert.equal(verdictIsStale(undefined, now), true, 'an answer with no timestamp vouches for nothing')
+assert.equal(verdictIsStale(null, now), true)
+assert.equal(verdictIsStale(now + 30_000, now), true, 'a future-dated verdict (sleep/skew) is re-asked, never trusted')
+assert.equal(verdictIsStale(now - 5, now, 1), true, 'the limit is a parameter, so a caller can be stricter')
 
 console.log('jointFailure: all assertions passed')

@@ -81,3 +81,21 @@ export function jointFailureLine(f: JointFailure | null): string | null {
     : ''
   return `no joints: ${f.headline}${f.remedy ? ` — ${f.remedy}` : ''}${tail}`
 }
+
+/**
+ * IS A CACHED VERDICT STILL WORTH BELIEVING?
+ *
+ * The verdict is read from a 10-line ring buffer, and for one running process it never changes (mesh/core
+ * repeats the cause at DEBUG only). But a RESPAWNED arm can fail differently — or be fixed — and this
+ * server exposes no spawn identity on a peer (no pid, no started_at), so the UI cannot always SEE the
+ * restart that invalidates the answer. Hence a modest age limit as a net beneath the explicit
+ * forgetJointFailure() calls: an excuse still on screen for an arm that was fixed is worse than one extra
+ * request a minute, and the request is only made while the arm is still mute.
+ */
+export const VERDICT_TTL_MS = 60_000
+
+export function verdictIsStale(atMs: number | undefined | null, nowMs: number, ttlMs: number = VERDICT_TTL_MS): boolean {
+  if (!atMs) return true          // no timestamp = nothing to vouch for it
+  if (atMs > nowMs) return true   // clock moved backwards (sleep/skew): re-ask rather than trust the future
+  return nowMs - atMs >= ttlMs
+}

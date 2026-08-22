@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
 import { CamRow, applySummary, configFromRows, parseIndexOrPath, previewRateNote, rowsFromConfig } from '../lib/cameraConfig'
 import { useConfig } from '../lib/useConfig'
+import { forgetJointFailure } from '../lib/useJointFailure'
 
 interface Detected { index: number; label?: string | null; in_use_by?: string | null }
 interface Mode { width: number; height: number; fps: number }
@@ -81,6 +82,10 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
     if (!rows) return
     setBusy(true); setError(null)
     try {
+      // A camera reconfigure IS a respawn (U19), so whatever this arm's log said about its joints
+      // describes a process that no longer exists. Forgotten BEFORE the request, because the new process
+      // may announce itself before this promise resolves and the card must not greet it with the old excuse.
+      forgetJointFailure(peerId)
       const r = await post<any>(`/api/devices/${encodeURIComponent(peerId)}/cameras`, { cameras: check.cameras })
       if (r?.error) setError(r.error)
       // The settle rail answers running / starting / failed / gone. `failed`

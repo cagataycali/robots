@@ -20,6 +20,7 @@ import { isLatestRequest } from '../lib/requestOrder'
 import { peerNameField } from '../lib/peerName'
 import { portChoice, blocksSpawn } from '../lib/portChoice'
 import { safeFilename, snippetRefusal, hubAddressMissing, cleanHubHost } from '../lib/deploySnippet'
+import { forgetJointFailure } from '../lib/useJointFailure'
 
 interface SerialPort {
   device: string
@@ -323,7 +324,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     mode,
   })
 
-  const spawn = () => act(() => post('/api/devices/spawn', {
+  /* Spawning under a name that was mute before: the previous process's excuse is not this one's, so the
+     cached "why has this arm no joints" verdict is dropped BEFORE the request — the new peer can announce
+     itself before this promise resolves, and its card must not greet it with the old reason. */
+  const spawn = () => act(() => (forgetJointFailure(nameVerdict.value), post('/api/devices/spawn', {
     robot_name: robotName,
     peer_id: nameVerdict.value,
     mode,
@@ -340,7 +344,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       },
     },
     robot_id: robotId || null,
-  }), 'spawned')
+  })), 'spawned')
 
   const showLogs = async (peer: string) => {
     try {
