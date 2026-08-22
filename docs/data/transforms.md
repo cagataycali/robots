@@ -148,6 +148,17 @@ spec = TransformSpec(
 Without a pipeline, `validate()` names the missing seam (and the licensing
 caveat) instead of crashing; nothing is read or written.
 
+The same holds for a pipeline that is named but cannot be loaded. Resolving the
+seam runs your code at three points - the module import and attribute lookup,
+the zero-arg construction of a class or factory target, and the read of the
+object's `generate` surface - and constructing a real generation pipeline loads
+weights and touches a device. So a missing optional dependency imported inside
+a factory body, an absent driver, absent weights or a malformed config are
+reported by `validate()` as problems, and by `transform()` as
+`status="error"`, each naming the class and message the pipeline raised. An
+operator interrupt (`KeyboardInterrupt`, `SystemExit`) is not a spec problem
+and still propagates.
+
 ## Custom backends
 
 Subclass `DatasetTransform`, implement `provider_name`, `validate` (call
