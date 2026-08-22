@@ -40,7 +40,8 @@ from strands_robots._mesh_switch import (
     NEGATIVE,
     mesh_env_request,
 )
-from strands_robots.mesh.core import _MESH_KILL_SWITCH_VALUES, mesh_disabled_by_env
+from strands_robots.mesh import core as mesh_core
+from strands_robots.mesh.core import mesh_disabled_by_env
 from strands_robots.robot import _mesh_env_opt_in
 
 _OWNER_LOGGER = "strands_robots._mesh_switch"
@@ -207,9 +208,15 @@ class TestTheVocabularyCannotRESplit:
             "unrecognized value unreportable"
         )
 
-    def test_the_kill_switch_values_are_the_owners_negative_half(self):
-        """The name the existing kill-switch regression test parametrizes over."""
-        assert _MESH_KILL_SWITCH_VALUES == NEGATIVE
+    def test_core_keeps_no_second_copy_of_the_negative_half(self):
+        """A re-export with no caller is the split waiting to be re-established.
+
+        ``mesh.core`` used to spell the kill-switch values itself. Now that its
+        predicate delegates, any surviving module-level copy there is dead code
+        that a later edit could quietly start reading again.
+        """
+        source = Path(mesh_core.__file__).read_text(encoding="utf-8")
+        assert "_MESH_KILL_SWITCH_VALUES" not in source
 
     def test_the_two_halves_do_not_overlap(self):
         assert set(AFFIRMATIVE).isdisjoint(NEGATIVE)

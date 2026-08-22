@@ -22,7 +22,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots._mesh_switch import NEGATIVE, mesh_env_request
+from strands_robots._mesh_switch import mesh_env_request
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.sensors import SensorLoopsMixin
@@ -3694,21 +3694,6 @@ class Mesh(SensorLoopsMixin):
         once Zenoh's mTLS + ACL took over identity and authorization.
         """
         put(key, payload)
-
-
-#: Values of ``STRANDS_MESH`` that trip the hard kill switch.
-#:
-#: Spelled once because two call sites resolve it: :func:`init_mesh`, the public
-#: constructor, and the robot-less coordinator peer in
-#: :mod:`strands_robots.tools.robot_mesh`, which builds its ``Mesh`` directly
-#: rather than through :func:`init_mesh`. A second inline spelling is how that
-#: peer came to escape the switch.
-#:
-#: Re-exported from :mod:`strands_robots._mesh_switch`, which owns this half of
-#: the vocabulary beside the affirmative half the ``Robot`` factory reads. The
-#: name stays here because it is the public-to-tests spelling of the kill
-#: switch's values.
-_MESH_KILL_SWITCH_VALUES = NEGATIVE
 
 
 def mesh_disabled_by_env() -> bool:
