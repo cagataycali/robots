@@ -1,23 +1,4 @@
-/**
- * The devices screen's `rescan` button, made honest.
- *
- * Before this, a rescan re-fetched /api/devices?refresh=1 and said NOTHING: on
- * success the same list re-rendered, on failure a red line appeared with the
- * HTTP error while the STALE list stayed on screen looking current. Three very
- * different worlds therefore looked identical to the operator:
- *
- *   1. the scan ran and the world genuinely did not change,
- *   2. the scan ran and this machine really has nothing plugged in,
- *   3. the scan FAILED, so what is on screen is the previous scan.
- *
- * They lead to opposite actions (do nothing / check the cable / retry or look
- * at the backend), and (3) is the dangerous one: an operator about to spawn an
- * arm reads a port list that may no longer exist.
- *
- * So the verdict is computed from the scan the operator ASKED for — its own
- * before/after pair — and always says which of the three happened. Nothing
- * here enforces anything; it is copy, and the copy is the feature.
- */
+/** The devices screen's `rescan` button, made honest. */
 
 export interface ScanPort { device?: string | null }
 export interface ScanCamera { index?: number | null; name_hint?: string | null }
@@ -78,10 +59,8 @@ function ageWords(beforeAtMs?: number | null, nowMs?: number | null): string {
 }
 
 /**
- * An identity for "what hardware this payload lists", so the component can tell
- * when a later background poll has made its rescan verdict describe a screen
- * that no longer exists. A verdict that outlives its evidence is the same class
- * of lie this module was written to remove.
+ * An identity for "what hardware this payload lists", so the component can tell when a later
+ * background poll has made its rescan verdict describe a screen that no longer exists.
  */
 export function hardwareKey(s: ScanShape | null | undefined): string {
   return `${ports(s).slice().sort().join('|')}#${cameras(s).slice().sort().join('|')}`
@@ -92,8 +71,7 @@ export function rescanReport(
   outcome: RescanOutcome,
   opts?: { beforeAtMs?: number | null; nowMs?: number | null },
 ): RescanReport {
-  // (3) It did not run. The screen is the PREVIOUS scan and must say so —
-  // this is the only case where what is displayed is not what was measured.
+  // (3) It did not run.
   if (!outcome.ok) {
     const why = String(outcome.error ?? '').trim() || 'the request failed'
     if (!before) {
@@ -111,9 +89,7 @@ export function rescanReport(
   const pAfter = ports(after)
   const cAfter = cameras(after)
 
-  // (2) It ran and found nothing. Say the scan succeeded first, or this reads
-  // as a failure; and if macOS is blocking the camera layer, the camera count
-  // is evidence about PERMISSION, not about what is connected.
+  // (2) It ran and found nothing.
   if (!pAfter.length && !cAfter.length) {
     const blocked = after?.camera_problem?.kind
       ? ' Cameras are blocked on this machine, so the camera count says nothing about what is connected — see the camera notice below.'

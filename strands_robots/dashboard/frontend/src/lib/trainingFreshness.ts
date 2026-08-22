@@ -1,17 +1,6 @@
 /**
- * How old the numbers on a training job actually are.
- *
- * TrainingTab polls /api/training/status every 5s and its catch block was
- * `catch { /* transient *\/ }`. One failed poll IS transient - but the swallow is
- * unbounded: if the provider process dies, the job store forgets the id, the
- * dashboard is restarted, or the endpoint 500s forever, `statuses[job_id]` keeps
- * the LAST answer and the card goes on rendering "running", a progress bar at
- * 4.7k / 10k steps and a loss sparkline - unchanged, indefinitely, with nothing
- * on screen admitting that nobody has heard from the run since.
- *
- * A training job is watched for hours by someone who is not looking at a console,
- * which is exactly the case where a frozen number reads as a healthy one. So the
- * numbers carry their own age, and a feed that stopped says so.
+ * How old the numbers on a training job actually are. TrainingTab polls /api/training/status
+ * every 5s and its catch block was `catch { /* transient *\/ }`.
  */
 
 /** Poll period of the status loop, seconds. */

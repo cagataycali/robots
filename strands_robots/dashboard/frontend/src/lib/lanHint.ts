@@ -1,15 +1,4 @@
-/**
- * Should this page offer the local address instead of the tunnel? (Q52)
- *
- * MEASURED: a browser in the same house as the dashboard streamed one camera tile out
- * through Cloudflare and back — 20.7 GB in 21 hours, and the round trip on the home
- * upstream is why the socket died 1.6 times a second. The server can now tell a viewer it
- * is local (GET /api/network/hint); this decides whether to say anything about it.
- *
- * The bar for showing it is deliberately high, because a banner suggesting a URL that does
- * not work is worse than the wasted bandwidth: it makes the dashboard look broken and
- * teaches the operator to ignore banners.
- */
+/** Should this page offer the local address instead of the tunnel? */
 
 export type HintBody = {
   same_network?: boolean | null
@@ -39,9 +28,8 @@ export function lanHintVerdict(args: {
   const urls = (body.lan_urls || []).filter(u => typeof u === 'string' && u.startsWith('http://'))
   if (!urls.length) return { show: false, reason: 'local, but the server named no address to offer' }
 
-  // Already there: the whole point is to move OFF the tunnel, so a page loaded from the
-  // LAN address must never be told to go to the LAN address. Compared by ORIGIN, so a
-  // different port on the same host still counts as somewhere else.
+  // Already there: the whole point is to move OFF the tunnel, so a page loaded from the LAN
+  // address must never be told to go to the LAN address.
   const here = urls.find(u => sameOrigin(u, origin))
   if (here) return { show: false, reason: 'this page is already served from the local address' }
 

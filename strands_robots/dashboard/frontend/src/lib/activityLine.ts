@@ -1,22 +1,7 @@
 /**
- * How one activity row reads: its verdict glyph, its tone, and the facts that
- * belong on the VISIBLE line rather than inside the collapsed detail.
- *
- * The log's `ok` field means "the call completed", not "the thing happened", and
- * the row rendered `ok ? '✓' : '✗'` - so two very different outcomes wore the
- * same green tick:
- *
- * - THE E-STOP FROM THE Q30 INCIDENT. A stray "evac-coordinator" broadcast an
- *   emergency stop that engaged a hardware lockout on a real arm for ~3 hours.
- *   In the log it is a green ✓ next to an EMPTY target, with responses_received
- *   0, lockout_engaged true and the issuing peer_id all hidden behind a collapsed
- *   "what the robot answered". The row that should have shouted looked like a
- *   routine success.
- * - A command that came back `state: "no_answer"` (the robot never replied) is
- *   also a completed call, also a green tick.
- *
- * So the verdict is computed from the OUTCOME, not the transport, and an e-stop
- * is never rendered as a reassuring success: it is an event that stopped a fleet.
+ * How one activity row reads: its verdict glyph, its tone, and the facts that belong on the
+ * VISIBLE line rather than inside the collapsed detail. The log's `ok` field means "the call
+ * completed", not "the thing happened", and the row rendered `ok ?
  */
 
 export interface ActivityRow {

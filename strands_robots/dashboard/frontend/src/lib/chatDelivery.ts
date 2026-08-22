@@ -1,21 +1,6 @@
 /**
- * What the agent dock is allowed to claim about a message and an answer.
- *
- * The dock had two silences. (1) `send()` cleared the input, appended the user's
- * bubble and *then* tried to open the socket — so a message that never left the
- * browser rendered exactly like a delivered one, and the typed text was gone.
- * (2) When the socket closed mid-turn the only reported case was 1008; any other
- * drop reset `busy` and said nothing, leaving a HALF-STREAMED answer on screen
- * looking like a finished one.
- *
- * (2) is the dangerous half here, because this agent starts and stops real
- * robots. A turn cut off after `⚙ fleet_stop` began is not "no answer": the
- * command may have run. So the verdicts below separate three things a chat UI
- * usually blurs:
- *
- *   - never delivered  → safe to retry, and the text must come back
- *   - delivered, outcome unknown → retrying may run it TWICE
- *   - delivered, answer truncated → the text on screen is not the whole reply
+ * What the agent dock is allowed to claim about a message and an answer. The dock had two
+ * silences.
  */
 
 export interface SendFailure {
@@ -30,8 +15,8 @@ export interface SendVerdict {
 }
 
 /**
- * The socket never opened, so nothing was sent: say so plainly, and promise the
- * text is not lost (the caller restores it).
+ * The socket never opened, so nothing was sent: say so plainly, and promise the text is not
+ * lost (the caller restores it).
  */
 export function sendFailureVerdict(f: SendFailure): SendVerdict {
   const why = String(f.error ?? '').trim() || 'the agent socket could not be opened'
@@ -61,11 +46,7 @@ export interface InterruptionNotice {
 
 const AUTH_TEXT = 'the server rejected this token — set it in Settings'
 
-/**
- * The verdict for a socket that closed. Returns null when there is nothing
- * honest to report — a dock that cries wolf on every idle reconnect trains the
- * operator to ignore the line that matters.
- */
+/** The verdict for a socket that closed. */
 export function interruptionNotice(i: Interruption): InterruptionNotice | null {
   const auth = i.code === 1008
   if (!i.wasBusy) {

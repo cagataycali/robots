@@ -1,20 +1,4 @@
-/**
- * U22 slice 3a: WHO could lead this arm, and what must be true before frames flow.
- *
- * Starting teleop moves a real arm, so this rule's whole job is to say what is known and refuse what is
- * not — before anything is sent. It exists in the shape it does because of two measured events:
- *
- *  1. A real SO-101 leader published 176 frames and the follower applied NONE of them: the mesh's
- *     per-frame envelope is 4*pi, a RADIAN assumption, and an SO-101 reports DEGREES (wrist_roll sits at
- *     170). Every frame from a real arm is out of range. That is not a fault to discover in a child log
- *     afterwards — it is a CONSENT to collect beforehand (teleop_degree_units), which is why `consents`
- *     is part of the plan rather than an error path.
- *  2. "A process is not an arm" (armHosts): peers are named parent / parent__child, and on this fleet the
- *     simulator PROCESS reports 0 joints while the robot under it reports 6. The friendlier name is the
- *     wrong one to command.
- *
- * Nothing here starts, stops or widens anything. It produces sentences and a list of preconditions.
- */
+/** WHO could lead this arm, and what must be true before frames flow. */
 import { armHosts, isChildOf, type HostInput } from './armHosts'
 
 export interface PairInput extends HostInput {
@@ -105,9 +89,10 @@ export function pairPlan(followerId: string, leaderId: string, peers: PairInput[
 
   return {
     leader: leaderId, follower: followerId, blockers, notes,
-    // Both grants are asked for BEFORE anything is sent. agent_physical_motion because frames move a real
-    // arm; teleop_degree_units because an SO-101 publishes degrees into a radian envelope and every frame
-    // would otherwise be refused — the failure that took a log dive to find the first time.
+    // Both grants are asked for BEFORE anything is sent. agent_physical_motion because frames move
+    // a real arm; teleop_degree_units because an SO-101 publishes degrees into a radian envelope
+    // and every frame would otherwise be refused — the failure that took a log dive to find the
+    // first time.
     consents: ['agent_physical_motion', 'teleop_degree_units'],
   }
 }

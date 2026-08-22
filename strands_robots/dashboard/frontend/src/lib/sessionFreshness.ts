@@ -1,22 +1,7 @@
 /**
- * Is the record screen's session state still LIVE, or a photograph?
- *
- * RecordPanel polls `/api/record/session` every second and swallowed every
- * failure ("a blip; the next tick retries"). One tick lost really is a blip —
- * but the panel's own comment says the ticking frame count "is the only proof
- * data is actually being captured", and a frozen counter looks exactly like:
- *
- *   - a live episode where the arm simply stopped moving,
- *   - an episode that ENDED (someone hit stop on the phone),
- *   - a backend that died mid-take.
- *
- * The operator's eyes are on the arms, not on this panel, so the number is
- * trusted precisely when it is least verified. A poll that has not landed for
- * several seconds must therefore say so and stop presenting its numbers as now.
- *
- * The age is measured from the last SUCCESSFUL read, not from the last attempt:
- * a request that hangs forever is the worst case and would otherwise keep
- * "refreshing" a screen that learns nothing.
+ * Is the record screen's session state still LIVE, or a photograph? RecordPanel polls
+ * `/api/record/session` every second and swallowed every failure ("a blip; the next tick
+ * retries").
  */
 
 /** Missed ticks tolerated before the numbers stop counting as live. */

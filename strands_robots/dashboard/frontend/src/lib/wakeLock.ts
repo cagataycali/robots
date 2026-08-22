@@ -1,17 +1,7 @@
 /**
- * Whether to take or drop the screen wake lock — as a pure decision.
- *
- * The lock exists so a phone propped next to the arms does not sleep while a robot is moving: a
- * sleeping screen drops the camera sockets and the operator loses sight of a moving arm.
- *
- * THE THING THAT MAKES THIS MORE THAN A ONE-LINER (Q89): the browser RELEASES a screen wake lock by
- * itself whenever the document becomes hidden, and it does not give it back on return. usePwa took
- * the lock when a task started and App re-asks only when `anyRunning` CHANGES — so the first time the
- * operator switched apps or their phone locked for a second, the lock was gone for the rest of the
- * task, silently, exactly while they were away from a moving arm. A lock that is only ever requested
- * once is not a lock; like the update prompt in the same file, the answer has to be re-offered.
- *
- * So the desired state is kept, and this function is asked again on every visibility change.
+ * Whether to take or drop the screen wake lock — as a pure decision. The lock exists so a
+ * phone propped next to the arms does not sleep while a robot is moving: a sleeping screen
+ * drops the camera sockets and the operator loses sight of a moving arm.
  */
 
 export type WakeAction = 'request' | 'release' | 'none'
@@ -32,9 +22,7 @@ export function wakeLockAction(s: WakeState): WakeAction {
   if (!s.supported) return 'none'
   if (s.want) {
     if (s.held) return 'none'
-    // A request while hidden is REFUSED by the browser (it throws NotAllowedError). Asking anyway
-    // would burn the request and leave `held` false with nothing to show for it — waiting for the
-    // page to come back is what actually gets the lock.
+    // A request while hidden is REFUSED by the browser (it throws NotAllowedError).
     return s.visible ? 'request' : 'none'
   }
   // Releasing does not need visibility, and a lock left held after the task ends drains the battery
@@ -43,8 +31,8 @@ export function wakeLockAction(s: WakeState): WakeAction {
 }
 
 /**
- * What to tell the operator about the screen. `held` is the truth from the API, not our intent, so
- * "sleep is prevented" is never claimed on a platform that refused.
+ * What to tell the operator about the screen. `held` is the truth from the API, not our
+ * intent, so "sleep is prevented" is never claimed on a platform that refused.
  */
 export function wakeLockNote(s: WakeState): string | null {
   if (!s.want) return null

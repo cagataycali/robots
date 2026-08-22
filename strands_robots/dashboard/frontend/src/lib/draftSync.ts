@@ -1,23 +1,3 @@
-/**
- * Q76: saving one settings tab threw away unsaved editing in another one, silently.
- *
- * SettingsDrawer seeds ~10 draft fields from /api/config in `useEffect(…, [config])`, and every save
- * calls `reload()`. So the sequence "type a new system prompt, notice the mesh port is wrong, fix and
- * save that" ended with the prompt reverting to the server's copy — no message, no marker, and the
- * operator's longest piece of writing in the whole app (a 10-row textarea) gone. The same applies to a
- * consent grant or revoke elsewhere in the drawer: anything that touches the shared config context
- * reseeds every field.
- *
- * The rule this module encodes: a value the operator has TOUCHED belongs to the operator. A field is
- * reseeded only while it still matches the server snapshot it came from; once it differs, the draft
- * wins until it is saved or explicitly discarded. And when the server's own value changed underneath a
- * touched field, that is a genuine conflict — the draft is still kept (never silently overwrite typing)
- * but it is reported, because "your change is pending against a value that moved" is something only the
- * human can resolve.
- *
- * Pure: strings in, strings out. No React, no fetch.
- */
-
 /** The subset of settings that are plain text drafts, keyed as the drawer names them. */
 export type Drafts = Record<string, string>
 
@@ -33,11 +13,9 @@ export interface SyncResult {
 }
 
 /**
- * Merge a fresh server snapshot into the current drafts.
- *
- * @param current  what the fields hold right now
- * @param lastServer  the snapshot the fields were seeded from (what "untouched" means)
- * @param nextServer  the snapshot that just arrived
+ * Merge a fresh server snapshot into the current drafts. @param current what the fields hold
+ * right now @param lastServer the snapshot the fields were seeded from (what "untouched"
+ * means) @param nextServer the snapshot that just arrived
  */
 export function syncDrafts(current: Drafts, lastServer: Drafts, nextServer: Drafts): SyncResult {
   const next: Drafts = { ...current }

@@ -1,11 +1,9 @@
+/** Reading what the voice session says — as pure functions. */
 export type VoiceState = 'idle' | 'connecting' | 'live' | 'error'
 
 /**
- * Reading what the voice session says — as pure functions.
- *
- * These decisions lived inside `ws.onmessage`, wrapped in `catch { /* ignore *\/ }`. That combination is
- * why they deserve a test more than most: any mistake in there is not a stack trace, it is SILENCE in a
- * channel whose entire job is to talk back.
+ * Reading what the voice session says — as pure functions. These decisions lived inside
+ * `ws.onmessage`, wrapped in `catch { /* ignore *\/ }`.
  */
 
 /** A base64 PCM rate the audio API will actually accept. */
@@ -33,16 +31,16 @@ function words(value: unknown, fallback: string, cap = 200): string {
 }
 
 /**
- * One frame from /ws/voice → what it should change. Unknown frames change nothing, deliberately: a
- * server that grows a new frame type must not break an older bundle.
+ * One frame from /ws/voice → what it should change. Unknown frames change nothing,
+ * deliberately: a server that grows a new frame type must not break an older bundle.
  */
 export function interpretVoiceEvent(ev: any): VoiceEffect {
   if (!ev || typeof ev !== 'object') return {}
   switch (ev.type) {
     case 'voice_meta': {
       // A zero, negative or non-numeric rate makes createBuffer throw NotSupportedError — and that
-      // throw happens inside onmessage's `catch { ignore }`, so a single bad meta frame silently kills
-      // ALL audio for the session with no error anywhere. The rate has to be usable or ignored.
+      // throw happens inside onmessage's `catch { ignore }`, so a single bad meta frame silently
+      // kills ALL audio for the session with no error anywhere.
       const rate = Number(ev.rate)
       return { rate: Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_RATE }
     }
@@ -53,10 +51,7 @@ export function interpretVoiceEvent(ev: any): VoiceEffect {
       return { transcript: `${ev.role === 'user' ? '🎙' : '🤖'} ${words(ev.text, '', 4000)}` }
     case 'needs_consent': {
       const effect: VoiceEffect = { need: ev.need ?? null }
-      // The sheet only opens for a real payload. A needs_consent frame carrying NOTHING renderable
-      // used to vanish completely — setNeed(undefined) is falsy, so no sheet, and with no `spoken`
-      // field no transcript either: a voice turn refused in total silence. Say something regardless;
-      // the refusal itself is the news, and the grant must always be a tap, never a spoken yes.
+      // The sheet only opens for a real payload.
       if (ev.spoken) effect.transcript = `⚠ ${words(ev.spoken, '')}`
       else if (!ev.need) effect.transcript = '⚠ that voice turn was refused — open the dock for details'
       return effect
@@ -72,12 +67,9 @@ export function interpretVoiceEvent(ev: any): VoiceEffect {
 }
 
 /**
- * What a closed voice socket means. 1008 is the policy close the server uses for an unauthorized
- * token — worth its own sentence, because "it just stopped listening" sends the operator hunting a
- * microphone problem that is really a settings problem.
- *
- * Any other close leaves an existing `error` standing: the close is the CONSEQUENCE of the error
- * frame that arrived a moment earlier, and overwriting it with a bland "idle" hides the reason.
+ * What a closed voice socket means. 1008 is the policy close the server uses for an
+ * unauthorized token — worth its own sentence, because "it just stopped listening" sends the
+ * operator hunting a microphone problem that is really a settings problem.
  */
 export function voiceCloseState(code: number | undefined, current: VoiceState): { state: VoiceState; transcript?: string } {
   if (code === 1008) {

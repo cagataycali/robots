@@ -1,17 +1,4 @@
-// What the LOCKOUT verdict from the fleet snapshot should look like on screen (Q43).
-//
-// Measured 2026-08-20: both arms had been e-stop locked for ten hours while one of them
-// rendered as a healthy green card with six live joints. The server now sends a verdict
-// per peer; the question here is the harder one — WHEN TO SAY SOMETHING.
-//
-// The trap is crying wolf. Every peer is `unknown` on an ordinary fresh dashboard start,
-// because the mesh does not advertise lockout state and this process has seen no safety
-// event yet. A warning on every card in that situation is noise, and noise is how a
-// safety badge gets learned as decoration. So: uncertainty is only worth showing when
-// SOMETHING HAPPENED — `since` is set, meaning this dashboard saw an e-stop or a resume
-// and genuinely cannot tell where the fleet landed. Unknown with no event behind it
-// renders NOTHING, which is honest: we are not saying "clear", we are saying nothing.
-
+/** What the LOCKOUT verdict from the fleet snapshot should look like on screen. */
 export type LockoutVerdict = {
   state?: string | null
   reason?: string | null

@@ -1,15 +1,4 @@
-/**
- * The record screen's contract with the backend (U8: teleop episode collection).
- *
- * The live implementation is /api/record (strands_robots/dashboard/record_api.py),
- * speaking exactly the shape below. `getRecordApi()` probes
- * `GET /api/record/session` once per page load and only a 404 - the route
- * genuinely missing, e.g. an older backend - selects the in-browser mock,
- * which behaves like the real thing (episodes accumulate, stop yields a
- * summary, discard removes) so the screen stays testable against any server.
- * A `mock: true` flag rides on the api object so the UI can say so honestly
- * instead of pretending a dataset was written.
- */
+/** The record screen's contract with the backend (U8: teleop episode collection). */
 import { api, post } from './endpoints'
 
 export interface EpisodeSummary {
@@ -21,11 +10,6 @@ export interface EpisodeSummary {
   discarded?: boolean
 }
 
-/**
- * Q40: evidence that a PREVIOUS session never closed — the dashboard wrote a breadcrumb when it
- * opened one and did not get to remove it. Only ever present alongside `dataset: null`, because a
- * live session is its own report.
- */
 export interface InterruptedSession {
   dataset: string
   task: string
@@ -41,13 +25,7 @@ export interface InterruptedSession {
 export interface RecordSession {
   /** null when no session is open */
   dataset: string | null
-  /** Q40: what the last session left behind, when it did not close. */
   interrupted?: InterruptedSession | null
-  /**
-   * Q92: free space where datasets are written, present on EVERY session read (idle and
-   * recording) because the volume can drain during a session — measured losing ~2Gi/h to macOS
-   * swap on the rig this was written on. Absent, not null, when there is nothing to say.
-   */
   disk_notice?: {
     level: 'tight' | 'critical'
     free_mb: number
@@ -64,18 +42,9 @@ export interface RecordSession {
   phase: 'idle' | 'recording'
   /** The rate written into the dataset - a DECLARATION, not a measurement. */
   fps: number
-  /**
-   * The rate frames were really captured at, or null before two frames exist.
-   * LeRobot timestamps a frame positionally as `frame_index / fps`, so this
-   * number is nowhere in the artifact: if the pair disagrees, only the session
-   * knows (BUGS.md Q70).
-   */
+  /** The rate frames were really captured at, or null before two frames exist. */
   fps_achieved?: number | null
-  /**
-   * Present ONLY when `fps_achieved` differs from `fps` by more than 10%. A
-   * notice and never a block - the operator is holding a leader arm mid-session,
-   * and the rate is not something they can change from that position.
-   */
+  /** Present ONLY when `fps_achieved` differs from `fps` by more than 10%. */
   fps_notice?: {
     declared_fps: number
     measured_fps: number
@@ -85,27 +54,13 @@ export interface RecordSession {
     slower: boolean
     detail: string
   } | null
-  /**
-   * Present ONLY when a camera the session asked for never opened. The dataset
-   * schema is built from the follower's first observation, so a missing camera
-   * is silently absent from every episode - the operator has to hear about it
-   * before they teleoperate ten of them, not after.
-   */
+  /** Present ONLY when a camera the session asked for never opened. */
   camera_notice?: {
     requested: string[]
     present: string[]
     missing: string[]
     message: string
   } | null
-  /**
-   * Present ONLY when the follower has held ONE POSE for the whole measuring
-   * window (BUGS.md Q35). A Feetech bus answers position reads off the USB logic
-   * rail while torque needs the 12V pack, so a tripped supply mid-episode records
-   * at full fps with valid numbers and perfect counters - and the dataset is a
-   * still life that teaches a policy to hold still. Absent means "nothing to say
-   * OR not enough evidence yet": it is NOT a certificate that the arm is moving,
-   * so it must never be rendered as reassurance.
-   */
   motion_notice?: {
     still: true
     /** how long the pose has been held, seconds */
@@ -122,7 +77,6 @@ export interface UploadPreflight {
   /** false = ticking upload can only produce an end-of-session failure */
   ok: boolean
   state: 'ready' | 'no_credential' | 'credential_rejected' | 'foreign_namespace' | 'no_dataset'
-    /** Q78: the destination repo already exists on the Hub — a push uploads INTO it. */
     | 'destination_exists'
   /** a refusal that is the operator's call, not a certainty (an org you may belong to; a
    *  published take only they know they want replaced) */
@@ -138,22 +92,10 @@ export interface RecordApi {
   session(): Promise<RecordSession>
   /** open a session (creates/appends the dataset) */
   /**
-   * `ignore_dead_cameras` is the operator's deliberate override of the server's
-   * refusal when a configured camera has stopped publishing (Q45). Optional and
-   * never defaulted: its absence means "let the server decide".
-   */
-  /**
-   * Q54: `fps` is the rate the DATASET DECLARES, and the backend has always accepted it
-   * (`fps=int(body.get("fps", 30) or 30)`) — this type simply never named it, so the form could
-   * not send it and every dataset was stamped 30 regardless of what the bus could deliver.
-   */
-  /**
-   * The other two camera gates are overridable the same way, and this type has to
-   * name them or the form CANNOT send them: `ignore_missing_cameras` (an index this
-   * machine does not list at all) and `ignore_camera_identity` (the index is listed
-   * and streaming, but a different camera answers it now — an unplug renumbers the
-   * rest). Same discipline as above: optional, never defaulted, only ever sent for
-   * the refusal the operator just read (lib/recordRefusal).
+   * The other two camera gates are overridable the same way, and this type has to name them or
+   * the form CANNOT send them: `ignore_missing_cameras` (an index this machine does not list at
+   * all) and `ignore_camera_identity` (the index is listed and streaming, but a different camera
+   * answers it now — an unplug renumbers the rest).
    */
   open(opts: {
     dataset: string; task: string; leader: string; follower: string
@@ -170,25 +112,10 @@ export interface RecordApi {
   discard(index: number): Promise<RecordSession>
   /** close the session; upload=true pushes the dataset to the HF Hub */
   close(opts?: { upload?: boolean; repo_id?: string }): Promise<{ ok: boolean; detail?: string }>
-  /**
-   * Q72: can this machine publish this session's dataset — asked BEFORE the recording.
-   *
-   * Every failure `close({upload:true})` can report (no HF credential, revoked token, a dataset
-   * named under a namespace you cannot write to) used to surface at the END of the session, after
-   * the teleop, with no retry: closing destroys the recorder. Read-only, cheap, safe to poll.
-   */
   uploadPreflight(): Promise<UploadPreflight>
 }
 
-/**
- * A FRESH empty session, built per call.
- *
- * This was a module-level constant, and `{ ...EMPTY }` is a SHALLOW copy: every session the mock
- * started shared one `episodes` array with the constant, so a single push before `open()` replaced it
- * would have appended a phantom take to every later session on the page — and to the constant itself,
- * for the rest of the page's life. Nothing reached that today (startEpisode refuses without a
- * dataset); a factory means nothing can.
- */
+/** A FRESH empty session, built per call. */
 function emptySession(): RecordSession {
   return {
     dataset: null, task: '', leader: null, follower: null,
@@ -215,8 +142,7 @@ function makeMock(): RecordApi {
     },
     async open(opts) {
       // `...opts` would write fps: undefined when the caller omits it, and the mock's frame tick
-      // multiplies by it - so the rehearsal would count NaN frames. Absent means the backend's
-      // default, the same reading the real route applies.
+      // multiplies by it - so the rehearsal would count NaN frames.
       s = { ...emptySession(), ...opts, fps: opts.fps ?? emptySession().fps, episodes: [], phase: 'idle' }
       return clone()
     },
@@ -247,8 +173,7 @@ function makeMock(): RecordApi {
     },
     async discard(index) {
       // The real route REFUSES both of these (record_worker.discard: _require_open, then KeyError ->
-      // HTTP 404). A rehearsal that quietly succeeds where the backend 404s is worse than no
-      // rehearsal: it is where the UI's error path gets declared unnecessary.
+      // HTTP 404).
       if (!s.dataset) throw new Error('no open session')
       const ep = s.episodes.find(e => e.index === index)
       if (!ep) throw new Error(`no saved episode with index ${index}`)
@@ -292,11 +217,7 @@ function makeReal(): RecordApi {
 
 let cached: Promise<RecordApi> | null = null
 
-/** Probe once per page load: real backend unless the route truly does not
- * exist. Only a 404 selects the in-browser rehearsal - a 401 means the
- * backend IS there and the auth gate will sort the token out, and a network
- * blip must not silently swap a real recorder for a mock that pretends to
- * write datasets. */
+/** Probe once per page load: real backend unless the route truly does not exist. */
 export function getRecordApi(): Promise<RecordApi> {
   if (!cached) {
     cached = api('/api/record/session')

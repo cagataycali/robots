@@ -1,25 +1,9 @@
+/** The header's connection badge. */
 import type { ConnState } from './useMesh'
 
 /**
- * The header's connection badge — UX_REVIEW #3 ("never let LIVE sit above
- * 'connecting'").
- *
- * The badge only ever knew about ONE thing: this browser's websocket to the
- * dashboard. It printed the bare word `LIVE` for it, one line above camera
- * tiles saying "connecting" and, in the worst case, while the robot mesh
- * session itself was closed. Three different links, one triumphant word.
- *
- * A status badge that can contradict what is visible below it teaches operators
- * to distrust every badge on the page, which is expensive on the day one of
- * them is the reason not to touch the arm. So:
- *
- * - `LIVE` NEVER STANDS ALONE WHEN SOMETHING ELSE IS DOWN. With the mesh
- *   session closed the badge reads `LIVE · page only` and carries a warning
- *   tone — the socket really is open, so claiming OFFLINE would be its own lie;
- *   what changes is the SCOPE of the claim.
- * - The badge names its subject out loud (`aria-label`, `title`): the link to
- *   the dashboard, not the robots and not the cameras, each of which reports
- *   itself.
+ * The header's connection badge — UX_REVIEW #3 ("never let LIVE sit above 'connecting'"). The
+ * badge only ever knew about ONE thing: this browser's websocket to the dashboard.
  */
 
 export interface ConnBadge {

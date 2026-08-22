@@ -1,34 +1,4 @@
-/**
- * Whether the sign-in this page is holding is still valid — read from the token itself.
- *
- * MEASURED INCIDENT (BUGS.md Q88, 2026-08-21): the live dashboard's log ended in an unbroken run of
- *
- *     "WebSocket /ws/camera/so101-arm-1/top?token=eyJ..." 403
- *
- * from one cellular client — 100,506 camera-socket lines in total, and the last 19.3 HOURS of them
- * were 403s, because the JWT in that tab expired (`exp` 1787209480) while the tab stayed open. The
- * phone kept reopening two tiles forever against a door that had already said no, and the screen
- * said nothing about it: `AuthGate` decides login-vs-open ONCE on mount, so a session that dies
- * mid-session leaves a dashboard that looks alive and is entirely deaf.
- *
- * The retry rules could not see it either. Q40's rule ("a completed handshake proves nothing") and
- * Q51's churn floor both reason about sockets that OPEN; a 403 handshake is refused before the
- * socket exists, which the browser reports as an ordinary failed connection — indistinguishable
- * from a camera that is not publishing. `planRetry` already stops dead on close code 1008, but a
- * refused HANDSHAKE never gets to send a close code.
- *
- * The evidence was in the page's own pocket the whole time: our token is a JWT, and its `exp` is
- * readable without any network call. Reading it is NOT trusting it — the server still verifies
- * every request, and a client that decodes its own token cannot grant itself anything. It is used
- * for exactly two honest things: stop hammering a door that will keep saying no, and tell the
- * operator the true reason ("sign in again") instead of a camera-shaped shrug.
- *
- * DELIBERATELY SILENT in two cases, because a false "your session expired" is worse than no
- * sentence at all:
- *   - no token: this is a LAN dashboard with auth off, which is a supported way to run;
- *   - a token that is not a decodable JWT with a numeric `exp`: the bootstrap/`--auth-token`
- *     credential is an opaque string that never expires, and audits drive the page with it.
- */
+/** Whether the sign-in this page is holding is still valid — read from the token itself. */
 
 /** Warn this long before the sign-in actually lapses. */
 export const EXPIRING_SOON_S = 300
@@ -88,13 +58,7 @@ export function humaniseSeconds(s: number): string {
   return `${shown} hour${shown === 1 ? '' : 's'}`
 }
 
-/**
- * What to do about the sign-in this page is holding.
- *
- * Args:
- *   token: the stored credential (`getAuthToken()`), whatever shape it is in.
- *   nowS: current time in SECONDS (JWT units), so tests need no clock.
- */
+/** What to do about the sign-in this page is holding. */
 export function sessionVerdict(
   token: string | null | undefined,
   nowS: number,
@@ -124,11 +88,6 @@ export function sessionVerdict(
     return {
       state: 'expiring',
       expiresInS: left,
-      // U21 made this sentence conditional. A dashboard that renews itself must not tell
-      // the operator to go and sign in — but a page whose renewals are NOT landing must
-      // not claim to be safe either, and only one of the two is happening at a time.
-      // `renewedAtS` is what this page has OBSERVED (endpoints.lastRenewalAt), never a
-      // guess about the server's policy.
       text: renewedAtS > 0
         ? `this sign-in lapses in ${humaniseSeconds(left)} and is no longer being renewed — `
           + 'this page renewed it automatically before, so the connection is now being refused '

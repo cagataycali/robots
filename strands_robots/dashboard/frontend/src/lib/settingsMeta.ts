@@ -1,11 +1,7 @@
 /**
- * Settings metadata: every tunable in the Settings drawer earns its place here
- * with a plain-language explanation, a unit, its safe default, HOW it applies
- * (live vs next turn vs mesh restart), and a validator.
- *
- * Pure module - no React, no fetch - so it can be verified with node directly
- * (this repo's frontend has no test runner; see the esbuild+node technique in
- * the repo notes).
+ * Settings metadata: every tunable in the Settings drawer earns its place here with a
+ * plain-language explanation, a unit, its safe default, HOW it applies (live vs next turn vs
+ * mesh restart), and a validator.
  */
 
 /** When does a change actually take effect? Shown as a chip next to the field. */
@@ -15,10 +11,7 @@ export const APPLY_LABEL: Record<ApplyMode, string> = {
   live: 'applies immediately',
   'next-turn': 'applies on the next agent turn',
   'mesh-restart': 'needs a mesh restart',
-  // Q51: a mesh restart CANNOT deliver this one — the value is read inside each robot's own
-  // process when it starts its camera loop, and the dashboard publishes no frames at all.
   respawn: 'applies to robots spawned from now on',
-  // Q52: verified — the CORS response header is baked into CORSMiddleware in create_app().
   startup: 'applies at next server start',
 }
 
@@ -35,7 +28,6 @@ export interface SettingMeta {
   validate: (raw: string) => string | null
 }
 
-/** A number that must parse finite - the Q14 family of breakage starts with NaN. */
 export function finiteNumber(raw: string, opts: {
   min?: number; max?: number; integer?: boolean; name?: string
 } = {}): string | null {
@@ -49,33 +41,12 @@ export function finiteNumber(raw: string, opts: {
   return null
 }
 
-/**
- * The schemes the MESH actually accepts, read off mesh/session.py rather than guessed.
- *
- * `_NONE_OK_SCHEMES = ("tcp","udp","tls","quic")` and, under the DEFAULT mTLS posture,
- * `_MTLS_OK_SCHEMES = _TLS_BEARING_SCHEMES = ("tls","quic","wss","unixsock")` — anything else makes
- * `_build_config()` raise a ValueError when the session opens.
- *
- * The old regex here allowed exactly `tcp|tls|quic|udp`, which disagreed with that list in BOTH
- * directions: it refused `wss` and `unixsock` (valid, and the only two extra ones a locked-down desk
- * can use) while accepting `tcp`/`udp`, which the default posture REFUSES — the operator typed a
- * legal-looking endpoint, saved it, restarted the mesh, and got the failure then, one screen away
- * from the field that caused it. A validator that disagrees with the value's consumer is worse than
- * no validator, because it is believed.
- */
+/** The schemes the MESH actually accepts, read off mesh/session.py rather than guessed. */
 const TLS_BEARING = ['tls', 'quic', 'wss', 'unixsock'] as const
 const PLAINTEXT = ['tcp', 'udp'] as const
 const ALL_SCHEMES: readonly string[] = [...TLS_BEARING, ...PLAINTEXT]
 
-/**
- * One endpoint. `dialable` distinguishes CONNECT from LISTEN, and it is not pedantry:
- *   - a LISTEN endpoint may use port 0, meaning "any free port" — the mesh writes exactly that for
- *     its own ephemeral listener (`tcp/127.0.0.1:0` in session.py), so refusing it made the UI
- *     unable to express what the system itself does;
- *   - a CONNECT endpoint may NOT: port 0 is not dialable. That cost a debugging arc of its own
- *     (Q37: rdzv_endpoint "localhost:0"), so it is spelled out rather than left to be rediscovered.
- * `unixsock` has a PATH, not host:port, which the old single shape could not express either.
- */
+/** One endpoint. */
 function endpointError(ep: string, dialable: boolean): string | null {
   // zenoh allows per-endpoint config after '#', e.g. tcp/0.0.0.0:7447#iface=en0
   const [addr] = ep.split('#')
@@ -221,10 +192,6 @@ export function allValid(drafts: Record<string, string>): boolean {
   return Object.entries(drafts).every(([k, v]) => validateSetting(k, v) === null)
 }
 
-// ---------------------------------------------------------------------------
-// Env var validation (UI half of the Q13 family: a newline in a key or value
-// used to inject a second variable into .env).
-
 /** Env var NAME: POSIX-shell shaped, no whitespace, never a newline. */
 export function envKeyError(raw: string): string | null {
   const s = raw.trim()
@@ -265,9 +232,6 @@ const TAB_OF: Record<string, SettingsTab> = {
   'mesh.camera_hz': 'mesh',
   'mesh.connect': 'mesh',
   'mesh.listen': 'mesh',
-  // The voice fields used to appear ONLY as hand-written EXTRA_ENTRIES copies, whose `effect` had
-  // already drifted from the field's own explanation — search said one thing, the drawer another.
-  // Anything that exists in SETTINGS is indexed FROM SETTINGS.
   'voice.provider': 'voice',
   'voice.voice_name': 'voice',
 }
@@ -304,8 +268,8 @@ export const SEARCH_INDEX: SearchEntry[] = [
 ]
 
 /**
- * Rank: label prefix > label substring > keyword/key/effect substring.
- * Every query term must match somewhere (so "camera rate" narrows, not widens).
+ * Rank: label prefix > label substring > keyword/key/effect substring. Every query term must
+ * match somewhere (so "camera rate" narrows, not widens).
  */
 export function searchSettings(query: string, limit = 8): SearchEntry[] {
   const q = query.trim().toLowerCase()

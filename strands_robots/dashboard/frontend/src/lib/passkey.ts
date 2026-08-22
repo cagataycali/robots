@@ -1,12 +1,7 @@
 /**
- * WebAuthn (passkey) client ceremonies for the dashboard auth gate.
- *
- * The server (dashboard/auth.py) speaks the standard wire format: options come
- * down with base64url-encoded binary fields, credentials go back the same way.
- * The private key never touches JS - navigator.credentials signs the server's
- * challenge inside the platform authenticator (Touch ID / Face ID / YubiKey).
- *
- * Everything except enroll()/login() is pure and testable without a browser.
+ * WebAuthn (passkey) client ceremonies for the dashboard auth gate. The server
+ * (dashboard/auth.py) speaks the standard wire format: options come down with
+ * base64url-encoded binary fields, credentials go back the same way.
  */
 import { api } from './endpoints'
 
@@ -43,12 +38,6 @@ export function prepCreate(opts: any): PublicKeyCredentialCreationOptions {
 export function prepGet(opts: any): PublicKeyCredentialRequestOptions {
   const out = { ...opts }
   out.challenge = b64uToBuf(opts.challenge)
-  // Passkeys are discoverable credentials: let the authenticator show its own
-  // account picker instead of pinning an explicit credential list. iOS Safari
-  // has been seen never opening the sheet for an allowCredentials entry that
-  // carries no transports hint (observed live 2026-08-19); an empty list is
-  // the documented flow for resident keys and the server verifies the
-  // returned credential id against its store either way.
   delete out.allowCredentials
   return out
 }
@@ -75,11 +64,7 @@ export function credToJSON(cred: any): any {
   return out
 }
 
-/**
- * WebAuthn only exists in a secure context (https:// or http://localhost).
- * On plain http://<lan-ip> the browser leaves navigator.credentials undefined
- * (Firefox especially) - detect that up front instead of crashing in .create().
- */
+/** WebAuthn only exists in a secure context (https:// or http://localhost). */
 export function webauthnReady(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -124,10 +109,9 @@ export async function enroll(label: string, bootstrap = ''): Promise<string> {
 }
 
 /**
- * A login challenge fetched AHEAD of the tap. iOS Safari only opens the Face ID
- * sheet while the tap's transient user-activation is alive — an awaited network
- * round-trip inside the click handler spends it, and credentials.get() then
- * hangs forever without an error. So: fetch first, tap later.
+ * A login challenge fetched AHEAD of the tap. iOS Safari only opens the Face ID sheet while
+ * the tap's transient user-activation is alive — an awaited network round-trip inside the
+ * click handler spends it, and credentials.get() then hangs forever without an error.
  */
 export interface PreparedLogin { challenge_id: string; options: any; t: number }
 
@@ -141,22 +125,12 @@ export async function beginLogin(): Promise<PreparedLogin> {
     method: 'POST',
     body: JSON.stringify({}),
   })
-  // Discoverable-credential flow: drop the allow list. Passkeys are resident
-  // keys, and iOS Safari has been seen wedging in a silent cross-device wait
-  // when an allowCredentials entry arrives without transports. With no list,
-  // the local Face ID sheet offers whatever passkeys exist for this rp — and
-  // the server verifies by the credential id the response carries anyway.
+  // Discoverable-credential flow: drop the allow list.
   delete (options as any).allowCredentials
   return { challenge_id, options, t: Date.now() }
 }
 
-/**
- * Run the authenticator ceremony for a prepared challenge. The FIRST await in
- * this function is credentials.get() itself, so when the click handler calls
- * it synchronously the user-activation is still alive. A hard timeout aborts
- * the ceremony instead of leaving an infinite spinner (Safari has been seen
- * ignoring options.timeout silently).
- */
+/** Run the authenticator ceremony for a prepared challenge. */
 export async function completeLogin(p: PreparedLogin, timeoutMs = 75_000): Promise<string> {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeoutMs)
@@ -175,9 +149,7 @@ export async function completeLogin(p: PreparedLogin, timeoutMs = 75_000): Promi
   return res.token as string
 }
 
-/** Sign in with an already-enrolled passkey. Returns the session token.
- *  (Desktop-friendly one-shot; the gate uses beginLogin/completeLogin so the
- *  ceremony starts inside the tap's user-activation on iOS.) */
+/** Sign in with an already-enrolled passkey. Returns the session token. */
 export async function login(): Promise<string> {
   return completeLogin(await beginLogin())
 }

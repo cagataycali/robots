@@ -1,14 +1,4 @@
-/**
- * The keys to this dashboard, visible and revocable (Q124).
- *
- * GET /api/auth/credentials and DELETE /api/auth/credentials/{id} have existed since the auth work
- * and had NO caller — so the enrolled passkeys could be neither listed nor removed from any screen.
- * On a dashboard published through a tunnel that is the sharpest form of Q121's law: a retired phone
- * keeps a working key to an arm that moves, and its owner cannot even see that it exists.
- *
- * Only the rules live here. The server owns the store — including the refusal to delete the last
- * passkey, which this module explains BEFORE the click instead of after it.
- */
+/** The keys to this dashboard, visible and revocable. */
 import { agoText } from './cameraFreshness'
 
 export interface Credential { id: string; name?: string | null; created?: number | string | null }
@@ -60,8 +50,8 @@ export function revokeRefusal(status: number, detail: string): string {
 }
 
 /**
- * The sentence above the list. An EMPTY list means auth is not protecting this dashboard at all,
- * which is a different and much louder fact than "you have no extra keys".
+ * The sentence above the list. An EMPTY list means auth is not protecting this dashboard at
+ * all, which is a different and much louder fact than "you have no extra keys".
  */
 export function passkeySummary(rows: PasskeyRow[], authRequired: boolean): string {
   if (rows.length === 0) {

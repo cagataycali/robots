@@ -1,23 +1,4 @@
-/**
- * What the dashboard may claim when the STOP ALL request itself fails.
- *
- * The sheet used to answer every failure with "Nothing was sent." That is a
- * claim the browser cannot make. `api()` throws HttpError(0, …) whenever fetch
- * rejects — and fetch rejects for a request that never left the machine AND for
- * one that reached the server, executed, and lost the connection before the
- * answer came back. A 5xx is the same story from the other side: the handler
- * ran, so the per-peer stops and the signed lockout envelope may already be on
- * the wire.
- *
- * Getting this wrong on an e-stop is expensive twice over: the operator is told
- * the fleet is untouched (so they misread the very next symptom — every peer
- * refusing commands — as a new fault), and a "nothing happened" reading invites
- * a calm retry where the truth is "assume the arms are still moving, hit the
- * hardware switch".
- *
- * Only a refusal the server issued BEFORE the handler (auth, missing route,
- * validation, rate limit) is safely "nothing ran".
- */
+/** What the dashboard may claim when the STOP ALL request itself fails. */
 
 export interface RequestFailure {
   /** HttpError.status — 0 when fetch itself rejected. */

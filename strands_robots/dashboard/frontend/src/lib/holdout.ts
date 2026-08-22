@@ -1,25 +1,4 @@
-/**
- * val_episodes: hold out the LAST N episodes as a validation set.
- *
- * Why this field exists at all: without it every run this screen starts trains on 100% of the
- * episodes and reports a TRAINING loss only — a curve that falls just as prettily when a policy
- * memorises the dataset as when it learns the task. It was missing from the form's vocabulary
- * entirely (SPEC_KEYS), so asking for a holdout came back as "unknown field(s): val_episodes".
- *
- * Empty is a real answer, not an unfilled field: it means "train on every episode", which is what
- * the backend does with `null`. So this helper never invents a default — the only thing it refuses
- * is a value that would silently do something other than what it looks like:
- *
- *  - 0 or negative: the backend converts the count into a split fraction, and a non-positive value
- *    produces NO SPLIT AT ALL. Accepting it would show a holdout in the form and train without one.
- *  - fractional: lerobot takes the ceiling of that fraction, so 2.7 reserves 3, not 2. A number
- *    that means something else than it reads is refused rather than quietly rounded.
- *  - >= the dataset's episode count: nothing (or nearly nothing) is left to train on. The trainer
- *    also refuses this — it reads meta/info.json — but the dataset picker already knows the count,
- *    so saying it here costs no round trip. When the count is unknown (a Hub source with no local
- *    root), this helper stays quiet and lets the trainer be the one to refuse: guessing a bound
- *    would block a legitimate run.
- */
+/** val_episodes: hold out the LAST N episodes as a validation set. */
 
 export interface Holdout {
   /** what to put in the submit body, or null to omit the key entirely */

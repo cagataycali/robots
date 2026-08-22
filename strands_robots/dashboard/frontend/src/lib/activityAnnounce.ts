@@ -1,22 +1,4 @@
-/**
- * What a screen reader hears when a new line lands in the activity log (Q158).
- *
- * The audit sheet — the one surface that answers "who moved that arm" — had no role, no
- * name and no live region either, so it was as mute as the agent dock was before Q157.
- *
- * THE CONTRAST WITH THE DOCK IS THE DESIGN. Chat text arrives one token at a time, so a
- * live transcript stutters and must be silent (Q157). Activity entries arrive WHOLE and
- * seconds apart — announcing them is the reason someone opened this sheet. But two traps
- * sit in the naive version:
- *   * the sheet loads server history right after mounting, so a live list would read
- *     dozens of old entries aloud on open. Nothing before the sheet opened is news, hence
- *     `sinceT`.
- *   * an e-stop storm appends many lines at once. An atomic region speaks the NEWEST one
- *     and lets the list carry the rest, rather than queueing a paragraph of speech that
- *     outlives the emergency it describes.
- * A failure is named as a failure, because "stop → arm-1" spoken flatly sounds like it
- * worked.
- */
+/** What a screen reader hears when a new line lands in the activity log. */
 import { activityLine, type ActivityRow } from './activityLine'
 
 /** activityLine's row type says nothing about WHEN or WHO — the two fields this rule needs —

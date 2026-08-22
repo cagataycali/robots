@@ -1,28 +1,11 @@
 /**
- * Which query the dataset list on screen actually belongs to.
- *
- * The picker searches the Hub as you type, and the copy under it is confident:
- * "nothing here or on the Hub matches 'so10'". But the results, the problem
- * verdict AND that sentence were three independent pieces of state, so they could
- * describe three different moments:
- *
- *   - Hub round trips are not ordered. A slow answer for "so" landing after a
- *     fast answer for "so101" repopulates the list with the WRONG rows, and the
- *     user picks a dataset a multi-hour job will then read.
- *   - The sentence always quoted the CURRENT input, so a verdict measured for a
- *     shorter query was attributed to the one being typed — the list said "no
- *     match for so101" while nobody had ever asked the Hub about so101.
- *   - While a search is in flight, an empty list from the PREVIOUS query renders
- *     "nothing matches", which is the wrong answer to a question still open.
- *
- * So: the shown results carry the query they were measured for, and this decides
- * what may be claimed. "I am still looking" is a legitimate, honest state.
+ * Which query the dataset list on screen actually belongs to. The picker searches the Hub as
+ * you type, and the copy under it is confident: "nothing here or on the Hub matches 'so10'".
  */
 
 export interface DatasetHintInput {
   /** what is in the box right now */
   query: string
-  /** the query the visible rows + problem were measured for (null = never searched) */
   shownQuery: string | null
   /** how many rows are visible */
   count: number
@@ -52,7 +35,6 @@ export function datasetHint(input: DatasetHintInput): DatasetHint {
     ? `Hub results are public only${input.authDetail ? ` (${input.authDetail})` : ''} — a private or gated dataset will look like “no match”.`
     : null
 
-  // A failure that was measured for THIS query is the loudest true thing.
   if (input.problem && !stale) {
     return { text: `⚠ ${input.problem}`, tone: 'warn', auth }
   }
@@ -78,8 +60,7 @@ export function datasetHint(input: DatasetHintInput): DatasetHint {
 }
 
 /**
- * Should this response be applied to the screen? The last request WINS, not the
- * last response — invisible in testing, because a fast local search always
- * answers before a slow Hub one. One definition, in lib/requestOrder.ts.
+ * Should this response be applied to the screen? The last request WINS, not the last response
+ * — invisible in testing, because a fast local search always answers before a slow Hub one.
  */
 export { isLatestRequest as isCurrentResponse } from './requestOrder'

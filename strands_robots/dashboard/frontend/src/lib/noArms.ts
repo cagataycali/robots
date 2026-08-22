@@ -1,16 +1,4 @@
-/**
- * What the record screen says when there is nothing to record WITH (Q44).
- *
- * `pairArms([])` answers "no arms on the mesh" — true, and a dead end. The commonest way to arrive
- * here is a dashboard restart: the arms are unplugged from nothing, they are simply not running, and
- * the devices screen already knows both of them by USB serial with a one-click respawn (Q41). A
- * screen that states the absence without naming that route asks the operator to go hunting for a
- * feature we shipped.
- *
- * It stays a SENTENCE plus an optional route, never a redirect: an operator who opened the record
- * screen deliberately should not be thrown onto another one.
- */
-
+/** What the record screen says when there is nothing to record WITH. */
 export interface RememberedBoard {
   /** the peer the board would come back as */
   peer_id: string
@@ -21,12 +9,7 @@ export interface RememberedBoard {
 export interface NoArmsVerdict {
   /** the whole message, ready to render */
   text: string
-  /**
-   * Just the actionable half — no "no arms are on the mesh" prefix. The home screen's heading
-   * ALREADY says the fleet is empty, and a screen that says it twice reads like a stutter and gets
-   * skimmed. Same words as `text` otherwise: two screens must not develop two vocabularies for one
-   * fact (Q45).
-   */
+  /** Just the actionable half — no "no arms are on the mesh" prefix. */
   route: string
   /** offer the devices screen? Only when it can actually help. */
   offerDevices: boolean

@@ -1,3 +1,4 @@
+/** What we believe about this robot's task. */
 import { useEffect, useRef, useState } from 'react'
 import { deriveTaskFlags, nextPhase, reportedTaskStatus } from './taskPhase'
 import { interpretRun, interpretStop } from './taskResponse'
@@ -9,38 +10,27 @@ import { findConsent, type ConsentNeed } from './consent'
 import { runFailure, stopFailure } from './taskOutcome'
 import type { RunBody } from '../components/RunForm'
 
-/**
- * What we believe about this robot's task.
- *
- * `starting` and `stopping` exist because the mesh RPC is not instant: without
- * them the ▶ button re-enables while the command is still in flight, and a
- * double tap sends the task twice.
- */
+/** What we believe about this robot's task. */
 export type { TaskPhase } from './taskPhase'
 
 // The verdict shape lives with the code that decides it, so the two cannot drift apart.
 export type { Outcome } from './taskResponse'
 
 /**
- * Run/stop for one peer, shared by the card and the detail view so both report
- * the *same* verdict. A response can arrive and still be a refusal
- * (`{error: …}` or `ok: false`), and a stop that got no answer is not a stop -
- * collapsing either into "started"/"stopped" is the most dangerous thing this
- * UI can do.
+ * Run/stop for one peer, shared by the card and the detail view so both report the *same*
+ * verdict.
  */
 export function useTask(peer: Peer) {
   const [phase, setPhase] = useState<TaskPhase>('idle')
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [twinBusy, setTwinBusy] = useState(false)
-  // A refusal the operator can answer (U18) plus the body that was refused, so
-  // "approve" can re-send the SAME request instead of asking them to retype it.
   const [consent, setConsent] = useState<ConsentNeed | null>(null)
   const lastBody = useRef<RunBody | null>(null)
   const mounted = useRef(true)
   useEffect(() => () => { mounted.current = false }, [])
 
   // Phase logic lives in ./taskPhase as a decision table (tested there; in this body it needed a
-  // rendered card against a live peer). Q87: `reported === undefined` is NOT a completion.
+  // rendered card against a live peer).
   const reported = reportedTaskStatus(peer)
   const { running, busy } = deriveTaskFlags({ phase, reported, twinBusy })
 
@@ -58,10 +48,10 @@ export function useTask(peer: Peer) {
   }
 
   /**
-   * A thrown run/stop is NOT proof the robot was left alone: a rejected fetch
-   * covers "never left this machine" and "dispatched, then lost the answer", and
-   * a 5xx means the handler ran. lib/taskOutcome states which world it is and
-   * what to do about it - see that file for why "failed" was the dangerous word.
+   * A thrown run/stop is NOT proof the robot was left alone: a rejected fetch covers "never left
+   * this machine" and "dispatched, then lost the answer", and a 5xx means the handler ran.
+   * lib/taskOutcome states which world it is and what to do about it - see that file for why
+   * "failed" was the dangerous word.
    */
   const physicalFail = (e: unknown, kind: 'run' | 'stop'): Outcome => {
     const f = { status: e instanceof HttpError ? e.status : 0, message: e instanceof Error ? e.message : String(e) }
@@ -75,15 +65,14 @@ export function useTask(peer: Peer) {
     try {
       const res = await post<{ ok: boolean; result: any; routed_to?: string; mirrored_to_twin?: boolean }>(
         `/api/robots/${encodeURIComponent(peer.peer_id)}/task`,
-        /* The confirmation marker: this call is only reachable through the run form, whose ▶ passes
-           the RunConfirm dialog first, so the browser can honestly say a human confirmed. It matters
-           only when the operator turned the requirement on (STRANDS_DASH_TASK_REQUIRES_CONFIRM);
-           otherwise the server ignores it, and it is never forwarded onto the wire. */
+        /**
+         * The confirmation marker: this call is only reachable through the run form, whose ▶ passes
+         * the RunConfirm dialog first, so the browser can honestly say a human confirmed.
+         */
         { ...body, confirmed: true },
       )
       if (!mounted.current) return
-      // ./taskResponse decides what the response SAYS (tested there). Q88: an `error` inside the
-      // payload refuses the run even when the envelope says ok.
+      // ./taskResponse decides what the response SAYS (tested there).
       const v = interpretRun(res)
       setOutcome(v.outcome)
       setPhase(v.phase)

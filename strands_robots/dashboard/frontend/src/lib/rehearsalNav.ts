@@ -1,16 +1,7 @@
 /**
- * UX_REVIEW #10: "flag rehearsal features in the nav, not after the click".
- *
- * `⏺ record` looks exactly as real as every other button until the sheet opens
- * and admits that this backend has no `/api/record` and nothing will be written
- * to disk. An operator who is about to spend twenty minutes teleoperating an arm
- * deserves to know that BEFORE the first episode, not after.
- *
- * The rule this module encodes is the same one the fleet's origin badge follows:
- * SILENCE IS NOT EVIDENCE. Until the probe has actually answered, the nav says
- * nothing — a chip that guessed "rehearsal" from a slow probe would train
- * operators to ignore the word on the day it is true, and a chip that guessed
- * "real" is worse.
+ * UX_REVIEW #10: "flag rehearsal features in the nav, not after the click". `⏺ record` looks
+ * exactly as real as every other button until the sheet opens and admits that this backend has
+ * no `/api/record` and nothing will be written to disk.
  */
 
 export interface NavFlag {
@@ -27,9 +18,8 @@ export interface NavFlag {
 }
 
 /**
- * @param mock  true = probe selected the in-browser rehearsal,
- *              false = the real backend answered,
- *              null/undefined = not probed yet (say nothing).
+ * @param mock true = probe selected the in-browser rehearsal, false = the real backend
+ * answered, null/undefined = not probed yet (say nothing).
  */
 export function recordNavFlag(mock: boolean | null | undefined, base = 'Record teleop episodes into a dataset'): NavFlag {
   if (mock !== true) {

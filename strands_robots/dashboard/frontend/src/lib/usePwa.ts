@@ -1,23 +1,12 @@
+/** PWA plumbing: install prompt, update prompt, online state, screen wake lock. */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
 import { shouldCheckForUpdate, SW_UPDATE_INTERVAL_MS, bundleAgeText } from './swUpdate'
 import { wakeLockAction, wakeLockNote } from './wakeLock'
 
 /**
- * PWA plumbing: install prompt, update prompt, online state, screen wake lock.
- *
- * Updates are `prompt`, not `autoUpdate`, on purpose. Auto-update reloads the
- * page whenever a new bundle ships - including mid-task, which would tear down
- * the camera sockets and the run form of a robot that is currently moving. The
- * operator decides when to reload.
- *
- * But a decision they are never offered is not a decision. A service worker only
- * looks for a new build when it REGISTERS, and this app is a cockpit left open for
- * days on a phone next to the arms - so we ask again on a timer and when the page
- * comes back to the foreground (lib/swUpdate decides when, on terms that suit a
- * phone on cellular). MEASURED 2026-08-20: cagatay's phone sat on an eleven hour
- * old bundle from Seattle while it opened 1.5 camera sockets a second, and nothing
- * shipped that day could reach it.
+ * PWA plumbing: install prompt, update prompt, online state, screen wake lock. Updates are
+ * `prompt`, not `autoUpdate`, on purpose.
  */
 export function usePwa() {
   const {
@@ -44,7 +33,6 @@ export function usePwa() {
   const [installable, setInstallable] = useState(false)
   const promptRef = useRef<any>(null)
   const wakeRef = useRef<any>(null)
-  // What the app last asked for, so the lock can be RE-TAKEN after the browser drops it (Q89).
   const wantAwakeRef = useRef(false)
 
   useEffect(() => {
@@ -70,10 +58,8 @@ export function usePwa() {
     }
   }, [])
 
-  // Ask the service worker to look for a new build: on a timer, and whenever the
-  // page returns to the foreground. Failures are deliberately silent - a phone
-  // that cannot reach the server is already telling the operator so via `online`,
-  // and a banner about a failed update check would be noise on top of noise.
+  // Ask the service worker to look for a new build: on a timer, and whenever the page returns to
+  // the foreground.
   useEffect(() => {
     const check = (reason: 'interval' | 'visible') => {
       const reg = regRef.current
@@ -111,9 +97,9 @@ export function usePwa() {
   }, [setNeedRefresh, updateServiceWorker])
 
   /**
-   * Hold the screen awake while any robot is running. A phone that sleeps
-   * mid-task drops the camera sockets and the operator loses sight of a moving
-   * arm - the one moment the screen must stay on.
+   * Hold the screen awake while any robot is running. A phone that sleeps mid-task drops the
+   * camera sockets and the operator loses sight of a moving arm - the one moment the screen must
+   * stay on.
    */
   const applyWakeLock = useCallback(async () => {
     const anyNav = navigator as any
@@ -141,9 +127,6 @@ export function usePwa() {
     await applyWakeLock()
   }, [applyWakeLock])
 
-  // Q89: a screen wake lock does NOT survive the page being hidden, and App only re-asks when
-  // `anyRunning` changes - so without this the lock was gone for the rest of the task the first time
-  // the operator switched apps, while an arm was moving.
   useEffect(() => {
     const onVisible = () => { void applyWakeLock() }
     document.addEventListener('visibilitychange', onVisible)

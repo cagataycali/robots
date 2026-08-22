@@ -1,28 +1,7 @@
 /**
- * Deciding ONE scale per joint strip, instead of one per joint.
- *
- * The old rule was `Math.abs(pos) > 4 ? 100 : PI`, evaluated for every joint
- * separately. Two things go wrong with that:
- *
- *  1. A servo-scaled gripper reading 45 and an elbow at 0.7 rad end up on
- *     different axes on the SAME card, so the bars are not comparable -- the
- *     picture invites a comparison the numbers do not support.
- *  2. The rule is a function of the live sample, so a joint that swings past
- *     |4| flips its own axis mid-stream and the bar jumps without the arm
- *     having done anything unusual.
- *
- * A robot reports its joints in ONE unit, so the unit is a property of the
- * STREAM, not of a joint. This module decides that unit once per strip from
- * every sample on the card, keeps it under hysteresis (a change needs
- * `switchFrames` consecutive frames of agreement, so no single frame or
- * glitch reading can flip the axis), and then gives each joint the range of
- * ITS OWN travel within that unit: servo streams put a gripper on 0..100 and
- * a rotating joint on -100..100, radian streams put everything on -PI..PI,
- * and an observed extreme past those bounds widens that joint's range and
- * never shrinks it again.
- *
- * The exported functions are pure so the decision can be reasoned about (and
- * unit-tested) without rendering anything.
+ * Deciding ONE scale per joint strip, instead of one per joint. The old rule was
+ * `Math.abs(pos) > 4 ? 100 : PI`, evaluated for every joint separately. Two things go wrong
+ * with that: 1.
  */
 
 export interface Range {
@@ -33,10 +12,7 @@ export interface Range {
 /** Which unit a peer's joint stream is speaking. */
 export type JointUnit = 'radian' | 'servo'
 
-/**
- * Carried between frames. Treat as opaque: pass the previous return value
- * back in as `prev`.
- */
+/** Carried between frames. Treat as opaque: pass the previous return value back in as `prev`. */
 export interface ScaleMemo {
   /** The unit currently in force for the whole strip. */
   unit: JointUnit
@@ -51,8 +27,8 @@ export interface ScaleMemo {
 /** A radian joint cannot legitimately exceed this, so past it the stream is servo-scaled. */
 export const RADIAN_CEILING = 4
 /**
- * Coming back down to radians needs to be clearly inside the radian band, not
- * merely under the ceiling -- otherwise a stream hovering at 4 oscillates.
+ * Coming back down to radians needs to be clearly inside the radian band, not merely under the
+ * ceiling -- otherwise a stream hovering at 4 oscillates.
  */
 export const RADIAN_FLOOR = 3.2
 /** Consecutive agreeing frames required before the strip changes unit. */
@@ -62,14 +38,7 @@ const SERVO_SPAN: Range = { lo: -100, hi: 100 }
 const SERVO_GRIPPER_SPAN: Range = { lo: 0, hi: 100 }
 const RADIAN_SPAN: Range = { lo: -Math.PI, hi: Math.PI }
 
-/**
- * Joints whose travel is one-sided (closed..open), by name.
- *
- * Name matching is a heuristic, but it is a STABLE one -- it depends on the
- * joint's identity rather than on its current value, which is exactly the
- * property the old rule lacked. A joint whose values contradict the guess
- * still renders correctly, because observation widens the range.
- */
+/** Joints whose travel is one-sided (closed..open), by name. */
 const ONE_SIDED_NAME = /(gripper|grip|jaw|finger|claw)/i
 
 export function isOneSidedJoint(name: string): boolean {
@@ -82,12 +51,7 @@ export function defaultSpan(name: string, unit: JointUnit): Range {
   return RADIAN_SPAN
 }
 
-/**
- * What unit the samples on this frame argue for, on their own.
- *
- * `undefined` means "no opinion": an all-zero frame is compatible with either
- * unit and must not be counted as evidence for changing anything.
- */
+/** What unit the samples on this frame argue for, on their own. */
 export function frameEvidence(samples: Array<[string, number]>): JointUnit | undefined {
   let peak = 0
   let sawFinite = false
@@ -97,32 +61,13 @@ export function frameEvidence(samples: Array<[string, number]>): JointUnit | und
     peak = Math.max(peak, Math.abs(pos))
   }
   if (!sawFinite) return undefined
-  // An ALL-ZERO frame is compatible with either unit — this function's own contract says so — but
-  // `peak <= RADIAN_FLOOR` used to answer 'radian' for it, and that made the contract false. The
-  // consequence was visible on cagatay's SO-101, which reports DEGREES: a parked arm reading zeros
-  // (or a robot that publishes zeros before its first real read) argued 'radian' every frame, so
-  // after SWITCH_FRAMES the strip flipped to a ±π axis and threw away the degree extremes it had
-  // observed. The arm then moves, and the bars sit pinned at the ends of the wrong axis until eight
-  // more frames flip it back. Axis flapping under a still arm is exactly what the hysteresis exists
-  // to prevent, so silence about zeros is not a nicety.
   if (peak === 0) return undefined
   if (peak > RADIAN_CEILING) return 'servo'
   if (peak <= RADIAN_FLOOR) return 'radian'
   return undefined
 }
 
-/**
- * Decide the strip's scale for this frame.
- *
- * Args:
- *   samples: `[jointName, position]` for every joint on the card.
- *   prev: The memo returned for the previous frame, if any.
- *   switchFrames: Consecutive agreeing frames needed to change unit.
- *
- * Returns:
- *   A new memo. `ranges` holds one range per joint in `samples`, each
- *   containing that joint's current position.
- */
+/** Decide the strip's scale for this frame. */
 export function decideStripScale(
   samples: Array<[string, number]>,
   prev?: ScaleMemo,
@@ -137,11 +82,7 @@ export function decideStripScale(
   let pendingFrames = 0
 
   if (prev && !evidence) {
-    // A frame with NO OPINION changes nothing, including the counter. Resetting a streak on an
-    // ambiguous frame let a genuinely degree-scaled stream stall forever on the radian axis: every
-    // pass through the ambiguous band (or one zero frame from a robot between reads) wiped the
-    // evidence collected so far, so the eighth agreeing frame never arrived. Only evidence moves
-    // this state machine — in either direction.
+    // A frame with NO OPINION changes nothing, including the counter.
     pending = prev.pending
     pendingFrames = prev.pendingFrames
   } else if (prev && evidence && evidence !== prev.unit) {
@@ -155,9 +96,6 @@ export function decideStripScale(
     }
   }
 
-  // A unit change invalidates observed extremes: they were measured on the
-  // other axis, and carrying them over would keep the old scale alive inside
-  // the new one.
   const carried = prev && unit === prev.unit ? prev.ranges : {}
   const ranges: Record<string, Range> = {}
   for (const [name, raw] of samples) {

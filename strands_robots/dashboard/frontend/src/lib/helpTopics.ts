@@ -1,23 +1,6 @@
 /**
- * The content of the help sheet — JOURNEYS #7 ("zero onboarding, zero
- * hyperlinks, zero help affordance": 0 `<a>` on the page, docs that exist and
- * are linked from nowhere).
- *
- * Two constraints shaped this file, and both are pinned by tests:
- *
- * 1. **The help is IN the app, not behind a link.** This dashboard is used on
- *    a LAN, through a tunnel, and on a phone whose network just dropped — the
- *    one moment help is needed most is the moment an external link fails. So
- *    every sentence an operator needs to act safely lives here; the doc links
- *    are extra reading, never the answer.
- * 2. **A link that 404s is worse than no link.** Measured 2026-08-19 against
- *    the published site: `/` and `/getting-started/quickstart/` answer 200,
- *    but every `/dashboard/*` page answers **404** — those pages exist in
- *    `docs/` in this repo and have a nav entry, yet the deployed site predates
- *    them. Linking the obvious "Fleet Dashboard → Quickstart" would therefore
- *    have sent a confused first-time operator to a 404. Only verified-live
- *    URLs are listed; the repo-relative paths are given as TEXT so they cannot
- *    rot into broken links.
+ * The content of the help sheet — JOURNEYS #7 ("zero onboarding, zero hyperlinks, zero help
+ * affordance": 0 `<a>` on the page, docs that exist and are linked from nowhere).
  */
 
 export interface HelpTopic {
@@ -37,10 +20,6 @@ export interface DocLink {
 /** The published docs site root — the only host any help link may point at. */
 export const DOCS_ORIGIN = 'https://strands-labs.github.io/robots'
 
-/**
- * Verified to answer 200 on 2026-08-19. Deliberately short: two live links beat
- * eight links where six are a coin toss.
- */
 export const DOC_LINKS: readonly DocLink[] = [
   {
     label: 'Strands Robots docs',
@@ -54,11 +33,7 @@ export const DOC_LINKS: readonly DocLink[] = [
   },
 ]
 
-/**
- * Pages that exist in this repo but are NOT on the deployed site yet. Rendered
- * as file paths, never as links — and kept in one list so that when the site
- * catches up, promoting them is a single obvious edit.
- */
+/** Pages that exist in this repo but are NOT on the deployed site yet. */
 export const REPO_DOC_PATHS: readonly string[] = [
   'docs/dashboard/quickstart.md — this screen, with an SO-101',
   'docs/dashboard/collect-train-deploy.md — the full loop',

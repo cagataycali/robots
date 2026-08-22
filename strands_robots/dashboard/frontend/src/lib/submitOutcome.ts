@@ -1,24 +1,6 @@
 /**
- * What the training tab may claim when a request that STARTS SOMETHING fails.
- *
- * Every action here answered a failure with `⚠ <message>`, which reads as "it
- * did not happen". For a lost answer that is a guess, and the same guess the
- * estop sheet used to make (see lib/estopOutcome.ts): `api()` throws
- * HttpError(0) both for a request that never left the machine and for one that
- * reached the server, ran, and lost the connection — and a 5xx means the handler
- * executed.
- *
- * The consequence here is not a stopped robot, it is a DUPLICATE:
- *   - /api/training/submit  -> a second multi-hour run on the same GPU, both
- *                              writing checkpoints into the same output_dir
- *   - /api/collect          -> a second recorder peer appending to the dataset
- *   - /api/replay           -> a second peer DRIVING THE SAME ARM
- * So an ambiguous failure must say "it may have started", name what a second
- * press would do, and point at the list where the truth already is — never
- * imply the button did nothing.
- *
- * The classifier is shared with the estop path deliberately: one definition of
- * "the server refused before running anything" for the whole dashboard.
+ * What the training tab may claim when a request that STARTS SOMETHING fails. Every action
+ * here answered a failure with `⚠ <message>`, which reads as "it did not happen".
  */
 import { refusedBeforeActing } from './estopOutcome'
 

@@ -1,27 +1,4 @@
-/**
- * Q58 (frontend half): what the training form must say and refuse about `output_dir`.
- *
- * The trainer clears a pre-existing output_dir that holds no resumable checkpoint with
- * `shutil.rmtree`. The backend now refuses that launch unless `confirm_clear` is sent
- * (see dashboard/output_dir_check.py) — this file decides what the OPERATOR sees and
- * whether the train button may be armed at all.
- *
- * Rules encoded here, each learned from a way this screen has misled before:
- *
- * - a destructive run is armed by a tick that names the loss, and the tick authorises
- *   ONE path. Retyping the field revokes it (the dsOverride/deployIntent rule: one click
- *   authorises one action — a sticky yes silences a check nobody re-made).
- * - `resumable` and `not_a_dir` are NOT confirmable. No tick exists for them, because the
- *   run cannot succeed: the first is refused by lerobot itself (a failure that would
- *   otherwise appear only in the run's log, after the job row says started) and the second
- *   is a typo.
- * - `unknown` (the path could not be read) never becomes silent permission. It cannot be
- *   confirmed either: nobody can consent to a loss they were not shown.
- * - while the verdict is in flight the button is not blocked. Blocking on a pending read
- *   would make a slow filesystem look like a broken form; the backend still refuses, so
- *   the worst case is an error toast rather than a delete.
- */
-
+/** What the training form must say and refuse about `output_dir`. */
 export type OutputDirState = 'free' | 'occupied' | 'resumable' | 'not_a_dir' | 'unknown'
 
 export interface OutputDirVerdict {
@@ -72,12 +49,7 @@ export function outputDirSay(v: OutputDirVerdict | null | undefined): OutputDirS
   }
 }
 
-/**
- * May the run start, and does it need to carry `confirm_clear`?
- *
- * `armedFor` is the path the operator ticked the box for — not a boolean, so a tick made
- * for `/tmp/run-a` cannot authorise deleting `/tmp/run-b` after the field is edited.
- */
+/** May the run start, and does it need to carry `confirm_clear`? */
 export function trainGate(args: {
   path: string
   verdict: OutputDirVerdict | null | undefined

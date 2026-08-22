@@ -1,21 +1,7 @@
 /**
- * What counts as PROOF that a peer is still alive.
- *
- * `last_seen` is stamped in the browser whenever a mesh event arrives, and the
- * stale sweep turns it into "no heartbeat for 20s - treat the arm as
- * unpredictable". So every event type that refreshes it is making a claim about
- * a process on the other side of the mesh.
- *
- * A CAMERA frame is not such a proof. The dashboard replays a camera's last
- * cached frame to each new subscriber (measured: a frame captured 6.8 hours
- * earlier arrived the instant a tile mounted, see cameraState.ts), so opening a
- * page can deliver camera events for a peer that died hours ago - and that
- * refreshed last_seen, cleared `stale`, and made a dead robot's card read
- * "seen 0s ago" with a live green dot.
- *
- * The frame carries the CAPTURE time the peer put on it, so the question is
- * answerable rather than a guess: recent capture = the peer really is publishing,
- * old capture = a replay from our own cache and no evidence of anything.
+ * What counts as PROOF that a peer is still alive. `last_seen` is stamped in the browser
+ * whenever a mesh event arrives, and the stale sweep turns it into "no heartbeat for 20s -
+ * treat the arm as unpredictable".
  */
 
 /** A capture older than this proves nothing about liveness (the stale window). */
@@ -36,9 +22,9 @@ export function frameProvesLiveness(input: {
     return false
   }
   const age = nowS - frameT
-  // A capture stamped in the FUTURE is clock skew between two machines, not
-  // freshness - but it is also not evidence of death, so it is simply not
-  // counted either way (and never allowed to look newer than now).
+  // A capture stamped in the FUTURE is clock skew between two machines, not freshness - but it
+  // is also not evidence of death, so it is simply not counted either way (and never allowed to
+  // look newer than now).
   if (age < 0) return false
   return age <= maxAgeS
 }

@@ -1,19 +1,4 @@
-/**
- * Telling the operator that a training run ENDED (Q159).
- *
- * A job's state is a polled word in the card — `running`, then `succeeded` or `failed`.
- * Nothing announced the change, and this is the longest-running thing the dashboard does:
- * minutes to hours, watched by nobody for most of it. So the one moment that matters was
- * the one moment with no signal, and a failure looked identical to still-working until you
- * came back and read the word.
- *
- * A TRANSITION rule, not a state rule, and the difference is the whole design:
- *   * a polled state announced every tick would repeat itself forever;
- *   * a job whose FIRST observed state is already terminal is NOT news — it finished
- *     before this tab existed, exactly like the activity history of Q158;
- *   * several finishing together become ONE sentence, failures named first, because two
- *     live regions racing produce interleaved half-sentences.
- */
+/** Telling the operator that a training run ENDED. */
 export type JobStateMap = Record<string, string>
 
 /** Terminal states the training providers actually report. Anything else is in flight. */

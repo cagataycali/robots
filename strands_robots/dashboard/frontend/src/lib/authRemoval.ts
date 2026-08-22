@@ -1,18 +1,4 @@
-/**
- * Q73: what removing the dashboard's auth token actually exposes, said before it happens.
- *
- * The Security tab's "remove token" was a one-click `danger` button with no confirmation — while the
- * panel directly above it says "anyone who can reach this port can move motors". Everything else in
- * this app that can move metal (run, teleop, e-stop) asks first; the control that removes the lock on
- * ALL of them did not. And the cost is not symmetric with the other dangers: an unlocked dashboard
- * stays unlocked silently, for as long as nobody notices.
- *
- * This module is the sentence that button now has to earn. It is pure so the wording can be tested,
- * and it reasons only from facts the browser genuinely has: the origin it is being viewed from (a
- * non-localhost origin PROVES the dashboard is reachable off this machine — the operator is doing it
- * right now), the CORS setting, and how many robots are on the fleet.
- */
-
+/** what removing the dashboard's auth token actually exposes, said before it happens. */
 export interface AuthRemovalFacts {
   /** location.hostname of the page doing the removing. */
   host: string

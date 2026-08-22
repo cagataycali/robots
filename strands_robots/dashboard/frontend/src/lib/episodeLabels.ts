@@ -1,17 +1,4 @@
-/**
- * #2486: episode labels on a dataset row — and the honest reason when there is nothing to show.
- *
- * The backend (GET /api/datasets/labels) reports a two-stage verdict per episode: deterministic
- * benchmark predicates, then a judge annotation on top. Two rules this file exists to keep, both
- * learned the expensive way in this dashboard:
- *
- *  1. A control is never offered where it cannot work. A Hub row has no local dataset directory, so
- *     there is no sidecar to read — the button is disabled WITH the reason instead of fetching a 404.
- *  2. Absence is never rendered as zero. "0 labelled" and "labelling is impossible for this kind of
- *     recording" look identical in a counter and mean opposite things, so the summary carries the
- *     server's `why` sentence verbatim rather than reducing it to a number.
- */
-
+/** episode labels on a dataset row — and the honest reason when there is nothing to show. */
 export type LabelRow = {
   episode_index: number
   verdict: 'success' | 'failure' | null

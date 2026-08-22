@@ -1,24 +1,7 @@
 /**
- * Human words for the policy registry's *code identifiers*.
- *
- * The run form is generated from `registry/policies.json`, which names a
- * provider's **constructor kwargs** — `pretrained_name_or_path`,
- * `policy_type`, `data_config`. Rendering those verbatim makes the operator
- * read source code to use a product: "lerobot_async (policy_type,
- * pretrained_name_or_path)" says nothing about needing a trained checkpoint.
- *
- * Two rules this module exists to enforce:
- *
- * 1. **The identifier is never thrown away.** Operators paste these keys into
- *    their own scripts and into `STRANDS_MESH_*` env vars, and a mismatch
- *    between what the UI calls a field and what the API calls it is its own
- *    bug class. So every caller shows the label *and* keeps the identifier
- *    visible (as secondary text / `<code>`), never one instead of the other.
- * 2. **An unknown identifier is printed verbatim, never guessed.** Splitting
- *    `norm_tag` into "norm tag" invents a meaning the code does not promise;
- *    a made-up label is worse than a raw one because it cannot be searched
- *    for and it sounds authoritative. `known: false` lets the UI treat those
- *    honestly (identifier only, no invented prose).
+ * Human words for the policy registry's *code identifiers*. The run form is generated from
+ * `registry/policies.json`, which names a provider's **constructor kwargs** —
+ * `pretrained_name_or_path`, `policy_type`, `data_config`.
  */
 
 export interface FieldCopy {
@@ -30,12 +13,7 @@ export interface FieldCopy {
   known: boolean
 }
 
-/**
- * Curated only where we can state the truth in a few words. Covers every key
- * the mesh command schema carries (config_api.WIRE_CMD_KEYS + its aliases,
- * i.e. everything that can appear as a form field) plus the local-only kwargs
- * an operator actually meets on this fleet's providers.
- */
+/** Curated only where we can state the truth in a few words. */
 const COPY: Record<string, { label: string; hint?: string }> = {
   // --- checkpoint / model identity -----------------------------------------
   pretrained_name_or_path: {
@@ -111,12 +89,8 @@ export function fieldCopy(key: string): FieldCopy {
 }
 
 /**
- * `["policy_type","pretrained_name_or_path"]` -> "needs a checkpoint + policy
- * family", for a one-line `<option>` where the identifiers do not fit.
- *
- * Unknown keys keep their identifier so the sentence never lies; duplicate
- * labels collapse (`checkpoint` for both `checkpoint` and `repo_id`) because
- * "needs a checkpoint + a checkpoint" reads like two things.
+ * `["policy_type","pretrained_name_or_path"]` -> "needs a checkpoint + policy family", for a
+ * one-line `<option>` where the identifiers do not fit.
  */
 export function requirementSummary(keys: readonly string[]): string {
   const labels: string[] = []
@@ -128,12 +102,8 @@ export function requirementSummary(keys: readonly string[]): string {
 }
 
 /**
- * The blocking-fields sentence: leads with words, keeps the identifiers in
- * parentheses because that is the string the operator will search the docs and
- * their own script for.
- *
- * Fully-unknown keys would render as "foo (foo)", so in that case the
- * identifier is printed once.
+ * The blocking-fields sentence: leads with words, keeps the identifiers in parentheses because
+ * that is the string the operator will search the docs and their own script for.
  */
 export function missingSummary(keys: readonly string[]): string {
   return keys
@@ -145,8 +115,8 @@ export function missingSummary(keys: readonly string[]): string {
 }
 
 /**
- * The "local-only kwargs" list: same label+identifier shape, but this list is
- * informational (these fields cannot be sent at all), so it stays compact.
+ * The "local-only kwargs" list: same label+identifier shape, but this list is informational
+ * (these fields cannot be sent at all), so it stays compact.
  */
 export function localOnlySummary(keys: readonly string[]): string {
   return keys.map(k => {

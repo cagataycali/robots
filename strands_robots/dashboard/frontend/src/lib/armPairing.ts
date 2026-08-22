@@ -1,24 +1,6 @@
-/**
- * Which arm is the leader and which is the follower — decided from what was
- * MEASURED off each servo bus, not from what the peer is called.
- *
- * Why this file exists: RecordPanel used to default the pair with
- * `/leader|arm-2/` for the leader and `/leader|arm-1/` for the follower. On this
- * machine arm-2 measures 12.6V — it IS the follower — so the record screen
- * confidently pre-filled the pair BACKWARDS, and a backwards pair means the
- * operator hand-moves the torqued 12V arm while the 7.4V one is told to mirror
- * it. The names never carried this information; the bus does (12V = follower,
- * 7.4V = leader), and /api/devices now reports the measurement per managed peer.
- *
- * Design rule: a confident wrong default is worse than an empty slot. Anything
- * this module is not sure about it leaves blank and SAYS SO, so the human fills
- * it in knowing the dashboard has no opinion, rather than trusting one that is
- * inverted.
- */
-
+/** Which arm is the leader and which is the follower — decided from what was MEASURED off each servo bus, not from what the peer is called. */
 export interface RoleCandidate {
   peer_id: string
-  /** 'leader' | 'follower' when measured; absent = nobody has measured it. */
   role?: string | null
   role_volts?: number | null
 }
@@ -28,21 +10,19 @@ export interface ArmPair {
   follower: string
   /** How each slot was decided — shown to the operator, never inferred by them. */
   basis: 'measured' | 'named' | 'none'
-  /** One sentence for the UI when the pair is not fully measured. */
   note?: string
 }
 
 const NAMED_LEADER = /(^|[^a-z])leader([^a-z]|$)/i
 const NAMED_FOLLOWER = /(^|[^a-z])follower([^a-z]|$)/i
 
-/** Peers whose bus measured as `role`. */
 export function measured(candidates: RoleCandidate[], role: string): RoleCandidate[] {
   return candidates.filter(c => c.role === role)
 }
 
 /**
- * Pick the pair. Measurement wins; an explicit name is a weak second; an index
- * in a name ("arm-2") is NOT evidence and is never used.
+ * Pick the pair. Measurement wins; an explicit name is a weak second; an index in a name
+ * ("arm-2") is NOT evidence and is never used.
  */
 export function pairArms(candidates: RoleCandidate[]): ArmPair {
   const leaders = measured(candidates, 'leader')
@@ -53,14 +33,8 @@ export function pairArms(candidates: RoleCandidate[]): ArmPair {
     return { leader: leaders[0].peer_id, follower: followers[0].peer_id, basis: 'measured' }
   }
 
-  // Exactly one side is UNAMBIGUOUS. Fill that slot and only that slot: guessing the other from a
-  // name is how the pair got inverted in the first place.
-  //
-  // This deliberately runs BEFORE the ambiguity branch, because "ambiguous on one side" does not
-  // make the other side unknown. One measured leader and TWO measured followers used to fall through
-  // to the tie branch and come back with BOTH slots empty — the dashboard discarding a measurement it
-  // was certain about, on the grounds that a different arm was unclear. Blanking a slot you have
-  // evidence for is the same disservice as filling one you do not.
+  // Exactly one side is UNAMBIGUOUS. Fill that slot and only that slot: guessing the other from
+  // a name is how the pair got inverted in the first place.
   if (leaders.length === 1 && followers.length !== 1) {
     return {
       leader: leaders[0].peer_id, follower: '', basis: 'measured',
@@ -100,8 +74,6 @@ export function pairArms(candidates: RoleCandidate[]): ArmPair {
     }
   }
 
-  // Nothing measured. A name that literally says "leader"/"follower" is a stated
-  // intent and worth honouring; "arm-1"/"arm-2" is just an index and is ignored.
   const named = {
     leader: candidates.find(c => NAMED_LEADER.test(c.peer_id))?.peer_id ?? '',
     follower: candidates.find(c => NAMED_FOLLOWER.test(c.peer_id))?.peer_id ?? '',
@@ -113,9 +85,7 @@ export function pairArms(candidates: RoleCandidate[]): ArmPair {
             'being taken at their word',
     }
   }
-  // Only ONE name states a role. Same rule as one measured side: fill the slot the name speaks for,
-  // leave the other blank. Filling it by ELIMINATION ("the other arm must be the follower") would be
-  // an inference from an index by another route, which is the thing this file exists to refuse.
+  // Only ONE name states a role.
   if (named.leader !== named.follower && (named.leader || named.follower)) {
     const stated = named.leader ? 'leader' : 'follower'
     return {
@@ -143,9 +113,8 @@ export function roleLabel(c: RoleCandidate): string {
 }
 
 /**
- * The contradiction check: the operator has chosen a slot that the hardware
- * says is the other thing. Returns null when there is nothing to warn about —
- * an unmeasured arm is never a warning, because we do not know.
+ * The contradiction check: the operator has chosen a slot that the hardware says is the other
+ * thing.
  */
 export function contradiction(
   candidates: RoleCandidate[], slot: 'leader' | 'follower', chosen: string,

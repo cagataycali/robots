@@ -1,19 +1,6 @@
 /**
- * What the checkpoint type-ahead may claim about an empty result — and which
- * answer it is allowed to show at all.
- *
- * Two lies lived in this widget's silence:
- *
- * 1. `no checkpoints match “q”` is a claim about the WHOLE catalogue, but when
- *    the backend reports `hub_problem` ("Hub search unavailable … showing local
- *    cache only") the only thing searched was this machine's HF cache. An
- *    operator reading "no matches" concludes the checkpoint does not exist, when
- *    in fact nothing asked the Hub.
- * 2. Type-ahead requests race. The 300ms debounce cancels a pending TIMER, not
- *    an in-flight fetch, so a slow search for "act" could resolve after a fast
- *    one for "smolvla" and paint act's rows — or an older failure — under the
- *    newer query. Results shown next to a query they do not belong to are the
- *    most confident kind of wrong.
+ * What the checkpoint type-ahead may claim about an empty result — and which answer it is
+ * allowed to show at all.
  */
 
 export interface EmptyNoteInput {
@@ -40,9 +27,5 @@ export function emptyNote({ query, hubProblem }: EmptyNoteInput): string {
     : 'type part of a checkpoint name — local cache and the Hub are both searched.'
 }
 
-/**
- * True when a response may be rendered: only the newest request speaks. Sequence
- * numbers, not timestamps — two responses in the same millisecond still have an
- * order, and a clock that jumps cannot reorder them.
- */
+/** True when a response may be rendered: only the newest request speaks. */
 export { isLatestRequest as isCurrent } from './requestOrder'

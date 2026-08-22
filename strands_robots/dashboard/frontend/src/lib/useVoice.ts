@@ -1,3 +1,4 @@
+/** Give the microphone back. */
 import { useCallback, useRef, useState } from 'react'
 import { wsUrl } from './endpoints'
 import { interpretVoiceEvent, voiceCloseState } from './voiceSession'
@@ -9,21 +10,14 @@ export type { VoiceState } from './voiceSession'
 export function useVoice() {
   const [state, setState] = useState<VoiceState>('idle')
   const [transcript, setTranscript] = useState('')
-  /* A refusal raised inside a voice turn is spoken once and gone. The session pushes it here as a
-     needs_consent frame so the dock can raise the same ConsentSheet — the grant must be a tap, never
-     a spoken yes. */
+  /** A refusal raised inside a voice turn is spoken once and gone. */
   const [need, setNeed] = useState<unknown | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const ctxRef = useRef<AudioContext | null>(null)
   const nodesRef = useRef<{ src?: MediaStreamAudioSourceNode; proc?: ScriptProcessorNode; stream?: MediaStream }>({})
   const playRef = useRef<{ ctx?: AudioContext; nextT: number; rate: number }>({ nextT: 0, rate: 24000 })
 
-  /**
-   * Give the microphone back. Separate from stop() and safe to call twice, because the mic can be
-   * live in states where there is nothing else to tear down (Q90): getUserMedia resolves BEFORE the
-   * socket opens, so a refused or unreachable /ws/voice left a hot mic - browser recording indicator
-   * on, tracks live - for the whole life of the tab, with no UI in any state able to release it.
-   */
+  /** Give the microphone back. */
   const releaseMic = useCallback(() => {
     nodesRef.current.proc?.disconnect()
     nodesRef.current.src?.disconnect()
@@ -48,9 +42,8 @@ export function useVoice() {
     setState('connecting')
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
-      // Same backend (and token) as every other channel - the dashboard API can
-      // be on another host entirely.
-      // Owned from this line on, whatever happens to the socket next (Q90).
+      // Same backend (and token) as every other channel - the dashboard API can be on another host
+      // entirely.
       nodesRef.current = { stream }
       const ws = new WebSocket(wsUrl('/ws/voice'))
       wsRef.current = ws
@@ -58,9 +51,7 @@ export function useVoice() {
 
       ws.onmessage = (msg) => {
         try {
-          /* What a frame MEANS lives in ./voiceSession, tested there. This handler only performs it -
-             the old inline chain sat inside this same `catch { ignore }`, where every mistake was
-             silence in the one channel whose job is to talk back. */
+          /** What a frame MEANS lives in ./voiceSession, tested there. */
           const eff = interpretVoiceEvent(JSON.parse(msg.data))
           if (eff.rate !== undefined) playRef.current.rate = eff.rate
           if (eff.play !== undefined) playPcm(eff.play)
@@ -72,8 +63,6 @@ export function useVoice() {
         } catch { /* a frame we could not even parse */ }
       }
       ws.onclose = (e) => {
-        // The socket is gone, so the mic must go with it (Q90) - a failed connect used to leave the
-        // browser recording indicator on for the life of the tab.
         releaseMic()
         setState(s => {
           const v = voiceCloseState(e.code, s)

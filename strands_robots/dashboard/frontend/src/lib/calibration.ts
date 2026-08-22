@@ -1,16 +1,7 @@
 /**
- * Parsers for the calibration API's text payloads.
- *
- * `GET /api/calibration` and `/api/calibration/{name}` both answer
- * `{status, text}` where `text` is the rich-markdown block `lerobot_calibrate`
- * prints for a human. The structured `{json: ...}` half of that tool result is
- * dropped by the backend, so the text *is* the data and parsing it is the only
- * way to render a table. These functions are pure so the shapes can be checked
- * without a browser or a robot.
- *
- * Every field is optional on purpose: the tool prints `*(error reading file)*`
- * instead of metadata when a calibration file cannot be read, and a row that
- * exists on disk should still be listed when its details are unreadable.
+ * Parsers for the calibration API's text payloads. `GET /api/calibration` and
+ * `/api/calibration/{name}` both answer `{status, text}` where `text` is the rich-markdown
+ * block `lerobot_calibrate` prints for a human.
  */
 
 export type CalibrationEntry = {
@@ -56,21 +47,6 @@ function plain(s: string): string {
   return s.replace(/[*`]/g, '').trim()
 }
 
-/**
- * MEASURED on this machine 2026-08-21: the calibration folder contains
- * `teleoperators/so_leader/None.json`, written 2026-08-19 11:33 — a python `None` that reached a
- * FILENAME, i.e. an arm was spawned with no robot_id and lerobot cheerfully calibrated into the
- * string of it. The dashboard listed that row like any other, and the spawn form OFFERED it as a
- * calibration id (the datalist filtered only on truthiness, and "None" is truthy).
- *
- * Why this matters more than tidiness: a calibration id selects the file that supplies a real arm's
- * joint limits and homing offsets. Picking a file whose name means "the id was missing" hands the
- * arm limits that belong to whatever ran during that accident — the wrong-limits failure the spawn
- * form's own hint warns about, arriving through the suggestion list itself.
- *
- * The row is still SHOWN (it exists on disk, and hiding it would leave an unexplainable file the
- * operator cannot inspect or delete) — it is shown as a problem, and it stops being suggested.
- */
 export function idProblem(id: string): string | undefined {
   const bare = id.trim()
   if (!bare) return 'this calibration has no id — the file name is empty'
@@ -84,14 +60,7 @@ export function idProblem(id: string): string | undefined {
   return undefined
 }
 
-/**
- * Parse the `list` action's text into flat rows.
- *
- * Shape being read:
- *   ## **Robots**
- *   ### **so101_follower** (3 calibrations)
- *     - `follower` *(2025-11-23 22:17:33, 0.9KB, 6 motors)*
- */
+/** Parse the `list` action's text into flat rows. */
 export function parseCalibrationList(text: string): CalibrationList {
   const out: CalibrationList = { entries: [] }
   if (!text) return out
@@ -128,8 +97,6 @@ export function parseCalibrationList(text: string): CalibrationList {
       const bad = idProblem(id)
       if (bad) entry.problem = bad
       if (meta && !entry.unreadable) {
-        // "2025-11-23 22:17:33, 0.9KB, 6 motors" — trailing parts are omitted
-        // when the tool has no value for them, so match each independently.
         const when = /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/.exec(meta)
         if (when) entry.modified = when[1]
         const size = /([\d.]+)\s*KB/i.exec(meta)
@@ -144,23 +111,7 @@ export function parseCalibrationList(text: string): CalibrationList {
   return out
 }
 
-/**
- * Parse the `view` action's text into a per-motor table.
- *
- * Shape being read:
- *   **Calibration Details: `robots/so101_follower/follower`**
- *   **Path:** `/…/follower.json`
- *   **Modified:** 2025-11-23 22:17:33
- *   **Size:** 921 bytes (0.9 KB)
- *
- *   **Motor Configuration** (6 motors)
- *
- *   ### **shoulder_pan**
- *     - **ID:** 1
- *     - **Drive Mode:** 0
- *     - **Homing Offset:** -2048
- *     - **Range:** 700 to 3400
- */
+/** Parse the `view` action's text into a per-motor table. */
 export function parseCalibrationDetail(text: string): CalibrationDetail {
   const out: CalibrationDetail = { motors: [] }
   if (!text) return out

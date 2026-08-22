@@ -1,15 +1,6 @@
 /**
- * The motion chip: "is this arm moving RIGHT NOW", the question an operator asks
- * before reaching over the desk.
- *
- * It has THREE states, not two. `moving` is a tri-state - true, false, or NOT
- * MEASURED - and rendering it as `moving ? 'moving' : 'still'` collapsed the
- * third into the reassuring one, in green, with the same styling as a real
- * measurement. Observed live: so101-arm-1 publishes no joint positions at all,
- * so nothing about its motion is knowable, and the chip said "still" in green.
- *
- * The chip is also the smallest widget on the card, which is exactly why it gets
- * a pure function: whatever it says is read as a fact about hardware.
+ * The motion chip: "is this arm moving RIGHT NOW", the question an operator asks before
+ * reaching over the desk. It has THREE states, not two.
  */
 export interface MotionChip {
   /** css modifier: still | moving | unknown */
@@ -42,8 +33,6 @@ export function motionChip(moving: boolean | null | undefined, opts: {
       aria: 'joints measured still',
     }
   }
-  // Not measured. The two reasons look identical here but read very differently
-  // to a human, so they are said apart - and NEITHER is green.
   if (opts.jointsSeen === false) {
     return {
       tone: 'unknown',

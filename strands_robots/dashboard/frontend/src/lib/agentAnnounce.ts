@@ -1,22 +1,4 @@
-/**
- * What a screen reader hears when the fleet agent answers (Q157).
- *
- * The dock's transcript had NO semantics at all: no role, no name, no live region. So a
- * sighted operator watched the reply arrive and a screen-reader user heard nothing —
- * they typed into a box and the app went silent, with no way to know a reply existed
- * short of hunting for it.
- *
- * The obvious fix is wrong. AgentDock.patchAgent APPENDS DELTAS to the trailing bubble,
- * so the transcript mutates once per token: as a live region it would stutter the answer
- * word by word, re-interrupting itself for the length of the reply. That is worse than
- * silence, because it is unstoppable and unreadable. The transcript is therefore a `log`
- * with live updates explicitly OFF, and this rule composes ONE sentence to announce when
- * the turn is finished — the same "narrow the claim, announce the settled fact" move the
- * rest of this dashboard makes.
- *
- * Announcing nothing while busy is deliberate: a spinner is not news, and the reply that
- * follows is the news.
- */
+/** What a screen reader hears when the fleet agent answers. */
 export interface AnnounceMsg {
   role: string
   text: string

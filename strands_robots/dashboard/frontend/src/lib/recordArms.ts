@@ -1,18 +1,7 @@
 /**
- * Say BEFORE the click that a chosen arm cannot report where it is.
- *
- * The backend now refuses this (record_joints.refusal -> 409, non-continuable: a missing camera view
- * is a degraded dataset, positions that cannot be read are an empty one). This module asks the same
- * question from the snapshot the screen already has, for the same reason the camera check is asked
- * here as well as there: the operator should find out before they set up the scene and name a dataset,
- * not after.
- *
- * It deliberately mirrors the SERVER'S rule rather than inventing a friendlier one — fresh snapshot,
- * zero joints, and it must be able to DATE the reading. A form that predicted a refusal the server
- * would not make (or blessed one it would) would be worse than no prediction at all.
- *
- * The wording of WHY comes from lib/jointAbsence, which the robot card already uses, so the record
- * screen and the fleet view explain one arm with one sentence.
+ * Say BEFORE the click that a chosen arm cannot report where it is. The backend now refuses
+ * this (record_joints.refusal -> 409, non-continuable: a missing camera view is a degraded
+ * dataset, positions that cannot be read are an empty one).
  */
 
 import type { Peer } from '../types'
@@ -38,10 +27,9 @@ function ageS(peer: Peer | null | undefined, nowS: number): number | null {
 }
 
 /**
- * Why this arm cannot be recorded from, or null to proceed.
- *
- * @param slot which side of the pair it was chosen for — the consequence differs: the follower's
- *             positions are the dataset's observations, the leader's are its actions.
+ * Why this arm cannot be recorded from, or null to proceed. @param slot which side of the pair
+ * it was chosen for — the consequence differs: the follower's positions are the dataset's
+ * observations, the leader's are its actions.
  */
 export function armJointWarning(
   peer: Peer | null | undefined,

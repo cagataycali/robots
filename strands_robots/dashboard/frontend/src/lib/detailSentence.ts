@@ -1,26 +1,3 @@
-/**
- * The server's error, in the words it wrote — even when it wrote them as JSON (Q99).
- *
- * MEASURED against the running dashboard 2026-08-21. Its richest errors do not come back as a
- * sentence, they come back as an OBJECT:
- *
- *   GET /api/devices/logs/no-such-peer -> 404
- *   {"detail":{"error":"unknown peer no-such-peer",
- *              "hint":"only locally spawned robots keep a log ring buffer",
- *              "managed_peers":["so101-follower","so101-follower-twin","so101-leader"]}}
- *
- * Someone wrote that hint, and listed the three peers that WOULD have worked, on purpose. What the
- * screen showed was `JSON.stringify` of it: braces, quotes and commas across an error toast, with the
- * answer buried in the middle. The failure is quiet — nothing is lost, so no test complains — and it
- * lands on exactly the errors that took the most care to write. Eight raises in the dashboard package
- * carry a dict detail, all in the same shape: an `error`, sometimes a `detail` naming the specific
- * cause, sometimes a `hint` naming the remedy, and often a list of the alternatives that exist.
- *
- * So compose the sentence they were always meant to be, in that order. Two rules keep it honest:
- * an unrecognised shape falls back to the JSON rather than a friendly summary that drops a field, and
- * a list of alternatives is never truncated silently — it says how many more there are.
- */
-
 /** Longest a list of alternatives may run before it starts counting instead. */
 const MAX_LISTED = 6
 
@@ -72,12 +49,7 @@ function validationSentence(items: readonly unknown[]): string | null {
   return parts.length ? parts.join('; ') : null
 }
 
-/**
- * The detail of an error response as one readable sentence.
- *
- * Never empty, and never lossy: an object whose shape this does not recognise comes back as its JSON,
- * because a message that quietly omits a field is worse than an ugly one.
- */
+/** The detail of an error response as one readable sentence. */
 export function detailSentence(detail: unknown): string {
   if (typeof detail === 'string') return detail.trim()
   if (typeof detail === 'number' || typeof detail === 'boolean') return String(detail)

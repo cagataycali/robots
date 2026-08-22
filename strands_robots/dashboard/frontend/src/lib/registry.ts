@@ -1,13 +1,7 @@
 /**
- * Normaliser for `/api/robots/registry`.
- *
- * The endpoint answers a list of rich entries
- * (`{name, description, category, joints, has_sim, has_real}`), but it has also
- * answered a list of bare names and a `{name: definition}` map. Rendering an
- * entry straight into an `<option>` is what React error #31 is - "objects are
- * not valid as a React child" - and because that throws during render it takes
- * the whole dashboard down, not just the picker. So the shape is narrowed once,
- * here, and the UI only ever sees strings.
+ * Normaliser for `/api/robots/registry`. The endpoint answers a list of rich entries (`{name,
+ * description, category, joints, has_sim, has_real}`), but it has also answered a list of bare
+ * names and a `{name: definition}` map.
  */
 
 export type RegistryRobot = {
@@ -17,15 +11,7 @@ export type RegistryRobot = {
   label: string
 }
 
-/**
- * `keyName` is the MAP KEY, and where it exists it is authoritative for the id.
- *
- * In `{name: definition}` shape the key IS the registry id — that is what the spawner takes
- * (registry/robots.py builds every entry's `name` from exactly that key). The value is free to be a
- * description string, and it used to become the id: `{ so101: 'SO-101 6-DOF arm' }` produced
- * name: 'SO-101 6-DOF arm', so the picker looked right and the spawn asked for a robot that does not
- * exist. A description now lands in the LABEL, where a description belongs.
- */
+/** `keyName` is the MAP KEY, and where it exists it is authoritative for the id. */
 function entryToRobot(value: unknown, keyName?: string): RegistryRobot | null {
   if (typeof value === 'string') {
     const text = value.trim()
@@ -51,13 +37,7 @@ function entryToRobot(value: unknown, keyName?: string): RegistryRobot | null {
   return { name, label: bits.length ? `${name} — ${bits.join(', ')}` : name }
 }
 
-/**
- * One name, one option. A registry that answers the same robot twice (a user registry shadowing a
- * built-in, the same list concatenated by a proxy) rendered two identical <option>s with the same
- * value AND the same React key — and a duplicate key means React reuses one element for both, so a
- * later change to one row can render on the other. First wins: the earlier entry is the more
- * specific one in every shape this endpoint has answered.
- */
+/** One name, one option. */
 function dedupe(rows: RegistryRobot[]): RegistryRobot[] {
   const seen = new Set<string>()
   return rows.filter(r => (seen.has(r.name) ? false : (seen.add(r.name), true)))

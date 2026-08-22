@@ -1,23 +1,4 @@
-/**
- * Q74: re-pointing the backend used to send the OLD host's token to the NEW host, silently.
- *
- * Settings ▸ Connection has two fields, "API base URL" and "Auth token (this browser)", and the token
- * is one global slot: `authToken()` reads a single localStorage key and `api()` attaches it as
- * `Authorization: Bearer …` to every request against whatever `backendBase()` currently is. So the
- * ordinary act of looking at another robot — change the URL, press "connect & reload", leave the token
- * field alone because it is a password box showing dots — transmits the credential you were given for
- * one machine to a different address entirely. If that address is a typo, a stale LAN name now owned by
- * something else, or a QR code someone handed you (`?backend=…&token=…` is advertised right there in
- * the tip), the secret is gone with no trace and no undo.
- *
- * A credential belongs to a host. This module says so at the one moment the pairing changes, and it
- * offers the two honest choices instead of picking for the operator: send it, or connect without it.
- *
- * Pure — no storage, no fetch — so every branch is testable, including the ones that must stay quiet.
- * Silence matters as much as the warning here: a dialog on every harmless save teaches people to click
- * through the one that mattered.
- */
-
+/** re-pointing the backend used to send the OLD host's token to the NEW host, silently. */
 export interface ConnectionChange {
   /** the base the app is talking to now ('' = the origin that served the page) */
   currentBase: string
@@ -68,11 +49,8 @@ function isLocal(host: string): boolean {
 }
 
 /**
- * Judge a pending "connect & reload".
- *
- * Only ONE thing is ever escalated: the token moving to a host it was not given for. A token the
- * operator just typed is theirs to aim wherever they like — they are looking at it as they press the
- * button — so a changed token is never questioned, no matter which host it goes to.
+ * Judge a pending "connect & reload". Only ONE thing is ever escalated: the token moving to a
+ * host it was not given for.
  */
 export function connectionChange(c: ConnectionChange): ConnectionVerdict {
   const nextRaw = (c.nextBase ?? '').trim()

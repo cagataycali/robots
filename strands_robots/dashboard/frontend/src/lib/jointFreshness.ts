@@ -1,25 +1,6 @@
 /**
- * How old are the numbers on a joint strip?
- *
- * The strip renders `state.joints` as bold values and filled bars. Nothing in it
- * was a function of TIME, so a state stream that stops leaves the last frame on
- * screen looking exactly like a robot holding position — the frozen-counter class
- * again, on the one surface an operator reads while their hands are on the arm.
- *
- * The card pairs the strip with TelemetryStrip ("stale 7s") and the status
- * sentence ("joints shown are stale"), so there it is covered. RecordPanel does
- * NOT: it renders the strip alone, while the operator hand-guides the leader and
- * watches these numbers to see the follower tracking. That is the worst possible
- * place for a freeze to look like stillness, so the strip has to carry its own
- * age instead of relying on a neighbour.
- *
- * Thresholds are about what the number is USED for, not about the transport:
- *   < 2s   a 10Hz stream with jitter, or a poll boundary: say nothing.
- *   2-10s  lagging - the value is probably still roughly right, but it is not now.
- *   > 10s  frozen - past the ~15s presence heartbeat window, so this is a dead
- *          stream, not a slow one, and the numbers must stop looking authoritative.
- * A strip that never received a frame is NOT stale; it has nothing to be stale
- * about, and the empty state already explains itself.
+ * How old are the numbers on a joint strip? The strip renders `state.joints` as bold values
+ * and filled bars.
  */
 
 export type JointFreshness = 'live' | 'lagging' | 'frozen' | 'unknown'

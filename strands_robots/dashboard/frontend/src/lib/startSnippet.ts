@@ -1,17 +1,4 @@
-/**
- * The code the empty home screen hands the operator (Q46).
- *
- * The hardcoded snippet said `port="/dev/ttyACM0"` — a LINUX path, on a Mac whose arms are at
- * /dev/cu.usbmodem5AB0181806. So the one piece of code this dashboard gives you to copy could not
- * run on the machine you copied it from, and the failure it produces (an open() on a path that does
- * not exist) tells you nothing about why.
- *
- * When a board has actually been detected we can write the truth instead: its real port, and the
- * robot family it was last spawned as. When nothing is detected the placeholder stays — but it is
- * LABELLED as a placeholder, because an example port that looks like a measurement is exactly the
- * mistake this file exists to undo.
- */
-
+/** The code the empty home screen hands the operator. */
 export interface DetectedBoard {
   /** the OS device path, e.g. /dev/cu.usbmodem5AB0181806 */
   device: string

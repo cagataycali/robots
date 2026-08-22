@@ -1,15 +1,6 @@
 /**
- * What a "✓ resolves" verdict actually applies to.
- *
- * The validate button POSTs the provider plus the config CURRENTLY in the form
- * and shows "✓ lerobot_local resolves" in green. The verdict was then cleared on
- * one event only - changing the provider - so editing any FIELD left the green
- * tick in place while the thing it vouched for was gone: paste a different
- * pretrained_name_or_path, or a checkpoint path with a typo, and the form still
- * says the policy resolves. The next click is ▶ Run on a real arm.
- *
- * A verdict is about a specific input, so it is stored with one and stops
- * claiming anything the moment that input changes.
+ * What a "✓ resolves" verdict actually applies to. The validate button POSTs the provider plus
+ * the config CURRENTLY in the form and shows "✓ lerobot_local resolves" in green.
  */
 
 export interface ValidatedInput {

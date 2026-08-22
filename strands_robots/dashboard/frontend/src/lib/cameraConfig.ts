@@ -1,13 +1,4 @@
-/**
- * U19: the camera reconfigure editor's pure half.
- *
- * Rows are what a human edits (strings from <input>s); the config is what the
- * backend takes (lerobot-shaped, typed). The conversion refuses locally with
- * the SAME bounds the server enforces (device_manager.validate_cameras), so
- * the operator reads the refusal next to the field instead of in an HTTP 422 —
- * but the server stays the law: this mirror existing does not excuse it.
- */
-
+/** the camera reconfigure editor's pure half. */
 export interface CamRow {
   name: string
   /** OpenCV index ("0") or a device path ("/dev/video1") — as typed. */
@@ -56,8 +47,8 @@ function intField(row: CamRow, field: 'fps' | 'width' | 'height'): { value?: num
 }
 
 /**
- * Rows -> backend payload. `{ cameras: null }` when every row was removed —
- * detaching all cameras is a legal, deliberate config, not an error.
+ * Rows -> backend payload. `{ cameras: null }` when every row was removed — detaching all
+ * cameras is a legal, deliberate config, not an error.
  */
 export function configFromRows(rows: CamRow[]): { cameras: CamConfig | null; error?: string } {
   const live = rows.filter(r => r.name.trim() || r.indexOrPath.trim() || r.fps.trim() || r.width.trim() || r.height.trim())
@@ -99,18 +90,8 @@ export function applySummary(rows: CamRow[], peerId: string): string {
 export const DEFAULT_MESH_CAMERA_HZ = 5
 
 /**
- * What the fps field actually buys — the sentence that stops a false bug report.
- *
- * `fps` is the CAMERA's capture rate, handed to lerobot's OpenCVCameraConfig.
- * What reaches this dashboard is a different number: every spawned peer
- * publishes frames onto the mesh at `mesh.camera_hz` (5/s by default), so an
- * operator who selects a 1920x1080@30 mode and then watches a ~5 fps preview
- * has no way to tell "my config was ignored" from "this is the publish rate" —
- * and the first conclusion is the one people reach. It also matters the other
- * way: publishing faster than the camera captures cannot invent frames.
- *
- * Returns null when the two rates cannot disagree (publish >= capture, or no
- * capture rate chosen), because a caveat that is not true here is noise.
+ * What the fps field actually buys — the sentence that stops a false bug report. `fps` is the
+ * CAMERA's capture rate, handed to lerobot's OpenCVCameraConfig.
  */
 export function previewRateNote(fps: number | null | undefined, cameraHz?: number | null): string | null {
   const publish = cameraHz == null || !Number.isFinite(cameraHz) || cameraHz <= 0

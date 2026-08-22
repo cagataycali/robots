@@ -1,42 +1,9 @@
-/**
- * What a managed child's DEATH means — U22.
- *
- * THE DEFECT, measured on the live rig 2026-08-21. The sim twin (the only peer
- * publishing joints) was SIGKILLed at 11:52:02Z. The devices drawer said, for the
- * whole day after:
- *
- *     so101-follower-twin   sim · exited
- *     14:00:32 [safety:so101-follower-twin] No emergency-stop resume code set...
- *
- * Both halves of that mislead:
- *
- *  1. "exited" is the word this drawer uses for EVERY death — a clean finish, a
- *     Python traceback, and a kill -9 all read identically. The server has known
- *     better all along: /api/devices reports `returncode` (-9 here), and the
- *     dashboard even logs "child exited (code=-9)" once at INFO. The frontend
- *     simply never asked — `grep returncode` across src/ found nothing.
- *  2. The log tail under it is the child's STARTUP output, not its last words. The
- *     ring buffer keeps 10 lines; a quiet sim that printed nothing for 22h leaves
- *     its birth cry sitting there looking like a cause of death. Read together the
- *     row says "it printed some warnings and exited", which is a story about a
- *     robot that stopped itself. The truth was that something killed it.
- *
- * Why that mattered: two days of supervisor iterations went into rediscovering,
- * from a 38MB server log and hand-written curls, what the exit status says in one
- * word. An operator with no shell has no path to it at all.
- *
- * Both functions are pure and take their evidence as arguments, so the sentences
- * can be tested rather than eyeballed.
- */
-
+/** What a managed child's DEATH means. */
 export interface DeathVerdict {
-  /** the phrase shown where "exited" used to be */
   phrase: string
   /**
-   * true when the status alone does not explain WHO ended it, so the row must not
-   * imply the robot stopped itself. A SIGKILL is the honest example: nothing in
-   * this dashboard sends one (despawn asks with SIGTERM first), so the sender was
-   * outside — the OS under memory pressure, a script, or a person.
+   * true when the status alone does not explain WHO ended it, so the row must not imply the
+   * robot stopped itself.
    */
   unexplained: boolean
 }
@@ -55,8 +22,8 @@ const SIGNALS: Record<number, DeathVerdict> = {
 }
 
 /**
- * `returncode` as Python reports it: 0 clean, >0 a Python-level failure, negative
- * the signal that ended it, and null/undefined "no status recorded".
+ * `returncode` as Python reports it: 0 clean, >0 a Python-level failure, negative the signal
+ * that ended it, and null/undefined "no status recorded".
  */
 export function deathVerdict(returncode: number | null | undefined): DeathVerdict {
   if (returncode === null || returncode === undefined) {
@@ -70,22 +37,7 @@ export function deathVerdict(returncode: number | null | undefined): DeathVerdic
   return SIGNALS[sig] ?? { phrase: `killed by signal ${sig}`, unexplained: true }
 }
 
-/**
- * Is the retained log tail the child's STARTUP burst rather than its last words?
- *
- * The lines carry a bare wall clock ("14:00:32 …") and `started_at` is an epoch
- * second, so the only honest comparison is seconds-past-the-hour: the viewer's
- * timezone may differ from the server's by whole hours, and a claim that flips
- * with the reader's location is worse than no claim. A half-hour zone (India,
- * Nepal) therefore yields `null` — no claim — by design.
- *
- * Every clocked line must fall inside the window, not just the last one: a child
- * whose 10 retained lines are spread across hours is genuinely still talking, and
- * one coincidental match must not relabel it.
- *
- * Returns null whenever the evidence cannot decide, and callers must render
- * nothing for null — a guess here would re-tell exactly the story this fixes.
- */
+/** Is the retained log tail the child's STARTUP burst rather than its last words? */
 export function retainedOutputIsStartup(
   input: { lines?: string[] | null; startedAt?: number | null; windowS?: number },
 ): boolean | null {

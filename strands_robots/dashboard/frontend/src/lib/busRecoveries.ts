@@ -1,20 +1,3 @@
-/**
- * How an arm reports that its serial bus had to be un-stranded (BUGS.md Q81).
- *
- * The backend cure is invisible on purpose: an exchange that dies mid-conversation leaves the motor
- * bus marked in-use, every later read fails before the port is even touched, and until this was fixed
- * an arm simply went mute for hours with healthy-looking presence. Now any read clears that flag and
- * the arm heals inside one telemetry cycle - which is right, and which is exactly why the operator
- * must still be told it happened. A flag strands for PHYSICAL reasons: a marginal USB cable, a hub
- * browning out under load, a connector working loose as the arm moves. Silence would hide a
- * degrading rig behind perfect joint traces until the recovery itself failed.
- *
- * So: nothing at all while the count is zero (a healthy arm earns no ornament), a quiet neutral mark
- * for the occasional hiccup, and a warn tone once the number stops looking like bad luck. The
- * threshold is a judgement, not a measurement, and it is stated here rather than buried in JSX so it
- * can be argued with.
- */
-
 /** Above this many strandings in one session, the cable is the suspect - not chance. */
 export const BUS_RECOVERY_WARN_AT = 5
 

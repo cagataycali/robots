@@ -1,22 +1,7 @@
 /**
- * Human names and grouping for the policy selector — UX_REVIEW's #1 ranked
- * finding ("the bare word `mock` beside live telemetry is the single most
- * trust-corrosive string in the app", and `cosmos3` / `curobo` / `wbc_gait` are
- * registry identifiers, not names a person recognises).
- *
- * Two rules, both pinned by tests:
- *
- * - **A name is never invented.** Only identifiers listed here get a friendly
- *   label; anything the backend adds tomorrow renders VERBATIM and lands in
- *   "Other". A plausible-but-wrong label on the control that decides what drives
- *   a physical arm is worse than an ugly one.
- * - **Grouping may never lose a policy.** `groupPolicies` returns every input,
- *   exactly once, in a fixed group order — a provider silently missing from the
- *   dropdown is a policy the operator cannot choose and cannot see is missing.
- *
- * The labels say what the thing NEEDS or WHERE it runs, because that is the
- * decision the operator is actually making: a local checkpoint, a server that
- * must be up, a planner that learns nothing, or the built-in safe test.
+ * Human names and grouping for the policy selector — UX_REVIEW's #1 ranked finding ("the bare
+ * word `mock` beside live telemetry is the single most trust-corrosive string in the app", and
+ * `cosmos3` / `curobo` / `wbc_gait` are registry identifiers, not names a person recognises).
  */
 
 export const POLICY_GROUPS = [
@@ -59,7 +44,6 @@ export function policyLabel(name: string): string {
   return KNOWN[name]?.label ?? name
 }
 
-/** True when the label is ours rather than the raw id — used to decide tooltips. */
 export function isKnownPolicy(name: string): boolean {
   return name in KNOWN
 }
@@ -71,8 +55,8 @@ export function policyGroup(name: string): PolicyGroup {
 export interface GroupedPolicies<T> { group: PolicyGroup; items: T[] }
 
 /**
- * Group in POLICY_GROUPS order, dropping empty groups, preserving the backend's
- * order inside each group. Every input comes back exactly once.
+ * Group in POLICY_GROUPS order, dropping empty groups, preserving the backend's order inside
+ * each group. Every input comes back exactly once.
  */
 export function groupPolicies<T>(items: readonly T[], nameOf: (item: T) => string): GroupedPolicies<T>[] {
   const out: GroupedPolicies<T>[] = []

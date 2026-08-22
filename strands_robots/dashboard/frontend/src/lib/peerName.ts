@@ -1,21 +1,4 @@
-/**
- * What should this robot be CALLED? (Q55)
- *
- * `/api/devices/spawn` has always accepted a caller-chosen `peer_id` — it validates it, remembers it
- * in the board's profile, and uses it as a zenoh key segment, so it is the name that appears on the
- * card, in the teleop pair, in the record panel and in every log line. The spawn form never sent it,
- * so every arm on this desk was named `so101-real-4718`: a timestamp the operator did not choose,
- * could not read as "the left arm", and cannot change afterwards (there is no rename — a peer id is
- * a live key, renaming it would mean a respawn).
- *
- * This is the client half. It mirrors the server's rule rather than inventing a second one:
- * PEER_NAME_RE is _PEER_ID_RE from device_manager.py, and a test pins the two together — a charset
- * the browser accepts but the server refuses would move the refusal to after the operator pressed
- * the button, which is the failure this whole sweep exists to remove.
- *
- * Posture: an empty box is NOT a problem. "Let the server name it" is a legitimate, common choice,
- * so it is allowed and simply says out loud what the generated name will look like.
- */
+/** What should this robot be CALLED? */
 
 /** Exactly `_PEER_ID_RE` in strands_robots/dashboard/device_manager.py. Kept in sync by a test. */
 export const PEER_NAME_RE = /^[A-Za-z0-9._:-]{1,64}$/
@@ -57,13 +40,9 @@ function freeVariant(name: string, taken: Set<string>): string | null {
 }
 
 /**
- * Judge the Name field.
- *
- * @param raw What the operator typed.
- * @param opts.existing Peer ids that already exist (live children AND remembered profiles): a
- *   collision is the server's 409, reported here while nothing has been started yet. An empty list
- *   is "no evidence", and no evidence never produces a refusal.
- * @param opts.robotName The robot family, used only to describe the generated name honestly.
+ * Judge the Name field. @param raw What the operator typed. @param opts.existing Peer ids that
+ * already exist (live children AND remembered profiles): a collision is the server's 409,
+ * reported here while nothing has been started yet.
  */
 export function peerNameField(
   raw: string,

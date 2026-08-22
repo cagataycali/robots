@@ -1,20 +1,7 @@
 /**
- * Loss history for a training job, accumulated from polled status snapshots.
- *
- * The trainer's status endpoint reports only the LATEST (step, loss) pair -
- * it parses the tail of the train log, there is no history API. So the
- * dashboard builds the curve itself from what it witnesses: each poll may
- * contribute one point. That shapes the rules here:
- *
- * - the same step reported twice is ONE point (polls outpace log lines)
- * - a step LOWER than the last seen means the job restarted; the old curve
- *   belongs to a run that no longer exists, so the trace resets rather than
- *   drawing a lying sawtooth
- * - non-finite loss (NaN in the log) is dropped from the trace but the
- *   caller can still surface it - a NaN loss is diagnostic gold, just not
- *   plottable
- * - capped: beyond `cap` points every second point of the OLDER half is
- *   dropped, preserving recent detail while keeping the early shape
+ * Loss history for a training job, accumulated from polled status snapshots. The trainer's
+ * status endpoint reports only the LATEST (step, loss) pair - it parses the tail of the train
+ * log, there is no history API.
  */
 
 export interface LossPoint {
@@ -50,19 +37,7 @@ export function pushLoss(
   return next
 }
 
-/**
- * The vertical band a trace is drawn in — and whether it had to be INVENTED.
- *
- * A sparkline that always scales to min..max is a liar about flat data: a run stuck at loss
- * 2.5000 ± 0.0004 fills the full height with a dramatic mountain range, and the operator reads
- * progress that is not happening. Amplifying noise to 34 pixels is not neutral drawing; it is a
- * claim about the run.
- *
- * So the band has a FLOOR of 2% of the values' own magnitude. Real variation (a loss falling from
- * 2.5 to 0.8) is far wider than the floor and scales exactly as before; negligible variation gets
- * a band it cannot fill, so a flat run looks flat and a padded band is reported as `flat: true`
- * for the caller to say so in words.
- */
+/** The vertical band a trace is drawn in — and whether it had to be INVENTED. */
 export function lossBand(points: readonly LossPoint[]): { lo: number; hi: number; flat: boolean } {
   let lo = Infinity
   let hi = -Infinity

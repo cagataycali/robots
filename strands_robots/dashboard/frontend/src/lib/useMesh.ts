@@ -20,11 +20,7 @@ export interface MeshStore {
   loaded: boolean
   /** epoch ms of the last frame on the socket (undefined = none yet) */
   lastEventAt?: number
-  /** dead managed children, already pruned from `peers` (U22). [] = none, and an
-   *  older server that never sends the field also yields [] - absentNotice treats
-   *  both as "nothing to say", never as "all present". */
   absentChildren: AbsentChild[]
-  /** Q155b: ids we hold a live child process for that the fleet has never heard of. */
   quietChildren: string[]
   /** true once the socket has opened at least once this session */
   everOpen: boolean
@@ -43,9 +39,9 @@ export function useMesh(): MeshStore {
   const [quietChildren, setQuietChildren] = useState<string[]>([])
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [loaded, setLoaded] = useState(false)
-  // When the last frame arrived, and whether the socket ever opened this
-  // session: lib/linkHealth needs both to tell ordinary startup from a
-  // reconnect, and to say how old a frozen fleet view is IN SECONDS.
+  // When the last frame arrived, and whether the socket ever opened this session: lib/linkHealth
+  // needs both to tell ordinary startup from a reconnect, and to say how old a frozen fleet view
+  // is IN SECONDS.
   const [lastEventAt, setLastEventAt] = useState<number | undefined>(undefined)
   const [everOpen, setEverOpen] = useState(false)
   const retryRef = useRef(0)
@@ -62,23 +58,15 @@ export function useMesh(): MeshStore {
     let openedAt: number | undefined
 
     const connect = () => {
-      // `closed` was checked when the retry was SCHEDULED, not when it fired, so
-      // a backoff already in flight at teardown opened a socket afterwards: a
-      // zombie /ws/mesh nobody closes, still pushing peers into an unmounted
-      // tree. Both halves matter - clear the pending timer AND refuse here.
+      // `closed` was checked when the retry was SCHEDULED, not when it fired, so a backoff already
+      // in flight at teardown opened a socket afterwards: a zombie /ws/mesh nobody closes, still
+      // pushing peers into an unmounted tree.
       if (closed) return
       framesThisSocket = 0
       openedAt = undefined
       ws = new WebSocket(wsUrl('/ws/mesh'))
       setConn('connecting')
 
-      // Opening is NOT success: the server accepts and authenticates the socket before
-      // it knows whether the mesh bridge can produce a snapshot, so a reset here is the
-      // Q40 mistake — the delay would stay at 1s forever against a broken bridge. The
-      // first frame is the evidence, and on a healthy socket it lands in milliseconds.
-      // openedAt is stamped INSIDE onopen, not here: a handshake that hangs for 30
-      // seconds and never opens would otherwise satisfy the "stayed open long enough"
-      // evidence and clear the very history it is proving.
       ws.onopen = () => { openedAt = Date.now(); setConn('open'); setEverOpen(true) }
       ws.onclose = (ev) => {
         // 1008 is the server refusing our token. Retrying forever just hides a
@@ -88,15 +76,7 @@ export function useMesh(): MeshStore {
           frames: framesThisSocket,
           openMs: openedAt !== undefined ? Date.now() - openedAt : undefined,
           code: ev.code,
-          // Q88: a lapsed sign-in means the HANDSHAKE is refused (403) and no close code
-          // ever arrives, so `code === 1008` cannot see it. Without this the fleet view
-          // just freezes and reconnects forever — the exact shape that ran for 19.3 hours
-          // on the camera sockets. AuthGate re-gates within 30s; this stops the traffic now.
           sessionExpired: sessionVerdict(authToken(), Date.now() / 1000).refusesUntilSignIn,
-          // Q102: expiry is only ONE way to be refused. A token rotated by a dashboard restart, a
-          // stale ?token= link or a revoked session is invalid without being expired, and the
-          // handshake refusal reaches the browser as 1006 — so without this the fleet view
-          // reconnects against a door that already said no, exactly like the camera tiles did.
           pageRefused: authRefusedRecently(),
         })
         retryRef.current = plan.attempt
@@ -114,9 +94,8 @@ export function useMesh(): MeshStore {
         switch (ev.type) {
           case 'snapshot':
             setDashboardId(ev.dashboard_peer_id)
-            // Peer merging lives in ./meshPeers as pure functions (tested there; inside this
-            // handler it needed a live websocket). The snapshot's last_seen values are the
-            // SERVER's clock, so mergeMeshEvent rebases them by AGE into this browser's.
+            // Peer merging lives in ./meshPeers as pure functions (tested there; inside this handler it
+            // needed a live websocket).
             setPeers(p => mergeMeshEvent(p, ev, Date.now() / 1000))
             if (ev.mesh) setMesh(ev.mesh)
             // Replaced wholesale, never merged: the list IS the current answer, so a child

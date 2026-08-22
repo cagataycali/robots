@@ -1,18 +1,4 @@
-/**
- * "Where did my robot go?" — the fleet-side half of U22.
- *
- * A peer that stops publishing is pruned from the snapshot, correctly: it really has
- * left the fleet. The consequence was that a robot the operator STARTED could die and
- * the only visible change was one fewer card. Measured on the live rig: the sole peer
- * publishing joints was SIGKILLed, and the fleet screen's answer was silence for a day.
- *
- * The server now sends `absent_children` inside the snapshot (dead managed children,
- * already pruned from `peers`). This module turns that list into ONE quiet line that
- * points at the devices drawer, where the full ledger and the log ring already live.
- *
- * Deliberately not corpse cards on the fleet grid: a card invites a click, and every
- * command on it would refuse. A card is for something you can act on.
- */
+/** Fleet-side answer to "where did my robot go?" — children we hold a process for that the snapshot no longer lists. */
 import { deathVerdict } from './childDeath'
 
 export interface AbsentChild {
@@ -38,13 +24,12 @@ export function shortCause(returncode?: number | null): string {
 }
 
 export function absentNotice(children: readonly AbsentChild[] | null | undefined): AbsentNotice | null {
-  // An older server sends no field at all. Absent means "this server cannot tell you",
-  // which must render nothing — inventing "all present" from silence is the U15 lesson.
+  // An older server sends no field at all.
   if (!Array.isArray(children) || children.length === 0) return null
   const named = children.filter(c => c && typeof c.peer_id === 'string' && c.peer_id.length > 0)
-  // A child that exited 0 finished its job: a recording that completed and left the mesh
-  // is EXPECTED, and a bar that announces expected things gets ignored, taking the
-  // surprises with it. Clean exits stay in the drawer's ledger.
+  // A child that exited 0 finished its job: a recording that completed and left the mesh is
+  // EXPECTED, and a bar that announces expected things gets ignored, taking the surprises with
+  // it.
   const surprises = named.filter(c => c.returncode !== 0)
   if (surprises.length === 0) return null
   const detail = surprises
@@ -58,32 +43,17 @@ export function absentNotice(children: readonly AbsentChild[] | null | undefined
   return { headline, detail, count: surprises.length }
 }
 
-/**
- * Q155b: the OTHER way a robot you started can be missing — it is still RUNNING and the
- * fleet has never heard of it. The server sends `managed_no_presence`: ids the dashboard
- * holds a live child process for, with no peer at all (measured on the real rig — a sim
- * child alive at 25h with no card, because a peer that does not appear cannot be rendered
- * stale, mute, or at all).
- *
- * A separate sentence from death on purpose. "Gone" would be a lie about a live process,
- * and the remedy is the opposite: nothing needs restarting, something needs READING — the
- * child's own log holds the refusal (a missing calibration, a busy servo bus), and despawn
- * is there if it is not wanted. Same destination as the death chip, since the drawer is
- * where logs and the managed ledger already live.
- */
 export function quietNotice(
   ids: readonly string[] | null | undefined,
   dead: readonly AbsentChild[] | null | undefined = [],
 ): AbsentNotice | null {
-  // An older server sends no field: absent means "this server cannot tell you", which
-  // renders nothing. Claiming "all children reported in" from silence is the U15 lesson.
+  // An older server sends no field: absent means "this server cannot tell you", which renders
+  // nothing.
   if (!Array.isArray(ids) || ids.length === 0) return null
   const buried = new Set(
     (Array.isArray(dead) ? dead : []).map(c => c && c.peer_id).filter(Boolean) as string[],
   )
   // The server derives these from the LIVE managed set, so an id cannot be in both lists.
-  // Enforced here anyway: if it ever happens, DEATH wins — it is the more specific claim
-  // (it carries an exit status) and two chips about one robot would read as two robots.
   const quiet = ids.filter(id => typeof id === 'string' && id.length > 0 && !buried.has(id))
   if (quiet.length === 0) return null
   const detail = quiet

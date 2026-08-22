@@ -1,23 +1,4 @@
-/**
- * Q77: the chosen servo bus can go stale between picking it and pressing spawn.
- *
- * DevicePanel's port <select> disables options that are already claimed and only lists ports the last
- * scan saw — both correct AT THE MOMENT OF RENDER. But `port` is held in state, and two things happen
- * to a selected value without anybody touching the form:
- *
- * 1. VANISHED — the board is unplugged, or macOS re-enumerates it under a new /dev path (these arms
- *    come back as a different tty on this machine routinely). The <select> then has no matching option,
- *    so it renders BLANK while state still holds the old path: the form looks unfilled, the button is
- *    enabled because the string is non-empty, and spawning targets a device file that no longer exists.
- *    The failure arrives from a serial driver inside a child process, minutes from the field that caused
- *    it.
- * 2. CLAIMED — another spawn (or the auto-spawn watcher) took that bus in the meantime. Two owners on
- *    one Feetech bus is the "Port is in use!" collision class that bus_access.py exists to prevent, and
- *    it usually presents as an arm that spawns and dies rather than as a refusal.
- *
- * A form that has gone stale should say so where the choice was made. Pure: no React, no fetch.
- */
-
+/** the chosen servo bus can go stale between picking it and pressing spawn. */
 export interface PortChoiceInput {
   /** The path currently held in the form. '' = nothing picked yet. */
   chosen: string

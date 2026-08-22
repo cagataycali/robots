@@ -1,15 +1,11 @@
+/** "Why does this arm report no joints?" — asked ONCE per peer, shared by every screen that asks. */
 import { useEffect, useState } from 'react'
 import { api } from './endpoints'
 import { jointFailure, jointFailureLine, jointFailureBadge, verdictIsStale, type JointFailure } from './jointFailure'
 
 /**
- * "Why does this arm report no joints?" — asked ONCE per peer, shared by every screen that asks.
- *
- * The fleet grid renders a card per peer, so a naive fetch-per-card would ask the same question again on
- * every remount and every card of a jointless fleet at once. The answer is also nearly static: the cause is
- * a line already written in a ring buffer, and mesh/core repeats it at DEBUG only, so re-asking learns
- * nothing. Hence a module-level cache with in-flight de-duplication — and it is keyed by peer, so a
- * respawned arm that fails DIFFERENTLY needs `forgetJointFailure` (called by the code that respawns).
+ * "Why does this arm report no joints?" — asked ONCE per peer, shared by every screen that
+ * asks.
  */
 type Entry = { line: string | null; badge: string | null; at?: number }
 const CACHE = new Map<string, Entry>()
@@ -23,17 +19,16 @@ const NO_LOG: Entry = {
 }
 
 /**
- * A check that only runs every TICK_MS must treat a verdict that will expire BEFORE THE NEXT CHECK as
- * already expired. Measured on the live dashboard: the 60s tick fired ~50ms before the 60s TTL elapsed, the
- * re-ask was refused, and the next chance was 90s — so a one-tick boundary silently halved the freshness
- * guarantee. Asking "will this still be fresh when I next look?" removes the boundary entirely.
+ * A check that only runs every TICK_MS must treat a verdict that will expire BEFORE THE NEXT
+ * CHECK as already expired.
  */
 const TICK_MS = 30_000
 
 async function load(peerId: string): Promise<Entry> {
   const cached = CACHE.get(peerId)
-  // An old excuse must not outlive the fault: a respawn this UI never saw (no pid/started_at on a peer)
-  // would otherwise keep accusing an arm that was fixed. verdictIsStale is the pure, tested policy.
+  // An old excuse must not outlive the fault: a respawn this UI never saw (no pid/started_at on
+  // a peer) would otherwise keep accusing an arm that was fixed. verdictIsStale is the pure,
+  // tested policy.
   if (cached && !verdictIsStale(cached.at, Date.now() + TICK_MS / 6)) return cached
   const running = INFLIGHT.get(peerId)
   if (running) return running
@@ -56,10 +51,8 @@ async function load(peerId: string): Promise<Entry> {
 }
 
 /**
- * Called when an arm is respawned: the next question must reach the NEW log, not the old verdict.
- * Accepts null/undefined because a caller may be forgetting a name it has not validated yet (the spawn
- * form's peer id) — dropping nothing is the right answer there, NOT clearing every arm's verdict, so an
- * empty name must not be mistaken for "forget all". Only an explicit no-argument call clears everything.
+ * Called when an arm is respawned: the next question must reach the NEW log, not the old
+ * verdict.
  */
 export function forgetJointFailure(peerId?: string | null): void {
   if (arguments.length === 0) { CACHE.clear(); return }

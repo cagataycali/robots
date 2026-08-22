@@ -1,15 +1,7 @@
 /**
- * Is pressing ▶ about to move METAL, or pixels?
- *
- * JOURNEYS.md #3: with a policy selected, typing a sentence enabled ▶, and the
- * 4th click moved a real arm with zero confirmation — no dialog, no mention of
- * the word "physical" anywhere in the app. The e-stop has a confirm sheet; the
- * thing that STARTS motion had none.
- *
- * The mesh does not publish a `mode` field, so physicality is inferred from
- * what a peer announces: `hw` is set by mesh/core.py to the inner lerobot
- * device's name (e.g. "so_follower") and only exists when a real device object
- * is attached. Pure module, no React, so it can be checked with node directly.
+ * Is pressing ▶ about to move METAL, or pixels? JOURNEYS.md #3: with a policy selected, typing
+ * a sentence enabled ▶, and the 4th click moved a real arm with zero confirmation — no dialog,
+ * no mention of the word "physical" anywhere in the app.
  */
 import type { Presence } from '../types'
 
@@ -23,9 +15,8 @@ export type RunRisk = {
 }
 
 /**
- * Errs toward "physical". A peer whose nature we cannot establish gets the
- * confirm sheet: a needless dialog costs one click, a missing one costs a
- * collision.
+ * Errs toward "physical". A peer whose nature we cannot establish gets the confirm sheet: a
+ * needless dialog costs one click, a missing one costs a collision.
  */
 export function runRisk(presence?: Presence | null): RunRisk {
   const hw = typeof presence?.hw === 'string' ? presence.hw.trim() : ''

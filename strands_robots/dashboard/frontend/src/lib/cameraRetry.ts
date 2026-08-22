@@ -1,21 +1,6 @@
 /**
- * When a camera socket may try again — and, crucially, when its attempt counter is
- * allowed to forget the failures.
- *
- * MEASURED INCIDENT (BUGS.md Q40): the live dashboard's log held 63,906 `connection
- * open` lines in ten hours — 1.7 sockets per second, nearly all
- * `/ws/camera/so101-arm-1/top`, from a phone on cellular data, for an arm that was not
- * running. CameraTile already had exponential backoff capped at 10s, which would be
- * ~3,600 attempts in that window, not 63,906. The backoff was not broken; it was being
- * RESET. `ws.onopen` set `tries = 0`, and this socket does open: the server accepts the
- * handshake, authenticates it, finds nothing publishing and closes. Every failure
- * therefore looked like a success followed by bad luck, so the delay was 1s forever.
- *
- * The lesson generalises past this file: a connection that COMPLETES A HANDSHAKE has
- * not proved anything. Progress is delivered data, or at least surviving long enough
- * that the next attempt is not obviously futile. So the counter resets on evidence —
- * a frame arrived, or the socket stayed open past `MIN_USEFUL_OPEN_MS` — and an
- * accepted-then-immediately-closed socket is counted as the failure it is.
+ * When a camera socket may try again — and, crucially, when its attempt counter is allowed to
+ * forget the failures.
  */
 
 /** A socket that closes sooner than this proved nothing, whatever its handshake did. */
@@ -24,20 +9,6 @@ export const MIN_USEFUL_OPEN_MS = 20_000
 /** Backoff ceiling. A camera the operator is waiting for should still recover on its own. */
 export const MAX_RETRY_MS = 30_000
 
-/**
- * Q51. Frames are evidence that the endpoint WORKS — they are not evidence that this
- * viewer can sustain it. Measured on the live dashboard: 0.45 MB/s for a single tile
- * (4.6 fps at ~97 KB a frame, ~3.6 Mbit/s), and one phone on cellular reopening the
- * same camera 1.55 times a second for eleven hours. Each of those sockets very likely
- * DID deliver a frame or two before the link gave up, and `frames > 0` reset the
- * counter to a 1s delay — so the generous rule turned a link that cannot keep up into
- * a permanent storm, and no amount of backoff tuning below it could have helped.
- *
- * So: a short-lived socket that keeps recurring is CHURN, however many frames it moved.
- * The floor is deliberately mild — the tile still refreshes every few seconds, which is
- * the honest best a strained link can do — and it is chosen by counting opens in a
- * rolling minute rather than by guessing at bandwidth.
- */
 export const CHURN_OPENS_PER_MIN = 6
 export const CHURN_FLOOR_MS = 5_000
 
@@ -52,19 +23,7 @@ export interface SocketOutcome {
   code?: number
   /** how many times THIS tile has opened a socket in the last 60s (this one included) */
   recentOpens?: number
-  /**
-   * Q88: the page's own sign-in has lapsed, so the handshake is being REFUSED (403) before a socket
-   * exists. Measured on the live rig: 19.3 hours of refused reopens from one phone, because a
-   * refused handshake carries no close code and every rule here reasons about sockets that opened.
-   */
   sessionExpired?: boolean
-  /**
-   * Q102: this PAGE was refused (401/403) moments ago, so a socket that never opened was refused too.
-   * The sibling of sessionExpired for a token that is invalid rather than expired — rotated by a
-   * dashboard restart, a stale ?token= link, a revoked session. Neither the close code (1006 on a
-   * refused handshake) nor the token's own `exp` can see that, and AuthGate checks once on mount and
-   * never again, so without this the tile blames the camera for as long as the page stays open.
-   */
   pageRefused?: boolean
 }
 
@@ -77,16 +36,6 @@ export interface RetryPlan {
   reason: string
 }
 
-/**
- * Exponential with a ceiling: 1s, 2s, 4s, 8s, 16s, 30s…
- *
- * Replaces cameraState's retryDelayMs, deleted in Q156: it survived as a duplicate
- * carrying the comment "kept only so the timing here stays comparable", and the comparison
- * was FALSE — that curve capped at 10s where this one caps at 30s, so a reader checking one
- * against the other got a wrong answer with a reassuring note attached. A second source of
- * truth kept for comparison is worse than no second source, and the ceiling below is now
- * asserted by name so the divergence cannot come back quietly.
- */
 export function backoffMs(attempt: number): number {
   return Math.min(MAX_RETRY_MS, 1000 * Math.pow(2, Math.max(0, attempt - 1)))
 }
@@ -99,9 +48,6 @@ export function planRetry(
   if (sessionExpired) {
     return { attempt, delayMs: null, reason: 'this sign-in has expired — sign in again' }
   }
-  // Q102: the page is being refused and this socket NEVER OPENED — the same door, the same no.
-  // Requires `never opened`: an established stream that drops while some unrelated request 401s is
-  // a camera event, and calling that unauthorized would hide a real hardware fault behind a login.
   if (pageRefused && openMs === undefined && frames === 0) {
     return { attempt, delayMs: null, reason: 'this page is being refused — sign in again (the camera was never asked)' }
   }

@@ -1,15 +1,4 @@
-/**
- * WHY does this arm report no joints? — read out of its own log ring buffer.
- *
- * Both real arms on this fleet have been jointless since they spawned three days ago, while every other
- * surface calls them healthy: presence connected, camera frames flowing, and — the cruel part — the LAST
- * TWO LINES of their log are "hardware connected" and "<peer> (real @ /dev/cu.usbmodem…) online". The
- * failure is a WARNING several lines above the reassuring tail, and mesh/core logs repeats at DEBUG only,
- * so it never appears again. Nobody reads line 8 of 10.
- *
- * This turns that one line into a sentence with a remedy. It never guesses: an exception it does not
- * recognise is quoted VERBATIM, because a wrong remedy for a hardware fault is worse than no remedy.
- */
+/** WHY does this arm report no joints? — read out of its own log ring buffer. */
 export interface JointFailure {
   /** the exception class, when the line named one */
   kind: string | null
@@ -28,8 +17,8 @@ const EXC = /^([A-Za-z_][A-Za-z0-9_]*)\(/
 const PORT = /['"](\/dev\/[^'"]+)['"]/
 
 /**
- * @param lines the ring buffer, oldest first (GET /api/devices/logs/{peer})
- * @returns null when nothing in the buffer explains a missing-joints state
+ * @param lines the ring buffer, oldest first (GET /api/devices/logs/{peer}) @returns null when
+ * nothing in the buffer explains a missing-joints state
  */
 export function jointFailure(lines: string[] | null | undefined): JointFailure | null {
   const list = (lines ?? []).filter(l => typeof l === 'string')
@@ -61,11 +50,7 @@ export function jointFailure(lines: string[] | null | undefined): JointFailure |
   return out
 }
 
-/**
- * CARD-SIZED: the cause in a few words, for the fleet grid where an operator looks FIRST. The remedy is
- * deliberately left to the detail view — a card that tries to hold a paragraph stops being scannable, and
- * the point here is only to turn "no joint data" into "no joint data, and here is which kind of problem".
- */
+/** CARD-SIZED: the cause in a few words, for the fleet grid where an operator looks FIRST. */
 export function jointFailureBadge(f: JointFailure | null): string | null {
   if (!f) return null
   if (/holds .*serial port|holds \/dev/.test(f.headline)) return 'the serial port is held by something else'
@@ -83,14 +68,8 @@ export function jointFailureLine(f: JointFailure | null): string | null {
 }
 
 /**
- * IS A CACHED VERDICT STILL WORTH BELIEVING?
- *
- * The verdict is read from a 10-line ring buffer, and for one running process it never changes (mesh/core
- * repeats the cause at DEBUG only). But a RESPAWNED arm can fail differently — or be fixed — and this
- * server exposes no spawn identity on a peer (no pid, no started_at), so the UI cannot always SEE the
- * restart that invalidates the answer. Hence a modest age limit as a net beneath the explicit
- * forgetJointFailure() calls: an excuse still on screen for an arm that was fixed is worse than one extra
- * request a minute, and the request is only made while the arm is still mute.
+ * IS A CACHED VERDICT STILL WORTH BELIEVING? The verdict is read from a 10-line ring buffer,
+ * and for one running process it never changes (mesh/core repeats the cause at DEBUG only).
  */
 export const VERDICT_TTL_MS = 60_000
 

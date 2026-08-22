@@ -1,18 +1,4 @@
-/**
- * R1 / UX_REVIEW:107 — the copy for the scariest button in the collect flow.
- *
- * It used to say `open session`, which describes a data structure. What the
- * click actually does to the room: both arm peers are DESPAWNED (their cards
- * and telemetry leave the fleet), their USB ports are handed to the recorder,
- * and the follower's motors are energised to hold position. Nothing is
- * recorded yet — that waits for the first episode — but two real arms have
- * changed state, one of them now stiff.
- *
- * So the button names the action and the panel states the consequence BEFORE
- * the click, and in rehearsal mode (recordApi fell back to the in-browser mock
- * on a 404) the button says so itself — a user must never fill this form and
- * find out at the end that nothing was written.
- */
+/** R1 / UX_REVIEW:107 — the copy for the scariest button in the collect flow. */
 
 export interface OpenAction {
   label: string
@@ -33,8 +19,8 @@ const MOCK_HINT =
   'taken and no dataset is written. The buttons work so you can learn the flow.'
 
 /**
- * @param mock true = in-browser rehearsal, false = real recorder,
- *             null/undefined = not known yet (claim neither).
+ * @param mock true = in-browser rehearsal, false = real recorder, null/undefined = not known
+ * yet (claim neither).
  */
 export function openActionCopy(mock: boolean | null | undefined): OpenAction {
   if (mock === true) {

@@ -1,24 +1,6 @@
 /**
- * What the card may claim when a run/stop request to a ROBOT fails.
- *
- * useTask's catch collapsed every failure into `phase: 'failed'` plus the raw
- * message — i.e. "it did not happen". On this endpoint that is the most
- * dangerous sentence in the dashboard: POST /api/robots/<peer>/task dispatches a
- * policy to a real arm, and api() throws HttpError(0) both for a request that
- * never left the machine AND for one that reached the server, dispatched, and
- * lost the answer (a 5xx means the handler already ran). "failed" then re-enables
- * ▶ under a hand that is about to reach into a workspace where an arm may be
- * moving under policy control — and a second press dispatches a SECOND task.
- *
- * The mirror image on stop is just as bad: the answered path already refuses to
- * say "stopped" on silence (no_answer -> "may still be moving"), but the
- * exception path printed a bare network message, which reads like the stop was
- * never needed.
- *
- * There is a real observer to hand the operator off to: the peer's own status
- * wins over our optimistic phase in useTask, so if the task did start, the card
- * says "running" within a poll or two. The honest answer is therefore not "we do
- * not know" but "watch this card, and keep your hands clear until it tells you".
+ * What the card may claim when a run/stop request to a ROBOT fails. useTask's catch collapsed
+ * every failure into `phase: 'failed'` plus the raw message — i.e. "it did not happen".
  */
 import { refusedBeforeActing } from './estopOutcome'
 

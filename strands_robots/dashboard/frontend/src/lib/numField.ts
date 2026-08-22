@@ -1,19 +1,4 @@
-/**
- * A number an operator typed, and whether we understood it — the general form of the record
- * sheet's episode parse (lib/episodeTarget.ts, BUGS.md Q59), for the training screen.
- *
- * `type="number"` is not validation. It stops most junk keystrokes and then hands you `""`, so
- * `Number(raw) || fallback` reads as harmless and is not:
- *
- *   steps:      cleared field → 10000 steps of fine-tuning (GPU hours, silently)
- *   n_episodes: cleared field → 5 episodes;  duration: cleared → 10s
- *   AND: `||` only catches 0 and NaN, so a MINUS sign sails straight through — `steps: -100` and
- *   `n_episodes: -3` were sent to the API verbatim, and a negative collect still grabs the arms
- *   before anything downstream can complain.
- *
- * So bounds are stated, not assumed, and a value we cannot use is refused with the reason in front
- * of the operator instead of replaced behind their back.
- */
+/** A number an operator typed, and whether we understood it — shared parse for numeric form fields. */
 export interface FieldNumber {
   /** the number to send — only meaningful when `problem` is null */
   value: number

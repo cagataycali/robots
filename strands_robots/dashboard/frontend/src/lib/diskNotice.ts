@@ -1,21 +1,4 @@
-/**
- * How the record screen says "the disk is running out" (Q92).
- *
- * The backend's `disk_notice` (dashboard/disk_headroom.py) is level-based and situation-blind: it
- * knows how much space is left, not what the operator is in the middle of. That difference decides
- * the ADVICE, which is the only part of a warning anybody acts on:
- *
- *  - BEFORE a session, "free space first" is actionable — nothing is running, and the operator can
- *    go delete a checkpoint and come back.
- *  - DURING a session it is not. Freeing space means leaving two parked arms and a half-written
- *    dataset to go hunting for files, and the honest instruction is the opposite: STOP at the end of
- *    the current episode, because episodes already written are complete and safe, and the damage
- *    only happens to the episode that runs out mid-write.
- *
- * So a critical disk mid-recording gets different words than the same disk on the idle form, and
- * neither of them ever blocks the operator: they are holding a leader arm.
- */
-
+/** How the record screen says "the disk is running out". */
 export type DiskLevel = 'tight' | 'critical'
 
 export interface DiskNotice {
@@ -37,10 +20,8 @@ export interface DiskNoticeView {
 }
 
 /**
- * Returns null when there is nothing to render — no notice, an unknown level, or a notice with no
- * headline. A malformed payload must render NOTHING rather than an empty warning box: the record
- * screen already carries three notices, and a fourth that appears blank teaches the operator that
- * warnings here mean nothing.
+ * Returns null when there is nothing to render — no notice, an unknown level, or a notice with
+ * no headline.
  */
 export function diskNoticeView(
   notice: DiskNotice | null | undefined,

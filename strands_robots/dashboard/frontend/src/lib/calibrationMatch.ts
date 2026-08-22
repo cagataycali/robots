@@ -1,18 +1,7 @@
 /**
- * Does the typed calibration id exist on this machine?
- *
- * The spawn form's "Calibration id" is free text with a prose warning under it -
- * "must match the one used by lerobot-calibrate, or the joint limits will be
- * wrong" - and nothing ever checked. A typo (`follower-arm` for `follower_arm`)
- * spawns happily and the arm then runs on raw servo counts with the wrong
- * limits, which is a physical outcome, discovered by watching a real arm reach
- * for a position it should not be able to reach.
- *
- * The evidence was already on the page: `GET /api/calibration` lists the real
- * ids. This module compares the two and says which case the operator is in. It
- * never blocks: spawning before calibrating is legitimate (you have to spawn to
- * calibrate), so an unknown id is a warning with the available names, not a
- * refusal.
+ * Does the typed calibration id exist on this machine? The spawn form's "Calibration id" is
+ * free text with a prose warning under it - "must match the one used by lerobot-calibrate, or
+ * the joint limits will be wrong" - and nothing ever checked.
  */
 
 import type { CalibrationEntry } from './calibration'
@@ -27,18 +16,22 @@ export type CalibrationVerdict = {
   warn: boolean
 }
 
-/** Case and surrounding whitespace are typing noise: lerobot's own id lookup is
- *  a filename match, so `Follower_Arm` finds `follower_arm` on a case-insensitive
- *  filesystem, but `follower-arm` is a DIFFERENT FILE and must never read as a
- *  match - saying "matches" there is the same lie in a new place. */
+/**
+ * Case and surrounding whitespace are typing noise: lerobot's own id lookup is a filename
+ * match, so `Follower_Arm` finds `follower_arm` on a case-insensitive filesystem, but
+ * `follower-arm` is a DIFFERENT FILE and must never read as a match - saying "matches" there
+ * is the same lie in a new place.
+ */
 const norm = (s: string) => s.trim().toLowerCase()
 /** Looser, for SUGGESTING only: separators are where the typo lives. */
 const loose = (s: string) => norm(s).replace(/[\s_-]+/g, '')
 
-/** Which SIDE of the pair a calibration was recorded for. lerobot stores them in
- *  `<root>/robots/<type>/<id>.json` and `<root>/teleoperators/<type>/<id>.json`, and a robot in
- *  real mode can only load the first: it is `robots/` or it is not loadable, whatever the name
- *  says. An entry whose type we cannot read is NOT accused of being on the wrong side. */
+/**
+ * Which SIDE of the pair a calibration was recorded for. lerobot stores them in
+ * `<root>/robots/<type>/<id>.json` and `<root>/teleoperators/<type>/<id>.json`, and a robot in
+ * real mode can only load the first: it is `robots/` or it is not loadable, whatever the name
+ * says.
+ */
 const isRobotSide = (e: CalibrationEntry): boolean => {
   const t = norm(e.deviceType || '')
   return !t || t.startsWith('robot')
@@ -84,13 +77,6 @@ export function calibrationVerdict(
     }
   }
 
-  /* The side is checked BEFORE the name, because the name passes: `leader` under
-     `teleoperators/so101_leader` satisfies every family test against `so101` (that is what
-     familyMatches is for), so this verdict used to render a green "✓ matches leader
-     (so101_leader, 6 motors)" for the exact id that was measured, live, producing an arm with
-     presence connected:true and ZERO joints. lerobot looked for robots/so101_follower/leader.json,
-     raised "has no calibration registered", and the reason sat in a child log. A green tick in
-     front of that is worse than no check at all: it is this page agreeing with the mistake. */
   const pick = (from: CalibrationEntry[]) =>
     from.find(e => e.id === id) ?? from.find(e => norm(e.id) === norm(id))
   const robotSide = known.filter(isRobotSide)

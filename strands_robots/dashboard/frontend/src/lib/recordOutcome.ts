@@ -1,27 +1,6 @@
 /**
- * What the collect panel may claim when a record action fails.
- *
- * Last screen carrying this bug (after estop, training, robot cards, devices).
- * `run()` printed the raw error, i.e. "the click did nothing" — but api() throws
- * HttpError(0) for a request that never left this machine AND for one that
- * reached the recorder, ACTED, and lost the answer; a 5xx means the handler ran.
- * What the five actions leave behind when that happens:
- *
- *   open    -> the session may already be open: both arms despawned, their ports
- *              handed to the recorder, the follower energised and stiff.
- *   start   -> the episode may already be RECORDING. Believing it is not is how
- *              you get a take of an empty workspace, or walk away mid-capture.
- *   stop    -> the take may already be SAVED, or not. Nobody can tell from here.
- *   redo    -> the take may already be THROWN AWAY. That is not undoable.
- *   discard -> the same, for an episode chosen by index.
- *   close   -> the dataset may already be finished, and if upload was ticked it
- *              may already be PUSHED TO THE HUB, which is public and not local.
- *
- * The observer to hand off to is unusually good here: the panel re-reads
- * /api/record/session every second, so the episode list and the recording pill
- * answer the question within a tick — as long as something is polling, which is
- * why the ambiguous branch also forces one immediate read (an `open` that may
- * have landed leaves `s.dataset` null, and the poll only runs with a session).
+ * What the collect panel may claim when a record action fails. Last screen carrying this bug
+ * (after estop, training, robot cards, devices). `run()` printed the raw error, i.e.
  */
 import { refusedBeforeActing } from './estopOutcome'
 
@@ -37,10 +16,6 @@ export interface RecordFailureVerdict {
 
 /** What did NOT happen, when the server refused before running anything. */
 const INERT: Record<RecordActionKind, string> = {
-  // Q101: NOT "the arms are untouched". Opening parks both arms before it builds the recorder, so a
-  // refusal raised after that point has already despawned and respawned them — and when the respawn
-  // fails, the server now names the arm that did not come back in this very message. A blanket
-  // reassurance here would contradict it in the same toast, and the reassurance is the wrong half.
   open: 'no session was opened and nothing was recorded — and unless the message above says '
     + 'otherwise, the arms are back in the fleet.',
   start: 'no episode was started — nothing is being recorded.',
