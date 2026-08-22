@@ -28,6 +28,15 @@ Rules:
 - Real hardware moves real motors. Be precise, prefer short durations, never guess a target.
 - To task "everyone", call fleet(action="task", ...) once per online peer.
 - Report what each robot answered. Be brief.
+
+You also have robot_mesh - the SDK's native mesh tool - for everything beyond tasks:
+- robot_mesh(action="peers"/"status") - discovery
+- robot_mesh(action="tell", target=..., instruction=...) - natural-language ask, waits for the reply
+- robot_mesh(action="send", target=..., command='{"action": ...}') / broadcast - raw mesh commands
+- robot_mesh(action="subscribe"/"watch"/"inbox") - telemetry
+- robot_mesh(action="emergency_stop") - fleet-wide stop
+Its physical actions pause for the operator's yes the same way fleet task does; a declined
+confirm means nothing was sent - accept the answer, never retry it.
 """
 
 _agent_lock = threading.Lock()
@@ -338,6 +347,22 @@ def _make_fleet_tool() -> Any:
 
     return fleet
 
+def _robot_mesh_tool() -> Any:
+    """The SDK's own mesh tool, if importable - the agent-native surface.
+
+    It carries its OWN SDK-native HITL interrupt on physical actions
+    (tell/send/stop/broadcast/emergency_stop/rpc), so it is deliberately NOT
+    in MOTION_ACTIONS - adding it there would double-gate every command. In
+    this robot-less process it reaches the fleet via its gateway mesh (#10).
+    """
+    try:
+        from strands_robots.tools.robot_mesh import robot_mesh
+
+        return robot_mesh
+    except Exception:  # noqa: BLE001 - the agent must build even if the tool cannot import
+        logger.warning("robot_mesh tool unavailable - agent runs with fleet only", exc_info=True)
+        return None
+
 def _build_agent() -> Any:
     os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
 
@@ -348,7 +373,7 @@ def _build_agent() -> Any:
 
     cfg = settings.load()["agent"]
     kwargs: dict[str, Any] = {
-        "tools": [_make_fleet_tool()],
+        "tools": [t for t in (_make_fleet_tool(), _robot_mesh_tool()) if t is not None],
         "system_prompt": cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT,
         "callback_handler": None,
         "hooks": [MotionInterruptHook(_peers_snapshot)],

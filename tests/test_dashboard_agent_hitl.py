@@ -71,9 +71,10 @@ def test_ungated_tool_passes():
     assert motion_intent("calculator", {"action": "task"}, {"arm-1": REAL_PEER}) is None
 
 
-def test_robot_mesh_send_and_broadcast_are_gated():
-    assert motion_intent("robot_mesh", {"action": "send", "target": "arm-1", "message": "go"}, {"arm-1": REAL_PEER})
-    assert motion_intent("robot_mesh", {"action": "broadcast", "message": "go"}, {})
+def test_robot_mesh_is_never_gated_here_its_sdk_interrupt_owns_that():
+    """Double-gating would ask the operator twice for one command (see MOTION_ACTIONS)."""
+    assert motion_intent("robot_mesh", {"action": "send", "target": "arm-1", "message": "go"}, {"arm-1": REAL_PEER}) is None
+    assert motion_intent("robot_mesh", {"action": "broadcast", "message": "go"}, {}) is None
     assert motion_intent("robot_mesh", {"action": "peers"}, {}) is None
 
 

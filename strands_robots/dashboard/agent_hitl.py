@@ -23,7 +23,10 @@ INTERRUPT_NAME = "physical_motion"
 #: stop / emergency_stop / status / peers are deliberately NOT here: stopping is never gated.
 MOTION_ACTIONS: dict[str, frozenset[str]] = {
     "fleet": frozenset({"task"}),
-    "robot_mesh": frozenset({"send", "broadcast"}),
+    # robot_mesh is deliberately ABSENT: it raises its own SDK-native interrupt
+    # (tool_context.interrupt in strands_robots/tools/robot_mesh.py) on every
+    # physical action, so listing it here would ask the operator twice for one
+    # command. This dict gates only the dashboard's bespoke tools.
 }
 
 _TRUE = ("1", "true", "yes", "on")

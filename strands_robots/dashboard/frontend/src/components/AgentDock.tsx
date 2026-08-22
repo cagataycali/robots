@@ -87,7 +87,8 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
     setBusy(true)
     try {
       const ws = await ensureWs()
-      ws.send(JSON.stringify({ type: 'interrupt_response', id: c.id, response: { approve } }))
+      // 'y'/'n' literal: the one response shape BOTH gates accept (see interruptResponseBody).
+      ws.send(JSON.stringify({ type: 'interrupt_response', id: c.id, response: approve ? 'y' : 'n' }))
     } catch (e: any) {
       setBusy(false)
       setConfirm(c) // the question is still pending server-side - keep it answerable

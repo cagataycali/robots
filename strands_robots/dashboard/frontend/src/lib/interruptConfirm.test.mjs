@@ -66,9 +66,36 @@ for (const d of [-1, 0, NaN, Infinity, 'five']) {
   assert.equal(parseStatusInterrupt('junk'), null)
 }
 
-// The answer frame is exactly what server.py's parse_chat_frame accepts.
-assert.deepEqual(interruptResponseBody('int-1', true), { type: 'interrupt_response', id: 'int-1', response: { approve: true } })
-assert.deepEqual(interruptResponseBody('int-1', false), { type: 'interrupt_response', id: 'int-1', response: { approve: false } })
+// The answer is the literal "y"/"n" string - the ONE shape both gates accept
+// (robot_mesh's _interrupt_approves refuses anything that is not a string).
+assert.deepEqual(interruptResponseBody('int-1', true), { type: 'interrupt_response', id: 'int-1', response: 'y' })
+assert.deepEqual(interruptResponseBody('int-1', false), { type: 'interrupt_response', id: 'int-1', response: 'n' })
+
+// robot_mesh's reason shape renders: scope, command, and the gate's own warning.
+{
+  const c = parseInterruptEvent({
+    type: 'interrupt', id: 'rm-1', name: 'robot_mesh-broadcast-approval',
+    reason: { action: 'broadcast', target: '*ALL_PEERS*', function: '', command: { action: 'execute', instruction: 'wave' }, instruction: '', warning: "Fleet-wide physical effect. Reply 'y' to approve, anything else to deny." },
+  })
+  assert.equal(c.fleetWide, true)
+  assert.match(confirmQuestion(c), /every robot on the mesh/)
+  assert.match(confirmQuestion(c), /"action":"execute"/)
+  assert.match(confirmDetail(c), /Fleet-wide/)
+}
+
+// A gated stop is confirmed as a stop, never dressed up as motion.
+{
+  const c = parseInterruptEvent({ type: 'interrupt', id: 'rm-2', reason: { action: 'stop', target: 'so101-arm-1', warning: "Physical effect on peer 'so101-arm-1'." } })
+  const q = confirmQuestion(c)
+  assert.match(q, /so101-arm-1 to stop/)
+  assert.equal(q.includes('real motion'), false)
+}
+
+// rpc names the device-native function being invoked.
+{
+  const c = parseInterruptEvent({ type: 'interrupt', id: 'rm-3', reason: { action: 'rpc', target: 'scout', function: 'set_led' } })
+  assert.match(confirmQuestion(c), /invoke set_led\(\)/)
+}
 
 // The transcript notice states the decision and its scope.
 {
