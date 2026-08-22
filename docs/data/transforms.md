@@ -28,7 +28,15 @@ record (strands-robots)  ->  transform (this page)  ->  train (create_trainer)
    episode index, and the transform's name and version. Training filters and
    evaluation read it via `load_provenance()` / `synthetic_episode_indices()`,
    so generated pixels are treated honestly - silent mixing of generated and
-   recorded data is the failure mode this field exists to prevent.
+   recorded data is the failure mode this field exists to prevent. A record that
+   cannot answer what it is read for is refused rather than stored or trusted:
+   `episode_index` must be a non-negative whole number and `synthetic` must be a
+   boolean, checked by one rule that both `write_provenance()` and
+   `load_provenance()` consult. `synthetic` is not coerced, because every
+   non-empty string and every non-zero number is truthy - guessing which of them
+   meant "generated" is how a generated episode ends up counted as recorded. The
+   descriptive keys (`transform_version`, `prompt`, `seed`) are carried through
+   untouched; nothing reads them as a verdict.
 3. **Re-validation is the acceptance gate.** Supply a deterministic verdict
    function and every generated episode is re-scored against its source
    episode's verdict; a generated episode that flips the verdict is discarded
@@ -93,6 +101,12 @@ from strands_robots.transforms import synthetic_episode_indices
 synthetic = synthetic_episode_indices("/data/augmented")
 # everything in `synthetic` was generated; everything outside it was recorded
 ```
+
+An empty set is that statement, not a shrug: a dataset with no
+`meta/provenance.json` declares no synthetic episodes (the ordinary state of a
+recorded dataset), while a file that is present but unreadable raises. Absence
+and corruption are different verdicts, so "outside the set" always means
+recorded.
 
 ## Backends
 
