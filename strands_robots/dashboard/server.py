@@ -436,13 +436,28 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/health")
     async def health(request: Request) -> dict[str, Any]:
+        # Q178: mesh_ingest publishes the numbers that can CONTRADICT mesh_online (freshest
+        # presence age + fan-out since the last poll). mesh_online stays for compatibility, but it
+        # is the bridge's belief; `mesh.verdict` is the falsifiable reading.
+        from strands_robots.dashboard.health_ingest import mesh_ingest
+        from strands_robots.dashboard.mesh_bridge import PEER_STALE_S
+
+        _coalesce = app.state.bridge.coalesce_stats()
+        _ingest, app.state.mesh_ingest_prev = mesh_ingest(
+            app.state.bridge.peers,
+            _coalesce,
+            time.time(),
+            getattr(app.state, "mesh_ingest_prev", None),
+            stale_after=PEER_STALE_S,
+        )
         return {
             "status": "ok",
+            "mesh": _ingest,
             "mesh_online": app.state.mesh_online,
             "dashboard_peer_id": app.state.bridge.peer_id,
             "peers": len(app.state.bridge.peers),
             # How much /ws/mesh fan-out the coalescer avoided.
-            "mesh_coalesce": app.state.bridge.coalesce_stats(),
+            "mesh_coalesce": _coalesce,
             **(
                 {"joint_streams": js}
                 if (js := silent_arms(app.state.bridge.peers)) is not None
