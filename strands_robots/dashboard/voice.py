@@ -64,8 +64,18 @@ def _build_bidi_model(provider: str, voice: Optional[str] = None) -> Any:
     raise ValueError(f"unknown voice provider: {provider!r} (openai | nova_sonic | gemini)")
 
 def build_voice_agent(provider: str | None = None, voice: str | None = None) -> Any:
-    """BidiAgent with the fleet toolset. Caller supplies browser audio IO."""
-    os.environ.setdefault("STRANDS_MESH_HITL_ACTIONS", "none")
+    """BidiAgent with the fleet toolset. Caller supplies browser audio IO.
+
+    Deliberately NO robot_mesh here, and NO touching STRANDS_MESH_HITL_ACTIONS:
+    bidi cannot pause a tool for a human answer (the SDK's agent/loop.py raises
+    "tool interrupts are not supported in bidi"), so a gated robot_mesh action
+    would blow up the tool task instead of asking. An earlier version worked
+    around that by setdefault-ing STRANDS_MESH_HITL_ACTIONS="none" - a
+    PROCESS-WIDE write that silently disarmed the chat agent's robot_mesh
+    confirm gate the moment one voice session was opened. Voice safety instead
+    rests on the fleet tool's own backstop (agent_motion_allowed fail-closes
+    physical tasks - voice has no confirm rail, so no grant can ever appear).
+    """
     os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
 
     from strands.experimental.bidi import BidiAgent
