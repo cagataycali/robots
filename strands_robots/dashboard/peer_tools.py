@@ -316,15 +316,52 @@ def _agent_tool_base() -> type:
     return AgentTool
 
 
+def stale_refusal(peer_id: str, peer: Mapping[str, Any] | None) -> str | None:
+    """Q179: why a command to this peer must not be sent, or None to proceed.
+
+    DECISION, and it is deliberately NOT the ``fleet`` tool's one. ``fleet`` filtered stale peers
+    out of its listing (agent_bridge.py:300, :361), so the honest move here looked like "drop the
+    proxy". It is the wrong one: staleness is a fact about PRESENCE DELIVERY, not about the robot
+    (Q178 - a 26-minute mesh-ingest blackout marked both real arms stale for 1430s while they were
+    connected and streaming the whole time, and it self-healed with no restart). Dropping tools on
+    that would delete the agent's entire arm surface mid-blackout and rebuild it minutes later.
+
+    So the proxy STAYS and the invocation refuses, for every action: a stale peer answers nothing,
+    so ``send_cmd`` can only burn its 30s timeout and hand the model a bare timeout, which reads as
+    a robot fault. The refusal names presence as the suspect instead.
+
+    Checked at INVOCATION time, never baked into the tool list - a build-time flag would be a claim
+    about a moment that has passed (which is also why ``fleet_signature`` still ignores stale).
+    """
+    if not peer or not peer.get("stale"):
+        return None
+    age = peer.get("last_seen_age")
+    if age is None:
+        age = peer.get("age")
+    when = f" (no presence for {float(age):.0f}s)" if isinstance(age, (int, float)) else ""
+    return (
+        f"peer '{peer_id}' is STALE on the mesh{when}: the dashboard has not heard from it, so a "
+        "command would only wait out its timeout. This is a PRESENCE fact, not a robot fault - the "
+        "device may be fine while mesh delivery is stalled. Check the fleet screen (or /api/health's "
+        "forwarded counter) and retry once it reports fresh; do not report the robot as broken."
+    )
+
+
 def build_peer_tools(
     peers: Mapping[str, Mapping[str, Any]],
     send_cmd: Callable[..., dict[str, Any]],
+    peer_state: Callable[[str], Mapping[str, Any] | None] | None = None,
 ) -> list[Any]:
     """One proxy AgentTool per tool-worthy fleet peer, names collision-free.
 
     ``send_cmd(peer_id, command, timeout=..., source="agent")`` is the
     dashboard bridge's sender — injected so the factory stays pure and the
     proxies stay testable with a fake.
+
+    ``peer_state(peer_id)`` is the LIVE presence reader (Q179): the proxy asks it
+    on every invocation so a peer that went stale after the tool was built
+    refuses with a presence sentence instead of a 30s timeout. Omit it and the
+    proxies keep their pre-Q179 behaviour — no gate, every call goes to the wire.
     """
     AgentTool = _agent_tool_base()
 
@@ -370,6 +407,18 @@ def build_peer_tools(
                     {"toolUseId": tool_use_id, "status": "error", "content": [{"text": err}]}
                 )
                 return
+            if peer_state is not None:
+                try:
+                    live = peer_state(self._peer_id)
+                except Exception:  # noqa: BLE001 - an unreadable snapshot must not block a command
+                    live = None
+                refusal = stale_refusal(self._peer_id, live)
+                if refusal is not None:
+                    yield ToolResultEvent(
+                        {"toolUseId": tool_use_id, "status": "error",
+                         "content": [{"text": refusal}]}
+                    )
+                    return
             try:
                 res = send_cmd(self._peer_id, cmd, timeout=30.0, source="agent")
             except Exception as exc:  # noqa: BLE001 - the wire's failure IS the result

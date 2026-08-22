@@ -402,7 +402,13 @@ def _peer_proxy_tools() -> list:
     try:
         from strands_robots.dashboard.peer_tools import build_peer_tools
 
-        return build_peer_tools(_peers_snapshot(), send_cmd=_bridge.send_cmd)
+        # Q179: peer_state is read at INVOCATION time, so a peer that goes stale after the
+        # tool list was built refuses with a presence sentence instead of a 30s timeout.
+        return build_peer_tools(
+            _peers_snapshot(),
+            send_cmd=_bridge.send_cmd,
+            peer_state=lambda pid: _peers_snapshot().get(pid),
+        )
     except Exception:  # noqa: BLE001 - the agent must build even if proxies cannot
         logger.warning("peer proxy tools unavailable - agent runs without them", exc_info=True)
         return []

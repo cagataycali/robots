@@ -367,3 +367,81 @@ class TestMotionGateTable:
         tools = pt.build_peer_tools(FLEET, send_cmd=lambda *a, **k: {})
         for actions in pt.motion_actions_for(tools).values():
             assert "stop" not in actions and "status" not in actions
+
+
+class TestStalePresence:
+    """Q179: the factory had no notion of `stale` (grep = 0) while the `fleet` tool it replaces
+    filtered it at agent_bridge.py:300 and :361. Wire shape below is the real one: mesh peers carry
+    a boolean `stale` alongside `last_seen`.
+    """
+
+    def test_a_fresh_peer_is_not_refused(self):
+        assert pt.stale_refusal("so101-real-689", {"stale": False, "presence": {}}) is None
+        assert pt.stale_refusal("so101-real-689", {}) is None
+        assert pt.stale_refusal("so101-real-689", None) is None
+
+    def test_the_refusal_blames_presence_not_the_robot(self):
+        msg = pt.stale_refusal("so101-real-689", {"stale": True, "last_seen_age": 1430.4})
+        assert msg is not None
+        assert "1430s" in msg, msg
+        assert "PRESENCE" in msg and "not a robot fault" in msg
+        assert "so101-real-689" in msg
+
+    def test_a_stale_peer_still_gets_a_tool(self):
+        # The DECISION: do NOT drop the proxy. Q178 marked both real arms stale for 1430s during a
+        # mesh-ingest blackout while they were connected and streaming — dropping tools there would
+        # delete the agent's whole arm surface mid-blackout and churn it back minutes later.
+        stale_fleet = {pid: dict(p) for pid, p in FLEET.items()}
+        for p in stale_fleet.values():
+            p["stale"] = True
+        assert len(pt.build_peer_tools(stale_fleet, send_cmd=lambda *a, **k: {})) == 4
+        assert pt.fleet_signature(stale_fleet) == pt.fleet_signature(FLEET), (
+            "staleness must not churn the agent: it is time-dependent and checked at invocation"
+        )
+
+    def test_a_stale_peer_refuses_before_the_wire(self):
+        sent: list = []
+
+        def fake_send(peer, cmd, timeout=30.0, source=""):
+            sent.append(peer)
+            return {"status": "success", "content": [{"text": "ok"}]}
+
+        tools = pt.build_peer_tools(
+            FLEET,
+            send_cmd=fake_send,
+            peer_state=lambda pid: {"stale": True, "last_seen_age": 90},
+        )
+        arm = next(t for t in tools if t.tool_name == "so101_real_689")
+        events = _run(_collect(arm.stream({"toolUseId": "t9", "input": {"action": "status"}}, {})))
+        assert sent == [], "a stale peer must not burn the 30s timeout"
+        blob = json.dumps(
+            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e))
+             for e in events], default=str)
+        assert "STALE" in blob and "error" in blob
+
+    def test_without_peer_state_behaviour_is_unchanged(self):
+        sent: list = []
+        tools = pt.build_peer_tools(
+            FLEET, send_cmd=lambda peer, cmd, timeout=30.0, source="": (
+                sent.append(peer) or {"status": "success", "content": [{"text": "ok"}]}))
+        arm = next(t for t in tools if t.tool_name == "so101_real_689")
+        _run(_collect(arm.stream({"toolUseId": "t10", "input": {"action": "status"}}, {})))
+        assert sent == ["so101-real-689"]
+
+    def test_an_unreadable_snapshot_does_not_block_a_command(self):
+        # UNKNOWN presence is not stale presence: refusing on a snapshot error would make a
+        # dashboard bug look like a dead robot.
+        sent: list = []
+
+        def boom(pid):
+            raise RuntimeError("snapshot unavailable")
+
+        tools = pt.build_peer_tools(
+            FLEET,
+            send_cmd=lambda peer, cmd, timeout=30.0, source="": (
+                sent.append(peer) or {"status": "success", "content": [{"text": "ok"}]}),
+            peer_state=boom,
+        )
+        arm = next(t for t in tools if t.tool_name == "so101_real_689")
+        _run(_collect(arm.stream({"toolUseId": "t11", "input": {"action": "status"}}, {})))
+        assert sent == ["so101-real-689"]
