@@ -156,9 +156,13 @@ export function calibratePlan(facts: PortFacts, family: string | null | undefine
   const deviceType = typeForRole(role)
   const model = deviceModel(fam, role)
   const id = deviceId(facts, role)
+  // The installed lerobot speaks draccus: a follower is addressed as --robot.*, a leader as
+  // --teleop.*. The old `--device_type=…` shape is refused with a usage screen — an operator
+  // copied it and calibration "failed" before touching the arm (phase-0 forensics, 2026-08-22).
+  const prefix = role === 'follower' ? 'robot' : 'teleop'
   const command =
-    `lerobot-calibrate --device_type=${deviceType} --device_model=${model} ` +
-    `--device_id=${shellArg(id)} --port=${shellArg(facts.device)}`
+    `lerobot-calibrate --${prefix}.type=${model} ` +
+    `--${prefix}.id=${shellArg(id)} --${prefix}.port=${shellArg(facts.device)}`
 
   const measured =
     facts.role_volts != null

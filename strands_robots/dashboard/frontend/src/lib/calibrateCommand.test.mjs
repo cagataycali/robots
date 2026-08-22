@@ -12,19 +12,20 @@ const LEADER = { device: '/dev/cu.usbmodem5AB01818061', serial_number: '5AB01818
   const p = calibratePlan(FOLLOWER, 'so101')
   assert.ok(p.command, 'a measured follower must produce a command')
   assert.match(p.command, /^lerobot-calibrate /)
-  assert.match(p.command, /--device_type=robots\b/)
-  assert.match(p.command, /--device_model=so101_follower\b/)
-  assert.match(p.command, /--port=\/dev\/cu\.usbmodem5AB01584281\b/)
-  assert.match(p.command, /--device_id=follower_5AB0158428\b/)
+  // the installed CLI is draccus: a follower is --robot.*, and --device_type is a usage-screen refusal
+  assert.match(p.command, /--robot\.type=so101_follower\b/)
+  assert.match(p.command, /--robot\.port=\/dev\/cu\.usbmodem5AB01584281\b/)
+  assert.match(p.command, /--robot\.id=follower_5AB0158428\b/)
+  assert.doesNotMatch(p.command, /--device_type/, 'the old flag shape is refused by lerobot-calibrate')
   assert.match(p.reason, /12\.6V/, 'the reason must cite the measurement it trusted')
 }
 
 // --- THE POINT OF THE FILE: a leader is a teleoperator, not a robot ---
 {
   const p = calibratePlan(LEADER, 'so101')
-  assert.match(p.command, /--device_type=teleoperators\b/,
-    'a leader calibrates as a teleoperator - the wrong type writes into the wrong directory tree')
-  assert.match(p.command, /--device_model=so101_leader\b/)
+  assert.match(p.command, /--teleop\.type=so101_leader\b/,
+    'a leader calibrates as a teleoperator - the wrong prefix writes into the wrong directory tree')
+  assert.match(p.command, /--teleop\.port=/)
   assert.equal(p.deviceType, 'teleoperators')
 }
 
@@ -58,7 +59,7 @@ assert.equal(calibratePlan({ device: '/dev/x', role: 'unknown' }, 'so101').comma
 // --- the family is never assumed to be so101 ---
 {
   const p = calibratePlan({ ...FOLLOWER, role: 'follower' }, 'so100')
-  assert.match(p.command, /--device_model=so100_follower\b/, "an so100 owner must not be handed an so101 command")
+  assert.match(p.command, /--robot\.type=so100_follower\b/, "an so100 owner must not be handed an so101 command")
 }
 {
   const p = calibratePlan(FOLLOWER, null)
@@ -81,7 +82,7 @@ assert.equal(deviceModel('SO101', 'leader'), 'so101_leader', 'family is normalis
 // --- a path with a space is quoted, an ordinary one is left readable ---
 {
   const p = calibratePlan({ ...FOLLOWER, device: '/dev/odd name' }, 'so101')
-  assert.match(p.command, /--port='\/dev\/odd name'/)
+  assert.match(p.command, /--robot\.port='\/dev\/odd name'/)
   assert.ok(!calibratePlan(FOLLOWER, 'so101').command.includes("'"), 'a normal port must not be needlessly quoted')
 }
 
@@ -112,7 +113,7 @@ for (const facts of [
   const withProfile = { ...FOLLOWER, robot_id: 'leader_arm' }
   assert.equal(deviceId(withProfile, 'follower'), 'leader_arm', 'the known id wins')
   const p = calibratePlan(withProfile, 'so101')
-  assert.ok(p.command.includes('--device_id=leader_arm'), 'the command carries the id the arm loads')
+  assert.ok(p.command.includes('.id=leader_arm'), 'the command carries the id the arm loads')
   assert.ok(!p.command.includes('follower_5AB0158428'), 'and never the invented one')
 
   assert.match(p.idNote, /leader_arm/)
@@ -135,7 +136,7 @@ for (const facts of [
 // spawn with that same id, or lerobot finds nothing.
 {
   const p = calibratePlan(FOLLOWER, 'so101')
-  assert.ok(p.command.includes('--device_id=follower_5AB0158428'))
+  assert.ok(p.command.includes('.id=follower_5AB0158428'))
   assert.match(p.idNote, /no spawn profile/)
   assert.match(p.idNote, /5AB0158428/)
   assert.match(p.idNote, /will not find the calibration/)
