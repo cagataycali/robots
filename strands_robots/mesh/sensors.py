@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
 
+from strands_robots.bus_access import read_observation
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.session import (
@@ -382,7 +383,7 @@ class SensorLoopsMixin:
         try:
             inner = getattr(r, "robot", None)
             if inner is not None and hasattr(inner, "get_observation") and getattr(inner, "is_connected", False):
-                obs = inner.get_observation()
+                obs = read_observation(inner)
                 for key in ("imu_rpy", "imu", "gyroscope", "accelerometer"):
                     if key in obs:
                         val = obs[key]

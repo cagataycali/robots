@@ -736,15 +736,21 @@ class TeleopMixin:
             merge_slew_baseline,
         )
 
-        # The local path uses a wider default than the mesh path because the
-        # shipped SO hardware defaults speak degrees (90 deg/s for a calm sweep,
-        # 372 deg/s for the STS3215 no-load max) and the gripper speaks 0-100.
-        # The mesh path's 8*pi default is radian-scoped and already requires
-        # explicit widening for driver-unit devices; imposing it on the local
-        # loop would refuse ordinary human teleop at default hardware settings.
-        # 500 units/s is above the fastest servo in any shipped unit system
-        # (deg, range-0-100, rad) while still catching encoder glitches and
-        # full-scale jumps that would strip gears.
+        # This default is sized directly against the shipped SO hardware units:
+        # the joints speak degrees (90 deg/s for a calm sweep, 372 deg/s for the
+        # STS3215 no-load max) and the gripper speaks 0-100. 500 units/s is above
+        # the fastest servo in any shipped unit system (deg, range-0-100, rad)
+        # while still catching encoder glitches and full-scale jumps that would
+        # strip gears.
+        #
+        # It stays a constant of its own now that the mesh path is frame-unit
+        # scoped too, because the two bound different things rather than the same
+        # thing at two scales: the mesh default is its whole value envelope
+        # traversed once per second, deliberately loose enough to admit any
+        # driver unit on a stream arriving from another machine, while this loop
+        # reads a leader attached to this host whose unit system is known. So the
+        # mesh bound is the looser of the two, and narrowing it here would be a
+        # policy decision about remote streams made in the local path.
         _LOCAL_SLEW_DEFAULT = 500.0
         _local_slew_str = os.environ.get("STRANDS_TELEOP_SLEW_ABS", "")
         if _local_slew_str:

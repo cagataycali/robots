@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from strands_robots._mesh_switch import mesh_env_request
+from strands_robots.bus_access import read_joints, read_observation
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.pacing import Ticker
@@ -1171,7 +1172,14 @@ class Mesh(SensorLoopsMixin):
         try:
             inner = getattr(r, "robot", None)
             if inner is not None and hasattr(inner, "get_observation") and getattr(inner, "is_connected", False):
-                obs = inner.get_observation()
+                # Through the device's bus lock: this probe shares one serial
+                # conversation with the camera publisher, the sensors probe and
+                # teleop, and two readers at once make the SDK refuse the whole
+                # exchange ("Port is in use!"). Joints ONLY, because a camera
+                # raising inside get_observation() discards the joint positions
+                # already in hand -- one dead USB camera used to erase an arm's
+                # entire joint telemetry while its presence stayed healthy.
+                obs = read_joints(inner)
                 cam_keys = set(getattr(getattr(inner, "config", None), "cameras", {}).keys())
                 joints: dict[str, Any] = {}
                 for key, value in obs.items():
@@ -1313,7 +1321,9 @@ class Mesh(SensorLoopsMixin):
 
         obs = None
         try:
-            obs = inner.get_observation()
+            # lerobot reads the MOTORS before it grabs any frame, so this is a
+            # bus reader too and must take the same lock as the probes.
+            obs = read_observation(inner)
         except Exception:
             pass
 

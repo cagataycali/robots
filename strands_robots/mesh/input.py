@@ -30,6 +30,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.bus_access import write_action
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.security import (
     ValidationError,
@@ -514,7 +515,7 @@ class InputReceiver:
         # eavesdrops a teleop stream can store frames and replay them hours/days
         # later (different session/ZID, stale timestamps) and the follower
         # repeats the captured motion -- the rate cap (100Hz) and value bound
-        # (4pi) still pass because the replayed frames are legitimate-shaped.
+        # still pass because the replayed frames are legitimate-shaped.
         # Every frame already carries a wall-clock ``t`` (set by
         # InputPublisher._publish_loop), so we just have to CHECK it. We reuse
         # the same freshness/forward-skew env knobs as the resume/e-stop replay
@@ -670,8 +671,11 @@ class InputReceiver:
 
     @staticmethod
     def _default_apply(robot: Any, action: dict[str, float]) -> None:
-        """Default: calls robot.send_action()."""
+        """Default: calls robot.send_action() under the device's bus lock."""
+        # The same lock the readers take: a write that interleaves with a
+        # sync-read corrupts both halves of the exchange, and teleop moving an
+        # arm while a probe reads its position is the common case.
         if hasattr(robot, "send_action"):
-            robot.send_action(action)
+            write_action(robot, action)
         elif hasattr(robot, "robot") and hasattr(robot.robot, "send_action"):
-            robot.robot.send_action(action)
+            write_action(robot.robot, action)
