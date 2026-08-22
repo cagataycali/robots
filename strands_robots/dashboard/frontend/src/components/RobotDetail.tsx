@@ -86,12 +86,34 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
     try {
       await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/receive`, { method: 'POST', body: JSON.stringify({ source_peer_id: leaderId }) })
     } catch (e) {
-      setTeleop('unreachable'); setStarted({ ok: false, line: `${leaderId} is publishing, but ${peer.peer_id} would not follow it: ${(e as Error).message} — stop teleop on ${leaderId} if you are done` }); return
+      /* HALF-BUILT CHAIN: the leader IS publishing now and the follower refused. Naming the remedy in
+         prose was not enough — the arm to stop is a DIFFERENT peer than the one on this screen, so acting
+         on the advice meant leaving the failure behind to go find it. The button comes with the sentence. */
+      setTeleop('unreachable'); setStranded(leaderId)
+      setStarted({ ok: false, line: `${leaderId} is publishing its joints, but ${peer.peer_id} would not follow it: ${(e as Error).message} — nothing is moving, and ${leaderId} is still on the wire until you stop it below` })
+      return
     }
     let after: TeleopView | null = null
     try { after = teleopView(await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop`)) } catch { after = null }
     setTeleop(after ?? 'unreachable')
     setStarted(startVerdict(after))
+  }
+
+  /* The leader left publishing by a half-built start, and its own stop — measured the same way as every
+     other stop on this screen: ASK AGAIN, because "stop was sent" is not "it stopped". The result is kept
+     even once it succeeds (a result that disappears when it works is the defect iter 485 fixed). */
+  const [stranded, setStranded] = useState<string | null>(null)
+  const [strandedResult, setStrandedResult] = useState<{ ok: boolean; line: string } | null>(null)
+  const stopStranded = async (leaderId: string) => {
+    setStrandedResult(null)
+    try { await api(`/api/robots/${encodeURIComponent(leaderId)}/teleop/stop`, { method: 'POST' }) }
+    catch (e) {
+      setStrandedResult({ ok: false, line: `${leaderId} would not stop publishing: ${(e as Error).message} — it is still on the wire` }); return
+    }
+    let after: TeleopView | null = null
+    try { after = teleopView(await api(`/api/robots/${encodeURIComponent(leaderId)}/teleop`)) } catch { after = null }
+    const v = stopVerdict(after)
+    setStrandedResult({ ok: v.ok, line: `${leaderId}: ${v.line}` })
   }
 
   const stopTeleop = async () => {
@@ -261,18 +283,35 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                 </div>
               )
             })()}
-            {stopped && (
-              <div className={`small ${stopped.ok ? 'muted' : 'warn'}`} role="status">{stopped.line}</div>
-            )}
-            {/* The result of a START must OUTLIVE the state it created. Rendered inside the "not streaming"
-                offer, this line vanished at the exact moment it had something to say — a success the
-                operator never saw, and a refusal (started, every frame rejected) hidden behind the very
-                streaming flag that made it true. Found by the audit the moment it could render a fleet. */}
-            {started && (
-              <div className={`small ${started.ok ? 'muted' : 'warn'}`} role="status">{started.line}</div>
-            )}
             {teleop.consentKind && (
               <div className="muted small">every frame is outside the safety envelope — settings › consent › {teleop.consentKind} is where that bound is widened, deliberately and by you</div>
+            )}
+          </div>
+        )}
+        {/* THE VERDICT ABOUT MY OWN ACTION MUST NOT LIVE INSIDE THE ARM'S STATUS BLOCK. It did, and that
+            block only renders when the status could be RE-READ — so every failure path hid its own report:
+            a stop that was refused, a start that was refused, and a half-built chain that left the leader
+            publishing all end with the status 'unreachable', which is exactly when the operator most needs
+            the sentence. Sibling of the status now, not a child of it. (Found by scenario 4 rendering an
+            empty screen where a three-line explanation should have been.) */}
+        {stopped && (
+          <div className={`small ${stopped.ok ? 'muted' : 'warn'}`} role="status">{stopped.line}</div>
+        )}
+        {/* The result of a START must OUTLIVE the state it created. Rendered inside the "not streaming"
+            offer, this line vanished at the exact moment it had something to say — a success the
+            operator never saw, and a refusal (started, every frame rejected) hidden behind the very
+            streaming flag that made it true. Found by the audit the moment it could render a fleet. */}
+        {started && (
+          <div className={`small ${started.ok ? 'muted' : 'warn'}`} role="status">{started.line}</div>
+        )}
+        {stranded && (
+          <div className="row small">
+            <button className="btn ghost small" onClick={() => stopStranded(stranded)}
+                    disabled={strandedResult?.ok} title={`stop ${stranded} publishing its joints`}>
+              stop {stranded} publishing
+            </button>
+            {strandedResult && (
+              <span className={strandedResult.ok ? 'muted' : 'warn'} role="status">{strandedResult.line}</span>
             )}
           </div>
         )}

@@ -39,7 +39,7 @@ const REFUSING = { health: { worst: { state: 'refusing', headline: 'every frame 
 const FOLLOWING = { health: { worst: { state: 'following', headline: 'following lead-arm at 9.8Hz' } } }
 
 const browser = await chromium.launch()
-const open = async ({ fleet, afterStart }) => {
+const open = async ({ fleet, afterStart, failReceive = false }) => {
   const ctx = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 1000 } })
   const page = await ctx.newPage()
   /* THE FLEET SCREEN IS FED BY THE /ws/mesh WEBSOCKET, not only by the /api/fleet poll: a fixtured poll is
@@ -69,10 +69,17 @@ const open = async ({ fleet, afterStart }) => {
   await page.route(/\/api\/robots\/[^/]+\/teleop(\/.*)?$/, r => {
     const req = r.request()
     const path = new URL(req.url()).pathname
-    if (req.method() === 'POST') { calls.push(path)
-      return r.fulfill({ status: 200, contentType: 'application/json', body: '{"result":{"ok":true}}' }) }
+    if (req.method() === 'POST') {
+      calls.push(path)
+      if (failReceive && /\/teleop\/receive$/.test(path))
+        return r.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"subscribe budget expired"}' })
+      return r.fulfill({ status: 200, contentType: 'application/json', body: '{"result":{"ok":true}}' })
+    }
     asked += 1
-    const body = calls.length ? afterStart : IDLE
+    // Per-peer: after the LEADER is stopped it must be able to answer "idle" independently of the follower.
+    const who = path.split('/')[3]
+    const stoppedLeader = calls.some(c => c === `/api/robots/${who}/teleop/stop`)
+    const body = stoppedLeader || !calls.length ? IDLE : afterStart
     return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
   })
   await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' })
@@ -85,8 +92,11 @@ const open = async ({ fleet, afterStart }) => {
   await page.waitForTimeout(1200)
   return { page, ctx, calls, asked: () => asked }
 }
+/* Reads the whole detail panel, not just div.hint: the verdict about the OPERATOR'S action is deliberately
+   a SIBLING of the arm's status block, because the status block does not render when the arm could not be
+   re-read — which is exactly when a failure has something to say. */
 const teleopText = async page =>
-  (await page.locator('div.hint').filter({ hasText: 'teleop' }).first().innerText().catch(() => '')).replace(/\s+/g, ' ')
+  (await page.locator('section, .sheet, .panel, body').last().innerText().catch(() => '')).replace(/\s+/g, ' ')
 
 // ---- 1. THE REAL FLEET SHAPE: a jointless leader can lead nothing, so there is no button to press.
 {
@@ -143,6 +153,36 @@ const teleopText = async page =>
   await ctx.close()
 }
 
+// ---- 4. THE HALF-BUILT CHAIN: publish took, the follower refused — so the LEADER is left on the wire.
+{
+  const { page, ctx, calls } = await open({
+    fleet: [peer('so101-follower', 6), peer('lead-arm', 6)], afterStart: IDLE, failReceive: true })
+  await page.locator('button', { hasText: /^follow lead-arm$/ }).first().click()
+  await page.waitForTimeout(300)
+  await page.locator('button', { hasText: /^confirm — hand-guide/ }).first().click()
+  await page.waitForTimeout(2200)
+  const t = await teleopText(page)
+  if (!/lead-arm is publishing its joints/.test(t) || !/would not follow it/.test(t))
+    failures.push(`a half-built chain did not say what state it left behind: ${t.slice(0, 200)}`)
+  if (!/nothing is moving/.test(t)) failures.push('the operator is not told whether the arm is moving')
+  const rescue = page.locator('button', { hasText: /^stop lead-arm publishing$/ }).first()
+  if (!await rescue.count()) {
+    failures.push('the leader was left publishing with no way to stop it from where the failure is reported')
+  } else {
+    const before = calls.length
+    await rescue.click(); await page.waitForTimeout(1800)
+    const sent = calls.slice(before)
+    if (sent.length !== 1 || !/lead-arm\/teleop\/stop$/.test(sent[0]))
+      failures.push(`the rescue must send exactly one stop to the LEADER, sent: ${sent.join(', ') || 'nothing'}`)
+    const after = await teleopText(page)
+    if (!/lead-arm:/.test(after)) failures.push(`the rescue result does not name the arm it acted on: ${after.slice(0, 200)}`)
+    if (!/(stopped|no teleop|not )/.test(after)) failures.push(`the rescue result is not a measured verdict: ${after.slice(0, 200)}`)
+    else console.log(`  note  a leader left publishing can be stopped from the failure: ${after.match(/lead-arm: [^·]*/)?.[0]?.slice(0, 100)}`)
+    if (!await rescue.isDisabled()) failures.push('a succeeded rescue still offers to stop an arm that is already quiet')
+  }
+  await ctx.close()
+}
+
 await browser.close()
 if (failures.length) { for (const f of failures) console.error(`  FAIL  ${f}`); process.exit(1) }
-console.log('  ok    an arm is offered only when it can lead, one click never moves anything, publish precedes receive, and a refused stream is not a session')
+console.log('  ok    an arm is offered only when it can lead, one click never moves anything, publish precedes receive, a refused stream is not a session, and a leader left publishing can be stopped from the failure that stranded it')
