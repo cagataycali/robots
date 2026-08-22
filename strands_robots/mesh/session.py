@@ -45,6 +45,7 @@ import math
 import os
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -331,6 +332,69 @@ class PeerInfo:
             return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
         except AttributeError:
             return partial_construction_repr(self)
+
+
+#: Presence ``robot_type`` values that name a simulation rather than metal.
+#: The two in-tree publishers set ``peer_type="sim"`` for a
+#: :class:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine` and
+#: ``"robot"`` for hardware; ``"simulation"`` / ``"mujoco"`` are accepted so a
+#: third-party publisher spelling the same fact differently is still read.
+_SIM_PEER_TYPES: frozenset[str] = frozenset({"sim", "simulation", "mujoco"})
+
+
+def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
+    """Is this peer metal? Returns ``(physical, why)``, failing closed.
+
+    Reads one entry of the :func:`get_peers` snapshot - the flat dict
+    :meth:`PeerInfo.to_dict` returns, which spreads the peer's presence payload
+    at the top level rather than nesting it under a ``presence`` key. Every
+    marker below is a key some publisher in
+    :meth:`~strands_robots.mesh.core.Mesh._build_presence` really sets, so no
+    rung is dead on arrival.
+
+    Fail-closed means: physical unless the peer can be SHOWN to be a sim. An
+    absent peer, a peer whose presence carries no sim marker, and a marker this
+    function cannot read are all metal. The direction of each rung follows from
+    that, and the two directions are deliberately different:
+
+    * ``hw`` is a positive METAL marker, so it is read permissively (any
+      non-empty string) and checked first - a peer reporting real hardware is
+      metal whatever else it claims.
+    * ``robot_type`` and ``world`` are positive SIM markers, so they are read
+      strictly (an exact token; ``world is True``, not merely truthy). A value
+      this function cannot read falls through to metal instead of being taken
+      for a sim.
+
+    The verdict is a description, never an authorisation: ``robot_type`` and
+    ``world`` arrive over the wire from the peer itself and
+    :meth:`~strands_robots.mesh.core.Mesh._on_presence` authenticates neither,
+    so a peer can claim to be a sim. That is fit to tell an operator what the
+    peer says about itself, and unfit to stand in for the operator.
+
+    Args:
+        peer: One entry of the :func:`get_peers` snapshot, or ``None`` when the
+            peer is not on it.
+
+    Returns:
+        ``(physical, why)`` - the verdict, and the reason it was reached, phrased
+        to read after the peer's name ("it reports real hardware (...)").
+    """
+    if not peer:
+        return True, "it is not on the fleet snapshot, so it cannot be shown to be a sim"
+
+    hw = peer.get("hw")
+    if isinstance(hw, str) and hw.strip():
+        return True, f"it reports real hardware ({hw.strip()})"
+
+    declared = str(peer.get("robot_type") or peer.get("type") or "").strip().lower()
+    if declared in _SIM_PEER_TYPES:
+        return False, f"it reports itself as {declared}"
+
+    sim_robots = peer.get("sim_robots")
+    if peer.get("world") is True or (isinstance(sim_robots, (list, tuple)) and len(sim_robots) > 0):
+        return False, "it reports a simulation world"
+
+    return True, "it did not report itself as a simulation"
 
 
 # Peer registry - shared across all Mesh instances in the same process
