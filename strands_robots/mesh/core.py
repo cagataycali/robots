@@ -825,7 +825,15 @@ class Mesh(SensorLoopsMixin):
             logger.info("[mesh] %s on mesh (%s)", self.peer_id, self.peer_type)
 
     def stop(self) -> None:
-        """Stop all loops and release the session reference."""
+        """Stop all loops and release the session reference.
+
+        Drops every :meth:`subscribe` subscription and clears :attr:`inbox`:
+        the subscribers are undeclared with the session reference, and the
+        ``(topic, callback)`` pairs behind them are not retained, so
+        :meth:`start` re-declares only this peer's built-in topics. A rejoining
+        caller re-declares its own subscriptions; the count dropped is reported
+        at INFO so that is visible rather than inferred.
+        """
         with self._lifecycle_lock:
             if not self._running:
                 return
@@ -837,10 +845,23 @@ class Mesh(SensorLoopsMixin):
 
         with self._subs_lock:
             subs_to_drop = list(self._subs)
+            user_sub_names = sorted(self._user_subs)
             self._subs.clear()
             self._user_subs.clear()
         with self._inbox_lock:
             self.inbox.clear()
+
+        # The peer's own built-in topics are re-declared by ``start()``; a
+        # caller's :meth:`subscribe` topics are not, and their callbacks are
+        # not retained anywhere, so this is the only notice that a rejoin
+        # leaves them to be re-declared.
+        if user_sub_names:
+            logger.info(
+                "[mesh] %s: dropped %d subscription(s) on leaving the mesh (%s); re-declare after start()",
+                self.peer_id,
+                len(user_sub_names),
+                ", ".join(user_sub_names),
+            )
 
         for sub in subs_to_drop:
             try:
@@ -3124,11 +3145,40 @@ class Mesh(SensorLoopsMixin):
     def subscribe(
         self, topic: str, callback: Callable[[str, dict[str, Any]], None] | None = None, name: str | None = None
     ) -> str | None:
-        """Subscribe to any Zenoh topic and receive parsed JSON dicts."""
+        """Subscribe to any Zenoh topic and receive parsed JSON dicts.
+
+        Returns:
+            The subscription name (``name`` when given, else *topic*) once the
+            subscriber is declared, or ``None`` when it was not. Every
+            ``None`` says why at WARNING, matching how the rest of this class
+            reports a client-side refusal: the peer is not on the mesh, there
+            is no session to declare against, or ``declare_subscriber`` itself
+            failed.
+
+        A subscription does not survive :meth:`stop`. That method drops every
+        subscription this one records and :meth:`start` re-declares only the
+        peer's own built-in topics, so a caller that rejoins the mesh
+        re-declares its own subscriptions - which is what the WARNING above
+        makes visible when a rejoin has not happened yet.
+        """
         if not self._running:
+            # Silent until now, unlike the declare_subscriber failure below and
+            # every other client-side refusal in this class. A caller
+            # re-subscribing after a stop()/start() round trip reads the
+            # ``None`` as "subscribed" unless it checks, so name the reason.
+            logger.warning(
+                "[mesh] %s: subscribe(%s) refused: peer is not on the mesh (start() first)",
+                self.peer_id,
+                topic,
+            )
             return None
         session = current_session()
         if session is None:
+            logger.warning(
+                "[mesh] %s: subscribe(%s) refused: no mesh session",
+                self.peer_id,
+                topic,
+            )
             return None
         sub_name = name or topic
         with self._inbox_lock:
