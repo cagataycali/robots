@@ -244,7 +244,8 @@ class TestASubscriptionNeverSilentlyFailsToExist:
         """The rejoin path: a subscription dropped by stop() cannot be replaced silently."""
         monkeypatch.setattr(mesh_core, "current_session", lambda: MagicMock())
         mesh = _running_mesh("rejoin-peer")
-        assert mesh.subscribe("strands/rejoin/topic", name="t") == "t", "premise: it subscribes while running"
+        attached = mesh.subscribe("strands/rejoin/topic", name="t")
+        assert attached == "t", "premise: it subscribes while running"
 
         mesh.stop()
         caplog.clear()
@@ -277,7 +278,8 @@ class TestASubscriptionNeverSilentlyFailsToExist:
         mesh = _running_mesh("declare-fail-peer")
 
         with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-            assert mesh.subscribe("strands/declare/topic") is None
+            refused = mesh.subscribe("strands/declare/topic")
+        assert refused is None
 
         said = _refusals(caplog, "strands/declare/topic")
         assert said, "the pre-existing declare_subscriber WARNING was lost"
@@ -289,7 +291,8 @@ class TestASubscriptionNeverSilentlyFailsToExist:
         mesh = _running_mesh("accepted-peer")
 
         with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-            assert mesh.subscribe("strands/accepted/topic", name="ok") == "ok"
+            accepted = mesh.subscribe("strands/accepted/topic", name="ok")
+        assert accepted == "ok"
 
         assert _refusals(caplog, "strands/accepted/topic") == []
 
@@ -297,8 +300,9 @@ class TestASubscriptionNeverSilentlyFailsToExist:
         """A rejoining caller is told what it has to re-declare."""
         monkeypatch.setattr(mesh_core, "current_session", lambda: MagicMock())
         mesh = _running_mesh("dropping-peer")
-        assert mesh.subscribe("strands/a", name="a") == "a"
-        assert mesh.subscribe("strands/b", name="b") == "b"
+        first = mesh.subscribe("strands/a", name="a")
+        second = mesh.subscribe("strands/b", name="b")
+        assert (first, second) == ("a", "b"), "premise: two subscriptions to drop"
 
         caplog.clear()
         with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
