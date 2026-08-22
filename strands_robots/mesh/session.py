@@ -70,6 +70,18 @@ _SESSION_REFS: int = 0
 # under ``_SESSION_LOCK``.
 _zenoh_missing_warned: set[str] = set()
 
+# One-shot-per-topic guard for a payload that cannot be JSON-encoded.  Unlike a
+# transient wire failure, an unencodable payload fails identically on every
+# retry, so a 50 Hz publisher would otherwise emit one report per tick forever.
+# Keyed on the topic because the payload builder is per-topic: a broken builder
+# is broken for every tick of ITS key and says nothing about any other.  A set
+# (mutated via .add, never reassigned) avoids a `global` rebind so static
+# analysis sees it as used.  Read and mutated WITHOUT ``_SESSION_LOCK``, because
+# :func:`_put_zenoh_directly` deliberately does not take it (a 50 Hz teleop loop
+# must not serialise on the session lock); the worst race is two threads each
+# reporting the same topic once.
+_unencodable_topics_warned: set[str] = set()
+
 
 # Constants
 
@@ -1071,6 +1083,53 @@ def put(key: str, data: dict[str, Any]) -> None:
     _put_zenoh_directly(key, data)
 
 
+def _report_unencodable_payload(transport: str, key: str, exc: BaseException) -> None:
+    """Report a payload that can never reach *key*, at ERROR, once per topic.
+
+    Every transport's ``put`` is fire-and-forget and
+    :meth:`strands_robots.mesh.transport.base.MeshTransport.put`
+    scopes that tolerance to a TRANSIENT failure - a closed session, a dropped broker, a
+    socket-level write - which the next tick retries. A payload the JSON encoder
+    refuses is not transient: it fails identically forever, so the message never
+    goes out at all and no retry can change that.
+
+    Reporting it at DEBUG left the two halves of one call disagreeing.
+    :meth:`strands_robots.mesh.sensors.SensorLoopsMixin.publish_safety_event`
+    writes the event to the wire AND to the local audit log; on an unencodable
+    payload the audit half records a ``sig="SERIALISE_FAILED"`` poison record and
+    logs at ERROR (naming the peer and the reason), while the wire half dropped
+    the event silently. A default-configured operator therefore saw a forensic
+    trail asserting that a safety event had been raised, with no peer having
+    received it and nothing above DEBUG to say so.
+
+    Once per topic, because a payload builder is per-topic: the same builder runs
+    on every tick of ITS key, so a 50 Hz publisher would otherwise emit one
+    report per tick, while a different key says nothing about it. Per TOPIC and
+    not per (topic, transport): under the bridge backend both legs encode the
+    same payload with the same encoder, so the second leg's report would restate
+    one fact. The leg that noticed is named in the line rather than keyed on,
+    which is why the wording does not claim the other leg is unaffected.
+
+    Args:
+        transport: Which leg could not encode, for the log line (``"Zenoh"`` /
+            ``"MQTT"``). The wording is shared so a reader grepping the log for
+            one transport's report finds the other's.
+        key: The topic the payload was addressed to; also the once-guard key.
+        exc: What the encoder raised, quoted as the reason.
+    """
+    if key in _unencodable_topics_warned:
+        return
+    _unencodable_topics_warned.add(key)
+    logger.error(
+        "put on %s: the payload cannot be JSON-encoded, so this message and every "
+        "later one built the same way is dropped before it reaches the wire "
+        "(noticed on the %s leg; reported once for this topic): %s",
+        key,
+        transport,
+        exc,
+    )
+
+
 def _put_zenoh_directly(key: str, data: dict[str, Any]) -> None:
     """Publish to the raw Zenoh session, bypassing transport-backend routing.
 
@@ -1089,11 +1148,28 @@ def _put_zenoh_directly(key: str, data: dict[str, Any]) -> None:
     Fire-and-forget, and it reads ``_SESSION`` without taking
     ``_SESSION_LOCK`` exactly as :func:`put` always has: a 50 Hz teleop loop
     must not serialise on the session lock.
+
+    The JSON encode is attempted OUTSIDE the handler that absorbs a wire
+    failure, because the two outcomes are not the same kind of failure. A wire
+    failure is transient and the next tick retries it, so it stays at DEBUG. A
+    payload the encoder refuses can never be published, so it is reported
+    through :func:`_report_unencodable_payload` instead of being absorbed by the
+    same DEBUG line. Neither raises: the ``put`` contract is fire-and-forget
+    either way. The encode catch is deliberately wide because an arbitrary
+    payload object can carry an arbitrary ``__reduce__`` / ``keys`` / ``default``
+    hook, so the encoder's raise set is not enumerable here (``json.dumps``
+    itself raises ``TypeError`` for an unsupported type and ``ValueError`` for a
+    circular reference).
     """
     if _SESSION is None:
         return
     try:
-        _SESSION.put(key, json.dumps(data).encode())
+        encoded = json.dumps(data).encode()
+    except Exception as exc:  # noqa: BLE001 - see the encode note in the docstring
+        _report_unencodable_payload("Zenoh", key, exc)
+        return
+    try:
+        _SESSION.put(key, encoded)
     except Exception as exc:
         logger.debug("Zenoh put error on %s: %s", key, exc)
 
