@@ -1626,6 +1626,15 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   border-radius: var(--s3); background: var(--glass-1); border: 1px solid var(--glass-border); }
 .calibcmd .row { align-items: center; gap: var(--s3); margin-top: var(--s2); }
 .calibcmd .hint { margin-top: var(--s2); }
+/* The calibration wizard: one step at a time, the live range table while recording. */
+.calibwizard { margin-top: var(--s3); padding: var(--s3) var(--s4);
+  border-radius: var(--s3); background: var(--glass-2, var(--glass-1));
+  border: 1px solid var(--glass-border-hi); }
+.calibwizard h4 { margin: 0 0 var(--s2); }
+.calibwizard h4.warn { color: var(--warn, #e6a23c); }
+.calibwizard .row { align-items: center; gap: var(--s3); margin-top: var(--s3); flex-wrap: wrap; }
+.calibwizard .jointtable { margin-top: var(--s2); }
+.calibwizard details { margin-top: var(--s2); }
 .cmdline { display: block; margin-top: var(--s2); padding: var(--s2) var(--s3);
   border-radius: var(--s2); background: rgb(0 0 0 / .34); border: 1px solid var(--glass-border-hi);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-small);

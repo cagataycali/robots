@@ -13,6 +13,7 @@ import CalibrationSection from './CalibrationSection'
 import CameraGallery, { type CameraInfo, type CameraName, type CameraProblem } from './CameraGallery'
 import { normalizeRegistry, type RegistryRobot } from '../lib/registry'
 import { calibratePlan, knownCalibrationId, type SpawnProfile } from '../lib/calibrateCommand'
+import CalibrateWizard from './CalibrateWizard'
 import { rememberedLine } from '../lib/rememberedBoard'
 import { parseCalibrationList, type CalibrationEntry } from '../lib/calibration'
 import { calibrationVerdict } from '../lib/calibrationMatch'
@@ -797,26 +798,41 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                               <p className="muted small">
                                 model <span className="mono">{plan.deviceModel}</span> — family from {source}
                               </p>
-                              {/* Selectable text first: the copy button is a convenience, not the only route. */}
-                              <code className="cmdline">{plan.command}</code>
                               {plan.idNote && (
                                 <p className={plan.idWarn ? 'hint warn' : 'hint'}>
                                   {plan.idWarn ? '⚠ ' : ''}{plan.idNote}
                                 </p>
                               )}
-                              <div className="row">
-                                <button className="btn ghost" onClick={() => void copyCommand(p.device, plan.command!)}>
-                                  copy
-                                </button>
-                                {verdict === 'ok' && <span className="muted small">copied — paste it in a terminal</span>}
-                                {verdict && verdict !== 'ok' &&
-                                  <span className="warn small">⚠ could not copy: {verdict} — select the line above instead</span>}
-                              </div>
-                              <p className="hint">
-                                It will ask you to move the arm through its range BY HAND. Nothing here moves it:
-                                the dashboard only writes the command you run. When the file lands, press
-                                <em> reload</em> in Calibration above to see it.
-                              </p>
+                              {/* The wizard runs the SAME lerobot-calibrate the terminal would,
+                                  as a managed session — no terminal needed. */}
+                              <CalibrateWizard
+                                port={p.device}
+                                role={(p.role === 'leader' ? 'leader' : 'follower')}
+                                model={plan.deviceModel!}
+                                deviceId={plan.deviceId!}
+                                onSaved={() => {
+                                  api<{ status?: string; text?: string }>('/api/calibration')
+                                    .then(r => { if (r?.text) setCalibIds(parseCalibrationList(r.text).entries) })
+                                    .catch(() => { /* the receipt names the path either way */ })
+                                }}
+                              />
+                              <details>
+                                <summary>run it in a terminal instead</summary>
+                                {/* Selectable text first: the copy button is a convenience, not the only route. */}
+                                <code className="cmdline">{plan.command}</code>
+                                <div className="row">
+                                  <button className="btn ghost" onClick={() => void copyCommand(p.device, plan.command!)}>
+                                    copy
+                                  </button>
+                                  {verdict === 'ok' && <span className="muted small">copied — paste it in a terminal</span>}
+                                  {verdict && verdict !== 'ok' &&
+                                    <span className="warn small">⚠ could not copy: {verdict} — select the line above instead</span>}
+                                </div>
+                                <p className="hint">
+                                  Same procedure as the wizard: it will ask you to move the arm through its range
+                                  BY HAND. When the file lands, press <em>reload</em> in Calibration above to see it.
+                                </p>
+                              </details>
                             </>
                           ) : (
                             <>
