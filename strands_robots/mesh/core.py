@@ -22,6 +22,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots._mesh_switch import NEGATIVE, mesh_env_request
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.sensors import SensorLoopsMixin
@@ -3702,7 +3703,12 @@ class Mesh(SensorLoopsMixin):
 #: :mod:`strands_robots.tools.robot_mesh`, which builds its ``Mesh`` directly
 #: rather than through :func:`init_mesh`. A second inline spelling is how that
 #: peer came to escape the switch.
-_MESH_KILL_SWITCH_VALUES = ("false", "0", "no")
+#:
+#: Re-exported from :mod:`strands_robots._mesh_switch`, which owns this half of
+#: the vocabulary beside the affirmative half the ``Robot`` factory reads. The
+#: name stays here because it is the public-to-tests spelling of the kill
+#: switch's values.
+_MESH_KILL_SWITCH_VALUES = NEGATIVE
 
 
 def mesh_disabled_by_env() -> bool:
@@ -3720,8 +3726,14 @@ def mesh_disabled_by_env() -> bool:
     I start a mesh?" wants this predicate; a caller asking "was I asked to start
     one?" wants that one, and the two are not each other's negation -- an unset
     variable answers False to both.
+
+    Resolved by :func:`strands_robots._mesh_switch.mesh_env_request`, which
+    holds both halves of the vocabulary. That is what makes an unrecognized
+    value reportable: this predicate alone cannot tell ``off`` (a typo) from
+    ``true`` (the other reader's business), because both are equally "not a
+    kill" to it.
     """
-    return os.getenv("STRANDS_MESH", "").strip().lower() in _MESH_KILL_SWITCH_VALUES
+    return mesh_env_request() is False
 
 
 # init_mesh -- the only public constructor
