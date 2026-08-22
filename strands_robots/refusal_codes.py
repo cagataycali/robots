@@ -22,8 +22,14 @@ message, and may be improved without breaking anyone.
 Only continuable refusals get a code. ``instruction exceeds 4096 chars`` is
 not continuable -- there is no grant that makes it succeed, so a consumer has
 nothing to offer and nothing to recognise. :data:`REFUSAL_GRANTS` records, per
-code, the operator grant that lifts it, which is also what lets the guard test
-derive the raise sites it must find instead of keeping a hand-written list.
+code, the operator grant that lifts it, so a consumer reads the variable to
+offer from here rather than hard-coding it.
+
+That table is deliberately *not* what scopes the guard test. Deriving the raise
+sites it must find from the grants already listed here would only ever find a
+refusal naming a grant this module already knows, so the first refusal to offer
+a *new* grant -- the one case the guard exists for -- would be invisible. The
+scope comes from the exception types that can carry a code at all instead.
 """
 
 from __future__ import annotations
