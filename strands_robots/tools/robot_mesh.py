@@ -71,6 +71,10 @@ _RATE_LIMITS: dict[str, tuple[int, float]] = {
     "broadcast": (10, 60.0),
     "stop": (20, 60.0),
     "rpc": (30, 60.0),
+    # ``sim_call`` only ever reaches a Simulation (hardware peers refuse the
+    # verb in Mesh._dispatch), so its budget is the loosest of the actuation
+    # verbs -- an agent building a scene issues many small calls.
+    "sim_call": (60, 60.0),
     "emergency_stop": (3, 60.0),
 }
 _RATE_HISTORY: dict[str, collections.deque[float]] = {}
@@ -88,8 +92,13 @@ _RATE_LOCK = threading.Lock()
 # physical actuation effect, and gating them by default would interrupt
 # every read-only observation. Operators who treat telemetry as sensitive
 # opt them in via ``STRANDS_MESH_HITL_ACTIONS``.
+# ``sim_call`` is gateable but, like subscribe/watch, NOT in the default
+# set: it is structurally sim-only (a hardware peer refuses the verb before
+# dispatch), so gating it by default would ask the operator to approve
+# adding a cube to a simulation. Operators who want it gated opt in via
+# ``STRANDS_MESH_HITL_ACTIONS``.
 _GATEABLE_ACTIONS: frozenset[str] = frozenset(
-    {"emergency_stop", "broadcast", "tell", "send", "stop", "rpc", "subscribe", "watch"}
+    {"emergency_stop", "broadcast", "tell", "send", "stop", "rpc", "subscribe", "watch", "sim_call"}
 )
 
 # Default interrupt set: every action with a direct physical-actuation
@@ -452,6 +461,7 @@ _ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
     "tell": ("timeout",),
     "send": ("timeout",),
     "rpc": ("timeout",),
+    "sim_call": ("timeout",),
     "broadcast": ("timeout",),
     "stop": ("timeout",),
     "inbox": ("limit",),
@@ -1022,13 +1032,26 @@ def robot_mesh(
 
     Args:
         action: One of ``peers`` / ``status`` / ``tell`` / ``send`` /
-            ``rpc`` / ``broadcast`` / ``stop`` / ``emergency_stop`` /
-            ``subscribe`` / ``unsubscribe`` / ``watch`` / ``inbox``.
+            ``rpc`` / ``sim_call`` / ``broadcast`` / ``stop`` /
+            ``emergency_stop`` / ``subscribe`` / ``unsubscribe`` /
+            ``watch`` / ``inbox``.
             ``rpc`` calls a device's NATIVE Device Connect function (e.g.
             the Reachy's ``nod`` / ``look`` / ``playMove``) directly,
             bypassing the policy-action allowlist that ``tell`` / ``send``
             enforce. Pass the function name in ``function`` and any kwargs
             as a JSON object in ``command``.
+            ``sim_call`` invokes one of a SIMULATION peer's published
+            actions -- world building and inspection (``add_object`` /
+            ``add_camera`` / ``register_urdf`` / ``load_scene`` /
+            ``list_objects`` / ``raycast`` / ``render`` and ~70 more; call
+            ``sim_call`` with function=``get_features`` or consult the sim's
+            tool_spec for the full list). Pass the sim action name in
+            ``function`` and its parameters as a JSON object in ``command``
+            (include ``robot_name`` there to disambiguate a multi-robot
+            world). Hardware peers refuse the verb, so it can never move a
+            real arm -- which is why it needs no motion confirmation.
+            Policy rollouts (``run_policy`` etc.) are refused here; use
+            ``tell`` / ``send`` for those.
         target: Peer id (for ``tell`` / ``send`` / ``stop`` / ``watch``) or
             Zenoh topic pattern (for ``subscribe``).
         instruction: Natural-language instruction for ``tell``.
@@ -1057,6 +1080,10 @@ def robot_mesh(
                    instruction="pick up the cube")
         robot_mesh(action="send", target="peer-b",
                    command='{"action": "status"}')
+        robot_mesh(action="sim_call", target="so101-sim-a1b2",
+                   function="add_object",
+                   command='{"name": "red_cube", "shape": "box",'
+                           ' "position": [0.3, 0, 0.05], "color": [1, 0, 0, 1]}')
         robot_mesh(action="emergency_stop")    # raises a HITL interrupt;
                                                # runs only on operator approval
 
@@ -1120,7 +1147,42 @@ def robot_mesh(
     # validated body so they skip this pre-pass.
     validated_broadcast_cmd: dict[str, Any] | None = None
     validated_send_cmd: dict[str, Any] | None = None
-    if action == "broadcast":
+    validated_sim_call_cmd: dict[str, Any] | None = None
+    if action == "sim_call":
+        # ``function`` names the published Simulation action; ``command`` is
+        # its JSON params object (same ergonomics as ``rpc``). Validated here
+        # -- before the interrupt gate -- so an operator who opted sim_call
+        # into STRANDS_MESH_HITL_ACTIONS approves the validated form.
+        if not target:
+            _audit_tool_action(action, target, False, "missing target")
+            return _err("sim_call requires target (a sim peer id)")
+        if not function:
+            _audit_tool_action(action, target, False, "missing function")
+            return _err(
+                "sim_call requires function (a published Simulation action, e.g. 'add_object', 'add_camera', 'list_objects')"
+            )
+        sim_params: dict[str, Any] = {}
+        if command:
+            try:
+                parsed = json.loads(command)
+            except json.JSONDecodeError as exc:
+                _audit_tool_action(action, target, False, f"bad json: {exc}")
+                return _err(f"sim_call params (command) is not valid JSON: {exc}")
+            if not isinstance(parsed, dict):
+                _audit_tool_action(action, target, False, "command not a dict")
+                return _err("sim_call params (command) must decode to a JSON object (dict)")
+            sim_params = parsed
+        _sim_cmd: dict[str, Any] = {"action": "sim_call", "sim_action": function, "sim_params": sim_params}
+        # ``robot_name`` disambiguates the robot in a multi-robot world; it is
+        # a validated top-level command field, so lift it out of the params.
+        if "robot_name" in sim_params:
+            _sim_cmd["robot_name"] = sim_params.pop("robot_name")
+        try:
+            validated_sim_call_cmd = _security.validate_command(_sim_cmd)
+        except _security.ValidationError as exc:
+            _audit_tool_action(action, target, False, f"validation: {exc}")
+            return _err(f"sim_call rejected: {exc}")
+    elif action == "broadcast":
         if not command:
             _audit_tool_action(action, "*", False, "missing command")
             return _err("broadcast requires command (JSON string)")
@@ -1392,6 +1454,23 @@ def robot_mesh(
         _audit_tool_action(action, target, True, f"action={cmd.get('action')}")
         return _ok(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
 
+    # ── action: sim_call ──────────────────────────────────────────────────
+    if action == "sim_call":
+        # Validated in the pre-interrupt pass above. Explicit raise, not
+        # assert -- see the broadcast handler below for why the sentinel
+        # check must survive ``python -O``.
+        if validated_sim_call_cmd is None:
+            raise RuntimeError(
+                "sim_call reached its handler without pre-validation -- validate-before-HITL contract broken"
+            )
+        try:
+            result = mesh.send(target, validated_sim_call_cmd, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
+            return _err(f"[sim_call -> {target}] dispatch error: {type(exc).__name__}: {exc}")
+        _audit_tool_action(action, target, True, f"sim_action={function}")
+        return _ok(f"[sim_call -> {target}] {function}: {json.dumps(result, default=str)[:2000]}")
+
     # ── action: broadcast ─────────────────────────────────────────────────
     if action == "broadcast":
         # Pre-validated above before the HITL interrupt fired, so
@@ -1572,7 +1651,7 @@ def robot_mesh(
         )
 
     return _err(
-        f"unknown action: {action!r}. Valid: peers, status, tell, send, rpc, "
+        f"unknown action: {action!r}. Valid: peers, status, tell, send, rpc, sim_call, "
         "broadcast, stop, emergency_stop, subscribe, unsubscribe, watch, inbox."
     )
 

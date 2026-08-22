@@ -413,7 +413,22 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         # ``resume`` clears the emergency-stop lockout; the only action
         # other than ``status`` permitted while the lockout is engaged.
         "resume",
+        # ``sim_call`` invokes one published Simulation action (add_object,
+        # add_camera, register_urdf, raycast, ...) on a SIM peer. Hardware
+        # peers refuse it in ``Mesh._dispatch`` -- the verb is structurally
+        # sim-only, which is why it needs no motion confirm anywhere.
+        "sim_call",
     }
+)
+
+#: Simulation actions ``sim_call`` refuses even though the sim tool publishes
+#: them. Each one starts a policy rollout, and the rollout surface has its own
+#: validated verb (``execute``/``start``) whose provider / HF-repo / host
+#: allowlists would be bypassed if the same capability rode in through
+#: ``sim_call``'s opaque params. One gate per capability: rollouts go through
+#: ``execute``, world/sensor/render calls go through ``sim_call``.
+SIM_CALL_BLOCKED_ACTIONS: frozenset[str] = frozenset(
+    {"run_policy", "start_policy", "replay_episode", "eval_policy"}
 )
 
 #: Device Connect native-RPC function names (e.g. the Reachy's ``nod`` /
@@ -1261,6 +1276,40 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
             )
         out["override_code"] = override_code
+
+    elif action == "sim_call":
+        # ``sim_action`` names one PUBLISHED Simulation action; ``sim_params``
+        # is that action's keyword arguments. Both flow into
+        # ``Simulation.__call__(action, **params)`` on the target peer, whose
+        # own dispatch validates per-action fields and refuses unpublished
+        # actions -- this layer bounds the wire shape (identifier charset,
+        # JSON-object params, encoded size) exactly as validate_device_rpc
+        # does for Device Connect natives, and closes the one hole that
+        # peer-side dispatch cannot: a rollout capability riding in through
+        # opaque params (SIM_CALL_BLOCKED_ACTIONS).
+        if not cmd.get("sim_action"):
+            raise ValidationError(
+                "sim_call requires non-empty `sim_action` (a published Simulation action, e.g. 'add_object')"
+            )
+        try:
+            sim_action, sim_params = validate_device_rpc(cmd.get("sim_action", ""), cmd.get("sim_params"))
+        except ValidationError as exc:
+            # Re-raise under this action's own name so the refusal names the
+            # field the caller actually sent (sim_action/sim_params, not
+            # device_rpc's function/params).
+            raise ValidationError(f"sim_call: {exc}") from exc
+        if sim_action in SIM_CALL_BLOCKED_ACTIONS:
+            raise ValidationError(
+                f"sim_call refuses {sim_action!r}: policy rollouts go through the "
+                "`execute`/`start` actions, whose policy_provider / HF-repo / host "
+                "allowlists must not be bypassed."
+            )
+        out["sim_action"] = sim_action
+        out["sim_params"] = sim_params
+        # robot_name disambiguates which robot in a multi-robot world a
+        # robot-scoped action targets; same rule as execute's robot_name.
+        if cmd.get("robot_name") is not None:
+            out["robot_name"] = validate_mesh_identifier(cmd["robot_name"], "sim_call.robot_name")
 
     return out
 

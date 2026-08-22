@@ -2199,6 +2199,8 @@ class Mesh(SensorLoopsMixin):
                         **extra,
                     )
                 )
+        if action == "sim_call":
+            return self._dispatch_sim_call(r, cmd)
         if action == "step" and hasattr(r, "step"):
             return dict(r.step(cmd.get("steps", 1)))
         if action == "reset" and hasattr(r, "reset"):
@@ -2369,6 +2371,104 @@ class Mesh(SensorLoopsMixin):
             return dict(sim.run_policy(robot_name, **run_kwargs))
         # action == "start"
         return dict(sim.start_policy(robot_name, **run_kwargs))
+
+    #: Byte budget for one text block of a ``sim_call`` wire reply. The
+    #: transport low-pass filter silently drops messages over its cmd cap
+    #: (default 16 KiB) in BOTH directions, so an unbounded reply (an
+    #: ``export_xml`` of a big scene, a base64 render) would not arrive large -
+    #: it would not arrive at all, surfacing as a timeout with zero
+    #: diagnostics. Truncating here turns that silent drop into a reply that
+    #: says it was truncated.
+    _SIM_CALL_REPLY_TEXT_CAP: int = 8_000
+
+    def _dispatch_sim_call(self, r: Any, cmd: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch a validated ``sim_call`` command to this peer's Simulation.
+
+        The rail that puts the Simulation's PUBLISHED action surface
+        (``add_object`` / ``add_camera`` / ``register_urdf`` / ``raycast`` /
+        ...) on the mesh: ``validate_command`` has already bounded the wire
+        shape (identifier-charset ``sim_action``, JSON-object ``sim_params``,
+        rollout actions refused - :data:`~strands_robots.mesh.security.SIM_CALL_BLOCKED_ACTIONS`),
+        and the call is delegated to ``Simulation.__call__``, the same
+        dispatcher the agent-facing AgentTool uses - so per-action parameter
+        validation, field aliasing and the published-actions-only refusal
+        (#2093) all apply without a second copy of that logic here.
+
+        Structurally sim-only: a hardware peer (no ``run_policy``/``_world``)
+        answers with a refusal naming the reason, so this verb can never move
+        metal - which is exactly why no motion confirm gates it anywhere.
+
+        A command addressed to a child SimRobot peer is delegated to the
+        parent Simulation (the child dataclass carries no world of its own),
+        with ``robot_name`` pre-bound to that child ONLY when the caller sent
+        a ``robot_name`` themselves or the action is robot-scoped enough to
+        need one - we deliberately do NOT inject ``robot_name`` into every
+        call, because world-scoped actions (``add_object``, ``set_gravity``)
+        do not accept the parameter and would refuse it.
+        """
+        sim_action = cmd.get("sim_action", "")
+        params = dict(cmd.get("sim_params") or {})
+        if cmd.get("robot_name") is not None:
+            params.setdefault("robot_name", cmd["robot_name"])
+
+        # Resolve the Simulation: the peer's own robot, or the child
+        # SimRobot's parent world.
+        sim = r
+        _sim_parent = getattr(r, "_sim_parent", None)
+        if _sim_parent is not None:
+            sim = _sim_parent
+        if not (hasattr(sim, "run_policy") and hasattr(sim, "_world") and callable(sim)):
+            return {
+                "error": (
+                    "sim_call targets a SIMULATION peer; this peer is not one. "
+                    "Hardware robots are driven through execute/start (policy "
+                    "rollouts) and teleop - their surface is deliberately "
+                    "narrower than a sim's."
+                )
+            }
+
+        try:
+            result = sim(action=sim_action, **params)
+        except TypeError as exc:
+            # A published action called with a parameter it does not accept
+            # (e.g. robot_name on a world-scoped action). The message names
+            # the Python signature mismatch, which IS the actionable content.
+            return {"error": f"sim_call {sim_action!r} rejected its parameters: {exc}"}
+        if not isinstance(result, dict):
+            return {"error": f"sim_call {sim_action!r} returned non-dict {type(result).__name__}"}
+
+        # Bound the reply for the wire (see _SIM_CALL_REPLY_TEXT_CAP). Text
+        # blocks are truncated with a marker; non-text blocks (images from
+        # render) cannot ride a 16 KiB cmd reply at all, so they are replaced
+        # by a pointer to the rails that do carry pixels.
+        content = result.get("content")
+        bounded_content = []
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    text = block["text"]
+                    if len(text) > self._SIM_CALL_REPLY_TEXT_CAP:
+                        text = (
+                            text[: self._SIM_CALL_REPLY_TEXT_CAP]
+                            + f"\n... [truncated at {self._SIM_CALL_REPLY_TEXT_CAP} chars for the wire]"
+                        )
+                    bounded_content.append({"text": text})
+                else:
+                    bounded_content.append(
+                        {
+                            "text": (
+                                "[non-text content elided: the mesh cmd reply is capped at "
+                                "~16 KiB. Rendered frames travel on the camera stream "
+                                "(strands/<peer>/camera/<name>) - add_camera + the dashboard "
+                                "tiles, or render with a save path on the sim host.]"
+                            )
+                        }
+                    )
+        return {
+            "status": result.get("status", "error"),
+            "sim_action": sim_action,
+            "content": bounded_content,
+        }
 
     def _on_response(self, sample: Any) -> None:
         """Inbound response handler.
