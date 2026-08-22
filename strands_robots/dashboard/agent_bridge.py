@@ -241,6 +241,38 @@ def set_bridge(bridge: Any) -> None:
     global _bridge
     _bridge = bridge
 
+_devices: Any = None
+
+def set_devices(devices: Any) -> None:
+    """Hand the DeviceManager over so direct-serial refusals can NAME the holding peer."""
+    global _devices
+    _devices = devices
+
+def _tracked_children() -> dict[int, str]:
+    """pid -> peer_id for this dashboard's own live spawned robots (device_manager.py pattern)."""
+    dm = _devices
+    if dm is None:
+        return {}
+    try:
+        with dm._lock:
+            return {
+                r.process.pid: pid_key
+                for pid_key, r in dm.robots.items()
+                if r.process is not None and r.alive()
+            }
+    except Exception:  # noqa: BLE001 - an unreadable roster means no names, never a crash
+        return {}
+
+def _direct_serial_tools() -> list:
+    """Bus-guarded pose_tool + serial_tool (direct_serial.py), or [] when they cannot import."""
+    try:
+        from strands_robots.dashboard.direct_serial import build_direct_serial_tools
+
+        return build_direct_serial_tools(_tracked_children)
+    except Exception:  # noqa: BLE001 - the agent must build even if these tools cannot
+        logger.warning("direct serial tools unavailable - agent runs without them", exc_info=True)
+        return []
+
 def _peers_snapshot() -> dict:
     """Current fleet peers for the motion gate - read at call time, never cached."""
     if _bridge is None:
@@ -442,7 +474,9 @@ def _build_agent() -> Any:
     except Exception:  # noqa: BLE001 - a signature failure must not block the build
         _agent_fleet_sig = None
     kwargs: dict[str, Any] = {
-        "tools": [t for t in (_make_fleet_tool(), _robot_mesh_tool()) if t is not None] + list(proxies),
+        "tools": [t for t in (_make_fleet_tool(), _robot_mesh_tool()) if t is not None]
+        + _direct_serial_tools()
+        + list(proxies),
         "system_prompt": cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT,
         "callback_handler": None,
         "hooks": [MotionInterruptHook(_peers_snapshot, proxy_motion, proxy_targets)],
@@ -531,6 +565,10 @@ def agent_status() -> dict[str, Any]:
         # Not built yet: report what the build WOULD produce (pure rules on the
         # live fleet), not a hardcoded guess - the old ['fleet'] badge lied.
         tools = ["fleet", "robot_mesh"]
+        with contextlib.suppress(Exception):
+            from strands_robots.dashboard.direct_serial import available_names
+
+            tools += available_names()
         with contextlib.suppress(Exception):
             from strands_robots.dashboard.peer_tools import expected_tool_names
 

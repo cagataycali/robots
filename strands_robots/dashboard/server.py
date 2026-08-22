@@ -399,6 +399,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         from strands_robots.dashboard import agent_bridge as _ab
 
         _ab.set_bridge(app.state.bridge)
+        # ...and the device roster, so a direct-serial refusal can NAME the
+        # spawned child holding the bus instead of printing a bare pid.
+        _ab.set_devices(app.state.devices)
 
         # USB auto-spawn: a board with a saved profile comes up on its own,
         # and an unplugged one is stopped. Unknown boards are only reported.

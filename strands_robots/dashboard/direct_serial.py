@@ -94,6 +94,28 @@ def port_refusal(
         f"both conversations, so the call is refused. Other {_scan_hint(scan)}"
     )
 
+def available_names() -> list[str]:
+    """Tool names build_direct_serial_tools WOULD produce -- same import rules.
+
+    The not-yet-built agent badge reports this instead of a hardcoded guess
+    (the ['fleet'] badge lied once already; agent_bridge.agent_status).
+    """
+    out: list[str] = []
+    try:
+        from strands_robots.tools.pose_tool import pose_tool  # noqa: F401
+
+        out.append("pose_tool")
+    except Exception:  # noqa: BLE001 - absent SDK tool means absent badge entry
+        pass
+    try:
+        from strands_robots.tools.serial_tool import serial_tool  # noqa: F401
+
+        out.append("serial_tool")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _default_holders(port: str) -> list[int]:
     from strands_robots.dashboard import bus_claim
 

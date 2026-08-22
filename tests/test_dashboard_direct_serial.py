@@ -100,3 +100,59 @@ def test_wrapped_pose_tool_port_free_action_reaches_sdk():
     assert out["status"] in ("success", "error")
     text = " ".join(str(c.get("text", "")) for c in out.get("content", []))
     assert "held by" not in text and "does not exist" not in text
+
+
+class TestMotionGateRows:
+    """agent_hitl.MOTION_ACTIONS is the ONLY human gate for these tools (they raise no interrupt)."""
+
+    def _intent(self, tool_name, tool_input):
+        from strands_robots.dashboard.agent_hitl import motion_intent
+
+        return motion_intent(tool_name, tool_input, peers={}, env={})
+
+    def test_pose_motion_actions_ask_and_name_the_port(self):
+        for act in ("load_pose", "move_motor", "move_multiple", "incremental_move", "reset_to_home"):
+            reason = self._intent("pose_tool", {"action": act, "port": PORT})
+            assert reason is not None, act
+            assert reason["target"] == PORT
+
+    def test_pose_reads_and_stops_are_never_gated(self):
+        for act in ("read_position", "read_all", "list_poses", "show_pose", "delete_pose", "connect", "emergency_stop", "store_pose"):
+            assert self._intent("pose_tool", {"action": act, "port": PORT}) is None, act
+
+    def test_serial_writes_ask_and_reads_do_not(self):
+        for act in ("send", "send_read", "feetech_position", "feetech_velocity"):
+            assert self._intent("serial_tool", {"action": act, "port": PORT}) is not None, act
+        for act in ("list_ports", "read", "feetech_ping", "monitor"):
+            assert self._intent("serial_tool", {"action": act, "port": PORT}) is None, act
+
+    def test_always_allow_grant_skips_the_gate(self):
+        from strands_robots.dashboard.agent_hitl import motion_intent
+        from strands_robots.dashboard.agent_motion import MOTION_ENV
+
+        assert motion_intent("pose_tool", {"action": "move_motor", "port": PORT}, peers={}, env={MOTION_ENV: "1"}) is None
+
+
+class TestAgentWiring:
+    """The builder and the not-yet-built badge both carry the new tools."""
+
+    def test_builder_produces_both_guarded_tools_without_devices(self, monkeypatch):
+        from strands_robots.dashboard import agent_bridge as ab
+
+        monkeypatch.setattr(ab, "_devices", None)
+        names = sorted(t.tool_name for t in ab._direct_serial_tools())
+        assert names == ["pose_tool", "serial_tool"]
+
+    def test_tracked_children_is_empty_not_an_error_without_devices(self, monkeypatch):
+        from strands_robots.dashboard import agent_bridge as ab
+
+        monkeypatch.setattr(ab, "_devices", None)
+        assert ab._tracked_children() == {}
+
+    def test_unbuilt_agent_status_badge_names_the_direct_serial_tools(self, monkeypatch):
+        from strands_robots.dashboard import agent_bridge as ab
+
+        monkeypatch.setattr(ab, "_bridge", None)
+        monkeypatch.setattr(ab, "_agent", None)
+        tools = ab.agent_status()["tools"]
+        assert "pose_tool" in tools and "serial_tool" in tools

@@ -27,6 +27,13 @@ MOTION_ACTIONS: dict[str, frozenset[str]] = {
     # (tool_context.interrupt in strands_robots/tools/robot_mesh.py) on every
     # physical action, so listing it here would ask the operator twice for one
     # command. This dict gates only the dashboard's bespoke tools.
+    # The bus-guarded direct-serial tools (dashboard/direct_serial.py) raise NO
+    # interrupt of their own (grep tool_context.interrupt in the SDK tools = 0),
+    # so this layer is their ONLY human gate. Reads, emergency_stop and
+    # delete_pose stay out: stopping is never gated. serial "monitor" only ever
+    # calls ser.read (serial_tool.py) so it is a read too.
+    "pose_tool": frozenset({"load_pose", "move_motor", "move_multiple", "incremental_move", "reset_to_home"}),
+    "serial_tool": frozenset({"send", "send_read", "feetech_position", "feetech_velocity"}),
 }
 
 _TRUE = ("1", "true", "yes", "on")
@@ -70,6 +77,11 @@ def motion_intent(
         # a proxy tool IS its peer: the binding names the target, the model
         # cannot write (or omit) its way around it.
         target = str(bound_targets.get(tool_name) or "").strip()
+    if not target:
+        # direct-serial tools address a PORT, not a peer: show the operator the
+        # real thing the yes would move. A port is never on the peers snapshot,
+        # so peer_is_physical(None) below stays fail-closed (metal).
+        target = str(tool_input.get("port") or "").strip()
     peer = (peers or {}).get(target)
     physical, why = peer_is_physical(peer)
     if not physical:
