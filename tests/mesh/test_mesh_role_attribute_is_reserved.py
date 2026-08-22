@@ -15,12 +15,14 @@ shipped Lambda source over a Things page.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import sys
 import types
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import boto3
 import pytest
 
 # Spelled out rather than imported so this module collects against a tree that
@@ -73,9 +75,10 @@ def _sent_attributes(iot_client: Any) -> dict[str, str]:
 def _fanout_targets(monkeypatch: pytest.MonkeyPatch, things: list[dict[str, Any]]) -> list[str]:
     """Run the shipped e-stop fan-out over *things*; return the topics stopped.
 
-    Executes ``bootstrap._ESTOP_LAMBDA_SOURCE`` verbatim - the same way
-    ``test_estop_fanout_turn_id_unique.py`` drives it - so the routing rule
-    under test is the one that is deployed rather than a restatement of it.
+    Executes ``bootstrap._ESTOP_LAMBDA_SOURCE`` verbatim, so the routing rule
+    under test is the one that is deployed rather than a restatement of it,
+    with the boto3 double installed in ``sys.modules`` because that is where
+    the source resolves the module.
     """
     from strands_robots.mesh.iot import bootstrap
 
@@ -90,7 +93,16 @@ def _fanout_targets(monkeypatch: pytest.MonkeyPatch, things: list[dict[str, Any]
     ddb.exceptions.ConditionalCheckFailedException = type("CCF", (Exception,), {})
 
     clients = {"iot": iot, "iot-data": iot_data, "dynamodb": ddb}
-    monkeypatch.setattr(boto3, "client", lambda name, *a, **k: clients[name])
+    # The Lambda source does its own ``import boto3``, so it resolves the
+    # module through ``sys.modules`` at call time rather than through any
+    # binding this file holds. Install the double there - the same way
+    # ``test_iot_provisioning_hook.py`` drives the sibling hook source in
+    # this module - so a patch on a module-level binding cannot be left
+    # pointing at an object the source never consults, which would reach
+    # the real SDK.
+    fake_boto3 = types.ModuleType("boto3")
+    fake_boto3.client = lambda name, *a, **k: clients[name]  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
     namespace: dict[str, Any] = {}
     exec(bootstrap._ESTOP_LAMBDA_SOURCE, namespace)  # noqa: S102 - deployed source under test
     namespace["lambda_handler"](
@@ -270,3 +282,42 @@ class TestTheHelperIsTotal:
 
         for value in ("robot", "operator", "", "so101-arm"):
             assert _reserved_attribute_error({RESERVED: value}) is not None
+
+
+class TestTheDoubleIsInstalledWhereTheSourceLooks:
+    """Pin the seam, because a binding patch passes every test above.
+
+    The Lambda source resolves ``boto3`` through ``sys.modules`` at call time
+    (it carries its own ``import boto3``), so patching a module-level binding
+    this file holds only works while nothing has replaced that entry. Any
+    sibling that removes ``boto3`` from ``sys.modules`` leaves the patch on an
+    orphaned object the source never consults, and the fan-out then runs
+    against the real SDK - a live signed AWS request from a unit test. That
+    shape passes every behavioural test in this file when the file runs alone,
+    so only a structural check notices it.
+    """
+
+    def test_the_double_goes_through_sys_modules(self) -> None:
+        """``sys.modules`` is the seam, matching the sibling hook driver."""
+        src = inspect.getsource(_fanout_targets)
+        assert 'setitem(sys.modules, "boto3"' in src
+
+    def test_no_module_level_boto3_binding_is_patched(self) -> None:
+        """A patch on this module's own binding is what the source ignores."""
+        assert "setattr(boto3" not in inspect.getsource(_fanout_targets)
+
+    def test_this_module_holds_no_boto3_binding_to_patch(self) -> None:
+        """Graded as an import statement: naming it in prose binds nothing."""
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        bound = {
+            alias.asname or alias.name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module == "boto3"
+            for alias in node.names
+        }
+        assert "boto3" not in bound, f"this module binds boto3: {sorted(bound)}"
