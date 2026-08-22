@@ -36,6 +36,22 @@ MOTION_ACTIONS: dict[str, frozenset[str]] = {
     "serial_tool": frozenset({"send", "send_read", "feetech_position", "feetech_velocity"}),
 }
 
+#: tools whose gated input names the motion in FIELDS, not an instruction string.
+DIRECT_SERIAL_TOOLS: frozenset[str] = frozenset({"pose_tool", "serial_tool"})
+
+#: the motion-bearing fields, in the order an operator reads them.
+_DETAIL_FIELDS = ("pose_name", "motor_name", "positions", "position", "delta", "steps", "data")
+
+def _direct_serial_detail(action: str, tool_input: dict) -> str:
+    """The gated call's own motion fields as one readable line -- never invented."""
+    parts = [action]
+    for key in _DETAIL_FIELDS:
+        value = tool_input.get(key)
+        if value is None or value == "":
+            continue
+        parts.append(f"{key}={value}")
+    return " ".join(parts) if len(parts) > 1 else ""
+
 _TRUE = ("1", "true", "yes", "on")
 
 
@@ -87,11 +103,16 @@ def motion_intent(
     if not physical:
         return None
 
+    instruction = str(tool_input.get("instruction") or tool_input.get("message") or "")
+    if not instruction and tool_name in DIRECT_SERIAL_TOOLS:
+        # pose/serial inputs carry the motion in named fields, not an
+        # instruction string; show the operator WHAT a yes moves, verbatim.
+        instruction = _direct_serial_detail(action, tool_input)
     reason: dict[str, Any] = {
         "tool": tool_name,
         "action": action,
         "target": target or "(unnamed peer)",
-        "instruction": str(tool_input.get("instruction") or tool_input.get("message") or ""),
+        "instruction": instruction,
         "why_physical": why,
     }
     if tool_input.get("duration") is not None:

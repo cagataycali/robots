@@ -156,3 +156,32 @@ class TestAgentWiring:
         monkeypatch.setattr(ab, "_agent", None)
         tools = ab.agent_status()["tools"]
         assert "pose_tool" in tools and "serial_tool" in tools
+
+
+class TestConfirmDetail:
+    """The interrupt's instruction line carries the call's own motion fields."""
+
+    def _intent(self, tool_name, tool_input):
+        from strands_robots.dashboard.agent_hitl import motion_intent
+
+        return motion_intent(tool_name, tool_input, peers={}, env={})
+
+    def test_move_motor_confirm_names_motor_and_position(self):
+        reason = self._intent("pose_tool", {"action": "move_motor", "port": PORT, "motor_name": "shoulder_pan", "position": 10.5})
+        assert reason["instruction"] == "move_motor motor_name=shoulder_pan position=10.5"
+
+    def test_load_pose_confirm_names_the_pose(self):
+        reason = self._intent("pose_tool", {"action": "load_pose", "port": PORT, "pose_name": "home_rest"})
+        assert "pose_name=home_rest" in reason["instruction"]
+
+    def test_serial_send_confirm_quotes_the_raw_bytes(self):
+        reason = self._intent("serial_tool", {"action": "send", "port": PORT, "data": "#5P1500T100"})
+        assert "data=#5P1500T100" in reason["instruction"]
+
+    def test_fieldless_gated_call_synthesizes_nothing(self):
+        reason = self._intent("pose_tool", {"action": "reset_to_home", "port": PORT})
+        assert reason["instruction"] == ""
+
+    def test_explicit_instruction_is_never_overwritten(self):
+        reason = self._intent("pose_tool", {"action": "move_motor", "port": PORT, "instruction": "operator words", "motor_name": "elbow"})
+        assert reason["instruction"] == "operator words"
