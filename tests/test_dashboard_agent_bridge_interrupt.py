@@ -173,3 +173,53 @@ def test_fleet_tool_consumes_a_deposited_grant(monkeypatch):
     assert res2["status"] == "error"
     assert len(sent) == 1
     assert consume_grant("fleet", {"action": "task", "target": "arm-1", "instruction": "wave"}) is False
+
+
+RM_REASON = {
+    "action": "broadcast", "target": "*ALL_PEERS*", "function": "",
+    "command": {"action": "execute", "instruction": "wave"}, "instruction": "",
+    "warning": "Fleet-wide physical effect. Reply 'y' to approve, anything else to deny.",
+}
+
+
+def test_parking_is_name_agnostic_robot_mesh_interrupts_flow_verbatim(_clean):
+    """robot_mesh raises its OWN interrupt names (robot_mesh-<action>-approval).
+
+    The rail must forward name and reason untouched - a filter on
+    'physical_motion' here would silently swallow every SDK-native confirm.
+    """
+    class _RmAgent(_FakeAgent):
+        def __call__(self, agent_input):
+            self.calls.append(agent_input)
+            if isinstance(agent_input, str):
+                return _Result("interrupt", [_Interrupt(id="rm-1", name="robot_mesh-broadcast-approval", reason=RM_REASON)])
+            return _Result("end_turn", text="broadcast sent")
+    import queue as _q
+    from unittest.mock import patch as _patch
+    rm = _RmAgent()
+    with _patch.object(ab, "get_agent", lambda: rm):
+        q: _q.Queue = _q.Queue()
+        ab.run_turn_blocking("wave everyone", q)
+        events = _events(q)
+        ie = next(e for e in events if e["type"] == "interrupt")
+        assert ie["name"] == "robot_mesh-broadcast-approval"
+        assert ie["reason"] == RM_REASON  # verbatim, including *ALL_PEERS* and the warning
+        assert ab.pending_interrupt()["name"] == "robot_mesh-broadcast-approval"
+
+        # And the resume delivers the literal string into the same turn.
+        q2: _q.Queue = _q.Queue()
+        ab.resume_interrupt_blocking("rm-1", "y", q2)
+        assert rm.calls[-1] == [{"interruptResponse": {"interruptId": "rm-1", "response": "y"}}]
+        assert any(e.get("type") == "done" for e in _events(q2))
+
+
+def test_resume_payload_matches_the_sdk_contract():
+    """The frame we build is the shape strands.types.interrupt documents.
+
+    Pinned against the SDK's own TypedDict so an SDK rename fails HERE with
+    a sentence, not in production with a silently ignored response.
+    """
+    from strands.types.interrupt import InterruptResponse, InterruptResponseContent
+
+    assert set(InterruptResponseContent.__annotations__) == {"interruptResponse"}
+    assert set(InterruptResponse.__annotations__) == {"interruptId", "response"}
