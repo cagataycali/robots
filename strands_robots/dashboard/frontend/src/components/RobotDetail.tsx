@@ -7,6 +7,7 @@ import { twinButtonCopy } from '../lib/twinButton'
 import { statusSentence, peerStatusFields } from '../lib/statusSentence'
 import { teleopView, stopVerdict, startVerdict, type TeleopView } from '../lib/teleopView'
 import { leaderOptions, pairPlan, teleopSubject, type PairInput } from '../lib/teleopPair'
+import { mirrorPlan, mirrorSentence } from '../lib/mirrorToSim'
 import { useJointFailure } from '../lib/useJointFailure'
 import { api } from '../lib/endpoints'
 import { useTelemetry } from '../lib/useTelemetry'
@@ -96,6 +97,72 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
     try { after = teleopView(await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop`)) } catch { after = null }
     setTeleop(after ?? 'unreachable')
     setStopped(stopVerdict(after))
+  }
+
+  /**
+   * MIRROR TO SIM — the real arm's own affordance for "hand-move me and my
+   * twin copies it". Same rail as teleop (publish on THIS arm, receive on the
+   * twin's robot), but discovered from the REAL arm's card, because the
+   * operator standing at the arm should not need to know the twin's child
+   * peer id to use it. The "following" indicator is derived by ASKING the
+   * follower again, never from the POSTs returning 200 (the /teleop/receive
+   * lesson: it once said "started" for a stream whose every frame was refused).
+   */
+  const mirror = peer.presence?.robot_type === 'robot' && (fleet?.length ?? 0) > 0
+    ? mirrorPlan(peer.peer_id, fleet!)
+    : null
+  const [mirrorArmed, setMirrorArmed] = useState(false)
+  const [mirrorBusy, setMirrorBusy] = useState(false)
+  /** the follower this card started a mirror on — the stop button's target */
+  const [mirrorOn, setMirrorOn] = useState<string | null>(null)
+  const [mirrorLine, setMirrorLine] = useState<{ ok: boolean; line: string } | null>(null)
+  const askMirror = async (followerId: string) => {
+    let after: TeleopView | null = null
+    try { after = teleopView(await api(`/api/robots/${encodeURIComponent(followerId)}/teleop`)) } catch { after = null }
+    return after
+  }
+  const startMirror = async (followerId: string) => {
+    setMirrorArmed(false); setMirrorBusy(true); setMirrorLine(null)
+    try {
+      // publish is read-only on this arm: the mover is whoever receives.
+      await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/publish`, { method: 'POST', body: JSON.stringify({}) })
+    } catch (e) {
+      setMirrorBusy(false)
+      setMirrorLine({ ok: false, line: `${peer.peer_id} could not start publishing its joints, so nothing was mirrored: ${(e as Error).message}` })
+      return
+    }
+    try {
+      await api(`/api/robots/${encodeURIComponent(followerId)}/teleop/receive`, { method: 'POST', body: JSON.stringify({ source_peer_id: peer.peer_id }) })
+    } catch (e) {
+      setMirrorBusy(false); setMirrorOn(followerId) // half-built: the stop button must appear
+      setMirrorLine({ ok: false, line: `${peer.peer_id} is publishing, but ${followerId} would not follow: ${(e as Error).message} — stop below removes the publisher` })
+      return
+    }
+    const after = await askMirror(followerId)
+    setMirrorBusy(false); setMirrorOn(followerId)
+    const v = startVerdict(after)
+    setMirrorLine({ ok: v.ok, line: v.ok ? `mirror live — ${followerId} is copying this arm's joints` : v.line })
+  }
+  const refreshMirror = async (followerId: string) => {
+    setMirrorBusy(true)
+    const after = await askMirror(followerId)
+    setMirrorBusy(false)
+    if (!after) { setMirrorLine({ ok: false, line: `${followerId} did not answer when asked — nothing confirms the mirror state` }); return }
+    setMirrorLine({ ok: after.streaming && after.tone === 'ok', line: `${followerId}: ${after.headline}` })
+  }
+  const stopMirror = async (followerId: string) => {
+    // ONE TAP, never armed: stopping a mirror only removes commands.
+    setMirrorBusy(true); setMirrorLine(null)
+    let failed = ''
+    try { await api(`/api/robots/${encodeURIComponent(followerId)}/teleop/stop`, { method: 'POST' }) }
+    catch (e) { failed = `${followerId} refused stop: ${(e as Error).message}` }
+    try { await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/stop`, { method: 'POST' }) }
+    catch (e) { failed = failed ? `${failed}; ` : ''; failed += `${peer.peer_id} refused stop: ${(e as Error).message}` }
+    const after = await askMirror(followerId)
+    setMirrorBusy(false)
+    const v = stopVerdict(after)
+    if (v.ok && !failed) setMirrorOn(null)
+    setMirrorLine(failed ? { ok: false, line: failed } : { ok: v.ok, line: v.ok ? 'mirror stopped — nothing is being copied' : v.line })
   }
   const sheetRef = useRef<HTMLElement | null>(null)
   useDialogFocus(sheetRef)
@@ -290,6 +357,55 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             </button>
             {strandedResult && (
               <span className={strandedResult.ok ? 'muted' : 'warn'} role="status">{strandedResult.line}</span>
+            )}
+          </div>
+        )}
+        {/* MIRROR TO SIM — from the real arm's own card. Hand-move the arm, the twin copies it. */}
+        {mirror && (
+          <div className="hint" role="status">
+            <b>mirror to sim:</b>{' '}
+            {mirrorOn ? (
+              <>
+                <span className={mirrorLine?.ok ? '' : 'muted'}>
+                  {mirrorLine?.line ?? `mirror started on ${mirrorOn}`}
+                </span>
+                <div className="row small">
+                  {/* one tap, never armed: stop only removes commands */}
+                  <button className="btn danger small" onClick={() => stopMirror(mirrorOn)} disabled={mirrorBusy}>
+                    stop mirror
+                  </button>
+                  <button className="btn ghost small" onClick={() => refreshMirror(mirrorOn)} disabled={mirrorBusy}
+                          title="ask the twin what it is actually doing — the indicator is measured, not assumed">
+                    {mirrorBusy ? 'asking…' : 'check'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="muted small">{mirrorSentence(mirror)}</span>
+                {mirror.notes.map((n, i) => <div key={i} className="muted small">{n}</div>)}
+                {mirror.follower && (
+                  <div className="row small">
+                    {mirrorArmed ? (
+                      <>
+                        {/* not the danger style: the follower is a sim, nothing physical moves */}
+                        <button className="btn" onClick={() => startMirror(mirror.follower!)} disabled={mirrorBusy}>
+                          confirm — publish this arm's joints; {mirror.follower} (sim) copies them
+                        </button>
+                        <button className="btn ghost" onClick={() => setMirrorArmed(false)}>cancel</button>
+                      </>
+                    ) : (
+                      <button className="btn ghost small" onClick={() => setMirrorArmed(true)} disabled={mirrorBusy}
+                              title="start the joint stream: this arm publishes (read-only), the twin follows — nothing physical moves">
+                        mirror to {mirror.follower}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {mirrorLine && !mirrorLine.ok && (
+                  <div className="warn small" role="status">{mirrorLine.line}</div>
+                )}
+              </>
             )}
           </div>
         )}
