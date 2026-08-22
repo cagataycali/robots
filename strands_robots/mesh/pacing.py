@@ -41,6 +41,17 @@ state and teleop frames:
    from the thread doing the stopping. A 30Hz loop must not take a third of a
    second to notice that the robot is going down.
 
+The doorbell :meth:`Ticker.wake` rings is a ``socket.socketpair()`` rather than an
+``os.pipe()``, and that is a portability requirement rather than a preference. On
+Windows ``selectors.DefaultSelector`` is ``SelectSelector``, whose WinSock
+``select()`` accepts sockets ONLY: a pipe fd raises ``OSError`` (WSAENOTSOCK,
+10038) on the first :meth:`Ticker.wait`. That call sits outside the ``try`` in
+every paced loop, so each publish thread would die on its first tick while the
+mesh itself looked up -- a robot that joins the fleet and streams nothing, which
+is the hardest shape of this failure to attribute. It is also why the claim above
+about sleeping on the same primitive as ``asyncio`` holds: ``asyncio``'s selector
+loop builds its own self-pipe from a socketpair for exactly this reason.
+
 Apart from the package's shared numeric-domain helper this module is
 dependency-free, and it imports nothing from the mesh: it is pure timing,
 unit-testable without a session, a robot or a network.
@@ -48,8 +59,8 @@ unit-testable without a session, a robot or a network.
 
 from __future__ import annotations
 
-import os
 import selectors
+import socket
 import threading
 import time
 
@@ -108,11 +119,17 @@ class Ticker:
         self.slice_s = min(slice_s, period)
         self._stop_event = stop_event
         self._selector = selectors.DefaultSelector()
-        # A self-pipe gives two things: a registered fd (so the selector always
-        # has something to watch, whatever the platform's implementation) and a
-        # way for the stopping thread to interrupt a wait immediately.
-        self._wake_r, self._wake_w = os.pipe()
-        os.set_blocking(self._wake_r, False)
+        # A self-socket gives two things: something registered (so the selector
+        # always has an object to watch, whatever the platform's implementation)
+        # and a way for the stopping thread to interrupt a wait immediately.
+        # A socketpair rather than os.pipe() because Windows resolves
+        # DefaultSelector to SelectSelector, and WinSock select() takes only
+        # sockets -- a pipe fd there raises OSError(WSAENOTSOCK) out of the first
+        # wait(), outside the try in every paced loop. asyncio's selector loop
+        # builds its own self-pipe from a socketpair for the same reason.
+        self._wake_r, self._wake_w = socket.socketpair()
+        self._wake_r.setblocking(False)
+        self._wake_w.setblocking(False)
         self._selector.register(self._wake_r, selectors.EVENT_READ)
         self._closed = False
         self._deadline = time.perf_counter()
@@ -155,22 +172,22 @@ class Ticker:
         return self._stop_event is not None and self._stop_event.is_set()
 
     def _drain(self) -> None:
-        """Empty the wake pipe so one write cannot satisfy every later wait.
+        """Empty the doorbell so one wake cannot satisfy every later wait.
 
-        Never raises. The pipe is only a doorbell: whether it had one byte or a
+        Never raises. It is only a doorbell: whether it carried one byte or a
         hundred, the caller's next decision comes from the deadline and the stop
         event, so nothing here is worth propagating into a publish loop.
         """
         try:
-            while os.read(self._wake_r, 4096):
+            while self._wake_r.recv(4096):
                 pass
         except BlockingIOError:
-            # Nothing left to read on a non-blocking fd: the pipe is drained,
+            # Nothing left to read on a non-blocking socket: it is drained,
             # which is exactly the post-condition this method is for.
             pass
         except OSError:
-            # The fd is gone (a concurrent close). There is nothing to drain and
-            # nothing a paced loop could do about it.
+            # The socket is gone (a concurrent close). There is nothing to drain
+            # and nothing a paced loop could do about it.
             pass
 
     # -- the stopper side ------------------------------------------------
@@ -185,15 +202,16 @@ class Ticker:
         if self._closed:
             return
         try:
-            os.write(self._wake_w, b"\x01")
+            self._wake_w.send(b"\x01")
         except (OSError, ValueError):
-            # The pipe is closed or full. Closed means the ticker is already
-            # done, and full means a wake is ALREADY pending, so in both cases
-            # the doorbell has been rung as far as the waiter is concerned.
+            # The socket is closed or its buffer is full. Closed means the ticker
+            # is already done, and full means a wake is ALREADY pending, so in
+            # both cases the doorbell has been rung as far as the waiter is
+            # concerned.
             pass
 
     def close(self) -> None:
-        """Release the pipe and the selector. Idempotent."""
+        """Release the doorbell sockets and the selector. Idempotent."""
         if self._closed:
             return
         self._closed = True
@@ -209,12 +227,13 @@ class Ticker:
             # Best effort: the epoll/kqueue fd is being released either way, and
             # close() is documented idempotent, so a shutdown must not raise here.
             pass
-        for fd in (self._wake_r, self._wake_w):
+        for sock in (self._wake_r, self._wake_w):
             try:
-                os.close(fd)
+                sock.close()
             except OSError:
-                # Already closed (close() is idempotent, and a double close
-                # raises EBADF). The descriptor is released, which is the point.
+                # Already closed; socket.close() is idempotent, so this only
+                # guards a platform raising on a double close. Either way the
+                # descriptor is released, which is the point.
                 pass
 
     def __enter__(self) -> Ticker:

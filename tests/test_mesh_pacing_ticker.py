@@ -18,6 +18,8 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
+import selectors
+import socket
 import threading
 import time
 from typing import Any
@@ -26,6 +28,7 @@ import numpy as np
 import pytest
 
 import strands_robots
+from strands_robots.mesh import pacing
 from strands_robots.mesh.pacing import Ticker, sleep_penalty_s
 from strands_robots.utils import positive_finite_number_error
 
@@ -374,3 +377,65 @@ class TestEveryPacedLoopAcquiresItsTickerWithWith:
         example = Ticker.__doc__ or ""
         assert "with Ticker(period, stop_event) as ticker:" in example
         assert "finally:" not in example
+
+
+class TestTheDoorbellIsSomethingEverySelectorAccepts:
+    """The wake object has to be a socket, or Windows loses every paced thread.
+
+    ``selectors.DefaultSelector`` is ``SelectSelector`` on Windows, and its
+    WinSock ``select()`` accepts sockets only: an ``os.pipe()`` fd raises
+    ``OSError`` (WSAENOTSOCK, 10038) out of the first :meth:`Ticker.wait`. That
+    call sits outside the ``try`` in every paced loop, so each publish thread
+    would die on its first tick while the mesh still looked up -- a robot that
+    joins the fleet and streams nothing.
+
+    That refusal cannot be reproduced on a POSIX host, where ``select()`` takes
+    any descriptor, so these pin the mechanism that makes the Windows selector
+    accept the doorbell rather than the Windows symptom. ``asyncio`` builds its
+    own self-pipe from a socketpair for this reason, which is also what makes
+    this module's claim to wait on the same primitive true.
+    """
+
+    def test_both_ends_of_the_doorbell_are_sockets(self) -> None:
+        with Ticker(0.01) as ticker:
+            assert isinstance(ticker._wake_r, socket.socket)
+            assert isinstance(ticker._wake_w, socket.socket)
+
+    def test_the_module_does_not_build_the_doorbell_from_a_pipe(self) -> None:
+        """A source guard, because the POSIX-only shape passes every test here."""
+        source = pathlib.Path(inspect.getfile(pacing)).read_text()
+        piped = [
+            node.lineno
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and ast.unparse(node.func) in {"os.pipe", "pipe"}
+        ]
+        assert not piped, (
+            f"the doorbell is built from a pipe at {piped}: WinSock select() takes only sockets, "
+            "so every paced loop's thread dies on its first wait() under Windows"
+        )
+
+    def test_the_doorbell_is_accepted_by_the_selector_windows_resolves_to(self) -> None:
+        """``SelectSelector`` is what ``DefaultSelector`` is on Windows.
+
+        Exercised directly rather than through ``DefaultSelector``, which is
+        epoll here. On POSIX this passes for a pipe too -- what it establishes is
+        that the doorbell is an object ``select()`` takes, which is the whole of
+        what Windows refuses about the pipe.
+        """
+        with Ticker(5.0, threading.Event()) as ticker:
+            with selectors.SelectSelector() as selector:
+                selector.register(ticker._wake_r, selectors.EVENT_READ)
+                assert selector.select(0) == [], "no wake has been sent yet"
+                ticker.wake()
+                assert selector.select(1.0), "a wake must be visible to a select()-based selector"
+
+    def test_a_wake_still_survives_a_drain_and_a_close(self) -> None:
+        """The socket swap must not change what the doorbell guarantees."""
+        stop = threading.Event()
+        ticker = Ticker(0.01, stop)
+        ticker.wake()
+        ticker._drain()
+        ticker.wake()
+        ticker.close()
+        ticker.wake()  # after close: a no-op on a shutdown path, never an exception
+        ticker.close()  # idempotent

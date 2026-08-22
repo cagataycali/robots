@@ -60,3 +60,14 @@ value past the float64 range got a bare `TypeError` / `OverflowError` out of the
 conversion rather than the `ValueError` the constructor documents. The conversion
 to a builtin float now happens after the guard, because the shared domain accepts
 a NumPy scalar and the selector cannot be handed one.
+
+The doorbell `wake()` rings is a `socket.socketpair()` rather than an `os.pipe()`,
+which is a portability requirement rather than a preference. On Windows
+`selectors.DefaultSelector` is `SelectSelector`, whose WinSock `select()` accepts
+sockets only, so a pipe descriptor raises `OSError` (WSAENOTSOCK) out of the first
+`wait()`. That call sits outside the `try` in every paced loop, so each publish
+thread would have died on its first tick while the mesh itself still looked up --
+presence, state, camera and sensor streams stopping on a robot that had joined the
+fleet. It is also what makes this module's claim to wait on the same primitive as
+`asyncio` true: `asyncio`'s selector loop builds its own self-pipe from a
+socketpair for the same reason.
