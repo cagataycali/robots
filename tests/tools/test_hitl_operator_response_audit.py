@@ -33,7 +33,7 @@ import strands_robots
 import strands_robots.tools.lerobot_train as train_mod
 import strands_robots.tools.robot_mesh as mesh_mod
 import strands_robots.tools.use_ros as ros_mod
-from strands_robots.mesh.audit import read_audit_log
+from strands_robots.mesh.audit import audit_log_path, read_audit_log
 
 # A reply that carries a reason. Every gate accepts a canonical affirmative only,
 # so this is always a decline - which is exactly why the audit row is the only
@@ -143,6 +143,29 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, dict[str
 
     monkeypatch.setattr("strands_robots.mesh.audit.log_safety_event", _record)
     return recorded
+
+
+@pytest.fixture(autouse=True)
+def audit_dir_is_this_tests_own(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep every gate driven in this file off the developer's real audit trail.
+
+    ``audit_log_path()`` falls back to ``~/.strands_robots`` when
+    ``STRANDS_MESH_AUDIT_DIR`` is unset, so a test that drives a real gate
+    reaches the real writer. Measured before this fixture existed: one run of
+    the rate-limit-race control appended an ``operator approved: 'y'`` row for
+    action ``tell`` with ``success: true`` to the developer's own
+    ``mesh_audit.jsonl`` and advanced the signed ``mesh_audit.seq.json``
+    sidecar beside it. That row is indistinguishable from a genuine human
+    authorisation to exactly the incident reader this file exists to serve, and
+    it accumulates on every local run.
+
+    Autouse rather than one line in the offending test, because the hole is
+    structural: capturing ``log_safety_event`` is a choice each test makes, so a
+    gate-driving test added later re-grows the same contamination in silence and
+    nothing fails. A test that wants a directory it can read back still names one
+    itself - its own ``setenv`` runs after this one and wins.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
 
 
 class TestEveryGateRecordsTheOperatorReply:
@@ -463,3 +486,33 @@ class TestAnApprovedActionRefusedForAnotherReasonStillRecordsTheHuman:
                 },
             )
         ]
+
+
+class TestTheAuditTrailATestWritesIsItsOwn:
+    """A gate driven by this suite must not write where an incident audit reads.
+
+    AGENTS.md item 16 exempts ``tests/`` from whole-log attestation *because* a
+    test redirects the audit directory. That exemption is only sound while the
+    redirect actually holds, so it is pinned here rather than assumed.
+    """
+
+    def test_the_resolved_audit_log_is_not_the_real_home(self, tmp_path: Path) -> None:
+        """The fallback in ``audit_log_path()`` is never the path under test."""
+        resolved = audit_log_path()
+
+        assert resolved.parent != Path.home() / ".strands_robots", (
+            "a gate driven by this suite would write to the developer's real audit trail at "
+            f"{resolved}, where a fabricated 'operator approved' row is indistinguishable "
+            "from a genuine human authorisation"
+        )
+        assert tmp_path in resolved.parents, f"the audit log is not this test's own: {resolved}"
+
+    def test_driving_a_real_gate_writes_only_under_this_tests_directory(self, tmp_path: Path) -> None:
+        """The row the rate-limit-race control used to plant lands in tmp_path."""
+        _drive_robot_mesh_racing_the_rate_limit(APPROVAL)
+
+        details = [str(rec.get("payload", {}).get("detail", "")) for rec in read_audit_log(since=0)]
+        assert any(detail.startswith("operator approved") for detail in details), (
+            f"premise: driving the gate left no operator row to locate: {details}"
+        )
+        assert tmp_path in audit_log_path().parents, "the operator row was written outside this test"
