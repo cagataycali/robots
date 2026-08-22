@@ -360,6 +360,10 @@ class MeshBridge:
         # RPC correlation (mirrors Mesh.send)
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, dict[str, Any]] = {}
+        # turn_id -> the ONE peer allowed to answer it (mirrors
+        # Mesh._expected_responders): without this, any ACL-authorised peer
+        # observing a turn_id could answer someone else's pending turn.
+        self._expected_responders: dict[str, str] = {}
         self._rpc_lock = threading.Lock()
 
         # Fleet activity: every command this dashboard issued + safety
@@ -690,11 +694,26 @@ class MeshBridge:
         turn = data.get("turn_id")
         if not isinstance(turn, str):
             return
+        responder = data.get("responder_id")
         with self._rpc_lock:
             evt = self._pending.get(turn)
-            if evt is not None:
-                self._responses[turn] = data
-                evt.set()
+            if evt is None:
+                return
+            # Point-to-point scope check (mirrors Mesh._on_response): a
+            # response is accepted only from the peer send_cmd addressed.
+            # Without it, any ACL-authorised peer observing a turn_id could
+            # answer someone else's pending turn and have its result taken
+            # for the target's. Legacy peers that omit responder_id are
+            # rejected the same way — an absent identity is not a match.
+            expected = self._expected_responders.get(turn)
+            if expected is not None and responder != expected:
+                logger.warning(
+                    "[mesh_bridge] response for turn %s rejected: responder %r != expected %r",
+                    turn, responder, expected,
+                )
+                return
+            self._responses[turn] = data
+            evt.set()
 
     # ------------------------------------------------------------------ Commands (dashboard ->
     # robot).
@@ -754,6 +773,23 @@ class MeshBridge:
 
         if not self._running:
             return {"error": "mesh offline", "ok": False}
+        # Mesh.send parity, missing from this clone until now (§2.1):
+        # target sanity + client-side validate_command. Receiver-side
+        # _exec_cmd still validates — this turns "the peer refused it" (a
+        # timeout or opaque error narrated as a robot fault) into a
+        # structured local error naming the actual defect.
+        if not isinstance(target, str) or not target:
+            return {"error": "send_cmd: target must be a non-empty string", "ok": False}
+        if "\x00" in target:
+            return {"error": "send_cmd: target may not contain NUL", "ok": False}
+        from strands_robots.mesh import security as _security
+
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            result = {"ok": False, "error": f"validation: {exc}"}
+            self.record_activity(source, cmd.get("action", "?"), target=target, detail=result, ok=False)
+            return result
         turn = uuid.uuid4().hex
         envelope = {
             "sender_id": self.peer_id,
@@ -776,6 +812,7 @@ class MeshBridge:
         evt = threading.Event()
         with self._rpc_lock:
             self._pending[turn] = evt
+            self._expected_responders[turn] = target
         started = time.time()
         try:
             put(f"strands/{target}/cmd", envelope)
@@ -801,6 +838,7 @@ class MeshBridge:
             with self._rpc_lock:
                 self._pending.pop(turn, None)
                 self._responses.pop(turn, None)
+                self._expected_responders.pop(turn, None)
 
     async def send_cmd_async(
         self,
