@@ -1,12 +1,4 @@
 // Assertions for lib/runRisk.ts — is pressing ▶ about to move metal?
-// Run: npx esbuild src/lib/runRisk.ts --bundle --format=esm --outfile=/tmp/runRisk.mjs \
-//        && node src/lib/runRisk.test.mjs
-//
-// Q71 made these worth writing down: RobotDetail rendered RunForm with NO presence at all, so on the
-// detail screen every verdict here was computed from `undefined` — the sheet warned about "a peer that
-// did not say whether it is real" for an arm that had said so, and warned identically for sim peers.
-// The fail-safe held (undefined ⇒ physical), but a dialog that fires on harmless runs is a dialog the
-// operator learns to click through, and then it is not guarding the real arm either.
 import assert from 'node:assert/strict'
 
 const { runRisk } = await import('/tmp/runRisk.mjs')

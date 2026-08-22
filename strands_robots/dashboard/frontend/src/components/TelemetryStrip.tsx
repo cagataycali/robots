@@ -2,16 +2,7 @@ import type { Peer } from '../types'
 import { useTelemetry, TELEMETRY_CAP } from '../lib/useTelemetry'
 import { motionChip } from '../lib/motionChip'
 
-/**
- * Rate + motion telemetry from the state topic.
- *
- * "Is this robot actually alive?" is not answerable from a presence dot: a peer
- * can heartbeat happily while its state topic has been frozen for a minute.
- * Measured Hz and a motion trace answer it directly.
- *
- * The ring itself lives in useTelemetry, shared with the card's status
- * sentence so both read the SAME motion judgment.
- */
+/** Rate + motion telemetry from the state topic. */
 export default function TelemetryStrip({ peer }: { peer: Peer }) {
   const { samples, hz, moving, stateAgeS, jointsSeen } = useTelemetry(peer)
   if (samples.length < 2) return null

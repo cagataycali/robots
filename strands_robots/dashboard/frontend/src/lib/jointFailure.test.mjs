@@ -50,8 +50,7 @@ assert.equal(jointFailure(null), null)
 assert.equal(jointFailure(['13:58:52 hardware connected', '13:58:52 online']), null, 'a healthy log explains nothing')
 assert.equal(jointFailure([`x state probe 'hw_joints' failed, omitted: `]), null, 'a failure with no exception text is not a sentence')
 assert.equal(jointFailureLine(null), null)
-// THE CARD FORM: a few words, no remedy — a card holding a paragraph stops being scannable. Both real
-// causes on this fleet must be distinguishable at a glance, and an unknown one must not pretend to know.
+// THE CARD FORM: a few words, no remedy — a card holding a paragraph stops being scannable.
 assert.equal(jointFailureBadge(jointFailure(FOLLOWER)), 'the serial port is held by something else')
 assert.equal(jointFailureBadge(jointFailure(LEADER)), 'its robot id has no calibration file')
 assert.match(jointFailureBadge(odd), /TimeoutError/)
@@ -60,9 +59,7 @@ assert.equal(jointFailureBadge(null), null)
 for (const b of [jointFailureBadge(jointFailure(FOLLOWER)), jointFailureBadge(jointFailure(LEADER))])
   assert.ok(b.length < 60, `a card badge must stay scannable, got ${b.length} chars`)
 
-// A CACHED VERDICT AGES. Fresh answers are reused (the cause of one running process never changes), but a
-// respawned arm can fail differently or be FIXED, and this server exposes no pid/started_at to notice the
-// restart with — so an old excuse must expire rather than outlive the fault it describes.
+// A CACHED VERDICT AGES.
 const now = 1_800_000_000_000
 assert.equal(verdictIsStale(now - 1_000, now), false, 'a seconds-old verdict is still the truth')
 assert.equal(verdictIsStale(now - VERDICT_TTL_MS, now), true, 'at the limit it is re-asked, not kept')

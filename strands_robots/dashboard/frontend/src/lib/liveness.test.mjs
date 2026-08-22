@@ -3,13 +3,6 @@ import { frameProvesLiveness, FRAME_LIVENESS_MAX_AGE_S } from '/tmp/liveness.mjs
 
 const NOW = 1_787_180_000
 
-// --- THE DEFECT ------------------------------------------------------------
-// The dashboard replays a camera's last cached frame to every new subscriber, so
-// mounting a tile delivered a camera event for a frame captured 6.8h earlier
-// (measured on so101-arm-1's wrist). That event refreshed last_seen and cleared
-// `stale`, i.e. opening a page could make a robot that died hours ago read
-// "seen 0s ago" with a live dot - the one number an operator uses to decide
-// whether anything they see on the card is worth believing.
 assert.equal(frameProvesLiveness({ frameT: NOW - 24_307, nowS: NOW }), false,
   'a 6.8h-old capture must not vouch for the peer')
 

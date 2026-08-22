@@ -12,17 +12,7 @@ interface CheckpointRow {
 
 interface HfAuth { authenticated: boolean; user: string | null; detail: string | null }
 
-/**
- * Type-ahead over LeRobot policy checkpoints for `pretrained_name_or_path`.
- *
- * The registry names the FIELD but not its values - "lerobot_local" alone
- * says nothing about the thousands of public checkpoints (smolvla/act/pi0/…)
- * or the ones already sitting in the local HF cache. This widget searches
- * `/api/checkpoints/search` (local cache merged with a Hub search ranked by
- * downloads) as the user types, and selecting a row also reports the
- * checkpoint's `policy_type` so the caller can prefill lerobot_async's other
- * required field.
- */
+/** Type-ahead over LeRobot policy checkpoints for `pretrained_name_or_path`. */
 export default function CheckpointPicker({ value, onPick, disabled }: {
   value: string
   onPick: (repoId: string, policyType: string | null) => void
@@ -36,9 +26,9 @@ export default function CheckpointPicker({ value, onPick, disabled }: {
   const [hfAuth, setHfAuth] = useState<HfAuth | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const debounce = useRef<ReturnType<typeof setTimeout>>()
-  // The debounce cancels a pending TIMER, not an in-flight fetch: without a
-  // sequence, a slow search for "act" can resolve after a fast one for "smolvla"
-  // and paint act's rows under the newer query. Only the newest request speaks.
+  // The debounce cancels a pending TIMER, not an in-flight fetch: without a sequence, a slow
+  // search for "act" can resolve after a fast one for "smolvla" and paint act's rows under the
+  // newer query.
   const seq = useRef(0)
   // Which query the rows on screen belong to, so the empty note cannot describe
   // a different search than the one that produced it.

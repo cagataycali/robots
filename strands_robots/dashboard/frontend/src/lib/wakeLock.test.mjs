@@ -1,7 +1,6 @@
-// Run: node scripts/run-lib-tests.mjs wakeLock
-//
-// The screen wake lock is the difference between watching a moving arm and staring at a black phone.
-// The decision was three inline conditions inside usePwa, reachable only from a real browser.
+// Run: node scripts/run-lib-tests.mjs wakeLock The screen wake lock is the difference between
+// watching a moving arm and staring at a black phone. The decision was three inline conditions
+// inside usePwa, reachable only from a real browser.
 import assert from 'node:assert/strict'
 
 const { wakeLockAction, wakeLockNote } = await import('/tmp/wakeLock.mjs')
@@ -15,11 +14,7 @@ assert.equal(at({ want: false, held: true }), 'release',
              'the task ended: give the screen back, or the phone burns its battery for the next task')
 assert.equal(at({}), 'none', 'nothing wanted, nothing held')
 
-// ── 2. Q89 — THE LAW: the browser drops the lock when the page hides, so the answer is re-offered ──
-// usePwa took the lock when a task STARTED, and App re-asks only when `anyRunning` changes. The first
-// time the operator switched apps, the browser released the lock and our own 'release' listener set
-// held = false — and nothing ever asked again. The screen then slept mid-task, dropping the camera
-// sockets, exactly while they were away from a moving arm. This is why `held` is an input.
+// ── 2.
 assert.equal(at({ want: true, held: false, visible: true }), 'request',
              'Q89: back in the foreground, still running, lock gone -> TAKE IT AGAIN')
 assert.equal(at({ want: true, held: false, visible: false }), 'none',
@@ -32,9 +27,9 @@ assert.equal(at({ want: true, held: true, visible: false }), 'none',
 assert.equal(at({ want: false, held: true, visible: false }), 'release',
              'releasing works from a hidden page, and holding on after the task is over is a battery leak')
 
-// ── 3. an unsupported platform is never pretended into working ──
-// navigator.wakeLock is absent on Firefox and on iOS Safari before 16.4 — a real share of the phones
-// this cockpit gets opened on.
+// ── 3. an unsupported platform is never pretended into working ── navigator.wakeLock is
+// absent on Firefox and on iOS Safari before 16.4 — a real share of the phones this cockpit
+// gets opened on.
 for (const s of [{ want: true }, { want: true, held: true }, { want: false, held: true }]) {
   assert.equal(at({ ...s, supported: false }), 'none', 'no API to call, so no action is invented')
 }
@@ -50,10 +45,8 @@ assert.match(note({ want: true, held: false }), /not being prevented yet/,
 assert.equal(note({ want: false, held: true, supported: false }), null,
              'no news when nothing is running, even on a platform that cannot help')
 
-// ── 5. the wiring, because the pure table cannot see it ──
-// Everything above is true of a function nobody calls. What actually fixed Q89 is that usePwa asks this
-// question again on a visibility change; delete that listener and every assertion here still passes while
-// the lock is once more lost for the rest of the task. So the wiring is asserted on the source.
+// ── 5. the wiring, because the pure table cannot see it ── Everything above is true of a
+// function nobody calls.
 import { readFileSync } from 'node:fs'
 const src = readFileSync(new URL('./usePwa.ts', import.meta.url), 'utf8')
 assert.match(src, /addEventListener\('visibilitychange', onVisible\)/,

@@ -7,7 +7,6 @@ const { lanHintVerdict, readDismissed, sameOrigin } = await import('/tmp/lanHint
 
 const LOCAL = { same_network: true, lan_urls: ['http://192.168.1.164:8090'], client_ip: '2600:4041:4256:7e00:a13b::1' }
 
-// THE MEASURED CASE: local viewer arriving over the tunnel -> offer the local address.
 {
   const v = lanHintVerdict({ body: LOCAL, origin: 'https://robots.cagatay.my', dismissed: [] })
   assert.equal(v.show, true)

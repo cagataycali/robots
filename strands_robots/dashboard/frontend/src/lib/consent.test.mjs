@@ -1,9 +1,6 @@
 // node assertions over the bundled module (esbuild first — see the sibling
-// calibrateCommand.test.mjs for the same pattern).
-//
-// This module decides whether a SECURITY refusal can be answered from the UI, and how loudly. It was
-// untested, and its approvability rule was a hardcoded list of one kind while the backend
-// (dashboard/consent.py KINDS) had grown to four.
+// calibrateCommand.test.mjs for the same pattern). This module decides whether a SECURITY
+// refusal can be answered from the UI, and how loudly.
 import assert from 'node:assert/strict'
 import { findConsent, canApprove, blockedReason, severity, afterApproval, nothingGranted } from '/tmp/consent.mjs'
 
@@ -31,8 +28,6 @@ assert.equal(findConsent({ a: { b: { c: { needs_consent: need() } } } }), null, 
 
 // ── approvability: the payload decides, not a hardcoded list ──
 assert.equal(canApprove(need()), true)
-// THE REGRESSION THAT MATTERED ON THIS FLEET: teleop's degree envelope (Q27) is a complete, grantable
-// need, and the old rule disabled its button and blamed an unreadable model name.
 assert.equal(canApprove(need({
   kind: 'teleop_degree_units', scope: 'teleop_degree_units', env_var: 'STRANDS_MESH_INPUT_VALUE_ABS',
   grants: ['STRANDS_MESH_INPUT_VALUE_ABS=400', 'STRANDS_MESH_INPUT_SLEW_ABS=800'],
@@ -80,14 +75,9 @@ assert.equal(afterApproval({ granted: true, note: 'server says' }, 'peer').note,
 
 console.log('consent: all assertions passed')
 
-// ── Q120: approvability is the SERVER's answer, not a list this file maintains ──
-// Added as a SECTION (the file already had 38 assertions and they all still matter): the rule above
-// was correct for four kinds and silently wrong when consent.py grew to six, which is precisely why
-// the client should not hold the list at all.
 assert.equal(canApprove(need({ grantable: true, subject: null })), true, 'server says yes: yes')
 assert.equal(canApprove(need({ grantable: false, env_var: 'X', grants: ['x'] })), false,
   'server says no even though it named a variable AND a grant — it owns env_patch, we do not')
-// the enabled-but-useless button, which is what Q120 actually fixes
 assert.equal(canApprove(need({ kind: 'policy_host_allow', grantable: false, subject: null })), false)
 assert.equal(canApprove(need({ kind: 'policy_host_allow', grantable: true, subject: 'gpu.lan' })), true)
 // a server older than the field: allowlist kinds still need a subject
@@ -111,9 +101,6 @@ assert.equal(severity(need({ kind: 'policy_type_allow' })), 'warn')
 assert.equal(severity(need({ kind: 'policy_host_allow' })), 'danger',
   'a host that receives frames and returns actions is a capability, not a value')
 
-// ── Q121: "nothing is allowed here" must be asked of the payload, not of a list of kind names ──
-// That inline conjunction was wrong three times (teleop envelope, agent motion, the two policy
-// allowlists), each time printing an ASSURANCE over a live grant. These cases are the regression.
 assert.equal(nothingGranted({ trust_remote_code: false, hf_repo_allow: [] }), true)
 assert.equal(nothingGranted({ trust_remote_code: true, hf_repo_allow: [] }), false)
 assert.equal(nothingGranted({ trust_remote_code: false, hf_repo_allow: ['org/repo'] }), false)

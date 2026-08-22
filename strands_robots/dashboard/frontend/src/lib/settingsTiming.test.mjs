@@ -1,4 +1,4 @@
-// Q51: npx esbuild src/lib/settingsMeta.ts --bundle --format=esm --outfile=/tmp/sm.mjs && node src/lib/settingsTiming.test.mjs
+// build: npx esbuild src/lib/settingsMeta.ts --bundle --format=esm --outfile=/tmp/sm.mjs
 import assert from 'node:assert/strict'
 const m = await import('/tmp/sm.mjs')
 const { SETTINGS, APPLY_LABEL } = m

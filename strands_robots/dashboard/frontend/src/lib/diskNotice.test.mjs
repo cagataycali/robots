@@ -27,8 +27,9 @@ assert.equal(idle.tone, 'bad')
 assert.equal(idle.urgent, true)
 assert.equal(idle.advice, 'free space first', 'idle: the backend advice IS reachable, keep it')
 
-// THE RULE THIS FILE EXISTS FOR: mid-session, "free space first" is unreachable advice for someone
-// holding an arm over a live dataset, so the words change and the artifact is what they protect.
+// THE RULE THIS FILE EXISTS FOR: mid-session, "free space first" is unreachable advice for
+// someone holding an arm over a live dataset, so the words change and the artifact is what
+// they protect.
 const live = diskNoticeView(crit, { recording: true })
 assert.equal(live.urgent, true)
 assert.match(live.advice, /Stop after this episode/)

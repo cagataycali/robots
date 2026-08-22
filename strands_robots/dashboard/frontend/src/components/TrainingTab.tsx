@@ -19,28 +19,17 @@ import { orderJobsNewestFirst } from '../lib/orderJobs'
 import { newerThanApplied } from '../lib/requestOrder'
 import { outputDirSay, trainGate, type OutputDirVerdict } from '../lib/outputDirIntent'
 
-// One row is either LOCAL (has a `root` path, trains offline) or from the HUB
-// (no root, trains from repo_id after a download). lib/datasetSelection owns
-// that distinction and the rule that exactly one field reaches the trainer.
+// One row is either LOCAL (has a `root` path, trains offline) or from the HUB (no root, trains
+// from repo_id after a download). lib/datasetSelection owns that distinction and the rule that
+// exactly one field reaches the trainer.
 type Dataset = DatasetRow
 interface Job { job_id: string; provider: string; dataset?: string; base_model?: string; output_dir?: string; steps?: number; submitted_at?: number }
 interface JobStatus { status: string; data: { status?: string; metrics?: Record<string, unknown> }; text: string }
-/**
- * What the server could see of the exported artifact ON DISK (Q36). `ok` means "nothing
- * objectionable there", NOT "this policy loads" - the server deliberately never loads the
- * model (seconds to minutes, and an OOM risk on a box that is mid-training), so nothing here
- * may be rendered as a guarantee. Absent = an older server: then the old behaviour stands,
- * because a missing verdict is not a bad verdict.
- */
 interface ArtifactVerdict { ok?: boolean; reason?: string; message?: string; warning?: string; path?: string }
 
 /**
- * Training tab - submit / monitor / export policy training jobs.
- *
- * Backed by train_policy, the one workflow tool with structured JSON
- * results (job_id, status, metrics) - no prose parsing. Dataset picker
- * scans local LeRobotDataset roots; the trained checkpoint feeds straight
- * back into the run form's checkpoint search (record → train → deploy).
+ * Training tab - submit / monitor / export policy training jobs. Backed by train_policy, the
+ * one workflow tool with structured JSON results (job_id, status, metrics) - no prose parsing.
  */
 // Same family-name heuristic the backend's checkpoint search uses - only a
 // PREFILL for the run form's policy_type field, never a decision.
@@ -51,52 +40,28 @@ function guessPolicyType(baseModel: string | undefined): string | null {
 
 export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const [trainers, setTrainers] = useState<string[]>([])
-  /**
-   * Q48: providers this FORM cannot submit, mapped to why. `ppo` and `fast_sac` need an
-   * RLTrainSpec built in a script — picking one here spent a dataset choice and a click to
-   * earn "ppo requires an RLTrainSpec, got TrainSpec", a sentence about internal classes on
-   * a path that could never succeed. Server-derived, never guessed here: a provider the
-   * backend cannot classify stays fully selectable.
-   */
   const [unsupported, setUnsupported] = useState<Record<string, string>>({})
-  // Q78: the field vocabulary the SERVER accepts, and whether we have actually heard from it.
-  // A long-running dashboard is regularly older than the bundle it serves.
   const [srvFields, setSrvFields] = useState<string[] | null>(null)
   const [srvHeard, setSrvHeard] = useState(false)
-  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLDivElement | null>(null)
   useDialogFocus(sheetRef)
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({})
-  /* Q159: training is the longest thing this dashboard does — minutes to hours, watched by
-   * nobody for most of it — and the end of a run had no signal at all: a failure looked
-   * exactly like still-working until you came back and read the word. Announced from the
-   * POLL, as a transition, so a state that keeps being reported is not said twice. */
   const [jobSay, setJobSay] = useState('')
   const seenStates = useRef<JobStateMap>({})
-  // WHEN each status was last read, and how many reads have failed since - a
-  // swallowed poll error used to leave a dead run rendering as healthy progress.
   const [polledAt, setPolledAt] = useState<Record<string, number>>({})
   const [pollFail, setPollFail] = useState<Record<string, { n: number; msg: string }>>({})
   const [nowS, setNowS] = useState(() => Date.now() / 1000)
   const [traces, setTraces] = useState<Record<string, LossPoint[]>>({})
   const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', dataset_repo_id: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora', embodiment: '', val_episodes: '' })
-  // R6: the picker searches the Hub as you type. `dsProblem` is the HUB half's
-  // verdict only — "no matches" is a real answer and must not wear an outage's
-  // clothes, so an empty list with problem===null says something different from
-  // an empty list with a reason.
+  // R6: the picker searches the Hub as you type.
   const [dsQuery, setDsQuery] = useState('')
   const [dsProblem, setDsProblem] = useState<string | null>(null)
-  // WHICH query the rows and the verdict on screen were measured for. Hub round
-  // trips are not ordered, so "the last response" is not "the current answer" -
-  // see lib/datasetHint.ts.
   const [dsShownQuery, setDsShownQuery] = useState<string | null>(null)
   const dsSeq = useRef(0)
-  // The status poll's own ordering: `tick` counts polling rounds, `applied` is the
-  // round whose answer is on screen for each job. A round is skipped while the
-  // previous one is still in flight - see lib/requestOrder.ts for why a late
-  // answer is worse than no answer here (it wipes the loss curve).
+  // The status poll's own ordering: `tick` counts polling rounds, `applied` is the round whose
+  // answer is on screen for each job.
   const tick = useRef(0)
   const tickBusy = useRef(false)
   const applied = useRef<Record<string, number>>({})
@@ -121,9 +86,6 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       setUnsupported(t.unsupported ?? {})
       setSrvFields(Array.isArray(t.fields) ? t.fields : null)
       setSrvHeard(true)
-      // Newest first from the DATA, not from the file's shape: the next effect polls
-      // only the first five, so an out-of-order ledger used to give status to the
-      // finished runs and none to the one just started.
       setJobs(orderJobsNewestFirst(j.jobs ?? []))
       setJobsProblem(j.problem ?? null)
       // A keystroke may have fired a newer dataset search while this was in
@@ -138,9 +100,6 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   }
   useEffect(() => { refresh() }, [])
 
-  // Q58: ask what is in the output dir while the operator types. Read-only endpoint; a failure
-  // leaves the verdict null, which arms nothing and blocks nothing (the backend still refuses a
-  // destructive launch, so a probe outage costs a clearer message, never a delete).
   const outSeq = useRef(0)
   useEffect(() => {
     const path = form.output_dir.trim()
@@ -160,10 +119,9 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     return () => clearTimeout(t)
   }, [form.output_dir])
 
-
-  // Type-ahead: datasets only (re-polling jobs on every keystroke would be
-  // rude to a running job's status endpoint). 250ms because each miss is a Hub
-  // round trip; the backend caches a hit for 5 minutes, never a failure.
+  // Type-ahead: datasets only (re-polling jobs on every keystroke would be rude to a running
+  // job's status endpoint). 250ms because each miss is a Hub round trip; the backend caches a
+  // hit for 5 minutes, never a failure.
   useEffect(() => {
     const t = setTimeout(async () => {
       const seq = ++dsSeq.current
@@ -202,11 +160,6 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // poll running job statuses every 5s
   useEffect(() => {
     const id = setInterval(async () => {
-      // A round that takes longer than the interval used to have the next round
-      // start on top of it: overlapping rounds pile up into a request storm
-      // against a provider that is already slow, and their answers arrive out of
-      // order. One round at a time; a skipped tick costs 5s of freshness, which
-      // the age readout reports honestly.
       if (tickBusy.current) return
       tickBusy.current = true
       const round = ++tick.current
@@ -217,9 +170,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         if (!job.job_id) continue
         try {
           const s = await api(`/api/training/status?provider=${job.provider}&job_id=${encodeURIComponent(job.job_id)}`)
-          // Only a newer round may speak for this job. An older answer landing
-          // late is not merely stale: pushLoss reads its lower step as a RESTART
-          // and drops the whole curve, while polledAt would stamp it as fresh.
+          // Only a newer round may speak for this job.
           if (!newerThanApplied(round, applied.current[job.job_id])) continue
           applied.current[job.job_id] = round
           setStatuses(prev => ({ ...prev, [job.job_id]: s }))
@@ -253,12 +204,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
   /**
-   * A failed request that STARTS something is not the same as one that did not
-   * happen: a rejected fetch covers "never left this machine" and "ran, then
-   * lost the answer". Saying `⚠ <message>` invited a second press — a second
-   * multi-hour run, a second recorder on one dataset, a second peer driving the
-   * same arm. `refresh()` runs on the ambiguous branch so the list that KNOWS
-   * gets a chance to answer.
+   * A failed request that STARTS something is not the same as one that did not happen: a
+   * rejected fetch covers "never left this machine" and "ran, then lost the answer".
    */
   const failed = (kind: SideEffectKind, e: unknown) => {
     const v = sideEffectVerdict({
@@ -271,11 +218,6 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   }
 
   const submit = async (validateOnly: boolean) => {
-    // Q37: a dataset the server could not confirm ANY episodes in. Training on it fails after
-    // the environment setup, the base-model download and the dataset scan - minutes of work and
-    // a job in the ledger that has to be read to be understood. Refused HERE, before the request,
-    // and continuable: the check reads metadata only, so an operator who knows better (a dataset
-    // written by something else, metadata about to be rebuilt) can insist once.
     const picked = selectedRow(datasets, form)
     const can = trainable(picked)
     if (!can.ok) {
@@ -284,15 +226,9 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
         setMsg(null)
         return
       }
-      // CONSUMED BY THE RUN IT AUTHORISED. Found by scripts/audit-dataset-abandoned-hold.mjs:
-      // a sticky override meant the FIRST insistence silenced the check for that dataset for the
-      // rest of the session, so a second job hours later - by which time the operator may have
-      // deleted the folder, or a recording may have half-filled it - started on a stale decision
-      // nobody re-made. Same rule as deployIntent: one click authorises one action.
+      // CONSUMED BY THE RUN IT AUTHORISED.
       setDsOverride(null)
     }
-    // Q58: a run whose output_dir cannot be used - or whose contents would be DELETED without a
-    // deliberate tick - never leaves the browser. validate() writes nothing, so it is exempt.
     if (!validateOnly && !gate.ok) { setMsg(`✗ ${gate.why}`); return }
     setBusy(true); setMsg(null)
     const body = {
@@ -301,14 +237,9 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       dataset_repo_id: form.dataset_repo_id || undefined,
       base_model: form.base_model || undefined,
       output_dir: form.output_dir || undefined,
-      // Q58: consent to deleting what is already in that directory, carried only when the
-      // operator ticked the box FOR THIS PATH. A run that needs it and lacks it never leaves
-      // the browser (the gate below refuses first), so this is never a silent yes.
       ...(gate.confirmClear ? { confirm_clear: true } : {}),
       steps: wantedSteps.value,
       method: form.method || undefined,
-      // Q49: sent only when the chosen provider asks for it. An empty string would reach
-      // train_policy as a real value and GR00T would tag the dataset with "".
       ...(extraFields(form.provider).some(f => f.key === 'embodiment') && form.embodiment.trim()
         ? { embodiment: form.embodiment.trim() } : {}),
       // Held out only when the operator asked for it: `null` and an absent key both mean "train
@@ -327,34 +258,20 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     setBusy(false)
   }
 
-  /** Q37: the picked dataset's refusal, and the one key the operator has insisted on. */
   const [dsWarn, setDsWarn] = useState<{ key: string; reason: string; recording?: boolean } | null>(null)
   const [dsOverride, setDsOverride] = useState<string | null>(null)
-  // Q58: what a run would DO to the typed output_dir, and the path the operator has ticked
-  // for. `clearArmedFor` holds a PATH, not a boolean, so a yes given for one directory can
-  // never delete another after the field is edited (same rule as dsOverride/deployIntent).
   const [outDir, setOutDir] = useState<OutputDirVerdict | null>(null)
   const [clearArmedFor, setClearArmedFor] = useState<string | null>(null)
 
-  // Q58: the verdict's wording and whether the run may start at all.
   const outSay = outputDirSay(outDir)
   const gate = trainGate({ path: form.output_dir, verdict: outDir, armedFor: clearArmedFor })
-
 
   const [collect, setCollect] = useState({ dataset_root: '', instruction: 'pick up the red cube', n_episodes: '5', duration: '10', robot_name: 'so101' })
   const [showCollect, setShowCollect] = useState(false)
 
-  /* Q60: `type="number"` hands you "" for junk and `Number(raw) || 10000` reads that as consent to
-     a 10k-step run; `||` also lets a minus sign through, so `steps: -100` and `n_episodes: -3` were
-     posted verbatim. Bounds stated, refusals explained, nothing corrected behind the operator. */
   const STEP_RULES = { what: 'steps', min: 1, max: 2_000_000, remedy: 'submit a shorter run' }
   const wantedSteps = numField(form.steps, STEP_RULES)
-  /* The validation holdout. The bound is the PICKED dataset's own episode count (the picker
-     already fetched it), so "20 of 20 leaves nothing to train on" is said before the submit
-     round trip rather than by the trainer minutes in. Empty is a legal answer, so this never
-     blocks the button on its own — only a value that would mean something other than it reads. */
-  // #2486 labels disclosure. Single-value on purpose, exactly like the devices screen's calibFor:
-  // one open panel at a time keeps the fetch bounded and the row list readable.
+  /** The validation holdout. */
   const [labelsFor, setLabelsFor] = useState<string | null>(null)
   const [labelData, setLabelData] = useState<LabelView | null>(null)
   const [labelErr, setLabelErr] = useState<string | null>(null)
@@ -369,7 +286,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     } catch (e) {
       // No special-casing here: api() already replaces a 404 on a route this server does not route
       // with the "restart the dashboard" explanation (lib/serverAge), so the message is right for
-      // every screen at once. A route's own 404 keeps the server's own words.
+      // every screen at once.
       setLabelErr(e instanceof HttpError ? e.message : String(e))
     }
   }
@@ -407,8 +324,6 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     }
     setBusy(true); setMsg(null)
     try {
-      // The index used to be hardcoded 0 here while the server accepted any episode, so a 40-episode
-      // dataset could only ever be watched at its first one. The refusal is rendered next to the box.
       const choice = episodeChoice(d, episodeBox[dsKey(d)])
       if (!choice.ok) { setMsg(`⚠ ${choice.reason}`); return }
       const j = await post('/api/replay', { repo_id: d.repo_id, root: d.root, episode: choice.episode })
@@ -420,11 +335,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   }
 
   /**
-   * A checkpoint the server could not confirm on disk, held back from staging until the
-   * operator says they mean it. A REFUSAL WITH A DOOR, like every other gate here: the disk
-   * check can be wrong (a loader that infers its own weights layout, an artifact the server
-   * cannot see through a symlink), and a hard block would leave the operator with a trained
-   * run and no way to use it.
+   * A checkpoint the server could not confirm on disk, held back from staging until the operator
+   * says they mean it.
    */
   const [stageAnyway, setStageAnyway] = useState<{ job: Job; ckpt: string; message: string } | null>(null)
 
@@ -435,20 +347,16 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       const art: ArtifactVerdict | undefined = j?.artifact
       if (j.status !== 'success') setMsg(`✗ ${j.text?.slice(0, 250)}`)
       else if (j.deployable === false) {
-        // The export RAN - that is why the trainer's ✓ is still shown - and what it produced
-        // is not a policy. Said here, on the export button, because this is where an operator
-        // looks before they go anywhere near a robot.
+        // The export RAN - that is why the trainer's ✓ is still shown - and what it produced is not a
+        // policy.
         setMsg(`⚠ the export succeeded but the artifact is not usable: ${art?.message ?? 'the checkpoint could not be confirmed on disk'}`)
       } else setMsg(`✓ ${j.text?.slice(0, 250)}${art?.warning ? ` — ⚠ ${art.warning}` : ''}`)
     } catch (e) { failed('export', e) }
     setBusy(false)
   }
 
-  // "Deploy" cannot start a policy from here - the run form is per-robot and
-  // a policy moves a real arm. So deploy = export (to get the honest loadable
-  // path from the trainer, never a guessed directory), stamp a deploy intent,
-  // and send the user to a robot card whose run form will prefill from it and
-  // WAIT for them to press Run.
+  // "Deploy" cannot start a policy from here - the run form is per-robot and a policy moves a
+  // real arm.
   const deployCkpt = async (job: Job) => {
     setBusy(true)
     try {
@@ -458,9 +366,8 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       if (j.status !== 'success' || typeof ckpt !== 'string' || !ckpt) {
         setMsg(`✗ nothing deployable: ${j.text?.slice(0, 200) ?? 'export returned no artifact path'}`)
       } else if (j.deployable === false) {
-        // Do NOT stage it. Staging prefills a run form the operator then presses Run on, and
-        // by that point the checkpoint's problem has become "the arm did not move and I do not
-        // know why". Hold it here, with the reason and a door.
+        // Do NOT stage it. Staging prefills a run form the operator then presses Run on, and by that
+        // point the checkpoint's problem has become "the arm did not move and I do not know why".
         setStageAnyway({ job, ckpt, message: art?.message ?? 'the checkpoint could not be confirmed on disk' })
         setMsg(null)
       } else {
@@ -474,7 +381,6 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     } catch (e) { failed('export', e) }
     setBusy(false)
   }
-
 
   /** The operator overrode the disk check. Stage exactly what deploy would have staged. */
   const stageRegardless = () => {
@@ -494,12 +400,7 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
   // multi-hour job: "what did I just ask for?"
   const datasetPicked = form.dataset_root || form.dataset_repo_id
   const datasetLabel = selectDataset(datasets, selectionKey(form)).label || null
-  // The plan sentence reads back what WILL run, so with an unusable step count it must say that
-  // rather than quietly print the 0 the parse produced — it used to print 10,000, the old fallback.
   const stepsPhrase = wantedSteps.problem ? `an unset number of` : fmtStep(wantedSteps.value)
-  // Q49: a certain refusal belongs in the read-back, not in the response to a click. The plan
-  // sentence is what people check before a multi-hour job, so if the provider will refuse for a
-  // missing field it says so here too, next to the promise.
   const missingExtra = missingForProvider(form.provider, form as Record<string, string>)
   const story = datasetPicked
     ? `Fine-tune ${form.base_model || 'lerobot/smolvla_base'} on ${datasetLabel ?? datasetPicked} for ${stepsPhrase} steps (${form.method}), saving to ${form.output_dir || '…pick an output dir'}.${wantedHoldout.send ? ` Holding out the last ${wantedHoldout.send} episodes to score it.` : ''}`
@@ -507,9 +408,11 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     : 'Pick a dataset to begin — the plan reads back here before anything runs.'
 
   return (
-    /* role + label like RecordPanel's sheet: this is a full-bleed layer over the fleet, and a
-       screen reader that is not told it entered a dialog reads it as more of the page it just
-       left. Same reason its ✕ is the only way out on a phone. */
+    /**
+     * role + label like RecordPanel's sheet: this is a full-bleed layer over the fleet, and a
+     * screen reader that is not told it entered a dialog reads it as more of the page it just
+     * left.
+     */
     <div ref={sheetRef} className="train-sheet" role="dialog" aria-label="Training">
       <div className="train-head">
         <h2>🎓 Training</h2>

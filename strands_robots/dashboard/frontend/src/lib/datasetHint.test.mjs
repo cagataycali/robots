@@ -21,7 +21,6 @@ const { datasetHint, isCurrentResponse } = await import('/tmp/datasetHint.mjs')
   assert.match(h.text, /the Hub answered/)
 }
 
-// A measured failure outranks everything: the list is not evidence of absence.
 {
   const h = datasetHint({ query: 'so101', shownQuery: 'so101', count: 0, problem: 'hub search failed: 503' })
   assert.equal(h.tone, 'warn')
@@ -29,8 +28,6 @@ const { datasetHint, isCurrentResponse } = await import('/tmp/datasetHint.mjs')
   assert.doesNotMatch(h.text, /no match/)
 }
 
-// THE BUG (1): the sentence used to quote the CURRENT input, so a verdict
-// measured for a shorter query was attributed to the one being typed.
 {
   const h = datasetHint({ query: 'so101', shownQuery: 'so', count: 0 })
   assert.equal(h.tone, 'pending')

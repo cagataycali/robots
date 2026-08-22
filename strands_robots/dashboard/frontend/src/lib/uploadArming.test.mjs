@@ -1,8 +1,3 @@
-// Q72: the arming rule of the record screen's "upload to the Hub" tick, as node assertions.
-//
-// The rule lives in RecordPanel (uploadBlocked / armedUpload) and cannot be imported without React,
-// so it is restated here in one line and pinned. If the component's version drifts from this, the
-// component is wrong: these are the cases that cost a whole recording session when they go wrong.
 import assert from 'node:assert/strict'
 
 /** exactly RecordPanel's expression */

@@ -1,5 +1,3 @@
-// Q77: a picked servo bus can go stale before the spawn. Run:
-//   npx esbuild src/lib/portChoice.ts --bundle --format=esm --outfile=/tmp/portChoice.mjs && node src/lib/portChoice.test.mjs
 import assert from 'node:assert/strict'
 const { portChoice, blocksSpawn } = await import('/tmp/portChoice.mjs')
 

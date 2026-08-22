@@ -18,7 +18,6 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
   peer: Peer
   /** a '<id>-twin' peer is live in the fleet (App reads the same snapshot) */
   twinLive?: boolean
-  /** Q150: children this peer hosts, when it is a process rather than an arm. */
   hostsChildren?: string[] | null
   onOpen?: (peerId: string) => void
   onBusyChange?: (peerId: string, running: boolean) => void
@@ -37,31 +36,16 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
   // R2: a button that spawns a process says so in words.
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
 
-  // The 5-second answer: one sentence joining heartbeat, hardware, task and
-  // MEASURED motion - so "running but frozen" and "moving with no task"
-  // (teleop/runaway: exactly when hands must stay clear) are said out loud
-  // instead of being left for the operator to infer from four widgets.
   const status = type === 'robot'
-    // Q151: the fields come from peerStatusFields, shared with the detail stage — two screens
-    // rendering the same judgement from two copies of the mapping is how they drift.
     ? statusSentence(peerStatusFields(peer, telemetry, hostsChildren))
     : null
 
   // The app keeps a screen wake lock while anything is moving.
   useEffect(() => { onBusyChange?.(peer.peer_id, running) }, [running, peer.peer_id])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* The CAUSE beside the claim. The ribbon has said "no joint data on this peer" for three days on two
-
-     arms without ever saying WHY, so the operator's next move was to open each arm and read a log.
-
-     A few words only — the remedy lives in the detail view, and a card that holds a paragraph stops
-
-     being scannable. Shared cache: one request per peer for the whole grid, and the same answer the
-
-     detail panel gives. */
+  /** The CAUSE beside the claim. */
 
   const { badge: whyMute } = useJointFailure(peer.peer_id, Object.keys(peer.state?.joints ?? {}).length === 0)
-
 
   return (
     <div className={`card${offline ? ' stale' : ''}${phase === 'failed' ? ' failed' : ''}${running ? ' running' : ''}`}>

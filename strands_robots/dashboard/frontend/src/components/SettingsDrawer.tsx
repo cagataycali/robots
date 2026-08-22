@@ -32,7 +32,6 @@ function FieldMeta({ k, raw }: { k: string; raw: string }) {
 
 type Tab = 'connection' | 'agent' | 'voice' | 'mesh' | 'env' | 'security'
 
-/** Q76: field keys in the operator's words, for the "unsaved changes" sentence. */
 const DRAFT_LABELS: Record<string, string> = {
   modelId: 'the model id', prompt: 'the system prompt', temperature: 'temperature',
   maxTokens: 'max tokens', voiceProvider: 'the voice provider', voiceName: 'the voice',
@@ -57,20 +56,11 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'security', label: 'Security' },
 ]
 
-/**
- * Everything that used to require an env var and a restart.
- *
- * Two stores sit behind this: `settings.json` for preferences and `.env` for
- * credentials. Secrets arrive masked and a value that still looks masked is not
- * written back - typing over a mask with bullets would otherwise destroy a live
- * API key.
- */
 export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   open: boolean; onClose: () => void; mesh: MeshInfo; initialTab?: Tab
 }) {
   const { config, loading, error, reload, save } = useConfig()
   const [tab, setTab] = useState<Tab>('connection')
-  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLElement | null>(null)
   useDialogFocus(sheetRef, open)
   const [query, setQuery] = useState('')
@@ -101,24 +91,12 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   const [newKey, setNewKey] = useState('')
   const [newValue, setNewValue] = useState('')
   const [serverToken, setServerToken] = useState('')
-  // Q73: removing the token unlocks every motor on the fleet — two steps, and the second one
-  // states what it exposes. Reset whenever the drawer's tab changes so it cannot stay armed.
-  // Q75: keys the operator marked for REMOVAL (null in the patch), distinct from an emptied value.
   const [envUnset, setEnvUnset] = useState<string[]>([])
   const [removeArmed, setRemoveArmed] = useState(false)
-  // Q76: closing with unsaved edits asks instead of discarding a 10-row prompt silently.
   const [discardArmed, setDiscardArmed] = useState(false)
   const [corsOrigins, setCorsOrigins] = useState('')
-  // Q74: the token is ONE global slot attached to whatever base is current, so re-pointing the
-  // backend used to hand the old host's credential to the new one silently. The verdict is computed
-  // when the button is pressed, and only two situations stop it — see connectionChange.
-  // Q77: declared HERE with the rest of the state, ABOVE `if (!open) return null` — this hook used
-  // to sit further down the body, so a closed drawer ran one hook fewer than an open one and every
-  // open crashed the screen with "rendered more hooks than during the previous render".
   const [connVerdict, setConnVerdict] = useState<ConnectionVerdict | null>(null)
 
-  // Q76: what the server says each draft field should be. Every save calls reload(), so this used to
-  // be blindly written back over whatever the operator was typing in ANOTHER tab.
   const serverDrafts: Drafts = useMemo<Drafts>(() => {
     if (!config) return {} as Drafts
     const ms = (config.mesh.settings ?? {}) as Record<string, any>
@@ -175,7 +153,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
 
   if (!open) return null
 
-  // Q76: what would be thrown away by closing right now.
   const dirty = dirtyFields(currentDrafts, serverDrafts)
   const unsaved = unsavedSummary(dirty, DRAFT_LABELS)
   const requestClose = () => {
@@ -183,8 +160,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
     onClose()
   }
 
-  // Live validation: a field that cannot be parsed never reaches the server
-  // (Q14: temperature "NaN" used to be written into settings.json verbatim).
   const agentValid =
     validateSetting('agent.temperature', temperature) === null &&
     validateSetting('agent.max_tokens', maxTokens) === null
@@ -202,8 +177,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
     const parts: string[] = []
     if (r.applied.length) parts.push(`applied ${r.applied.join(', ')}`)
     if (r.env_written.length) parts.push(`wrote ${r.env_written.join(', ')} to .env`)
-    // Q75: a removal is not a write. Saying "wrote X" for a deleted key, or saying nothing at all,
-    // both leave the operator unsure whether the variable is gone or merely blank.
     if (r.env_removed?.length) {
       parts.push(
         `removed ${r.env_removed.join(', ')} from .env `
@@ -213,11 +186,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
     if (r.agent_reset) parts.push('agent will rebuild on the next turn')
     if (r.skipped_masked.length) parts.push(`skipped unchanged secrets: ${r.skipped_masked.join(', ')}`)
     if (r.restart_required.length) parts.push(`needs a mesh restart: ${r.restart_required.join(', ')}`)
-    // Q51: saved, inherited by the next child, and NOT in effect for anything running. Saying
-    // "mesh re-pointed" alone let an operator believe a rate change had landed.
-    // Q52: cors_origins used to be announced as "applied". Adding an origin cannot work until
-    // the process restarts (the browser header is baked at startup); removing one tightens the
-    // write/websocket gate immediately, so the two directions are stated separately.
     if (r.startup_required?.length) {
       parts.push(
         `saved, takes effect at the next server start: ${r.startup_required.join(', ')} `
@@ -295,8 +263,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
         </header>
 
         {discardArmed && (
-          /* Q76: the drawer holds the longest text in the app. Closing it used to be one stray click
-             on the backdrop, and every draft went back to the server's value with no message. */
           <div className="result bad" role="alert">
             <b>{unsaved}</b>
             <p>Closing now discards {dirty.length === 1 ? 'it' : 'them'}. Save the tab you were editing first, or discard.</p>
@@ -339,7 +305,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
 
         <nav className="tabs">
           {TABS.map(t => {
-            /* Q76: which tab is holding unsaved work, so it is visible from any other tab. */
             const tabDirty = dirty.some(k => (TAB_OF_FIELD[k] ?? '') === t.id)
             return (
               <button key={t.id} className={tab === t.id ? 'tab on' : 'tab'} aria-pressed={tab === t.id}
@@ -758,9 +723,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 )}
               </div>
               {config.security.auth_enabled && removeArmed && (() => {
-                /* Q73: this used to be one click. Every other control here that can move metal asks
-                   first; the one that removes the lock on all of them did not — and an unlocked
-                   dashboard stays unlocked silently, for as long as nobody notices. */
                 const w = authRemovalWarning({
                   host: typeof location !== 'undefined' ? location.hostname : '',
                   corsOrigins,

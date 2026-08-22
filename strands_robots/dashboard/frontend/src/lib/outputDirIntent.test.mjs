@@ -1,6 +1,3 @@
-// Assertions for the training form's output_dir gate (lib/outputDirIntent.ts) — Q58 frontend half.
-// Run: npx esbuild src/lib/outputDirIntent.ts --bundle --format=esm --outfile=/tmp/outputDirIntent.mjs \
-//        && node src/lib/outputDirIntent.test.mjs
 import assert from 'node:assert/strict'
 
 const { outputDirSay, trainGate } = await import('/tmp/outputDirIntent.mjs')

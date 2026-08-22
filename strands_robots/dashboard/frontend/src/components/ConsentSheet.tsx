@@ -1,13 +1,3 @@
-/**
- * The dialog that turns a security refusal into a decision (U18).
- *
- * Before this, a refused policy load ended the operator's day: the only way
- * forward was an env var in a shell and a restart. The refusal itself is
- * correct — it must stay a wall for anyone who does not understand it — so this
- * sheet does not soften it. It quotes the risk in the guard's own words, lists
- * exactly what saying yes permits, and keeps the SDK's raw message one click
- * away for the person who wants to read it.
- */
 import { useEffect, useRef, useState } from 'react'
 import {
   afterApproval,

@@ -1,25 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { HELP_TOPICS, DOC_LINKS, REPO_DOC_PATHS } from '../lib/helpTopics'
 
-/**
- * The help affordance — JOURNEYS #7. The audit measured 0 `<a>` elements and
- * 0 onboarding words on the whole page, with docs that exist and are linked
- * from nowhere; the cheapest legal first action a newcomer could find was an
- * unlabelled ▶ on a real arm.
- *
- * Content lives in `lib/helpTopics.ts` (tested), so this file is only how it is
- * presented. Three deliberate choices:
- *
- * - **Reachable on touch and by keyboard**, because a `title=` tooltip — the
- *   old "explanation" for several controls here — does not exist on a phone.
- *   `?` opens it from anywhere, Escape closes it, focus lands inside.
- * - **The safety topic is not first for drama**: it is second, right after
- *   what-this-page-is, because someone opening help mid-incident needs the
- *   brake before the tour.
- * - **The doc links are last and clearly extra.** Everything needed to act is
- *   above them, so this sheet still works on a tunnelled phone with no route
- *   to the public internet.
- */
+/** The help affordance — JOURNEYS #7. */
 export default function HelpSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement | null>(null)
   useEffect(() => { if (open) closeRef.current?.focus() }, [open])

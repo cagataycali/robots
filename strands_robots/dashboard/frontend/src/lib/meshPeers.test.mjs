@@ -1,9 +1,3 @@
-// Run: node scripts/run-lib-tests.mjs meshPeers
-//
-// These rules decide whether a robot's card is green or shown as dead, and they used to live inside
-// useMesh's socket handler — so exercising them required a live websocket in a browser, and nothing did.
-// The interesting cases are all about EVIDENCE: which events actually prove a peer is alive, and whose
-// clock the proof is measured against.
 import assert from 'node:assert/strict'
 
 const { mergeMeshEvent, sweepStale, rebaseSnapshotPeers, PEER_STALE_S } = await import('/tmp/meshPeers.mjs')
@@ -25,9 +19,7 @@ const kept = mergeMeshEvent(
 assert.deepEqual(kept['arm-1'].presence, { role: 'follower' }, 'presence survives a state event')
 assert.deepEqual(kept['arm-1'].cameras, { main: { t: 1 } }, 'cameras survive a state event')
 
-// ── 2. THE REPLAY TRAP: a camera frame only vouches for the peer that CAPTURED it recently ──
-// The bridge replays a camera's last cached frame to every new subscriber, so opening a tile used to
-// resurrect a peer that died hours ago: last_seen refreshed, stale cleared, card green.
+// ── 2.
 const dead = { 'arm-1': { peer_id: 'arm-1', last_seen: NOW - 3600, stale: true } }
 const replayed = mergeMeshEvent(dead, { type: 'camera_meta', peer_id: 'arm-1', cam: 'main', data: { t: NOW - 3600 } }, NOW)
 assert.equal(replayed['arm-1'].last_seen, NOW - 3600, 'an HOUR-OLD cached frame does not refresh last_seen')
@@ -38,9 +30,8 @@ const live = mergeMeshEvent(dead, { type: 'camera_meta', peer_id: 'arm-1', cam: 
 assert.equal(live['arm-1'].last_seen, NOW, 'a FRESH capture does vouch for the peer')
 assert.equal(live['arm-1'].stale, false, 'and clears the badge')
 
-// ── 3. THE CLOCK BOUNDARY (fixed here): a snapshot's last_seen is the SERVER's time ──
-// Every other path stamps Date.now(); only the snapshot carries server timestamps. Judging those with
-// a browser clock compares two unsynchronised clocks.
+// ── 3. THE CLOCK BOUNDARY (fixed here): a snapshot's last_seen is the SERVER's time ── Every
+// other path stamps Date.now(); only the snapshot carries server timestamps.
 const snapshot = {
   type: 'snapshot', t: 5_000,                       // server clock
   peers: { quiet: { peer_id: 'quiet', last_seen: 4_997 }, gone: { peer_id: 'gone', last_seen: 4_900 } },
@@ -78,12 +69,10 @@ assert.equal(mergeMeshEvent(before, { type: 'state', data: {} }, NOW), before, '
 assert.equal(mergeMeshEvent(before, { type: 'safety', kind: 'estop' }, NOW), before, 'safety is not a peer event')
 assert.equal(mergeMeshEvent(before, undefined, NOW), before, 'a malformed frame does not throw')
 
-// ── 6. the sweep: measured from ARRIVAL, and identity-stable ──
 assert.equal(sweepStale(before, NOW + 1), before,
              'nothing changed = the SAME object, or every card in the grid re-renders every 5s forever')
-// A peer whose `stale` key is absent (fresh from a snapshot) DOES change on the first sweep: undefined
-// becomes an explicit boolean. That is one render to normalise the shape, not a per-5s churn — and it
-// matters that it is a change, because components read `stale === false` as "measured fresh".
+// A peer whose `stale` key is absent (fresh from a snapshot) DOES change on the first sweep:
+// undefined becomes an explicit boolean.
 const unset = { x: { peer_id: 'x', last_seen: NOW } }
 const normalised = sweepStale(unset, NOW + 1)
 assert.notEqual(normalised, unset, 'an absent stale key is filled in once')
@@ -98,24 +87,15 @@ assert.equal(sweepStale({ x: { peer_id: 'x', last_seen: NOW, stale: true } }, NO
 
 console.log('meshPeers.test.mjs: all assertions passed')
 
-// ── Q94: a camera frame is not evidence that a robot EXISTS ──
-// Fixture-shape hole: every camera_meta case above merges into a map where 'arm-1' is already present,
-// so this file could not express the event the bridge actually broadcasts — a replayed frame for a peer
-// THIS CLIENT HAS NEVER HEARD OF. The bridge replays each camera's last cached frame to every new
-// subscriber, and mesh_bridge.py states the rule for its own server-side annotations: "an annotation
-// must never conjure a peer into the fleet". The client did exactly that.
 const empty = {}
 assert.equal(mergeMeshEvent(empty, { type: 'camera_meta', peer_id: 'ghost-1', cam: 'main', data: { t: NOW - 3600 } }, NOW),
              empty, 'an unknown peer is not created by a cached frame — and identity is returned, so no render')
 
-// It mattered most for the FRESH frame, which used to look like good news: the conjured peer had no
-// last_seen, the sweep read that as ancient, and the card rendered "no heartbeat — state unknown, treat
-// the arm as unpredictable". A robot invented out of a cached JPEG, wearing a safety warning.
 assert.equal(mergeMeshEvent(empty, { type: 'camera_meta', peer_id: 'ghost-1', cam: 'main', data: { t: NOW - 0.1 } }, NOW),
              empty, 'nor by a fresh one — a peer that is really live announces itself on presence within ~1s')
 
-// THE REACHABLE PATH: mesh_reconfigured empties the map on purpose, and cached frames keep arriving for
-// the peers of the mesh we just left. Those must not repopulate the fleet view we deliberately cleared.
+// THE REACHABLE PATH: mesh_reconfigured empties the map on purpose, and cached frames keep
+// arriving for the peers of the mesh we just left.
 const cleared = mergeMeshEvent({ 'old-arm': { peer_id: 'old-arm', last_seen: NOW } }, { type: 'mesh_reconfigured' }, NOW)
 assert.deepEqual(cleared, {}, 'the old mesh is gone')
 assert.deepEqual(mergeMeshEvent(cleared, { type: 'camera_meta', peer_id: 'old-arm', cam: 'main', data: { t: NOW } }, NOW),
@@ -126,10 +106,6 @@ const known = { 'arm-1': { peer_id: 'arm-1', last_seen: NOW - 1, stale: false } 
 const annotated = mergeMeshEvent(known, { type: 'camera_meta', peer_id: 'arm-1', cam: 'wrist', data: { t: NOW } }, NOW)
 assert.deepEqual(annotated['arm-1'].cameras.wrist, { t: NOW }, 'the camera still lands on a real peer')
 
-// A MISSING TIMESTAMP STAYS STALE — considered and REJECTED as a fix this iteration, recorded so the
-// next reader does not "fix" it back. `stale` is a boolean, so the only alternative to stale is LIVE,
-// and a peer whose age is unknown rendered green is the worse error for a machine that can move.
-// `?? 0` is not a measurement, but it lands on the safe side of one.
 assert.equal(sweepStale({ x: { peer_id: 'x' } }, NOW).x.stale, true,
              'unknown age keeps the conservative verdict, not a green card')
 

@@ -33,11 +33,7 @@ import AuthGate from './components/AuthGate'
 
 type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | 'help' | null
 
-/**
- * `?panel=…` is what the manifest shortcuts deep-link to. Note there is
- * deliberately no `estop` shortcut in the manifest - a fleet stop needs the
- * confirm step and the per-peer results, which a launcher shortcut cannot show.
- */
+/** `?panel=…` is what the manifest shortcuts deep-link to. */
 function initialPanel(): Panel {
   const want = new URLSearchParams(location.search).get('panel')
   return want === 'settings' || want === 'activity' || want === 'devices' || want === 'training' || want === 'record' ? want : null
@@ -47,42 +43,28 @@ function Dashboard() {
   const { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, quietChildren, loaded, lastEventAt, everOpen } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
-  /* The verdict of copying the first-run snippet. Never a bare boolean: on a non-secure origin
-     (http://<lan-ip>:8090, how this dashboard is usually opened from a phone) navigator.clipboard is
-     undefined, and a copy button that silently does nothing is the exact class of lie this project
-     hunts. Same rule as DevicePanel.copyCommand. */
+  /** The verdict of copying the first-run snippet. */
   const [snipCopied, setSnipCopied] = useState<string | null>(null)
-  /**
-   * Q45: what this machine REMEMBERS, for the empty fleet. The home screen used to answer an empty
-   * mesh with a python snippet only — after a restart the arms are not unplugged, they are simply
-   * not running, and their configs are already here keyed by USB serial. Asked only while the fleet
-   * is empty (one request, no polling): with robots on screen there is nothing to route anyone to.
-   * null = the lookup failed, which lib/noArms.ts is careful never to turn into "nothing is
-   * configured".
-   */
   const [boards, setBoards] = useState<(RememberedBoard & DetectedBoard)[] | null | undefined>(undefined)
   const [settingsTab, setSettingsTab] = useState<'mesh' | undefined>(undefined)
   const [detail, setDetail] = useState<string | null>(null)
   const [busyPeers, setBusyPeers] = useState<Record<string, boolean>>({})
-  /* UX_REVIEW #10: the record backend is probed ONCE per page load (lib/recordApi
-     caches it), so asking here costs nothing and lets the nav warn before the
-     click instead of after. null until the answer arrives — the nav must not
-     guess in either direction. */
+  /**
+   * UX_REVIEW #10: the record backend is probed ONCE per page load (lib/recordApi caches it), so
+   * asking here costs nothing and lets the nav warn before the click instead of after. null
+   * until the answer arrives — the nav must not guess in either direction.
+   */
   const [recordMock, setRecordMock] = useState<boolean | null>(null)
 
-  /* R2: which robots currently have a live sim twin. Read from the SAME snapshot
-     the cards render from, so the button's state and the twin's own card can
-     never disagree; a stale twin peer does not count as live. */
+  /** R2: which robots currently have a live sim twin. */
   const liveTwins = useMemo(() => new Set(
     Object.values(peers).filter(p => p.peer_id.endsWith('-twin') && !p.stale).map(p => p.peer_id),
   ), [peers])
 
   const list = useMemo(() => Object.values(peers)
-    // Infrastructure peers are not robots: 'gateway' meshes (robot_mesh's
-    // robot-less fallback, one per coordinating agent process) and the
-    // dashboard's own '-safety' signer have no cameras, no joints, and no
-    // dispatch - a run form on them is a card that can only fail. They stay
-    // visible in the settings/mesh panel, just not in the fleet grid.
+    // Infrastructure peers are not robots: 'gateway' meshes (robot_mesh's robot-less fallback, one
+    // per coordinating agent process) and the dashboard's own '-safety' signer have no cameras, no
+    // joints, and no dispatch - a run form on them is a card that can only fail.
     .filter(p => {
       const t = p.presence?.robot_type
       if (t === 'gateway') return false
@@ -102,10 +84,8 @@ function Dashboard() {
   // A phone that sleeps mid-task drops the camera sockets, exactly when the
   // operator most needs to see a moving arm.
   const fleetEmpty = loaded && list.length === 0
-  // undefined (not asked yet) is passed as a failed lookup: while the request is in flight, "could
-  // not be reached" is the honest reading and never becomes "nothing is configured".
-  // The snippet is derived, not stored: whatever the last devices lookup saw. undefined (in flight)
-  // and null (failed) both read as "no board detected", which is the placeholder branch and says so.
+  // undefined (not asked yet) is passed as a failed lookup: while the request is in flight,
+  // "could not be reached" is the honest reading and never becomes "nothing is configured".
   const snippet = startSnippet(boards ?? null)
   const homeRoute = fleetEmpty
     ? noArmsVerdict(0, boards === undefined ? null : boards)?.route ?? null
@@ -121,9 +101,6 @@ function Dashboard() {
         if (!alive) return
         const claimed = new Set(Object.values(doc.managed ?? {})
           .filter((m) => m?.alive && m?.port).map((m) => m.port as string))
-        // EVERY detected board, not only the remembered ones: an unconfigured board still has a
-        // real port, and that port is the whole point of the snippet (Q46). noArmsVerdict does its
-        // own filtering on peer_id, so the two questions stay independent.
         setBoards((doc.serial_ports ?? []).map(p => ({
           peer_id: p.remembered?.peer_id ?? '',
           claimed: claimed.has(p.device),
@@ -135,27 +112,15 @@ function Dashboard() {
     return () => { alive = false }
   }, [fleetEmpty, boards])
 
-  // Q150: the record screen's evidence rule, now on the fleet screen too — a parent that HAS a child
-  // while reporting no joints itself is the host process, whose silence is correct. Computed once for
-  // the whole list, because it is a fact about the fleet's shape rather than about any single card.
   const fleetHosts = useMemo(() => armHosts(list.map(q => ({
     peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length }))), [list])
 
-  /* U22: the same fleet shape the detail view needs to answer "who could lead this arm" — joint counts
-     plus the MEASURED role evidence (12.6V = follower). Derived here so the pairing rule and the host
-     rule above read the identical list and cannot disagree about which peers are arms. */
   const pairInputs = useMemo(() => list.map(q => ({
     peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length,
     role: q.role ?? null, role_volts: q.role_volts ?? null, role_source: q.role_source ?? null })), [list])
 
   useEffect(() => { void pwa.keepAwake(anyRunning) }, [anyRunning])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Q124: which features on this page does the server answering here NOT have? lib/serverAge explains
-     one 404 AFTER the click; on this very machine the running dashboard lacked ten routes the UI calls
-     for three days, so ten features refused a click each and nothing said so first. Asked ONCE per
-     backend, from the same cached openapi.json a 404 explanation would fetch, and silent when the
-     answer is unknown (darkRoutes returns [] for that — our own missing fetch must never be rendered
-     as an accusation about the server). */
   const [dark, setDark] = useState<string[]>([])
   useEffect(() => {
     let live = true
@@ -168,11 +133,8 @@ function Dashboard() {
     return () => { live = false }
   }, [])
 
-  // Keyboard: Escape closes, "." (or Cmd/Ctrl+. even while typing) opens the
-  // stop sheet, "?" opens help. The decision itself is pure and tested in
-  // lib/hotkeys.ts — including the case that made JOURNEYS #12 dangerous: an
-  // operator mid-sentence in a form, where the bare key must stay a character
-  // and the brake still has to be one chord away.
+  // Keyboard: Escape closes, "." (or Cmd/Ctrl+. even while typing) opens the stop sheet, "?"
+  // opens help.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
@@ -204,40 +166,19 @@ function Dashboard() {
   const [linkTick, setLinkTick] = useState(0)
   const link = linkHealth({
     conn, browserOnline: pwa.online, lastEventAt, everOpen,
-    // Q100: the same fact the empty-fleet block explains 130 lines below — but that block only
-    // renders when NO robot is on screen, which is the harmless half of the failure.
     meshOnline: mesh.online,
-    // list.length, NOT the non-stale count: what is RENDERED is what can
-    // mislead. Measured — when the stream dies quietly the stale sweep drops
-    // the non-stale count to 0, so gating on it went silent at the exact moment
-    // the screen was worst (2 frozen cards, no banner, a normal-looking brake).
+    // list.length, NOT the non-stale count: what is RENDERED is what can mislead.
     peerCount: list.length, now: Date.now(),
-    // Q88: the same token the sockets are being refused for. Read locally, no request.
     sessionExpired: sessionVerdict(authToken(), Date.now() / 1000).refusesUntilSignIn,
   })
-  // The tick runs ALWAYS, and that is the whole point. I first gated it on the
-  // verdict being unhealthy and MEASURED the result: with the link healthy
-  // nothing schedules a render, so when the stream went quiet the component
-  // never re-rendered, never recomputed the verdict, and sat there showing a
-  // live-looking fleet with a normal brake — until an unrelated click forced a
-  // render 23 s later. A watchdog gated on its own subject cannot fire. 1 Hz is
-  // free next to the telemetry renders a healthy fleet already causes.
+  // The tick runs ALWAYS, and that is the whole point.
   useEffect(() => {
     const id = setInterval(() => setLinkTick(t => t + 1), 1000)
     return () => clearInterval(id)
   }, [])
   void linkTick
 
-  // Q88: /api/health counts refused handshakes, and NOTHING in this frontend read it — the news
-  // existed only for whoever thought to curl it, which is a hiding place, not a surface. Polled
-  // slowly and only while the socket is up: a storm lasts hours (measured: 19.3 of them), so a
-  // minute of latency costs nothing, and hammering health while the API is down would make this
-  // page part of the problem it reports. Failures are swallowed — linkHealth already owns "the
-  // API is unreachable", and a second opinion about that helps nobody.
   const [refused, setRefused] = useState<RefusedHandshakes | null>(null)
-  // The WHOLE payload, because the build stamp's ABSENCE is the signal (ec5aabb4) and a
-  // sub-block cannot express it. `undefined` until the first answer: "not asked yet" must
-  // never read as "your server is old".
   const [health, setHealth] = useState<unknown>(undefined)
   useEffect(() => {
     if (conn !== 'open') return
@@ -253,8 +194,7 @@ function Dashboard() {
   }, [conn])
   const notice = serverNotice(refused)
   // Staleness alone is the normal state of a long-running server and is NOT news; a field the
-  // whole fleet is silent about is not news either. Together they are, because the operator is
-  // then seeing less than this bundle can show and there is exactly one remedy.
+  // whole fleet is silent about is not news either.
   const stale = useMemo(() => staleServerNotice(health, fleetFieldGaps(peers)), [health, peers])
 
   return (
@@ -289,7 +229,6 @@ function Dashboard() {
         onRecord={() => setPanel('record')}
         onHelp={() => setPanel('help')}
       />
-
 
       {pwa.needRefresh && (
         <div className="toast">
@@ -515,9 +454,8 @@ function TokenPrompt() {
 }
 
 export default function App() {
-  // Remount everything when the backend or token changes: sockets, peer maps and
-  // frame buffers all belong to one backend. AuthGate sits INSIDE the key so a
-  // freshly minted session token re-runs its open/gate probe too.
+  // Remount everything when the backend or token changes: sockets, peer maps and frame buffers
+  // all belong to one backend.
   return (
     <ConfigProvider key={backendKey()}>
       <AuthGate>

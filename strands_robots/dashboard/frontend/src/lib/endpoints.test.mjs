@@ -1,17 +1,6 @@
-// Run: npx esbuild src/lib/endpoints.ts --bundle --format=esm --outfile=/tmp/endpoints.mjs && node src/lib/endpoints.test.mjs
-//
-// endpoints.ts is the one place EVERY screen's fetch, auth header, token storage and 404 explanation
-// passes through, and it had no test at all. Three defects fixed here are the reason it needs one, and
-// each is a silent lie rather than a crash:
-//   1. normalize() answered `new URL().origin` for any scheme, and `foo://bar` / `file:///x` return the
-//      STRING "null" — so a typo in the backend field made every later request go to "nullapi/fleet".
-//   2. absorbUrl() used to live inside backendBase(), but api() reads authToken() BEFORE resolving the
-//      URL — so the first request of a `?token=` link went out unauthenticated and came back 401, which
-//      the AuthGate shows as a login form to someone who just clicked an authorised link.
-//   3. The live route list (Q79) belongs to ONE server. Kept across a backend switch, the old server's
-//      routes explain the new server's 404s: "restart your dashboard" about a route that exists.
-// Module state (cachedBase, absorbedUrl, _liveRoutes) is per-import, so a case needing a different
-// location/localStorage re-imports the bundle with a `?case=N` cache-buster.
+// Run: npx esbuild src/lib/endpoints.ts --bundle --format=esm --outfile=/tmp/endpoints.mjs &&
+// node src/lib/endpoints.test.mjs endpoints.ts is the one place EVERY screen's fetch, auth
+// header, token storage and 404 explanation passes through, and it had no test at all.
 import assert from 'node:assert/strict'
 
 const store = new Map()
@@ -110,7 +99,6 @@ assert.match(err.message, /cannot reach robot\.lan:9000/, 'the operator is told 
 
 console.log('endpoints.test.mjs: all assertions passed')
 
-// ── Q102: the page remembers being refused, so a socket-shaped failure can be read for what it is ──
 {
   const m = await import('/tmp/endpoints.mjs?case=q102')
   assert.equal(m.authRefusedRecently(), false, 'a fresh page has not been refused')
@@ -127,10 +115,6 @@ console.log('endpoints.test.mjs: all assertions passed')
 
 console.log('endpoints.test.mjs: Q102 refusal memory ok')
 
-// ── Q103: a PUBLIC 200 must not absolve a refused page ─────────────────────────────────────────────
-// Measured in a browser against the live dashboard: after the token was rotated, /api/auth/status
-// (public — the middleware never looks at it) kept answering 200 and cleared the refusal within a
-// second, so AuthGate's watcher never saw one and the page stayed open, deaf, exactly as before.
 {
   const m = await import('/tmp/endpoints.mjs?case=q103')
   m.noteAuthRefusal(401, 1_000)
@@ -146,10 +130,6 @@ console.log('endpoints.test.mjs: Q102 refusal memory ok')
 
 console.log('endpoints.test.mjs: Q103 public-200 absolution ok')
 
-// ── Q104: EVERY fetcher in this module records a refusal, not just api() ────────────────────────────
-// apiBlob is the camera-preview rail: on the fleet screen it is usually the FIRST thing a rotated token
-// refuses, and it had its own fetch() with no accounting — so the tiles went dark while the refusal
-// memory stayed empty, and both planRetry and AuthGate's watcher were left with nothing to act on.
 {
   const m = await import('/tmp/endpoints.mjs?case=q104-blob')
   globalThis.localStorage = { getItem: () => 'a-token', setItem() {}, removeItem() {} }
@@ -170,11 +150,6 @@ console.log('endpoints.test.mjs: Q103 public-200 absolution ok')
 
 console.log('endpoints.test.mjs: Q104 every fetcher accounts ok')
 
-// --- U21: a sliding session renews itself on an ordinary response ---------------------
-// The JWT lives 24h and had no renewal route, so the phone that signed in on Monday was
-// refused on Tuesday and its socket knocked 18,968 times over 44 hours (Q109). The server
-// now hands a fresh token back on X-Session-Token; absorbing it HERE is why no screen
-// needs to know renewal exists.
 const JWT_A = 'aaa.bbb.ccc'
 const JWT_B = 'ddd.eee.fff'
 
@@ -248,11 +223,6 @@ const withHeader = value => ({
   assert.equal(m.absorbRenewedSession({ headers: { get() { throw new Error('no headers here') } } }), false)
 }
 
-// --- Q156: the remount key IS the change notification -------------------------------
-// A listener set lived here with no subscriber, poked by both setters. It was deleted, so
-// this pins what replaces it: BOTH halves of the identity change the key, which is what
-// remounts App. If someone reintroduces a callback rail, this still passes — but if a
-// setter ever stops moving the key, the switch becomes invisible and this fails.
 {
   const m = await import('/tmp/endpoints.mjs?case=remountkey')
   m.setBackendBase('one.lan:8090')
@@ -265,11 +235,6 @@ const withHeader = value => ({
   assert.notEqual(m.backendKey(), second, 'clearing the token must move it too (AuthGate depends on this)')
 }
 
-
-// --- Q161: a remembered route list must not outlive the server that gave it ------------
-// The cache is consulted ONLY to explain a 404, and its wrong answer is the dangerous one:
-// after a restart it keeps saying "restart the dashboard to pick it up" about routes that
-// now exist. Asserted against the REAL TTL, with Date.now driven so the test does not sleep.
 {
   const m = await import('/tmp/endpoints.mjs?case=q161')
   const realNow = Date.now

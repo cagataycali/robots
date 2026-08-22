@@ -63,9 +63,6 @@ import { cameraEvidence, cameraPlaceholder } from '/tmp/cameraEvidence.mjs'
   assert.match(none.title, /indistinguishable/)
 }
 
-// --- THE arm-2 SPECIMEN: we asked for two cameras, the robot announces none ----
-// Measured on the live fleet 2026-08-20: so101-arm-2 presence.cameras=None, frames=[].
-// With the dashboard's own spawn request in hand the ambiguity is GONE.
 {
   const v = cameraEvidence('so101-arm-2', [], [], ['top', 'wrist'])
   assert.equal(v.kind, 'dropped')
@@ -84,8 +81,6 @@ import { cameraEvidence, cameraPlaceholder } from '/tmp/cameraEvidence.mjs'
 {
   // Frames arriving: what we asked for is irrelevant, the tiles are the truth.
   assert.equal(cameraEvidence('p', [], ['top'], ['top', 'wrist']).kind, 'ok')
-  // Announced but mute stays `mute`: the camera DID open, so "dropped" would be wrong
-  // and would send the operator hunting a permission instead of a dead reader thread (Q45).
   assert.equal(cameraEvidence('p', ['top'], [], ['top', 'wrist']).kind, 'mute')
 }
 

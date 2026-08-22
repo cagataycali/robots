@@ -56,8 +56,7 @@ assert.match(cleanHubHost('gpu.lan:').why, /must be a port number/)
 assert.match(cleanHubHost('gpu.lan:zenoh').why, /must be a port number/)
 assert.match(cleanHubHost(':7447').why, /not a host name/)
 
-// The judgement that is NOT here on purpose: the server refuses public/loopback when it GUESSES,
-// and uses an explicit override verbatim. A LAN-shape rule in this file would be a second source of
-// truth and would block the one person who knows the network.
+// The judgement that is NOT here on purpose: the server refuses public/loopback when it
+// GUESSES, and uses an explicit override verbatim.
 assert.equal(cleanHubHost('203.0.113.9').why, '', 'a public address is the server\'s call, not ours')
 assert.equal(cleanHubHost('localhost:7447').why, '', 'even loopback: the operator may be testing on one box')

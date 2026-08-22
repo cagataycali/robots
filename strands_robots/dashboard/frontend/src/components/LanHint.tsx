@@ -1,10 +1,3 @@
-/**
- * "You are on the same network — use the local address" (Q52).
- *
- * One fetch on mount, silent unless the server can PROVE the viewer is local. An old
- * server 404s the endpoint and this renders nothing, so the component is safe to ship
- * ahead of the restart that makes the endpoint exist.
- */
 import { useEffect, useState } from 'react'
 
 import { api } from '../lib/endpoints'

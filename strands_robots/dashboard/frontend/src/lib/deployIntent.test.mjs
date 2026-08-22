@@ -1,9 +1,5 @@
 // node assertions over the bundled module (esbuild first — see the sibling
 // calibrateCommand.test.mjs for the same pattern).
-//
-// A DEPLOY INTENT is the note the Training tab leaves for a robot's run form: "this checkpoint,
-// carried across, for a human to press Run on". Untested until now, and it guards a physical act —
-// the thing it must never do is reappear later on a DIFFERENT robot's form.
 import assert from 'node:assert/strict'
 
 // A sessionStorage the module can use: it is read at call time, so defining it before the import is enough.
@@ -37,8 +33,6 @@ assert.ok(peekDeployIntent(t + 9 * 60 * 1000), 'still valid at 9 minutes')
 assert.equal(peekDeployIntent(t + 11 * 60 * 1000), null, 'expired at 11 minutes')
 assert.equal(peekDeployIntent(), null, 'an expired intent is REMOVED, not just hidden')
 
-// A CLOCK THAT JUMPED BACK (sleep/resume, NTP correction, VM snapshot) used to make an intent
-// immortal: `now - at > TTL` is never true when the age is negative. It must read as untrustworthy.
 store.set('strands.deployIntent', JSON.stringify({ ...intent, at: 5_000_000 }))
 assert.equal(peekDeployIntent(1_000_000), null, 'a future stamp is expired, not fresh')
 assert.equal(store.size, 0, 'and it is cleared, so it cannot come back when the clock catches up')

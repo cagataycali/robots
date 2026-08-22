@@ -1,17 +1,4 @@
-/**
- * The one thing a robot dashboard must never do: vanish.
- *
- * React unmounts the WHOLE tree when a render throws, so before this existed a
- * single bad payload (a session object with no `episodes`, an API returning an
- * object where a string was expected) blanked the app to a white page — and
- * took the E-STOP button out of the DOM with it, at exactly the moment the
- * operator most wants it. Measured in JOURNEYS.md #1: one click on ⏺ record
- * emptied #root.
- *
- * So every screen is wrapped individually. A crash is then contained to its own
- * panel: the fleet, the cards and the stop button keep rendering, and the
- * broken screen says what happened instead of pretending nothing did.
- */
+/** The one thing a robot dashboard must never do: vanish. */
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 type Props = {

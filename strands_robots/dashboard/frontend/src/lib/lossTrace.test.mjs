@@ -1,8 +1,6 @@
-// Run: npx esbuild src/lib/lossTrace.ts --bundle --format=esm --outfile=/tmp/lossTrace.mjs && node src/lib/lossTrace.test.mjs
-//
-// The loss curve is BUILT BY THE DASHBOARD from polled snapshots — there is no history API, each poll
-// contributes at most one point. Every rule here exists because a plausible-looking curve made of
-// witnessed points can lie in a specific way, and none of them were pinned by a test.
+// Run: npx esbuild src/lib/lossTrace.ts --bundle --format=esm --outfile=/tmp/lossTrace.mjs &&
+// node src/lib/lossTrace.test.mjs The loss curve is BUILT BY THE DASHBOARD from polled
+// snapshots — there is no history API, each poll contributes at most one point.
 import assert from 'node:assert/strict'
 import { pushLoss, lossPath, lossBand, fmtStep } from '/tmp/lossTrace.mjs'
 
@@ -44,8 +42,6 @@ for (let i = 1; i < big.length; i++) assert.ok(big[i].step > big[i - 1].step, 'm
 // early shape is kept, not truncated: the first point is still the first reading
 assert.equal(big[0].step, 10)
 
-// ── THE BAND: a flat run must not be magnified into a mountain ──
-// A run stuck at 2.5000 ± 0.0004 used to fill the full canvas height, which reads as progress.
 const stuck = [{ step: 1, loss: 2.5001 }, { step: 2, loss: 2.4999 }, { step: 3, loss: 2.5000 }]
 const band = lossBand(stuck)
 assert.equal(band.flat, true, 'noise below 2% of magnitude is flat, and says so')

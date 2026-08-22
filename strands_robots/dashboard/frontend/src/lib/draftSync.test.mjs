@@ -1,9 +1,6 @@
-// Q76: a value the operator has touched belongs to the operator. Run:
-//   npx esbuild src/lib/draftSync.ts --bundle --format=esm --outfile=/tmp/draftSync.mjs && node src/lib/draftSync.test.mjs
 import assert from 'node:assert/strict'
 const { syncDrafts, dirtyFields, unsavedSummary } = await import('/tmp/draftSync.mjs')
 
-// THE BUG: type a new prompt, then save the mesh tab -> reload -> the prompt used to revert.
 {
   const server = { prompt: 'old prompt', meshPort: '7447' }
   const current = { prompt: 'MY LONG NEW PROMPT', meshPort: '9000' }
@@ -35,7 +32,6 @@ const { syncDrafts, dirtyFields, unsavedSummary } = await import('/tmp/draftSync
 
 // Typing something and then typing it BACK is not dirty: the operator ended where the server is.
 assert.deepEqual(dirtyFields({ a: 'x' }, { a: 'x' }), [])
-// Empty string is a real value, distinct from absent (Q75's lesson applied to drafts).
 assert.deepEqual(dirtyFields({ a: '' }, { a: 'x' }), ['a'])
 assert.deepEqual(dirtyFields({}, { a: 'x' }), [], 'a field not yet rendered is not "dirty"')
 

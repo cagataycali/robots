@@ -43,9 +43,6 @@ assert.match(other.title, /weird__child-twin/)
 assert.match(other.aria, /weird__child/)
 console.log('twinButtonCopy: all assertions passed')
 
-// A11Y (found by audit-screens-render, 2026-08-20): the live state was CSS-only, so a screen reader
-// announced the same "button" whether a MuJoCo sim peer was running or not — and "twin on" reads as
-// an instruction as easily as a state. aria-pressed comes from the verdict, never from the class.
 {
   assert.equal(twinButtonCopy({ peerId: 'a', twinLive: true }).pressed, true)
   assert.equal(twinButtonCopy({ peerId: 'a', twinLive: false }).pressed, false)

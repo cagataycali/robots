@@ -7,15 +7,7 @@ import { humanJointNames, stripLegend } from '../lib/jointLabels'
 import { jointAgeNote } from '../lib/jointFreshness'
 import { jointAbsence } from '../lib/jointAbsence'
 
-/**
- * One scale per strip, learned from the stream.
- *
- * The scale decision lives in `../lib/jointScale` as pure functions: a robot
- * reports every joint in one unit, so the unit belongs to the strip, and a
- * change of unit needs several consecutive frames of agreement before the
- * axis moves. See that module for why the old per-joint
- * `|pos| > 4 ? 100 : PI` rule made bars incomparable and jumpy.
- */
+/** One scale per strip, learned from the stream. */
 
 function readValue(v: unknown): number {
   if (typeof v === 'number') return v
@@ -28,13 +20,8 @@ export default function JointStrip({
   state, presence, problem, peerStale, history: showHistory = true,
 }: {
   state?: PeerState; presence?: Presence; history?: boolean
-  /**
-   * The fleet snapshot's own `stale` for this peer. Passed through because presence and the state
-   * probe are INDEPENDENT rails: a peer whose presence is current cannot have exited, however far
-   * behind its state document is, and jointAbsence must not print that guess over a measured fact.
-   */
+  /** The fleet snapshot's own `stale` for this peer. */
   peerStale?: boolean | null
-  /** the backend's `joint_problem` verdict for this peer (Q80) — absent means nothing is known */
   problem?: { kind?: string | null; headline?: string | null; remedy?: string | null; detail?: string | null } | null
 }) {
   const memo = useRef<ScaleMemo | undefined>(undefined)
@@ -66,12 +53,10 @@ export default function JointStrip({
 
   const joints = state?.joints
   if (!joints || Object.keys(joints).length === 0) {
-    // "no joint data on this peer" was the sentence a LOCKED-OUT arm showed for ten
-    // hours while it published state 0.3s old: alive, talking, and only the joints
-    // missing. lib/jointAbsence separates the three situations the operator has to
-    // act on differently, and points at the log rather than guessing the cause.
-    // Since Q80 the backend may KNOW the reason (it reads the child's log): a held serial port and
-    // an uncalibrated board are opposite remedies that both used to render as the same shrug.
+    // "no joint data on this peer" was the sentence a LOCKED-OUT arm showed for ten hours while it
+    // published state 0.3s old: alive, talking, and only the joints missing. lib/jointAbsence
+    // separates the three situations the operator has to act on differently, and points at the log
+    // rather than guessing the cause.
     const note = jointAbsence({ state, presence, problem, peerStale, nowS: nowMs / 1000 })
     return (
       <div className="joints empty" data-tone={note.tone} title={note.detail ?? undefined}>
@@ -93,23 +78,19 @@ export default function JointStrip({
   const { unit, ranges } = memo.current
   pending.current = samples
 
-  // The number, not just the bar: bars without values are decoration on a
-  // machine that can hit things (UX review #4). Precision adapts to the
-  // stream's magnitude; the unit is NOT invented — 'servo' streams mix
-  // degrees and 0..100 grippers, so a fabricated '°' would lie for some rows.
+  // The number, not just the bar: bars without values are decoration on a machine that can hit
+  // things (UX review #4).
   const fmt = (n: number) =>
     Math.abs(n) >= 100 ? n.toFixed(0) : Math.abs(n) >= 10 ? n.toFixed(1) : n.toFixed(2)
 
-  // UX_REVIEW #4's remaining half: the numbers were there, but nothing on
-  // screen said what unit they are in or what the bar and the line mean — that
-  // lived only in `title=`, which does not exist on a touch screen. Labels fall
-  // back to raw keys if humanising two rows would read the same.
+  // UX_REVIEW #4's remaining half: the numbers were there, but nothing on screen said what unit
+  // they are in or what the bar and the line mean — that lived only in `title=`, which does not
+  // exist on a touch screen.
   const labels = humanJointNames(entries.map(([name]) => name))
 
-  // The strip carries its own freshness because it is rendered ALONE in the
-  // collect panel, where the operator is hand-guiding the leader and reading
-  // these very numbers to see the follower track. A neighbour's "stale" chip
-  // (TelemetryStrip, on the cards) cannot cover that screen.
+  // The strip carries its own freshness because it is rendered ALONE in the collect panel, where
+  // the operator is hand-guiding the leader and reading these very numbers to see the follower
+  // track.
   const fresh = jointAgeNote(lastAt.current === null ? null : nowMs - lastAt.current)
 
   return (

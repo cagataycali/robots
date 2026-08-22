@@ -1,7 +1,6 @@
 // Assertions for what the devices drawer may claim when spawn/despawn fails
-// (lib/deviceOutcome.ts).
-// Run: npx esbuild src/lib/deviceOutcome.ts --bundle --format=esm --outfile=/tmp/deviceOutcome.mjs \
-//        && node src/lib/deviceOutcome.test.mjs
+// (lib/deviceOutcome.ts). Run: npx esbuild src/lib/deviceOutcome.ts --bundle --format=esm
+// --outfile=/tmp/deviceOutcome.mjs \ && node src/lib/deviceOutcome.test.mjs
 import assert from 'node:assert/strict'
 
 const { deviceActionFailure } = await import('/tmp/deviceOutcome.mjs')

@@ -1,7 +1,6 @@
 // Assertions for the record screen's "are these numbers live?" verdict
-// (lib/sessionFreshness.ts).
-// Run: npx esbuild src/lib/sessionFreshness.ts --bundle --format=esm --outfile=/tmp/sessionFreshness.mjs \
-//        && node src/lib/sessionFreshness.test.mjs
+// (lib/sessionFreshness.ts). Run: npx esbuild src/lib/sessionFreshness.ts --bundle
+// --format=esm --outfile=/tmp/sessionFreshness.mjs \ && node src/lib/sessionFreshness.test.mjs
 import assert from 'node:assert/strict'
 
 const { sessionFreshness, staleSuffix, STALE_AFTER_MS } =
@@ -59,8 +58,6 @@ for (const bad of [null, undefined, NaN]) {
   assert.equal(f.text, null)
 }
 
-// Age is measured from the last read that ARRIVED, so a request that hangs
-// forever cannot keep the screen looking fresh.
 {
   const hung = sessionFreshness({ lastOkAtMs: NOW - 30000, nowMs: NOW, recording: true, lastError: '' })
   assert.equal(hung.stale, true)

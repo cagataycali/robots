@@ -22,40 +22,21 @@ import type { RecordOverrideFlag } from '../lib/recordRefusal'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
 
-/**
- * Record screen (U8): collect teleop episodes into a LeRobotDataset.
- * The leader arm drives the follower; the follower is what gets recorded.
- *
- * Session state lives on the backend (see lib/recordApi.ts) - this component
- * only renders it and sends intents, and it POLLS while a session is open, so
- * a phone and a laptop really do watch the same session (frame counts tick,
- * a stop pressed on one device appears on the other). Space starts/stops an
- * episode and X redoes a bad one - collection is a two-handed job and the
- * operator's eyes are on the arms, not the pointer.
- */
 export default function RecordPanel(
   { peers, onClose, onDevices }: { peers: Peer[]; onClose: () => void; onDevices?: () => void },
 ) {
   const peerIds = peers.map(p => p.peer_id)
   const [api, setApi] = useState<RecordApi | null>(null)
-  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLDivElement | null>(null)
   useDialogFocus(sheetRef)
   const [s, setS] = useState<RecordSession | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  // Which arm is which comes from the servo bus, not from the peer id: the old
-  // default here was /leader|arm-2/, and arm-2 measures 12.6V - it is the
-  // FOLLOWER - so this screen used to pre-fill the pair backwards. Roles arrive
-  // from /api/devices (measured once, remembered by USB serial). Until they do,
-  // both slots stay empty rather than confidently wrong.
   const [roles, setRoles] = useState<Record<string, RoleCandidate>>({})
-  /* A PROCESS is not an arm: `parent` hosts `parent__child`, and on this fleet the parent is the
-     simulator while the child is the robot with six joints. Offered identically, the parent is a
-     doomed pick with the friendlier name — and since 91d1a009 it draws the joint warning with the
-     wrong remedy ("check its log") for a process behaving exactly as designed. Kept in the list but
-     unpickable and explained: an operator who came looking for that name deserves to be told where
-     its arm went, not to watch it vanish. */
+  /**
+   * A PROCESS is not an arm: `parent` hosts `parent__child`, and on this fleet the parent is the
+   * simulator while the child is the robot with six joints.
+   */
   const hosts = armHosts(peers.map(p => ({
     peer_id: p.peer_id,
     joints: p.state?.joints
@@ -63,20 +44,15 @@ export default function RecordPanel(
         : typeof p.state.joints === 'object' ? Object.keys(p.state.joints).length : null
       : 0,
   })))
-  // pairArms must not SUGGEST one either: a host is never measured, so it could only ever arrive in a
-  // slot as a guess, and this screen's rule is that a confident wrong default is worse than a blank.
   const candidates: RoleCandidate[] = peerIds
     .filter(id => !hosts[id])
     .map(id => roles[id] ?? { peer_id: id })
-  // Q44: what the devices screen remembers, for the case where this screen has nothing to record
-  // WITH. undefined = not asked yet, null = the request failed (which must not become the claim
-  // "nothing is configured").
   const [boards, setBoards] = useState<RememberedBoard[] | null | undefined>(undefined)
 
   const suggestion = pairArms(candidates)
-  // Replaces pairArms's "no arms on the mesh" note when there is nothing to record with: same fact,
-  // with the way out. undefined (not asked yet) is passed through as a failed lookup rather than as
-  // "nothing configured" - the honest reading while the request is in flight.
+  // Replaces pairArms's "no arms on the mesh" note when there is nothing to record with: same
+  // fact, with the way out. undefined (not asked yet) is passed through as a failed lookup
+  // rather than as "nothing configured" - the honest reading while the request is in flight.
   const noArms = noArmsVerdict(peerIds.length, boards === undefined ? null : boards)
   const [form, setForm] = useState({
     dataset: '', task: '', leader: '', follower: '', target_episodes: '20', fps: '',
@@ -84,14 +60,9 @@ export default function RecordPanel(
   const [touched, setTouched] = useState({ leader: false, follower: false })
   // What the operator asked for, and whether we understood it — never a silent correction.
   const wanted = episodeTarget(form.target_episodes)
-  // Q54: /api/record/open has always taken `fps` and this form never sent it, so every dataset
-  // was stamped 30 while an SO-101 captures nearer 4 — and LeRobot derives timestamps from the
-  // declaration, so the artifact claims the motion happened 7x faster than it did.
   const rate = fpsField(form.fps)
-  // A pair the hardware contradicts is not forbidden - a bench rig can be wired
-  // in a way we cannot see - but it is not a silent default either. This follows
-  // the same posture as the other safety refusals in this dashboard: state the
-  // measurement, then let the operator continue DELIBERATELY.
+  // A pair the hardware contradicts is not forbidden - a bench rig can be wired in a way we
+  // cannot see - but it is not a silent default either.
   const [ack, setAck] = useState(false)
   // Every slot the measurement contradicts, in one place: the warnings, the
   // acknowledgement and the submit gate must agree about what is wrong.
@@ -100,10 +71,6 @@ export default function RecordPanel(
     .filter((x): x is { slot: 'leader' | 'follower'; msg: string } => !!x.msg)
 
   const [upload, setUpload] = useState(false)
-  // Q72: whether this machine can publish AT ALL, and where to. Asked when the tick is made — the
-  // answer used to arrive at the end of the session, when the recording was already spent and the
-  // recorder about to be destroyed. Null = not asked yet; failure to ask stays silent (no evidence
-  // is not evidence of a problem), but then the tick cannot arm either: see armedUpload.
   const [pre, setPre] = useState<UploadPreflight | null>(null)
   const [preErr, setPreErr] = useState(false)
   // The operator's deliberate "yes, that namespace really is mine" for the one refusal that is a
@@ -122,10 +89,6 @@ export default function RecordPanel(
   const uploadBlocked = !!upload && (!pre || (!pre.ok && !(pre.needs_force && uploadForce)))
   const armedUpload = upload && !uploadBlocked
 
-  // Q39: the backend refuses a taken dataset name before it parks the arms - but by then the
-  // operator has picked a pair, aimed two cameras and pressed the button. The training picker's own
-  // listing answers the question, so ask it once while the form is open and warn while there is
-  // nothing at stake. Failure is silence: no evidence is not evidence of a problem.
   const [known, setKnown] = useState<KnownDataset[] | null>(null)
   useEffect(() => {
     let alive = true
@@ -140,30 +103,19 @@ export default function RecordPanel(
   // request would otherwise keep this screen looking live forever.
   const [lastOkAt, setLastOkAt] = useState<number | null>(null)
   const [pollErr, setPollErr] = useState<string | null>(null)
-  // Ticks once a second so the age on screen keeps growing even while a request
-  // is stuck and no other state changes - the freeze is exactly the case where
-  // the display must not sit still and look current.
+  // Ticks once a second so the age on screen keeps growing even while a request is stuck and no
+  // other state changes - the freeze is exactly the case where the display must not sit still
+  // and look current.
   const [nowMs, setNowMs] = useState(() => Date.now())
 
-  // The follower's cameras are what gets WRITTEN INTO THE DATASET, so a camera
-  // that stopped publishing is a defect in the recording, not a cosmetic issue.
-  // Measured on this fleet: arm-1's wrist last captured a frame 10.4 hours before
-  // the record screen would have happily used it. The backend refuses this too
-  // (409 + ignore_dead_cameras); asking here means the operator finds out before
-  // they set up the scene, not after. Its own tick, separate from the wiring
-  // acknowledgement: two different admissions must not share one checkbox.
-  // Date.now() rather than the `nowMs` ticker: that one only runs while a session
-  // is OPEN, and this question is asked on the form before it. Every peer event
-  // re-renders this component, so the age stays current on its own.
+  // The follower's cameras are what gets WRITTEN INTO THE DATASET, so a camera that stopped
+  // publishing is a defect in the recording, not a cosmetic issue.
   const followerPeer = peers.find(p => p.peer_id === form.follower)
   const deadCams = stoppedCameras(followerPeer?.cameras, Date.now() / 1000)
   const camWarning = cameraWarning(deadCams, { peerId: form.follower })
 
-  // An arm that cannot report where it is cannot be recorded from: the follower's positions are the
-  // dataset's observations and the leader's are its actions. The backend refuses this too (409,
-  // record_joints) - asking here means the operator finds out before naming a dataset and setting up
-  // a scene. Same rule as the server's, deliberately: a form that predicted a refusal the server
-  // would not make would be worse than no prediction.
+  // An arm that cannot report where it is cannot be recorded from: the follower's positions are
+  // the dataset's observations and the leader's are its actions.
   const jointWarnings = ([
     ['leader', form.leader],
     ['follower', form.follower],
@@ -175,28 +127,15 @@ export default function RecordPanel(
     .filter((x): x is { slot: 'leader' | 'follower'; msg: string } => !!x.msg)
   const [camAck, setCamAck] = useState(false)
 
-  // The SERVER's camera gates (frame age, enumeration, identity) each refuse with
-  // 409 + the name of the flag that proceeds anyway. The tick above only answers
-  // the first, and only when this screen's own freshness check saw it first: a
-  // camera unplugged before the arm subscribed, or an index that changed hands,
-  // is invisible here and arrives as a refusal. Without this the operator reads a
-  // paragraph naming a flag they cannot send - a continuable refusal continuable
-  // only by curl. Cleared on every new attempt: consent to a stale camera is not
-  // consent to a camera that changed identity.
+  // The SERVER's camera gates (frame age, enumeration, identity) each refuse with 409 + the name
+  // of the flag that proceeds anyway.
   const [refusalAck, setRefusalAck] = useState(false)
   const offered = overrideOffered(err)
-  // Q98: EVERY admission made about this attempt sequence, not only the last one. The route checks its
-  // three camera gates in order and each is skipped only by its own flag, so carrying one flag at a
-  // time made a two-fault camera ping-pong forever - and the commonest two-fault case is one unplug,
-  // which makes a camera missing AND renumbers the rest into identity drift.
   const [ackedFlags, setAckedFlags] = useState<RecordOverrideFlag[]>([])
   // An admission about these cameras is an admission about THAT robot and THAT dataset: changing any
   // of them starts over.
   useEffect(() => { setAckedFlags([]) }, [form.follower, form.leader, form.dataset])
 
-  // The measured roles. Managed children carry them keyed by peer id, so this is
-  // one request, not one per arm. A failure here is not worth a banner: the
-  // pickers simply stay unopinionated (basis 'none' says so out loud).
   useEffect(() => {
     let alive = true
     httpGet<{
@@ -243,9 +182,8 @@ export default function RecordPanel(
     return () => { alive = false }
   }, [])
 
-  // Poll while a session is open: frame counts tick during an episode and a
-  // second device (the phone next to the arms) stays in sync. One request in
-  // flight at a time; the mock answers from memory so polling it is free.
+  // Poll while a session is open: frame counts tick during an episode and a second device (the
+  // phone next to the arms) stays in sync.
   const sRef = useRef(s); sRef.current = s
   useEffect(() => {
     if (!api || !s?.dataset) return
@@ -257,9 +195,7 @@ export default function RecordPanel(
       pending = true
       api.session()
         .then(sess => { if (alive) { setS(sess); setLastOkAt(Date.now()); setPollErr(null) } })
-        // One lost tick IS a blip. Several in a row means the numbers on screen
-        // are a photograph, and the frame count - the only proof an episode is
-        // being captured - has quietly stopped meaning anything.
+        // One lost tick IS a blip.
         .catch(e => { if (alive) setPollErr(e instanceof Error ? e.message : String(e)) })
         .finally(() => { pending = false })
     }, 1000)
@@ -280,9 +216,7 @@ export default function RecordPanel(
         message: e instanceof Error ? e.message : String(e),
       })
       setErr(v.text)
-      // Hand off to the observer that knows. The 1s poll only runs once a session
-      // exists, so an `open` that MAY have landed would otherwise leave nothing
-      // watching at all - the one case that most needs a read.
+      // Hand off to the observer that knows.
       if (v.ambiguous && api) {
         try {
           setS(await api.session()); setLastOkAt(Date.now()); setPollErr(null)
@@ -292,9 +226,8 @@ export default function RecordPanel(
     setBusy(false)
   }
 
-  // Collection is a two-handed job - eyes on the arms, not the pointer.
-  // Space: start / stop-and-keep. X: redo (throw the take away). Only while
-  // a session is open, and never while typing in a field.
+  // Collection is a two-handed job - eyes on the arms, not the pointer. Space: start /
+  // stop-and-keep. X: redo (throw the take away).
   const runRef = useRef(run); runRef.current = run
   const apiRef = useRef(api); apiRef.current = api
   useEffect(() => {
@@ -324,21 +257,15 @@ export default function RecordPanel(
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
   const open = !!s?.dataset
   const recording = s?.phase === 'recording'
-  // While recording, the last episode entry is the take in flight - its frame
-  // count ticking is the only proof data is actually being captured. It is
-  // not "kept" until stop saves it.
-  // Never dereference the payload's shape: an older/other backend answering
-  // /api/record/session with a session that has no `episodes` used to throw
-  // during render, and a render that throws unmounts the whole app (JOURNEYS
-  // #1). Missing simply means "no episodes yet".
+  // While recording, the last episode entry is the take in flight - its frame count ticking is
+  // the only proof data is actually being captured. It is not "kept" until stop saves it.
   const episodes = Array.isArray(s?.episodes) ? s!.episodes : []
   const finished = recording ? episodes.slice(0, -1) : episodes
   const kept = finished.filter(e => !e?.discarded).length
   const liveFrames = recording && episodes.length > 0
     ? episodes[episodes.length - 1]?.frames ?? null
     : null
-  // Are those numbers still live? The poller used to swallow its failures, so a
-  // frozen frame count read exactly like a ticking one.
+  // Are those numbers still live?
   const fresh = sessionFreshness({ lastOkAtMs: lastOkAt, nowMs, lastError: pollErr, recording })
 
   // R1: the button's words depend on which recorder answered the probe.
@@ -382,7 +309,6 @@ export default function RecordPanel(
             // Only ever sent when the operator ticked the box in front of the
             // named camera and its age - never a default, never remembered.
             ...(camWarning && camAck ? { ignore_dead_cameras: true } : {}),
-            // Every flag whose refusal was read and ticked in this sequence (Q98).
             ...overrideBodyFlags(nextAcknowledged(ackedFlags, offered, refusalAck)),
           }), 'open')
         }}>
@@ -669,8 +595,6 @@ export default function RecordPanel(
               {Object.entries(ep.thumbnails).length > 0 && (
                 <div className="rec-thumbs">
                   {Object.entries(ep.thumbnails).slice(0, 3).map(([cam, url]) => (
-                    /* Q127: authed fetch, not a bare <img src> — the URL is one of this
-                       dashboard's own routes and 401s without the bearer token. */
                     <AuthedImg key={cam} path={url} alt={`${cam} thumbnail of episode ${ep.index}`} />
                   ))}
                 </div>
@@ -692,13 +616,6 @@ export default function RecordPanel(
             <span>upload to the Hugging Face Hub after finishing</span>
           </label>
           {upload && (
-            /* Q56: this was a free-text "hub repo id" box, and a LeRobotDataset can only publish
-               under the repo_id it was created with — there is no argument that redirects the push.
-               So the box could only produce a refusal at the end of the session. It now states
-               where the push goes, and the two things the operator cannot see: the repo is public
-               unless their namespace defaults otherwise, and nothing in this dashboard can retry a
-               failed push (the session is gone once it closes).
-               Q72: and it is CHECKED now, not merely described — see uploadPreflight. */
             <>
               <p className={pre && !pre.ok ? 'hint bad' : 'hint'}>
                 publishes as <code>{pre?.destination ?? s.dataset ?? '(unnamed)'}</code> — a dataset
@@ -788,17 +705,17 @@ export default function RecordPanel(
 }
 
 /**
- * What the dataset sees: the follower's cameras and joints, live during the
- * whole session (not just while recording - the operator lines the arms up
- * BETWEEN episodes, and needs eyes then most of all).
+ * What the dataset sees: the follower's cameras and joints, live during the whole session (not
+ * just while recording - the operator lines the arms up BETWEEN episodes, and needs eyes then
+ * most of all).
  */
 function FollowerLive({ peer, recording }: { peer?: Peer; recording: boolean }) {
   if (!peer) {
     return <div className="toast warn">The follower is not on the mesh — its card left the fleet. Recording would capture nothing.</div>
   }
-  // Frames vs announcement are DIFFERENT facts (see lib/cameraEvidence): saying
-  // "no cameras announced" when presence announced two is the snapshot
-  // contradicting itself, and it blamed the robot for a macOS permission.
+  // Frames vs announcement are DIFFERENT facts (see lib/cameraEvidence): saying "no cameras
+  // announced" when presence announced two is the snapshot contradicting itself, and it blamed
+  // the robot for a macOS permission.
   const evidence = cameraEvidence(
     peer.peer_id,
     peer.presence?.cameras,

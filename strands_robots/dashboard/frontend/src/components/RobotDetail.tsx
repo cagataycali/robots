@@ -25,22 +25,12 @@ function fmt(v: unknown): string {
   return String(v)
 }
 
-/**
- * Single-robot stage: one big camera, the whole joint table, and the policy's
- * own step stream.
- *
- * The grid view is for watching a fleet; this is for watching *one* robot do
- * something, which is when you need the action vector the policy is actually
- * emitting rather than a 3-line summary. Steps are buffered client-side because
- * `strands/<peer>/stream` is fire-and-forget - nothing on the mesh replays it.
- */
+/** Single-robot stage: one big camera, the whole joint table, and the policy's own step stream. */
 export default function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onClose }: {
   peer: Peer
   /** a '<id>-twin' peer is live in the fleet */
   twinLive?: boolean
-  /** Q150: children this peer hosts, when it is a process rather than an arm. */
   hostsChildren?: string[] | null
-  /** U22: the fleet's joint counts + measured roles, for "who could lead this arm". */
   fleet?: PairInput[] | null
   onClose: () => void
 }) {
@@ -49,12 +39,6 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
   // R2: same words as the card, from the same pure module.
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
   const [cam, setCam] = useState<string | null>(null)
-  /* U22 slice 1, READ-ONLY. Teleop has four server routes and no screen at all, so the dashboard has
-     been telling operators to "collect teleop episodes" while giving them no way to see whether teleop
-     is even working. The server's verdict already exists (teleop_health.py) and was written because of
-     a measured disaster: 176 frames published, every one refused, while every surface the dashboard
-     could see said success. Fetched ON DEMAND rather than polled — asking a peer costs a mesh
-     round-trip on the same shared servo bus that starves the state reads. */
   const [teleop, setTeleop] = useState<TeleopView | null | 'asking' | 'unreachable'>(null)
   const askTeleop = async () => {
     setTeleop('asking')
@@ -63,18 +47,8 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
     // older server, and swallowing this into "no teleop" would be the same lie the counters told.
     catch { setTeleop('unreachable') }
   }
-  /* U22 slice 2. STOPPING is the safe direction — it can only remove commands from an arm — so it
-     needs no consent, but it does need (a) an armed two-step, because a mis-click during a good
-     recording session costs the operator the take, and (b) a MEASURED result: the sentence afterwards
-     comes from asking again, never from the POST returning 200. */
   const [stopArmed, setStopArmed] = useState(false)
   const [stopped, setStopped] = useState<{ ok: boolean; line: string } | null>(null)
-  /* U22 slice 3b: STARTING. This is the only button on this screen whose effect is an arm in motion, so:
-     armed-then-confirmed with the confirm sentence naming BOTH arms and which one moves; publish on the
-     leader FIRST (read-only on that arm — it publishes what it measures) and only then point the follower
-     at it, because a follower aimed at a stream nobody publishes waits out its subscribe budget and
-     shrugs; and the result is MEASURED by asking again, where "started but every frame refused" is the
-     outcome this fleet has actually produced. */
   const [startArmed, setStartArmed] = useState<string | null>(null)
   const [started, setStarted] = useState<{ ok: boolean; line: string } | null>(null)
   const startTeleop = async (leaderId: string) => {
@@ -87,9 +61,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
     try {
       await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/receive`, { method: 'POST', body: JSON.stringify({ source_peer_id: leaderId }) })
     } catch (e) {
-      /* HALF-BUILT CHAIN: the leader IS publishing now and the follower refused. Naming the remedy in
-         prose was not enough — the arm to stop is a DIFFERENT peer than the one on this screen, so acting
-         on the advice meant leaving the failure behind to go find it. The button comes with the sentence. */
+      /** HALF-BUILT CHAIN: the leader IS publishing now and the follower refused. */
       setTeleop('unreachable'); setStranded(leaderId)
       setStarted({ ok: false, line: `${leaderId} is publishing its joints, but ${peer.peer_id} would not follow it: ${(e as Error).message} — nothing is moving, and ${leaderId} is still on the wire until you stop it below` })
       return
@@ -100,9 +72,6 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
     setStarted(startVerdict(after))
   }
 
-  /* The leader left publishing by a half-built start, and its own stop — measured the same way as every
-     other stop on this screen: ASK AGAIN, because "stop was sent" is not "it stopped". The result is kept
-     even once it succeeds (a result that disappears when it works is the defect iter 485 fixed). */
   const [stranded, setStranded] = useState<string | null>(null)
   const [strandedResult, setStrandedResult] = useState<{ ok: boolean; line: string } | null>(null)
   const stopStranded = async (leaderId: string) => {
@@ -126,7 +95,6 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
     setTeleop(after ?? 'unreachable')
     setStopped(stopVerdict(after))
   }
-  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLElement | null>(null)
   useDialogFocus(sheetRef)
   const [camConfig, setCamConfig] = useState(false)
@@ -152,23 +120,19 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
   const offline = !!peer.stale
   const joints = Object.entries(peer.state?.joints ?? {})
 
-  /* AN ARM WITH NO JOINTS IS THE MOST IMPORTANT SENTENCE ON THIS SCREEN, and until iter 487 it was the one
-     sentence nowhere on it: both real arms have been jointless for three days while presence said connected
-     and camera frames kept flowing, the cause a WARNING in the middle of a ring buffer whose tail reads
-     "hardware connected … online". Asked through the SHARED CACHE so this panel and the card cannot give
-     different answers about the same arm, and asked ONLY when the joints are actually missing. */
+  /**
+   * AN ARM WITH NO JOINTS IS THE MOST IMPORTANT SENTENCE ON THIS SCREEN, and until iter 487 it
+   * was the one sentence nowhere on it: both real arms have been jointless for three days while
+   * presence said connected and camera frames kept flowing, the cause a WARNING in the middle of
+   * a ring buffer whose tail reads "hardware connected … online".
+   */
   const { line: whyNoJoints } = useJointFailure(peer.peer_id, joints.length === 0)
 
   const telemetry = useTelemetry(peer)
-  // Q151: THE SAFETY SENTENCE BELONGS HERE MOST. This is the surface an operator has open while
-  // walking up to the arm, and it said nothing about whether the stillness on screen is measured —
-  // while the card behind it said "safe to approach" or refused to. Same pure rule, same fields.
   const status = (p?.robot_type ?? '?') === 'robot'
     ? statusSentence(peerStatusFields(peer, telemetry, hostsChildren))
     : null
 
-  // Steps per second, measured off the stream itself rather than trusted from
-  // the policy's declared control frequency.
   const stepHz = useMemo(() => {
     if (steps.length < 2) return 0
     const span = steps[0].t - steps[steps.length - 1].t
@@ -204,13 +168,6 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
           )}
           {p?.robot_type === 'robot' && (
             <button className="btn ghost" onClick={() => setCamConfig(true)}
-                    /* U15: reconfiguring cameras IS a respawn, and we have no
-                       process to respawn for a peer we did not start - the
-                       request could only ever 404. Refuse it here, with the
-                       reason, instead of opening a sheet that cannot submit.
-                       Only when we KNOW: an absent origin (a server older than
-                       the field) must keep the button working, and the sheet
-                       already explains the 404 if it comes. */
                     disabled={peer.origin === 'external'}
                     title={peer.origin === 'external'
                       ? 'this robot was started outside the dashboard, so it has no local process to '
@@ -351,10 +308,9 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             {active
               ? <CameraTile peerId={peer.peer_id} cam={active} meta={peer.cameras?.[active]} big />
               : (() => {
-                  // "this peer publishes none" was a denial of the presence THIS SAME peer
-                  // announces (lib/cameraEvidence): on a machine where macOS blocks capture,
-                  // both arms announce top+wrist and deliver nothing, and the detail screen is
-                  // where the operator comes to find out why. Say which of the two it is.
+                  // "this peer publishes none" was a denial of the presence THIS SAME peer announces
+                  // (lib/cameraEvidence): on a machine where macOS blocks capture, both arms announce top+wrist
+                  // and deliver nothing, and the detail screen is where the operator comes to find out why.
                   const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, peer.presence?.cameras, cams, peer.cameras_requested))
                   return (
                     <div className="camtile big">
@@ -367,9 +323,11 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             {cams.length > 1 && (
               <div className="camswitch">
                 {cams.map(c => (
-                  /* aria-pressed, not colour alone: `.chip.on` is the ONLY thing that said which
-                     camera is on screen, so a screen reader announced two identical "wrist, button"
-                     controls and voice control could not confirm a switch. */
+                  /**
+                   * aria-pressed, not colour alone: `.chip.on` is the ONLY thing that said which camera is on
+                   * screen, so a screen reader announced two identical "wrist, button" controls and voice
+                   * control could not confirm a switch.
+                   */
                   <button key={c} className={c === active ? 'chip on' : 'chip'}
                           aria-pressed={c === active} onClick={() => setCam(c)}>{c}</button>
                 ))}
@@ -378,8 +336,6 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             <TelemetryStrip peer={peer} />
             <RunForm
               peerId={peer.peer_id}
-              // Q60: without this the detail screen's confirm sheet could not name the hardware it
-              // was warning about, and showed a physical-motion warning for sim peers.
               presence={p}
               running={running}
               busy={busy}

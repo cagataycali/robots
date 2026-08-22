@@ -1,5 +1,3 @@
-// Q78: assertions for fieldSupport (lib/serverFields.ts).
-// Run: npx esbuild src/lib/serverFields.ts --bundle --format=esm --outfile=/tmp/serverFields.mjs && node src/lib/serverFields.test.mjs
 import assert from 'node:assert/strict'
 const { fieldSupport } = await import('/tmp/serverFields.mjs')
 

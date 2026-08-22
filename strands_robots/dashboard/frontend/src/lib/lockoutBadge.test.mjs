@@ -1,13 +1,9 @@
-// Assertions for the e-stop lockout badge (lib/lockoutBadge.ts), Q43.
-// Run: npx esbuild src/lib/lockoutBadge.ts --bundle --format=esm --outfile=/tmp/lockoutBadge.mjs \
-//        && node src/lib/lockoutBadge.test.mjs
 import assert from 'node:assert/strict'
 
 const { lockoutBadge, lockoutBanner } = await import('/tmp/lockoutBadge.mjs')
 
 const NOW = 1_700_000_000_000
 
-// THE MEASURED INCIDENT: arm-2 locked for 10h, rendering as a healthy green card.
 {
   const b = lockoutBadge({ state: 'locked', by: 'evac-coordinator', since: NOW / 1000 - 36000,
                            reason: 'an e-stop from evac-coordinator locked the fleet' }, NOW)
@@ -20,9 +16,8 @@ const NOW = 1_700_000_000_000
   assert.match(b.title, /moves nothing/)
 }
 
-// THE CRY-WOLF TRAP: every peer is 'unknown' on an ordinary fresh start, because the mesh
-// does not advertise lockout state. A badge on every card there is noise, and noise is how
-// a safety marker gets learned as decoration.
+// THE CRY-WOLF TRAP: every peer is 'unknown' on an ordinary fresh start, because the mesh does
+// not advertise lockout state.
 {
   const b = lockoutBadge({ state: 'unknown', reason: 'no e-stop or resume seen since this dashboard started' }, NOW)
   assert.equal(b.label, null, 'silence, not a warning, when nothing has happened')

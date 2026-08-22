@@ -3,10 +3,10 @@ import { classifyCamera, ageText, publishedAtMs, PUBLISH_FRESH_MS, CAPTURE_STALE
 
 const NOW = 1_787_180_409_000 // ms, matching the live snapshot this was measured on
 
-// --- the defect: `publishedAt` was read as a BOOLEAN -------------------------
-// Live measurement on so101-arm-1: `top` published at 1787180409 (now) while
-// `wrist` sat at 1787156394 - 6.7 HOURS old - and both were rendered by the same
-// branch, saying "peer published frames, none arrived yet". "Yet" is a promise.
+// --- the defect: `publishedAt` was read as a BOOLEAN ------------------------- Live
+// measurement on so101-arm-1: `top` published at 1787180409 (now) while `wrist` sat at
+// 1787156394 - 6.7 HOURS old - and both were rendered by the same branch, saying "peer
+// published frames, none arrived yet".
 
 const stale = classifyCamera({
   now: NOW, conn: 'open', frames: 0, publishedAt: 1_787_156_394,
@@ -55,10 +55,8 @@ for (const bad of [0, -1, NaN, undefined, null]) {
   assert.match(got.detail, /sending nothing/)
 }
 
-// --- units: python writes SECONDS, Date.now() is MILLISECONDS ---------------
-// The dangerous half of this fix. Comparing the two directly turns 2026 into
-// 1970 and every age into ~57 years, which would have read as a confident
-// "the peer's last frame is 20871d old" on a perfectly live camera.
+// --- units: python writes SECONDS, Date.now() is MILLISECONDS --------------- The dangerous
+// half of this fix.
 assert.equal(publishedAtMs(1_787_156_394), 1_787_156_394_000)
 assert.equal(publishedAtMs(1_787_156_394_000), 1_787_156_394_000, 'ms input must pass through')
 assert.equal(publishedAtMs(undefined), undefined)
@@ -108,12 +106,6 @@ const stallBeatsPublish = classifyCamera({
 })
 assert.equal(stallBeatsPublish.kind, 'stalled')
 
-// --- ARRIVAL IS NOT CAPTURE (found on the live page, iteration 41) ----------
-// The camera socket replays the peer's last cached frame to a new subscriber, so
-// a frame taken this morning ARRIVES now. Measured on so101-arm-1's wrist tile:
-// class "cam-stalled frozen", text "last frame 8s ago", over pixels the peer had
-// captured 24,307 seconds (6.8h) earlier - and for the first 2.5s after connect
-// the same tile was classified `live`, at full brightness.
 const replayed = classifyCamera({
   now: NOW, conn: 'open', frames: 3, lastFrameAt: NOW - 1000,   // arrived 1s ago
   publishedAt: (NOW - 24_307_000) / 1000,                        // captured 6.8h ago
@@ -139,9 +131,9 @@ const reallyLive = classifyCamera({
 assert.equal(reallyLive.kind, 'live')
 assert.equal(reallyLive.live, true)
 
-// Both clocks stale: the arrival age leads (the socket really did stop) and the
-// capture age is added, because the two together say "the camera stopped, and so
-// did the stream" rather than "someone reconnected to a corpse".
+// Both clocks stale: the arrival age leads (the socket really did stop) and the capture age is
+// added, because the two together say "the camera stopped, and so did the stream" rather than
+// "someone reconnected to a corpse".
 const bothStale = classifyCamera({
   now: NOW, conn: 'open', frames: 8, lastFrameAt: NOW - 60_000, publishedAt: (NOW - 90_000) / 1000,
 })
@@ -189,8 +181,7 @@ console.log('cameraState: 62 assertions ok')
 
 // --- the stall threshold is asserted against the REAL constant, not a copy of it -------
 // STALL_MS was exported for exactly this and no test read it, so the number here and the
-// number in the product were free to drift apart in silence. It governs a camera that HAS
-// delivered frames and then stopped — the frozen-tile case, not a never-opened one.
+// number in the product were free to drift apart in silence.
 {
   const cam = (sinceLast) => classifyCamera({
     now: NOW, conn: true, frames: 5, lastFrameAt: NOW - sinceLast,

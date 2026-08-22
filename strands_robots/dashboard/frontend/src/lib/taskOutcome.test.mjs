@@ -1,7 +1,6 @@
-// Assertions for what a card may claim when a run/stop request to a real robot
-// fails (lib/taskOutcome.ts).
-// Run: npx esbuild src/lib/taskOutcome.ts --bundle --format=esm --outfile=/tmp/taskOutcome.mjs \
-//        && node src/lib/taskOutcome.test.mjs
+// Assertions for what a card may claim when a run/stop request to a real robot fails
+// (lib/taskOutcome.ts). Run: npx esbuild src/lib/taskOutcome.ts --bundle --format=esm
+// --outfile=/tmp/taskOutcome.mjs \ && node src/lib/taskOutcome.test.mjs
 import assert from 'node:assert/strict'
 
 const { runFailure, stopFailure } = await import('/tmp/taskOutcome.mjs')
@@ -40,8 +39,6 @@ for (const status of [400, 401, 403, 404, 422, 429]) {
   assert.doesNotMatch(v.text, /MAY have started/)
 }
 
-// STOP, the mirror image: the answered path already refuses to say "stopped" on
-// silence; the thrown path used to print a bare network message.
 {
   const v = stopFailure({ status: 0, message: 'Load failed' })
   assert.equal(v.ambiguous, true)

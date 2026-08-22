@@ -29,9 +29,6 @@ const { createHistory, pushFrame, traceFor, stalled, historyClaim, GAP_MS, MAX_P
   assert.equal(pts[0].gapAfter, true)
 }
 
-// stalled(): drives the sparkline's redraw decision under prefers-reduced-motion,
-// where the ticker used to be off entirely and a dead stream drew itself as a
-// still arm (x is TIME with now at the right edge).
 {
   const now = 10_000
   assert.equal(stalled(undefined, now), false, 'nothing received is not a stall')
@@ -73,7 +70,6 @@ console.log('jointHistory: stalled() assertions passed')
   assert.equal(historyClaim('movement', track(10_000), now, 10_000), 'last 10s of movement')
   assert.match(historyClaim('movement', track(4000), now, 10_000), /10s window is not full yet/)
 }
-
 
 // --- the ring buffer's cap is the REAL constant ----------------------------------------
 // MAX_POINTS bounds memory for a tab left open; exported for a test that never read it.

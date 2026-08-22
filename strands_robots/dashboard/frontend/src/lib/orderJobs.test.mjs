@@ -18,8 +18,7 @@ const ids = (rows) => rows.map(r => r.job_id)
 }
 
 // THE BUG THIS FILE EXISTS FOR: a ledger whose file order is NOT submission order
-// (hand-edited, merged from two machines, restored from a quarantined copy). Reversing
-// would poll the finished runs and leave the fresh one with no status at all.
+// (hand-edited, merged from two machines, restored from a quarantined copy).
 {
   const out = orderJobsNewestFirst([
     { job_id: 'just-started', submitted_at: 900 },

@@ -4,23 +4,13 @@ import type { EstopResult } from '../types'
 import { post, HttpError } from '../lib/endpoints'
 import { estopFailureVerdict, resumeFailureVerdict, type FailureVerdict } from '../lib/estopOutcome'
 
-/**
- * Fleet-wide stop, with a per-peer answer.
- *
- * The old flow fired the broadcast and showed nothing: a peer that never
- * answered, or that answered "cannot stop", looked exactly like a peer that
- * halted. For an e-stop that is the worst possible failure mode, so this stays
- * open until every live peer is accounted for, and stays *red* while any peer is
- * unconfirmed.
- */
+/** Fleet-wide stop, with a per-peer answer. */
 export default function EstopSheet({
   open, onClose, linkWarning,
 }: {
   open: boolean
   onClose: () => void
-  /** Set when this page cannot currently deliver the stop (lib/linkHealth). The
-   *  person who just pressed a dashed STOP ALL is owed the reason HERE, before
-   *  the second click, not in a toast after it fails. */
+  /** Set when this page cannot currently deliver the stop (lib/linkHealth). */
   linkWarning?: string | null
 }) {
   const [firing, setFiring] = useState(false)

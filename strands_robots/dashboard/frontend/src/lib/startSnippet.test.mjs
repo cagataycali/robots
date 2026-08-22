@@ -1,5 +1,4 @@
-// Q46: the empty-state snippet must not hand out a port that cannot exist here.
-// Run: npx esbuild src/lib/startSnippet.ts --bundle --format=esm --outfile=/tmp/ss.mjs && node src/lib/startSnippet.test.mjs
+// build: npx esbuild src/lib/startSnippet.ts --bundle --format=esm --outfile=/tmp/ss.mjs
 import assert from 'node:assert/strict'
 const { startSnippet } = await import('/tmp/ss.mjs')
 

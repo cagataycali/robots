@@ -24,9 +24,11 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
   onSettings?: () => void
   /** true when launched from the manifest's "Ask the agent" shortcut. */
   startOpen?: boolean
-  /** a real online robot to name in examples - the placeholder is the
-   *  de-facto tutorial, and it should teach a one-robot command before a
-   *  fleet-wide one, with a name that actually exists on this desk. */
+  /**
+   * a real online robot to name in examples - the placeholder is the de-facto tutorial, and it
+   * should teach a one-robot command before a fleet-wide one, with a name that actually exists
+   * on this desk.
+   */
   exampleRobot?: string
 }) {
   const [open, setOpen] = useState(startOpen)
@@ -42,9 +44,7 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
   // close handler must judge the answer it actually interrupted.
   const lastAgentRef = useRef<{ chars: number; running: string[] }>({ chars: 0, running: [] })
   const scrollRef = useRef<HTMLDivElement>(null)
-  // A refused turn: the guard's decision, plus the sentence to re-send if it is granted. Without
-  // this the chat box was the ONE surface where a continuable refusal was not continuable — the
-  // operator had to go hunting through Settings for a permission the agent had just named.
+  // A refused turn: the guard's decision, plus the sentence to re-send if it is granted.
   const [need, setNeed] = useState<ConsentNeed | null>(null)
   const refusedPrompt = useRef<string>('')
   const voice = useVoice()
@@ -82,10 +82,6 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
     if (wsRef.current?.readyState === WebSocket.OPEN) return resolve(wsRef.current)
     const ws = new WebSocket(wsUrl('/ws/chat'))
     ws.onopen = () => { wsRef.current = ws; setConnError(null); resolve(ws) }
-    // Q102: a credential-refused handshake arrives as an ordinary error event (the server closes
-    // with 1008 before accepting, so the browser sees 1006). "could not reach" then blames the
-    // network for a sign-in the operator could fix in one tap — and this dock is where they ask
-    // what is wrong. The 401 that any recent request already collected is the only witness.
     ws.onerror = () => reject(new Error(
       authRefusedRecently()
         ? 'the agent socket was refused — this page is not signed in any more, sign in again'
@@ -122,9 +118,6 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
     ws.onclose = (e) => {
       wsRef.current = null
       setBusy(false)
-      // A drop mid-turn used to be silent unless it was 1008: the half-streamed
-      // answer just stopped and read as finished — and if a tool had started,
-      // "no answer" was a claim about the FLEET that nobody had checked.
       const verdict = interruptionNotice({
         code: e.code,
         wasBusy: busyRef.current,
@@ -155,9 +148,9 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
     } catch (e: any) {
       setBusy(false)
       const verdict = sendFailureVerdict({ error: e?.message ?? String(e) })
-      // The message never left the browser: mark THAT bubble (it must not read
-      // as delivered) and give the operator their text back rather than making
-      // them retype a sentence the UI silently swallowed.
+      // The message never left the browser: mark THAT bubble (it must not read as delivered) and
+      // give the operator their text back rather than making them retype a sentence the UI silently
+      // swallowed.
       setMsgs(prev => prev.map((m, i) =>
         i === prev.length - 1 && m.role === 'user' ? { ...m, delivered: false } : m))
       if (verdict.retrySafe) setInput(text)

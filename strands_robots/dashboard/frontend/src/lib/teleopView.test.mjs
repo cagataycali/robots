@@ -1,5 +1,3 @@
-/** U22 slice 1: the server's teleop verdict must reach a human, worst news first — and silence must
- *  stay silence. Subject: npx esbuild src/lib/teleopView.ts --bundle --format=esm --outfile=/tmp/teleopView.mjs */
 import assert from 'node:assert/strict'
 import { teleopView, stopVerdict, startVerdict } from '/tmp/teleopView.mjs'
 
@@ -13,8 +11,6 @@ assert.deepEqual(teleopView({ health: { receivers: {}, publishers: {} } }),
   { tone: 'idle', headline: 'no teleop on this arm', streaming: false,
     detail: 'it is neither following another arm nor publishing its own joints' })
 
-// The measured disaster: 176 frames published, every one refused. It must read as a WARNING with the
-// consent path, never as "following".
 const refusing = teleopView({ health: { worst: { state: 'refusing', headline: 'every frame is being refused',
   detail: 'shoulder_lift.pos |46.4| > 12.57', refusal: { kind: 'envelope' } }, publishers: {}, receivers: {} } })
 assert.equal(refusing.tone, 'warn')
@@ -48,9 +44,7 @@ assert.equal(idleLeader.tone, 'idle'); assert.equal(idleLeader.streaming, false)
 // The server's own worst-first ordering is respected when `worst` is absent but receivers exist.
 const fallback = teleopView({ health: { receivers: { 'a': { state: 'refusing', headline: 'refused' } } } })
 assert.equal(fallback.tone, 'warn')
-// SLICE 2: a stop is only "stopped" when the arm SAYS SO on a re-ask. The optimistic sentence was
-// already believed once in this codebase's history (/teleop/receive answered "started" for a stream
-// whose every frame was refused), so a 200 may never be the evidence.
+// SLICE 2: a stop is only "stopped" when the arm SAYS SO on a re-ask.
 const stillOn = stopVerdict(teleopView({ health: { worst: { state: 'following', headline: 'following so101-leader at 9.8Hz' } } }))
 assert.equal(stillOn.ok, false, 'frames still on the wire is a FAILED stop, however clean the POST was')
 assert.match(stillOn.line, /STILL/)

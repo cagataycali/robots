@@ -1,7 +1,6 @@
-// Assertions for the checkpoint type-ahead's honest empty state + stale-response
-// guard (lib/checkpointSearch.ts).
-// Run: npx esbuild src/lib/checkpointSearch.ts --bundle --format=esm --outfile=/tmp/checkpointSearch.mjs \
-//        && node src/lib/checkpointSearch.test.mjs
+// Assertions for the checkpoint type-ahead's honest empty state + stale-response guard
+// (lib/checkpointSearch.ts). Run: npx esbuild src/lib/checkpointSearch.ts --bundle
+// --format=esm --outfile=/tmp/checkpointSearch.mjs \ && node src/lib/checkpointSearch.test.mjs
 import assert from 'node:assert/strict'
 
 const { emptyNote, isCurrent } = await import('/tmp/checkpointSearch.mjs')
@@ -17,7 +16,6 @@ const HUB_DOWN = 'Hub search unavailable (timeout) - showing local cache only'
   assert.match(t, /local cache \+ Hub/)
 }
 
-// THE FIX: with the Hub down, "no checkpoints match" is a claim nothing measured.
 {
   const t = emptyNote({ query: 'smolvla-xyz', hubProblem: HUB_DOWN })
   assert.match(t, /already on this machine/, 'the claim must be scoped to what was consulted')

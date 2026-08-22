@@ -1,5 +1,3 @@
-// U19: assertions for the camera editor's pure half (lib/cameraConfig.ts).
-// Run: npx esbuild src/lib/cameraConfig.ts --bundle --format=esm --outfile=/tmp/cameraConfig.mjs && node src/lib/cameraConfig.test.mjs
 import assert from 'node:assert/strict'
 
 const { rowsFromConfig, configFromRows, parseIndexOrPath, applySummary } = await import('/tmp/cameraConfig.mjs')

@@ -1,11 +1,4 @@
-/**
- * The dialog between "I typed a sentence" and "the arm moves" (JOURNEYS #3).
- *
- * Deliberately NOT a generic "are you sure?": it reads back the four things a
- * mistake actually hinges on — which robot, which policy, which weights, and
- * for how long — because the failure mode here is not carelessness, it is
- * running the right sentence on the wrong arm.
- */
+/** The dialog between "I typed a sentence" and "the arm moves" (JOURNEYS #3). */
 import { useEffect, useRef } from 'react'
 import type { RunRisk } from '../lib/runRisk'
 

@@ -1,8 +1,7 @@
-// Run: npx esbuild src/lib/settingsMeta.ts --bundle --format=esm --outfile=/tmp/settingsMeta.mjs && node src/lib/settingsMeta.test.mjs
-//
-// Every tunable in the Settings drawer is validated here, and a validator that DISAGREES WITH THE
-// VALUE'S CONSUMER is worse than none, because it is believed. The endpoint rules are checked against
-// mesh/session.py's real scheme lists (_NONE_OK_SCHEMES, _TLS_BEARING_SCHEMES), not against a guess.
+// Run: npx esbuild src/lib/settingsMeta.ts --bundle --format=esm
+// --outfile=/tmp/settingsMeta.mjs && node src/lib/settingsMeta.test.mjs Every tunable in the
+// Settings drawer is validated here, and a validator that DISAGREES WITH THE VALUE'S CONSUMER
+// is worse than none, because it is believed.
 import assert from 'node:assert/strict'
 import {
   SETTINGS, SEARCH_INDEX, APPLY_LABEL, settingMeta, validateSetting, allValid,
@@ -27,7 +26,6 @@ assert.equal(validateSetting('mesh.port', '99999'), 'maximum is 65535')
 assert.equal(allValid({ 'mesh.port': '7447', 'agent.temperature': '0.7' }), true)
 assert.equal(allValid({ 'mesh.port': 'seven' }), false)
 
-// ── numbers: the Q14 family starts with NaN ──
 assert.equal(finiteNumber(''), null)
 assert.equal(finiteNumber('  '), null)
 assert.equal(finiteNumber('1.5'), null)
@@ -62,7 +60,6 @@ assert.match(listenEndpoints('udp/0.0.0.0:7447'), /mTLS posture refuses/)
 assert.match(connectEndpoints('http/robot.lan:80'), /not a mesh transport/)
 assert.match(connectEndpoints('robot.lan:7447'), /not proto\/host:port/, 'a bare host:port is not an endpoint')
 
-// port 0 = "any free port": what the mesh writes for its OWN listener, and not dialable (Q37)
 assert.equal(listenEndpoints('tls/127.0.0.1:0'), null, 'the UI can express what session.py does')
 assert.match(connectEndpoints('tls/127.0.0.1:0'), /cannot be dialled/)
 assert.match(connectEndpoints('tls/robot.lan:70000'), /out-of-range/)
@@ -75,7 +72,6 @@ assert.equal(listenEndpoints('tls/0.0.0.0:7447#iface=en0'), null)
 assert.equal(connectEndpoints(' tls/a.lan:7447 , quic/b.lan:7447 , '), null)
 assert.match(connectEndpoints('tls/a.lan:7447,http/b.lan:80'), /"http"/)
 
-// ── env vars: the Q13 injection family ──
 assert.equal(envKeyError(''), null)
 assert.equal(envKeyError('HF_TOKEN'), null)
 assert.equal(envKeyError('A1_B'), null)

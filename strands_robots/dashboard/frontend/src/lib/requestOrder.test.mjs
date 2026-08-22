@@ -1,8 +1,5 @@
-// Assertions for response ordering (lib/requestOrder.ts) — and a pin on the
-// damage a stale answer does once it reaches lossTrace.
-// Run: npx esbuild src/lib/requestOrder.ts --bundle --format=esm --outfile=/tmp/requestOrder.mjs \
-//        && npx esbuild src/lib/lossTrace.ts --bundle --format=esm --outfile=/tmp/lossTrace.mjs \
-//        && node src/lib/requestOrder.test.mjs
+// Assertions for response ordering (lib/requestOrder.ts) — and a pin on the damage a stale
+// answer does once it reaches lossTrace.
 import assert from 'node:assert/strict'
 
 const { isLatestRequest, newerThanApplied } = await import('/tmp/requestOrder.mjs')
@@ -20,9 +17,8 @@ assert.equal(newerThanApplied(2, 1), true)
 assert.equal(newerThanApplied(1, 2), false)
 assert.equal(newerThanApplied(2, 2), false)
 
-// WHY the ordering is enforced BEFORE interpretation: lossTrace reads a step
-// lower than the last as a restart and drops the entire curve. So one late answer
-// from a superseded poll erases a healthy run's history.
+// WHY the ordering is enforced BEFORE interpretation: lossTrace reads a step lower than the
+// last as a restart and drops the entire curve.
 {
   let trace = []
   trace = pushLoss(trace, 1000, 2.0)

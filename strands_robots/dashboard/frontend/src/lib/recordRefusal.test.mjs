@@ -1,10 +1,4 @@
-/**
- * The refusals a record session can be continued past — and the ones it cannot.
- *
- * Every camera gate at /api/record/open is continuable by design; this pins that
- * the continuation is REACHABLE (the flag the server names becomes a tick) and
- * that the allowlist keeps a bypass from appearing where nobody designed one.
- */
+/** The refusals a record session can be continued past — and the ones it cannot. */
 import assert from 'node:assert/strict'
 import { overrideOffered, nextAcknowledged, overrideBodyFlags } from '/tmp/recordRefusal.mjs'
 
@@ -66,12 +60,6 @@ assert.deepEqual(ack(null, true), {}, 'a tick with nothing offered sends nothing
 
 console.log('recordRefusal: ok')
 
-// ── Q98: the admissions ACCUMULATE, or a two-fault camera loops forever ──
-// The route checks dead -> missing -> identity, and each gate is skipped only by its own flag. Sending
-// just the last refusal's flag ping-ponged: ignore_missing gets past gate 2 and is then refused by
-// gate 3, whose retry drops ignore_missing and is refused by gate 2 again. And that pair is ONE
-// PHYSICAL EVENT - unplugging a camera makes it missing and renumbers the rest into identity drift -
-// so the commonest two-fault case could not be continued from the screen at all.
 const missing = overrideOffered(GONE)
 const identity = overrideOffered(DRIFT)
 assert.equal(missing.flag, 'ignore_missing_cameras')
@@ -85,10 +73,8 @@ assert.deepEqual(afterSecond, ['ignore_missing_cameras', 'ignore_camera_identity
 assert.deepEqual(overrideBodyFlags(afterSecond),
   { ignore_missing_cameras: true, ignore_camera_identity: true }, 'and both are actually sent')
 
-// Order is the ROUTE's (dead, missing, identity), not the order the faults happened to be met in - in
-// the SET as well as the body. Asserting it on the body alone proved nothing: overrideBodyFlags walks
-// the allowlist itself, so a body is canonical however the set was built. (A surviving mutation said
-// so - the assertion, not the code, was the weak half.)
+// Order is the ROUTE's (dead, missing, identity), not the order the faults happened to be met
+// in - in the SET as well as the body.
 assert.deepEqual(nextAcknowledged(['ignore_camera_identity'], missing, true),
                  ['ignore_missing_cameras', 'ignore_camera_identity'])
 assert.deepEqual(Object.keys(overrideBodyFlags(['ignore_camera_identity', 'ignore_missing_cameras'])),

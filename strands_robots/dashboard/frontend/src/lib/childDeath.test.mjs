@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict'
 import { deathVerdict, retainedOutputIsStartup } from '/tmp/childDeath.mjs'
 
-// --- THE DEFECT: every death read as "exited" -----------------------------------
-// The live case that cost two days: the twin's row said "· exited" for a kill -9.
 {
   const v = deathVerdict(-9)
   assert.match(v.phrase, /killed \(SIGKILL\)/)

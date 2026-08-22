@@ -8,16 +8,6 @@ interface Detected { index: number; label?: string | null; in_use_by?: string | 
 interface Mode { width: number; height: number; fps: number }
 interface Probe { busy?: boolean; error?: string; modes?: Mode[] }
 
-/**
- * U19: per-camera reconfigure for one managed robot.
- *
- * Cameras are taken only at spawn, so applying is honestly a RESPAWN — the
- * confirm step names that cost (streams and any running task stop) instead of
- * burying it. The editor pre-fills from the child's actual spawn config
- * (/api/devices managed[peer].cameras); a peer this dashboard did not spawn
- * cannot be edited here and the sheet says so rather than offering a form
- * that can only fail.
- */
 export default function CameraConfigSheet({ peerId, onClose }: { peerId: string; onClose: () => void }) {
   const { config } = useConfig()
   const [rows, setRows] = useState<CamRow[] | null>(null)
@@ -53,8 +43,6 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
   const add = (indexOrPath = '') =>
     setRows(rs => [...(rs ?? []), { name: '', indexOrPath, fps: '', width: '', height: '' }])
 
-  // Verified modes per camera index (U19: selects offer what the camera
-  // AGREED to via set/read-back — never a fantasy the driver would ignore).
   const [probes, setProbes] = useState<Record<number, Probe>>({})
   const probe = async (idx: number) => {
     setProbes(p => ({ ...p, [idx]: { ...p[idx], busy: true, error: undefined } }))
@@ -82,16 +70,10 @@ export default function CameraConfigSheet({ peerId, onClose }: { peerId: string;
     if (!rows) return
     setBusy(true); setError(null)
     try {
-      // A camera reconfigure IS a respawn (U19), so whatever this arm's log said about its joints
-      // describes a process that no longer exists. Forgotten BEFORE the request, because the new process
-      // may announce itself before this promise resolves and the card must not greet it with the old excuse.
       forgetJointFailure(peerId)
       const r = await post<any>(`/api/devices/${encodeURIComponent(peerId)}/cameras`, { cameras: check.cameras })
       if (r?.error) setError(r.error)
-      // The settle rail answers running / starting / failed / gone. `failed`
-      // arrives as r.error above; `gone` means the peer despawned while we
-      // watched — "watch its card come back" would be a promise about a card
-      // that is never coming back, so it is an error, not a ✓.
+      // The settle rail answers running / starting / failed / gone.
       else if (r?.status === 'gone') setError(`${peerId} despawned during the respawn window — check devices › logs`)
       else setDone(r?.status === 'running'
         ? `✓ ${peerId} is back on the mesh with the new cameras`

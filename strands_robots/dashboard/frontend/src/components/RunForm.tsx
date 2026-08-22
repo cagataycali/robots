@@ -21,15 +21,7 @@ export interface RunBody {
 
 interface Props {
   peerId: string
-  /** Judges whether ▶ moves metal - see lib/runRisk.ts.
-   *
-   * REQUIRED, and deliberately not optional (Q60): RobotDetail rendered this form without it for as
-   * long as the form has existed, so the detail screen's motion warning was blind. runRisk() errs
-   * toward "physical", so nothing unsafe happened - but the confirm sheet said "this peer did not
-   * say whether it is real" about a peer that HAD said, and it appeared for SIM runs too. A safety
-   * dialog that cries wolf gets clicked through, and then it is not protecting the real arm either.
-   * Pass `null` only when the presence is genuinely unknown; tsc now refuses silence.
-   */
+  /** Judges whether ▶ moves metal - see lib/runRisk.ts. */
   presence: Presence | null | undefined
   running: boolean
   busy: boolean
@@ -48,11 +40,9 @@ interface ValidateResult {
   error?: string
   note?: string
   observation_keys?: string[]
-  /** Q79: the checkpoint-vs-robot comparison, when it could be made. */
   fit?: PolicyFit
 }
 
-/** Q79: what the checkpoint says it was trained on, against what this robot announces. */
 export interface PolicyFit {
   ok: boolean
   /** true = this policy cannot drive this robot; no field correction changes that */
@@ -64,30 +54,11 @@ export interface PolicyFit {
   evidence?: boolean
 }
 
-/**
- * The run form is *generated from the policy registry*, not hardcoded.
- *
- * `registry/policies.json` already states what each provider needs
- * (`requires`), what it accepts (`config_keys`) and what to prefill
- * (`defaults`). A fixed five-provider dropdown that sends only
- * `{instruction, policy_provider}` guarantees a failed run for every provider
- * that needs a port or a checkpoint - and the failure arrives 30 s later as a
- * timeout, on the robot, with no hint of the missing field.
- *
- * Fields are restricted to what the mesh command validator actually carries
- * (`wire_fields`); the provider's remaining kwargs are listed as
- * "local only" rather than rendered as inputs that get silently dropped.
- */
+/** The run form is *generated from the policy registry*, not hardcoded. */
 export default function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop }: Props) {
   const { policies } = useConfig()
   const [providerName, setProviderName] = useState('mock')
   const [instruction, setInstruction] = useState('')
-  /* Q60's class, last instance: this held a NUMBER and coerced on every keystroke
-     (Math.max(1, Number(raw) || 1)), so the box could not be cleared — it snapped to 1 mid-typing,
-     and "0.5" became "1" before the decimal point was even typed. Math.max also clamps the low side
-     only, so max={600} (an attribute the browser enforces in a form submit, and this is a button)
-     let duration: 9999 through: a run 16x longer than this screen claims to allow. Raw text now,
-     parsed once, refused out loud. */
   const [durationText, setDurationText] = useState('15')
   const wantedDuration = numField(durationText, { what: 'seconds', min: 1, max: 600, remedy: 'run it again to go longer' })
   const duration = wantedDuration.value
@@ -103,9 +74,8 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
   // NOTHING has been sent yet.
   const [pending, setPending] = useState<RunBody | null>(null)
 
-  // A deploy intent staged from the Training tab prefills THIS form - once,
-  // visibly, and only into fields; running still takes the human pressing
-  // Run. Consumed on apply so it cannot ambush a second robot's form later.
+  // A deploy intent staged from the Training tab prefills THIS form - once, visibly, and only
+  // into fields; running still takes the human pressing Run.
   useEffect(() => {
     const intent = peekDeployIntent()
     if (!intent) return
@@ -140,18 +110,14 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
     return fallback === null || fallback === undefined ? '' : String(fallback)
   }
 
-  /* Q79: a checkpoint states its own state/action dims and camera names, and until now nothing
-     compared them with the robot. ▶ parks and TORQUES the arm first, so the mismatch arrived as a
-     tensor error with metal already energised — or never arrived, and the policy acted on a blank
-     frame for a camera this robot does not have. Asked as the field is typed, not at submit. */
   const [fit, setFit] = useState<PolicyFit | null>(null)
   const checkpointField = wireFields.find(
     f => f.key === 'pretrained_name_or_path' || f.key === 'model_path')?.key
   const checkpoint = checkpointField ? String(value(checkpointField, '')).trim() : ''
-  /* No norm_tag here on purpose: the registry lists it in `unsettable_over_mesh`, so the wire schema
-     drops it and this form can never own that field. The server-side precheck still asks (a direct API
-     caller could send one); wiring a branch here would only imply a control the operator does not have.
-     tests/test_dashboard_norm_tag_reachability.py fails the day the registry makes it settable. */
+  /**
+   * No norm_tag here on purpose: the registry lists it in `unsettable_over_mesh`, so the wire
+   * schema drops it and this form can never own that field.
+   */
   useEffect(() => {
     if (!checkpoint || !peerId) { setFit(null); return }
     let alive = true
@@ -372,10 +338,10 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
                   <option value="true">true</option>
                 </select>
               ) : f.key === 'pretrained_name_or_path' || f.key === 'model_path' ? (
-                /* Checkpoint fields get a Hub+local-cache type-ahead: the
-                   registry names the field, this names the VALUES (thousands
-                   of public LeRobot checkpoints). Picking one also prefills
-                   policy_type when the checkpoint declares its family. */
+                /**
+                 * Checkpoint fields get a Hub+local-cache type-ahead: the registry names the field, this names
+                 * the VALUES (thousands of public LeRobot checkpoints).
+                 */
                 <CheckpointPicker
                   value={value(f.key, f.default)}
                   disabled={blocked}
@@ -427,8 +393,6 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
       )}
 
       {fit && (fit.blocking || fit.evidence) && (
-        /* Q79: the physical consequence, not "invalid configuration" — and a quiet PASS says what was
-           compared, because silence that could mean "never looked" is what made the camera tiles lie. */
         <div className={fit.blocking ? 'validation bad' : 'validation ok'} role={fit.blocking ? 'alert' : undefined}>
           {fit.blocking
             ? <>

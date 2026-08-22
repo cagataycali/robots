@@ -5,7 +5,6 @@ import {
   type CalibrationDetail, type CalibrationEntry,
 } from '../lib/calibration'
 
-/** One motor as the server sends it: numbers, not the markdown they used to be. */
 type ServerMotor = {
   name: string
   id?: number | null
@@ -37,15 +36,7 @@ const show = (v: number | null | undefined): string | undefined =>
 
 const label = (e: CalibrationEntry) => `${e.deviceType}/${e.model}/${e.id}`
 
-/**
- * The calibration files on this machine, read-only.
- *
- * Calibration is what makes a joint number mean a physical angle, and the id it
- * was saved under is the one the spawn form above needs - so the ids are worth
- * showing rather than remembering. Nothing here writes: the backend exposes
- * only `list` and `view`, and re-calibrating an arm means moving it, which is a
- * terminal job (`lerobot-calibrate`) and not a button on a web page.
- */
+/** The calibration files on this machine, read-only. */
 export default function CalibrationSection() {
   const [entries, setEntries] = useState<CalibrationEntry[] | null>(null)
   const [location, setLocation] = useState<string | null>(null)
@@ -78,9 +69,9 @@ export default function CalibrationSection() {
   const select = async (entry: CalibrationEntry) => {
     if (sel && label(sel.entry) === label(entry)) { setSel(null); return }
     setSel({ entry, loading: true })
-    // Both parameters are required to identify a calibration: a name alone is
-    // ambiguous (leader_arm exists under three models here) and the endpoint
-    // answers 409 with the candidates rather than guessing.
+    // Both parameters are required to identify a calibration: a name alone is ambiguous
+    // (leader_arm exists under three models here) and the endpoint answers 409 with the candidates
+    // rather than guessing.
     const path = `/api/calibration/${encodeURIComponent(entry.id)}`
       + `?device_type=${encodeURIComponent(entry.deviceType)}`
       + `&device_model=${encodeURIComponent(entry.model)}`

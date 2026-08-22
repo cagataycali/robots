@@ -42,11 +42,6 @@ assert.equal(bundleAgeText(NOW + 10_000, NOW), null)
 
 console.log('swUpdate: all assertions passed')
 
-// ── Q97: the toast must say what reloading costs RIGHT NOW ──
-// Auto-update is refused because a reload mid-task tears down camera sockets and the run form of a
-// moving robot. The manual prompt inherited that hazard and described it with ONE STATIC SENTENCE,
-// printed identically at the safest moment and the worst one — so the operator, who was deliberately
-// given the decision, was given nothing to decide with.
 const quiet = reloadImpact([])
 assert.equal(quiet.busy, false)
 assert.match(quiet.text, /good moment/, 'when nothing runs, say so — that is the useful news')

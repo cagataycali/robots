@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict'
 import { activityLine } from '/tmp/activityLine.mjs'
 
-// --- THE Q30 ROW, verbatim from this dashboard's live /api/activity ----------
-// A stray "evac-coordinator" broadcast an emergency stop that locked out a real
-// arm for ~3 hours. The log rendered it as a GREEN TICK next to an EMPTY target,
-// with every fact that mattered collapsed inside "what the robot answered".
 const q30 = activityLine({
   action: 'estop', target: '', ok: true,
   detail: { peer_id: 'evac-coordinator', responses_received: 0, peers_not_stopped: [], lockout_engaged: true },

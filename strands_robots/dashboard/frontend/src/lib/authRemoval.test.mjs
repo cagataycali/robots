@@ -1,5 +1,3 @@
-// Q73: the sentence "remove token" has to earn. Run:
-//   npx esbuild src/lib/authRemoval.ts --bundle --format=esm --outfile=/tmp/authRemoval.mjs && node src/lib/authRemoval.test.mjs
 import assert from 'node:assert/strict'
 const { authRemovalWarning, isLocalHost } = await import('/tmp/authRemoval.mjs')
 

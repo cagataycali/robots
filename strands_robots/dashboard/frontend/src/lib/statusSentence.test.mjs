@@ -47,13 +47,6 @@ const idleBase = {
   instruction: null, taskDurationS: null, moving: false, stateAgeS: 0.3,
 }
 
-// --- SILENCE IS NOT STILLNESS (found on the live dashboard, iteration 42) ----
-// so101-arm-1 published zero joint positions. Its card showed the joints panel
-// saying "no joint data on this peer" and, right above it, a GREEN ribbon:
-// "IDLE and still - safe to approach". That sentence is a claim about the
-// physical world, made with no measurement of the physical world, on the arm
-// whose power state was in doubt at that very moment.
-
 const noJoints = statusSentence({
   ...idleBase, moving: null, jointsSeen: false,
 })
@@ -80,15 +73,9 @@ for (const js of [null, undefined]) {
   assert.doesNotMatch(unknown.text, /safe to approach/)
 }
 
-// MEASURED stillness is the only thing that earns the green sentence - and it
-// still does, so the change costs the operator nothing when telemetry works.
 const measuredStill = statusSentence({ ...idleBase, moving: false, jointsSeen: true })
 assert.equal(measuredStill.severity, 'ok')
 assert.equal(measuredStill.text, 'idle and still \u2014 safe to approach')
-// ...and a card with no joint stream can NEVER reach it, even when the ring
-// claims moving:false - which is exactly what it used to claim, because motion
-// computed from an absent joint stream is 0 on every sample and hardens into a
-// fabricated "measured stillness" after 10 of them. jointsSeen===false wins.
 const fabricated = statusSentence({ ...idleBase, moving: false, jointsSeen: false })
 assert.equal(fabricated.severity, 'warn', 'stillness derived from an empty stream is not a measurement')
 assert.equal(fabricated.word, 'idle?')
@@ -110,13 +97,6 @@ assert.match(ribbonDetail(measuring), /motion not measured yet/)
 
 console.log('statusSentence: silence-is-not-stillness assertions ok')
 
-// ── Q93: the fixture shape was the bug ──
-// Every case in this file built `taskStatus: 'idle'` or `'running'`, so it could not EXPRESS the other
-// four values the SDK actually publishes: TaskStatus in hardware_robot.py is
-// idle | connecting | running | completed | stopped | error. statusSentence branched on 'running'
-// alone, so the remaining four fell through to the green sentence. MEASURED before the fix:
-// taskStatus 'error' returned { severity: 'ok', word: 'idle', text: 'idle and still — safe to
-// approach' }. A crashed policy rendered as a calm green card.
 const TASK_STATUSES = ['idle', 'connecting', 'running', 'completed', 'stopped', 'error']
 
 for (const status of TASK_STATUSES) {
@@ -147,8 +127,7 @@ const stopped = statusSentence({ ...base, taskStatus: 'stopped' })
 assert.equal(stopped.severity, 'ok', 'pressing stop is not an anomaly')
 assert.match(stopped.text, /resume/, 'but a resume moves an arm parked mid-task')
 
-// AN UNRECOGNISED STATUS IS NO EVIDENCE, and no evidence cannot earn the green sentence. Before this,
-// any state a newer SDK invents rendered as "safe to approach" purely because it was not 'running'.
+// AN UNRECOGNISED STATUS IS NO EVIDENCE, and no evidence cannot earn the green sentence.
 const paused = statusSentence({ ...base, taskStatus: 'paused' })
 assert.equal(paused.word, 'unknown')
 assert.equal(paused.severity, 'warn')
@@ -175,10 +154,6 @@ assert.equal(statusSentence({ ...base, taskStatus: '' }).text, 'idle and still �
 
 console.log('statusSentence: Q93 task-status assertions ok')
 
-// ── Q95: the sentence and the lockout badge must not contradict each other ──
-// Q43 put a loud "e-stop locked" badge on the card, and this function was blind to the field, so a
-// LOCKED arm rendered "idle and still — safe to approach" two rows under a red badge. The operator was
-// left to decide which widget to believe, which is the exact disease this function exists to cure.
 const locked = statusSentence({ ...base, lockout: 'locked' })
 assert.equal(locked.word, 'locked')
 assert.equal(locked.severity, 'warn')
@@ -193,18 +168,16 @@ assert.equal(escaping.severity, 'danger', 'this is the only card state that outr
 assert.equal(escaping.word, 'locked?!')
 assert.match(escaping.text, /lockout is not holding|outside the mesh/)
 
-// The lockout explains a "running" task that is not moving, so it must OUTRANK the wedged accusation:
-// a locked arm under a policy is not a wedged policy, and the remedy is the lockout, not a restart.
+// The lockout explains a "running" task that is not moving, so it must OUTRANK the wedged
+// accusation: a locked arm under a policy is not a wedged policy, and the remedy is the
+// lockout, not a restart.
 const lockedRunning = statusSentence({ ...base, lockout: 'locked', taskStatus: 'running', moving: false })
 assert.equal(lockedRunning.word, 'locked', 'not "wedged?" — the lockout is the reason, and it is fixable')
 
-// ...and the same for the Q93 statuses: whatever the task says, the lockout is the live fact.
 assert.equal(statusSentence({ ...base, lockout: 'locked', taskStatus: 'error' }).word, 'locked')
 assert.equal(statusSentence({ ...base, lockout: 'locked', taskStatus: 'connecting' }).word, 'locked')
 
-// 'unknown' DELIBERATELY says nothing. It is the COMMON case — the mesh does not advertise lockout
-// state, so most peers report it — and letting doubt suppress the green sentence would gut it
-// fleet-wide. The dashed "lockout unknown" badge already carries that doubt at the right volume.
+// 'unknown' DELIBERATELY says nothing.
 for (const state of ['unknown', 'clear', null, undefined, '']) {
   assert.equal(statusSentence({ ...base, lockout: state }).text, 'idle and still — safe to approach',
                `lockout ${JSON.stringify(state)} leaves the sentence to the motion measurement`)
@@ -219,13 +192,6 @@ assert.equal(statusSentence({ ...base, lockout: 'locked', hwConnected: false }).
 
 console.log('statusSentence: Q95 lockout assertions ok')
 
-// ---------------------------------------------------------------------------
-// Q150: a process is not an arm — on the FLEET screen, not only the record screen.
-//
-// armHosts' rule lived only in RecordPanel, so the fleet card read the simulator PARENT's
-// by-design silence as "an arm that might move": severity warn, "treat the arm as able to
-// move", on the one peer whose silence is correct. Every false warning spends the credibility
-// of the true one beside it — and on this fleet the true ones are two real mute arms.
 {
   const base = { stale: false, lastSeenAgoS: 2, hwConnected: true, taskStatus: 'idle',
     moving: null, jointsSeen: false, stateAgeS: 1 }
@@ -253,11 +219,6 @@ console.log('statusSentence: Q95 lockout assertions ok')
   assert(busyParent.word !== 'process', 'a peer publishing joints is an arm, whatever it hosts')
 }
 
-// ---------------------------------------------------------------------------
-// Q151: one builder, two screens. The card had the peer->facts mapping inline and the DETAIL STAGE
-// had no status sentence at all, so the surface an operator reads while walking up to the arm said
-// nothing about whether the stillness on screen was measured. Sharing the builder is what stops the
-// two from ever saying different things about the same robot.
 {
   const peer = {
     last_seen: Date.now() / 1000 - 2, stale: false,
@@ -274,7 +235,6 @@ console.log('statusSentence: Q95 lockout assertions ok')
   const mute = peerStatusFields(peer, { moving: null, jointsSeen: false, stateAgeS: 0.4 })
   assert(statusSentence(mute).severity === 'warn', 'a mute arm warns wherever it is rendered')
 
-  // hostsChildren rides through the builder, so the detail stage inherits Q150's process rule.
   const host = peerStatusFields(peer, { moving: null, jointsSeen: false, stateAgeS: 0.4 }, ['sim__so101'])
   assert(statusSentence(host).word === 'process', 'a host process is a process on both screens')
 

@@ -1,6 +1,3 @@
-/** U22 slice 3a: before a single frame moves a real arm, the dashboard must say who could lead, what
- *  blocks it, and which grants it needs — using only evidence the peers actually carry.
- *  Subject: npx esbuild src/lib/teleopPair.ts --bundle --format=esm --outfile=/tmp/teleopPair.mjs */
 import assert from 'node:assert/strict'
 import { leaderOptions, pairPlan, pairSentence } from '/tmp/teleopPair.mjs'
 
@@ -29,7 +26,6 @@ assert.match(real.why, /role not measured/, 'unmeasured role is stated, not gues
 const childOpts = leaderOptions('so101-follower-twin__so101', FLEET)
 assert.equal(childOpts.find(o => o.peer_id === 'so101-follower-twin').ok, false)
 
-// Measured roles are quoted with their volts, and a follower-wired leader is a WARNING, not a refusal.
 const measured = leaderOptions('a', [
   { peer_id: 'a', joints: 6 },
   { peer_id: 'lead', joints: 6, role: 'leader', role_volts: 7.4, role_source: 'measured' },
@@ -40,9 +36,7 @@ const followerAsLeader = measured.find(o => o.peer_id === 'foll')
 assert.equal(followerAsLeader.ok, true, 'a follower-wired arm may still be hand-guided — evidence, not a veto')
 assert.match(followerAsLeader.why, /measured as a FOLLOWER \(12\.6V\)/)
 
-// THE PLAN. Both grants are collected BEFORE anything is sent: motion because a real arm moves, and the
-// degree envelope because an SO-101 publishes degrees into a radian bound and every frame would be
-// refused — the 176-frame failure that took a child-log dive to find the first time.
+// THE PLAN.
 const plan = pairPlan('f', 'l', [{ peer_id: 'f', joints: 6 }, { peer_id: 'l', joints: 6 }])
 assert.deepEqual(plan.consents, ['agent_physical_motion', 'teleop_degree_units'])
 assert.deepEqual(plan.blockers, [])
@@ -61,8 +55,6 @@ assert.match(gone.blockers[0], /ghost is not on the mesh/)
 const hosted = pairPlan('so101-follower-twin', 'so101-follower-twin__so101', FLEET)
 assert.ok(hosted.blockers.some(b => /so101-follower-twin hosts/.test(b)), 'the process must not be the follower')
 
-// Joint-count mismatch is a NOTE (the mesh maps by name), and driving an arm measured as a leader is
-// called out because it is about to move.
 const shapes = pairPlan('f', 'l', [
   { peer_id: 'f', joints: 5, role: 'leader', role_volts: 7.4, role_source: 'measured' },
   { peer_id: 'l', joints: 6 }])

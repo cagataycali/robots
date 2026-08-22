@@ -27,8 +27,7 @@ const { spawnNotice } = await import('/tmp/spawnNotice.mjs')
   }
 }
 
-// A non-string warning is NOT rendered. `calibration_warning: true` means "something is wrong but I
-// cannot tell you what", and showing that spends the operator's attention for nothing actionable.
+// A non-string warning is NOT rendered.
 {
   for (const v of [true, 1, {}, ['a'], null]) {
     assert.equal(spawnNotice({ calibration_warning: v }), null, `${JSON.stringify(v)} is not a sentence`)
@@ -42,8 +41,9 @@ const { spawnNotice } = await import('/tmp/spawnNotice.mjs')
     'and a real sentence is trimmed rather than rejected')
 }
 
-// A failed body can carry it too (a settled-then-dead spawn reports 200-with-error), and the two are
-// independent: the error line and the calibration reason are different facts about the same attempt.
+// A failed body can carry it too (a settled-then-dead spawn reports 200-with-error), and the
+// two are independent: the error line and the calibration reason are different facts about the
+// same attempt.
 {
   const n = spawnNotice({ error: 'exited after 1.2s', calibration_warning: 'no calibration for "leader"' })
   assert.match(n.text, /leader/)

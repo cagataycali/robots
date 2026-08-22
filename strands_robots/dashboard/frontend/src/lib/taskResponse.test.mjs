@@ -1,8 +1,6 @@
-// Run: node scripts/run-lib-tests.mjs taskResponse
-//
-// lib/taskOutcome covers the THROWN cases (whether the arm may be moving after a rejected fetch).
-// This is the other half: a response that ARRIVED, and what it actually says. It lived inside useTask's
-// request handler and had no test — while it decides whether a card says "running" or shows the refusal.
+// Run: node scripts/run-lib-tests.mjs taskResponse lib/taskOutcome covers the THROWN cases
+// (whether the arm may be moving after a rejected fetch). This is the other half: a response
+// that ARRIVED, and what it actually says.
 import assert from 'node:assert/strict'
 
 const { interpretRun, interpretStop, errorInResult } = await import('/tmp/taskResponse.mjs')
@@ -26,10 +24,7 @@ assert.equal(interpretRun({ ok: true, result: {}, routed_to: 'so101-follower' })
              'routing is worth saying: the operator asked one peer and another carried it out')
 assert.equal(interpretRun({ ok: true, result: {}, mirrored_to_twin: true }).outcome.text, 'running + twin')
 
-// ── 3. Q88 — THE LAW: an error in the payload refuses the run even when the envelope says ok ──
-// mesh_bridge.command_succeeded rejects a response for type == "error", a top-level error, ok is False,
-// result.ok is False, or a result.status of error/failed — but NOT for `result.error`. So this exact reply
-// from a peer arrives with ok: true, and the card used to say "running" above a readable error message.
+// ── 3.
 const jammed = interpretRun({ ok: true, result: { error: 'gripper jammed' } })
 assert.equal(jammed.outcome.ok, false, 'Q88: the PEER said no, so the answer is no — whatever the envelope says')
 assert.equal(jammed.outcome.text, 'gripper jammed', 'and the peer\'s own words are the news, not "refused"')
@@ -43,11 +38,6 @@ assert.equal(refused.outcome.text, 'refused', 'no error message in the payload =
 assert.equal(refused.outcome.detail, '{"detail":"peer exposes no run_task"}', 'the payload is shown verbatim')
 assert.equal(refused.phase, 'failed')
 
-// ── 4. an unexpected body must NOT crash the success path ──
-// It used to build the detail with JSON.stringify(res.result).slice(...) — and JSON.stringify(undefined)
-// IS undefined, so a refusal carrying no `result` threw a TypeError inside the try. That throw landed in
-// the catch, where it was reported as a PHYSICAL ambiguity ("the arm may be moving") instead of a flat
-// refusal — and setConsent never ran, so an answerable refusal silently lost its tick box.
 const noResult = interpretRun({ ok: false })
 assert.equal(noResult.outcome.ok, false)
 assert.equal(noResult.outcome.detail, 'no result payload', 'says so in words rather than throwing')

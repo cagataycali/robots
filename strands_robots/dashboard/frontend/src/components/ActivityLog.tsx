@@ -17,26 +17,15 @@ function ago(t: number, now: number): string {
   return `${(s / 3600).toFixed(1)}h`
 }
 
-/**
- * One audit trail for every command that left this dashboard.
- *
- * The agent can start and stop robots on its own, so "who moved that arm" is
- * otherwise unanswerable: the chat transcript shows intent, not the wire
- * result. Entries carry `ok` from the same classifier the REST layer uses, so a
- * command that returned `result.ok == False` reads as a failure here too.
- */
+/** One audit trail for every command that left this dashboard. */
 export default function ActivityLog({ live, open, onClose }: {
   live: ActivityEntry[]; open: boolean; onClose: () => void
 }) {
   const [history, setHistory] = useState<ActivityEntry[]>([])
-  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLElement | null>(null)
   useDialogFocus(sheetRef, open)
   const [filter, setFilter] = useState<string>('all')
   const [now, setNow] = useState(() => Date.now() / 1000)
-  /* Q158: the moment this sheet opened. The websocket carries events from before that and
-   * the server's ring buffer carries far more, so `sinceT` is what keeps the announcement
-   * from reading a page of history aloud the instant someone opens the sheet. */
   const openedAt = useRef(0)
   useEffect(() => { if (open) openedAt.current = Date.now() / 1000 }, [open])
   const newest = live.reduce<ActivityEntry | undefined>(

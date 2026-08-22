@@ -30,11 +30,8 @@ assert.equal(storm.vague, false)
 // What this layer adds is the one thing the server cannot know: who is reading it.
 assert.match(storm.text, /Your own session is fine/, 'the reader is signed in — it must not read as "you are locked out"')
 assert.match(storm.text, /another client/)
-// And it must not blame the fleet: the whole point of Q88.
 assert.match(storm.text, /Nothing is wrong with the robots/)
 
-// An unauthenticated read of /api/health has the counts and no identities (dd658b47). Say the
-// true, smaller thing rather than nothing.
 const vague = serverNotice({ total: 40, recent: 40, window_s: 300, storm: true })
 assert.match(vague.text, /Something is being refused/)
 assert.match(vague.text, /40 handshake\(s\) in the last 5 minutes/)
@@ -51,9 +48,6 @@ assert.ok(!/undefined/.test(noText.text), 'a missing field must never reach the 
 
 console.log('serverNotice: 6 groups ok — a loop is named, a handful and a stopped storm stay silent, and the reader is never told they are locked out')
 
-// --- which build is answering (ec5aabb4), and the silence around it -----------------------------
-// ADDED as a section, not a new file: serverNotice.ts already had tests and a sibling life once
-// lost 31 assertions to a `cat >` on a file it assumed was empty (Q106).
 import { serverPredatesBuildStamp, fleetFieldGaps, staleServerNotice } from '/tmp/serverNotice.mjs'
 
 const OLD = { status: 'ok', t: 1787350000, peers: 4 } // the live Aug-19 server: no `build` key
@@ -80,9 +74,6 @@ assert.deepEqual(fleetFieldGaps([{ peer_id: 'a', origin: 'external' }, { peer_id
 assert.deepEqual(fleetFieldGaps({ a: { peer_id: 'a' }, b: { peer_id: 'b' } }), [
   'which robots this dashboard started itself',
 ], 'a peers MAP is accepted, not just an array (App holds a record)')
-// Measured on the live Aug-19 server: it OMITS the key entirely (not origin:null), which is what
-// makes this evidence rather than a guess. A device-row field like `remembered` was deliberately
-// NOT added to the table — peers never carry it on any version, so its absence proves nothing.
 
 // The whole point: staleness alone is silent, a gap alone is silent, the two together speak once.
 assert.equal(staleServerNotice(OLD, []).text, '', 'an old server with nothing missing is not news')

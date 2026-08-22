@@ -1,10 +1,9 @@
-// Run: npx esbuild src/lib/armPairing.ts --bundle --format=esm --outfile=/tmp/armPairing.mjs && node src/lib/armPairing.test.mjs
-//
-// THE BUG THIS FILE EXISTS FOR: RecordPanel defaulted the teleop pair with /leader|arm-2/. arm-2
-// measures 12.6V — it IS the follower — so the record screen pre-filled the pair BACKWARDS, and a
-// backwards pair means the operator hand-forces a torqued 12V arm while the 7.4V one tries to mirror
-// it, and the dataset teaches the wrong arm. Law of the file: a confident wrong default is worse than
-// an empty slot — and, equally, a blank slot you HAD evidence for is a disservice too.
+// Run: npx esbuild src/lib/armPairing.ts --bundle --format=esm --outfile=/tmp/armPairing.mjs
+// && node src/lib/armPairing.test.mjs THE BUG THIS FILE EXISTS FOR: RecordPanel defaulted the
+// teleop pair with /leader|arm-2/. arm-2 measures 12.6V — it IS the follower — so the record
+// screen pre-filled the pair BACKWARDS, and a backwards pair means the operator hand-forces a
+// torqued 12V arm while the 7.4V one tries to mirror it, and the dataset teaches the wrong
+// arm.
 import assert from 'node:assert/strict'
 import { pairArms, measured, roleLabel, contradiction } from '/tmp/armPairing.mjs'
 
@@ -23,7 +22,6 @@ assert.equal(lying.leader, 'so101-follower')
 assert.equal(lying.basis, 'measured')
 assert.deepEqual(measured([arm('a', 'leader'), arm('b', 'follower'), arm('c', null)], 'leader').map(c => c.peer_id), ['a'])
 
-// ── one side measured: fill that slot, never guess the other ──
 const onlyLeader = pairArms([arm('a', 'leader', 7.4), arm('b', null)])
 assert.equal(onlyLeader.leader, 'a')
 assert.equal(onlyLeader.follower, '', 'the unmeasured arm is NOT promoted by elimination')
@@ -33,9 +31,6 @@ assert.equal(onlyFollower.follower, 'a')
 assert.equal(onlyFollower.leader, '')
 assert.match(onlyFollower.note, /5.5V on the USB rail/, 'says why a leader may be missing')
 
-// ── THE FIX: ambiguity on one side does not erase certainty on the other ──
-// One measured leader + TWO measured followers used to return BOTH slots empty — the dashboard
-// throwing away a measurement it was sure of because a different arm was unclear.
 const oneLeaderTwoFollowers = pairArms([
   arm('a', 'leader', 7.4), arm('b', 'follower', 12.6), arm('c', 'follower', 12.4),
 ])
@@ -59,7 +54,6 @@ const messy = pairArms([arm('a', 'leader'), arm('b', 'leader'), arm('c', 'follow
 assert.equal(messy.basis, 'none')
 assert.match(messy.note, /2 arms measured as the leader and 2 as the follower/)
 
-// ── nothing measured: a NAME that states a role is honoured and admitted as such ──
 const named = pairArms([arm('so101-leader', null), arm('so101-follower', null)])
 assert.deepEqual([named.leader, named.follower, named.basis], ['so101-leader', 'so101-follower', 'named'])
 assert.match(named.note, /taken at their word/, 'the weaker basis is stated, not hidden')

@@ -1,8 +1,6 @@
-// Run: node scripts/run-lib-tests.mjs taskPhase
-//
-// This table decides whether the operator sees a task as still running — and therefore whether the STOP
-// button is on the screen while an arm is moving. It lived in useTask's body, reachable only by rendering
-// a card against a live peer, so nothing tested it.
+// Run: node scripts/run-lib-tests.mjs taskPhase This table decides whether the operator sees a
+// task as still running — and therefore whether the STOP button is on the screen while an arm
+// is moving.
 import assert from 'node:assert/strict'
 
 const { reportedTaskStatus, isRunningStatus, nextPhase, deriveTaskFlags } = await import('/tmp/taskPhase.mjs')
@@ -22,11 +20,7 @@ assert.equal(isRunningStatus('executing'), true, 'both words the robot uses')
 assert.equal(isRunningStatus('idle'), false)
 assert.equal(isRunningStatus(undefined), false, 'silence is not running…')
 
-// ── 2. Q87 — THE LAW: absence of a status is NOT a completion ──
-// `!reportedRunning` used to be true both when the robot said "idle" and when it said NOTHING, so one
-// presence payload that lost its task_status (mesh/core wraps the read in a bare try/except, and some
-// peers never report one) flipped the UI to "done" mid-task — which also drops `running`, taking the
-// STOP button off the screen while the arm is still executing.
+// ── 2.
 assert.equal(nextPhase('running', undefined), null,
              'Q87: a peer that goes QUIET does not complete its task — hold the phase, keep stop reachable')
 assert.equal(nextPhase('running', 'idle'), 'done',

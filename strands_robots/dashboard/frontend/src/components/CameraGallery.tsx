@@ -30,29 +30,16 @@ const STATE_LABEL: Record<string, string> = {
   blocked: 'blocked by macOS',
   unreadable: 'not responding',
   absent: 'nothing here',
-  /* Not 'nothing here': a camera WAS here. The label has to carry the event, because the difference
-     between an empty index and one that just lost its camera is the difference between no action and
-     "your wrist view may now be pointing at the wrong thing". */
+  /** Not 'nothing here': a camera WAS here. */
   vanished: 'gone since we saw it',
   unknown: 'not probed',
 }
 
-/**
- * The devices screen's answer to "which camera is index N?".
- *
- * An OpenCV index is a position, never an identity: the OS lists camera
- * *names* in a different order than OpenCV enumerates them (Continuity
- * cameras renumber, a running robot claiming an index shifts the probe
- * list). So this gallery leads with the only honest identity — a live
- * snapshot per index — and shows the name roster separately, labeled as
- * a roster rather than pretending name[i] belongs to index i.
- */
+/** The devices screen's answer to "which camera is index N?". */
 export default function CameraGallery(
   { cameras, names, problem, scanned = true, error = null }:
     { cameras: CameraInfo[]; names: CameraName[]; problem?: CameraProblem | null
-      /* Whether /api/devices has ANSWERED. Defaults to true so an existing caller keeps its
-         behaviour, but DevicePanel passes the real fact: an empty grid from a failed request
-         must not be reported as an empty machine. */
+      /** Whether /api/devices has ANSWERED. */
       scanned?: boolean; error?: string | null },
 ) {
   const [previews, setPreviews] = useState<Record<number, string>>({})
@@ -120,9 +107,6 @@ export default function CameraGallery(
                 {c.remedy ? <div className="hint">{c.remedy}</div> : null}
               </div>
             ) : c.state && c.state !== 'ready' ? (
-              /* The whole point of U14: the camera stays on screen and says why
-                 it cannot be used, because "missing" and "blocked" call for
-                 completely different actions from the operator. */
               <div className="camcard-body cam-why">
                 <div>{c.reason}</div>
                 {c.remedy ? <div className="hint">→ {c.remedy}</div> : null}
@@ -133,10 +117,10 @@ export default function CameraGallery(
                     ? 'trying…'
                     : c.state === 'assigned'
                       ? '📷 identify it anyway'
-                      /* For a vanished index the probe answers the question the remedy raises: macOS
-                         renumbers on removal, so what matters is not "is something there" but WHICH
-                         camera is there now. The verb has to say that, or the operator reads the
-                         reappearance of a picture as proof their camera came back. */
+                      /**
+                       * For a vanished index the probe answers the question the remedy raises: macOS renumbers on
+                       * removal, so what matters is not "is something there" but WHICH camera is there now.
+                       */
                       : c.state === 'vanished' ? '📷 see which camera is here now' : 'try anyway'}
                 </button>
                 {previews[c.index] && (

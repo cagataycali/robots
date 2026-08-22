@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
 import { detailSentence } from '/tmp/detailSentence.mjs'
 
-// ── REAL bodies, measured against the running dashboard on 2026-08-21 ──
-// GET /api/devices/logs/no-such-peer. Someone wrote that hint and listed the three peers that WOULD
-// have worked; the screen used to show JSON.stringify of it.
 const LOGS_404 = {
   error: 'unknown peer no-such-peer',
   hint: 'only locally spawned robots keep a log ring buffer',

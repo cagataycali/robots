@@ -4,11 +4,9 @@ import { trainingFreshness, TRAINING_POLL_S, TRAINING_STALE_POLLS } from '/tmp/t
 const NOW = 1_787_180_000
 const window = TRAINING_POLL_S * TRAINING_STALE_POLLS
 
-// --- THE DEFECT: an unbounded `catch { /* transient */ }` --------------------
-// The status poll's failures were swallowed forever, so a job whose provider
-// process died kept rendering "running", a bar at 4.7k/10k and a loss sparkline
-// unchanged for hours. Training is watched by someone who is NOT at a console:
-// a frozen number reads as a healthy one.
+// --- THE DEFECT: an unbounded `catch { /* transient */ }` -------------------- The status
+// poll's failures were swallowed forever, so a job whose provider process died kept rendering
+// "running", a bar at 4.7k/10k and a loss sparkline unchanged for hours.
 const dead = trainingFreshness({ polledAtS: NOW - 600, nowS: NOW, failures: 118, error: 'HTTP 500', state: 'running' })
 assert.equal(dead.stale, true)
 assert.match(dead.note, /these numbers are 10m old/)

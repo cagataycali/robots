@@ -142,11 +142,6 @@ for (const bad of [null, {}, { serial_ports: null, cameras: null }, { serial_por
 
 console.log('rescanReport: all assertions passed')
 
-// THE INTERLEAVING (2026-08-20): a rescan re-probes serial + every camera index
-// and takes seconds; the 5s background poll reads the CACHED enumeration. If the
-// cached answer is allowed to land after the fresh one, the two rails that make
-// the devices screen honest turn on each other. Pinned here with the real
-// hardwareKey/rescanReport, because the fix lives in ordering, not in copy.
 {
   const before = { serial_ports: [{ device: '/dev/tty.usbmodem1' }], cameras: [] }
   const fresh = {
@@ -157,9 +152,7 @@ console.log('rescanReport: all assertions passed')
   assert.equal(verdict.stale, false)
   assert.match(verdict.text, /camera/i, 'the scan reported what it found')
 
-  // The poll's cached doc still shows no cameras. Its hardwareKey differs from the
-  // fresh scan's, and DevicePanel retires a verdict whose evidence changed - so a
-  // late cached answer would erase the verdict that had just told the truth.
+  // The poll's cached doc still shows no cameras.
   assert.notEqual(hardwareKey(before), hardwareKey(fresh))
   // ...which is exactly why the newest REQUEST now wins: the cached load is older
   // evidence, it is never painted, and the verdict keeps its evidence.

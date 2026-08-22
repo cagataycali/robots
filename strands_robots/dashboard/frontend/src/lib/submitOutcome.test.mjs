@@ -1,7 +1,6 @@
-// Assertions for what the training tab may claim when a start-something request
-// fails (lib/submitOutcome.ts).
-// Run: npx esbuild src/lib/submitOutcome.ts --bundle --format=esm --outfile=/tmp/submitOutcome.mjs \
-//        && node src/lib/submitOutcome.test.mjs
+// Assertions for what the training tab may claim when a start-something request fails
+// (lib/submitOutcome.ts). Run: npx esbuild src/lib/submitOutcome.ts --bundle --format=esm
+// --outfile=/tmp/submitOutcome.mjs \ && node src/lib/submitOutcome.test.mjs
 import assert from 'node:assert/strict'
 
 const { sideEffectVerdict } = await import('/tmp/submitOutcome.mjs')

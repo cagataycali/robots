@@ -43,9 +43,6 @@ assert.match(replayable(hub).reason, /not on this machine/)
 
 console.log('datasetSelection: all assertions passed')
 
-// ---- Q37: a directory an abandoned recording left behind must not be replayed or trained on.
-// The server writes the verdict onto the row (dataset_check.dataset_verdict); these assertions
-// pin what the UI is allowed to conclude from it.
 {
   const abandoned = {
     root: '/data/local/sim_recording', repo_id: 'local/sim_recording', total_episodes: 0, fps: 30,
@@ -68,10 +65,9 @@ console.log('datasetSelection: all assertions passed')
   // A row that is FINE is untouched by any of this.
   const good = { root: '/data/good', repo_id: 'org/good', total_episodes: 30, fps: 10, usable: true }
   assert.equal(replayable(good).ok, true)
-  // The sentence deliberately names NO episode number: since the replay button gained an episode box,
-  // the number comes from episodeChoice and the tooltip composes both — a hardcoded "episode 0" here
-  // would let the two disagree in front of the operator. What must survive is the promise about WHERE
-  // it happens, because that is why the operator looks at the fleet grid afterwards.
+  // The sentence deliberately names NO episode number: since the replay button gained an episode
+  // box, the number comes from episodeChoice and the tooltip composes both — a hardcoded
+  // "episode 0" here would let the two disagree in front of the operator.
   assert.match(replayable(good).reason, /live mesh sim/)
   assert.doesNotMatch(replayable(good).reason, /episode \d/, 'the index belongs to episodeChoice now')
   assert.equal(trainable(good).ok, true)
@@ -82,8 +78,6 @@ console.log('datasetSelection: all assertions passed')
   assert.equal(replayable(unknown).ok, true)
   assert.equal(trainable(unknown).ok, true)
 
-  // Hub rows: still refused for replay for the ORIGINAL reason (not here yet), never for Q37 -
-  // nothing on this machine can inspect a dataset it has not downloaded.
   const hub = { repo_id: 'lerobot/pusht', local: false, downloads: 900 }
   assert.equal(replayable(hub).ok, false)
   assert.match(replayable(hub).reason, /not on this machine/)
@@ -139,10 +133,6 @@ console.log('datasetSelection: all assertions passed')
   assert.equal(datasetMark({ ...abandoned, recording: true }).kind, 'recording')
 }
 
-// ── an EMPTY dataset row, from a server too old to judge it (measured on this machine) ──
-// /Users/cagatay/.cache/huggingface/lerobot/local/sim_recording as the RUNNING dashboard reports it:
-// no `usable`, no `problem`, and a count of zero. Source-side dataset_verdict already calls this
-// unusable; the page must reach the same answer without it.
 const emptyRow = {
   root: '/Users/cagatay/.cache/huggingface/lerobot/local/sim_recording',
   repo_id: 'local/sim_recording', total_episodes: 0, total_frames: 0, fps: 30, robot_type: 'unknown',

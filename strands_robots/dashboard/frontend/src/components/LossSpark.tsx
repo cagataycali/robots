@@ -2,12 +2,8 @@ import { useEffect, useRef } from 'react'
 import { lossBand, lossPath, fmtStep, type LossPoint } from '../lib/lossTrace'
 
 /**
- * A training job's loss curve, drawn on canvas (same rationale as JointSpark:
- * these live in a polled list and must never become a DOM-heavy chart lib).
- *
- * Honest by construction: it draws only what the status endpoint actually
- * reported, and labels the span ("2.1k → 8.4k steps") so a curve built from
- * four polls doesn't masquerade as a full training history.
+ * A training job's loss curve, drawn on canvas (same rationale as JointSpark: these live in a
+ * polled list and must never become a DOM-heavy chart lib).
  */
 export default function LossSpark({ trace, height = 34 }: { trace: LossPoint[]; height?: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null)
@@ -53,9 +49,9 @@ export default function LossSpark({ trace, height = 34 }: { trace: LossPoint[]; 
   }
   const first = trace[0]
   const last = trace[trace.length - 1]
-  // A flat trace is drawn flat (lib/lossTrace lossBand pads the band rather than magnifying noise),
-  // and SAYS so: the shape alone cannot distinguish "no measurable change" from "not much happened",
-  // and the difference is whether the run is worth leaving to finish.
+  // A flat trace is drawn flat (lib/lossTrace lossBand pads the band rather than magnifying
+  // noise), and SAYS so: the shape alone cannot distinguish "no measurable change" from "not
+  // much happened", and the difference is whether the run is worth leaving to finish.
   const flat = lossBand(trace).flat
   return (
     <div className="loss-spark">

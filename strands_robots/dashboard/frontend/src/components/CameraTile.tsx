@@ -8,24 +8,7 @@ import { pacingFromNotice, nextRequestedFps } from '../lib/cameraPacing'
 
 interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: boolean; error?: string }
 
-/**
- * Binary JPEG stream over /ws/camera/{peer}/{cam} → <img>.
- *
- * A camera tile that is simply black is the least debuggable thing on the
- * dashboard, and one showing a frozen last-good frame at full brightness is
- * actively misleading. Every state is named by `classifyCamera` and, when the
- * pixels are stale, the image itself is dimmed so it cannot pass for live.
- *
- * A closed socket also retries with backoff instead of sitting dead until
- * someone reloads the page - and it stops retrying when the close was a refusal
- * (1008), because hammering a door that said no is not resilience.
- *
- * The backoff counter is only cleared by EVIDENCE (a frame, or a socket that stayed
- * open): this server accepts and authenticates the handshake before discovering that
- * nothing is publishing, so `onopen` firing means nothing. Resetting there is what
- * turned ten hours of a missing arm into 63,906 sockets from a phone on cellular
- * data (BUGS.md Q40) - see lib/cameraRetry.
- */
+/** Binary JPEG stream over /ws/camera/{peer}/{cam} → <img>. */
 /** What a struggling viewer asks for: one frame a second still shows a moving arm. */
 const DEGRADED_FPS = 1
 
@@ -45,13 +28,9 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
   const conn = useRef<'connecting' | 'open' | 'closed'>('connecting')
   const error = useRef<string | null>(null)
   const retryAt = useRef<number | undefined>(undefined)
-  // Q51: opens in the last 60s. A tile that keeps reopening is churning even when each
-  // socket carried a frame - the count is what lets planRetry tell those apart.
   const openLog = useRef<number[]>([])
   /** the reduced rate this tile is currently asking for, or null at full rate */
   const degraded = useRef<number | null>(null)
-  // Q53: the rate the SERVER told us it is serving this viewer at, and the note the
-  // operator reads. Kept apart from `error` on purpose - a paced stream is working.
   const pacedFps = useRef<number | null>(null)
   const [pacedNote, setPacedNote] = useState<string | null>(null)
   // Attempts survive a re-run of the effect: peerId/cam churn must not hand a dead
@@ -89,20 +68,12 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
     const open = () => {
       if (stopped) return
       conn.current = 'connecting'
-      // Per-socket evidence must be per SOCKET: leaving a previous connection's
-      // openedAt in place would let a later socket that never opens inherit a long
-      // openMs and clear the failure history it is supposed to be proving.
+      // Per-socket evidence must be per SOCKET: leaving a previous connection's openedAt in place
+      // would let a later socket that never opens inherit a long openMs and clear the failure
+      // history it is supposed to be proving.
       framesThisSocket = 0
       openedAt = undefined
-      // Q52: a tile that is demonstrably churning ASKS THE SERVER FOR LESS. One tile at
-      // 4.6 fps x ~97 KB measured 467 KB/s sustained (20.5 GB in 21h to a phone on
-      // cellular), so a link that keeps dropping the stream is offered a rate it can
-      // actually carry instead of the same firehose again. Only the churning tile is
-      // degraded, and only while it churns - a LAN operator never sees this.
       const capped = openLog.current.length >= CHURN_OPENS_PER_MIN
-      // Q53: agree with the server. If it has already told us it is pacing this viewer,
-      // asking for the firehose again is an argument we lose anyway - and the LOWER of the
-      // two rates wins, so our own degradation is never talked back up by its cap.
       degraded.current = nextRequestedFps(capped ? DEGRADED_FPS : null, pacedFps.current)
       const path = `/ws/camera/${encodeURIComponent(peerId)}/${encodeURIComponent(cam)}`
       const rate = degraded.current
@@ -152,12 +123,7 @@ export default function CameraTile({ peerId, cam, big = false, meta }: {
           openMs: openedAt !== undefined ? Date.now() - openedAt : undefined,
           code: ev.code,
           recentOpens: openLog.current.length,
-          // Q88: a lapsed JWT makes the server refuse the HANDSHAKE (403), which the browser
-          // reports as an ordinary failed connection - so the tile would churn forever against
-          // a door that already said no. The token itself knows; reading its `exp` costs nothing
-          // and grants nothing (the server still verifies every request).
           sessionExpired: sessionVerdict(authToken(), Date.now() / 1000).refusesUntilSignIn,
-          // Q102: and the token may be invalid rather than expired — only an HTTP 401 can see that.
           pageRefused: authRefusedRecently(),
         })
         tries.current = plan.attempt

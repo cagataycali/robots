@@ -2,17 +2,6 @@ import { useEffect, useRef } from 'react'
 import type { Range } from '../lib/jointScale'
 import { traceFor, stalled, historyClaim, type Sample } from '../lib/jointHistory'
 
-/**
- * One joint's recent past, drawn on a canvas (U6).
- *
- * Canvas rather than SVG because there is one of these per joint per card and
- * they redraw at stream rate: 6 arms x 6 joints of DOM polyline with 900 points
- * each is how a dashboard starts dropping frames while claiming to be realtime.
- *
- * The redraw is driven by `frame` (a counter the parent bumps when new state
- * arrives) and by a slow ticker, so the trace keeps sliding left even when the
- * robot is idle - a frozen sparkline and a still arm must not look alike.
- */
 export default function JointSpark({
   track,
   range,
@@ -102,14 +91,6 @@ export default function JointSpark({
 
     raf = requestAnimationFrame(draw)
     // Idle robots still need the window to scroll; 4Hz is invisible work.
-    //
-    // Under prefers-reduced-motion the ticker used to be OFF entirely, and the
-    // old comment ("the data is still complete") missed the point: x is TIME
-    // with now at the right edge, so with no redraw the last sample stays pinned
-    // to now and a dead stream draws itself as a still arm. Completeness was
-    // never the issue; the axis was. So calm mode keeps a slow ticker but only
-    // redraws while the stream has actually stalled - motion appears exactly
-    // where it carries information, and a healthy stream stays as calm as before.
     const calm = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     if (live) {
       timer = window.setInterval(() => {

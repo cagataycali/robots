@@ -14,9 +14,8 @@ for (const tag of ['INPUT', 'TEXTAREA', 'SELECT', 'input', 'textarea']) {
 }
 assert.equal(hotkeyVerdict(ev({ key: '.', metaKey: true, editable: true })), 'estop')
 
-// --- but a typed full stop must never fire it -------------------------------
-// A task sentence ends in ".". If the bare key fired inside a field, describing
-// a task would open the stop sheet mid-word.
+// --- but a typed full stop must never fire it ------------------------------- A task sentence
+// ends in ".".
 assert.equal(hotkeyVerdict(ev({ key: '.', targetTag: 'INPUT' })), null)
 assert.equal(hotkeyVerdict(ev({ key: '.', targetTag: 'TEXTAREA' })), null)
 assert.equal(hotkeyVerdict(ev({ key: '.', editable: true })), null)

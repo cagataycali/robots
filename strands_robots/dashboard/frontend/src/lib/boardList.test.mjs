@@ -98,9 +98,9 @@ import { boardListEmptyLine, managedListEmptyLine, cameraGridEmptyLine, hardware
   assert.match(hardwareSummaryValue({ scanned: true, items: ['', ''], emptyNote: 'answered a probe' }), /^none answered a probe$/)
 }
 
-// --- the summary and the list above it can never disagree ------------------------
-// Both derive from the SAME `scanned` fact, so a screenshot of the drawer cannot show
-// "none" in the inventory next to "scanning…" in the list (or vice versa).
+// --- the summary and the list above it can never disagree ------------------------ Both
+// derive from the SAME `scanned` fact, so a screenshot of the drawer cannot show "none" in the
+// inventory next to "scanning…" in the list (or vice versa).
 for (const scanned of [false, true]) {
   const claimsNone = /none/.test(hardwareSummaryValue({ scanned, items: [], emptyNote: 'x' }))
   const claimsDetected = boardListEmptyLine({ scanned }).kind === 'detected'

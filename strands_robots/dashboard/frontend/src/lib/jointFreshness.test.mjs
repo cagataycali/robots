@@ -22,8 +22,6 @@ for (const ms of [0, 50, 333, 1999]) {
   assert.equal(v.dim, false, 'a 4s-old value is still roughly right; dimming it cries wolf')
 }
 
-// THE BUG: past the presence window this is a dead stream, and the strip used to
-// keep presenting it as the arm's position — with the operator's hands on the arm.
 {
   const v = jointAgeNote(23_000)
   assert.equal(v.level, 'frozen')

@@ -106,12 +106,8 @@ for (const facts of [
   assert.match(p.reason, /Run this in a terminal/, 'the human is the executor, and the copy says so')
 }
 
-// --- THE ID THE ARM ACTUALLY LOADS BEATS ANY ID WE COULD INVENT ---
-// A profile's robot_id is the file name the spawned robot reads its limits
-// from. Inventing a different one sends the operator through the whole
-// hand-moving ceremony and writes a file the arm never opens: the calibration
-// "succeeds", the arm keeps its old limits, and the only symptom is a real arm
-// still reaching where it should not.
+// --- THE ID THE ARM ACTUALLY LOADS BEATS ANY ID WE COULD INVENT --- A profile's robot_id is
+// the file name the spawned robot reads its limits from.
 {
   const withProfile = { ...FOLLOWER, robot_id: 'leader_arm' }
   assert.equal(deviceId(withProfile, 'follower'), 'leader_arm', 'the known id wins')
@@ -119,8 +115,6 @@ for (const facts of [
   assert.ok(p.command.includes('--device_id=leader_arm'), 'the command carries the id the arm loads')
   assert.ok(!p.command.includes('follower_5AB0158428'), 'and never the invented one')
 
-  // Measured on this machine: arm-2 is a 12.6V FOLLOWER whose id is named
-  // `leader_arm`. Correct to pass, and dangerous to read - so it is said.
   assert.match(p.idNote, /leader_arm/)
   assert.match(p.idNote, /12\.6V/, 'the contradiction is stated with the evidence')
   assert.match(p.idNote, /only a file name/, 'and with the reason it is still right')
@@ -136,9 +130,9 @@ for (const facts of [
   assert.equal(p.idWarn, false)
 }
 
-// No profile: the invented id must be SERIAL-qualified (two same-role arms on
-// one machine would otherwise overwrite each other's calibration) and the note
-// must tell the operator to spawn with that same id, or lerobot finds nothing.
+// No profile: the invented id must be SERIAL-qualified (two same-role arms on one machine
+// would otherwise overwrite each other's calibration) and the note must tell the operator to
+// spawn with that same id, or lerobot finds nothing.
 {
   const p = calibratePlan(FOLLOWER, 'so101')
   assert.ok(p.command.includes('--device_id=follower_5AB0158428'))

@@ -1,16 +1,7 @@
-// Run: node scripts/run-lib-tests.mjs telemetryRing
-//
-// This is the dashboard's only judgment about PHYSICAL MOTION, and statusSentence turns each of its
-// three answers into a different accusation: `moving === false` accuses a running policy of being
-// wedged, `moving === true` warns that an arm is moving with nobody commanding it, and null keeps
-// quiet. Until now the logic lived inside useTelemetry's body, so it could only be exercised by
-// rendering a component — nothing tested it.
-//
-// The cases below are the real fleet, not invented ones (measured 2026-08-21): both of cagatay's REAL
-// arms publish NO `joints` key at all (two different root causes — a busy serial port and a missing
-// calibration file), while only the sim twin so101-follower-twin__so101 publishes 6 joints. So "a peer
-// with no joints" is the COMMON case here, and reporting its silence as stillness is what once made a
-// card say "no joint data on this peer" and "idle and still — safe to approach" at the same time.
+// Run: node scripts/run-lib-tests.mjs telemetryRing This is the dashboard's only judgment
+// about PHYSICAL MOTION, and statusSentence turns each of its three answers into a different
+// accusation: `moving === false` accuses a running policy of being wedged, `moving === true`
+// warns that an arm is moving with nobody commanding it, and null keeps quiet.
 import assert from 'node:assert/strict'
 
 const mod = await import('/tmp/telemetryRing.mjs')
@@ -61,7 +52,6 @@ assert.equal(nothing.hz, 0, 'no rate from no samples')
 const dropped = summarize(drive([{ a: 1 }, { a: 1 }, null, null, null]), 1_001)
 assert.equal(dropped.jointsSeen, true, 'jointsSeen latches: seen once, seen thereafter')
 
-// ── 5. measured stillness IS allowed — when there is something to measure ──
 const still = summarize(drive(Array(15).fill({ shoulder_pan: 0.5, elbow_flex: -0.25 })), 1_002)
 assert.equal(still.jointsSeen, true, 'joints are present')
 assert.equal(still.moving, false,
@@ -89,20 +79,10 @@ const long = drive(Array(TELEMETRY_CAP + 40).fill({ a: 1 }))
 assert.equal(long.samples.length, TELEMETRY_CAP, `capped at ${TELEMETRY_CAP}`)
 assert.ok(long.samples[0].t > 1_003, 'the OLDEST samples are the ones dropped')
 
-// ── 9. PINNED, NOT ENDORSED: the threshold is purely relative, so encoder dither reads as motion ──
-// `moving` compares recent motion to the ring's own PEAK (5%), with no absolute floor beyond a
-// divide-by-zero guard. That is deliberate — motion carries the joints' unit (the real arms report
-// DEGREES, the sim twin radians), and an absolute epsilon in the wrong unit is the Q27 bug class. But
-// it means a torqued, commanded-still arm whose encoder dithers by a hair reports moving: true, which
-// statusSentence renders as an uncommanded-motion warning. Filed as Q85; this assertion documents
-// today's answer so the fix is a deliberate change with a failing test, not a silent drift.
+// ── 9.
 const dither = summarize(drive(Array(15).fill(0).map((_, i) => ({ a: 0.5 + (i % 2) * 0.0004 }))), 1_002)
 assert.equal(dither.moving, true, 'Q85: sub-milli-unit dither currently reads as motion (pinned, not endorsed)')
 
-// ── Q91: a stream that stopped and resumed leaves TWO episodes in one ring ──
-// Samples are stamped by ARRIVAL and the ring is capped by COUNT, never by age. On this fleet a state
-// topic that stops and starts is routine (both real arms have spent days that way), so the mixture is
-// the common case — and judging NOW from it was wrong three ways at once.
 const S = (t, motion) => ({ t, motion })
 
 assert.deepEqual(recentRun([]), [], 'nothing is its own trailing run')
@@ -129,10 +109,10 @@ assert.equal(view.samples.length, 10,
              'and the sparkline gets only the current episode — it plots by INDEX, so a ten-minute ' +
              'silence was drawn as one adjacent pixel, a line that looks like motion across an outage')
 
-// (b) THE DANGEROUS ONE: a big move BEFORE the outage raised the bar for the move happening now.
-// peak was the loudest motion anywhere in the ring and `moving` asks for >5% of it, so an arm creeping
-// at 2% of its old peak was reported "still" — the one sentence on this card that gets a person's hands
-// near the hardware.
+// (b) THE DANGEROUS ONE: a big move BEFORE the outage raised the bar for the move happening
+// now. peak was the loudest motion anywhere in the ring and `moving` asks for >5% of it, so an
+// arm creeping at 2% of its old peak was reported "still" — the one sentence on this card that
+// gets a person's hands near the hardware.
 assert.equal(view.moving, true,
              'Q91: motion of 0.04 is real motion when the current episode peaks at 0.04; judging it ' +
              'against a peak of 2 from before the silence returned "still - safe to approach"')

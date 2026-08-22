@@ -1,22 +1,3 @@
-/**
- * Q127: an <img src> the dashboard's own auth cannot reach.
- *
- * The episode thumbnails were rendered as `<img src="/api/record/thumb/0/top">`, straight from the
- * URL the server puts in the session payload. That has two faults at once and both only appear
- * where it matters least visibly:
- *
- *  1. A browser image request carries NO Authorization header, so with auth enabled — every remote
- *     session through the tunnel — each thumbnail 401s and renders as a broken image. The operator
- *     reads that as "the recording did not capture anything", which is the opposite of true, and it
- *     appears exactly when the episode they just recorded is the thing they want to check.
- *  2. A relative path resolves against the PAGE, not the configured backend, so a UI pointed at
- *     another server asks the wrong host for the picture and gets its 404.
- *
- * endpoints.ts already knew this ("an <img src> cannot carry an Authorization header") and
- * CameraGallery already did it right. This makes that rule reusable instead of remembered: the
- * bytes come through the authed fetch, the object URL is revoked on unmount and on every src
- * change, and a failure renders the alt text rather than a broken-image glyph.
- */
 import { useEffect, useState } from 'react'
 import { apiBlob } from '../lib/endpoints'
 

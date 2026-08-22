@@ -1,13 +1,9 @@
-// Run: npx esbuild src/lib/recordApi.ts --bundle --format=esm --outfile=/tmp/recordApi.mjs && node src/lib/recordApi.test.mjs
-//
-// Two things are tested here, and both decide whether a recording session is REAL:
-//   1. the probe that chooses the live backend vs the in-browser rehearsal — a wrong answer either
-//      hides a working recorder or pretends a dataset is being written;
-//   2. the mock's fidelity to /api/record, because the rehearsal is where the UI's behaviour is
-//      declared correct. A mock that succeeds where the backend refuses is how an error path gets
-//      deleted as "unreachable".
-// The probe is exercised through the REAL lib/endpoints with fetch stubbed, so this also covers the
-// status → HttpError mapping that the 404 rule depends on.
+// Run: npx esbuild src/lib/recordApi.ts --bundle --format=esm --outfile=/tmp/recordApi.mjs &&
+// node src/lib/recordApi.test.mjs Two things are tested here, and both decide whether a
+// recording session is REAL: 1. the probe that chooses the live backend vs the in-browser
+// rehearsal — a wrong answer either hides a working recorder or pretends a dataset is being
+// written; 2. the mock's fidelity to /api/record, because the rehearsal is where the UI's
+// behaviour is declared correct.
 import assert from 'node:assert/strict'
 
 const store = new Map()
@@ -72,8 +68,8 @@ assert.equal(s.episodes.length, 2)
 assert.equal(s.episodes[0].discarded, true)
 assert.notEqual(s.episodes[1].discarded, true)
 
-// THE FIDELITY FIX: the real route 404s on an unknown index (record_worker.discard raises KeyError)
-// and refuses when no session is open (_require_open). The rehearsal used to succeed at both.
+// THE FIDELITY FIX: the real route 404s on an unknown index (record_worker.discard raises
+// KeyError) and refuses when no session is open (_require_open).
 await assert.rejects(() => api.discard(99), /no saved episode with index 99/)
 await api.close()
 await assert.rejects(() => api.discard(0), /no open session/)

@@ -1,14 +1,4 @@
-/**
- * The Strands Agents mark: two interleaved strands, the front one live.
- *
- * Inlined rather than loaded as an <img> for three reasons that all matter on
- * this dashboard: it renders on the first paint (a header that pops in later
- * is the kind of jitter the zero-UI language is trying to remove), it needs no
- * network so it survives the PWA running offline, and its colours are CSS so
- * the mark can dim with the rest of the chrome instead of staying loud.
- *
- * Geometry is the official asset, untouched; only the fills are variables.
- */
+/** The Strands Agents mark: two interleaved strands, the front one live. */
 export default function StrandsMark({ size = 22, title }: { size?: number; title?: string }) {
   return (
     <svg

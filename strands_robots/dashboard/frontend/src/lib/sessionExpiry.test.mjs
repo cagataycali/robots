@@ -10,7 +10,6 @@ const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64')
   .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const jwt = (claims) => `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url(claims)}.sIgNaTuRe`
 
-// THE MEASURED TOKEN (Q88): the real payload from the live log, expired 19.3 hours before the read.
 {
   const real = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyLVFOMm1iV2lIRXEtT1BUQVgtQk9Kb2xtc2ci'
     + 'LCJuYW1lIjoiY2FnYXRheSIsImlhdCI6MTc4NzEyMzA4MCwiZXhwIjoxNzg3MjA5NDgwfQ.W3L8czgAYPYQO-zzCc-6C-HEDGwliiChAZR7jZuScQE'
@@ -89,12 +88,6 @@ for (const token of ['!!!.!!!.!!!', 'ey.%%%%.zz', '..', jwt({}) + '.extra']) {
 console.log('sessionExpiry: 6 assertions groups ok — the measured 19.3h-expired token is named, and a '
   + 'missing/opaque/valid credential stays silent')
 
-// --- U21 follow-up: the expiring banner must not prescribe a remedy it cannot know is needed ---
-// Sliding renewal (auth.renewal_verdict + endpoints.absorbRenewedSession) means a healthy page
-// re-issues its own session on any request, and App polls every 60s. So a page that has SEEN a
-// renewal and is STILL 5 minutes from lapsing is not in the ordinary "go sign in" case — either
-// the server stopped accepting it or the 30-day cap was reached. Telling that operator the same
-// thing as someone on an older server (which never renews) hides the diagnosis.
 {
   const NOW = 1787300000
   const soon = jwt({ sub: 'cred1', iat: NOW - 86000, exp: NOW + 120 })

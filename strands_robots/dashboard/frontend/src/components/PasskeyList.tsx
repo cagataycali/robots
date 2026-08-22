@@ -1,10 +1,3 @@
-/**
- * Q124: the devices that can sign in — visible, and removable.
- *
- * GET /api/auth/credentials + DELETE /api/auth/credentials/{id} shipped with the auth work and had
- * no caller, so a retired phone kept a working key to a dashboard that moves real arms. Sits under
- * the permissions list because it answers the same question about a sharper subject.
- */
 import { useCallback, useEffect, useState } from 'react'
 import { api, del, HttpError } from '../lib/endpoints'
 import { passkeyRows, passkeySummary, revokeRefusal, type Credential } from '../lib/passkeyList'

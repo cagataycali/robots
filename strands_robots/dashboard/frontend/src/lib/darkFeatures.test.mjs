@@ -1,12 +1,5 @@
-/**
- * Q124: which features on this page are dark because the server answering is older than the bundle?
- * The rule matters most in the case where it must say NOTHING — an unknown route table is our own
- * missing fetch, not an accusation about the server.
- *
- * Two subjects, so this file documents its own builds (the runner reads these lines):
- *   npx esbuild src/lib/darkFeatures.ts --bundle --format=esm --outfile=/tmp/darkFeatures.mjs
- *   npx esbuild src/lib/bundleRoutes.generated.ts --bundle --format=esm --outfile=/tmp/bundleRoutes.mjs
- */
+// build: npx esbuild src/lib/darkFeatures.ts --bundle --format=esm --outfile=/tmp/darkFeatures.mjs
+// build: npx esbuild src/lib/bundleRoutes.generated.ts --bundle --format=esm --outfile=/tmp/bundleRoutes.mjs
 import assert from 'node:assert/strict'
 import { darkRoutes, darkFeatureMessage } from '/tmp/darkFeatures.mjs'
 
@@ -15,21 +8,15 @@ const NEEDED = ['/api/fleet', '/api/deploy/snippet', '/api/devices/camera/{index
 // A server that has everything: nothing to say.
 assert.deepEqual(darkRoutes(['/api/fleet', '/api/deploy/snippet', '/api/devices/camera/{index}/modes'], NEEDED), [])
 
-// The real measured case on this machine: the live server predates two of the three.
 assert.deepEqual(darkRoutes(['/api/fleet'], NEEDED),
   ['/api/deploy/snippet', '/api/devices/camera/{index}/modes'], 'sorted, and only the missing ones')
 
-// A TEMPLATED need against a templated server path: no second path algebra, serverAge's segment
-// matcher accepts a literal {index} as one segment. This is the assertion that would break if
-// somebody "simplified" the comparison to string equality.
+// A TEMPLATED need against a templated server path: no second path algebra, serverAge's
+// segment matcher accepts a literal {index} as one segment.
 assert.deepEqual(darkRoutes(['/api/devices/camera/{index}/modes'], ['/api/devices/camera/{index}/modes']), [])
 assert.deepEqual(darkRoutes(['/api/devices/camera/{i}/modes'], ['/api/devices/camera/{index}/modes']), [],
   'the server names its parameter differently — still the same route')
 
-// A BASE, not a route. endpoints.ts names '/api/auth/login/' and callers append 'begin'/'finish';
-// judged as a route it is permanently dark, and the banner accused a healthy server of two missing
-// features (measured in a browser, then fixed). Satisfied by anything beneath it — and still dark
-// when nothing is.
 assert.deepEqual(darkRoutes(['/api/auth/login/begin', '/api/auth/login/finish'], ['/api/auth/login/']), [],
   'a base is satisfied by a route underneath it')
 assert.deepEqual(darkRoutes(['/api/fleet'], ['/api/auth/login/']), ['/api/auth/login/'],

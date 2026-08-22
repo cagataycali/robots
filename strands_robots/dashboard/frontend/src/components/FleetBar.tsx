@@ -21,7 +21,6 @@ interface Props {
   onSettings: () => void
   onWireSecurity: () => void
   onActivity: () => void
-  /** dead children this dashboard started, already pruned from the mesh (U22) */
   absentChildren?: readonly AbsentChild[]
   quietChildren?: readonly string[]
   onDevices: () => void
@@ -35,18 +34,11 @@ export default function FleetBar({
   activityCount, recordMock, absentChildren, quietChildren, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
   onHelp,
 }: Props) {
-  // The mesh session and this browser's socket fail independently: the page can
-  // be LIVE while the robot mesh is down, and vice versa. Showing only one of
-  // them is how "why is the fleet empty" becomes unanswerable.
+  // The mesh session and this browser's socket fail independently: the page can be LIVE while
+  // the robot mesh is down, and vice versa.
   const absentDeath = absentNotice(absentChildren)
-  // Q155b: alive, ours, absent. Deliberately a DIFFERENT chip and a different verb from
-  // the death one — the process needs reading, not restarting.
   const quiet = quietNotice(quietChildren, absentChildren)
   const meshDown = mesh.online === false
-  // UX_REVIEW #3: the badge used to print a bare 'LIVE' for this browser's
-  // socket — one line above camera tiles reading "connecting", and even while
-  // the robot mesh session was closed. lib/connBadge.ts narrows the CLAIM
-  // instead of faking the state, and names the subject out loud.
   const badge = connBadge(conn, { meshDown })
   // UX_REVIEW #10: a feature that cannot write a dataset says so in the nav.
   const rec = recordNavFlag(recordMock)

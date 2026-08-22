@@ -1,21 +1,5 @@
-// Run: node scripts/run-lib-tests.mjs passkey
-//
-// passkey.ts is the ONLY door into this dashboard from outside the LAN, and it had no test. Every rule
-// below was learned from a real wedge on cagatay's iPhone (2026-08-19), where the failure mode was never
-// an exception — it was a Face ID sheet that never appeared and a spinner that never ended:
-//   1. prepGet/beginLogin DELETE allowCredentials. Passkeys are discoverable (resident) keys; iOS Safari
-//      has been seen waiting silently for a cross-device authenticator when an allowCredentials entry
-//      arrives with no transports hint. An empty list = the local account picker. The server verifies by
-//      the credential id the response carries, so dropping the list costs nothing.
-//   2. credentials.get() must be the FIRST await in completeLogin. Any network round-trip before it
-//      spends the tap's user activation, and Safari then refuses the ceremony with NO error at all —
-//      which is why the prepared-challenge (beginLogin/completeLogin) split exists.
-//   3. A ceremony that never answers must ABORT with a sentence a human can act on, because Safari has
-//      been seen ignoring options.timeout entirely.
-//   4. credToJSON has two shapes (enroll = attestation, login = assertion). Send the wrong keys and the
-//      server rejects a perfectly good passkey.
-// Stub-globals technique from the endpoints.test.mjs iteration: navigator is a GETTER on globalThis in
-// node, so it needs defineProperty, not assignment.
+// Run: node scripts/run-lib-tests.mjs passkey passkey.ts is the ONLY door into this dashboard
+// from outside the LAN, and it had no test.
 import assert from 'node:assert/strict'
 
 const store = new Map()
@@ -65,8 +49,8 @@ assert.ok(!('allowCredentials' in getOpts),
 assert.equal(getOpts.rpId, 'dash.local', 'everything else is passed through untouched')
 assert.deepEqual(new Uint8Array(getOpts.challenge), new Uint8Array([0, 0, 0]), 'challenge is decoded to bytes')
 
-// prepCreate is the opposite case: excludeCredentials is a SERVER instruction ("this device already has one"),
-// not a picker hint, so it is decoded and kept. Dropping it would let one device enroll twice.
+// prepCreate is the opposite case: excludeCredentials is a SERVER instruction ("this device
+// already has one"), not a picker hint, so it is decoded and kept.
 const createOpts = mod.prepCreate({
   challenge: 'AAAA', user: { id: 'AQID', name: 'c' }, excludeCredentials: [{ id: 'AAAA', type: 'public-key' }],
 })
@@ -121,10 +105,8 @@ assert.ok(!('allowCredentials' in prepared.options),
           'beginLogin strips allowCredentials from the STORED options, not just at ceremony time')
 assert.ok(prepared.t > 0 && mod.loginFresh(prepared), 'it is stamped so loginFresh can judge it')
 
-// ── 7. a silent authenticator ends with an instruction, not a spinner ──
-// The wedge itself: the sheet never resolves. A browser rejects credentials.get when the
-// AbortController fires, so the stub does too — and that is the exact boundary of this guarantee:
-// the timeout converts a hang into a message only because the platform honours the signal.
+// ── 7. a silent authenticator ends with an instruction, not a spinner ── The wedge itself:
+// the sheet never resolves.
 credGet = opts => new Promise((_, rej) => {
   opts.signal.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))
 })
@@ -140,24 +122,22 @@ await assert.rejects(
   /passkey sign-in was cancelled/, 'a null credential means the user dismissed it')
 
 {  // sections 8-10 keep their fixtures in a block: the names above are the sibling test's
-  // ── 8. base64url: the substitution PROVEN by the two bytes that need it ──
-  // Section 1 asserts no + / = survive; this asserts the mapping is right, which a payload of
-  // alphanumerics can never catch. 0xFB 0xFF encodes to "+/" in the standard alphabet, so if the
-  // replace() pair is ever dropped this is the input that says so. WebAuthn reports an alphabet
-  // mistake as "invalid credential", never as an alphabet mistake — hence the paranoia.
+  // ── 8. base64url: the substitution PROVEN by the two bytes that need it ── Section 1 asserts
+  // no + / = survive; this asserts the mapping is right, which a payload of alphanumerics can
+  // never catch. 0xFB 0xFF encodes to "+/" in the standard alphabet, so if the replace() pair is
+  // ever dropped this is the input that says so.
   assert.equal(mod.bufToB64u(new Uint8Array([0xfb, 0xff, 0x00])), '-_8A', 'base64url must use -_ and drop padding')
   for (const n of [1, 2, 3, 16, 32, 64]) {  // every length remainder, i.e. every padding case
     const bs = new Uint8Array(Array.from({ length: n }, (_, i) => (i * 37 + 11) & 0xff))
     assert.deepEqual(new Uint8Array(mod.b64uToBuf(mod.bufToB64u(bs))), bs, `round trip at ${n} bytes`)
   }
-  // A padded, standard-alphabet string is what a curl probe or an older server sends; rejecting it
-  // would surface as a corrupt credential. ('+/8=' is 0xFB 0xFF — I first hand-computed it wrong, and
-  // the failing assertion was proof the test read the real decoder rather than my arithmetic.)
+  // A padded, standard-alphabet string is what a curl probe or an older server sends; rejecting
+  // it would surface as a corrupt credential.
   assert.deepEqual(new Uint8Array(mod.b64uToBuf('+/8=')), new Uint8Array([0xfb, 0xff]))
 
-  // ── 9. the prep functions do not mutate the caller's options ──
-  // The gate persists a PreparedLogin and re-reads p.options; if prep* edited it in place, a second
-  // ceremony would run against half-converted options (bytes where the server's base64url is expected).
+  // ── 9. the prep functions do not mutate the caller's options ── The gate persists a
+  // PreparedLogin and re-reads p.options; if prep* edited it in place, a second ceremony would
+  // run against half-converted options (bytes where the server's base64url is expected).
   const getOpts = { challenge: 'AAEC', rpId: 'robots.cagatay.my', allowCredentials: [{ id: 'AAEC', type: 'public-key' }] }
   const gotGet = mod.prepGet(getOpts)
   assert.ok(Array.isArray(getOpts.allowCredentials), 'prepGet must not strip the CALLER\'s list')
@@ -174,9 +154,9 @@ await assert.rejects(
   // exclude must not grow the field.
   assert.ok(!('excludeCredentials' in mod.prepCreate({ challenge: 'AAEC', user: { id: 'AAEC' } })))
 
-  // ── 10. the freshness window's exact boundary ──
-  // Section 4 pins the principle; these pin the number, because the risk is a widening that still
-  // "looks fresh": anything at or past the server's 300s TTL must be refused.
+  // ── 10. the freshness window's exact boundary ── Section 4 pins the principle; these pin the
+  // number, because the risk is a widening that still "looks fresh": anything at or past the
+  // server's 300s TTL must be refused.
   const t0 = Date.now()
   assert.equal(mod.loginFresh({ challenge_id: 'c', options: {}, t: t0 - 239_000 }), true, 'just inside')
   assert.equal(mod.loginFresh({ challenge_id: 'c', options: {}, t: t0 - 241_000 }), false, 'just outside')

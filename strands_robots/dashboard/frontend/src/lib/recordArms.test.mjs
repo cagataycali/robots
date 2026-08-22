@@ -48,8 +48,8 @@ assert.ok(armJointWarning(peer(null, { age: 29 }), { slot: 'follower', nowS: NOW
 console.log('recordArms: all assertions passed')
 
 // --- the evidence window is the REAL constant ------------------------------------------
-// MAX_AGE_S exists because "no joints" from a snapshot older than this is not evidence
-// about NOW. Exported for a test, and no test read it.
+// MAX_AGE_S exists because "no joints" from a snapshot older than this is not evidence about
+// NOW.
 {
   const at = (age) => armJointWarning(peer(null, { age }), { slot: 'follower', nowS: NOW })
   assert.equal(at(MAX_AGE_S + 1), null, 'past the window, silence is not evidence and must not warn')

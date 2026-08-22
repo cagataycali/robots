@@ -1,7 +1,6 @@
 // Assertions for what the collect panel may claim when a record action fails
-// (lib/recordOutcome.ts).
-// Run: npx esbuild src/lib/recordOutcome.ts --bundle --format=esm --outfile=/tmp/recordOutcome.mjs \
-//        && node src/lib/recordOutcome.test.mjs
+// (lib/recordOutcome.ts). Run: npx esbuild src/lib/recordOutcome.ts --bundle --format=esm
+// --outfile=/tmp/recordOutcome.mjs \ && node src/lib/recordOutcome.test.mjs
 import assert from 'node:assert/strict'
 
 const { recordFailure } = await import('/tmp/recordOutcome.mjs')
@@ -102,10 +101,6 @@ assert.equal(recordFailure({ kind: 'redo', status: 418, message: 'x' }).ambiguou
 
 console.log('recordOutcome: all assertions passed')
 
-// ── Q101: the inert verdict for `open` must not promise a fleet it cannot see ──
-// A refusal can be raised AFTER both arms were parked, and the respawn can fail; the server names the
-// arm that did not come back in the same message. A blanket "the arms are untouched" contradicted it in
-// one toast, and the reassurance was the wrong half to keep.
 const refusedOpen = recordFailure({ kind: 'open', status: 422, message: 'fps must be positive' })
 assert.equal(refusedOpen.ambiguous, false)
 assert.doesNotMatch(refusedOpen.text, /untouched/)

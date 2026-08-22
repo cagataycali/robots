@@ -1,16 +1,12 @@
-// Run: node scripts/run-lib-tests.mjs dialogFocus
-//
-// Focus bugs are the quietest bugs in the app: nothing throws, nothing looks wrong in a screenshot, and
-// the only person who notices is the one who cannot use a mouse. Q58 measured the damage — every sheet
-// left focus on the nav chip behind it. These are the rules that fix it, and two of them were wrong.
+// Run: node scripts/run-lib-tests.mjs dialogFocus Focus bugs are the quietest bugs in the app:
+// nothing throws, nothing looks wrong in a screenshot, and the only person who notices is the
+// one who cannot use a mouse.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const { focusPlan, looksLikeClose, looksDangerous, rememberOpener, shouldRestoreFocus } =
   await import('/tmp/dialogFocus.mjs')
 
-// ── 1. recognising the close button — by any of the three things a real one carries ──
-// These are the ACTUAL labels in the app, read off the components (2026-08-21).
 for (const label of ['close the activity log', 'close devices', 'Close help', 'close', 'close settings',
                      'close training', 'close this robot', 'dismiss this hint']) {
   assert.ok(looksLikeClose({ label }), `"${label}" is a close affordance`)
@@ -21,9 +17,8 @@ assert.ok(!looksLikeClose({ label: 'closest camera' }), 'a word STARTING with cl
 assert.ok(!looksLikeClose({ label: 'disclose the token' }), 'nor one containing it')
 assert.ok(!looksLikeClose({ text: 'x axis' }), 'a lone x is a glyph; "x axis" is a label')
 
-// ── 2. controls that must never be auto-focused ──
-// Focus is not activation — but a keyboard user who lands on `▶ run` and presses space has commanded a
-// real arm. This is the same principle the record/teleop refusals are built on.
+// ── 2. controls that must never be auto-focused ── Focus is not activation — but a keyboard
+// user who lands on `▶ run` and presses space has commanded a real arm.
 for (const text of ['▶ run', 'start recording', '⏺ record', 'stop', 'E-STOP', 'delete episode',
                     'despawn', 'deploy to arm-1', 'train', 'calibrate', 'replay in sim', 'teleop']) {
   assert.ok(looksDangerous({ text }), `"${text}" moves hardware or destroys work`)
@@ -39,9 +34,6 @@ assert.equal(focusPlan([{ text: 'run' }, { label: 'close settings' }, { text: 'n
              'then the close button — the safe default, like HelpSheet always did')
 assert.equal(focusPlan([{ text: 'episodes' }, { text: 'run' }]), 0, 'then the first SAFE control')
 
-// THE ONE THAT USED TO BE A SILENT NO-OP: no candidates at all. Every one of these sheets fetches on
-// open, so the frame after it opened can contain nothing focusable — and `pick?.focus()` on undefined
-// left focus on the nav chip BEHIND the sheet: Q58, unfixed, for exactly the sheets that load slowest.
 assert.equal(focusPlan([]), 'container',
              'an empty sheet focuses the DIALOG, which is a real answer: a screen reader lands inside ' +
              'it and Tab starts inside it')
@@ -52,11 +44,7 @@ assert.equal(focusPlan([{ text: '▶ run' }, { text: 'stop' }]), 'container',
 assert.equal(focusPlan([{ text: '▶ run' }, { label: 'close', text: '✕' }]), 1,
              'but a close button among them is still preferred over the container')
 
-// ── 4. Q92 — who opened this, really ──
-// Safari does not focus a button when you click it, so activeElement is <body> — and that is most of
-// cagatay's traffic, since he opens this dashboard on an iPhone. Saving body as the opener and focusing
-// it on close does not restore anything: it drops focus to the top of the document, so the next Tab
-// starts from nowhere. That is one of the symptoms Q58 was filed about, and it survived Q58's fix.
+// ── 4.
 const body = { tag: 'body' }
 const chip = { tag: 'button' }
 assert.deepEqual(rememberOpener(chip, body), { el: chip }, 'a real element is the opener')

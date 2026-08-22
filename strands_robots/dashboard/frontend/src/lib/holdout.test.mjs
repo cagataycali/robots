@@ -1,5 +1,3 @@
-// U19: assertions for the validation-holdout field (lib/holdout.ts).
-// Run: npx esbuild src/lib/holdout.ts --bundle --format=esm --outfile=/tmp/holdout.mjs && node src/lib/holdout.test.mjs
 import assert from 'node:assert/strict'
 
 const { holdout } = await import('/tmp/holdout.mjs')

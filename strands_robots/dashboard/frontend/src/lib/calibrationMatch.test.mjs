@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict'
 import { calibrationVerdict } from '/tmp/calibrationMatch.mjs'
 
-// --- THE DEFECT ------------------------------------------------------------
-// The spawn form's "Calibration id" was free text under a prose warning that
-// nothing enforced. A typo spawns happily and the arm runs on raw servo counts
-// with the wrong joint limits - a physical outcome, discovered by watching a
-// real arm reach somewhere it should not be able to reach.
+// --- THE DEFECT ------------------------------------------------------------ The spawn form's
+// "Calibration id" was free text under a prose warning that nothing enforced.
 
 const E = (id, model = 'so101_follower', extra = {}) => ({
   deviceType: 'robots', model, id, unreadable: false, ...extra,
@@ -98,12 +95,6 @@ for (const typed of ['  follower_arm  ', 'FOLLOWER_ARM', 'Follower_Arm']) {
 
 console.log('calibrationMatch: all assertions passed')
 
-// --- THE WRONG SIDE OF THE PAIR (measured live 2026-08-21) ------------------
-// `leader` exists — as `teleoperators/so101_leader/leader.json`. Every family test passes (that is
-// what familyMatches is for), so this verdict rendered a green "✓ matches leader" for the exact id
-// that produced an arm with presence connected:true and ZERO joints: a robot in real mode loads
-// robots/<type>/<id>.json, lerobot raised "has no calibration registered", and the reason lived in a
-// child log. A green tick in front of that is this page agreeing with the mistake.
 const T = (id, model = 'so101_leader') => ({
   deviceType: 'teleoperators', model, id, unreadable: false,
 })

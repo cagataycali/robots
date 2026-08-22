@@ -1,20 +1,11 @@
 // node assertions over the bundled module (esbuild first — see the sibling
-// calibrateCommand.test.mjs for the same pattern).
-//
-// THIS MODULE DECIDES WHAT A JOINT BAR MEANS. It replaced a per-joint rule (`|pos| > 4 ? 100 : PI`)
-// that put two joints of one arm on different axes and flipped an axis mid-stream; the whole point of
-// the replacement is that the axis is a property of the STREAM and changes only under hysteresis. None
-// of that was pinned by a test until now, so nothing stopped a later edit from restoring the old
-// behaviour with a one-line "simplification".
+// calibrateCommand.test.mjs for the same pattern). THIS MODULE DECIDES WHAT A JOINT BAR MEANS.
 import assert from 'node:assert/strict'
 import {
   decideStripScale, fillPercent, frameEvidence, defaultSpan, isOneSidedJoint,
   RADIAN_CEILING, RADIAN_FLOOR, SWITCH_FRAMES,
 } from '/tmp/jointScale.mjs'
 
-// ── the evidence a single frame gives, and when it must stay silent ──
-// cagatay's SO-101 reports DEGREES (wrist_roll rests at 170, shoulder_lift near -46) — the case Q27
-// was about. Degrees are the 'servo' side of this taxonomy.
 assert.equal(frameEvidence([['wrist_roll.pos', 170], ['shoulder_lift.pos', -46]]), 'servo')
 assert.equal(frameEvidence([['elbow_flex.pos', 0.7], ['wrist_flex.pos', -1.2]]), 'radian')
 // AMBIGUOUS BAND: between the floor and the ceiling either unit is possible, so the frame has NO
@@ -70,7 +61,6 @@ assert.equal(memo.unit, 'servo', `switched on frame ${SWITCH_FRAMES}`)
 assert.equal(memo.pending, null)
 assert.equal(memo.pendingFrames, 0)
 
-// ── a unit change DISCARDS observed extremes: they were measured on the other axis ──
 let m2 = decideStripScale([['a', 3.0]])
 m2 = decideStripScale([['a', -3.4]], m2)
 assert.equal(m2.ranges.a.lo, -3.4, 'observation widens a range')
@@ -86,9 +76,6 @@ const wide = m3.ranges.a.hi
 m3 = decideStripScale([['a', 0.1]], m3)
 assert.equal(m3.ranges.a.hi, wide, 'a range that has been widened stays widened')
 
-// ── an ambiguous frame changes NOTHING, counter included ──
-// (a zero frame from a robot between reads, or a pass through the ambiguous band, must not wipe the
-// evidence collected so far — that is how a degree stream used to stall on the radian axis forever)
 let m7 = decideStripScale([['a', 0.5]])
 m7 = decideStripScale([['a', 99]], m7)
 assert.equal(m7.pendingFrames, 1)

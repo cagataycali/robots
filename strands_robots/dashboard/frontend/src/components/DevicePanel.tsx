@@ -29,16 +29,10 @@ interface SerialPort {
   pid?: string | null
   serial_number?: string | null
   likely_robot?: string | null
-  // Measured off the servo bus (12V = follower, 7.4V = leader) and remembered by
-  // serial. ABSENT means never measured, which is not the same as "unknown".
   role?: string | null
   role_volts?: number | null
   role_source?: string | null
   role_measured_at?: number | null
-  /**
-   * Q41: how this board was last brought up (profiles.json, keyed by USB serial). ABSENT means
-   * nobody has configured it — a normal state, and NOT the same as an empty config.
-   */
   remembered?: {
     peer_id: string
     robot_name?: string | null
@@ -46,10 +40,6 @@ interface SerialPort {
     cameras: string[]
     robot_id?: string
     saved_at?: number | null
-    /**
-     * Q43: present only when a remembered camera index is NOT usable right now. The spawn still
-     * works — the arm drops what it cannot open — so this is a warning, never a gate.
-     */
     camera_health?: { ok: boolean; text: string; cameras: { name: string; index?: number; state: string; reason?: string; remedy?: string }[] } | null
   } | null
 }
@@ -80,38 +70,20 @@ interface Managed {
   alive: boolean
   started_at?: number
   log_tail?: string[]
-  /**
-   * U22: the exit status the server has always sent and this drawer never read, so
-   * a kill -9 and a clean finish both rendered as the single word "exited".
-   */
   returncode?: number | null
 }
 
-/**
- * Local hardware, and the robot processes this dashboard owns.
- *
- * A managed robot is a *child process* that joins the mesh as its own peer, so
- * it appears twice: as a peer card in the fleet and as a row here. This is the
- * only place that can kill it, and the only place its stdout is visible —
- * a robot that dies during `Robot()` construction never reaches the mesh at all,
- * and its traceback is in that log tail.
- */
+/** Local hardware, and the robot processes this dashboard owns. */
 export default function DevicePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [doc, setDoc] = useState<DeviceDoc | null>(null)
-  /* Q58: focus must land inside an overlay and go back to whatever opened it. */
   const sheetRef = useRef<HTMLElement | null>(null)
   useDialogFocus(sheetRef, open)
   const [robots, setRobots] = useState<RegistryRobot[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
-  /* Q123: U16's snippet, fetched per board. Keyed by device so two boards cannot show each other's
-     file (the calibFor lesson: a single-value disclosure means opening one closes the other, which
-     is correct here — the operator reads one file at a time). */
   const [snip, setSnip] = useState<{ device: string; code: string; filename: string } | null>(null)
   const [logs, setLogs] = useState<{ peer: string; lines: string[] } | null>(null)
-  // A spawn refused by a safety guard (U18): keep the request so approving can
-  // re-run exactly what was refused.
   const [consent, setConsent] = useState<ConsentNeed | null>(null)
   const [notice, setNotice] = useState<SpawnNotice | null>(null)
   const retry = useRef<{ fn: () => Promise<any>; label: string; kind: DeviceAction } | null>(null)
@@ -121,32 +93,16 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [mode, setMode] = useState<'sim' | 'real'>('sim')
   const [port, setPort] = useState('')
   const [camIndex, setCamIndex] = useState('')
-  /* Q60's class, spawn side: min/max on a number input are hints the browser only enforces in a
-     form submit — this is a button, so `fps: -5` or `width: 3` reached /api/devices/spawn and the
-     failure surfaced later as a camera the robot "could not open". Blank still means the driver's
-     own default, so an empty box is NOT a problem here. */
   const [camFps, setCamFps] = useState('')
   const [camW, setCamW] = useState('')
   const [camH, setCamH] = useState('')
   const [robotId, setRobotId] = useState('')
-  /* Q55: the name the peer will carry. The route has always accepted `peer_id` (and remembers it in
-     the board's profile), but no field ever sent one, so every arm was named after a clock. */
   const [peerName, setPeerName] = useState('')
   // The real calibration ids on this machine. `null` = not read yet / failed,
   // which the verdict deliberately treats as "say nothing" rather than a guess.
   const [calibIds, setCalibIds] = useState<CalibrationEntry[] | null>(null)
-  /**
-   * The remembered spawn profiles, keyed by serial. Needed for ONE reason: a
-   * profile's `robot_id` is the calibration id the arm actually loads, so the
-   * calibrate command must carry it rather than invent one (see
-   * lib/calibrateCommand.ts). null = not loaded, and the command builder treats
-   * that as "no profile to honour" - it degrades to a safe invented id instead
-   * of blocking.
-   */
+  /** The remembered spawn profiles, keyed by serial. */
   const [profiles, setProfiles] = useState<Record<string, SpawnProfile> | null>(null)
-  // Measured servo-bus roles, keyed by port. Declared here with the other hooks
-  // on purpose: this component returns null when closed, so a useState below
-  // that bail-out changes the hook count between renders (React #310).
   const [roles, setRoles] = useState<Record<string, RoleVerdict>>({})
   const [measuring, setMeasuring] = useState<string | null>(null)
   // R5: which port's calibrate panel is open, the family the operator confirmed
@@ -156,23 +112,17 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [calibFor, setCalibFor] = useState<string | null>(null)
   const [calibFamily, setCalibFamily] = useState<Record<string, string>>({})
   const [copied, setCopied] = useState<string | null>(null)
-  // The verdict for the scan the operator ASKED for (rescan), plus the in-flight
-  // flag: a serial+camera enumeration takes seconds, and a button that still
-  // looks idle invites a second click that stacks another scan on the first.
+  // The verdict for the scan the operator ASKED for (rescan), plus the in-flight flag: a
+  // serial+camera enumeration takes seconds, and a button that still looks idle invites a second
+  // click that stacks another scan on the first.
   const [scan, setScan] = useState<RescanReport | null>(null)
   const [scanning, setScanning] = useState(false)
   const scannedAt = useRef<number | null>(null)
   // What the last verdict described. A background poll that finds different
   // hardware retires it: a verdict must never outlive its evidence.
   const scanKey = useRef<string | null>(null)
-  // A rescan (`?refresh=1`) re-probes serial AND every camera index, which takes
-  // seconds, while the 5s background poll reads the CACHED enumeration. Without
-  // ordering, the cached answer lands after the fresh one and overwrites it:
-  // the list loses the hardware the operator just plugged in, and - worse - the
-  // changed hardwareKey retires the very verdict that reported it ("2 cameras
-  // appeared" vanishes, or reads against a list that no longer contains them).
-  // Newest REQUEST wins (lib/requestOrder.ts), and the poll yields while any
-  // load is in flight rather than queueing a probe behind a probe.
+  // A rescan (`?refresh=1`) re-probes serial AND every camera index, which takes seconds, while
+  // the 5s background poll reads the CACHED enumeration.
   const loadSeq = useRef(0)
   const inFlight = useRef(0)
 
@@ -232,24 +182,14 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     void api<{ robots: any }>('/api/robots/registry')
       .then(r => setRobots(normalizeRegistry(r.robots)))
       .catch(() => setRobots([]))
-    // Managed children die on their own (import errors, unplugged bus); poll so
-    // an `alive: false` row does not sit there looking healthy.
-    // Yield while a load (especially the operator's rescan) is in flight: a
-    // cached poll stacked on a live probe adds nothing and its older evidence
-    // would only have to be discarded.
+    // Managed children die on their own (import errors, unplugged bus); poll so an `alive: false`
+    // row does not sit there looking healthy.
     const id = setInterval(() => { if (inFlight.current === 0) void load() }, 5000)
     return () => clearInterval(id)
   }, [open, load])
 
-  // Read the calibration ids once the panel opens: the spawn form's id field is checked
-  // against them, so a typo is caught before an arm runs on raw servo counts.
-  //
-  // THIS HOOK MUST STAY ABOVE `if (!open) return null`. It used to live 100 lines further
-  // down, after that early return, so a closed panel rendered one hook fewer than an open
-  // one — React #310, "rendered more hooks than during the previous render". The whole
-  // devices screen crashed to its error boundary the instant it was opened, live, with the
-  // honest crash card explaining that the rest of the dashboard still worked. The fetch is
-  // still gated on `open`, so a closed panel asks the server for nothing.
+  // Read the calibration ids once the panel opens: the spawn form's id field is checked against
+  // them, so a typo is caught before an arm runs on raw servo counts.
   useEffect(() => {
     if (!open) return
     let alive = true
@@ -264,13 +204,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
 
   if (!open) return null
 
-  /**
-   * Every mutating device action. `kind` is what the request DOES, so a thrown
-   * failure can say which of the two worlds it is in: a rejected fetch covers
-   * "never left this machine" and "ran, then lost the answer" (a 5xx means the
-   * handler executed), and here that difference is a process holding the servo
-   * bus, or a robot killed mid-episode. See lib/deviceOutcome.ts.
-   */
+  /** Every mutating device action. */
   const act = async (fn: () => Promise<any>, label: string, kind: DeviceAction = 'spawn') => {
     setBusy(true); setStatus(null); setConsent(null); setNotice(null)
     retry.current = { fn, label, kind }
@@ -281,8 +215,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       // consent hint rides in that same body.
       setConsent(findConsent(r))
       // A spawn can SUCCEED and still be about to fail on the wire: the calibration gap arrives in
-      // the same 200 body as the pid. It is a separate fact from the status line, so it gets its own
-      // amber box rather than being appended to "spawned: so101-leader".
+      // the same 200 body as the pid.
       setNotice(spawnNotice(r))
       await load()
     } catch (e: any) {
@@ -294,9 +227,6 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       setStatus(v.text)
       setConsent(findConsent(e?.body))
       setNotice(spawnNotice(e?.body))
-      // The list is the observer that can actually answer "did it happen?" -
-      // so it is refreshed precisely when we do NOT know, which is the case the
-      // old code was the only one to skip.
       if (v.ambiguous) await load()
     } finally {
       setBusy(false)
@@ -324,17 +254,20 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     mode,
   })
 
-  /* Spawning under a name that was mute before: the previous process's excuse is not this one's, so the
-     cached "why has this arm no joints" verdict is dropped BEFORE the request — the new peer can announce
-     itself before this promise resolves, and its card must not greet it with the old reason. */
+  /**
+   * Spawning under a name that was mute before: the previous process's excuse is not this one's,
+   * so the cached "why has this arm no joints" verdict is dropped BEFORE the request — the new
+   * peer can announce itself before this promise resolves, and its card must not greet it with
+   * the old reason.
+   */
   const spawn = () => act(() => (forgetJointFailure(nameVerdict.value), post('/api/devices/spawn', {
     robot_name: robotName,
     peer_id: nameVerdict.value,
     mode,
     port: mode === 'real' ? port || null : null,
-    // The camera config must be a MAPPING per entry ({index_or_path: N, ...});
-    // a bare int here is the exact ValueError an operator once hit live:
-    // "Camera 'main' config must be a mapping ... got int: 3".
+    // The camera config must be a MAPPING per entry ({index_or_path: N, ...}); a bare int here is
+    // the exact ValueError an operator once hit live: "Camera 'main' config must be a mapping ...
+    // got int: 3".
     cameras: camIndex === '' ? null : {
       main: {
         index_or_path: Number(camIndex),
@@ -355,18 +288,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     }
   }
 
-  /**
-   * Bring a remembered board back up. This is a REAL spawn — it energises an arm — so the button
-   * names the peer it will start rather than saying "restore", and the payload is never assembled
-   * here: the server holds it (a two-camera config cannot be re-typed by a client, and a guessed
-   * one opens the wrong device). The port travels because it is where the board is NOW; the server
-   * re-reads the profile by serial and reports if the /dev path moved.
-   */
-  /** U16's last mile: ask the server for the Python file that recreates this exact board. */
-  /** `hubHost`: Q122's other half. /api/deploy/snippet has always accepted an explicit hub address
-   *  and uses it verbatim (an operator's override outranks the server's guess), but this caller sent
-   *  only the serial — so a refused guess left the one person who knows their LAN with no field to
-   *  type it in. Same defect as Q54's fps: the server accepts what the form cannot send. */
+  /** Bring a remembered board back up. */
   const writeSnippet = async (p: SerialPort, hubHost?: string) => {
     setSnip(null); setNotice(null)
     try {
@@ -405,9 +327,6 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const freePorts = doc?.serial_ports ?? []
   const claimedPorts = new Set(managed.filter(m => m.alive && m.port).map(m => m.port as string))
 
-  /* Q77: the picked bus can go stale after it is picked — unplugged, re-enumerated under a new /dev
-     path, or claimed by another child. The <select> is only correct at render time; this judges the
-     value actually held in state. */
   const portVerdict = portChoice({
     chosen: port,
     known: freePorts.map(p => p.device),
@@ -420,14 +339,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const acting = busy
 
   /**
-   * Which robot family this board is, and HOW we know — the model name in the
-   * calibrate command is half family, so its provenance has to be visible.
-   * Precedence: what is actually running on this port (a fact) > what the
-   * operator picked here > the spawn form's current pick > `likely_robot`,
-   * which is only `vid == 0x1A86 ? "so101" : null` (device_manager.py:239) and
-   * so is a guess about a USB-serial chip used by many boards. A guess may
-   * PREFILL the picker; it must never quietly become the model name, which is
-   * why the source is rendered next to it.
+   * Which robot family this board is, and HOW we know — the model name in the calibrate command
+   * is half family, so its provenance has to be visible.
    */
   const familyFor = (p: SerialPort): { family: string; source: string } => {
     const running = managed.find(m => m.alive && m.port === p.device)
@@ -439,13 +352,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
     return { family: '', source: '' }
   }
 
-  /**
-   * Copy, and say so honestly when it fails. `navigator.clipboard` is undefined
-   * on a NON-SECURE origin, and this dashboard is regularly opened at
-   * http://<lan-ip>:8090 — a copy button that silently does nothing there is
-   * exactly the kind of lie this project keeps hunting. The command is always
-   * rendered as selectable text, so the keyboard route never depends on this.
-   */
+  /** Copy, and say so honestly when it fails. */
   const copyCommand = async (port: string, command: string) => {
     try {
       if (!navigator.clipboard) throw new Error('this page is not a secure origin, so the browser blocks copying')
@@ -526,13 +433,10 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                   </span>
                   {!m.alive && (() => {
                     const v = deathVerdict(m.returncode)
-                    // U22: name the cause where the word "exited" used to stand for all of them.
                     return <div className={v.unexplained ? 'deathnote unexplained' : 'deathnote'}>{v.phrase}</div>
                   })()}
                   {!m.alive && m.log_tail?.length ? (() => {
-                    // The ring keeps 10 lines. When they are all from the child's first seconds
-                    // they are its BIRTH CRY, not its last words - saying so is the difference
-                    // between "it warned and stopped" and "something killed it 22h later".
+                    // The ring keeps 10 lines.
                     const startup = retainedOutputIsStartup({ lines: m.log_tail, startedAt: m.started_at })
                     return (
                       <>
@@ -770,11 +674,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                         offer exactly one click to bring it back — but never while something is
                         already driving that bus. */}
                     {p.remembered && (() => {
-                      // The line, and the trap inside it: the memory's id and peer name are just
-                      // names someone typed, while the badge above is a MEASUREMENT. Where they
-                      // disagree the row says so - iteration 135 shipped this line without that,
-                      // which is how "calibration id leader_arm" ended up sitting under a badge
-                      // reading "follower · 12.6V" with nothing to explain it.
+                      // The line, and the trap inside it: the memory's id and peer name are just names someone
+                      // typed, while the badge above is a MEASUREMENT.
                       const mem = rememberedLine(p.remembered, { ...p, calibrations: calibIds })!
                       return (
                       <div className="row between remembered">
@@ -840,9 +741,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                         </div>
                         <pre className="snippet">{snip.code}</pre>
                         {(() => {
-                          /* The file went out with NO hub address, so the peer it starts would connect
-                             to nothing. The server said why (it refuses a guess that would mislead —
-                             a tunnel host has no zenoh port), and now the operator can answer it. */
+                          /** The file went out with NO hub address, so the peer it starts would connect to nothing. */
                           const gap = hubAddressMissing(snip.code)
                           if (!gap) return null
                           const draft = cleanHubHost(hubDraft)

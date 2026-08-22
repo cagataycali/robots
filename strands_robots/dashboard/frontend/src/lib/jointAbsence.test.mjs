@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { jointAbsence, expectsJoints, failingForText, STATE_QUIET_S } from '/tmp/jointAbsence.mjs'
 
-// The REAL so101-arm-1 document, copied from /api/fleet on 2026-08-20.
 const NOW = 1787195402.7
 const ARM1 = {
   presence: { robot_id: 'so101-arm-1', connected: true, hw: 'so_follower', cameras: ['top', 'wrist'] },
@@ -64,11 +63,6 @@ assert.equal(expectsJoints(null), 'unknown')
 
 console.log('jointAbsence: all assertions passed')
 
-// ------------------------------------------------------------------ Q80: the backend knows now
-// The module's own docstring says it must not GUESS the cause. Since Q80 the cause can arrive with
-// the peer (annotation `joint_problem`, read from the child's log server-side), and then withholding
-// it would be the dishonest choice: a held serial port and an uncalibrated board are opposite
-// remedies that both used to render as the same "check its log" shrug.
 {
   const arriving = { state: { t: 1000 }, presence: { hw: 'so_follower', action_keys: ['a', 'b'] }, nowS: 1000.3 }
 
@@ -115,10 +109,6 @@ console.log('jointAbsence: all assertions passed')
   console.log('  ✓ Q80 backend verdict is used when present, and only when it applies')
 }
 
-// --- the fault's AGE and its provenance (Q85/Q86) -------------------------------------------------
-// Two of cagatay's arms sat silent for 3.5 hours while their cards said only "no joints". The
-// backend now publishes how long and how often, from the robot itself.
-
 assert.equal(failingForText(3), null, 'a 3s-old fault is as likely a transient: say nothing')
 assert.equal(failingForText(45), 'for 45s')
 assert.equal(failingForText(600), 'for 10m')
@@ -148,9 +138,9 @@ const UNCAL = {
 }
 
 {
-  // A log-derived verdict says where it came from, because it clears only if the log later records a
-  // recovery -- which mesh.core now logs, but a robot running older code never does, so the verdict
-  // can still describe a fault that is already over.
+  // A log-derived verdict says where it came from, because it clears only if the log later
+  // records a recovery -- which mesh.core now logs, but a robot running older code never does,
+  // so the verdict can still describe a fault that is already over.
   const note = jointAbsence({ ...ARM1, problem: { ...UNCAL, source: undefined, for_seconds: undefined, failures: undefined }, nowS: ARM1.state.t + 1 })
   assert.equal(note.text, 'no joint positions — this board has no calibration, so its positions cannot be read in degrees')
   assert.match(note.detail, /read from this robot's log/)
@@ -166,17 +156,14 @@ const UNCAL = {
 }
 
 {
-  // A verdict with a headline but NOTHING to show keeps detail null: an existing contract in this
-  // file, and it caught the first version of the provenance clause, which would have rendered a
-  // tooltip made only of "read from its log" -- no fact for the operator to weigh.
+  // A verdict with a headline but NOTHING to show keeps detail null: an existing contract in
+  // this file, and it caught the first version of the provenance clause, which would have
+  // rendered a tooltip made only of "read from its log" -- no fact for the operator to weigh.
   const note = jointAbsence({ ...ARM1, problem: { kind: 'probe_failed', headline: 'the joint read failed' }, nowS: ARM1.state.t + 1 })
   assert.equal(note.detail, null)
   assert.equal(note.text, 'no joint positions — the joint read failed')
 }
 
-// --- Q89 follow-up: a verdict must not be thrown away by the two early branches ------------------
-// Both were written for a peer we know nothing about, and both then spoke as if that were still true
-// after the backend had read the reason out of the child's log.
 {
   const problem = {
     kind: 'uncalibrated',
@@ -214,11 +201,6 @@ const UNCAL = {
   assert.match(jointAbsence(quiet).hint, /not the servo bus/)
 }
 
-// --- presence is a SEPARATE rail from the state probe (measured 2026-08-22) ------------------------
-// On cagatay's live fleet both real arms publish state every ~11s while STATE_QUIET_S is 10, so this
-// branch fired on EVERY cycle and told the operator "its process may have exited" about two processes
-// that had been alive for 27 hours with current presence. Presence (~1Hz, aged by the dashboard
-// itself) is independent evidence, so where it says the peer is not stale, the exit guess is banned.
 {
   const alive = { connected: true, hw: 'so_follower' }
   const nowS = 1_000_000

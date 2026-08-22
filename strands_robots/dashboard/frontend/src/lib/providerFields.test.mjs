@@ -1,4 +1,4 @@
-// Q49: npx esbuild src/lib/providerFields.ts --bundle --format=esm --outfile=/tmp/pf.mjs && node src/lib/providerFields.test.mjs
+// build: npx esbuild src/lib/providerFields.ts --bundle --format=esm --outfile=/tmp/pf.mjs
 import assert from 'node:assert/strict'
 const { extraFields, missingForProvider } = await import('/tmp/pf.mjs')
 

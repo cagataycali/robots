@@ -1,35 +1,7 @@
 /**
- * AuthGate - the passkey door in front of the dashboard.
- *
- * Decision on mount (and after every backend/token change, because App remounts):
- *   1. GET /api/auth/status (public) + probe GET /api/fleet (guarded) in parallel.
- *   2. Fleet answered 200  -> open. Local dev, static token, or a valid session -
- *      whatever the server accepted, the UI has no business second-guessing it.
- *   3. Fleet answered 401  -> gate. setup_required decides enroll vs login.
- *
- * The session JWT rides the existing token plumbing (setAuthToken -> localStorage
- * -> Authorization: Bearer on fetches, ?token= on WebSockets), so nothing below
- * this component knows passkeys exist.
- *
- * AND IT KEEPS WATCHING (Q88). That decision used to be made once, on mount, which is
- * wrong for the way this dashboard is actually used: a tab left open on a phone. Measured
- * on the live rig, a session lapsed mid-session and the page stayed "open" for 19.3 HOURS
- * -- camera sockets refused with 403 on every reopen, REST calls failing one by one, and
- * not a word on screen about a sign-in. A dashboard that looks alive and is deaf is worse
- * than a locked door, because the operator debugs the ROBOT.
- *
- * So while the gate is open it re-reads the verdict from the token's own `exp` (see
- * lib/sessionExpiry): five minutes before the lapse a banner warns above the app, and at
- * the lapse the gate closes again with the reason. It does not poll the server -- the
- * answer is already in the page's pocket, and a lapsed session must not generate traffic
- * to discover that it is lapsed. Only a JWT can trigger this; a static --auth-token and
- * an auth-off LAN dashboard are silent, so nobody is thrown out of a session that works.
- *
- * ONE EXCEPTION, and it is evidence rather than polling (Q103): a token can be INVALID without being
- * expired -- rotated by a dashboard restart, a stale ?token= link, a revoked session -- and nothing in
- * its claims says so. When a request has ALREADY been refused (lib/endpoints remembers the last
- * 401/403), the watcher verifies once against /api/fleet, the same probe the mount uses. The refusal is
- * the trigger; the server is the judge.
+ * AuthGate - the passkey door in front of the dashboard. Decision on mount (and after every
+ * backend/token change, because App remounts): 1. GET /api/auth/status (public) + probe GET
+ * /api/fleet (guarded) in parallel. 2. Fleet answered 200 -> open.
  */
 import { useEffect, useRef, useState } from 'react'
 import { api, setAuthToken, authToken, authRefusedRecently, HttpError, lastRenewalAt } from '../lib/endpoints'
@@ -54,20 +26,16 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [label, setLabel] = useState('')
   const [bootstrap, setBootstrap] = useState('')
   const [showToken, setShowToken] = useState(false)
-  /** Q88: the pre-lapse warning shown ABOVE the running app, or '' when there is nothing to say. */
   const [expiring, setExpiring] = useState('')
   const [tokenValue, setTokenValue] = useState('')
-  // Login challenge fetched AHEAD of the tap: iOS Safari only opens the Face ID
-  // sheet while the tap's user-activation is alive, so the click handler must
-  // reach credentials.get() without awaiting the network first.
+  // Login challenge fetched AHEAD of the tap: iOS Safari only opens the Face ID sheet while the
+  // tap's user-activation is alive, so the click handler must reach credentials.get() without
+  // awaiting the network first.
   const prepared = useRef<PreparedLogin | null>(null)
-  /** Q103: one server probe at a time, so a burst of 401s cannot become a burst of requests. */
   const verifying = useRef(false)
 
-  // The App's update prompt lives BEHIND the gate — a visitor stuck out here
-  // (exactly where auth bugs strand them) could otherwise be pinned to a stale
-  // bundle by the service worker forever. At the gate nothing is mid-task, so
-  // updating immediately is safe: take the new worker and reload.
+  // The App's update prompt lives BEHIND the gate — a visitor stuck out here (exactly where auth
+  // bugs strand them) could otherwise be pinned to a stale bundle by the service worker forever.
   const {
     needRefresh: [gateNeedsRefresh],
     updateServiceWorker,
@@ -78,7 +46,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }, [gateNeedsRefresh, mode, updateServiceWorker])
 
-  // Q88: while the app is open, watch the sign-in we are holding.
   useEffect(() => {
     if (mode !== 'open') { setExpiring(''); return }
     let alive = true
@@ -97,18 +64,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       }
       setExpiring(v.state === 'expiring' ? (v.text ?? '') : '')
 
-      // Q103: `exp` is not the only way a sign-in dies. A token ROTATED by a dashboard restart, a
-      // stale ?token= link, a revoked session or a server that forgot its sessions is INVALID while
-      // its own claims still look perfectly fresh — so the verdict above says "fine" and this page
-      // stays open, deaf, for as long as the tab lives. That is the 19.3-hour shape again with a
-      // cause the token cannot see.
-      //
-      // The doctrine above still holds: a lapsed session must not generate traffic to DISCOVER that
-      // it is lapsed. This is not speculation — some request has already come back 401/403, and the
-      // refusal is only the TRIGGER. /api/fleet stays the JUDGE, the same probe the mount uses, so a
-      // route-specific refusal costs exactly one request instead of throwing the operator at a login
-      // screen they did not need. Self-limiting either way: success clears the memory, denial closes
-      // the gate and unmounts this watcher.
       if (authRefusedRecently() && !verifying.current) {
         verifying.current = true
         api('/api/fleet')

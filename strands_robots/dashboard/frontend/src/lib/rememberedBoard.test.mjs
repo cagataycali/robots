@@ -1,5 +1,3 @@
-// Q41: assertions for the servo-board memory line (lib/rememberedBoard.ts).
-// Run: npx esbuild src/lib/rememberedBoard.ts --bundle --format=esm --outfile=/tmp/rememberedBoard.mjs && node src/lib/rememberedBoard.test.mjs
 import assert from 'node:assert/strict'
 
 const { rememberedLine, nameClaimsOtherRole } = await import('/tmp/rememberedBoard.mjs')
@@ -109,7 +107,6 @@ const CALS = [
   assert.equal(l.idProblem, undefined)
 }
 {
-  // The two notes are INDEPENDENT: a measured board whose name lies AND whose id cannot load says both.
   const l = rememberedLine(
     { peer_id: 'so101-leader', robot_id: 'leader', cameras: [] },
     { role: 'follower', role_volts: 12.6, calibrations: CALS })

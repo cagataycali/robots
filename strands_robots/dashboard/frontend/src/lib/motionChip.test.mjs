@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict'
 import { motionChip } from '/tmp/motionChip.mjs'
 
-// --- THE DEFECT: a tri-state rendered through a ternary ----------------------
-// `moving ? 'moving' : 'still'` collapsed "not measured" into the reassuring
-// half - in green, styled exactly like a real measurement. Live: so101-arm-1
-// publishes no joint positions, so nothing about its motion is knowable, and the
-// chip said "still".
+// --- THE DEFECT: a tri-state rendered through a ternary ---------------------- `moving ?
 const noJoints = motionChip(null, { jointsSeen: false })
 assert.equal(noJoints.tone, 'unknown')
 assert.notEqual(noJoints.tone, 'still', 'unmeasurable must not borrow the measured-still styling')
@@ -43,8 +39,6 @@ assert.equal(moving.label, 'moving')
 assert.match(moving.title, /keep hands clear/)
 assert.match(moving.aria, /keep hands clear/)
 
-// A MEASURED movement outranks a missing joint stream: if we somehow saw motion,
-// that is the fact, and it is the dangerous one.
 assert.equal(motionChip(true, { jointsSeen: false }).tone, 'moving')
 
 // Every state announces itself to a screen reader - a coloured dot is not an

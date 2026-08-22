@@ -1,5 +1,3 @@
-// Q44: assertions for the record screen's empty state (lib/noArms.ts).
-// Run: npx esbuild src/lib/noArms.ts --bundle --format=esm --outfile=/tmp/noArms.mjs && node src/lib/noArms.test.mjs
 import assert from 'node:assert/strict'
 
 const { noArmsVerdict } = await import('/tmp/noArms.mjs')
@@ -47,8 +45,6 @@ assert.equal(noArmsVerdict(1, null), null)
   assert.equal(v.offerDevices, true)
 }
 
-// --- Q45: `route` is the same words without the "no arms" prefix, for a screen whose heading
-// already said it. Two screens, one vocabulary.
 for (const arg of [[{ peer_id: 'a' }], [{ peer_id: 'a', claimed: true }], [], null]) {
   const v = noArmsVerdict(0, arg)
   assert.doesNotMatch(v.route, /no arms/, 'the route must not repeat the absence')

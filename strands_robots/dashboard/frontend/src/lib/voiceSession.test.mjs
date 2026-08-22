@@ -1,7 +1,6 @@
-// Run: node scripts/run-lib-tests.mjs voiceSession
-//
-// These decisions lived inside ws.onmessage, wrapped in `catch { ignore }`. Any mistake in there is not a
-// stack trace — it is SILENCE, in the one channel whose entire job is to talk back.
+// Run: node scripts/run-lib-tests.mjs voiceSession These decisions lived inside ws.onmessage,
+// wrapped in `catch { ignore }`. Any mistake in there is not a stack trace — it is SILENCE, in
+// the one channel whose entire job is to talk back.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
@@ -16,9 +15,9 @@ assert.deepEqual(interpretVoiceEvent({ type: 'transcript', text: '' }), {}, 'an 
 assert.deepEqual(interpretVoiceEvent({ type: 'audio' }), {}, 'an audio frame with no data plays nothing')
 assert.deepEqual(interpretVoiceEvent({ type: 'audio', data: '' }), {}, 'nor an empty one')
 
-// ── 2. a bad sample rate must not silently kill ALL audio ──
-// createBuffer(1, n, 0) throws NotSupportedError, and that throw lands in onmessage's `catch { ignore }`:
-// one malformed meta frame and the session never speaks again, with no error visible anywhere.
+// ── 2. a bad sample rate must not silently kill ALL audio ── createBuffer(1, n, 0) throws
+// NotSupportedError, and that throw lands in onmessage's `catch { ignore }`: one malformed
+// meta frame and the session never speaks again, with no error visible anywhere.
 assert.deepEqual(interpretVoiceEvent({ type: 'voice_meta', rate: 16000 }), { rate: 16000 })
 for (const bad of [0, -1, 'fast', null, undefined, NaN, Infinity]) {
   assert.equal(interpretVoiceEvent({ type: 'voice_meta', rate: bad }).rate, 24000,
@@ -72,10 +71,7 @@ assert.deepEqual(voiceCloseState(1006, 'error'), { state: 'error' },
 assert.equal(voiceCloseState(1008, 'error').transcript !== undefined, true,
              'but an unauthorized close still replaces the reason, because that one is actionable')
 
-// ── 7. Q90 — the wiring: the microphone must not outlive the socket ──
-// getUserMedia resolves BEFORE the socket opens, and the stream used to be stored only inside ws.onopen.
-// So a refused (1008) or unreachable /ws/voice left a HOT MIC — recording indicator on, tracks live — for
-// the whole life of the tab, with no UI in any state able to release it. Pure tests cannot see this.
+// ── 7.
 const src = readFileSync(new URL('./useVoice.ts', import.meta.url), 'utf8')
 const gum = src.indexOf('getUserMedia')
 const onopen = src.indexOf('ws.onopen')

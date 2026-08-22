@@ -1,5 +1,3 @@
-// #2486: assertions for the episode-labels panel rules (lib/episodeLabels.ts).
-// Run: npx esbuild src/lib/episodeLabels.ts --bundle --format=esm --outfile=/tmp/episodeLabels.mjs && node src/lib/episodeLabels.test.mjs
 import assert from 'node:assert/strict'
 
 const { labelsGate, labelSummary, labelRowLine } = await import('/tmp/episodeLabels.mjs')

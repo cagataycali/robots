@@ -13,9 +13,8 @@ for (const t of HELP_TOPICS) {
 
 const text = HELP_TOPICS.flatMap(t => t.lines).join(' ').toLowerCase()
 
-// THE SAFETY CONTENT IS THE POINT — JOURNEYS #7's cost was "the cheapest legal
-// first action is an unlabelled ▶ on a real arm". Help that omits the brake, or
-// omits the safe first move, would leave that exactly as it was.
+// THE SAFETY CONTENT IS THE POINT — JOURNEYS #7's cost was "the cheapest legal first action is
+// an unlabelled ▶ on a real arm".
 assert.match(text, /stop all/, 'the brake must be named')
 assert.match(text, /"\."|\bthe "\." key\b/, 'the . hotkey is the only control that works on every screen')
 assert.match(text, /power switch/, 'name the brake that does not go through this page')
@@ -36,10 +35,6 @@ assert.ok(DOC_LINKS.length > 0, 'JOURNEYS #7: zero links was the finding')
 for (const l of DOC_LINKS) {
   assert.ok(l.url.startsWith(`${DOCS_ORIGIN}/`), `${l.url}: help links stay on the docs site`)
   assert.ok(l.label && l.note, `${l.url}: an unexplained link is another guess`)
-  // MEASURED 2026-08-19: every /dashboard/* page on the deployed site 404s,
-  // though the markdown exists in this repo and mkdocs.yml lists it. The
-  // obvious "Fleet Dashboard > Quickstart" link would have been a 404 handed to
-  // a first-time operator.
   assert.doesNotMatch(l.url, /\/dashboard\//,
     'the deployed site has no /dashboard/* pages yet — keep those as repo paths')
 }

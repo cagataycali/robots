@@ -1,11 +1,3 @@
-/**
- * What this machine has been talked into allowing — and the way back (U18).
- *
- * The consent sheet tells the operator a grant can be revoked. That sentence is
- * only true if there is a place that lists the grants, so this is that place:
- * one row per permission, with the blast radius stated (an org-wide entry allows
- * every repo under it) and a revoke that is as narrow as the grant was.
- */
 import { useCallback, useEffect, useState } from 'react'
 import { api, post } from '../lib/endpoints'
 import { nothingGranted } from '../lib/consent'
@@ -20,16 +12,12 @@ type TeleopEnvelope = {
 type ConsentState = {
   trust_remote_code: boolean
   hf_repo_allow: string[]
-  /* Q119: the two policy allowlists. Absent from an older server — an empty list is then correct,
-     because that server could not have granted one. */
   policy_type_allow?: string[]
   policy_host_allow?: string[]
   /* Absent from an older server: this screen listed two of the three kinds and the teleop envelope
      widening — the grant with physical reach — could not be seen or revoked here. */
   teleop_degree_units?: TeleopEnvelope
-  /* Q80: the agent's permission to START physical motion by itself. Absent from an older server. */
   agent_physical_motion?: boolean
-  /* Q81: the one entry that TIGHTENS instead of loosening. Absent from an older server. */
   locks?: { task_requires_confirm: boolean; task_requires_confirm_env: string }
   env_file?: string
 }
@@ -51,9 +39,12 @@ export default function ConsentSettings() {
 
   useEffect(() => { void load() }, [load])
 
-  /* The lock is a plain env var the dashboard reads per request, so flipping it goes through the
-     existing config rail rather than the consent endpoints — /api/consent grants and revokes
-     PERMISSIONS, and pushing a restriction through it would make "revoke" mean two opposite things. */
+  /**
+   * The lock is a plain env var the dashboard reads per request, so flipping it goes through the
+   * existing config rail rather than the consent endpoints — /api/consent grants and revokes
+   * PERMISSIONS, and pushing a restriction through it would make "revoke" mean two opposite
+   * things.
+   */
   const setLock = async (on: boolean) => {
     const key = state?.locks?.task_requires_confirm_env ?? 'STRANDS_DASH_TASK_REQUIRES_CONFIRM'
     setBusy('lock'); setNote(null); setError(null)
@@ -88,9 +79,6 @@ export default function ConsentSettings() {
   if (error && !state) return <p className="hint">could not read permissions: {error}</p>
 
   const envelope = state?.teleop_degree_units
-  // Q121: asked of the payload's shape, not of a list of kind names — the inline conjunction that
-  // used to live here was wrong three times, each time printing "nothing is allowed" over a real
-  // grant. See nothingGranted().
   const nothing = state && nothingGranted(state as unknown as Record<string, unknown>)
 
   return (

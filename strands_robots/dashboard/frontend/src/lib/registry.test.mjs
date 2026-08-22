@@ -1,9 +1,7 @@
-// Run: npx esbuild src/lib/registry.ts --bundle --format=esm --outfile=/tmp/registry.mjs && node src/lib/registry.test.mjs
-//
-// This normaliser exists because rendering a registry entry straight into an <option> IS React error
-// #31 ("objects are not valid as a React child"), which throws during render and takes the whole
-// dashboard down — not just the picker. So it must survive every shape /api/robots/registry has ever
-// answered, and the id it produces must be a real spawn target.
+// Run: npx esbuild src/lib/registry.ts --bundle --format=esm --outfile=/tmp/registry.mjs &&
+// node src/lib/registry.test.mjs This normaliser exists because rendering a registry entry
+// straight into an <option> IS React error #31 ("objects are not valid as a React child"),
+// which throws during render and takes the whole dashboard down — not just the picker.
 import assert from 'node:assert/strict'
 import { normalizeRegistry } from '/tmp/registry.mjs'
 
@@ -27,9 +25,6 @@ assert.deepEqual(normalizeRegistry(['so101', 'g1']), [
 assert.deepEqual(normalizeRegistry([' so101 ']), [{ name: 'so101', label: 'so101' }], 'trimmed')
 assert.deepEqual(normalizeRegistry(['', '   ']), [], 'a blank name is not a robot')
 
-// ── THE MAP SHAPE: the KEY is the id ──
-// A value that is a description used to BECOME the id, so the picker looked right and the spawn asked
-// for a robot that does not exist.
 assert.deepEqual(normalizeRegistry({ so101: 'SO-101 6-DOF arm' }), [
   { name: 'so101', label: 'so101 — SO-101 6-DOF arm' },
 ])

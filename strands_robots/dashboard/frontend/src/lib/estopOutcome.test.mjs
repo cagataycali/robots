@@ -1,15 +1,13 @@
-// Assertions for what the sheet may claim when a STOP ALL request fails
-// (lib/estopOutcome.ts).
-// Run: npx esbuild src/lib/estopOutcome.ts --bundle --format=esm --outfile=/tmp/estopOutcome.mjs \
-//        && node src/lib/estopOutcome.test.mjs
+// Assertions for what the sheet may claim when a STOP ALL request fails (lib/estopOutcome.ts).
+// Run: npx esbuild src/lib/estopOutcome.ts --bundle --format=esm
+// --outfile=/tmp/estopOutcome.mjs \ && node src/lib/estopOutcome.test.mjs
 import assert from 'node:assert/strict'
 
 const { estopFailureVerdict, resumeFailureVerdict, refusedBeforeActing } =
   await import('/tmp/estopOutcome.mjs')
 
-// THE BUG: fetch rejects (HttpError status 0) both for a request that never left
-// the machine and for one that ran and lost its answer. "Nothing was sent" is
-// therefore unprovable — and on an e-stop it is the expensive direction to guess.
+// THE BUG: fetch rejects (HttpError status 0) both for a request that never left the machine
+// and for one that ran and lost its answer.
 {
   const v = estopFailureVerdict({ status: 0, message: 'cannot reach robots.cagatay.my: Load failed' })
   assert.equal(v.delivered, 'unknown')

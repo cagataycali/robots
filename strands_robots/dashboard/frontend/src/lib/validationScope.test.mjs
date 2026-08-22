@@ -3,11 +3,9 @@ import { validationScope, changedKeys } from '/tmp/validationScope.mjs'
 
 const V = { provider: 'lerobot_local', config: { pretrained_name_or_path: 'HashtagRobotics/smolvla-a', device: 'mps' } }
 
-// --- THE DEFECT -------------------------------------------------------------
-// validate() vouches for the config in the form; the verdict was cleared on ONE
-// event only (changing the provider). So pasting a different checkpoint left
-// "✓ lerobot_local resolves" in green about a policy nobody checked - and the
-// next click is ▶ Run on a real arm.
+// --- THE DEFECT ------------------------------------------------------------- validate()
+// vouches for the config in the form; the verdict was cleared on ONE event only (changing the
+// provider).
 const swapped = validationScope(V, { provider: 'lerobot_local', config: { pretrained_name_or_path: 'someone/typo-model', device: 'mps' } })
 assert.equal(swapped.applies, false)
 assert.deepEqual(swapped.changed, ['pretrained_name_or_path'])

@@ -5,8 +5,6 @@ import {
 
 const NOW = 1_787_200_000 // seconds
 
-// --- the incident, in the numbers it was measured with -----------------------
-// so101-arm-1: `top` publishing at 4fps, `wrist` captured 37327s (10.4h) earlier.
 {
   const stopped = stoppedCameras({ top: { t: NOW - 0.2 }, wrist: { t: NOW - 37327 } }, NOW)
   assert.equal(stopped.length, 1)

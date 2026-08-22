@@ -1,9 +1,5 @@
 // node assertions over the bundled module (esbuild first — see the sibling
 // calibrateCommand.test.mjs for the same pattern).
-//
-// THE FIXTURE IS REAL: this is exactly what `GET /api/calibration` returned from the running
-// dashboard on 2026-08-21, /Users/cagatay/.cache/huggingface/lerobot/calibration and all. An invented
-// fixture would have been tidy, and tidy is how `None.json` went unnoticed for two days.
 import assert from 'node:assert/strict'
 import { parseCalibrationList, parseCalibrationDetail, idProblem } from '/tmp/calibration.mjs'
 

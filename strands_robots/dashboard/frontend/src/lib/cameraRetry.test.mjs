@@ -5,9 +5,6 @@ import assert from 'node:assert/strict'
 
 const { planRetry, backoffMs, MAX_RETRY_MS, MIN_USEFUL_OPEN_MS } = await import('/tmp/cameraRetry.mjs')
 
-// THE MEASURED INCIDENT (Q40): a socket that is accepted and then closed with nothing
-// sent must be counted as a FAILURE. This is the whole bug: onopen reset the counter,
-// so the delay stayed at 1s and a phone on cellular opened 63,906 sockets in 10 hours.
 {
   let attempt = 0
   let elapsed = 0
@@ -74,11 +71,6 @@ const { planRetry, backoffMs, MAX_RETRY_MS, MIN_USEFUL_OPEN_MS } = await import(
 
 console.log('cameraRetry: all assertions passed')
 
-// --- Q51: a stream that keeps dying after a few frames is churn, not health ---------
-// MEASURED: one cellular phone reopened /ws/camera/so101-arm-1/top 1.55x/s for 11 hours,
-// while the server side of that very tile was healthy (42 frames / 4.1 MB in 9s from
-// localhost = 0.45 MB/s). Those sockets almost certainly DID carry a frame or two, and
-// `frames > 0` reset the delay to 1s — the generous rule is what sustained the storm.
 {
   const { CHURN_FLOOR_MS, CHURN_OPENS_PER_MIN } = await import('/tmp/cameraRetry.mjs')
   let attempt = 0, elapsed = 0, opens = 0
@@ -127,9 +119,6 @@ console.log('cameraRetry: all assertions passed')
 }
 console.log('cameraRetry: Q51 churn assertions ok')
 
-// Q88: a LAPSED SIGN-IN outranks every socket-shaped rule. Measured on the live rig: 19.3 hours of
-// refused reopens because the server answered the handshake with 403 — which carries no close code,
-// so `code === 1008` never fired and "frames are evidence" had nothing to say either.
 {
   const stop = planRetry({ attempt: 3, frames: 0, openMs: undefined, sessionExpired: true })
   assert.equal(stop.delayMs, null, 'a lapsed sign-in must stop the loop, not slow it')
@@ -144,19 +133,14 @@ console.log('cameraRetry: Q51 churn assertions ok')
 }
 console.log('cameraRetry: Q88 expired-session assertions ok')
 
-// ── Q102: refused, not broken ──────────────────────────────────────────────────────────────────────
-// The middleware closes a credential-refused websocket BEFORE accepting, so uvicorn fails the
-// handshake and the browser reports 1006 — the `code === 1008` rule below can never see it from a
-// browser. Q88 caught the case where the token is decodably EXPIRED. A token that is merely INVALID
-// (rotated by a dashboard restart, a stale ?token= link, a revoked session) has nothing in it to read,
-// and AuthGate cannot rescue the page: its check is a useEffect with [] deps, once on mount, no poll.
 const refused = planRetry({ attempt: 4, frames: 0, code: 1006, pageRefused: true })
 assert.equal(refused.delayMs, null, 'retrying a door that said no is not resilience')
 assert.match(refused.reason, /sign in again/)
 assert.match(refused.reason, /never asked/, 'and it must not read as a camera fault')
 
-// It outranks nothing it should not: an ESTABLISHED stream that drops while some unrelated request
-// 401s is a camera event, and calling that unauthorized would hide a hardware fault behind a login.
+// It outranks nothing it should not: an ESTABLISHED stream that drops while some unrelated
+// request 401s is a camera event, and calling that unauthorized would hide a hardware fault
+// behind a login.
 const droppedWhileRefused = planRetry({ attempt: 1, frames: 40, openMs: 9_000, pageRefused: true })
 assert.notEqual(droppedWhileRefused.delayMs, null)
 assert.match(droppedWhileRefused.reason, /delivered frames/)
@@ -170,10 +154,6 @@ assert.equal(planRetry({ attempt: 2, frames: 0, pageRefused: false }).delayMs !=
 
 console.log('cameraRetry: Q102 refused-not-broken ok')
 
-// --- Q156: the ceiling, pinned by name ----------------------------------------------
-// cameraState.retryDelayMs was kept as a duplicate "so the timing stays comparable" and
-// nothing ever compared them: it capped at 10s, this caps at 30s. The duplicate is gone;
-// what is left is this assertion, so the real ceiling is a fact rather than a comment.
 {
   assert.equal(MAX_RETRY_MS, 30_000, 'the ceiling is 30s — the retired duplicate said 10s')
   assert.equal(backoffMs(4), 8000, 'still doubling below the ceiling')
