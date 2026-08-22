@@ -37,8 +37,10 @@ HASHED = [
     r"C:\\dist\\assets\\index-BGRlFtdn.js",
     # Q177, THE RED THAT MADE THIS FILE'S COLOUR A FUNCTION OF THE LAST npm run build: vite hashes are
     # base64URL, so a '-' or '_' can land INSIDE the hash. These two are the real main bundle and css
-    # of the dist on this machine - the charset [A-Za-z0-9_]{8,} could not parse the first one, so the
-    # app's own entry chunk was served revalidate-on-every-load while the guard reported a defect.
+    # of the dist on this machine - the charset [A-Za-z0-9_]{8,} could not parse the first one.
+    # (Serving was never affected: both call sites keep the assets/ directory, which is immutable by
+    # the directory rule regardless of the name. The bare-name patterns are a belt for a future call
+    # site that loses the directory — and this guard's own fixtures.)
     "index-BBNIi-aw.js",
     "index-8Y9f9e6n.css",
     "index-BB_NIi-aw.js",
@@ -67,7 +69,14 @@ UNHASHED = ["apple-touch-icon.png", "maskable-192.png", "icon-192.png", "icon.sv
             # hyphenated hand-written name is only kept out by the MIXED-CASE demand. All-lowercase
             # with a digit is what a person writes; upper+lower is what a base64url hash has.
             "camera-preview-fullscreen.png", "sw-registration-helper-2.js",
-            "robot-arm-preview-192.png"]
+            "robot-arm-preview-192.png",
+            # Q184: the fixtures above shared the widened rule's blind spot — all lowercase, so
+            # "demand mixed case" looked sufficient while any CAPITALISED kebab/TitleCase name at
+            # the dist root got a year-long immutable cache. These are the measured escapees: both
+            # patterns matched all three (TitleCase IS mixed case). A hash tell is a digit or an
+            # internal -/_ in a non-word-shaped tail; a person writes words.
+            "Logo-Wordmark.png", "hero-BannerImage.png", "icon-Placeholder.svg",
+            "My-Logo-Wordmark.png"]
 
 
 @pytest.mark.parametrize("name", HASHED)

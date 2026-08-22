@@ -289,19 +289,35 @@ def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
         )
 
 _HASHED_EXT = r"(?:js|css|woff2?|png|svg|jpg|jpeg|webp|ico)"
+# Q184: a HUMAN-WORD tail — TitleCase words, optionally -/_ joined, no digits. That is what a
+# person writes (Logo-Wordmark, hero-BannerImage, icon-Placeholder) and what a random base64url
+# hash essentially never is (Q116's digit-less BGRlFtdn has consecutive capitals, so it does not
+# fit). Measured 2026-08-22: BOTH patterns below matched all three of those names — "mixed case"
+# alone is a hash tell only against lowercase kebab-case, not against TitleCase. Misreading a rare
+# word-shaped hash costs one 304 revalidation; a year-long immutable cache on a hand-written name
+# cannot be fixed from here, so the guard errs toward no-cache.
+_WORDLIKE_TAIL = r"(?:[A-Z][a-z]+)(?:[-_]?[A-Z][a-z]+)*"
 # A hash with no '-' in it: a digit or mixed case is tell enough (Q116 - one vite hash in four has
-# no digit at all, so "must contain a digit" refused a real main bundle).
+# no digit at all, so "must contain a digit" refused a real main bundle), EXCEPT the word-shaped
+# names Q184 carves back out.
 _HASHED_NAME = re.compile(
-    r".+-(?=[A-Za-z0-9_]*(?:[0-9]|[a-z][A-Za-z0-9_]*[A-Z]|[A-Z][A-Za-z0-9_]*[a-z]))"
+    r".+-(?!" + _WORDLIKE_TAIL + r"\.)"
+    r"(?=[A-Za-z0-9_]*(?:[0-9]|[a-z][A-Za-z0-9_]*[A-Z]|[A-Z][A-Za-z0-9_]*[a-z]))"
     r"[A-Za-z0-9_]{8,}\." + _HASHED_EXT
 )
 # Q177: vite hashes are base64URL, so '-' appears INSIDE the hash - index-BBNIi-aw.js, the real main
 # bundle of this dist, which the charset above cannot parse. A hyphen is also what hand-written
-# kebab-case names are made of, so this variant demands MIXED CASE (an upper AND a lower letter):
-# camera-preview-2x.png and apple-touch-icon-192.png are lowercase+digit and stay revalidated, while
-# a year-long immutable cache on a name that never changes would be unfixable from here.
+# kebab-case names are made of, so this variant demands MIXED CASE plus (Q184) a digit OR an
+# internal -/_ flanked by alphanumerics, and refuses the word-shaped tails outright:
+# camera-preview-2x.png and apple-touch-icon-192.png are lowercase+digit and stay revalidated,
+# Logo-Wordmark.png is mixed-case but word-shaped and stays revalidated too. This pattern is a BELT
+# for a call site that loses the directory: both current call sites keep it (server passes the full
+# file path / URL sub-path), so assets/* is already immutable via the directory rule above.
 _HASHED_BASE64URL = re.compile(
-    r".+-(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])[A-Za-z0-9_-]{8,}\." + _HASHED_EXT
+    r".+-(?!" + _WORDLIKE_TAIL + r"\.)"
+    r"(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])"
+    r"(?=[A-Za-z0-9_-]*(?:[0-9]|[A-Za-z0-9][-_][A-Za-z0-9]))"
+    r"[A-Za-z0-9_-]{8,}\." + _HASHED_EXT
 )
 
 
