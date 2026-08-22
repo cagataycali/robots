@@ -147,3 +147,24 @@ register_transform("my_v2v", lambda: MyTransform)
 
 The base class owns the dataset plumbing, pass-through, provenance and
 re-validation gate, so a backend cannot accidentally weaken them.
+
+`transform_frames` is called with the determinism key's two per-call inputs,
+`source_episode` and `variant`, and owns one obligation of its own: refuse a
+value either is not. Both are non-negative whole numbers - together with
+`spec.seed` they are spread through one `SeedSequence` by `derive_variant_seed`,
+so an unusable value on any of the three names a stream another variant already
+owns rather than failing:
+
+```python
+from strands_robots.utils import non_negative_whole_number_error
+
+for name, value in (("source_episode", source_episode), ("variant", variant)):
+    if text := non_negative_whole_number_error(value, name, "my_v2v.transform_frames"):
+        raise ValueError(text)
+```
+
+`derive_variant_seed` applies the same rule to all three, so a backend that
+always derives a key inherits it - but refuse in `transform_frames` too, because
+a backend need not derive one at all (`mock`'s explicit `pixel_shift` mode reads
+no key), and because the refusal should name the counter rather than whatever
+the pipeline seam happens to complain about first.
