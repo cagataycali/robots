@@ -5,7 +5,11 @@ export interface PairInput extends HostInput {
   role?: string | null
   role_volts?: number | null
   role_source?: string | null
+  /** presence.robot_type — 'sim' means pixels, anything else is treated as metal */
+  robot_type?: string | null
 }
+
+const isSim = (p: PairInput | undefined): boolean => p?.robot_type === 'sim'
 
 export interface LeaderOption {
   peer_id: string
@@ -27,6 +31,25 @@ export interface PairPlan {
   consents: TeleopConsent[]
   /** true but not disqualifying — evidence the operator should read */
   notes: string[]
+  /** does starting this pair move METAL? false only when the follower says it is a sim */
+  physical: boolean
+}
+
+/**
+ * Is this peer the thing to teleop at all? A PROCESS card (a sim twin, a multi-robot host)
+ * has no joints of its own — the arm lives on a child peer, and the screen should send the
+ * operator there instead of listing refusals it can never satisfy.
+ */
+export function teleopSubject(peerId: string, peers: PairInput[] | null | undefined): { children: string[]; why: string } | null {
+  const list = (peers ?? []).filter(p => p && p.peer_id)
+  const host = armHosts(list)[peerId]
+  if (!host) return null
+  return {
+    children: host.children,
+    why: host.children.length === 1
+      ? `this is the process, not the arm — the robot inside it is ${host.children[0]}`
+      : `this is the process, not the arm — it hosts ${host.children.join(', ')}`,
+  }
 }
 
 const jointCount = (p: PairInput | undefined): number =>
@@ -50,6 +73,13 @@ export function leaderOptions(followerId: string, peers: PairInput[] | null | un
     }
     if (isChildOf(p.peer_id, followerId) || isChildOf(followerId, p.peer_id)) {
       out.push({ peer_id: p.peer_id, ok: false, why: 'the same robot as the follower, under its process name' })
+      continue
+    }
+    if (isSim(p)) {
+      // A sim publishes joints too, but there is nothing to hand-guide: its joints move
+      // when a task, a policy or a replay drives them.
+      out.push({ peer_id: p.peer_id, ok: true,
+        why: 'simulated — nothing to hand-guide; its joints move when a task or replay drives it' })
       continue
     }
     out.push({ peer_id: p.peer_id, ok: true,
@@ -87,13 +117,19 @@ export function pairPlan(followerId: string, leaderId: string, peers: PairInput[
   if (follower?.role === 'leader' && follower.role_source === 'measured')
     notes.push(`${followerId} measures as a LEADER (${follower.role_volts ?? '?'}V) — it is about to be DRIVEN, so make sure that is the arm you want moving`)
 
+  // A sim follower moves PIXELS: no physical-motion grant to collect, and the confirm can say so.
+  // Unknown robot_type errs toward metal, exactly as runRisk does — a needless grant costs a click,
+  // a missing one costs a collision.
+  const physical = !isSim(follower)
+  if (!physical) notes.push(`${followerId} is simulated — nothing physical moves when it follows`)
+
   return {
-    leader: leaderId, follower: followerId, blockers, notes,
-    // Both grants are asked for BEFORE anything is sent. agent_physical_motion because frames move
-    // a real arm; teleop_degree_units because an SO-101 publishes degrees into a radian envelope
-    // and every frame would otherwise be refused — the failure that took a log dive to find the
-    // first time.
-    consents: ['agent_physical_motion', 'teleop_degree_units'],
+    leader: leaderId, follower: followerId, blockers, notes, physical,
+    // Grants asked for BEFORE anything is sent. agent_physical_motion only when frames move
+    // metal; teleop_degree_units always, because an SO-101 leader publishes degrees into a
+    // radian envelope (sim or real) and every frame would otherwise be refused — the failure
+    // that took a log dive to find the first time.
+    consents: physical ? ['agent_physical_motion', 'teleop_degree_units'] : ['teleop_degree_units'],
   }
 }
 

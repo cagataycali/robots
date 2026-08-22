@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { leaderOptions, pairPlan, pairSentence } from '/tmp/teleopPair.mjs'
+import { leaderOptions, pairPlan, pairSentence, teleopSubject } from '/tmp/teleopPair.mjs'
 
 // This fleet, as it actually is today: two real arms reporting NO joints, a simulator process with 0
 // joints, and the robot under it with 6.
@@ -67,4 +67,35 @@ assert.match(pairSentence(shapes), /f could follow l · /)
 // Degenerate asks produce nothing rather than a guess.
 for (const bad of [['', 'l'], ['f', ''], ['f', 'f']]) assert.equal(pairPlan(bad[0], bad[1], FLEET), null)
 assert.equal(pairSentence(null), null)
+
+// SIM-AWARENESS (phase-0 forensics: teleoping the sim was gated and worded as if metal moved).
+const SIM_FLEET = [
+  { peer_id: 'real-leader', joints: 6, role: 'leader', role_volts: 7.4, role_source: 'measured' },
+  { peer_id: 'sim-arm', joints: 6, robot_type: 'sim' },
+]
+// A sim follower collects NO physical-motion grant — pixels move, not metal.
+const simPlan = pairPlan('sim-arm', 'real-leader', SIM_FLEET)
+assert.equal(simPlan.physical, false)
+assert.deepEqual(simPlan.consents, ['teleop_degree_units'], 'the unit envelope still applies in sim; motion consent does not')
+assert.ok(simPlan.notes.some(n => /nothing physical moves/.test(n)), 'the plan says why the gate is lighter')
+// A metal follower keeps both grants, and an UNKNOWN follower is treated as metal (runRisk law).
+const metalPlan = pairPlan('real-leader', 'sim-arm', SIM_FLEET)
+assert.equal(metalPlan.physical, true)
+assert.deepEqual(metalPlan.consents, ['agent_physical_motion', 'teleop_degree_units'])
+const unknownPlan = pairPlan('mystery', 'real-leader', [...SIM_FLEET, { peer_id: 'mystery', joints: 6 }])
+assert.equal(unknownPlan.physical, true, 'a peer that did not say it is a sim is treated as metal')
+// A sim offered as leader is not described in wiring words — there is nothing to hand-guide.
+const simLead = leaderOptions('real-leader', SIM_FLEET).find(o => o.peer_id === 'sim-arm')
+assert.equal(simLead.ok, true)
+assert.match(simLead.why, /simulated/)
+assert.doesNotMatch(simLead.why, /wired/, 'a sim has no wiring to measure')
+
+// teleopSubject: a PROCESS card redirects to the arm inside it; an arm is its own subject.
+assert.equal(teleopSubject('so101-follower', FLEET), null)
+const subj = teleopSubject('so101-follower-twin', FLEET)
+assert.deepEqual(subj.children, ['so101-follower-twin__so101'])
+assert.match(subj.why, /this is the process, not the arm/)
+assert.match(subj.why, /so101-follower-twin__so101/, 'the redirect names where to go')
+assert.equal(teleopSubject('so101-follower-twin', null), null, 'no fleet, no verdict')
+
 console.log('teleopPair: all assertions passed')

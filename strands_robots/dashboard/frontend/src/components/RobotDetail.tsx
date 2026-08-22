@@ -6,7 +6,7 @@ import { useTask } from '../lib/useTask'
 import { twinButtonCopy } from '../lib/twinButton'
 import { statusSentence, peerStatusFields } from '../lib/statusSentence'
 import { teleopView, stopVerdict, startVerdict, type TeleopView } from '../lib/teleopView'
-import { leaderOptions, pairPlan, type PairInput } from '../lib/teleopPair'
+import { leaderOptions, pairPlan, teleopSubject, type PairInput } from '../lib/teleopPair'
 import { useJointFailure } from '../lib/useJointFailure'
 import { api } from '../lib/endpoints'
 import { useTelemetry } from '../lib/useTelemetry'
@@ -26,12 +26,14 @@ function fmt(v: unknown): string {
 }
 
 /** Single-robot stage: one big camera, the whole joint table, and the policy's own step stream. */
-export default function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onClose }: {
+export default function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onClose }: {
   peer: Peer
   /** a '<id>-twin' peer is live in the fleet */
   twinLive?: boolean
   hostsChildren?: string[] | null
   fleet?: PairInput[] | null
+  /** open another peer's detail — the host→arm teleop redirect uses it */
+  onOpen?: (peerId: string) => void
   onClose: () => void
 }) {
   const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer)
@@ -205,6 +207,25 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             )}
             {/* U22 slice 3a: what would it TAKE to teleop this arm? */}
             {!teleop.streaming && (fleet?.length ?? 0) > 0 && (() => {
+              // A PROCESS card (a sim twin, a multi-robot host) is not the thing to teleop:
+              // the arm lives on a child peer — send the operator there instead of listing
+              // leader refusals this card can never satisfy.
+              const subject = teleopSubject(peer.peer_id, fleet!)
+              if (subject) {
+                return (
+                  <div className="small muted">
+                    {subject.why}
+                    <div className="row small">
+                      {subject.children.map(c => (
+                        <button key={c} className="btn ghost small" onClick={() => onOpen?.(c)}
+                                disabled={!onOpen} title={`open ${c} — teleop starts from the arm itself`}>
+                          open {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              }
               const opts = leaderOptions(peer.peer_id, fleet!)
               const usable = opts.filter(o => o.ok)
               if (usable.length) {
@@ -213,21 +234,27 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                   <div className="small muted">
                     could follow: {usable.map(o => `${o.peer_id} (${o.why})`).join(', ')}
                     {plan && !plan.blockers.length && (
-                      <> · starting asks for {plan.consents.join(' + ')} first, because frames move a real arm</>
+                      <> · starting asks for {plan.consents.join(' + ')} first, {plan.physical
+                        ? 'because frames move a real arm'
+                        : 'because raw degree frames are refused by the unit envelope even in sim'}</>
                     )}
                     {plan?.notes.map((n, i) => <div key={i}>{n}</div>)}
                     {/* One armed step per candidate leader. */}
                     <div className="row small">
                       {usable.map(o => (startArmed === o.peer_id ? (
                         <span key={o.peer_id} className="row small">
-                          <button className="btn danger" onClick={() => startTeleop(o.peer_id)}>
-                            confirm — hand-guide {o.peer_id}, and {peer.peer_id} MOVES with it
+                          <button className={plan?.physical === false ? 'btn' : 'btn danger'} onClick={() => startTeleop(o.peer_id)}>
+                            {plan?.physical === false
+                              ? `confirm — ${peer.peer_id} (sim) follows ${o.peer_id}; nothing physical moves`
+                              : `confirm — hand-guide ${o.peer_id}, and ${peer.peer_id} MOVES with it`}
                           </button>
                           <button className="btn ghost" onClick={() => setStartArmed(null)}>cancel</button>
                         </span>
                       ) : (
                         <button key={o.peer_id} className="btn ghost small" onClick={() => setStartArmed(o.peer_id)}
-                                title={`${peer.peer_id} will follow ${o.peer_id}'s joints and move`}>
+                                title={plan?.physical === false
+                                  ? `${peer.peer_id} is simulated — it will mirror ${o.peer_id}'s joints in the sim`
+                                  : `${peer.peer_id} will follow ${o.peer_id}'s joints and move`}>
                           follow {o.peer_id}
                         </button>
                       )))}
