@@ -134,8 +134,12 @@ class TestSceneObjectExtraction:
         assert objs["cap"].size == pytest.approx((0.2, 0.2, 0.6))
         # ellipsoid uses its three semi-axes directly.
         assert objs["elli"].size == pytest.approx((0.2, 0.4, 0.6))
-        # a single-size cylinder degrades to a radius-cube.
-        assert objs["cyl1"].size == pytest.approx((0.1, 0.1, 0.1))
+        # A cylinder carrying one size component is not a shape MuJoCo compiles
+        # ("size 1 must be positive in geom") -- that spelling only means
+        # something alongside ``fromto``, which supplies the axis extent. With no
+        # ``fromto`` there is no segment to measure, so the loader leaves the
+        # caller's fallback rather than inventing a radius-sized cube.
+        assert objs["cyl1"].size == pytest.approx((0.05, 0.05, 0.05))
 
     def test_malformed_scene_and_missing_worldbody_fail_loud(self, tmp_path):
         with pytest.raises(FileNotFoundError):
