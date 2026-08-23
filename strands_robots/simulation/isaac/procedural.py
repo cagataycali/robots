@@ -62,13 +62,40 @@ class ProceduralRobot:
         return [j.name for j in self.joints if j.joint_type != "fixed"]
 
 
+def _body_label(robot: ProceduralRobot, index: int) -> str:
+    """Render a body index as ``index (name)`` for a refusal message.
+
+    A caller who wrote a URDF named links, not indices, so the name is what
+    makes the offender locatable. An out-of-range index is reported bare
+    rather than guessed at -- body-index validity is not this helper's
+    question.
+    """
+    if 0 <= index < len(robot.bodies):
+        return f"{index} ({robot.bodies[index].name})"
+    return str(index)
+
+
 def _validate_kinematic_tree(robot: ProceduralRobot) -> None:
-    """Fail-fast guard: reject duplicate (parent, child) body edges.
+    """Fail-fast guard: every body is reached by at most one joint.
 
     A USD/MuJoCo articulation requires a tree where each non-root link has
-    exactly one inbound joint. Two joints sharing the same ``(parent_body,
-    child_body)`` edge violate that invariant and would surface two layers
-    down as a cryptic articulation error at instantiation time.
+    exactly one inbound joint, so a body is never reached twice and never
+    parented to itself. Three shapes violate that invariant and would each
+    surface two layers down as a cryptic articulation error at instantiation
+    time:
+
+      * Two joints sharing one ``(parent_body, child_body)`` edge -- an MJCF
+        body carrying two ``<joint>`` children, i.e. a 2-DOF compound joint.
+      * Two joints naming the same ``child_body`` with *different* parents,
+        i.e. a link with two parents. URDF spells ``<parent>`` and
+        ``<child>`` explicitly per joint, so a generated or hand-edited file
+        expresses this as easily as a well-formed chain.
+      * A joint whose ``parent_body`` is its own ``child_body``.
+
+    Each is reported separately because the remedies differ: a compound
+    joint is split with an intermediate massless link, whereas a link with
+    two parents carries one joint too many and inserting a link would not
+    help.
 
     Validation runs unconditionally on every procedural builder + every
     URDF / MJCF / USD loader: shipping a robot we know cannot instantiate
@@ -82,6 +109,12 @@ def _validate_kinematic_tree(robot: ProceduralRobot) -> None:
     joint has its own ``(parent, child)`` edge. ``_build_unitree_g1`` is the
     canonical example -- six ``*_link`` intermediate bodies split the
     hip / ankle / arm 2-DOF axes.
+
+    Multiple *roots* are not an error: a body with no inbound joint is a
+    root, and ``_build_unitree_g1`` ships two of them, as does an MJCF whose
+    ``<worldbody>`` declares several top-level bodies. Connectivity and
+    general acyclicity are therefore out of scope for this guard -- it
+    answers how many joints reach a body, not whether every body is reached.
     """
     from collections import Counter
 
@@ -92,6 +125,25 @@ def _validate_kinematic_tree(robot: ProceduralRobot) -> None:
         raise ValueError(
             f"{robot.name}: duplicate parent->child body edges: {offenders}. "
             f"Insert intermediate massless link bodies before instantiating articulation."
+        )
+
+    self_parented = [j.name for j in robot.joints if j.parent_body == j.child_body]
+    if self_parented:
+        raise ValueError(
+            f"{robot.name}: joints whose parent_body is their own child_body: {self_parented}. "
+            f"A joint connects two distinct bodies; re-point its parent_body or child_body."
+        )
+
+    inbound: dict[int, list[str]] = {}
+    for joint in robot.joints:
+        inbound.setdefault(joint.child_body, []).append(joint.name)
+    multi = {child: names for child, names in sorted(inbound.items()) if len(names) > 1}
+    if multi:
+        reached_twice = {_body_label(robot, child): names for child, names in multi.items()}
+        raise ValueError(
+            f"{robot.name}: bodies reached by more than one joint: {reached_twice}. "
+            f"A tree articulation reaches each body through exactly one joint, so one of "
+            f"these joints is redundant -- drop it or re-point its child_body."
         )
 
 
