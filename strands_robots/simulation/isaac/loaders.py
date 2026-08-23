@@ -940,6 +940,12 @@ def _mjcf_model_toplevel(root: ET.Element, base_dir: str, _seen: frozenset[str] 
     return out
 
 
+# MJCF's implicit root default class. MuJoCo names it and will not let a model
+# rename it, so this is the one spelling a file can use for the root besides
+# leaving the top-level ``<default>`` unnamed.
+_MJCF_ROOT_DEFAULT_CLASS = "main"
+
+
 def _mjcf_geom_defaults(root: ET.Element, base_dir: str) -> dict[str, dict[str, str]]:
     """Every ``<default>`` class's effective ``<geom>`` attributes, flattened.
 
@@ -959,10 +965,10 @@ def _mjcf_geom_defaults(root: ET.Element, base_dir: str) -> dict[str, dict[str, 
     for ``<compiler>`` and ``<asset>``.
 
     Returns a mapping from class name to that class's merged ``<geom>``
-    attributes, with the root class under ``""``. A class a geom names but no
-    ``<default>`` declares contributes nothing rather than failing the load:
-    MuJoCo refuses such a model itself, and naming the offending class is its
-    report to make.
+    attributes, with the root class under both of the spellings that reach it -
+    ``""`` and ``"main"``. A class a geom names but no ``<default>`` declares
+    contributes nothing rather than failing the load: MuJoCo refuses such a
+    model itself, and naming the offending class is its report to make.
     """
 
     def _geom_attrs_of(default_el: ET.Element) -> dict[str, str]:
@@ -971,21 +977,36 @@ def _mjcf_geom_defaults(root: ET.Element, base_dir: str) -> dict[str, dict[str, 
             return {}
         return {k: v for k, v in geom_el.attrib.items() if k != "class"}
 
-    classes: dict[str, dict[str, str]] = {"": {}}
+    classes: dict[str, dict[str, str]] = {"": {}, _MJCF_ROOT_DEFAULT_CLASS: {}}
 
-    def _flatten(default_el: ET.Element, inherited: dict[str, str]) -> None:
+    def _flatten(default_el: ET.Element, inherited: dict[str, str]) -> dict[str, str]:
         merged = {**inherited, **_geom_attrs_of(default_el)}
         classes[default_el.get("class", "")] = merged
         for nested in default_el.findall("default"):
             _flatten(nested, merged)
+        return merged
 
-    # A compilable model has exactly one top-level ``<default>`` - MuJoCo
-    # refuses a second ("top-level default class 'main' cannot be renamed") - so
-    # every class reachable from a spliced fragment is a descendant of one root,
-    # and a plain recursion from each is the whole tree.
     for el in _mjcf_model_toplevel(root, base_dir):
         if el.tag == "default":
-            _flatten(el, {})
+            # A top-level ``<default>`` is the root class under either of two
+            # spellings: MuJoCo names it ``main`` and refuses to let it be
+            # renamed ("top-level default class 'main' cannot be renamed"), so a
+            # file may leave it unnamed or write ``class="main"`` and mean the
+            # same class. A geom reaches it by the same two names, plus by
+            # naming no class at all. Keying it on whichever spelling the file
+            # used loses every geom that arrives by the other one - which is the
+            # whole model when the two disagree, and they disagree in shipped
+            # assets: Menagerie's ``pal_tiago_dual`` writes ``class="main"`` and
+            # gives none of its 46 geoms a class, so 34 of them report the
+            # fallback box for the ``type="mesh"`` that class declares.
+            #
+            # Registering both spellings cannot shadow a different class,
+            # because neither name is available to one: MuJoCo refuses a nested
+            # ``class="main"`` ("repeated default class name") and a nested
+            # unnamed ``<default>`` ("empty class name").
+            root_attrs = _flatten(el, {})
+            classes[""] = root_attrs
+            classes[_MJCF_ROOT_DEFAULT_CLASS] = root_attrs
     return classes
 
 
