@@ -503,7 +503,23 @@ def load_mjcf(path: str) -> ProceduralRobot:
 
 
 def _extract_mjcf_shape(body_el: ET.Element) -> tuple[str, tuple[float, ...]]:
-    """Best-effort MJCF body -> (shape, shape_size) extraction from first <geom>."""
+    """Best-effort MJCF body -> (shape, shape_size) extraction from first <geom>.
+
+    A capsule or cylinder may spell its axis extent with ``fromto`` instead of
+    ``pos`` + ``size``, in which case ``size`` holds only the radius and the
+    endpoints carry the length - the same two spellings
+    :func:`_geom_aabb` consults :func:`_parse_fromto` for on the scene-object
+    side, and the fixed-component rule
+    :func:`strands_robots.simulation.mujoco.scene_ops.fromto_fixed_size_components`
+    states for the MuJoCo backend. Read as ``size`` alone, such a link reports
+    the 0.05 m default half-length however long the segment is, so the
+    endpoints are consulted first.
+
+    ``fromto`` on a box or ellipsoid squares the cross-section and needs the
+    rotated-box bound; those keep their existing default-box reading, matching
+    the exclusion :func:`_geom_aabb` documents rather than asserting an
+    approximation this does not compute.
+    """
     geom = body_el.find("geom")
     if geom is None:
         return "box", (0.05, 0.05, 0.05)
@@ -524,7 +540,14 @@ def _extract_mjcf_shape(body_el: ET.Element) -> tuple[str, tuple[float, ...]]:
             return "sphere", (sizes[0],)
         return "sphere", (0.05,)
     if gtype in ("cylinder", "capsule"):
-        # MJCF size for capsule/cylinder is (radius, half-length).
+        # MJCF size for capsule/cylinder is (radius, half-length) - but only
+        # for the ``pos`` spelling. With ``fromto`` the endpoints carry the
+        # length and ``size`` holds only the radius, so read them first.
+        segment = _parse_fromto(geom.get("fromto"))
+        if segment is not None:
+            length = _segment_length(segment[0], segment[1])
+            if length > 0.0:
+                return gtype, (sizes[0] if sizes else 0.05, length / 2.0)
         if len(sizes) >= 2:
             return gtype, (sizes[0], sizes[1])
         if len(sizes) == 1:
@@ -1002,6 +1025,19 @@ def _parse_fromto(
     return (parts[0], parts[1], parts[2]), (parts[3], parts[4], parts[5])
 
 
+def _segment_length(p1: tuple[float, float, float], p2: tuple[float, float, float]) -> float:
+    """Length of a ``fromto`` segment - the single owner of that arithmetic.
+
+    Both consumers of a ``fromto`` geom need it: :func:`_segment_aabb` for the
+    AABB a scene object's collision proxy is built from, and
+    :func:`_extract_mjcf_shape` for the half-length a robot link's
+    ``shape_size`` reports. A zero length is MuJoCo's own refusal case
+    ("fromto points too close"), so callers treat ``0.0`` as "no geometry".
+    """
+    delta = tuple(p2[i] - p1[i] for i in range(3))
+    return math.sqrt(sum(d * d for d in delta))
+
+
 def _segment_aabb(
     gtype: str,
     p1: tuple[float, float, float],
@@ -1023,7 +1059,7 @@ def _segment_aabb(
     also refuses ("fromto points too close").
     """
     delta = tuple(p2[i] - p1[i] for i in range(3))
-    length = math.sqrt(sum(d * d for d in delta))
+    length = _segment_length(p1, p2)
     if length <= 0.0:
         return None
     center = tuple((p1[i] + p2[i]) / 2.0 for i in range(3))
