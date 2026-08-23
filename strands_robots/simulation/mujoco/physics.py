@@ -928,7 +928,14 @@ class PhysicsMixin:
                 model defines - an id outside ``[0, model.nbody)`` matches no
                 body, so the geoms the caller asked to skip would be included
                 and could be reported as the obstacle.
-            include_static: Whether to include static geoms.
+            include_static: Whether the ray sees static geoms (a geom on a body
+                with no degrees of freedom - the ground plane, a wall, a fixed
+                fixture). ``False`` casts against the movable scene only, so a
+                clearance check can ask about dynamic obstacles without the
+                static world answering first. Must be a boolean: read by
+                truthiness this flag inverts for exactly the spellings a caller
+                opting out reaches for, since ``"false"``, ``"no"`` and ``"0"``
+                are all truthy.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -974,6 +981,15 @@ class PhysicsMixin:
         if err is not None:
             return err
 
+        # The static filter is a posture flag, so it is held to the shared boolean
+        # domain rather than read by truthiness (the rule ``set_joint_positions``
+        # states for ``hold``): "false", "no" and "0" are all truthy, so every
+        # string spelling of an opt-out would select the include it asks to skip.
+        # Resolved once here so the batch entry point can apply the same value.
+        if text := boolean_flag_error(include_static, "include_static", "raycast"):
+            return {"status": "error", "content": [{"text": text}]}
+        static_filter = 1 if include_static else 0
+
         pnt = np.array(origin_f, dtype=np.float64)
         vec = np.array(direction_f, dtype=np.float64)
         # Normalize direction
@@ -1002,7 +1018,7 @@ class PhysicsMixin:
                 pnt,
                 vec,
                 None,  # geom group filter (None = all)
-                1 if include_static else 0,
+                static_filter,
                 exclusion,
                 geomid,
             )
@@ -2253,6 +2269,7 @@ class PhysicsMixin:
         origin: list[float],
         directions: list[list[float]],
         exclude_body: int = -1,
+        include_static: bool = True,
     ) -> dict[str, Any]:
         """Cast multiple rays from a single origin (e.g., for LIDAR simulation).
 
@@ -2279,6 +2296,14 @@ class PhysicsMixin:
                 string is refused rather than read as one ray per character).
             exclude_body: Body ID whose geoms every ray passes through (``-1`` =
                 exclude nothing); see :meth:`raycast`.
+            include_static: Whether the ray sees static geoms (a geom on a body
+                with no degrees of freedom - the ground plane, a wall, a fixed
+                fixture). ``False`` casts against the movable scene only, so a
+                clearance check can ask about dynamic obstacles without the
+                static world answering first. Must be a boolean: read by
+                truthiness this flag inverts for exactly the spellings a caller
+                opting out reaches for, since ``"false"``, ``"no"`` and ``"0"``
+                are all truthy.
 
         Returns:
             Standard status dict. On success the ``{"json": ...}`` block carries
@@ -2316,6 +2341,14 @@ class PhysicsMixin:
         exclusion, err = _coerce_excluded_body(exclude_body, "multi_raycast", int(model.nbody))
         if err is not None:
             return err
+
+        # Same shared boolean domain :meth:`raycast` applies to this flag and
+        # ``set_joint_positions`` applies to ``hold``, rather than a truthiness
+        # read: "false", "no" and "0" are all truthy, so every string spelling of
+        # an opt-out would select the include the caller asked to switch off.
+        if text := boolean_flag_error(include_static, "include_static", "multi_raycast"):
+            return {"status": "error", "content": [{"text": text}]}
+        static_filter = 1 if include_static else 0
 
         # Validate and normalize EVERY direction before casting anything, so a
         # batch that cannot be cast in full is refused rather than half-cast. The
@@ -2366,7 +2399,7 @@ class PhysicsMixin:
             mj.mj_kinematics(model, data)
             for vec in vectors:
                 geomid = np.array([-1], dtype=np.int32)
-                dist = mj.mj_ray(model, data, pnt, vec, None, 1, exclusion, geomid)
+                dist = mj.mj_ray(model, data, pnt, vec, None, static_filter, exclusion, geomid)
                 results.append(
                     {
                         "distance": float(dist) if dist >= 0 else None,

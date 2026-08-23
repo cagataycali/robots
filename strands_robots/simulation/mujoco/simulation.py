@@ -2926,7 +2926,8 @@ class MuJoCoSimEngine(
         )
         base["methods"]["multi_raycast"] = (
             "(origin: list[float], directions: list[list[float]], "
-            "exclude_body=-1) -> dict  # batch raycast from one origin (e.g. a lidar fan); "
+            "exclude_body=-1, include_static=True) -> dict  # batch raycast from one origin "
+            "(e.g. a lidar fan); "
             "all-or-nothing - a direction it cannot cast refuses the batch instead of "
             "reporting that bearing as a miss"
         )
