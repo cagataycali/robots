@@ -949,15 +949,16 @@ _MJCF_ROOT_DEFAULT_CLASS = "main"
 def _mjcf_geom_defaults(root: ET.Element, base_dir: str) -> dict[str, dict[str, str]]:
     """Every ``<default>`` class's effective ``<geom>`` attributes, flattened.
 
-    MJCF's ``<default>`` elements form a tree: the unnamed top-level element is
-    the root class, a ``<default class="X">`` inherits its enclosing element's
-    attributes, and a ``<geom>`` takes its class's attributes for every
-    attribute it does not spell itself. So ``type``, ``size`` and ``fromto`` -
-    the three attributes that decide what shape a geom is - need not appear on
-    the geom at all. Read as the geom's own attributes alone, a link whose class
-    declares ``type="capsule" size="0.05"`` reports the default box however long
-    its ``fromto`` segment is, which also makes the endpoint reading
-    :func:`_extract_mjcf_shape` performs unreachable for it.
+    MJCF's ``<default>`` elements form a tree: the top-level element is the
+    root class whether or not it names itself, a nested ``<default class="X">``
+    inherits its enclosing element's attributes, and a ``<geom>`` takes its
+    class's attributes for every attribute it does not spell itself. So
+    ``type``, ``size`` and ``fromto`` - the three attributes that decide what
+    shape a geom is - need not appear on the geom at all. Read as the geom's
+    own attributes alone, a link whose class declares ``type="capsule"
+    size="0.05"`` reports the default box however long its ``fromto`` segment
+    is, which also makes the endpoint reading :func:`_extract_mjcf_shape`
+    performs unreachable for it.
 
     ``<default>`` is a top-level element, so it is model-global: the fragment
     declaring a class need not be the fragment declaring the geom, and neither
