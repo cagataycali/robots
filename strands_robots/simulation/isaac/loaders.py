@@ -36,6 +36,7 @@ description file is configured. The loaders here layer on top.
 
 from __future__ import annotations
 
+import math
 import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -978,6 +979,63 @@ def _find_body_mesh(
     return first_any
 
 
+def _parse_fromto(
+    fromto_str: str | None,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    """Parse a geom ``fromto`` into its two endpoints, or ``None``.
+
+    ``fromto`` is MJCF's endpoint spelling for a capsule / cylinder / box /
+    ellipsoid: six numbers giving the two ends of the geom's own axis. It is
+    mutually exclusive with ``pos`` - MuJoCo refuses a geom declaring both -
+    so the endpoint pair is the whole placement, not an offset from one.
+    Anything that is not exactly six parseable numbers returns ``None``:
+    MuJoCo refuses those files outright, so there is no shape to approximate.
+    """
+    if not fromto_str:
+        return None
+    try:
+        parts = [float(p) for p in fromto_str.replace(",", " ").split()]
+    except (ValueError, TypeError):
+        return None
+    if len(parts) != 6:
+        return None
+    return (parts[0], parts[1], parts[2]), (parts[3], parts[4], parts[5])
+
+
+def _segment_aabb(
+    gtype: str,
+    p1: tuple[float, float, float],
+    p2: tuple[float, float, float],
+    radius: float,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    """``(center, half_extent)`` AABB of a ``fromto`` capsule or cylinder.
+
+    The centre is the segment midpoint - what MuJoCo's compiler resolves
+    ``geom_pos`` to for a ``fromto`` geom - and the extent is the exact
+    bound rather than the box of a rotated local box: a capsule is the
+    segment swept by a ball of ``radius``, so every axis grows by the full
+    radius, while a cylinder's cap is a disc perpendicular to the axis and
+    grows by ``radius * sqrt(1 - u_i ** 2)``. For an axis-aligned
+    ``fromto`` - the spelling a robosuite-compiled scene uses - both agree
+    with MuJoCo's own resolved ``geom_pos`` and extent exactly.
+
+    Returns ``None`` for a degenerate (zero-length) segment, which MuJoCo
+    also refuses ("fromto points too close").
+    """
+    delta = tuple(p2[i] - p1[i] for i in range(3))
+    length = math.sqrt(sum(d * d for d in delta))
+    if length <= 0.0:
+        return None
+    center = tuple((p1[i] + p2[i]) / 2.0 for i in range(3))
+    if gtype == "capsule":
+        half = tuple(abs(delta[i]) / 2.0 + radius for i in range(3))
+    else:
+        half = tuple(
+            abs(delta[i]) / 2.0 + radius * math.sqrt(max(0.0, 1.0 - (delta[i] / length) ** 2)) for i in range(3)
+        )
+    return center, half  # type: ignore[return-value]
+
+
 def _geom_aabb(geom: ET.Element) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
     """Return ``(center, half_extent)`` AABB for a collision ``<geom>``.
 
@@ -985,6 +1043,19 @@ def _geom_aabb(geom: ET.Element) -> tuple[tuple[float, float, float], tuple[floa
     capsule / ellipsoid). Mesh / plane / unknown geoms return ``None`` so
     the caller can fall back to other geoms. The geom-local ``pos`` is the
     AABB centre relative to the owning body's frame.
+
+    A capsule or cylinder may spell its placement and axis extent with
+    ``fromto`` instead of ``pos`` + ``size``, in which case the endpoints
+    carry both and ``size`` holds only the radius - the same fixed-component
+    rule
+    :func:`strands_robots.simulation.mujoco.scene_ops.fromto_fixed_size_components`
+    states for the MuJoCo backend. Read as ``pos`` + ``size`` alone such a
+    geom collapses to a ball of that radius at the body origin, losing the
+    length and the offset, so :func:`_parse_fromto` is consulted first.
+    ``fromto`` on a box or ellipsoid additionally squares the cross-section
+    by copying the first ``size`` component and needs the rotated-box bound;
+    those keep returning ``None`` (no analytic AABB) so the caller falls back
+    rather than asserting an approximation this does not compute.
     """
     gtype = geom.get("type", "sphere")
     pos = _parse_xyz(geom.get("pos"))
@@ -1006,15 +1077,20 @@ def _geom_aabb(geom: ET.Element) -> tuple[tuple[float, float, float], tuple[floa
         else:
             return None
     elif gtype in ("cylinder", "capsule"):
-        # MJCF (radius, half-length) along local z.
+        # MJCF spells these either as ``pos`` + ``size="radius half-length"``
+        # along the geom's local z, or as ``fromto`` + ``size="radius"`` with
+        # the endpoints carrying the placement and the axis extent.
+        segment = _parse_fromto(geom.get("fromto"))
+        if segment is not None:
+            return _segment_aabb(gtype, segment[0], segment[1], sizes[0]) if sizes else None
         if len(sizes) >= 2:
             r, hl = sizes[0], sizes[1]
             ext = hl + (r if gtype == "capsule" else 0.0)
             half = (r, r, ext)
-        elif len(sizes) == 1:
-            r = sizes[0]
-            half = (r, r, r)
         else:
+            # One size and no ``fromto`` is not a shape MuJoCo compiles
+            # ("size 1 must be positive in geom"), so there is no geometry
+            # here to approximate.
             return None
     elif gtype == "ellipsoid":
         if len(sizes) >= 3:
