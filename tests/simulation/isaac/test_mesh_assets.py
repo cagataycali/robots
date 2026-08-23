@@ -265,6 +265,128 @@ class TestObjKeywordsAreWhitespaceDelimited:
         assert counts == [3]
 
 
+class TestAnUnterminatedAsciiStlFacetIsRefused:
+    """A facet an ASCII STL never closes must not parse as a smaller mesh.
+
+    The parser flushes a facet on its ``endfacet``, so vertices read before an
+    ``endfacet`` that never arrives stay in ``points`` - and therefore in the
+    bounds :func:`mesh_aabb` reports and the ``extent``
+    :func:`convert_mesh_to_usd` authors - while the triangle they form reaches
+    no face. Accepting that returns a mesh whose bounds describe geometry it
+    does not carry, with nothing raised at all: the silent-proxy failure mode
+    #2459 removed the default box proxy for.
+
+    The binary STL and legacy MSH parsers in this module both refuse a
+    truncated file by reconciling their declared counts against the byte
+    length. An ASCII STL declares no counts, so the open facet is the only
+    thing there is to reconcile - which is why this is the same refusal rather
+    than a new rule.
+    """
+
+    # Two triangles sharing an edge, the second one 9 units tall, written so
+    # each line number below is the one the refusals name.
+    _CLOSED_FACET = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\n"
+    _SPIKE_BODY = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 0 9\nendloop\n"
+
+    def test_a_well_formed_two_facet_file_is_unchanged(self, tmp_path):
+        # The control the three refusals below are measured against: with both
+        # ``endfacet`` lines present this geometry parses, and the 9-unit
+        # triangle is real - so there is something for the others to lose.
+        asset = tmp_path / "closed.stl"
+        asset.write_text(
+            "solid part\n" + self._CLOSED_FACET + self._SPIKE_BODY + "endfacet\nendsolid part\n",
+            encoding="utf-8",
+        )
+        points, counts, _indices = load_mesh_geometry(str(asset))
+        _center, size = mesh_aabb(str(asset))
+        assert len(points) == 4
+        assert counts == [3, 3]
+        assert size[2] == pytest.approx(9.0)
+
+    def test_the_last_facet_without_an_endfacet_is_refused(self, tmp_path):
+        # The headline: the file ends mid-facet, so the spike triangle reaches
+        # no face while its vertices stay in the bounds. Nothing raised, and
+        # mesh_aabb reported the closed file's extent for a one-face mesh.
+        # Shaped like the OBJ tab test above: the diagnosis sits on the branch
+        # that means the parser got it wrong, which for this file is acceptance.
+        asset = tmp_path / "truncated.stl"
+        asset.write_text(
+            "solid part\n" + self._CLOSED_FACET + self._SPIKE_BODY + "endsolid part\n",
+            encoding="utf-8",
+        )
+        try:
+            points, counts, _indices = load_mesh_geometry(str(asset))
+        except ValueError as refused:
+            message = str(refused)
+        else:
+            _center, size = mesh_aabb(str(asset))
+            raise AssertionError(
+                f"an unterminated facet parsed: {len(counts)} of 2 faces from {len(points)} vertices, "
+                f"and the z extent is {size[2]} - the bounds of a triangle the mesh does not carry"
+            )
+        assert "facet left unterminated" in message
+        # Line 11 is the open facet's first vertex; the file's last line is 15.
+        assert ":11:" in message
+        assert "the end of the file" in message
+
+    def test_the_only_facet_unterminated_is_not_reported_as_an_empty_asset(self, tmp_path):
+        # Refused before this change too, but as "no triangle geometry
+        # (empty vertices/faces)" - for a file declaring a facet with three
+        # vertices, which sends a reader looking for the wrong defect.
+        asset = tmp_path / "single.stl"
+        asset.write_text("solid part\n" + self._SPIKE_BODY + "endsolid part\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="facet left unterminated") as refused:
+            load_mesh_geometry(str(asset))
+        message = str(refused.value)
+        assert ":4:" in message
+        assert "no triangle geometry" not in message
+
+    def test_the_refusal_names_the_open_facet_not_the_line_that_closes_the_next_one(self, tmp_path):
+        # A facet keyword arriving before the previous ``endfacet`` used to
+        # accumulate both facets' vertices into one, so the file was refused
+        # for "6 vertices (expected 3)" at line 14 - an arity no facet in the
+        # file declares, blaming the one line that is correct.
+        asset = tmp_path / "mid.stl"
+        asset.write_text(
+            "solid part\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\n"
+            + self._SPIKE_BODY
+            + "endfacet\nendsolid part\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="facet left unterminated") as refused:
+            load_mesh_geometry(str(asset))
+        message = str(refused.value)
+        assert ":4:" in message, f"the open facet's first vertex is on line 4: {message}"
+        assert "the facet starting on line 8" in message
+        assert "6 vertices" not in message
+
+    def test_a_facet_that_really_declares_four_vertices_still_reports_its_arity(self, tmp_path):
+        # The pre-existing refusal for a genuinely malformed facet - one that
+        # opens and closes around four vertices - must survive: the new guard
+        # covers an absent ``endfacet``, not a wrong vertex count.
+        asset = tmp_path / "quad_facet.stl"
+        asset.write_text(
+            "solid part\nfacet normal 0 0 1\nouter loop\n"
+            "vertex 0 0 0\nvertex 1 0 0\nvertex 1 1 0\nvertex 0 1 0\n"
+            "endloop\nendfacet\nendsolid part\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match=r"facet with 4 vertices \(expected 3\)"):
+            load_mesh_geometry(str(asset))
+
+    def test_the_binary_sibling_already_refuses_a_truncated_file(self, tmp_path):
+        # Passes either way, and is the reason this refusal is not a new rule:
+        # the binary parser reconciles its declared triangle count against the
+        # byte length, so a file cut mid-record is refused rather than read as
+        # the triangles that survived.
+        asset = tmp_path / "torn.stl"
+        tri1 = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+        tri2 = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 9.0))
+        asset.write_bytes(_binary_stl([tri1, tri2])[:-50])
+        with pytest.raises(ValueError, match="neither a well-formed binary STL nor an ASCII one"):
+            load_mesh_geometry(str(asset))
+
+
 class TestMeshAabb:
     def test_full_extents_and_center(self, tmp_path):
         asset = tmp_path / "tetra.obj"

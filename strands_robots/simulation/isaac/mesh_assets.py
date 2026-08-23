@@ -209,7 +209,33 @@ def _parse_stl_binary(data: bytes, tri_count: int) -> tuple[list[tuple[float, fl
     return points, counts, indices
 
 
+def _unterminated_facet_error(mesh_path: str, lineno: int, vertex_count: int, before: str) -> ValueError:
+    """The refusal for an ASCII-STL facet still open when something else ends it.
+
+    One wording for both sites - a following ``facet`` keyword, and the end
+    of the file - so the two cannot drift, and each names the line the open
+    facet's first vertex is on, which is the only line that identifies it.
+    """
+    return ValueError(
+        f"STL {mesh_path}:{lineno}: facet left unterminated - {vertex_count} vertices read and no 'endfacet' "
+        f"before {before}, so the triangle they form would be dropped while their coordinates stay in the bounds"
+    )
+
+
 def _parse_stl_ascii(mesh_path: str, data: bytes) -> tuple[list[tuple[float, float, float]], list[int], list[int]]:
+    """Parse an ASCII STL, deduplicating shared vertices.
+
+    A facet is flushed on its ``endfacet``, so a facet still open when the
+    file ends - or when another ``facet`` keyword arrives - is refused rather
+    than left pending. Its vertices are already in ``points``, and therefore
+    in the bounds :func:`mesh_aabb` reports and the ``extent``
+    :func:`convert_mesh_to_usd` authors, while the triangle they form is in
+    no face: accepting one returns bounds for geometry the mesh does not
+    carry, under no error at all. The two binary parsers in this module
+    already refuse a truncated file by reconciling their declared counts
+    against the byte length; this is the same refusal for the format whose
+    triangle count is not declared anywhere but in its structure.
+    """
     text = data.decode("utf-8", errors="replace")
     if not text.lstrip().lower().startswith("solid"):
         raise ValueError(f"STL {mesh_path}: neither a well-formed binary STL nor an ASCII one (no 'solid' header)")
@@ -218,9 +244,11 @@ def _parse_stl_ascii(mesh_path: str, data: bytes) -> tuple[list[tuple[float, flo
     counts: list[int] = []
     indices: list[int] = []
     facet: list[int] = []
+    facet_lineno = 0
     for lineno, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
-        if line.lower().startswith("vertex"):
+        lowered = line.lower()
+        if lowered.startswith("vertex"):
             parts = line.split()
             if len(parts) < 4:
                 raise ValueError(f"STL {mesh_path}:{lineno}: vertex with fewer than 3 components: {line!r}")
@@ -233,13 +261,19 @@ def _parse_stl_ascii(mesh_path: str, data: bytes) -> tuple[list[tuple[float, flo
                 idx = len(points)
                 index_of[vert] = idx
                 points.append(vert)
+            if not facet:
+                facet_lineno = lineno
             facet.append(idx)
-        elif line.lower().startswith("endfacet"):
+        elif lowered.startswith("endfacet"):
             if len(facet) != 3:
                 raise ValueError(f"STL {mesh_path}:{lineno}: facet with {len(facet)} vertices (expected 3)")
             indices.extend(facet)
             counts.append(3)
             facet = []
+        elif lowered.startswith("facet") and facet:
+            raise _unterminated_facet_error(mesh_path, facet_lineno, len(facet), f"the facet starting on line {lineno}")
+    if facet:
+        raise _unterminated_facet_error(mesh_path, facet_lineno, len(facet), "the end of the file")
     if not points or not counts:
         raise ValueError(f"mesh {mesh_path} has no triangle geometry (empty vertices/faces)")
     return points, counts, indices

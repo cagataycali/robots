@@ -403,11 +403,12 @@ def load_mjcf(path: str) -> ProceduralRobot:
 
     model_name = root.get("model", os.path.splitext(os.path.basename(path))[0])
 
-    worldbody = root.find("worldbody")
-    if worldbody is None:
+    mjcf_dir = os.path.dirname(os.path.abspath(path))
+    declares_worldbody, top_bodies = _mjcf_model_worldbody_bodies(root, mjcf_dir)
+    if not declares_worldbody:
         raise ValueError(f"MJCF loader: {path} has no <worldbody>")
 
-    geom_defaults = _mjcf_geom_defaults(root, os.path.dirname(os.path.abspath(path)))
+    geom_defaults = _mjcf_geom_defaults(root, mjcf_dir)
 
     bodies: list[BodyDef] = []
     joints: list[JointDef] = []
@@ -496,13 +497,19 @@ def load_mjcf(path: str) -> ProceduralRobot:
         for child in body_el.findall("body"):
             _walk(child, body_idx, childclass)
 
-    top_bodies = list(worldbody.findall("body"))
     if not top_bodies:
         raise ValueError(f"MJCF loader: {path} <worldbody> has no <body> children (phantom robot guard)")
 
-    world_childclass = worldbody.get("childclass") or ""
+    # Each top-level body inherits its OWN <worldbody>'s childclass: a spliced
+    # model may carry several, and they need not name the same class.
+    body_childclass = {
+        id(body): wb.get("childclass") or ""
+        for wb in _mjcf_model_toplevel(root, mjcf_dir)
+        if wb.tag == "worldbody"
+        for body in wb.findall("body")
+    }
     for body_el in top_bodies:
-        _walk(body_el, parent_idx=0, childclass=world_childclass)
+        _walk(body_el, parent_idx=0, childclass=body_childclass.get(id(body_el), ""))
 
     robot = ProceduralRobot(name=model_name, bodies=bodies, joints=joints)
     _validate_kinematic_tree(robot)
@@ -995,6 +1002,39 @@ def _geom_attrs(geom: ET.Element, defaults: dict[str, dict[str, str]], childclas
     return {**defaults.get(cls, {}), **geom.attrib}
 
 
+def _mjcf_model_worldbody_bodies(root: ET.Element, base_dir: str) -> tuple[bool, list[ET.Element]]:
+    """Whether the model declares a ``<worldbody>``, and its top-level bodies.
+
+    Read from the whole model - the MJCF plus every ``<include>``d fragment, via
+    :func:`_mjcf_model_toplevel` - because MuJoCo splices includes and MERGES
+    every ``<worldbody>`` the spliced model carries, exactly as it treats
+    ``<compiler>`` and ``<asset>`` as model-global. So a model's bodies need not
+    live in the top file, and a model may declare several ``<worldbody>``
+    elements across its fragments.
+
+    Reading only the top file's direct children breaks in two ways, and they
+    fail differently. A model whose ``<worldbody>`` lives entirely in a fragment
+    reads as having none, so the loader refuses a model MuJoCo compiles. A model
+    that keeps some bodies in the top file and includes the rest reads only the
+    ones it can see, silently dropping the others - and their whole subtrees and
+    joints with them - under a successful load.
+
+    Both elements and bodies keep document order, which is the order MuJoCo
+    assigns body indices in.
+
+    Args:
+        root: Parsed ``<mujoco>`` root element.
+        base_dir: Directory the model's own ``<include>`` paths resolve against.
+
+    Returns:
+        ``(declares_a_worldbody, top_level_body_elements)``. The flag separates
+        "no ``<worldbody>`` anywhere in the model" from "a ``<worldbody>`` that
+        carries no bodies", which the two callers report differently.
+    """
+    worldbodies = [el for el in _mjcf_model_toplevel(root, base_dir) if el.tag == "worldbody"]
+    return bool(worldbodies), [body for wb in worldbodies for body in wb.findall("body")]
+
+
 def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[str, tuple[float, float, float]]]:
     """Collect the model's ``<asset><mesh>`` registry: name -> (file path, scale).
 
@@ -1360,17 +1400,24 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
     root = _parse_xml(path, "MJCF scene")
     if root.tag != "mujoco":
         raise ValueError(f"MJCF scene loader: root element must be <mujoco>, got <{root.tag}> in {path}")
-    worldbody = root.find("worldbody")
-    if worldbody is None:
+    mjcf_dir = os.path.dirname(os.path.abspath(path))
+    declares_worldbody, top_bodies = _mjcf_model_worldbody_bodies(root, mjcf_dir)
+    if not declares_worldbody:
         raise ValueError(f"MJCF scene loader: {path} has no <worldbody>")
 
-    mjcf_dir = os.path.dirname(os.path.abspath(path))
     mesh_registry = _parse_mjcf_mesh_assets(root, mjcf_dir)
     geom_defaults = _mjcf_geom_defaults(root, mjcf_dir)
-    world_childclass = worldbody.get("childclass") or ""
+    # Each top-level body inherits its OWN <worldbody>'s childclass: a spliced
+    # model may carry several, and they need not name the same class.
+    body_childclass = {
+        id(body): wb.get("childclass") or ""
+        for wb in _mjcf_model_toplevel(root, mjcf_dir)
+        if wb.tag == "worldbody"
+        for body in wb.findall("body")
+    }
 
     objects: list[SceneObject] = []
-    for body_el in worldbody.findall("body"):
+    for body_el in top_bodies:
         name = body_el.get("name") or ""
         if not name or _is_skipped_scene_body(name):
             continue
@@ -1390,7 +1437,8 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
         mesh_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
         mesh_pos: tuple[float, float, float] = (0.0, 0.0, 0.0)
         mesh_quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
-        mesh_ref = _find_body_mesh(body_el, geom_defaults, world_childclass)
+        cc = body_childclass.get(id(body_el), "")
+        mesh_ref = _find_body_mesh(body_el, geom_defaults, cc)
         if mesh_ref is not None:
             mesh_name, mesh_pos, mesh_quat, _is_visual = mesh_ref
             asset = mesh_registry.get(mesh_name)
@@ -1420,7 +1468,7 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
         # (e.g. ``living_room_table`` -> ``living_room_table_col``), folding
         # nested-body offsets into the AABB.
         bounds = [[float("inf")] * 3, [float("-inf")] * 3]
-        found = _recursive_collision_aabb(body_el, (0.0, 0.0, 0.0), bounds, geom_defaults, world_childclass)
+        found = _recursive_collision_aabb(body_el, (0.0, 0.0, 0.0), bounds, geom_defaults, cc)
         mins, maxs = bounds[0], bounds[1]
 
         if found:
