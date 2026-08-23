@@ -304,6 +304,30 @@ def _coerce_excluded_body(value: Any, method: str, nbody: int) -> tuple[int | No
     return body_id, None
 
 
+def _dof_joint_names(mj: Any, model: Any) -> list[str | None]:
+    """Name the joint that owns each of the model's ``nv`` DOF columns.
+
+    Every DOF-indexed payload this module reports - a Jacobian's columns, the
+    mass matrix's diagonal - is indexed by MuJoCo's DOF ordering, which a
+    caller cannot reconstruct from the width alone for two reasons that both
+    arise in ordinary scenes:
+
+    * a multi-DOF joint owns several consecutive columns (a free joint six, a
+      ball joint three), so ``nv`` exceeds the joint count for every
+      floating-base robot;
+    * ``nv`` spans the whole compiled model, so a scene holding two robots
+      reports one width covering both and the columns belonging to the robot
+      the caller asked about are an interior slice.
+
+    The returned list is exactly ``nv`` long and repeats a multi-DOF joint's
+    name once per column it owns, so it is index-aligned with the payload it
+    labels. An entry is ``None`` where the owning joint is unnamed - MJCF
+    permits a bare ``<freejoint/>`` - because dropping that column would break
+    the alignment the list exists to provide.
+    """
+    return [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, int(model.dof_jntid[dof])) for dof in range(int(model.nv))]
+
+
 def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     """Return the dense ``nv x nv`` mass matrix M(q), robust to MuJoCo drift.
 
@@ -1039,9 +1063,24 @@ class PhysicsMixin:
         The Jacobian maps joint velocities to Cartesian velocities:
             v = J @ dq
 
-        Returns both positional (3×nv) and rotational (3×nv) Jacobians,
+        Returns both positional (3xnv) and rotational (3xnv) Jacobians,
         computed at the current ``qpos`` (the position pipeline is recomputed
         first so the result is never a stale earlier configuration).
+
+        Columns are MuJoCo DOFs of the whole compiled model, so ``nv`` alone
+        does not say which column belongs to which joint: a free or ball joint
+        owns several consecutive columns, and a scene holding more than one
+        robot reports one width spanning all of them. ``dof_joint_names`` in
+        the ``json`` block names the owning joint of every column, on the same
+        terms ``inverse_dynamics`` names every generalized force it reports -
+        without it, ``dq`` from this Jacobian cannot be mapped back onto joint
+        names, and a caller who pairs one robot's joint names with the leading
+        columns silently reads another robot's Jacobian.
+
+        Returns:
+            ``{"status": "success", "content": [{"text"}, {"json": {"jacp",
+            "jacr", "nv", "dof_joint_names"}}]}`` on success, an error envelope
+            when the world is absent or the named entity does not resolve.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1086,7 +1125,14 @@ class PhysicsMixin:
             "status": "success",
             "content": [
                 {"text": f"Jacobian for {label}: pos={jacp.shape}, rot={jacr.shape}, nv={model.nv}"},
-                {"json": {"jacp": jacp.tolist(), "jacr": jacr.tolist(), "nv": model.nv}},
+                {
+                    "json": {
+                        "jacp": jacp.tolist(),
+                        "jacr": jacr.tolist(),
+                        "nv": model.nv,
+                        "dof_joint_names": _dof_joint_names(mj, model),
+                    }
+                },
             ],
         }
 
@@ -1137,8 +1183,21 @@ class PhysicsMixin:
     def get_mass_matrix(self) -> dict[str, Any]:
         """Compute the full mass (inertia) matrix M(q).
 
-        M is nv×nv where nv is the number of DoFs.
+        M is nv x nv where nv is the number of DoFs.
         Useful for dynamics analysis, impedance control, etc.
+
+        The reported ``diagonal`` is DOF-indexed, and ``nv`` alone does not say
+        which entry belongs to which joint: a free or ball joint owns several
+        consecutive DOFs, and ``nv`` spans the whole compiled model rather than
+        one robot. ``dof_joint_names`` names the owning joint of every entry,
+        so a per-joint inertia can be read off it without reaching into the
+        compiled model.
+
+        Returns:
+            ``{"status": "success", "content": [{"text"}, {"json": {"shape",
+            "rank", "condition_number", "diagonal", "total_mass",
+            "dof_joint_names"}}]}`` on success, an error envelope when the
+            world is absent.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1173,6 +1232,7 @@ class PhysicsMixin:
                         "condition_number": cond,
                         "diagonal": np.diag(M).tolist(),
                         "total_mass": float(np.sum(model.body_mass)),
+                        "dof_joint_names": _dof_joint_names(mj, model),
                     }
                 },
             ],

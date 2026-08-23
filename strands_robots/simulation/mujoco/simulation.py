@@ -2905,14 +2905,19 @@ class MuJoCoSimEngine(
             "rangefinder, framequat, ...)"
         )
         base["methods"]["get_energy"] = "() -> dict  # kinetic + potential energy of the system"
-        base["methods"]["get_mass_matrix"] = "() -> dict  # joint-space inertia matrix M(q)"
+        base["methods"]["get_mass_matrix"] = (
+            "() -> dict  # joint-space inertia matrix M(q); json carries the "
+            "DOF-indexed diagonal plus dof_joint_names naming each entry's joint"
+        )
         base["methods"]["inverse_dynamics"] = (
             "() -> dict  # gravity + Coriolis/bias compensation torques for the "
             "current pose (mj_inverse at zero desired acceleration)"
         )
         base["methods"]["get_jacobian"] = (
             "(body_name=None, site_name=None, geom_name=None) -> dict  # "
-            "translational + rotational Jacobian of a body/site/geom for IK/control"
+            "translational + rotational Jacobian of a body/site/geom for IK/control; "
+            "columns are whole-model DOFs, and json carries dof_joint_names naming "
+            "the joint that owns each column"
         )
         base["methods"]["get_total_mass"] = "() -> dict  # total mass of the model"
         base["methods"]["get_ground_height"] = (
