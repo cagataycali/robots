@@ -143,6 +143,7 @@ class TestAJointTakesItsDefaultClassAttributes:
         )
         limits = _mujoco_joints(path)["j"]["limits"]
         assert limits is not None, "premise: MuJoCo limits this joint"
+        assert limits != _FALLBACK_LIMIT, "premise: the fixture's range differs from the loader's fallback"
         joint = _only_joint(path)
         assert (joint.limit_lower, joint.limit_upper) == pytest.approx(limits, abs=1e-9)
 
@@ -394,6 +395,7 @@ class TestTheContractIsNotWidened:
         joint = _only_joint(path)
         assert joint.joint_type == _FALLBACK_TYPE
         assert joint.axis == pytest.approx(_FALLBACK_AXIS, abs=1e-9)
+        assert (joint.limit_lower, joint.limit_upper) == pytest.approx(_FALLBACK_LIMIT, abs=1e-9)
 
     def test_compiler_angle_units_are_out_of_scope(self, tmp_path):
         # MJCF's angles are degrees unless ``<compiler angle="radian">`` says
