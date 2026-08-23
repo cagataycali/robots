@@ -118,23 +118,37 @@ def load_mesh_geometry(
 
 
 def _parse_obj(mesh_path: str) -> tuple[list[tuple[float, float, float]], list[int], list[int]]:
-    """Parse a Wavefront OBJ: ``v`` positions + ``f`` faces (n-gons kept)."""
+    """Parse a Wavefront OBJ: ``v`` positions + ``f`` faces (n-gons kept).
+
+    OBJ is whitespace-delimited, so a keyword may be followed by a tab as
+    legitimately as by a space (MuJoCo reads either form identically). The
+    keyword is therefore read off the split fields rather than matched as a
+    ``"v "`` prefix: matching the prefix skipped a tab-separated ``v`` line,
+    which either dropped the vertex silently - leaving a mesh whose bounds
+    are the ones the file did not declare - or made a later face reference
+    fall out of range and blamed the face for a vertex the parser never
+    recognised. ``vn`` / ``vt`` still fall out naturally: they are different
+    keywords, not the vertex keyword followed by a separator.
+    """
     points: list[tuple[float, float, float]] = []
     counts: list[int] = []
     indices: list[int] = []
     with open(mesh_path, encoding="utf-8", errors="replace") as fh:
         for lineno, raw in enumerate(fh, start=1):
             line = raw.strip()
-            if line.startswith("v "):
-                parts = line.split()
+            parts = line.split()
+            if not parts:
+                continue
+            keyword = parts[0]
+            if keyword == "v":
                 if len(parts) < 4:
                     raise ValueError(f"OBJ {mesh_path}:{lineno}: vertex with fewer than 3 components: {line!r}")
                 try:
                     points.append((float(parts[1]), float(parts[2]), float(parts[3])))
                 except ValueError as e:
                     raise ValueError(f"OBJ {mesh_path}:{lineno}: non-numeric vertex component: {line!r}") from e
-            elif line.startswith("f "):
-                refs = line.split()[1:]
+            elif keyword == "f":
+                refs = parts[1:]
                 if len(refs) < 3:
                     raise ValueError(f"OBJ {mesh_path}:{lineno}: face with fewer than 3 vertices: {line!r}")
                 face: list[int] = []

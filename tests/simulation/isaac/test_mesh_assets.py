@@ -163,6 +163,108 @@ class TestLoadMeshGeometry:
             load_mesh_geometry(str(asset))
 
 
+class TestObjKeywordsAreWhitespaceDelimited:
+    """An OBJ keyword may be followed by a tab as legitimately as by a space.
+
+    OBJ is a whitespace-delimited format, and MuJoCo - the reference reader
+    for every asset this module is pointed at - reads the tab form and the
+    space form identically. Recognising the keyword by a ``"v "`` prefix
+    skipped a tab-separated vertex line, which either dropped the vertex with
+    nothing raised (leaving :func:`mesh_aabb` reporting bounds the file never
+    declared, and so a collision proxy the MJCF scene loader derives from
+    those bounds) or pushed a later face reference out of range and blamed
+    the face for a vertex the parser had never recognised.
+
+    The ASCII-STL parser in this same module always read its keyword off the
+    split fields, so the two parsers answered the same question two ways;
+    ``test_the_ascii_stl_parser_already_tolerated_a_tab`` pins that half.
+    """
+
+    def test_a_tab_separated_obj_parses_as_the_space_separated_one(self, tmp_path):
+        spaces = tmp_path / "spaces.obj"
+        spaces.write_text(_TETRA_OBJ, encoding="utf-8")
+        tabs = tmp_path / "tabs.obj"
+        tabs.write_text(_TETRA_OBJ.replace("v ", "v\t").replace("f ", "f\t"), encoding="utf-8")
+
+        reference = load_mesh_geometry(str(spaces))
+        try:
+            measured = load_mesh_geometry(str(tabs))
+        except ValueError as refused:
+            raise AssertionError(
+                "the same tetrahedron written with a tab after each v/f keyword was refused "
+                f"({refused}), and the refusal names the face rather than the vertex lines the "
+                "parser did not recognise - MuJoCo reads both forms identically"
+            ) from refused
+        assert measured == reference
+        assert mesh_aabb(str(tabs)) == mesh_aabb(str(spaces))
+
+    def test_a_tab_vertex_line_is_not_dropped_from_the_bounds(self, tmp_path):
+        # The 9-unit spike is declared on a tab line and referenced by no
+        # face, so dropping it raises nothing at all: the asset simply
+        # reports the bounds of the three vertices that were recognised.
+        # mesh_aabb is what the MJCF scene loader turns into a mesh-only
+        # body's collision proxy, so a silently flat z is a silently flat box.
+        asset = tmp_path / "spike.obj"
+        asset.write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nv\t0 0 9\nf 1 2 3\n", encoding="utf-8")
+
+        points, counts, _indices = load_mesh_geometry(str(asset))
+        _center, size = mesh_aabb(str(asset))
+        assert len(points) == 4, f"the tab-separated vertex was dropped: {points}"
+        assert counts == [3]
+        assert size[2] == pytest.approx(9.0), f"bounds the file never declared: z extent {size[2]}"
+
+    def test_a_mixed_separator_obj_keeps_every_vertex(self, tmp_path):
+        # One writer emitting both separators is the case that shifts every
+        # subsequent 1-based face reference onto the wrong vertex.
+        asset = tmp_path / "mixed.obj"
+        asset.write_text(
+            "v 0 0 0\nv\t1 0 0\nv 0 2 0\nv\t0 0 3\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n",
+            encoding="utf-8",
+        )
+        points, counts, indices = load_mesh_geometry(str(asset))
+        assert len(points) == 4
+        assert counts == [3, 3, 3, 3]
+        assert indices == [0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 3]
+
+    def test_vertex_normals_and_texcoords_are_still_not_vertices(self, tmp_path):
+        # ``vn`` / ``vt`` are their own keywords, not ``v`` plus a separator:
+        # reading the keyword off the split must not widen the vertex rule
+        # into them, in either the space or the tab spelling.
+        asset = tmp_path / "attrs.obj"
+        asset.write_text(
+            "v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\nvt 0 0\nvn\t0 1 0\nvt\t1 0\nf 1 2 3\n",
+            encoding="utf-8",
+        )
+        points, counts, indices = load_mesh_geometry(str(asset))
+        assert len(points) == 3
+        assert counts == [3]
+        assert indices == [0, 1, 2]
+
+    def test_blank_and_comment_lines_are_ignored(self, tmp_path):
+        asset = tmp_path / "commented.obj"
+        asset.write_text(
+            "# Blender v3.2.2 OBJ File\n\nmtllib x.mtl\no Cube\n\t\n" + _TETRA_OBJ,
+            encoding="utf-8",
+        )
+        _points, counts, _indices = load_mesh_geometry(str(asset))
+        assert counts == [3, 3, 3, 3]
+
+    def test_the_ascii_stl_parser_already_tolerated_a_tab(self, tmp_path):
+        # Passes either way: the sibling parser in this module has always
+        # read its keyword off the split, which is why one module answered
+        # "is a tab a separator" two different ways.
+        asset = tmp_path / "part.stl"
+        asset.write_text(
+            "solid part\nfacet normal 0 0 1\nouter loop\n"
+            "vertex\t0 0 0\nvertex\t1 0 0\nvertex\t0 1 0\n"
+            "endloop\nendfacet\nendsolid part\n",
+            encoding="utf-8",
+        )
+        points, counts, _indices = load_mesh_geometry(str(asset))
+        assert len(points) == 3
+        assert counts == [3]
+
+
 class TestMeshAabb:
     def test_full_extents_and_center(self, tmp_path):
         asset = tmp_path / "tetra.obj"
