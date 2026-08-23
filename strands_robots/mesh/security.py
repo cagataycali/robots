@@ -911,6 +911,15 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     Performed checks:
 
     * ``action`` must be a string and a member of :data:`ALLOWED_ACTIONS`.
+    * ``turn_id`` and ``sender_id`` (both optional) are checked on *every*
+      action, not per-action: each must be a str of at most
+      :data:`MAX_PASSTHROUGH_LEN` characters, printable ASCII only (no C0/DEL
+      or non-printable byte). They are wire-routing fields rather than action
+      payload -- ``Mesh`` correlates an RPC turn on ``turn_id`` and keys its
+      command-replay cache on ``(sender_id, turn_id)`` -- so a publisher
+      minting them needs the bound, and a control byte must not reach the
+      audit trail through either. Any other unvalidated key is dropped from
+      the sanitised copy rather than refused.
     * ``execute`` and ``start`` actions require:
         - ``instruction``: non-empty str up to :data:`MAX_INSTRUCTION_LEN`,
           carrying no C0/DEL/C1 control character. Printable non-ASCII is
@@ -926,14 +935,16 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
           No silent default -- a peer that omits this is rejected so it is
           never ambiguous whether ``mock`` was an explicit choice or a bug.
         - ``server_address`` (optional): in :func:`is_safe_server_address`.
-        - ``robot_name`` (optional): peer-id charset, used by sim peers
+        - ``robot_name`` (optional): peer-id charset, at most
+          :data:`MAX_PEER_ID_LEN` characters, used by sim peers
           to disambiguate which robot in the world the policy targets.
         - ``target_pose`` (optional): list of 7 floats
           ``[x, y, z, qw, qx, qy, qz]`` for planner-style providers
           (issue #300 well-known kwarg).
         - ``target_joints`` (optional): dict of joint-name to float
-          (issue #300 well-known kwarg). Bounded by
-          :data:`MAX_TARGET_JOINTS`.
+          (issue #300 well-known kwarg). Key count bounded by
+          :data:`MAX_TARGET_JOINTS`, and each key by
+          :data:`MAX_PEER_ID_LEN` characters.
         - ``target_velocity`` (optional): list of floats
           ``[vx, vy, omega]`` (m/s, m/s, rad/s) for locomotion providers
           (issue #300 well-known kwarg). Component count bounded by

@@ -6,7 +6,7 @@ for a reader the census *is* the contract: a publisher author decides what to
 put on the wire from it, and an operator tuning the teleop safety envelope
 reads it to learn what the bound is. Nothing graded it.
 
-Two properties are checked, both derived from the function's own body so that a
+Three properties are checked, all derived from the function's own body so that a
 census added later is held to them with no list to update:
 
 * **A census may only cite a domain the function reads.** Citing a module
@@ -22,13 +22,28 @@ census added later is held to them with no list to update:
   shape ``if isinstance(v, T): raise`` says "T is refused", so a census that
   does not name ``T`` describes a wider admission than the code performs.
 
-Both rules are permissive by construction -- they can only under-report. A
-constant named in prose *outside* the bullets is not graded (the bullets are the
-enumeration; the surrounding paragraphs are commentary), and no wording is
-required beyond the type name itself.
+* **Every public bound the function enforces is named.** The first rule grades
+  one direction of a set equality -- that every constant the census *cites* is
+  one the body reads -- and left the other direction open, so a bound the body
+  enforces and the census never states was graded by nothing. That is how
+  ``validate_command`` came to enforce ``MAX_PASSTHROUGH_LEN`` on ``turn_id`` and
+  ``sender_id`` without naming either field, and to bound ``robot_name`` and each
+  ``target_joints`` key by ``MAX_PEER_ID_LEN`` while citing only the key *count*:
+  seven of the nine public constants it loads were cited, and a publisher sizing
+  an RPC correlation id from the census had no bound to size it to.
 
-``validate_command``'s census satisfies both rules unchanged, so it is the
-control: the properties are this module's own convention rather than a new one.
+All three rules are permissive by construction -- they can only under-report. A
+constant named in prose *outside* the bullets is not graded (the bullets are the
+enumeration; the surrounding paragraphs are commentary), no wording is required
+beyond the type name itself, and only *public* constants are graded: the module's
+charset gates are private regexes, and the census describes the admitted charset
+in words (``[A-Za-z0-9_.-]+``) rather than naming a ``_``-prefixed object a caller
+cannot reach.
+
+Which census is the control differs per rule, which is what makes each one this
+module's own convention rather than a new one: ``validate_command`` satisfies the
+first two unchanged, and ``validate_input_frame`` cites both of the bounds it
+enforces, so it satisfies the third.
 """
 
 from __future__ import annotations
@@ -47,7 +62,9 @@ from strands_robots.mesh import security
 #: rules would hold vacuously over an empty population.
 _MINIMUM_CENSUSES = 2
 
-_CONSTANT_RE = re.compile(r"[`\s(]([A-Z][A-Z0-9_]{3,})[`\s,.)]")
+# ``]`` terminates a citation too: a range reads ``[0, MAX_DURATION_S]``, and
+# without it that bound looks uncited to the rule below.
+_CONSTANT_RE = re.compile(r"[`\s(]([A-Z][A-Z0-9_]{3,})[`\s,.)\]]")
 _DATA_ROLE_RE = re.compile(r":data:`([A-Z][A-Z0-9_]*)`")
 
 
@@ -137,6 +154,16 @@ def _cited_constants(bullets: str, constants: set[str]) -> set[str]:
     return cited & constants
 
 
+def _public_bounds_enforced(fn: ast.FunctionDef | ast.AsyncFunctionDef, constants: set[str]) -> set[str]:
+    """Public module constants *fn* loads: the bounds a reader must be given.
+
+    Private constants are out of scope. The module's charset gates are
+    ``_``-prefixed regexes, and a census names the charset they admit in words
+    rather than an object a caller cannot reach.
+    """
+    return {c for c in _loaded_names(fn) & constants if not c.startswith("_")}
+
+
 def _refused(value: Any) -> str | None:
     """Drive the real validator with *value*; return its refusal, or ``None``."""
     try:
@@ -191,6 +218,25 @@ class TestThePerformedChecksCensusNamesWhatTheCodeDoes:
                 "narrows the teleop envelope reads the snapshot and is told the wrong number."
             )
 
+    def test_every_bound_the_function_enforces_is_named_in_its_census(self) -> None:
+        """The other direction: a bound the body reads but the census omits.
+
+        A reader sizes a value from the census, so a bound stated nowhere is a
+        refusal they cannot anticipate.
+        """
+        offenders: dict[str, list[str]] = {}
+        for name, node, bullets, constants in _censuses():
+            cited = _cited_constants(bullets, constants)
+            missing = sorted(c for c in _public_bounds_enforced(node, constants) if c not in cited)
+            if missing:
+                offenders[name] = missing
+        assert not offenders, (
+            f"a Performed-checks census omits a bound its own body enforces: {offenders}. "
+            "A publisher sizes a field from the census, so a bound it does not state is a "
+            "refusal the caller cannot anticipate; name the constant in the bullet for the "
+            "field it bounds."
+        )
+
     def test_every_type_the_function_refuses_is_named_in_its_census(self) -> None:
         """``if isinstance(v, T): raise`` means T is refused, so T is named."""
         offenders: dict[str, list[str]] = {}
@@ -239,6 +285,14 @@ class TestTheCensusRulesHoldOnTheSiblingUnchanged:
         name, node, bullets, _constants = next(c for c in _censuses() if c[0] == "validate_command")
         refused = _positively_refused_types(node)
         assert not [t for t in refused if not re.search(rf"\b{re.escape(t)}\b", bullets)], name
+
+    def test_the_frame_census_names_every_bound_it_enforces(self) -> None:
+        """The control for the bound rule: it holds on the frame validator as shipped."""
+        name, node, bullets, constants = next(c for c in _censuses() if c[0] == "validate_input_frame")
+        enforced = _public_bounds_enforced(node, constants)
+        assert enforced, "premise: the frame validator must enforce at least one public bound"
+        cited = _cited_constants(bullets, constants)
+        assert not [c for c in enforced if c not in cited], f"{name} enforces {sorted(enforced)}"
 
 
 class TestTheScanIsNotVacuous:
@@ -305,6 +359,31 @@ class TestTheRulesDoNotOverReach:
         refused = _positively_refused_types(fn)
         assert refused == {"bool"}
         assert not [t for t in refused if not re.search(rf"\b{re.escape(t)}\b", "* never a ``bool``.")]
+
+    def test_a_private_domain_is_not_graded_as_a_bound(self) -> None:
+        """A charset gate is a private regex; the census names the charset instead."""
+        fn = ast.parse("def f(v):\n    return _KEY_RE.fullmatch(v) and len(v) < MAX_LEN\n").body[0]
+        assert isinstance(fn, ast.FunctionDef)
+        assert _public_bounds_enforced(fn, {"MAX_LEN", "_KEY_RE"}) == {"MAX_LEN"}
+
+    def test_a_bound_cited_inside_a_range_is_recognised(self) -> None:
+        """Non-vacuity for the ``]`` terminator: ``[0, X]`` cites X.
+
+        Without it the shipped ``[0, MAX_DURATION_S]`` bullet reads as uncited
+        and the bound rule reports a field the census does state.
+        """
+        bullets = "    * ``duration``: ``[0, MAX_DURATION_S]``, defaults to 30.\n"
+        assert _cited_constants(bullets, {"MAX_DURATION_S"}) == {"MAX_DURATION_S"}
+
+    def test_a_planted_uncited_bound_is_reported(self) -> None:
+        """Non-vacuity for the bound rule: the check must be able to fail."""
+        fn = ast.parse("def f(v):\n    return len(v) < MAX_CITED and v < MAX_SILENT\n").body[0]
+        assert isinstance(fn, ast.FunctionDef)
+        constants = {"MAX_CITED", "MAX_SILENT"}
+        bullets = "    * at most ``MAX_CITED`` characters.\n"
+        enforced = _public_bounds_enforced(fn, constants)
+        missing = sorted(c for c in enforced if c not in _cited_constants(bullets, constants))
+        assert missing == ["MAX_SILENT"], missing
 
     def test_a_planted_unread_citation_is_reported(self) -> None:
         """Non-vacuity for rule A: the check must be able to fail."""
