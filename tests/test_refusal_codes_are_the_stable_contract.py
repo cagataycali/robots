@@ -230,16 +230,88 @@ def _raise_sites() -> list[tuple[str, int, ast.expr]]:
     return sites
 
 
-def _coded_raise_sites() -> list[tuple[str, int, str]]:
-    """Every raise passing ``code=<refusal_codes.NAME>``, with that name."""
-    found: list[tuple[str, int, str]] = []
-    for rel, lineno, exc in _raise_sites():
-        if not isinstance(exc, ast.Call):
-            continue
-        for keyword in exc.keywords:
-            if keyword.arg == "code" and isinstance(keyword.value, ast.Attribute):
-                found.append((rel, lineno, keyword.value.attr))
+def _imported_code_names(source: str) -> dict[str, str]:
+    """Names a module binds with ``from ...refusal_codes import X``, to their code.
+
+    A code reached that way is a bare :class:`ast.Name` at the raise site, so
+    resolving it needs the module's own import list. The mapping is
+    ``bound name -> declared name`` so an ``as`` alias resolves to the code it
+    aliases rather than to a name this package does not declare.
+    """
+    bound: dict[str, str] = {}
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("refusal_codes"):
+            for alias in node.names:
+                bound[alias.asname or alias.name] = alias.name
+    return bound
+
+
+def _code_identifier(value: ast.expr, imported: dict[str, str]) -> str | None:
+    """The declared-code name a ``code=`` argument states, or ``None`` if unreadable.
+
+    Three spellings reach a declared code, and
+    ``test_every_code_is_exported_under_its_own_name`` is what makes them one
+    channel: every code is exported under its own name, so the module attribute,
+    the imported name and the string literal are all that same name.
+
+    ``None`` means the value is not statically readable -- a parameter forwarded
+    by a shared helper, a table lookup -- so nothing here can say whether the
+    code that reaches a consumer is declared.
+    """
+    if isinstance(value, ast.Attribute):
+        return value.attr
+    if isinstance(value, ast.Name):
+        return imported.get(value.id)
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    return None
+
+
+def _code_keyword_sites(sources: list[tuple[str, str]]) -> list[tuple[str, int, str | None, str]]:
+    """Every ``code=`` at a raise site: (path, line, declared name or ``None``, as written).
+
+    Read spelling-independently, the way :func:`_refusals_naming_an_env_var`
+    already reads the *presence* of the keyword. That rule accepts a code this
+    package does not declare on purpose, because grading the value belongs
+    here -- so a spelling this scan cannot read is a code nothing checks.
+    """
+    found: list[tuple[str, int, str | None, str]] = []
+    for rel, source in sources:
+        imported = _imported_code_names(source)
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+                continue
+            for keyword in node.exc.keywords:
+                if keyword.arg == "code":
+                    found.append(
+                        (rel, node.lineno, _code_identifier(keyword.value, imported), ast.unparse(keyword.value))
+                    )
     return found
+
+
+def _coded_raise_sites() -> list[tuple[str, int, str]]:
+    """Every package raise passing a readable ``code=``, with the code it names."""
+    return [(rel, lineno, name) for rel, lineno, name, _ in _code_keyword_sites(_package_sources()) if name]
+
+
+def _undeclared_codes_in(sources: list[tuple[str, str]]) -> list[str]:
+    """Sites passing a readable ``code=`` that is not a declared code, as messages."""
+    from strands_robots import refusal_codes
+
+    return [
+        f"{rel}:{lineno} passes code={written} -> {name!r}"
+        for rel, lineno, name, written in _code_keyword_sites(sources)
+        if name is not None and getattr(refusal_codes, name, None) not in refusal_codes.REFUSAL_CODES
+    ]
+
+
+def _unreadable_codes_in(sources: list[tuple[str, str]]) -> list[str]:
+    """Sites whose ``code=`` value this scan cannot resolve, as messages."""
+    return [
+        f"{rel}:{lineno} passes code={written}"
+        for rel, lineno, name, written in _code_keyword_sites(sources)
+        if name is None
+    ]
 
 
 def _package_sources() -> list[tuple[str, str]]:
@@ -391,7 +463,112 @@ class TestTheContractReachesEveryGrantBearingRefusal:
         assert "ValueError" not in carriers and "RuntimeError" not in carriers, carriers
 
     def test_every_code_passed_at_a_raise_site_is_a_declared_code(self) -> None:
-        from strands_robots import refusal_codes
+        undeclared = _undeclared_codes_in(_package_sources())
+        assert not undeclared, (
+            "a code outside REFUSAL_CODES reaches a consumer that switches on the closed "
+            "vocabulary, which has no branch for it and no grant to offer: " + "; ".join(undeclared)
+        )
 
-        for rel, lineno, name in _coded_raise_sites():
-            assert getattr(refusal_codes, name, None) in refusal_codes.REFUSAL_CODES, f"{rel}:{lineno} {name}"
+
+class TestTheCodeValueIsReadInEverySpellingThatReachesIt:
+    """A ``code=`` this scan cannot read is a code nothing checks.
+
+    :func:`_refusals_naming_an_env_var` reads the *presence* of the keyword
+    spelling-independently, and
+    ``test_a_coded_refusal_offering_a_new_grant_is_accepted`` accepts a code this
+    package does not declare on purpose -- grading the value belongs to
+    ``test_every_code_passed_at_a_raise_site_is_a_declared_code``. So that rule
+    has to read the value in every spelling that reaches a declared code, and
+    ``test_every_code_is_exported_under_its_own_name`` is what makes them one
+    channel: each code is exported under its own name and listed in ``__all__``,
+    so importing it directly is a first-class way to reach it.
+
+    Nothing validates the value at runtime, and nothing should: ``code`` is
+    stored as given (``SecurityError.__init__`` assigns it), and raising from an
+    exception constructor would replace a security refusal with a constructor
+    error. This scan is the only thing standing between a mistyped code and a
+    consumer, so its reach is the contract.
+    """
+
+    _MODULE_ATTRIBUTE = (
+        "from strands_robots import refusal_codes\n"
+        "def _gate(value: str) -> None:\n"
+        "    raise ValidationError(\n"
+        '        f"sink={value!r} not in allowlist. Set STRANDS_MESH_SINK_ALLOW to extend.",\n'
+        "        code=refusal_codes.<CODE>,\n"
+        "    )\n"
+    )
+    _IMPORTED_NAME = (
+        "from strands_robots.refusal_codes import <CODE>\n"
+        "def _gate(value: str) -> None:\n"
+        "    raise ValidationError(\n"
+        '        f"sink={value!r} not in allowlist. Set STRANDS_MESH_SINK_ALLOW to extend.",\n'
+        "        code=<CODE>,\n"
+        "    )\n"
+    )
+    _STRING_LITERAL = (
+        "def _gate(value: str) -> None:\n"
+        "    raise ValidationError(\n"
+        '        f"sink={value!r} not in allowlist. Set STRANDS_MESH_SINK_ALLOW to extend.",\n'
+        '        code="<CODE>",\n'
+        "    )\n"
+    )
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ["_MODULE_ATTRIBUTE", "_IMPORTED_NAME", "_STRING_LITERAL"],
+    )
+    def test_a_declared_code_is_read_however_the_site_spells_it(self, spelling: str) -> None:
+        planted = getattr(self, spelling).replace("<CODE>", "HF_REPO_NOT_ALLOWED")
+        read = _code_keyword_sites([("planted.py", planted)])
+        assert [name for _rel, _line, name, _written in read] == ["HF_REPO_NOT_ALLOWED"], read
+        assert _undeclared_codes_in([("planted.py", planted)]) == []
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ["_MODULE_ATTRIBUTE", "_IMPORTED_NAME", "_STRING_LITERAL"],
+    )
+    def test_a_mistyped_code_is_reported_however_the_site_spells_it(self, spelling: str) -> None:
+        """The regression: a typo in any spelling ships an undeclared code."""
+        planted = getattr(self, spelling).replace("<CODE>", "HF_REPO_NOT_ALOWED")
+        reported = _undeclared_codes_in([("planted.py", planted)])
+        assert len(reported) == 1, reported
+        assert "HF_REPO_NOT_ALOWED" in reported[0]
+
+    def test_an_aliased_import_resolves_to_the_code_it_aliases(self) -> None:
+        """``import X as Y`` must not read as a code named ``Y``, which is undeclared."""
+        planted = (
+            "from strands_robots.refusal_codes import HF_REPO_NOT_ALLOWED as REPO_CODE\n"
+            "def _gate(value: str) -> None:\n"
+            '    raise ValidationError("nope", code=REPO_CODE)\n'
+        )
+        read = _code_keyword_sites([("planted.py", planted)])
+        assert [name for _rel, _line, name, _written in read] == ["HF_REPO_NOT_ALLOWED"], read
+        assert _undeclared_codes_in([("planted.py", planted)]) == []
+
+    def test_a_code_this_scan_cannot_read_is_reported_not_skipped(self) -> None:
+        """A forwarded parameter is not gradeable here, so silence would be a hole."""
+        planted = "def _refuse(message: str, code: str) -> None:\n    raise ValidationError(message, code=code)\n"
+        assert _undeclared_codes_in([("planted.py", planted)]) == []
+        unreadable = _unreadable_codes_in([("planted.py", planted)])
+        assert len(unreadable) == 1, unreadable
+        assert "code=code" in unreadable[0]
+
+    def test_every_code_keyword_in_the_package_is_read_or_reported(self) -> None:
+        """Root cause: a keyword neither graded nor reported is one nothing checks."""
+        sources = _package_sources()
+        every = _code_keyword_sites(sources)
+        graded = [row for row in every if row[2] is not None]
+        assert len(graded) + len(_unreadable_codes_in(sources)) == len(every)
+        assert len(every) >= 7, every
+
+    def test_the_shipped_sites_are_all_read(self) -> None:
+        """Nothing in the package is unreadable today, so the scan grades all of it."""
+        assert _unreadable_codes_in(_package_sources()) == []
+        assert {name for _rel, _line, name in _coded_raise_sites()} == {
+            "TRUST_REMOTE_CODE_REQUIRED",
+            "HF_REPO_NOT_ALLOWED",
+            "POLICY_TYPE_NOT_ALLOWED",
+            "POLICY_HOST_NOT_ALLOWED",
+            "TELEOP_VALUE_OUT_OF_RANGE",
+        }

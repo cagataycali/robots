@@ -30,6 +30,17 @@ sites it must find from the grants already listed here would only ever find a
 refusal naming a grant this module already knows, so the first refusal to offer
 a *new* grant -- the one case the guard exists for -- would be invisible. The
 scope comes from the exception types that can carry a code at all instead.
+
+Scope has a second dimension: how a raise site *spells* the code it passes. A
+code is checked against this vocabulary by a static scan, because nothing
+validates it at runtime -- it is stored as given, and raising from an exception
+constructor would replace a security refusal with a constructor error. So the
+scan reads the value in every spelling that reaches a declared code: an
+attribute of this module, a name imported from it (every code is exported under
+its own name and listed in ``__all__``, so that is a first-class way to reach
+one), or the literal string. A spelling it cannot read is reported rather than
+skipped, because a code nothing can check is a code that may not be in this
+vocabulary at all.
 """
 
 from __future__ import annotations
