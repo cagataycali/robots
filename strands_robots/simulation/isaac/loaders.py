@@ -850,23 +850,74 @@ def _is_skipped_scene_body(name: str) -> bool:
     return any(lname.startswith(p) for p in _MJCF_SCENE_SKIP_PREFIXES)
 
 
-def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[str, tuple[float, float, float]]]:
-    """Collect the MJCF's ``<asset><mesh>`` registry: name -> (file path, scale).
+def _mjcf_model_toplevel(root: ET.Element, base_dir: str, _seen: frozenset[str] = frozenset()) -> list[ET.Element]:
+    """Top-level elements of the whole model, with ``<include>`` spliced in document order.
 
-    File paths resolve the way MuJoCo's compiler does: an absolute ``file``
-    is used as-is; a relative one is joined against ``<compiler meshdir=...>``
-    (or ``assetdir``), itself resolved against the MJCF's own directory;
-    with no meshdir the MJCF directory is the base. Paths are resolved but
-    NOT existence-checked here - only meshes actually consumed by a task
-    object are checked (at selection time in
-    :func:`load_mjcf_scene_objects`), so an unused stale asset entry cannot
-    fail a scene that never touches it.
+    MuJoCo treats ``<include file=...>`` as a textual splice: the referenced
+    file's children take the ``<include>`` element's place. ``<compiler>`` and
+    ``<asset>`` are therefore model-global - the fragment declaring the mesh
+    search directory need not be the fragment declaring the mesh, and neither
+    need be the top file. Reading only the top file's direct children reports a
+    mesh that is present as absent, which is the harm
+    :func:`strands_robots.assets.download._mjcf_mesh_subdir` names for the same
+    rule on the robot-asset path.
+
+    An include path is resolved against the *including* file's directory, so
+    nested includes chain. A missing, unreadable, malformed or cyclic include
+    contributes nothing rather than failing the scene: MuJoCo names the
+    offending file itself on the load that follows, which is a better report
+    than anything this reader could invent.
+
+    Element order is preserved because it is load-bearing: within one
+    ``<compiler>`` element ``meshdir`` overrides ``assetdir``, but a later
+    ``<compiler>`` element overrides an earlier one, so the last declaration in
+    document order wins.
+    """
+    out: list[ET.Element] = []
+    for child in root:
+        if child.tag != "include":
+            out.append(child)
+            continue
+        rel = child.get("file")
+        if not rel:
+            continue
+        inc_path = os.path.normpath(os.path.abspath(rel if os.path.isabs(rel) else os.path.join(base_dir, rel)))
+        if inc_path in _seen or not os.path.isfile(inc_path):
+            continue
+        try:
+            frag = ET.parse(inc_path).getroot()
+        except (ET.ParseError, OSError):
+            continue
+        out.extend(_mjcf_model_toplevel(frag, os.path.dirname(inc_path), _seen | {inc_path}))
+    return out
+
+
+def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[str, tuple[float, float, float]]]:
+    """Collect the model's ``<asset><mesh>`` registry: name -> (file path, scale).
+
+    The registry and its search directory are read from the whole model - the
+    MJCF plus every ``<include>``d fragment, via
+    :func:`_mjcf_model_toplevel` - because MuJoCo splices includes and treats
+    ``<compiler>`` and ``<asset>`` as model-global.
+
+    File paths resolve the way MuJoCo's compiler does: an absolute ``file`` is
+    used as-is; a relative one is joined against ``<compiler meshdir=...>`` (or
+    ``assetdir``), itself resolved against the *model* file's directory even
+    when an included fragment in a subdirectory declared it; with no meshdir the
+    model directory is the base. Where one ``<compiler>`` element carries both
+    attributes ``meshdir`` wins; where several elements carry one, the last in
+    document order wins. Paths are resolved but NOT existence-checked here -
+    only meshes actually consumed by a task object are checked (at selection
+    time in :func:`load_mjcf_scene_objects`), so an unused stale asset entry
+    cannot fail a scene that never touches it.
 
     A ``<mesh>`` without a ``name`` defaults to the file's basename without
     extension, per the MJCF spec.
     """
+    elements = _mjcf_model_toplevel(root, mjcf_dir)
+
     mesh_base = mjcf_dir
-    for compiler_el in root.findall("compiler"):
+    for compiler_el in (el for el in elements if el.tag == "compiler"):
         for attr in ("meshdir", "assetdir"):
             d = compiler_el.get(attr)
             if d:
@@ -874,7 +925,7 @@ def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[
                 break
 
     registry: dict[str, tuple[str, tuple[float, float, float]]] = {}
-    for asset_el in root.findall("asset"):
+    for asset_el in (el for el in elements if el.tag == "asset"):
         for mesh_el in asset_el.findall("mesh"):
             file_attr = mesh_el.get("file")
             if not file_attr:
@@ -1139,10 +1190,13 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
                 # An unconvertible format (e.g. a COLLADA .dae)
                 # keeps mesh_path=None: the realization uses the box proxy
                 # and load_scene reports the object among the proxies.
-            # A mesh reference with no <asset> entry cannot occur in a
-            # robosuite-COMPILED scene (MuJoCo refuses to compile it), so it
-            # is hand-written test scaffolding: keep the historical
-            # degrade-cleanly box fallback rather than failing the scene.
+            # A mesh reference with no <asset> entry anywhere in the model
+            # (the top file or any <include>d fragment) is hand-written test
+            # scaffolding: keep the historical degrade-cleanly box fallback
+            # rather than failing the scene. The registry is model-global, so
+            # a scene that declares its assets in an included fragment - which
+            # MuJoCo compiles - resolves here too, instead of reaching this
+            # fallback and rendering the 0.05 m proxy #2459 removed.
 
         # Gather collision geometry from this body and any nested bodies
         # (e.g. ``living_room_table`` -> ``living_room_table_col``), folding
