@@ -2274,14 +2274,13 @@ def _normalized_op_vector_fields(kind: str, op: Mapping[str, Any]) -> tuple[dict
 # geom takes its extent from a mesh asset, and this op's key set
 # (:data:`_PATCH_OP_KEYS`) has no key that could name one - so a mesh geom it
 # adds carries no meshid, and MuJoCo refuses it at the batch's recompile with
-# ``mesh geom '<name>' (id = N) must have valid meshid``. That refusal arrives
-# too late to be either actionable or survivable: it names a MuJoCo id rather
-# than the op, and it fires OUTSIDE the try/except that rolls a rejected batch
-# back, so the mutated spec stays installed and every later mutation of that
-# world - a valid patch, an ``add_object`` - re-fails on the same leftover geom.
-# Measured on a default world: three successive mutations after one such patch
-# all returned the meshid error. Refusing the value at the door is what keeps
-# the atomicity ``patch_scene_mjcf`` documents true for every op it accepts.
+# ``mesh geom '<name>' (id = N) must have valid meshid``. That refusal is rolled
+# back like any other now that the recompile goes through
+# :func:`_recompile_preserving_state` inside the batch's try/except, but it is
+# still not actionable: it names a MuJoCo id rather than the op the caller
+# wrote. Refusing the value at the door is what lets the message name the op,
+# and it keeps the atomicity ``patch_scene_mjcf`` documents true for every op it
+# accepts without leaning on the compiler to describe a caller's mistake.
 _UNSUPPORTED_GEOM_SHAPES = frozenset({"mesh"})
 
 
