@@ -1738,6 +1738,32 @@ which side the enum is on.
   and by the render path's `cameras` resolution, which has read the same kind of selector
   `is None` all along - an empty camera selection there resolves to no camera rather than
   to every one.
+### A model source is read by absence when absence selects another resolution path
+- **The selector rule above allows a scalar path to be read by truthiness "because empty
+  and absent genuinely coincide there - the value is derived either way". That holds where
+  absence derives the SAME kind of value.** `examples/wbc/motionbricks_g1_mujoco.py`
+  declares `--scene-xml` with a `""` default and derives the scene from `--result-dir`, so
+  `""` IS its sentinel there and truthiness is correct. It does not hold where absence
+  selects a DIFFERENT RESOLUTION PATH: then the two spellings do not pick the same value
+  by another route, they pick a different thing to blame when the call fails.
+- **`add_robot`'s model source is that case.** Absent means "resolve from `data_config`, or
+  from the instance label via the deprecated registry short form"; supplied means "load
+  this file". Read by truthiness, `urdf_path=""` took the absent branch, so the refusal
+  diagnosed the NAME - close-match suggestions for a name the caller never asked to
+  resolve, and "Or pass data_config=<registered model> or urdf_path=<file>" to a caller who
+  had just passed exactly that. It was byte-identical to what supplying no source returns.
+- **The tell is the REPORT, not the value.** Both spellings error either way, so nothing
+  loads a wrong model; what diverges is which parameter the caller is sent to fix. One
+  whitespace character away (`urdf_path=" "`) the diagnosis was already correct ("File not
+  found"), which is the shape to match - refuse the empty value, not the unusable one.
+- **Check the whole family, and note that most of it was already right.** Newton reads
+  `urdf_path is not None`, Isaac reads `usd_path is None`, and `register_urdf` refuses an
+  empty `urdf_path` by name in both backends that expose it; MuJoCo's `add_robot` was the
+  one site reading the source by truthiness. Refuse behind any existing precedence (the
+  name-collision report still wins) so no settled message moves.
+- Pinned by `tests/simulation/mujoco/test_add_robot_unknown_model_message.py`, whose
+  controls pin the boundary (whitespace stays a path), the untouched short forms (`name=""`
+  still derives a label, an omitted source still diagnoses the name) and the precedence.
 ### A resolution knob is validated before the work it sizes
 - **Check the knob that sizes an expensive result before producing the result.** A
   resolution is caller input like any other, and the numeric domains

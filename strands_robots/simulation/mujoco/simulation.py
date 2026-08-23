@@ -1677,6 +1677,17 @@ class MuJoCoSimEngine(
         model source". The bare model-source message is kept only when no
         ``name`` was supplied at all.
 
+        A model source that is SUPPLIED but empty (``urdf_path=""`` /
+        ``data_config=""``) is refused naming THAT parameter, rather than read
+        as omitted. Read by truthiness the two were indistinguishable, so an
+        empty path fell through to the name lookup and got the message above -
+        close-match suggestions for a name the caller never asked to resolve,
+        and advice to pass the very kwarg they had passed - byte-identical to
+        what supplying no source at all returns. One whitespace character away
+        (``urdf_path=" "``) the diagnosis was already correct ("File not
+        found"), which is the shape an empty value gets now too.
+        :meth:`register_urdf` refuses an empty ``urdf_path`` the same way.
+
         ``position`` (3 elements) and ``orientation`` (4-element wxyz quaternion)
         are validated up front: a wrong-length, non-numeric, or non-finite
         (nan/inf) vector returns an actionable ``{"status": "error"}`` and
@@ -1762,6 +1773,36 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
+
+        # A model source the caller SUPPLIED but left empty is not one they
+        # omitted. The resolution below reads both by truthiness, so `""` was
+        # indistinguishable from `None`: the deprecated name-as-registry-key
+        # fallback ran for a call that had asked for a file, and the refusal
+        # then diagnosed the NAME - offering close-match suggestions for a
+        # name the caller never asked to resolve, and advising them to "pass
+        # data_config=<registered model> or urdf_path=<file>", the kwarg they
+        # had just passed. Name the empty parameter instead. This is the rule
+        # `name` states two paragraphs up ("another falsy value would take the
+        # same branch and report success under a label that was never asked
+        # for"), the rule `position`/`orientation` state below (`is None`
+        # means omitted, an `or` would read an empty vector as omitted), the
+        # rule :meth:`register_urdf` already applies to this same parameter,
+        # and the rule the Newton (`urdf_path is not None`) and Isaac
+        # (`usd_path is None`) backends already read their model source by.
+        for param, supplied in (("urdf_path", urdf_path), ("data_config", data_config)):
+            if supplied is not None and not supplied:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"add_robot: '{param}' must be a non-empty string. "
+                                f"Pass a model source, or omit {param}= to resolve the "
+                                f"model from the registry instead."
+                            )
+                        }
+                    ],
+                }
 
         # Resolution precedence:
         #   1. explicit `urdf_path` (anything on disk).
