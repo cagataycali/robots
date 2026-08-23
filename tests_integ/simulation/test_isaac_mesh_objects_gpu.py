@@ -90,11 +90,18 @@ class TestIsaacMeshObjectsGPU:
                 shape="mesh",
                 mesh_path=str(asset),
                 position=[0.4, 0.0, 0.2],
+                # Ignored for shape="mesh" - the asset's own units define the
+                # extent. Wrong on every axis so the discard is unambiguous, and
+                # the same value tests/simulation/
+                # test_mesh_size_docs_match_backend_divergence.py uses to prove
+                # Newton *does* consume it.
+                size=[2.0, 3.0, 4.0],
                 is_static=True,
             )
             assert result["status"] == "success", result
             payload = _json_payload(result)
             assert payload["shape"] == "mesh"
+            # The asset's extent, not the request.
             assert payload["size"] == pytest.approx([0.1, 0.1, 0.1])
 
             import omni.usd
