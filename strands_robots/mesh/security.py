@@ -1359,11 +1359,21 @@ def validate_input_frame(action: Any) -> dict[str, float]:
 
     * Frame must be a ``dict``.
     * At most :data:`MAX_INPUT_FRAME_KEYS` keys (DoS bound).
-    * Each key: ``str``, ``<= MAX_INPUT_KEY_LEN`` chars, matching
-      :data:`_INPUT_KEY_RE` (no control bytes / path separators / shell
-      metacharacters).
-    * Each value: coercible to ``float``, **finite** (no ``nan`` /
-      ``inf``), and within ``+/- MAX_INPUT_VALUE_ABS``.
+    * Each key: a non-empty ``str`` of at most ``MAX_INPUT_KEY_LEN`` chars,
+      matching :data:`_INPUT_KEY_RE` (no control bytes / path separators /
+      shell metacharacters).
+    * Each value: an ``int`` or a ``float``. The *type* is checked rather than
+      the value's coercibility, so a numeric-looking ``str`` is refused. A
+      numpy scalar is unwrapped to a python scalar first, and a ``bool`` is
+      then refused explicitly: ``bool`` is an ``int`` subclass, so ``True``
+      would otherwise reach an actuator as a ``1.0`` command.
+    * Each value: **finite** (no ``nan`` / ``inf``) and within ``+/-``
+      :func:`_input_value_abs` (``STRANDS_MESH_INPUT_VALUE_ABS``).
+
+    The envelope the last check applies is that resolver, not the import-time
+    :data:`MAX_INPUT_VALUE_ABS` snapshot of it, so an operator who narrows the
+    teleop envelope takes effect without a process restart. The two agree until
+    the env var is set after import, and it is the resolver that refuses.
 
     Returns a sanitised ``dict[str, float]`` containing only validated
     entries. Raises :class:`ValidationError` on any violation.
