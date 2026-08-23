@@ -387,13 +387,51 @@ def _device_holding_modules() -> list[pathlib.Path]:
     return holders
 
 
+def _device_names_in(function: ast.AST) -> set[str]:
+    """Locals inside ``function`` bound to a device the module holds.
+
+    Mirrors the binding step :func:`_owned_bus_operations` already performs on
+    ``bus_access`` itself, where ``bus = getattr(device, "bus", None)`` parks the
+    thing being driven in a local. A module that reaches its wrapped robot as
+    ``getattr(holder, "robot", None)`` or ``holder.robot`` and then drives that
+    local is on the same serial bus as every other reader, so matching only the
+    ``self.robot`` spelling grades the expression rather than the device.
+
+    Args:
+        function: The function whose local bindings to collect.
+
+    Returns:
+        The local names bound to a held device.
+    """
+    names: set[str] = set()
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call) and ast.unparse(value.func) == "getattr":
+            bound = len(value.args) >= 2 and isinstance(value.args[1], ast.Constant) and value.args[1].value == "robot"
+        elif isinstance(value, ast.Attribute):
+            bound = value.attr == "robot"
+        else:
+            bound = False
+        if bound:
+            names.add(target.id)
+    return names
+
+
 def _direct_device_touches() -> list[tuple[str, int, str]]:
     """Owned bus operations reached through a device the module holds.
 
     Matched on the expression rather than on a file list: reaching
     ``get_observation`` through ``self.robot`` is driving the wrapped hardware
     bus, while a simulation backend's identically named method drives no serial
-    port at all and is never in scope.
+    port at all and is never in scope. A device parked in a local first
+    (:func:`_device_names_in`) is the same bus reached by another spelling, so it
+    is graded too -- matching the attribute expression alone let a device
+    obtained as ``getattr(self._robot, "robot", None)`` drive the wire ungraded.
     """
     operations = _owned_bus_operations()
     touches: list[tuple[str, int, str]] = []
@@ -404,10 +442,13 @@ def _direct_device_touches() -> list[tuple[str, int, str]]:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except SyntaxError:  # pragma: no cover - a module that does not parse
             continue
+        held_locals: set[str] = set()
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+            held_locals |= _device_names_in(function)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute) or node.attr not in operations:
                 continue
             holder = ast.unparse(node.value)
-            if holder == "self.robot" or holder.startswith("self.robot."):
+            if holder == "self.robot" or holder.startswith("self.robot.") or holder in held_locals:
                 touches.append((str(path.relative_to(PACKAGE.parent)), node.lineno, ast.unparse(node)))
     return sorted(touches)
