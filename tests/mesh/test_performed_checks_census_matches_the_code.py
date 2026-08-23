@@ -358,3 +358,303 @@ class TestTheValueRuleTheCensusNowStates:
         monkeypatch.setenv("STRANDS_MESH_INPUT_VALUE_ABS", "10.0")
         refusal = _refused(50.0)
         assert refusal is not None and "out of range" in refusal, refusal
+
+
+def _validated_action_fields(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> dict[str, dict[str, str | None]]:
+    """Map each ``action`` branch of *fn* to the fields that branch validates.
+
+    A census enumerated *per action* is complete only when it names every
+    action branch that validates a field, and every field inside it. Both
+    halves are read off the body -- the ``if action == "x"`` chain, and the
+    ``cmd`` reads within each branch -- so a thirteenth action is graded on
+    arrival with no list here to update.
+
+    A field handed to a shared ``validate_*`` helper maps to that helper's
+    name, because the helper *is* the domain: a bullet that describes such a
+    field in its own words can describe a wider admission than the code
+    performs, which is how ``source_peer_id`` came to be documented as a
+    "non-empty str" while
+    :func:`~strands_robots.mesh.security.validate_mesh_identifier` refuses the
+    Zenoh ``**`` wildcard -- a value that, per that function's own docstring,
+    widens a point-to-point teleop subscription into a match-any one.
+
+    A validator that does not branch on an action yields ``{}``, so the rules
+    below are vacuous for it rather than needing an exemption.
+    """
+    found: dict[str, dict[str, str | None]] = {}
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.If):
+            continue
+        actions = _actions_selected_by(node.test)
+        if not actions:
+            continue
+        branch = ast.Module(body=node.body, type_ignores=[])
+        fields = _command_fields_read(branch)
+        fields.pop("action", None)
+        for action in actions:
+            found.setdefault(action, {}).update(fields)
+    return {action: fields for action, fields in found.items() if fields}
+
+
+def _actions_selected_by(test: ast.expr) -> list[str]:
+    """Action literals the ``if``/``elif`` *test* selects, in either spelling."""
+    selected: list[str] = []
+    for node in ast.walk(test):
+        if not (isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)):
+            continue
+        if node.left.id != "action":
+            continue
+        for comparator in node.comparators:
+            if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+                selected.append(comparator.value)
+            elif isinstance(comparator, (ast.Tuple, ast.List, ast.Set)):
+                for element in comparator.elts:
+                    # The isinstance on ``.value`` narrows for the type checker:
+                    # ``ast.Constant.value`` is the whole literal union.
+                    if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                        selected.append(element.value)
+    return selected
+
+
+def _command_fields_read(branch: ast.Module) -> dict[str, str | None]:
+    """Fields *branch* reads out of ``cmd``, mapped to a delegate or ``None``.
+
+    All three read spellings the body uses count -- ``cmd.get("f")``,
+    ``cmd["f"]`` and ``"f" in cmd`` -- because a field guarded only behind a
+    presence test is still a field the function validates.
+    """
+    fields: dict[str, str | None] = {}
+    for node in ast.walk(branch):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            container = node.func.value
+            if (
+                node.func.attr in ("get", "pop")
+                and isinstance(container, ast.Name)
+                and container.id == "cmd"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                fields.setdefault(node.args[0].value, None)
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "cmd":
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                fields.setdefault(node.slice.value, None)
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Constant):
+            if isinstance(node.left.value, str) and any(isinstance(o, (ast.In, ast.NotIn)) for o in node.ops):
+                if any(isinstance(c, ast.Name) and c.id == "cmd" for c in node.comparators):
+                    fields.setdefault(node.left.value, None)
+    for field, delegate in _delegated_fields(branch).items():
+        if field in fields:
+            fields[field] = delegate
+    return fields
+
+
+def _delegated_fields(branch: ast.Module) -> dict[str, str]:
+    """Fields *branch* hands to a shared ``validate_*`` helper.
+
+    The helper is located by the dotted ``"action.field"`` label every such
+    call passes for its message prefix. The label is read off the AST rather
+    than out of the unparsed source, because :func:`ast.unparse` normalises
+    string literals to single quotes and a pattern written for the source's
+    double quotes silently matches nothing.
+    """
+    delegated: dict[str, str] = {}
+    for node in ast.walk(branch):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if not node.func.id.startswith("validate_"):
+            continue
+        for argument in node.args:
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str) and "." in argument.value:
+                delegated[argument.value.rsplit(".", 1)[1]] = node.func.id
+    return delegated
+
+
+#: Fewest action/field pairs the per-action scan must reach. Below this the
+#: rules would hold vacuously over an empty enumeration.
+_MINIMUM_ACTION_FIELD_PAIRS = 20
+
+
+def _per_action_censuses() -> list[tuple[str, str, dict[str, dict[str, str | None]]]]:
+    """Every census whose function enumerates checks per ``action``."""
+    found = []
+    for name, fn, bullets, _constants in _censuses():
+        by_action = _validated_action_fields(fn)
+        if by_action:
+            found.append((name, bullets, by_action))
+    return found
+
+
+class TestACensusEnumeratedPerActionNamesEveryActionAndField:
+    """An enumeration organised by action must be complete about both."""
+
+    def test_every_action_that_validates_a_field_is_named(self) -> None:
+        missing: dict[str, list[str]] = {}
+        for name, bullets, by_action in _per_action_censuses():
+            absent = sorted(action for action in by_action if f"``{action}``" not in bullets)
+            if absent:
+                missing[name] = absent
+        assert not missing, (
+            f"a census enumerated per action omits an action branch that validates a field: {missing}. "
+            "A reader consulting the enumeration concludes the action carries nothing to check."
+        )
+
+    def test_every_field_an_action_validates_is_named(self) -> None:
+        missing: dict[str, list[str]] = {}
+        for name, bullets, by_action in _per_action_censuses():
+            absent = sorted(
+                f"{action}.{field}"
+                for action, fields in by_action.items()
+                for field in fields
+                if f"``{field}``" not in bullets
+            )
+            if absent:
+                missing[name] = absent
+        assert not missing, (
+            f"a census names an action but not every field that action validates: {missing}. "
+            "An unnamed field reads as unvalidated, so a publisher author does not learn its bound."
+        )
+
+    def test_a_field_delegated_to_a_shared_validator_names_it(self) -> None:
+        missing: dict[str, list[str]] = {}
+        for name, bullets, by_action in _per_action_censuses():
+            absent = sorted(
+                f"{action}.{field} -> {delegate}"
+                for action, fields in by_action.items()
+                for field, delegate in fields.items()
+                if delegate is not None and delegate not in bullets
+            )
+            if absent:
+                missing[name] = absent
+        assert not missing, (
+            f"a census describes a delegated field without naming the validator that decides it: {missing}. "
+            "The helper is the domain, so describing the field in other words can state a wider admission "
+            "than the code performs."
+        )
+
+
+class TestThePerActionScanIsNotVacuous:
+    """The rules above are only worth anything over a populated enumeration."""
+
+    def test_the_scan_reaches_the_per_action_census(self) -> None:
+        names = [name for name, _bullets, _by_action in _per_action_censuses()]
+        assert "validate_command" in names, names
+
+    def test_the_scan_reaches_every_action_field_pair(self) -> None:
+        pairs = sum(len(fields) for _n, _b, by_action in _per_action_censuses() for fields in by_action.values())
+        assert pairs >= _MINIMUM_ACTION_FIELD_PAIRS, pairs
+
+    def test_the_scan_finds_the_delegated_identifier_fields(self) -> None:
+        """``validate_mesh_identifier`` is the delegate the rule exists for."""
+        delegated = {
+            delegate
+            for _n, _b, by_action in _per_action_censuses()
+            for fields in by_action.values()
+            for delegate in fields.values()
+            if delegate is not None
+        }
+        assert "validate_mesh_identifier" in delegated, delegated
+
+
+class TestThePerActionRulesDoNotOverReach:
+    """A validator with no action branches is not held to an enumeration."""
+
+    def test_a_census_that_does_not_branch_on_an_action_is_not_graded(self) -> None:
+        source = inspect.getsource(security)
+        fn = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "validate_input_frame"
+        )
+        assert _validated_action_fields(fn) == {}
+
+    def test_every_read_spelling_counts_as_a_field(self) -> None:
+        """``cmd.get``, ``cmd[...]`` and ``"f" in cmd`` all name a field."""
+        planted = ast.parse(
+            "\n".join(
+                [
+                    "def validate_planted(cmd):",
+                    '    """Performed checks:',
+                    "",
+                    "    * ``noop``: nothing.",
+                    '    """',
+                    '    if action == "planted":',
+                    '        a = cmd.get("via_get")',
+                    '        b = cmd["via_subscript"]',
+                    '        if "via_membership" in cmd:',
+                    "            pass",
+                ]
+            )
+        )
+        fn = planted.body[0]
+        assert isinstance(fn, ast.FunctionDef)
+        assert _validated_action_fields(fn) == {
+            "planted": {"via_get": None, "via_subscript": None, "via_membership": None}
+        }
+
+    def test_a_delegate_label_is_read_off_the_ast_not_the_unparsed_source(self) -> None:
+        """Single-quote normalisation by ``ast.unparse`` must not hide it."""
+        planted = ast.parse(
+            "\n".join(
+                [
+                    "def validate_planted(cmd):",
+                    '    if action == "planted":',
+                    '        x = validate_thing(cmd.get("field"), "planted.field")',
+                ]
+            )
+        )
+        fn = planted.body[0]
+        assert isinstance(fn, ast.FunctionDef)
+        assert _validated_action_fields(fn) == {"planted": {"field": "validate_thing"}}
+
+
+class TestTheActionRulesTheCensusNowStates:
+    """The census's new bullets describe what the validator really does."""
+
+    @pytest.mark.parametrize("identifier", ["**", "*", "a/b", "with space", "semi;colon"])
+    def test_a_teleop_source_peer_id_outside_the_charset_is_refused(self, identifier: str) -> None:
+        with pytest.raises(security.ValidationError, match=r"\[A-Za-z0-9_\.-\]\+"):
+            security.validate_command({"action": "teleop_receive", "source_peer_id": identifier})
+
+    def test_a_teleop_device_name_outside_the_charset_is_refused(self) -> None:
+        with pytest.raises(security.ValidationError, match="device_name"):
+            security.validate_command({"action": "teleop_receive", "source_peer_id": "leader", "device_name": "**"})
+
+    def test_an_identifier_inside_the_charset_is_admitted(self) -> None:
+        out = security.validate_command(
+            {"action": "teleop_receive", "source_peer_id": "arm-1.left", "device_name": "leader_2"}
+        )
+        assert out["source_peer_id"] == "arm-1.left"
+        assert out["device_name"] == "leader_2"
+
+    @pytest.mark.parametrize("device", [123, [], {}, 1.5])
+    def test_a_non_string_teleop_stop_device_name_is_refused(self, device: Any) -> None:
+        with pytest.raises(security.ValidationError, match="must be a string or null"):
+            security.validate_command({"action": "teleop_stop", "device_name": device})
+
+    def test_a_null_teleop_stop_device_name_is_admitted(self) -> None:
+        assert security.validate_command({"action": "teleop_stop", "device_name": None})["device_name"] is None
+
+    @pytest.mark.parametrize("code", [123, [], {}, True])
+    def test_a_non_string_override_code_is_refused(self, code: Any) -> None:
+        with pytest.raises(security.ValidationError, match="must be a string"):
+            security.validate_command({"action": "resume", "override_code": code})
+
+    def test_an_override_code_past_the_cited_bound_is_refused(self) -> None:
+        over = "a" * (security.MAX_OVERRIDE_CODE_LEN + 1)
+        with pytest.raises(security.ValidationError, match="too long"):
+            security.validate_command({"action": "resume", "override_code": over})
+
+    @pytest.mark.parametrize("code", ["ok\ninjected", "ok\r\ninjected", "nul\x00byte", "bell\x07"])
+    def test_an_override_code_carrying_a_control_character_is_refused(self, code: str) -> None:
+        with pytest.raises(security.ValidationError, match="control characters"):
+            security.validate_command({"action": "resume", "override_code": code})
+
+    def test_a_printable_override_code_at_the_bound_is_admitted(self) -> None:
+        at_bound = "a" * security.MAX_OVERRIDE_CODE_LEN
+        assert security.validate_command({"action": "resume", "override_code": at_bound})["override_code"] == at_bound
+
+    def test_an_omitted_override_code_defaults_to_empty(self) -> None:
+        assert security.validate_command({"action": "resume"})["override_code"] == ""

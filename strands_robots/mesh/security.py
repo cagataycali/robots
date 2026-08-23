@@ -947,7 +947,19 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         - ``fast_mode`` (optional): boolean.
         - ``n_steps`` (optional): integer in ``[1, 10_000_000]``.
     * ``step``: ``steps`` integer in ``[1, 10_000]``, defaults to 1.
-    * ``teleop_receive``: ``source_peer_id`` non-empty str.
+    * ``teleop_receive``: both identifiers are checked by
+      :func:`validate_mesh_identifier`, so the admitted charset is
+      ``[A-Za-z0-9_.-]+`` rather than any non-empty string -- a Zenoh
+      wildcard is refused instead of silently widening the subscription
+      the follower builds out of them.
+        - ``source_peer_id``: REQUIRED.
+        - ``device_name`` (optional): defaults to ``"leader"`` downstream.
+    * ``teleop_stop``: ``device_name`` (optional) must be a str or null.
+    * ``resume``: ``override_code`` (optional, defaults to ``""``): str of at
+      most :data:`MAX_OVERRIDE_CODE_LEN` characters, printable ASCII only
+      (no C0/DEL/CRLF). The operator's second factor for clearing an e-stop
+      lockout is bounded here so it cannot carry a control character into the
+      audit trail, and cannot reach ``Mesh._resume_lockout`` as a non-string.
 
     Raises :class:`ValidationError` on any rule violation.
     """
