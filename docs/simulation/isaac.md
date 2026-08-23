@@ -220,7 +220,11 @@ LIBERO scenes get the same treatment for their *visuals*: `load_scene`
 renders each task object with its real mesh (bowls, plates - the assets a
 pixel-conditioned policy was trained on) while keeping the validated
 collision-AABB box as the invisible physics proxy, so switching backends does
-not also switch what the cameras see. An object whose mesh cannot be resolved
+not also switch what the cameras see. That box covers both MJCF spellings of a
+capsule or cylinder - `pos` plus `size="radius half-length"`, and `fromto` plus
+`size="radius"`, where the two endpoints carry the placement and the axis
+extent - so a `fromto` bar is proxied by its full length at its midpoint rather
+than by a ball of its radius at the body origin. An object whose mesh cannot be resolved
 keeps a visible box proxy, and the `load_scene` report then carries an
 explicit caveat that pixel-conditioned policy scores on that scene are not
 comparable across backends; when every object renders its mesh, the caveat

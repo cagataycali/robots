@@ -114,9 +114,9 @@ def _mujoco_body_frame_aabb(scene_path: str, geom_name: str = "g"):
     assert gid >= 0, f"premise: geom {geom_name!r} is missing from the compiled model"
     local_center = model.geom_aabb[gid][:3].copy()
     local_half = model.geom_aabb[gid][3:].copy()
-    rot = np.zeros(9)
-    mujoco.mju_quat2Mat(rot, model.geom_quat[gid])
-    rot = rot.reshape(3, 3)
+    flat = np.zeros(9)
+    mujoco.mju_quat2Mat(flat, model.geom_quat[gid])
+    rot = flat.reshape(3, 3)
     center = model.geom_pos[gid] + rot @ local_center
     half = np.abs(rot) @ local_half
     return tuple(float(v) for v in center), tuple(float(2.0 * v) for v in half)
