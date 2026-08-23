@@ -403,8 +403,8 @@ def load_mjcf(path: str) -> ProceduralRobot:
 
     model_name = root.get("model", os.path.splitext(os.path.basename(path))[0])
 
-    worldbody = root.find("worldbody")
-    if worldbody is None:
+    declares_worldbody, top_bodies = _mjcf_model_worldbody_bodies(root, os.path.dirname(os.path.abspath(path)))
+    if not declares_worldbody:
         raise ValueError(f"MJCF loader: {path} has no <worldbody>")
 
     bodies: list[BodyDef] = []
@@ -490,7 +490,6 @@ def load_mjcf(path: str) -> ProceduralRobot:
         for child in body_el.findall("body"):
             _walk(child, body_idx)
 
-    top_bodies = list(worldbody.findall("body"))
     if not top_bodies:
         raise ValueError(f"MJCF loader: {path} <worldbody> has no <body> children (phantom robot guard)")
 
@@ -916,6 +915,39 @@ def _mjcf_model_toplevel(root: ET.Element, base_dir: str, _seen: frozenset[str] 
     return out
 
 
+def _mjcf_model_worldbody_bodies(root: ET.Element, base_dir: str) -> tuple[bool, list[ET.Element]]:
+    """Whether the model declares a ``<worldbody>``, and its top-level bodies.
+
+    Read from the whole model - the MJCF plus every ``<include>``d fragment, via
+    :func:`_mjcf_model_toplevel` - because MuJoCo splices includes and MERGES
+    every ``<worldbody>`` the spliced model carries, exactly as it treats
+    ``<compiler>`` and ``<asset>`` as model-global. So a model's bodies need not
+    live in the top file, and a model may declare several ``<worldbody>``
+    elements across its fragments.
+
+    Reading only the top file's direct children breaks in two ways, and they
+    fail differently. A model whose ``<worldbody>`` lives entirely in a fragment
+    reads as having none, so the loader refuses a model MuJoCo compiles. A model
+    that keeps some bodies in the top file and includes the rest reads only the
+    ones it can see, silently dropping the others - and their whole subtrees and
+    joints with them - under a successful load.
+
+    Both elements and bodies keep document order, which is the order MuJoCo
+    assigns body indices in.
+
+    Args:
+        root: Parsed ``<mujoco>`` root element.
+        base_dir: Directory the model's own ``<include>`` paths resolve against.
+
+    Returns:
+        ``(declares_a_worldbody, top_level_body_elements)``. The flag separates
+        "no ``<worldbody>`` anywhere in the model" from "a ``<worldbody>`` that
+        carries no bodies", which the two callers report differently.
+    """
+    worldbodies = [el for el in _mjcf_model_toplevel(root, base_dir) if el.tag == "worldbody"]
+    return bool(worldbodies), [body for wb in worldbodies for body in wb.findall("body")]
+
+
 def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[str, tuple[float, float, float]]]:
     """Collect the model's ``<asset><mesh>`` registry: name -> (file path, scale).
 
@@ -1257,14 +1289,15 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
     root = _parse_xml(path, "MJCF scene")
     if root.tag != "mujoco":
         raise ValueError(f"MJCF scene loader: root element must be <mujoco>, got <{root.tag}> in {path}")
-    worldbody = root.find("worldbody")
-    if worldbody is None:
+    mjcf_dir = os.path.dirname(os.path.abspath(path))
+    declares_worldbody, top_bodies = _mjcf_model_worldbody_bodies(root, mjcf_dir)
+    if not declares_worldbody:
         raise ValueError(f"MJCF scene loader: {path} has no <worldbody>")
 
-    mesh_registry = _parse_mjcf_mesh_assets(root, os.path.dirname(os.path.abspath(path)))
+    mesh_registry = _parse_mjcf_mesh_assets(root, mjcf_dir)
 
     objects: list[SceneObject] = []
-    for body_el in worldbody.findall("body"):
+    for body_el in top_bodies:
         name = body_el.get("name") or ""
         if not name or _is_skipped_scene_body(name):
             continue
