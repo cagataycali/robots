@@ -2447,8 +2447,14 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
 
     The list is applied atomically: if any op raises, the whole patch is
     rejected and the world is left in its original state. After all ops
-    succeed, ``spec.recompile(model, data)`` is called once, so joint
-    qpos/qvel for unchanged joints are preserved automatically.
+    succeed the batch is recompiled once, through the same
+    :func:`_recompile_preserving_state` every other scene mutation uses, so joint
+    qpos/qvel for unchanged joints are preserved automatically and so is the rest
+    of the state that helper carries -- notably a latched ``apply_force`` wrench,
+    which ``spec.recompile`` returns zeroed. That recompile is inside the
+    rollback too: a batch whose ops all apply and whose compiled model the
+    compiler then refuses leaves the pre-patch spec live, so the refusal costs
+    exactly the batch that was refused rather than every later mutation.
 
     Returns the number of ops applied (same as ``len(ops)`` on success).
     """
@@ -2477,16 +2483,29 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
         world._backend_state["spec"] = backup_spec
         raise ValueError(f"patch op #{applied + 1} failed: {err}") from err
 
-    # One recompile for the whole batch - preserves qpos/qvel for unchanged joints.
-    with filter_mujoco_attach_noise():
-        new_model, new_data = spec.recompile(world._model, world._data)
-    install_compiled_model(world, new_model, new_data)
+    # One recompile for the whole batch, through the same helper every other
+    # scene mutation uses. Hand-rolled here, this path kept none of what that
+    # helper preserves: it re-latches the applied-force buffers ``spec.recompile``
+    # carries no part of, defines every buffer entry the positional transfer
+    # leaves untouched, re-discovers per-robot joint and actuator ids, and runs
+    # the forward pass. A latched ``apply_force`` wrench is documented to hold
+    # until the next ``apply_force`` on that body or a ``reset()``, and a patch
+    # is neither, yet a bare recompile zeroed it -- so a crate held against
+    # gravity fell out of the sky on the first step after any successful patch,
+    # under a "status": "success".
+    #
+    # The call sits inside the rollback's scope, mirroring
+    # :func:`inject_robot_into_scene`: the ops all landed in the spec but the
+    # model they produced was refused, so the entire batch is sitting in the live
+    # spec while the caller is about to be told the patch failed. That spec is
+    # what every later mutation recompiles from, so the refusal was permanent
+    # rather than per-call -- a subsequent unrelated ``add_object`` failed too,
+    # naming the leftover element from a batch the caller was told had failed.
+    # Put the pre-patch spec back, then let the compiler's reason travel.
+    try:
+        _recompile_preserving_state(world, spec, raise_on_refusal=True)
+    except (ValueError, RuntimeError):
+        world._backend_state["spec"] = backup_spec
+        raise
 
-    # Forward pass so new bodies' xpos / xquat / cam_xmat are populated for
-    # the very next render() or get_body_state() call. Same reasoning as
-    # replace_scene_mjcf.
-    mj = _ensure_mujoco()
-    mj.mj_forward(world._model, world._data)
-
-    _sync_cached_xml(world, spec)
     return applied

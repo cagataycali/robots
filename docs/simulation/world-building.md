@@ -518,7 +518,14 @@ sim.patch_scene_mjcf([{"op": "add_geom", "body": "rig", "type": "box",
 
 The batch is atomic: if any op is rejected the world is rolled back to its
 pre-patch state, so a bad key or a non-finite component never leaves a
-half-applied scene. Use
+half-applied scene. A batch every op accepts can still be refused by MuJoCo when
+the model they add up to is one it will not build, and that refusal is rolled
+back on the same terms - it costs the batch, not the world, so the next mutation
+still succeeds.
+
+A successful batch recompiles the model once, so it keeps the dynamic state every
+other scene mutation keeps: joint positions and velocities, actuator setpoints,
+and a latched `apply_force` wrench. Use
 `replace_scene_mjcf(xml)` for MJCF elements this vocabulary does not cover.
 
 ## Exporting a scene
