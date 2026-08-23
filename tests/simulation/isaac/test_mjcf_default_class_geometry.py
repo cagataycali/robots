@@ -324,7 +324,7 @@ class TestOneRuleAnswersWhatAGeomDeclared:
         offenders = []
         scanned = 0
         for fn in ast.walk(tree):
-            if not isinstance(fn, ast.FunctionDef) or fn.name == "_geom_attrs":
+            if not isinstance(fn, ast.FunctionDef) or fn.name == "_class_attrs":
                 continue
             scanned += 1
             for node in ast.walk(fn):
@@ -348,21 +348,21 @@ class TestOneRuleAnswersWhatAGeomDeclared:
     def test_an_undeclared_class_contributes_nothing(self, tmp_path):
         # MuJoCo refuses such a model itself, so naming the offending class is
         # its report to make; the reader must not fail the load over it.
-        from strands_robots.simulation.isaac.loaders import _geom_attrs, _mjcf_geom_defaults
+        from strands_robots.simulation.isaac.loaders import _class_attrs, _mjcf_class_defaults
 
         root = ET.fromstring(
             '<mujoco><worldbody><body name="b"><geom name="g" class="nope"/></body></worldbody></mujoco>'
         )
-        defaults = _mjcf_geom_defaults(root, str(tmp_path))
+        defaults = _mjcf_class_defaults(root, str(tmp_path), "geom")
         geom = root.find(".//geom")
         assert geom is not None
-        assert _geom_attrs(geom, defaults, "") == {"name": "g", "class": "nope"}
+        assert _class_attrs(geom, defaults, "") == {"name": "g", "class": "nope"}
 
     def test_the_scan_reaches_the_readers_it_grades(self):
         # A scan that reaches nothing would report clean forever.
         src = inspect.getsource(mod)
         for name in ("_extract_mjcf_shape", "_geom_aabb", "_body_collision_aabb", "_find_body_mesh"):
             assert f"def {name}(" in src, f"premise: {name} is no longer in the scanned module"
-            assert "_geom_attrs(" in inspect.getsource(getattr(mod, name)), (
+            assert "_class_attrs(" in inspect.getsource(getattr(mod, name)), (
                 f"{name} does not resolve its geom attributes through the shared rule"
             )

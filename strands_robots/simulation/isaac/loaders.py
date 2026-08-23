@@ -408,8 +408,8 @@ def load_mjcf(path: str) -> ProceduralRobot:
     if not declares_worldbody:
         raise ValueError(f"MJCF loader: {path} has no <worldbody>")
 
-    geom_defaults = _mjcf_geom_defaults(root, mjcf_dir)
-
+    geom_defaults = _mjcf_class_defaults(root, mjcf_dir, "geom")
+    joint_defaults = _mjcf_class_defaults(root, mjcf_dir, "joint")
     bodies: list[BodyDef] = []
     joints: list[JointDef] = []
 
@@ -456,8 +456,14 @@ def load_mjcf(path: str) -> ProceduralRobot:
 
         # Each <joint> child connects this body to its parent.
         for joint_el in body_el.findall("joint"):
+            # A joint's own attributes, with its default class's underneath: a
+            # class may declare ``type``, ``axis``, ``range``, ``damping`` and
+            # ``armature``, so a joint that spells none of them still has all
+            # five. ``name`` stays an attribute of the element - a class names a
+            # kind of joint, never an instance of one.
+            jattrs = _class_attrs(joint_el, joint_defaults, childclass)
             jname = joint_el.get("name") or f"{body_name}_joint_{len(joints)}"
-            mjcf_type = joint_el.get("type", "hinge")
+            mjcf_type = jattrs.get("type", "hinge")
             jtype = _MJCF_JOINT_TYPE_MAP.get(mjcf_type)
             if jtype is None:
                 raise ValueError(
@@ -465,8 +471,8 @@ def load_mjcf(path: str) -> ProceduralRobot:
                     f"unknown joint type (expected one of {sorted(_MJCF_JOINT_TYPE_MAP)})"
                 )
 
-            axis = _parse_axis(joint_el.get("axis"))
-            range_str = joint_el.get("range")
+            axis = _parse_axis(jattrs.get("axis"))
+            range_str = jattrs.get("range")
             lower, upper = -3.14159, 3.14159
             if range_str:
                 try:
@@ -477,8 +483,8 @@ def load_mjcf(path: str) -> ProceduralRobot:
                 except (ValueError, TypeError):
                     pass
 
-            damping = _safe_float(joint_el.get("damping"), 0.1)
-            armature = _safe_float(joint_el.get("armature"), 0.01)
+            damping = _safe_float(jattrs.get("damping"), 0.1)
+            armature = _safe_float(jattrs.get("armature"), 0.01)
 
             joints.append(
                 JointDef(
@@ -538,7 +544,7 @@ def _extract_mjcf_shape(
     the exclusion :func:`_geom_aabb` documents rather than asserting an
     approximation this does not compute.
 
-    All three attributes are read through :func:`_geom_attrs`, because a geom
+    All three attributes are read through :func:`_class_attrs`, because a geom
     need not spell any of them itself - ``<default>`` inheritance may supply
     them, and a link whose class declares ``type="capsule"`` reads as the
     fallback box if the element is asked directly.
@@ -546,7 +552,7 @@ def _extract_mjcf_shape(
     geom = body_el.find("geom")
     if geom is None:
         return "box", (0.05, 0.05, 0.05)
-    attrs = _geom_attrs(geom, defaults, childclass)
+    attrs = _class_attrs(geom, defaults, childclass)
     gtype = attrs.get("type", "box")
     size_str = attrs.get("size", "")
     sizes: list[float] = []
@@ -940,41 +946,47 @@ def _mjcf_model_toplevel(root: ET.Element, base_dir: str, _seen: frozenset[str] 
     return out
 
 
-def _mjcf_geom_defaults(root: ET.Element, base_dir: str) -> dict[str, dict[str, str]]:
-    """Every ``<default>`` class's effective ``<geom>`` attributes, flattened.
+def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str, dict[str, str]]:
+    """Every ``<default>`` class's effective ``<tag>`` attributes, flattened.
 
     MJCF's ``<default>`` elements form a tree: the unnamed top-level element is
     the root class, a ``<default class="X">`` inherits its enclosing element's
-    attributes, and a ``<geom>`` takes its class's attributes for every
-    attribute it does not spell itself. So ``type``, ``size`` and ``fromto`` -
-    the three attributes that decide what shape a geom is - need not appear on
-    the geom at all. Read as the geom's own attributes alone, a link whose class
-    declares ``type="capsule" size="0.05"`` reports the default box however long
-    its ``fromto`` segment is, which also makes the endpoint reading
-    :func:`_extract_mjcf_shape` performs unreachable for it.
+    attributes, and an element takes its class's attributes for every attribute
+    it does not spell itself. So the attributes that decide what a ``<geom>``
+    is - ``type``, ``size``, ``fromto`` - and the ones that decide what a
+    ``<joint>`` is - ``type``, ``axis``, ``range`` - need not appear on the
+    element at all. Read as the element's own attributes alone, a link whose
+    class declares ``type="capsule" size="0.05"`` reports the default box
+    however long its ``fromto`` segment is, and a finger whose class declares
+    ``type="slide"`` reports a revolute joint turning about the default axis.
+
+    ``tag`` selects the ``<default>`` child whose attributes to collect. One
+    class carries a separate attribute set per element kind, so ``geom`` and
+    ``joint`` are collected separately and never merged: they share attribute
+    names (``type``) that mean different things.
 
     ``<default>`` is a top-level element, so it is model-global: the fragment
-    declaring a class need not be the fragment declaring the geom, and neither
-    need be the top file - the same splice :func:`_mjcf_model_toplevel` resolves
-    for ``<compiler>`` and ``<asset>``.
+    declaring a class need not be the fragment declaring the element, and
+    neither need be the top file - the same splice
+    :func:`_mjcf_model_toplevel` resolves for ``<compiler>`` and ``<asset>``.
 
-    Returns a mapping from class name to that class's merged ``<geom>``
-    attributes, with the root class under ``""``. A class a geom names but no
-    ``<default>`` declares contributes nothing rather than failing the load:
+    Returns a mapping from class name to that class's merged ``<tag>``
+    attributes, with the root class under ``""``. A class an element names but
+    no ``<default>`` declares contributes nothing rather than failing the load:
     MuJoCo refuses such a model itself, and naming the offending class is its
     report to make.
     """
 
-    def _geom_attrs_of(default_el: ET.Element) -> dict[str, str]:
-        geom_el = default_el.find("geom")
-        if geom_el is None:
+    def _attrs_of(default_el: ET.Element) -> dict[str, str]:
+        child = default_el.find(tag)
+        if child is None:
             return {}
-        return {k: v for k, v in geom_el.attrib.items() if k != "class"}
+        return {k: v for k, v in child.attrib.items() if k != "class"}
 
     classes: dict[str, dict[str, str]] = {"": {}}
 
     def _flatten(default_el: ET.Element, inherited: dict[str, str]) -> None:
-        merged = {**inherited, **_geom_attrs_of(default_el)}
+        merged = {**inherited, **_attrs_of(default_el)}
         classes[default_el.get("class", "")] = merged
         for nested in default_el.findall("default"):
             _flatten(nested, merged)
@@ -989,17 +1001,22 @@ def _mjcf_geom_defaults(root: ET.Element, base_dir: str) -> dict[str, dict[str, 
     return classes
 
 
-def _geom_attrs(geom: ET.Element, defaults: dict[str, dict[str, str]], childclass: str) -> dict[str, str]:
-    """A geom's effective attributes: its default class's, overridden by its own.
+def _class_attrs(el: ET.Element, defaults: dict[str, dict[str, str]], childclass: str) -> dict[str, str]:
+    """An element's effective attributes: its default class's, overridden by its own.
 
-    The class is the geom's own ``class``, else the nearest enclosing body's
-    ``childclass``, else the root class - MJCF's own precedence. Every geom
-    attribute this module reads goes through here so one rule answers "what did
-    this geom declare", rather than each reader asking the element directly and
+    The class is the element's own ``class``, else the nearest enclosing body's
+    ``childclass``, else the root class - MJCF's own precedence, and the same
+    rule for a ``<joint>`` as for a ``<geom>``. Every attribute this module
+    reads off either kind goes through here so one rule answers "what did this
+    element declare", rather than each reader asking the element directly and
     seeing only half of it.
+
+    ``defaults`` must be the map :func:`_mjcf_class_defaults` collected for
+    ``el``'s own tag: a joint resolved against geom defaults would inherit a
+    geom's ``type``, which names a shape rather than a degree of freedom.
     """
-    cls = geom.get("class") or childclass
-    return {**defaults.get(cls, {}), **geom.attrib}
+    cls = el.get("class") or childclass
+    return {**defaults.get(cls, {}), **el.attrib}
 
 
 def _mjcf_model_worldbody_bodies(root: ET.Element, base_dir: str) -> tuple[bool, list[ET.Element]]:
@@ -1099,14 +1116,14 @@ def _find_body_mesh(
     declares no mesh geom.
 
     ``mesh``, ``pos``, ``quat`` and the ``group`` that decides visual-vs-
-    collision are read through :func:`_geom_attrs`, so a geom that inherits its
+    collision are read through :func:`_class_attrs`, so a geom that inherits its
     group from a ``<default class="visual">`` is preferred as MuJoCo reads it
     rather than being taken for a collision geom.
     """
     first_any: tuple[str, tuple[float, float, float], tuple[float, float, float, float], bool] | None = None
     childclass = body_el.get("childclass") or childclass
     for geom in body_el.findall("geom"):
-        attrs = _geom_attrs(geom, defaults, childclass)
+        attrs = _class_attrs(geom, defaults, childclass)
         mesh_name = attrs.get("mesh")
         if not mesh_name:
             continue
@@ -1226,10 +1243,10 @@ def _geom_aabb(
     rather than asserting an approximation this does not compute.
 
     ``type``, ``pos``, ``size`` and ``fromto`` are read through
-    :func:`_geom_attrs`: MJCF's ``<default>`` classes may supply any of them, so
+    :func:`_class_attrs`: MJCF's ``<default>`` classes may supply any of them, so
     asking the element directly sees only the half the geom spells itself.
     """
-    attrs = _geom_attrs(geom, defaults, childclass)
+    attrs = _class_attrs(geom, defaults, childclass)
     gtype = attrs.get("type", "sphere")
     pos = _parse_xyz(attrs.get("pos"))
     size_str = attrs.get("size", "")
@@ -1294,7 +1311,7 @@ def _body_collision_aabb(
         maxs = [float("-inf")] * 3
         found = False
         for geom in body_el.findall("geom"):
-            attrs = _geom_attrs(geom, defaults, childclass)
+            attrs = _class_attrs(geom, defaults, childclass)
             if group_filter is not None and attrs.get("group") != group_filter:
                 continue
             aabb = _geom_aabb(geom, defaults, childclass)
@@ -1406,7 +1423,7 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
         raise ValueError(f"MJCF scene loader: {path} has no <worldbody>")
 
     mesh_registry = _parse_mjcf_mesh_assets(root, mjcf_dir)
-    geom_defaults = _mjcf_geom_defaults(root, mjcf_dir)
+    geom_defaults = _mjcf_class_defaults(root, mjcf_dir, "geom")
     # Each top-level body inherits its OWN <worldbody>'s childclass: a spliced
     # model may carry several, and they need not name the same class.
     body_childclass = {
