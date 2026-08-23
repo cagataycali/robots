@@ -307,21 +307,27 @@ class TestAnUnterminatedAsciiStlFacetIsRefused:
         # The headline: the file ends mid-facet, so the spike triangle reaches
         # no face while its vertices stay in the bounds. Nothing raised, and
         # mesh_aabb reported the closed file's extent for a one-face mesh.
+        # Shaped like the OBJ tab test above: the diagnosis sits on the branch
+        # that means the parser got it wrong, which for this file is acceptance.
         asset = tmp_path / "truncated.stl"
         asset.write_text(
             "solid part\n" + self._CLOSED_FACET + self._SPIKE_BODY + "endsolid part\n",
             encoding="utf-8",
         )
-        with pytest.raises(ValueError, match="facet left unterminated") as refused:
+        try:
             points, counts, _indices = load_mesh_geometry(str(asset))
+        except ValueError as refused:
+            message = str(refused)
+        else:
             _center, size = mesh_aabb(str(asset))
             raise AssertionError(
                 f"an unterminated facet parsed: {len(counts)} of 2 faces from {len(points)} vertices, "
                 f"and the z extent is {size[2]} - the bounds of a triangle the mesh does not carry"
             )
+        assert "facet left unterminated" in message
         # Line 11 is the open facet's first vertex; the file's last line is 15.
-        assert ":11:" in str(refused.value)
-        assert "the end of the file" in str(refused.value)
+        assert ":11:" in message
+        assert "the end of the file" in message
 
     def test_the_only_facet_unterminated_is_not_reported_as_an_empty_asset(self, tmp_path):
         # Refused before this change too, but as "no triangle geometry
