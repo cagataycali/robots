@@ -5751,6 +5751,21 @@ class MuJoCoSimEngine(
     # and must not be reported as "unknown" by the router.
     _ROUTER_PASSTHROUGH = {"action"}
 
+    # Actions whose payload folds the flat video keys the schema publishes
+    # (``output_path``/``fps``/``camera_name``) into the structured ``video``
+    # dict their signatures take. :meth:`_fold_flat_video_keys` owns the rule;
+    # both the router and the acceptance-mirror guard read it rather than
+    # restating it, which is what let the mirror model four actions where the
+    # router accepted one.
+    _VIDEO_FOLDING_ACTIONS: frozenset[str] = frozenset(
+        {"run_policy", "start_policy", "eval_policy", "evaluate_benchmark"}
+    )
+
+    # The flat video keys ``run_policy`` accepts at the boundary even when the
+    # fold could not consume them. Named so the mirror can track the asymmetry
+    # instead of guessing at it; #2663 asks whether it should exist at all.
+    _RUN_POLICY_RESIDUAL_VIDEO_KEYS: frozenset[str] = frozenset({"output_path", "fps", "camera_name"})
+
     # Vector params with the component counts the target buffer can honor (for
     # dimension validation before numpy/MuJoCo sees them). 3 = xyz unless noted.
     # A param with several honorable counts lists them all, so the router never
@@ -5768,6 +5783,46 @@ class MuJoCoSimEngine(
         "orientation": (4,),  # quaternion (w,x,y,z)
         "color": (3, 4),  # rgb (opaque alpha) or rgba
     }
+
+    @classmethod
+    def _fold_flat_video_keys(cls, action: str, payload: dict[str, Any]) -> None:
+        """Fold the flat video keys into a structured ``video`` dict, in place.
+
+        The rollout and eval actions take ``video=`` as a dict, while the schema
+        publishes the flat spellings a model can emit (``output_path``, ``fps``,
+        ``camera_name``). This consumes the flat keys it can honor and leaves the
+        rest in *payload* for the router's unknown-key check.
+
+        Runs before validation, so a key removed here is never reported as
+        unknown. That makes this the single owner of "which flat video key is
+        legitimate for which action": :meth:`_validate_and_build_kwargs` and the
+        acceptance-mirror guard both read it instead of restating the rule.
+        Restating it is what let the mirror model the three flat keys as accepted
+        for all four folding actions while the router accepted a bare
+        ``camera_name`` on ``run_policy`` alone - so an example naming the video
+        camera for an eval rollout passed the mirror and was refused at runtime,
+        which is the dropped-envelope no-op the mirror exists to prevent.
+
+        ``camera_name`` is only folded when paired with a path, because the name
+        is shared with :meth:`render` and there is nothing to attach it to
+        otherwise. A payload that already carries ``video`` is left untouched:
+        the explicit dict wins.
+
+        Args:
+            action: The dispatched action name.
+            payload: Alias-rewritten parameters, mutated in place.
+        """
+        if action not in cls._VIDEO_FOLDING_ACTIONS or "video" in payload:
+            return
+        flat: dict[str, Any] = {}
+        if "output_path" in payload:
+            flat["path"] = payload.pop("output_path")
+        if "fps" in payload:
+            flat["fps"] = payload.pop("fps")
+        if flat.get("path") and "camera_name" in payload:
+            flat["camera"] = payload.pop("camera_name")
+        if flat.get("path"):
+            payload["video"] = flat
 
     def _validate_and_build_kwargs(
         self,
@@ -5808,11 +5863,13 @@ class MuJoCoSimEngine(
         method_param_names = set(named_params)
         accepted_field_names = method_param_names | set(self._FIELD_ALIASES.keys()) | self._ROUTER_PASSTHROUGH
 
-        # run_policy folds flat video keys into a structured `video` dict; those
-        # flat keys are legitimate at the router boundary even though run_policy
-        # itself takes `video=`.
+        # ``run_policy`` also accepts the flat video keys the fold could NOT
+        # consume: a bare ``camera_name`` with no path to attach it to, or a flat
+        # key sent alongside an explicit ``video=``. Only that residue reaches
+        # here, because :meth:`_fold_flat_video_keys` already removed the rest.
+        # Its three sibling folding actions refuse the same residue (see #2663).
         if action == "run_policy":
-            accepted_field_names |= {"output_path", "fps", "camera_name"}
+            accepted_field_names |= self._RUN_POLICY_RESIDUAL_VIDEO_KEYS
 
         # name/robot_name are aliased in both directions in the legacy router;
         # allow either here so we don't flag the alias as unknown.
@@ -5984,19 +6041,10 @@ class MuJoCoSimEngine(
             if field_key in remapped and param_key not in remapped:
                 remapped[param_key] = remapped.pop(field_key)
 
-        # Fold flat video keys into `video` dict for the rollout/eval actions.
-        if action in ("run_policy", "start_policy", "eval_policy", "evaluate_benchmark") and "video" not in remapped:
-            _video_flat: dict[str, Any] = {}
-            if "output_path" in remapped:
-                _video_flat["path"] = remapped.pop("output_path")
-            if "fps" in remapped:
-                _video_flat["fps"] = remapped.pop("fps")
-            # camera_name is shared with render(); only treat as video camera
-            # when paired with an output path.
-            if _video_flat.get("path") and "camera_name" in remapped:
-                _video_flat["camera"] = remapped.pop("camera_name")
-            if _video_flat.get("path"):
-                remapped["video"] = _video_flat
+        # Fold the flat video keys the schema publishes into the structured
+        # `video` dict the rollout/eval signatures take. Runs BEFORE validation,
+        # so a key it consumes is never reported as unknown.
+        self._fold_flat_video_keys(action, remapped)
 
         kwargs, err = self._validate_and_build_kwargs(action, method_name, sig, remapped, d)
         if err is not None:
