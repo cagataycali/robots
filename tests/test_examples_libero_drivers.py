@@ -33,9 +33,11 @@ argparse setup still get covered by the repo-wide example lint tests.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import inspect
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -297,3 +299,172 @@ def test_library_surface_the_drivers_depend_on() -> None:
         "port",
     ):
         assert kwarg in tool_params, f"gr00t_inference lost the {kwarg!r} kwarg the LIBERO drivers pass"
+
+
+# ---------------------------------------------------------------------------
+# The zero-frame verdict is shared, because the videos= line is shared
+# ---------------------------------------------------------------------------
+#
+# `stop_cameras_recording` answers status="success" whether the recorder
+# captured every frame or none, and imageio drops a 0-frame mp4 rather than
+# writing an empty file. Measured on the MuJoCo backend with a GL context the
+# host cannot create (a `MUJOCO_GL` naming a windowed backend on a headless
+# box): status="success", `frames: 0`, `errors: 46`, and nothing on disk.
+# The result line prints `videos=<path>` for both subcommands, so the verdict
+# has to hold for both - it is the shared loop's, not a per-backend hook's.
+
+_ZERO_FRAME_REFUSAL = "Rendering unavailable (no OpenGL context). Install EGL or OSMesa"
+
+
+def _stop_payload(*, camera: str = "default", frames: int = 0, refused: str | None = None) -> dict:
+    """A ``stop_cameras_recording`` envelope in the shape both backends emit."""
+    artifact: dict = {
+        "camera": camera,
+        "path": f"/tmp/rollout__{camera}.mp4",
+        "frames": frames,
+        "errors": 0 if frames else 46,
+        "size_kb": 16.2 if frames else 0.0,
+    }
+    if refused is not None:
+        artifact["render_refused"] = refused
+    return {
+        "status": "success",
+        "content": [
+            {"text": f"Stopped 'rollout' after 1.9s\n   {camera}  {frames} frames"},
+            {"json": {"recording": "rollout", "artifacts": [artifact]}},
+        ],
+    }
+
+
+class _FakeSim:
+    """Minimal ``evaluate_benchmark`` / ``stop_cameras_recording`` pair."""
+
+    def __init__(self, stop: dict) -> None:
+        self._stop = stop
+        self.evaluated = 0
+
+    def evaluate_benchmark(self, **_kwargs: object) -> dict:
+        self.evaluated += 1
+        return {"status": "success", "content": [{"json": {"success_rate": 0.4}}]}
+
+    def stop_cameras_recording(self) -> dict:
+        return self._stop
+
+
+def _report_args(run, backend: str):
+    """The namespace ``_evaluate_and_report`` reads, for either subcommand."""
+    return run.argparse.Namespace(
+        backend=backend, policy="mock", n_episodes=2, seed=7, task="libero_spatial", port=5555
+    )
+
+
+def _plan_for(run, backend: str, calls: list[str]):
+    """A plan in each subcommand's real shape.
+
+    MuJoCo ships no ``check_recording`` at all; Isaac ships one that reports
+    its ``on_frame`` retry counters. Neither may decide whether a rollout
+    recorded anything, so the Isaac shape here reports without raising.
+    """
+    hook = None
+    if backend == "isaac":
+
+        def hook(_stop: dict) -> None:
+            calls.append("check_recording")
+
+    return run._EvalPlan(
+        requested_task="libero_spatial",
+        resolved_task="libero_spatial_task_0",
+        recording_camera="default",
+        arm_recording=lambda _video_dir, _rec_name: {},
+        check_recording=hook,
+    )
+
+
+@pytest.mark.parametrize("backend", ["mujoco", "isaac"])
+def test_a_rollout_that_recorded_no_frames_is_refused_on_either_subcommand(backend, tmp_path, monkeypatch):
+    """Neither subcommand may print a videos= path for a file that never landed.
+
+    Fails pre-fix on the ``mujoco`` shape: with no ``check_recording`` the
+    loop printed the result lines and returned, so a blank rollout shipped a
+    ``success_rate`` line naming a dropped mp4. Fails pre-fix on the
+    ``isaac`` shape too once the hook only reports - which is the point: the
+    verdict must not depend on a per-backend hook supplying it.
+    """
+    run = _load_example("run.py")
+    monkeypatch.setattr(run, "_date_dir", lambda: str(tmp_path))
+    calls: list[str] = []
+    sim = _FakeSim(_stop_payload(frames=0))
+
+    with pytest.raises(RuntimeError, match="0 frames"):
+        run._evaluate_and_report(sim, _report_args(run, backend), _plan_for(run, backend, calls))
+
+    assert sim.evaluated == 1, "premise: the eval itself ran and reported success"
+
+
+@pytest.mark.parametrize("backend", ["mujoco", "isaac"])
+def test_a_rollout_that_recorded_frames_still_reports_normally(backend, tmp_path, monkeypatch, capsys):
+    """Control: a real recording is untouched, and the hook still runs."""
+    run = _load_example("run.py")
+    monkeypatch.setattr(run, "_date_dir", lambda: str(tmp_path))
+    calls: list[str] = []
+    sim = _FakeSim(_stop_payload(frames=120))
+
+    run._evaluate_and_report(sim, _report_args(run, backend), _plan_for(run, backend, calls))
+
+    printed = capsys.readouterr().out
+    assert "benchmark_name=libero_spatial" in printed
+    assert "success_rate=0.40" in printed and f"backend={backend}" in printed
+    assert calls == (["check_recording"] if backend == "isaac" else [])
+
+
+def test_the_backend_hook_reports_before_the_shared_verdict_raises(tmp_path, monkeypatch):
+    """A backend's recorder diagnostics are context for the refusal, so they precede it."""
+    run = _load_example("run.py")
+    monkeypatch.setattr(run, "_date_dir", lambda: str(tmp_path))
+    calls: list[str] = []
+
+    with pytest.raises(RuntimeError, match="0 frames"):
+        run._evaluate_and_report(
+            _FakeSim(_stop_payload(frames=0)), _report_args(run, "isaac"), _plan_for(run, "isaac", calls)
+        )
+
+    assert calls == ["check_recording"], "the hook must have run before the verdict raised"
+
+
+def test_the_refusal_carries_the_reason_the_recorder_recorded():
+    """The MuJoCo payload names the remedy; the refusal must not discard it."""
+    run = _load_example("run.py")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        run._require_recorded_frames(_stop_payload(frames=0, refused=_ZERO_FRAME_REFUSAL), "default")
+
+    message = str(excinfo.value)
+    assert _ZERO_FRAME_REFUSAL in message, message
+    assert "46 per-frame render errors" in message, message
+
+
+def test_a_missing_artifact_for_the_named_camera_counts_as_no_video():
+    """The result line names that camera's file whether or not an artifact exists."""
+    run = _load_example("run.py")
+
+    with pytest.raises(RuntimeError, match="'image'"):
+        run._require_recorded_frames(_stop_payload(camera="default", frames=120), "image")
+
+
+def test_the_zero_frame_verdict_is_applied_unconditionally() -> None:
+    """Root cause: the verdict is the shared loop's, not a per-backend opt-in.
+
+    Guarding the call on ``plan.check_recording is None`` would restore the
+    split this closes - one backend deciding, the other not - so pin that the
+    call is not inside any conditional.
+    """
+    run = _load_example("run.py")
+    tree = ast.parse(textwrap.dedent(inspect.getsource(run._evaluate_and_report)))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_require_recorded_frames"
+    ]
+    assert len(calls) == 1, "the shared loop applies the verdict exactly once"
+    conditional = {id(n) for branch in ast.walk(tree) if isinstance(branch, ast.If) for n in ast.walk(branch)}
+    assert id(calls[0]) not in conditional, "the zero-frame verdict must not be conditional"

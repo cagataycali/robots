@@ -499,8 +499,10 @@ class _EvalPlan:
     any extra ``evaluate_benchmark`` kwargs the recording needs (Isaac's
     synchronous recorder returns an ``on_frame=`` closure; MuJoCo's
     background-thread recorder returns nothing). ``check_recording``
-    validates the ``stop_cameras_recording`` payload after the eval
-    (Isaac's zero-frame fail-loud check); ``None`` skips the check.
+    reports backend-specific recorder context after the eval (Isaac's
+    ``on_frame`` retry counters); ``None`` skips that reporting. The
+    zero-frame verdict is deliberately not here and not optional - it is the
+    shared loop's ``_require_recorded_frames``, which runs for every backend.
     """
 
     requested_task: str
@@ -930,36 +932,17 @@ def _setup_isaac(args: argparse.Namespace, suite: str):
             return {"on_frame": on_frame}
 
         def check_recording(stop: dict) -> None:
-            # Fail loud if the rollout captured zero frames.
-            # `stop_cameras_recording` always returns status="success" (it's
-            # best-effort and idempotent), and imageio silently drops a
-            # 0-frame mp4 -- so without this check a blank rollout would ship
-            # a "success" line pointing at a file that never landed on disk.
+            # Report what the recorder did. The zero-frame *verdict* belongs
+            # to the shared loop (`_require_recorded_frames`), which runs as
+            # soon as this returns; these counters are the Isaac-specific
+            # context for it, so they are printed before it raises.
             print(f"[recording] {stop['content'][0]['text']}")
-            stop_json = next((c["json"] for c in stop.get("content", []) if "json" in c), None)
-            frames_written = 0
-            frame_errors = 0
-            if stop_json is not None:
-                for art in stop_json.get("artifacts", []):
-                    if art.get("camera") == recording_camera:
-                        frames_written = int(art.get("frames", 0))
-                        frame_errors = int(art.get("errors", 0))
-                        break
             if retry_stats["skipped"]:
                 print(
                     f"[recording] on_frame retries: {retry_stats['skipped']} skipped, "
                     f"{retry_stats['retried']} step+render retries, "
                     f"{retry_stats['recovered']} recovered "
                     f"(max {_ON_FRAME_MAX_RETRIES}/frame)"
-                )
-            if frames_written == 0:
-                raise RuntimeError(
-                    f"rollout recorded 0 frames for camera {recording_camera!r} "
-                    f"({frame_errors} per-frame render errors, "
-                    f"{retry_stats['skipped']} skipped frames not recovered by "
-                    f"{_ON_FRAME_MAX_RETRIES} step+render retries each). "
-                    "imageio drops a 0-frame mp4, so no video would land on "
-                    "disk; failing loud instead of shipping a blank rollout."
                 )
 
         plan = _EvalPlan(
@@ -987,6 +970,52 @@ def _setup_isaac(args: argparse.Namespace, suite: str):
 # ---------------------------------------------------------------------------
 # Shared eval-and-report loop
 # ---------------------------------------------------------------------------
+
+
+def _require_recorded_frames(stop: dict, camera: str) -> None:
+    """Refuse a rollout that recorded no frames for the camera ``videos=`` names.
+
+    ``stop_cameras_recording`` is best-effort and idempotent, so it answers
+    ``status="success"`` whether the recorder captured every frame or none,
+    and imageio drops a 0-frame mp4 rather than writing an empty file. The
+    result line prints ``videos=<path>`` unconditionally, so without this
+    check a blank rollout ships a success line naming a file that never
+    landed on disk - and ``libero_backend_matrix.py``, which parses those
+    lines, records the run as a completed cell.
+
+    Neither half of that is backend-specific, which is why the verdict lives
+    here once rather than in a per-backend hook. The reachable MuJoCo case is
+    a GL context the host cannot create - a ``MUJOCO_GL`` naming a windowed
+    backend on a headless box refuses every frame - and the recorder reports
+    it in the same ``artifacts`` shape an Isaac RTX stall produces.
+
+    An artifact missing for ``camera`` counts as zero frames: the result line
+    names that camera's file either way.
+
+    Raises:
+        RuntimeError: The recorder wrote no frames for ``camera``. The message
+            carries the recorder's own per-frame error count and, when the
+            payload supplies one, the refusal reason it recorded - which is
+            where the actionable remedy lives.
+    """
+    stop_json = next((c["json"] for c in stop.get("content", []) if "json" in c), None)
+    artifact: dict = {}
+    if stop_json is not None:
+        for art in stop_json.get("artifacts", []):
+            if art.get("camera") == camera:
+                artifact = art
+                break
+    if int(artifact.get("frames", 0)):
+        return
+    errors = int(artifact.get("errors", 0))
+    refused = artifact.get("render_refused")
+    detail = f" Recorder refused to render: {refused}" if refused else ""
+    raise RuntimeError(
+        f"rollout recorded 0 frames for camera {camera!r} ({errors} per-frame "
+        "render errors). imageio drops a 0-frame mp4, so no video landed on "
+        "disk; failing loud instead of printing a videos= path for a file "
+        f"that does not exist.{detail}"
+    )
 
 
 def _evaluate_and_report(sim, args: argparse.Namespace, plan: _EvalPlan) -> None:
@@ -1025,6 +1054,10 @@ def _evaluate_and_report(sim, args: argparse.Namespace, plan: _EvalPlan) -> None
 
     if plan.check_recording is not None:
         plan.check_recording(stop)
+    # Both subcommands print a videos= path below, so both must have recorded
+    # something. This runs after the hook above so a backend's own recorder
+    # diagnostics are already on stdout when it raises.
+    _require_recorded_frames(stop, plan.recording_camera)
 
     if result.get("status") != "success":
         raise RuntimeError(f"evaluate_benchmark failed: {result}")
