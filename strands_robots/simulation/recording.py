@@ -28,7 +28,7 @@ enforceable protocol.
 
 import logging
 import shutil
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -384,6 +384,93 @@ def _resume_schema_error(diffs: list[str]) -> str:
         "Use overwrite=True for a fresh dataset, or restore the original scene. Differences:\n  - "
         + "\n  - ".join(diffs)
     )
+
+
+def undriven_robot_state(engine: Any, driven_robot: str, robot_names: Iterable[str]) -> dict[str, Any]:
+    """Read the scalar state of every robot a recorded frame does not drive.
+
+    ``start_recording`` declares ``observation.state`` over EVERY robot in the
+    scene, prefixing each column with its robot's name
+    (``alice__shoulder_pan``). A single-policy rollout's recording hook supplies
+    only the driven robot's observation, so every column belonging to another
+    robot is absent from the frame and
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame` writes it
+    as ``0.0`` - under ``status="success"``, for every frame of the episode.
+
+    That zero is not a missing value the consumer can detect. It is recorded in
+    the same column, with the same dtype, as a measurement: a policy trained on
+    the dataset reads ``observation.state`` and learns the other robot is
+    permanently at its zero pose, and anything replaying or analysing the
+    episode reads the same. The disagreement is unbounded - the undriven robot
+    keeps whatever pose it was placed in, and contact with the driven robot can
+    move it further during the episode.
+
+    Unlike the *action* columns of the same frame, there is nothing to decide
+    here. An action column asks what command was issued, and no command was
+    issued to a robot this rollout does not drive (#1715 works through why no
+    substitute is truthful). A state column asks where the robot is, the robot
+    is in the scene, and its joint positions are readable at that instant from
+    the same engine, at the same step, through the same
+    :meth:`~strands_robots.simulation.base.SimEngine.get_observation` the driven
+    robot's own columns come from. So the undriven columns are filled with the
+    measurement rather than left to the ``0.0`` fill.
+
+    This is the behaviour ``run_multi_policy``'s synchronized loop already has -
+    it builds one merged observation per step covering every robot it drives and
+    hands that to ``add_frame``. This helper is that same guarantee for the
+    three single-policy hooks, so which rollout entry point recorded an episode
+    stops changing whether its state columns are measurements.
+
+    Images are deliberately not collected. A camera array is keyed by the
+    camera's own name rather than a robot's, and the recording hooks scope
+    cameras through ``start_recording(cameras=...)``, so an undriven robot
+    contributes no image column. Only scalars are returned, prefixed exactly as
+    the hooks prefix the driven robot's.
+
+    Args:
+        engine: The simulation engine, read through its public
+            ``get_observation(robot_name=..., skip_images=True)``.
+        driven_robot: The robot this frame drives; its columns are supplied by
+            the hook itself and are not re-read here.
+        robot_names: Every robot the dataset schema declares columns for.
+
+    Returns:
+        ``{"<robot>__<joint>": value}`` for each scalar observation of each
+        robot other than ``driven_robot``. Empty when the scene holds only the
+        driven robot, which is the single-robot case where the schema is not
+        prefixed at all.
+    """
+    merged: dict[str, Any] = {}
+    for name in robot_names:
+        if name == driven_robot:
+            continue
+        try:
+            observation = engine.get_observation(robot_name=name, skip_images=True)
+        except (AttributeError, KeyError, RuntimeError, ValueError):
+            # ``engine`` is duck-typed - every backend's own engine reaches here,
+            # and a state read it cannot serve must degrade to the recorder's
+            # fill rather than end the episode. The driven robot's columns are
+            # the rollout's primary product: losing a whole episode of them to a
+            # bystander's read failure is strictly worse than the fill this
+            # helper exists to avoid, so the failure is reported and the frame
+            # still lands. ``AttributeError`` is in the set deliberately - an
+            # engine that has not built (or has torn down) the state buffers a
+            # per-robot read needs surfaces exactly that way.
+            logger.warning(
+                "recording: could not read state for robot %r this step; its declared "
+                "observation.state columns fall back to the recorder's fill for this frame.",
+                name,
+            )
+            continue
+        if not isinstance(observation, Mapping):
+            continue
+        for key, value in observation.items():
+            # Mirror the hooks' own split: a non-scalar value is a camera array,
+            # which is not a per-robot column.
+            if hasattr(value, "shape"):
+                continue
+            merged[f"{name}__{key}"] = value
+    return merged
 
 
 class DatasetRecordingMixin:
