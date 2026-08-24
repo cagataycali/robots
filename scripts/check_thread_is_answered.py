@@ -72,9 +72,12 @@ in order to tell "already fixed at ``d04a8969``" from "not yet fixed" (#2520).
 
 What decides the outcome, and what is only reported
 ---------------------------------------------------
-One rule decides it: **whoever spoke last owes the next move, unless a reviewer
-resolved the thread.** Resolution is terminal because it is a reviewer action.
-Everything else is the authorship test.
+One rule decides it: **whoever spoke last owes the next move, unless the thread is
+resolved.** Resolution is terminal. Everything else is the authorship test -- and
+what that test settles is *what* the author owes, not *whether* anything is owed: a
+thread whose last word is the author's owes the resolve, and one whose last word is
+a reviewer's owes a reply before it. Only ``isResolved`` clears a thread, because
+only ``isResolved`` is what the branch ruleset reads (#2682).
 
 Two fields that look like they belong in that decision are reported beside it
 instead, and both exclusions are deliberate.
@@ -109,17 +112,21 @@ What the steady state looks like, and why that is the point
 -----------------------------------------------------------
 Swept over the 150 most recently updated closed pull requests here, every one of
 the 26 review threads found is ``isResolved: true`` and therefore ``settled``, and
-all 150 report ``nothing-owed``. The same sweep over the 11 currently open pull
-requests also reports ``nothing-owed`` throughout.
+all 150 report ``nothing-owed``. Adding the resolve to what this reports leaves that
+measurement where it was, because ``settled`` is the one outcome that is not work
+under either reading. The same sweep over the 4 open pull requests at the time of
+that change also reports ``nothing-owed`` throughout -- 4 settled threads on #1722,
+none anywhere else.
 
 That is the expected result, not a broken check: threads in this repository do get
 resolved, so on a finished pull request ``settled`` is the only outcome left. The
 two discriminating outcomes exist only in the window between a reviewer's comment
 and its resolution -- which is exactly the window a scheduled run reads in, and
-exactly when the wrong answer costs a permanent duplicate reply. Their coverage
-therefore comes from ``tests/test_thread_is_answered.py``, which replays the
-measured payloads of the two incidents above with the flags as they stood in that
-window, rather than from a historical sweep that cannot contain them.
+exactly when the wrong answer costs a permanent duplicate reply, or a pull request
+that sits unmergeable with nothing in the sweep saying so. Their coverage therefore
+comes from ``tests/test_thread_is_answered.py``, which replays the measured payloads
+of the incidents above with the flags as they stood in that window, rather than from
+a historical sweep that cannot contain them.
 
 The incidents are attributable on timestamped fields alone, which is why
 authorship carries the rule. Thread resolution has no timestamp in the API, so
@@ -144,14 +151,21 @@ Per thread:
     ``isResolved``. Terminal; a reviewer has closed the business, and reopening it
     to restate a landed fix reads as noise.
 ``answered``
-    Open, and the last non-bot comment is the pull request author's. The author
-    has had the last word; the next move is the reviewer's.
+    Open, and the last non-bot comment is the pull request author's. The *reply* is
+    not owed; the resolve is. This outcome is chosen only after ``isResolved`` has
+    been ruled out, so every thread carrying it is answered **and** unresolved --
+    and ``required_review_thread_resolution`` is a branch ruleset rule, so the pull
+    request cannot merge until its author resolves it. Work, whose whole remedy is
+    the resolve (#2682).
 ``awaiting-the-author``
     Open, and the last non-bot comment belongs to someone other than the author
-    (or there is no non-bot comment). This is the only outcome that is work.
+    (or there is no non-bot comment). Work: a reply, then the resolve.
 
-Per pull request: ``nothing-owed``, or ``author-owes-a-reply`` when at least one
-thread is ``awaiting-the-author``.
+Per pull request: ``author-owes-a-reply`` when at least one thread is
+``awaiting-the-author``; ``author-owes-a-resolve`` when none is but at least one is
+``answered``; ``nothing-owed`` only when every thread is ``settled``. The reply
+outranks the resolve in that ordering because a thread still owed an answer is not
+yet ready to be resolved -- but both exit 1, because both are the author's.
 
 What this deliberately does not do
 ----------------------------------
@@ -173,7 +187,8 @@ Usage
     python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --pr 2577
     python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
 
-Exit 1 when at least one evaluated pull request has a thread awaiting its author.
+Exit 1 when at least one evaluated pull request owes its author a move: a reply on
+a thread awaiting one, or the resolve on a thread it has already answered.
 
 Pinned by tests/test_thread_is_answered.py.
 """
@@ -213,6 +228,7 @@ AWAITING_THE_AUTHOR = "awaiting-the-author"
 
 NOTHING_OWED = "nothing-owed"
 AUTHOR_OWES_A_REPLY = "author-owes-a-reply"
+AUTHOR_OWES_A_RESOLVE = "author-owes-a-resolve"
 
 _API = "https://api.github.com/graphql"
 
@@ -226,11 +242,16 @@ WHAT_TO_DO: tuple[str, ...] = (
     "concern, one commit, one reply -- and the reply is owed only because the",
     "last word is not yours yet.",
     "",
-    "Threads reported `answered` or `settled` are not work. Do not reply to them",
-    "to restate a fix that has landed: the reviewer's question stays in the",
-    "thread verbatim after it is answered, so its presence is not evidence that",
-    "anything is outstanding. If code is owed, push it -- the push is the",
-    "message.",
+    "Resolve each `answered` thread, and do **not** reply to it. The reviewer's",
+    "question stays in the thread verbatim after it is answered, so its presence",
+    "is not evidence that anything is outstanding, and restating a landed fix is",
+    "the failure this check was written to prevent. The resolve is owed all the",
+    "same: `required_review_thread_resolution` is a branch ruleset rule, an",
+    "answered thread is not a resolved one, and no reviewer can clear it for you",
+    "-- so the merge sits until you do (#2682).",
+    "",
+    "Threads reported `settled` are not work. If code is owed, push it -- the",
+    "push is the message.",
     "",
     "`head moved` beside an `answered` thread says a commit followed the thread,",
     "not that the commit fixed it. It is there so a later run can tell",
@@ -260,7 +281,20 @@ class Thread:
 
     @property
     def is_owed(self) -> bool:
+        """A reply is owed: the last non-bot word is not the author's yet."""
         return self.outcome == AWAITING_THE_AUTHOR
+
+    @property
+    def owes_a_resolve(self) -> bool:
+        """A resolve is owed: the author has answered and nobody has resolved it.
+
+        No second look at ``isResolved`` is needed, because ``ANSWERED`` is only
+        chosen once that flag has been ruled out. Kept apart from ``is_owed`` so the
+        two remedies cannot collapse into one: the answer to a thread awaiting a
+        reply is words, and the answer to an answered thread is emphatically not
+        (#2682).
+        """
+        return self.outcome == ANSWERED
 
 
 @dataclass(frozen=True)
@@ -278,12 +312,21 @@ class Row:
         return tuple(t for t in self.threads if t.is_owed)
 
     @property
+    def unresolved(self) -> tuple[Thread, ...]:
+        """Threads this author has answered and not resolved -- merge blockers."""
+        return tuple(t for t in self.threads if t.owes_a_resolve)
+
+    @property
     def outcome(self) -> str:
-        return AUTHOR_OWES_A_REPLY if self.owed else NOTHING_OWED
+        if self.owed:
+            return AUTHOR_OWES_A_REPLY
+        if self.unresolved:
+            return AUTHOR_OWES_A_RESOLVE
+        return NOTHING_OWED
 
     @property
     def is_finding(self) -> bool:
-        return bool(self.owed)
+        return bool(self.owed) or bool(self.unresolved)
 
     @property
     def summary(self) -> str:
@@ -293,11 +336,17 @@ class Row:
                 f"{len(self.owed)} of {len(self.threads)} thread(s) are awaiting @{self.author}: "
                 f"{named}. Answer each once, then resolve it."
             )
+        if self.unresolved:
+            named = ", ".join(f"`{t.path}`" for t in self.unresolved)
+            return (
+                f"{len(self.unresolved)} of {len(self.threads)} thread(s) are answered by "
+                f"@{self.author} and not resolved: {named}. Resolve each; do not reply again. "
+                "The merge is blocked until they are resolved."
+            )
         if not self.threads:
             return "No review threads. Nothing is owed here."
         return (
-            f"All {len(self.threads)} thread(s) are settled or already answered by @{self.author}. "
-            "Nothing is owed here; the next move belongs to a reviewer."
+            f"All {len(self.threads)} thread(s) are settled. Nothing is owed here; the next move belongs to a reviewer."
         )
 
 
@@ -502,7 +551,7 @@ def _unread_note(row: Row) -> list[str]:
 
 def render_one(repo: str, row: Row) -> str:
     lines = [
-        "## Review threads owed a reply",
+        "## Review threads owed the author's next move",
         "",
         f"Outcome: **{row.outcome}**",
         "",
@@ -515,6 +564,7 @@ def render_one(repo: str, row: Row) -> str:
         f"| recorded head | {_short(row.head)} |",
         f"| threads | {len(row.threads)} |",
         f"| awaiting the author | {len(row.owed)} |",
+        f"| answered, not resolved | {len(row.unresolved)} |",
     ]
     if row.threads:
         lines += [""] + _thread_rows(row)
@@ -527,23 +577,23 @@ def render_one(repo: str, row: Row) -> str:
 def render_sweep(repo: str, rows: Sequence[Row], skipped: Sequence[int]) -> str:
     findings = [r for r in rows if r.is_finding]
     lines = [
-        "## Review threads owed a reply -- sweep",
+        "## Review threads owed the author's next move -- sweep",
         "",
         f"Evaluated {len(rows)} open non-draft pull request(s) in {repo}.",
         "",
     ]
     if findings:
         named = ", ".join(f"#{r.pr}" for r in findings)
-        lines += [f"**{len(findings)} pull request(s) have a thread awaiting their author:** {named}.", ""]
+        lines += [f"**{len(findings)} pull request(s) owe their author a move:** {named}.", ""]
     else:
-        lines += ["Every review thread is settled or already answered by its author.", ""]
+        lines += ["Every review thread is settled.", ""]
 
     lines += [
         "| pull request | author | outcome | threads | awaiting | answered | settled |",
         "|---|---|---|---|---|---|---|",
     ]
     for row in rows:
-        answered = sum(1 for t in row.threads if t.outcome == ANSWERED)
+        answered = len(row.unresolved)
         settled = sum(1 for t in row.threads if t.outcome == SETTLED)
         lines.append(
             f"| #{row.pr} | @{row.author} | {row.outcome} | {len(row.threads)} | "
@@ -571,7 +621,7 @@ def _publish(report: str) -> None:
 
 
 def _annotate(repo: str, row: Row) -> None:
-    print(f"::warning title=A review thread is awaiting its author::{repo}#{row.pr}: {row.summary}")
+    print(f"::warning title=A review thread needs its author::{repo}#{row.pr}: {row.summary}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
