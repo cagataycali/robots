@@ -113,6 +113,7 @@ from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_diffi
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
+    coerce_orientation_quaternion,
     coerce_pose_vector,
     entity_name_error,
     finite_vector_error,
@@ -1740,7 +1741,7 @@ class MuJoCoSimEngine(
         position, e = coerce_pose_vector("add_robot", "position", position, 3)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        orientation, e = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        orientation, e = coerce_orientation_quaternion("add_robot", "orientation", orientation)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
 
@@ -3458,7 +3459,7 @@ class MuJoCoSimEngine(
                 ``"ellipsoid"``, ``"plane"``, or ``"mesh"``.
             position: World position ``[x, y, z]`` of the body origin (default
                 origin).
-            orientation: wxyz quaternion (default identity).
+            orientation: wxyz quaternion (default identity). Any non-unit value is fine -- the magnitude is ignored -- but one whose norm rounds to zero describes no rotation and is refused rather than silently applied as identity (:func:`~strands_robots.utils.coerce_orientation_quaternion`).
             size: Full extents in meters per the per-shape table above. Defaults
                 to ``[0.05, 0.05, 0.05]`` (a 5 cm box) when omitted. Must carry
                 every component the shape consumes -- 3 for ``box`` /
@@ -3598,7 +3599,7 @@ class MuJoCoSimEngine(
         position, e = coerce_pose_vector("add_object", "position", position, 3)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        orientation, e = coerce_pose_vector("add_object", "orientation", orientation, 4)
+        orientation, e = coerce_orientation_quaternion("add_object", "orientation", orientation)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
         if size is not None and (e := finite_vector_error("add_object", "size", size)) is not None:
@@ -3808,7 +3809,10 @@ class MuJoCoSimEngine(
           other joints' state), just like ``add_object`` / ``remove_object``.
 
         ``position`` must be a 3-element vector and ``orientation`` a 4-element
-        wxyz quaternion; each must contain only finite real numbers. The vector
+        wxyz quaternion whose norm does not round to zero; each must contain only
+        finite real numbers. A zero quaternion describes no rotation, and MuJoCo
+        substitutes identity for one without complaint, so the success text would
+        echo an orientation the body does not have. The vector
         itself may be a list, a tuple or a NumPy array (pose arithmetic produces
         arrays), and its elements may be NumPy scalars. A wrong-length,
         non-numeric, or nan/inf pose is rejected up front rather than raising a
@@ -3841,7 +3845,7 @@ class MuJoCoSimEngine(
         position, perr = coerce_pose_vector("move_object", "position", position, 3)
         if perr is not None:
             return {"status": "error", "content": [{"text": perr}]}
-        orientation, oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
+        orientation, oerr = coerce_orientation_quaternion("move_object", "orientation", orientation)
         if oerr is not None:
             return {"status": "error", "content": [{"text": oerr}]}
 

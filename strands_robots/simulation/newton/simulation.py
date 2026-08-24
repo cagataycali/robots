@@ -68,6 +68,7 @@ from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     camera_fov_error,
+    coerce_orientation_quaternion,
     coerce_pose_vector,
     coerce_rgba,
     coerce_size_vector,
@@ -615,7 +616,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("add_robot", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("add_robot", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         if name in self._world.robots:
@@ -779,7 +780,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``"cylinder"``, or ``"mesh"``. ``"mesh"`` requires
                 ``mesh_path``.
             position: World position ``[x, y, z]`` (default origin).
-            orientation: wxyz quaternion (default identity).
+            orientation: wxyz quaternion (default identity). Any non-unit value is fine -- the magnitude is ignored -- but one whose norm rounds to zero describes no rotation and is refused rather than silently applied as identity (:func:`~strands_robots.utils.coerce_orientation_quaternion`).
             size: Half-extents (box) or ``[radius, ...]`` (others). For
                 ``shape="mesh"`` this is the per-axis scale applied to the
                 loaded geometry (default ``[1, 1, 1]`` -- the mesh's own units).
@@ -846,7 +847,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("add_object", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("add_object", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("add_object", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         # Same shared domain for the colour, whose accepted counts the 4-component
@@ -1009,7 +1010,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("move_object", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("move_object", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         with self._lock:

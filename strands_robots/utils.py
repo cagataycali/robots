@@ -1930,7 +1930,10 @@ def coerce_pose_vector(
         param_name: Parameter name, used in error text.
         vec: The caller's value, or ``None`` when the parameter was omitted.
         expected_len: Component count the target buffer defines (3 for a
-            position, 4 for a wxyz quaternion).
+            position). An orientation is not validated through here directly:
+            four components are necessary but not sufficient for a rotation,
+            so wxyz callers use
+            :func:`coerce_orientation_quaternion`, which adds the norm rule.
 
     Returns:
         ``(None, None)`` when ``vec`` is ``None`` (omitted - the caller applies
@@ -1948,6 +1951,117 @@ def coerce_pose_vector(
     if err is not None:
         return None, err
     return floats, None
+
+
+#: The smallest quaternion norm this library reads as a rotation.
+#:
+#: A wxyz value below it cannot be turned into one. MuJoCo refuses the all-zero
+#: quaternion through its XML door outright ("XML Error: zero quaternion is not
+#: allowed"), but the spec-attribute and ``qpos`` doors this package writes
+#: through accept it, and a norm it does consider too small to normalize it
+#: stores verbatim - measured on mujoco 3.12.0, ``quat="1e-9 0 0 0"`` compiles
+#: to ``body_quat = [1e-9, 0, 0, 0]`` while ``quat="2 0 0 0"`` is normalized to
+#: identity. Either way the rotation the caller asked for is not the rotation
+#: the model carries, so the value is refused at the door instead.
+#:
+#: The bound is the one ``move_to`` has always applied; it moved here unchanged
+#: so every orientation entry point shares it.
+MIN_QUATERNION_NORM = 1e-8
+
+
+def _quaternion_direction_error(method: str, param_name: str, floats: list[float]) -> str | None:
+    """The one rule a quaternion adds over a position, shared by both wrappers.
+
+    ``floats`` has already been read and validated by :func:`_read_pose_vector`,
+    so this examines four plain ``float`` values rather than anything of the
+    caller's.
+
+    Args:
+        method: Calling method or op name, used in error text.
+        param_name: Parameter or field name, used in error text.
+        floats: The four wxyz components.
+
+    Returns:
+        A message when the components have no direction to recover, else ``None``.
+    """
+    norm = math.sqrt(sum(component * component for component in floats))
+    if norm < MIN_QUATERNION_NORM:
+        return f"{method}: '{param_name}' quaternion has ~zero norm; pass a valid [w, x, y, z]."
+    return None
+
+
+def coerce_orientation_quaternion(method: str, param_name: str, quat: Any) -> tuple[list[float] | None, str | None]:
+    """Validate an optional wxyz orientation and normalize it to plain floats.
+
+    Single definition of the library's orientation contract, shared by every
+    entry point that writes a wxyz quaternion so their accepted domains cannot
+    diverge. It is :func:`coerce_pose_vector` with ``expected_len=4`` plus the
+    one rule a quaternion adds over a position: four finite components are not
+    enough, because they can still fail to describe a rotation.
+
+    A quaternion is a DIRECTION with a magnitude the target buffers ignore, so
+    any non-unit value is fine - ``[0, 2, 0, 0]`` and ``[0, 1, 0, 0]`` are the
+    same half turn, and every consumer either normalizes or is scale-invariant.
+    A norm below :data:`MIN_QUATERNION_NORM` has no direction to recover,
+    though, and nothing downstream reports that: MuJoCo substitutes identity for
+    an all-zero body quaternion and reports success, so the rotation the caller
+    requested is silently replaced by no rotation at all. ``move_object`` then
+    echoes the requested quaternion back in its success text while
+    ``get_body_state`` reports identity - one call, two answers, neither of them
+    flagged.
+
+    Args:
+        method: Calling method name, used in error text.
+        param_name: Parameter name, used in error text.
+        quat: The caller's wxyz value, or ``None`` when the parameter was
+            omitted.
+
+    Returns:
+        ``(None, None)`` when ``quat`` is ``None`` (omitted - the caller applies
+        its own default), ``(floats, None)`` for four finite components whose
+        norm is a usable direction, or ``(None, error_message)`` otherwise.
+    """
+    if quat is None:
+        return None, None
+    # One read, through the guard's own, for the reason :func:`pose_vector_error`
+    # defers to it: the floats the direction check examines are the ones the
+    # component checks read, and reading them here cannot run the caller's code.
+    floats, err = _read_pose_vector(method, param_name, quat, 4)
+    if err is not None:
+        return None, err
+    if (direction_err := _quaternion_direction_error(method, param_name, floats)) is not None:
+        return None, direction_err
+    return floats, None
+
+
+def orientation_quaternion_error(method: str, param_name: str, quat: Any) -> str | None:
+    """Return an error message if ``quat`` is not a usable wxyz orientation.
+
+    Error-only wrapper over :func:`coerce_orientation_quaternion`, for the
+    callers that hold a value to the orientation domain without taking the
+    normalized floats back - the structured scene ops, which pass the caller's
+    value straight to the spec write.
+
+    It pairs with :func:`coerce_orientation_quaternion` the way
+    :func:`pose_vector_error` pairs with :func:`coerce_pose_vector`, and differs
+    from it in the same one respect: ``None`` is REFUSED here rather than read as
+    an omission. An op dict is not a keyword argument - a key that is PRESENT
+    carries a supplied value - so reading ``{"op": ..., "quat": None}`` as "no
+    orientation asked for" would apply identity under a success result.
+
+    Args:
+        method: Calling method or op name, used in error text.
+        param_name: Parameter or field name, used in error text.
+        quat: The caller's wxyz value, or ``None`` when omitted.
+
+    Returns:
+        ``None`` when ``quat`` is acceptable (including omitted), else the
+        message naming the method, the parameter and what is wrong.
+    """
+    floats, err = _read_pose_vector(method, param_name, quat, 4)
+    if err is not None:
+        return err
+    return _quaternion_direction_error(method, param_name, floats)
 
 
 #: The component counts a 4-component RGBA row can be built from. Alpha is the
