@@ -165,7 +165,13 @@ An option the requested action never reads is not second-guessed:
 
 A robot is driven through three different verbs - `publish` to a topic,
 `service_call` to a service and `action_send_goal` to an action server - so the
-gate is keyed on the surface **name** and consulted from all three. An agent
+gate is keyed on the surface **name** and consulted from all three. It is also
+consulted from every **transport** that reaches the graph, not just this one:
+`use_rtps` publishes over raw RTPS and `use_rosbridge` over a WebSocket, and a
+`Twist` on `/cmd_vel` moves the same base whichever of the three wrote it. The
+blocklist and the approval decision therefore have a single owner
+(`strands_robots.tools._command_gate`) rather than a copy per tool, so a surface
+refused on one transport cannot be sent on another under a different tool name. An agent
 asked to "drive forward" reaches for whichever verb fits the interface it found
 on the graph, so gating `publish` alone would leave `/navigate_to_pose` (a ROS 2
 action) and `/emergency_stop` (usually a `std_srvs/srv/Trigger` service)

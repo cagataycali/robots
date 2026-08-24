@@ -30,6 +30,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import strands_robots
+import strands_robots.tools._command_gate as gate_mod
 import strands_robots.tools.lerobot_train as train_mod
 import strands_robots.tools.robot_mesh as mesh_mod
 import strands_robots.tools.use_ros as ros_mod
@@ -96,12 +97,15 @@ class _Gate:
         self.function = function
 
 
+# The module/function columns name where the interrupt is raised, which for the
+# ROS 2 command gate is the owner shared by all three graph transports rather
+# than any one tool - one interrupt site, one audit row, whichever tool asked.
 # The target each drive above aims at. ``emergency_stop`` is fleet-wide, so no
 # single peer is named and its row's target is legitimately empty - the verb is
 # what identifies it. Pinning the expected value per gate keeps that deliberate
 # rather than letting an empty target pass everywhere.
 _GATES: tuple[_Gate, ...] = (
-    _Gate("use_ros", "use_ros_tool", "publish", "/cmd_vel", _drive_use_ros, ros_mod, "_gate_command"),
+    _Gate("use_ros", "use_ros_tool", "publish", "/cmd_vel", _drive_use_ros, gate_mod, "gate_command"),
     _Gate(
         "lerobot_train",
         "lerobot_train_tool",
