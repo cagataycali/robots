@@ -109,6 +109,7 @@ from strands_robots.simulation.mujoco.spec_builder import (
     material_spec_error,
 )
 from strands_robots.simulation.policy_runner import CooperativeStop
+from strands_robots.simulation.recording import undriven_robot_state
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
@@ -5275,10 +5276,19 @@ class MuJoCoSimEngine(
                         # the schema. Camera values (ndarray) keep their (already
                         # namespaced) names - dataset_recorder normalizes '/'->'__'.
                         if len(world.robots) > 1:
-                            obs_keyed = {
-                                (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
-                                for k, v in observation.items()
-                            }
+                            # The schema declares a state column for every robot in the
+                            # scene, and this frame carries only the driven robot's. An
+                            # undriven robot's columns are a readable measurement, so they
+                            # are filled from the engine at this step rather than left to
+                            # add_frame's 0.0 fill, which records them as a zero pose the
+                            # robot is not in. Driven keys win any collision.
+                            obs_keyed = undriven_robot_state(self, robot_name, world.robots)
+                            obs_keyed.update(
+                                {
+                                    (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
+                                    for k, v in observation.items()
+                                }
+                            )
                             act_keyed = {f"{robot_name}__{k}": v for k, v in action.items()}
                             rec.add_frame(
                                 observation=obs_keyed,
