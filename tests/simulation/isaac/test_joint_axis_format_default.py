@@ -33,6 +33,7 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
+from typing import Any
 
 import pytest
 
@@ -251,8 +252,19 @@ class TestNoCallSiteCanInheritAFormatsDefault:
         )
 
     def test_omitting_the_default_is_refused(self) -> None:
-        with pytest.raises(TypeError):
-            loaders._parse_axis("not a vector")  # type: ignore[call-arg]
+        """The refusal names the argument that was not passed.
+
+        The argument list is built rather than spelled at the call. A literal
+        one-argument call *is* a statically wrong call -- that is the property
+        under test -- so writing one here would make this assertion's own
+        subject a finding for any caller-arity checker reading the file. Built
+        this way the refusal stays a runtime fact about the signature, and the
+        match pins it to the missing ``default`` rather than to any
+        ``TypeError`` the parser body might raise for an unreadable axis.
+        """
+        one_argument_short: list[Any] = ["not a vector"]
+        with pytest.raises(TypeError, match="missing 1 required positional argument: 'default'"):
+            loaders._parse_axis(*one_argument_short)
 
     def test_every_call_site_names_its_default(self) -> None:
         """Derived, so a call site added later is graded on arrival."""
