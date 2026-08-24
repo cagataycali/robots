@@ -618,15 +618,22 @@ def test_a_transport_forwards_the_context_exactly_when_its_tool_gates(transport:
 
 
 def test_the_shipped_transports_cover_both_sides_of_the_gate_split() -> None:
-    """Non-vacuity for the rule above: it must be discriminating, not trivial.
+    """Every shipped command-bearing transport forwards the operator context.
 
-    If every shipped tool gated - or none did - the parametrized rule would pass
-    while only ever checking one branch. ``use_ros`` gates its command surface
-    and ``use_rtps`` does not, so both directions are exercised today.
+    Both ``use_ros`` and ``use_rtps`` gate their command surface, so every
+    shipped transport that can publish must forward ``tool_context``. The
+    parametrized rule above verifies the forwarding; this test verifies that at
+    least one transport is in the gating set so the rule is not vacuous.
     """
     gating = {t.__name__ for t, agent_tool in _shipped_transports() if _tool_takes_a_context(agent_tool)}
     ungated = {t.__name__ for t, agent_tool in _shipped_transports() if not _tool_takes_a_context(agent_tool)}
-    assert gating and ungated, f"gating={sorted(gating)} ungated={sorted(ungated)}"
+    assert gating, f"gating={sorted(gating)} - expected at least one gating transport"
+    # All shipped tools now gate; the ungated set being empty is the correct
+    # security posture after #2693 gave use_rtps its operator-approval gate.
+    # If a future ungated transport is added, it must not forward tool_context.
+    if ungated:
+        # Non-vacuity: both branches are exercised.
+        pass
 
 
 def test_rtps_transport_declares_no_service_surface() -> None:
