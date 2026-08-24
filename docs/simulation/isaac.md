@@ -214,12 +214,16 @@ open a window.
   `ProceduralRobot` dataclass. Both XML loaders report each link's pose in its
   parent's frame. `load_mjcf` reads the rotation from whichever of MJCF's five
   spellings the body uses - `quat`, `euler`, `axisangle`, `xyaxes` or `zaxis` -
-  under the model-global `<compiler angle>` and `<compiler eulerseq>`.
-  `load_urdf` reads both halves from the `<origin>` of the joint that reaches
-  the link, since URDF places a link on that joint rather than on the `<link>`
-  element: `xyz` into `position` and `rpy` - fixed-axis roll-pitch-yaw, always
-  radians - into `orientation`. A root link, reached by no joint, keeps the
-  identity pose.
+  under the model-global `<compiler angle>` and `<compiler eulerseq>`. The
+  reported orientation is always a unit quaternion, the one MuJoCo's compiler
+  stores: a non-unit spelling such as `quat="1 -1 0 0"` (the idiomatic quarter
+  turn) is reported as the quarter turn it means, not as the components as
+  written, which applied as a rotation would scale the frame by `|q|^2` as well
+  as turning it. `load_urdf` reads both halves from the `<origin>` of the joint
+  that reaches the link, since URDF places a link on that joint rather than on
+  the `<link>` element: `xyz` into `position` and `rpy` - fixed-axis
+  roll-pitch-yaw, always radians - into `orientation`. A root link, reached by no
+  joint, keeps the identity pose.
 
 Because the joint-name and observation contract matches the MuJoCo backend,
 policies and observation mappings transfer unchanged between backends.

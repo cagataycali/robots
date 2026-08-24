@@ -18,6 +18,8 @@ Focus areas (verified against the shipped loader behavior):
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from strands_robots.simulation.isaac.loaders import (
@@ -93,8 +95,10 @@ class TestSceneObjectExtraction:
         assert table.is_static is True
         assert table.size == pytest.approx((1.0, 0.6, 0.82))
         assert table.position == pytest.approx((1.0, 0.0, 0.01))
-        # The body-level quat is preserved as [w, x, y, z].
-        assert table.quat == pytest.approx((0.707, 0.0, 0.0, 0.707))
+        # The body-level quat is reported as [w, x, y, z], normalized the way
+        # MuJoCo's compiler normalizes it: the fixture's rounded 0.707 spelling
+        # of a quarter turn is reported as the quarter turn it means.
+        assert table.quat == pytest.approx((math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5)))
         # The body-frame AABB-centre offset is recorded (#1820): pose
         # appliers recompose the prim pose from a NEW body pose as
         # ``body_pos + R(body_quat) @ offset``, which is unrecoverable
