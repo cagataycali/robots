@@ -897,6 +897,210 @@ def _write_stats_parquet(root: Path, columns: dict[str, list]) -> Path:
     return root
 
 
+_ALICE_BOB_NAMES = [f"alice__{j}" for j in range(1, 7)] + [f"bob__{j}" for j in range(1, 7)]
+_SOLO_NAMES = [str(j) for j in range(1, 7)]
+
+
+def _control_info(names: list[str]) -> dict:
+    """A ``meta/info.json`` declaring both control features over ``names``.
+
+    Mirrors what ``start_recording`` writes: one column per robot per joint,
+    each named, with the per-robot prefix in a multi-robot scene.
+    """
+    spec = {"dtype": "float32", "shape": [len(names)], "names": list(names)}
+    return {"features": {"action": dict(spec), "observation.state": dict(spec)}}
+
+
+def _block(dead: set[int], width: int) -> tuple[list[float], list[float]]:
+    """A ``(min, max)`` stat pair whose ``dead`` indices are identically zero.
+
+    Every other index gets a distinct non-zero span, so a column is zero in the
+    pair exactly when the test asked for it.
+    """
+    mn = [0.0 if j in dead else -(j + 1.0) for j in range(width)]
+    mx = [0.0 if j in dead else (j + 1.0) for j in range(width)]
+    return mn, mx
+
+
+class TestDeadControlColumnPerRobotBlock:
+    """One robot's columns dead while a sibling robot's vary is flagged.
+
+    ``start_recording`` declares a multi-robot dataset with one column per robot
+    per joint, namespacing each with the robot's instance name
+    (``alice__shoulder_pan``). When a writer's keys never resolve for ONE of those
+    robots, that robot's whole block of columns is written as zeros while the other
+    robot's columns carry real measurements. The vector as a whole therefore
+    varies, so a whole-vector test cannot see it; the declared names are what
+    recover each robot's own columns.
+    """
+
+    def test_the_fixture_declares_two_distinct_robot_blocks(self) -> None:
+        blocks = {n.split("__", 1)[0] for n in _ALICE_BOB_NAMES}
+        assert blocks == {"alice", "bob"}, "premise: the fixture must span two robots"
+        assert all("__" not in n for n in _SOLO_NAMES), "premise: the solo fixture is unprefixed"
+
+    def test_one_robots_block_dead_while_the_sibling_varies_is_flagged(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(range(6, 12)), 12)
+        assert any(v != 0.0 for v in mn), "premise: the vector as a whole is not dead"
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            action_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is False
+        dead = [p for p in report["problems"] if "identically zero" in p]
+        assert len(dead) == 1
+        assert "bob" in dead[0]
+        assert "action" in dead[0]
+
+    def test_the_message_names_the_dead_robot_and_not_the_live_one(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(range(0, 6)), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            state_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        dead = [p for p in report["problems"] if "identically zero" in p]
+        assert len(dead) == 1
+        assert "alice" in dead[0]
+        assert "bob" not in dead[0]
+
+    def test_both_control_features_report_their_own_dead_block(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(range(6, 12)), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            action_minmax=[(mn, mx)],
+            state_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        dead = [p for p in report["problems"] if "identically zero" in p]
+        assert len(dead) == 2
+        assert any("action" in p for p in dead)
+        assert any("observation.state" in p for p in dead)
+
+    def test_a_single_dead_joint_inside_a_robot_is_not_flagged(self, tmp_path: Path) -> None:
+        """A gripper held at zero all episode is a measurement, not a dead block."""
+        mn, mx = _block({11}, 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[90],
+            action_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True, report["problems"]
+
+    def test_a_single_robot_dataset_with_one_dead_joint_still_passes(self, tmp_path: Path) -> None:
+        mn, mx = _block({5}, 6)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[90],
+            action_minmax=[(mn, mx)],
+            info=_control_info(_SOLO_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True, report["problems"]
+
+    def test_a_wholly_dead_multi_robot_vector_reports_one_problem(self, tmp_path: Path) -> None:
+        """Every block dead is still the single whole-vector finding, not one per robot."""
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            action_minmax=[([0.0] * 12, [0.0] * 12)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is False
+        dead = [p for p in report["problems"] if "identically zero" in p]
+        assert len(dead) == 1
+        assert "alice" not in dead[0] and "bob" not in dead[0]
+
+    def test_absent_declared_names_fall_back_to_the_whole_vector_rule(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(range(6, 12)), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            action_minmax=[(mn, mx)],
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True, report["problems"]
+
+    def test_declared_names_of_the_wrong_width_fall_back(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(range(6, 12)), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            action_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES[:8]),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True, report["problems"]
+
+    def test_a_single_frame_episode_is_not_flagged(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(range(6, 12)), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[1],
+            action_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True, report["problems"]
+
+    def test_a_healthy_multi_robot_dataset_passes(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            action_minmax=[(mn, mx)],
+            state_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True, report["problems"]
+        assert report["stats_vectors_checked"] == 2
+
+    def test_no_check_stats_skips_the_block_check(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(range(6, 12)), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            action_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False, check_stats=False)
+        assert report["ok"] is True, report["problems"]
+        assert report["stats_vectors_checked"] == 0
+
+    def test_dead_block_drives_the_cli_exit_code(self, tmp_path: Path) -> None:
+        mn, mx = _block(set(range(6, 12)), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            action_minmax=[(mn, mx)],
+            info=_control_info(_ALICE_BOB_NAMES),
+        )
+        assert verify_main([str(tmp_path), "--no-check-videos"]) == 1
+
+
 class TestFeatureStatsEdgeCases:
     """Defensive branches of ``_verify_feature_stats`` over irregular parquet.
 

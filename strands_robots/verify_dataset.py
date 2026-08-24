@@ -29,7 +29,10 @@ Checks performed against a dataset root (the dir containing ``meta/``):
      a multi-frame episode - the dead-control-column corruption (correct
      counts and pixels, but the proprioceptive/action signal was written as
      all zeros), read from the per-episode stats (disable with
-     ``--no-check-stats``).
+     ``--no-check-stats``). A multi-robot recording is graded per robot, using
+     the per-robot column names it declares: one robot's whole block of
+     columns written as zeros is flagged even while another robot's columns
+     carry real measurements.
 
 Usage:
     strands-robots verify-dataset /path/to/dataset
@@ -82,7 +85,11 @@ def verify_dataset(
             video file referenced by the dataset exists and is non-empty.
         check_stats: When True (default), flag any episode whose ``action``
             or ``observation.state`` column is identically zero across the
-            whole episode (a dead control column).
+            whole episode (a dead control column). A multi-robot vector is
+            split into the per-robot blocks ``meta/info.json`` declares, and a
+            block that is wholly zero is flagged even when its siblings vary; a
+            zero SUBSET of one robot's block (a gripper parked at zero for the
+            whole episode) is a measurement and is not flagged.
 
     Returns:
         A report dict with:
@@ -192,6 +199,11 @@ def verify_dataset(
             detail = ", ".join(f"episode {ep}={n} frame(s)" for ep, n in short)
             problems.append(f"{len(short)} episode(s) below min_frames={min_frames}: {detail}")
 
+    # ``meta/info.json``, read once. Check 3 compares its counts against the
+    # parquet truth; check 6 reads its per-feature ``names`` to split a control
+    # vector into the per-robot blocks the recorder declared.
+    declared: dict[str, Any] = {}
+
     # Check 3: meta/info.json vs parquet ground truth (drift detection).
     info_json_path = root_path / "meta" / "info.json"
     if info_json_path.is_file():
@@ -199,7 +211,6 @@ def verify_dataset(
             declared = json.loads(info_json_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
             problems.append(f"could not read meta/info.json: {e}")
-            declared = {}
         decl_eps = declared.get("total_episodes")
         decl_frames = declared.get("total_frames")
         report["info_total_episodes"] = decl_eps
@@ -242,8 +253,15 @@ def verify_dataset(
     # declared columns, so every frame's action is written as zeros while the
     # episode and frame counts stay correct. The per-episode feature stats
     # LeRobot v3 writes inline make this a cheap, decoder-independent check.
+    # In a multi-robot scene each robot owns its own columns, so the resolution
+    # can fail for one robot alone; ``declared_features`` carries the per-robot
+    # names that split the vector into the blocks graded individually.
     if check_stats:
-        stats_checked, stats_problems = _verify_feature_stats(root_path, known_unreadable=known_unreadable)
+        stats_checked, stats_problems = _verify_feature_stats(
+            root_path,
+            known_unreadable=known_unreadable,
+            declared_features=declared.get("features"),
+        )
         report["stats_vectors_checked"] = stats_checked
         problems.extend(stats_problems)
 
@@ -441,7 +459,48 @@ def _verify_video_files(root_path: Path, *, known_unreadable: frozenset[str] = f
     return len(referenced), problems
 
 
-def _verify_feature_stats(root_path: Path, *, known_unreadable: frozenset[str] = frozenset()) -> tuple[int, list[str]]:
+def _declared_column_blocks(feature_spec: Any, width: int) -> list[tuple[str, tuple[int, ...]]]:
+    """Split a control feature's columns into the per-robot blocks it declares.
+
+    A multi-robot recording gives every robot its own state/action columns and
+    namespaces each declared name with the robot's instance name
+    (``alice__shoulder_pan``), the prefix ``start_recording`` writes. Grouping the
+    column indices by that prefix recovers, for each robot, exactly the columns
+    its own writer is responsible for filling.
+
+    Args:
+        feature_spec: The feature's ``meta/info.json`` entry (the mapping that
+            carries ``names``), or anything else when the dataset declares none.
+        width: Number of columns the episode stats actually carry. A ``names``
+            list of a different length does not describe this vector.
+
+    Returns:
+        One ``(robot_name, column_indices)`` pair per declared block. Empty when
+        the declaration cannot split this vector - absent, non-string or
+        wrong-width ``names`` - or when it describes a single unprefixed block,
+        which is the ordinary single-robot recording. In both cases the caller
+        keeps the whole-vector rule, so a dataset that declares nothing is graded
+        exactly as before.
+    """
+    names = feature_spec.get("names") if isinstance(feature_spec, dict) else None
+    if not isinstance(names, list) or len(names) != width:
+        return []
+    if not all(isinstance(name, str) for name in names):
+        return []
+    blocks: dict[str, list[int]] = {}
+    for index, name in enumerate(names):
+        blocks.setdefault(name.split("__", 1)[0] if "__" in name else "", []).append(index)
+    if len(blocks) < 2:
+        return []
+    return [(label, tuple(indices)) for label, indices in blocks.items()]
+
+
+def _verify_feature_stats(
+    root_path: Path,
+    *,
+    known_unreadable: frozenset[str] = frozenset(),
+    declared_features: dict[str, Any] | None = None,
+) -> tuple[int, list[str]]:
     """Flag dead (identically-zero) control columns via per-episode stats.
 
     LeRobot v3 writes per-episode feature statistics inline in
@@ -462,6 +521,17 @@ def _verify_feature_stats(root_path: Path, *, known_unreadable: frozenset[str] =
     column. Reading only the lightweight stats columns keeps this
     decoder-independent (no video decode, no ``data/`` scan).
 
+    A multi-robot recording needs the same check one level finer. It declares one
+    state/action column per robot per joint, so when the writer's keys resolve for
+    one robot and not another only that robot's block is written as zeros - the
+    vector as a whole still varies, and a whole-vector test cannot see it.
+    ``_declared_column_blocks`` recovers each robot's own columns from the
+    per-robot names in ``declared_features``, and a block that is wholly zero is
+    reported the same way a wholly-zero vector is. A zero subset of a block is
+    left alone: a gripper parked at zero for a whole episode is a measurement,
+    not a writer fault. With no usable declaration this is exactly the
+    whole-vector rule, so a dataset that declares no names is graded as before.
+
     Args:
         root_path: Dataset root directory (the dir that contains ``meta/``).
         known_unreadable: Episode-parquet paths (relative to ``root_path``) the
@@ -479,6 +549,7 @@ def _verify_feature_stats(root_path: Path, *, known_unreadable: frozenset[str] =
     except ImportError:  # pragma: no cover - pyarrow ships with the lerobot extra
         return 0, []
 
+    features_decl = declared_features if isinstance(declared_features, dict) else {}
     parquet_files = sorted((root_path / "meta" / "episodes").glob("**/*.parquet"))
     if not parquet_files:
         return 0, []
@@ -537,12 +608,32 @@ def _verify_feature_stats(root_path: Path, *, known_unreadable: frozenset[str] =
                 if n is not None and n < 2:
                     continue  # single frame: identically-zero is not yet corruption evidence
                 ep = int(episodes[i]) if i < len(episodes) and episodes[i] is not None else -1
-                if all(v == 0 for v in row_min) and all(v == 0 for v in row_max):
-                    frames = f"{n} frame(s)" if n is not None else "all frames"
+                frames = f"{n} frame(s)" if n is not None else "all frames"
+                width = min(len(row_min), len(row_max))
+                dead = {j for j in range(width) if row_min[j] == 0 and row_max[j] == 0}
+                if not dead:
+                    continue
+                if len(dead) == width:
                     problems.append(
                         f"feature '{feat}' is identically zero across episode {ep} ({frames}) - "
                         "dead control column (the recorded values never change and are all zero)"
                     )
+                    continue
+                # Some columns died and others did not. That is only evidence when
+                # the dead ones are exactly one robot's declared block: a scene's
+                # per-robot writer either resolves for that robot or writes its
+                # whole block as zeros, so a fully-dead block is the same
+                # corruption as a fully-dead vector in a single-robot recording.
+                # A dead SUBSET of a block is left alone - a gripper parked at
+                # zero for a whole episode is a measurement, not a writer fault.
+                for label, indices in _declared_column_blocks(features_decl.get(feat), width):
+                    if indices and dead.issuperset(indices):
+                        problems.append(
+                            f"feature '{feat}' is identically zero for every '{label}' column across "
+                            f"episode {ep} ({frames}) - dead control column block (that robot's "
+                            "recorded values never change and are all zero, while its siblings in "
+                            "the same vector vary)"
+                        )
     return checked, problems
 
 
