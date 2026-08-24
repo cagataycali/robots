@@ -107,9 +107,11 @@ class Transport(Protocol):
                 command-approval gate. The gate lives in the tool, so the base
                 can only carry the context this far and the transport is what
                 hands it over. A transport whose tool gates its command surface
-                forwards it; one whose tool exposes no gate has nothing to
-                forward and states that at its own implementation, so the
-                asymmetry is visible where it is real rather than hidden here.
+                forwards it; one whose tool has no gate would have nothing to
+                forward. Every shipped graph tool gates today, so no transport
+                is currently in that second case - the condition is derived from
+                the tool rather than restated here so a future ungated transport
+                is handled without amending this contract.
         """
         ...
 

@@ -544,7 +544,9 @@ Everything below therefore holds identically for any transport:
 - Command tools are declared `@tool(context=True)` by the base and forward the
   injected operator context to the transport, which hands it to its own tool. A
   transport whose tool gates its command surface therefore prompts rather than
-  failing closed, and a transport whose tool has no gate has nothing to forward.
+  failing closed. All three graph tools gate their command surface today, so no
+  shipped transport is exempt - the rule is keyed on the tool rather than on a
+  list so that a future ungated one is handled, not because an exemption exists.
   Because the tools are declared once, this holds for every transport rather
   than being wired per bridge.
 - `init_services` declares an ordered enable/arm handshake that runs once before
