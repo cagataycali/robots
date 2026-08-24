@@ -27,3 +27,11 @@ single owner of that wording, `strands_robots.utils.partial_construction_repr`,
 as the three differential-drive bridges do, and the class is triaged into the
 survey in `tests/test_repr_survives_partial_construction.py` (both the
 half-built sweep and the documented-refusal cases).
+
+A timed `drive()` whose trailing halt fails now reports that failure instead of
+the main publish's success. `use_ros` reports a transport failure as an error
+dict rather than raising, and the halt's verdict was discarded - so a node dying
+mid-hold left the call returning `success` for a car still holding the commanded
+throttle, on a tool whose description promises that a command with a duration
+stops itself. The result now names the published command, the failed halt and
+its cause, so the agent's next action is `stop`.

@@ -254,7 +254,10 @@ limit) converts to servo values internally. The handshake declared in
 `init_services` runs once, automatically, before the first command; a failed
 handshake aborts the drive. Timed and multi-message commands are always
 followed by a zero servo message - even when the publish fails - so a timed
-drive cannot leave the car with a live throttle. A bare single-shot `drive()`
+drive cannot leave the car with a live throttle, and a halt that itself fails is
+reported: the call returns an error naming the throttle that may still be live
+instead of the drive's success, so the agent's next action is `stop()`. A bare
+single-shot `drive()`
 (no `duration`) latches like any raw servo command until `stop()`. Commands
 are clamped to `max_speed`; holds longer
 than `max_duration` are rejected loudly rather than silently truncated. The

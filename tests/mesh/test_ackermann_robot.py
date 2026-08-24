@@ -303,6 +303,51 @@ def test_drive_trailing_zero_sent_even_when_publish_errors(rec: _Recorder) -> No
     assert rec.calls[1]["fields"] == {"angle": 0.0, "throttle": 0.0}
 
 
+def test_drive_reports_a_failed_trailing_halt_rather_than_the_publish_success(rec: _Recorder) -> None:
+    """The other direction of the case above: the halt is what fails.
+
+    ``use_ros`` reports a transport failure as an error dict rather than raising,
+    so a discarded halt verdict would present a car still holding the commanded
+    throttle as a drive that stopped itself - and the tool description promises
+    exactly that ("a command with duration stops automatically afterwards"), so
+    an agent reading ``success`` never issues ``stop``.
+    """
+    rec.responses = [
+        {"status": "success", "content": [{"text": "published 20 message(s)"}]},
+        {"status": "error", "content": [{"text": "use_ros: publish failed"}]},
+    ]
+    result = _car().drive(linear=1.0, duration=1.0)
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "stop" in text  # names the action the agent has to take next
+    assert "use_ros: publish failed" in text  # the halt's own cause survives
+    assert len(rec.calls) == 2
+
+
+def test_drive_failing_on_both_publishes_reports_the_drive_failure(rec: _Recorder) -> None:
+    """A failed drive is the cause; a halt that also failed does not replace it."""
+    drive_failure = {"status": "error", "content": [{"text": "use_ros: publish failed"}]}
+    rec.responses = [drive_failure, {"status": "error", "content": [{"text": "halt failed too"}]}]
+    result = _car().drive(linear=1.0, duration=1.0)
+    assert result is drive_failure
+    assert len(rec.calls) == 2
+
+
+def test_drive_single_shot_success_is_not_reinterpreted(rec: _Recorder) -> None:
+    """Control: no halt is sent for a latching command, so none can be judged.
+
+    A scripted failure sits next in the queue; a verdict read from a publish
+    this call never makes would turn a successful single-shot into an error.
+    """
+    rec.responses = [
+        {"status": "success", "content": [{"text": "published 1 message(s)"}]},
+        {"status": "error", "content": [{"text": "use_ros: publish failed"}]},
+    ]
+    result = _car().drive(linear=1.0)
+    assert result["status"] == "success"
+    assert len(rec.calls) == 1
+
+
 def test_drive_sustained_zero_command_has_no_trailing_zero(rec: _Recorder) -> None:
     car = _car()
     car.drive(linear=0.0, duration=1.0)  # already zero: trailing zero is redundant

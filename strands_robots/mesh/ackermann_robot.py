@@ -249,9 +249,17 @@ class AckermannRosRobot:
         command; a failed handshake aborts the drive). Every timed or
         multi-message non-zero command is followed by a single zero servo
         message - even if the main publish failed - so it can never leave the
-        car with a live throttle latched. A bare single-shot command (no
-        ``duration``, ``count=1``) latches like a raw servo command until
-        :meth:`stop`.
+        car with a live throttle latched, and when that halt is the call that
+        fails the result says so instead of reporting the drive's success. A
+        bare single-shot command (no ``duration``, ``count=1``) latches like a
+        raw servo command until :meth:`stop`.
+
+        ``tool_context`` is the operator context forwarded to ``use_ros``, whose
+        command gate prompts for approval on a safety-critical surface such as
+        this vehicle's servo topic and mode services. The ``drive_<node_name>``
+        agent tool passes the one the framework injects; a programmatic call has
+        none, and the gate then refuses unless the surface is pre-approved via
+        ``STRANDS_ROS2_COMMAND_ALLOW`` / ``BYPASS_TOOL_CONSENT``.
         """
         # A servo command is the one call on this bridge that physically moves
         # the car, so every knob it carries is checked before anything reaches
@@ -289,11 +297,29 @@ class AckermannRosRobot:
             max_steering_rad=self.max_steering_rad,
         )
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
+        # The trailing halt runs from ``finally`` so it goes out even if the
+        # main publish raised, but its verdict is kept rather than dropped:
+        # ``use_ros`` reports a transport failure as an error dict rather than
+        # raising, so returning the main publish's success after a failed halt
+        # would report a car still holding the commanded throttle as a drive
+        # that stopped itself - and an agent reading ``success`` never issues
+        # ``stop``.
+        halt: dict[str, Any] | None = None
         try:
-            return self._publish_servo(angle, throttle, count=n)
+            result = self._publish_servo(angle, throttle, count=n)
         finally:
             if (duration is not None or n > 1) and (angle or throttle):
-                self._publish_servo(0.0, 0.0, count=1)
+                halt = self._publish_servo(0.0, 0.0, count=1)
+        if halt is not None and halt.get("status") != "success" and result.get("status") == "success":
+            cause = " ".join(
+                block.get("text", "") for block in halt.get("content", []) if isinstance(block, dict)
+            ).strip()
+            return self._error(
+                f"drive: the command was published to {self.servo_topic}, but the trailing stop "
+                f"failed - the car may still be holding the commanded throttle. Halt it with stop. "
+                f"Halt failure: {cause or 'no detail reported'}"
+            )
+        return result
 
     def _publish_servo(self, angle: float, throttle: float, count: int) -> dict[str, Any]:
         return use_ros(
