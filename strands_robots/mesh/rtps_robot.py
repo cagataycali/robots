@@ -50,12 +50,13 @@ _TWIST_TYPE = "geometry_msgs/msg/Twist"
 # private (``~``) names for rclpy to resolve.
 _RTPS_TOPIC_RE = re.compile(r"^/[A-Za-z0-9_/]*[A-Za-z0-9_]$")
 _RTPS_NAME_RE = re.compile(r"^[A-Za-z0-9_/~]+$")
+
+
 def _check(label: str, value: str, pattern: re.Pattern[str]) -> str:
-
     if not value or not pattern.match(value):
-
         raise ValueError(f"invalid {label}: {value!r}")
     return value
+
 
 class _UseRtpsTransport:
     """Transport that forwards to the pure-DDS ``use_rtps`` tool.
@@ -67,12 +68,12 @@ class _UseRtpsTransport:
     service or action surface, and declaring ``service_call`` here would let a
     caller wire an ``init_services`` handshake that could never run.
 
-    ``use_rtps`` gates commanding actions (``publish``) through
-    ``_command_gate.gate_command``, so :meth:`publish` forwards the
+    ``use_rtps`` gates its commanding actions behind the operator approval in
+    ``strands_robots.tools._command_gate``, so :meth:`publish` forwards the
     ``tool_context`` the protocol carries. A transport that silently dropped an
     operator decision would be the same class of defect as one that declared a
-    capability it does not have.
-
+    capability it does not have: the prompt would be unreachable and the command
+    would fail closed with the blanket bypass as its only remedy.
     """
 
     twist_type = _TWIST_TYPE
@@ -87,16 +88,20 @@ class _UseRtpsTransport:
         rate: float,
         tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        # Forwarded to ``use_rtps``, which gates commanding actions through
-        # ``_command_gate.gate_command``. The base already carries the context
-        # this far for every transport.
-        return use_rtps(action="publish", topic=topic, type=type, fields=fields, count=count, rate=rate, tool_context=tool_context)
+        # ``publish`` is a commanding action, so the operator decision has to
+        # reach ``use_rtps``: the base carries the context this far for every
+        # transport, and dropping it here would make the gate fail closed with
+        # no prompt.
+        return use_rtps(
+            action="publish", topic=topic, type=type, fields=fields, count=count, rate=rate, tool_context=tool_context
+        )
 
     def echo(self, *, topic: str, type: str | None, count: int, timeout: float) -> dict[str, Any]:
         return use_rtps(action="echo", topic=topic, type=type, count=count, timeout=timeout)
 
     def advertise(self, *, topic: str, type: str) -> dict[str, Any]:
         return use_rtps(action="advertise", topic=topic, type=type)
+
 
 class RtpsRobot(MobileBaseRobot):
     """A ROS 2 robot driven over pure RTPS (no rclpy), exposed as a strands robot.
