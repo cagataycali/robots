@@ -26,6 +26,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from strands_robots.verify_dataset import (
+    _declared_column_blocks,
     _verify_feature_stats,
     _verify_video_files,
     _video_frame_count,
@@ -899,6 +900,11 @@ def _write_stats_parquet(root: Path, columns: dict[str, list]) -> Path:
 
 _ALICE_BOB_NAMES = [f"alice__{j}" for j in range(1, 7)] + [f"bob__{j}" for j in range(1, 7)]
 _SOLO_NAMES = [str(j) for j in range(1, 7)]
+# The joint names a real SO-10x arm declares. They carry single underscores, which
+# are NOT the per-robot separator: one arm is one block however its joints are
+# spelled.
+_ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+_TWO_ARM_NAMES = [f"alice__{j}" for j in _ARM_JOINTS] + [f"bob__{j}" for j in _ARM_JOINTS]
 
 
 def _control_info(names: list[str]) -> dict:
@@ -1099,6 +1105,47 @@ class TestDeadControlColumnPerRobotBlock:
             info=_control_info(_ALICE_BOB_NAMES),
         )
         assert verify_main([str(tmp_path), "--no-check-videos"]) == 1
+
+    def test_a_solo_robots_columns_are_not_a_split(self) -> None:
+        """One robot is one block, so there is nothing to grade block-wise."""
+        spec = {"names": list(_SOLO_NAMES)}
+        assert _declared_column_blocks(spec, len(_SOLO_NAMES)) == []
+
+    def test_underscored_joint_names_do_not_split_a_solo_robot(self, tmp_path: Path) -> None:
+        """A real arm's ``shoulder_pan`` / ``gripper`` names are one robot, not four.
+
+        The per-robot separator is the doubled underscore ``start_recording``
+        writes. Splitting on a single underscore would turn one arm into several
+        blocks and flag a parked gripper as a dead block.
+        """
+        assert _declared_column_blocks({"names": list(_ARM_JOINTS)}, len(_ARM_JOINTS)) == []
+        mn, mx = _block({_ARM_JOINTS.index("gripper")}, len(_ARM_JOINTS))
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[90],
+            action_minmax=[(mn, mx)],
+            info=_control_info(_ARM_JOINTS),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True, report["problems"]
+
+    def test_two_real_arms_split_on_the_robot_prefix_only(self, tmp_path: Path) -> None:
+        """Two SO-10x arms are two blocks even though every joint name has an underscore."""
+        blocks = _declared_column_blocks({"names": list(_TWO_ARM_NAMES)}, len(_TWO_ARM_NAMES))
+        assert [label for label, _ in blocks] == ["alice", "bob"]
+        mn, mx = _block(set(range(6, 12)), 12)
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[20],
+            state_minmax=[(mn, mx)],
+            info=_control_info(_TWO_ARM_NAMES),
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        dead = [p for p in report["problems"] if "identically zero" in p]
+        assert len(dead) == 1
+        assert "bob" in dead[0]
 
 
 class TestFeatureStatsEdgeCases:
