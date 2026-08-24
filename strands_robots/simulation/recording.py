@@ -27,12 +27,14 @@ enforceable protocol.
 """
 
 import logging
+import math
+import numbers
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import boolean_flag_error, positive_whole_number_error
+from strands_robots.utils import boolean_flag_error, is_boolean, positive_whole_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -368,6 +370,97 @@ def rollout_rate_mismatch_error(method: str, fps: Any, rates: Mapping[str, float
     if reason is None:
         return None
     return {"status": "error", "content": [{"text": reason}]}
+
+
+def requested_rate_mismatch_reason(method: str, fps: Any, control_frequency: Any, fps_param: str = "fps") -> str | None:
+    """Explain why one call's own two rates cannot describe the same episode.
+
+    The third ordering of the disagreement its two siblings cover, and the only
+    one in which neither rate can be read off live state:
+    :func:`dataset_rate_mismatch_reason` reads the frame rate from an open
+    recorder, and :func:`rollout_rate_mismatch_reason` reads the capture rate
+    from a rollout already in flight, so neither can be asked before either
+    exists. A caller that supplies *both* rates in one call and opens the
+    recording itself has them in hand while nothing is open yet - and must be
+    answered then, because that call is also the one that destroys the target.
+
+    Its caller is :func:`~strands_robots.tools.run_policy.run_policy`, which
+    starts its recording with ``overwrite=True`` before the episode loop. Each
+    rate there is already checked on its own domain - ``control_frequency`` by
+    the tool's own guard, ``dataset_fps`` by ``start_recording`` ahead of the
+    target - but their *equality* was left to the rollout entry point, which the
+    tool reaches only inside the loop. Measured against an existing dataset of
+    one episode / five frames, ``dataset_fps=30`` with
+    ``control_frequency=50.0`` wiped it to ``total_episodes=0, total_frames=0``
+    and then reported ``0/2 episodes ok`` - the caller lost the dataset and
+    recorded nothing, for a pair of arguments neither of which was wrong on its
+    own.
+
+    No envelope twin is shipped alongside this reason (unlike its two siblings):
+    the one caller reports through a structured-error helper of its own, so an
+    envelope form here would be dead code.
+
+    Args:
+        method: Public surface name, used to prefix the error message.
+        fps: Caller-supplied dataset frame rate. A value outside the writable
+            domain returns ``None`` here so it is reported as the parameter
+            error it is by :func:`dataset_recording_option_error`, exactly as in
+            :func:`rollout_rate_mismatch_reason`.
+        control_frequency: Rate the rollout will capture frames at. A value
+            outside the positive-finite domain likewise returns ``None``, left
+            to the caller's own ``control_frequency`` guard. Both rates are
+            classified on ``numbers.Real``, the same predicate those two domains
+            use, so every spelling they accept is judged here too.
+        fps_param: How the caller spells the frame-rate argument, so the advised
+            remedy is one the caller can type. Defaults to ``fps``, the name
+            every backend's ``start_recording`` uses.
+
+    Returns:
+        The reason text naming both rates, the distortion and the remedies, or
+        ``None`` when the rates agree or either is outside its own domain.
+    """
+    # Unlike its two siblings, this guard is asked BEFORE either rate has been
+    # through its own domain - that is the point of it - so it classifies raw
+    # caller input, and it must accept every spelling those domains accept or it
+    # silently declines to judge a pair they will both honor. Hence
+    # ``numbers.Real``, exactly as ``positive_whole_number_error`` and
+    # ``positive_finite_number_error`` use: ``numpy.int64`` and ``numpy.float32``
+    # are neither ``int`` nor ``float`` subclasses, so an ``isinstance(int |
+    # float)`` narrowing here would have passed a colliding pair read out of a
+    # config straight through. The boolean question goes to the shared predicate
+    # (``bool`` IS a ``numbers.Real``, so it would otherwise be compared as
+    # 1 Hz).
+    if is_boolean(fps) or not isinstance(fps, numbers.Real):
+        return None
+    if is_boolean(control_frequency) or not isinstance(control_frequency, numbers.Real):
+        return None
+    try:
+        declared = float(fps)
+        rate = float(control_frequency)
+    except (OverflowError, TypeError, ValueError):
+        # An ``int`` beyond the float64 range cannot be compared with anything;
+        # its own domain refuses it with a reason of its own.
+        return None
+
+    if declared <= 0 or not declared.is_integer():
+        return None
+    fps_int = int(declared)
+    if rate <= 0 or not math.isfinite(rate):
+        return None
+
+    if abs(rate - fps_int) < 1e-9:
+        return None
+
+    remedy = f"pass control_frequency={fps_int}"
+    if rate.is_integer():
+        # ``fps`` must be a positive whole number, so only an integral capture
+        # rate is one the recording could be opened at instead.
+        remedy += f", or record at the rollout's rate ({fps_param}={int(rate)})"
+    return (
+        f"{method}: this call would open a recording declaring {fps_int} fps for a rollout "
+        f"capturing at control_frequency={rate:g} Hz. {rate_mismatch_explanation(fps_int, rate)} "
+        f"Align the two rates: {remedy}."
+    )
 
 
 def _resume_schema_error(diffs: list[str]) -> str:
