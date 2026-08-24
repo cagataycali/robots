@@ -275,6 +275,71 @@ def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]
     return servos, other
 
 
+def joint_rate_drive_map(model: Any, mj: Any) -> dict[int, int]:
+    """Map each joint whose actuator commands a *rate* in the joint's own units.
+
+    The velocity counterpart of :func:`joint_drive_map`, which answers the same
+    question for a pose. A *rate drive* is an actuator whose ``ctrl`` IS the
+    joint's velocity, so a velocity a caller writes into ``qvel`` is a value the
+    drive is simultaneously commanding somewhere else -- and the next step
+    resolves that disagreement in the drive's favour.
+
+    The three terms mirror :func:`joint_drive_map`'s, read off the same compiled
+    fields (measured against every MuJoCo actuator shortcut, only ``<velocity>``
+    clears all of them):
+
+    * ``biastype == mjBIAS_AFFINE`` - the bias is computed from the joint's own
+      state. Necessary and not sufficient: ``<position kp>`` and
+      ``<intvelocity kp>`` are affine-bias too.
+    * ``biasprm[1] == 0`` and ``biasprm[2] < 0`` - slot 1 is ``-kp`` (position
+      feedback) and slot 2 is ``-kv`` (velocity feedback), so a rate command is
+      the one with feedback on the rate and none on the pose. ``<velocity kv>``
+      compiles to ``biasprm = [0, 0, -kv]``; ``<position kp>`` to
+      ``[0, -kp, 0]``, which this excludes.
+    * ``dyntype == mjDYN_NONE`` - ``ctrl`` reaches the force law directly.
+      ``<intvelocity>`` also reads ``ctrl`` as a rate, but integrates it into a
+      *pose* target behind an ``act`` state, so the joint's velocity is not what
+      it commands and it is excluded here.
+    * the transmission is the joint itself, resolved through
+      :func:`actuator_joint_id`. A tendon velocity drive is disqualified for the
+      same two reasons a tendon servo is: ``ctrl`` is in the tendon's units
+      rather than the joint's, and one ``ctrl`` drives several joints at once.
+
+    Stock assets reach this path: Menagerie's ``pal_tiago`` ships a
+    ``tiago_velocity.xml`` whose arm is driven by 9 ``<velocity>`` actuators
+    (``pal_tiago_dual`` 18), and any caller MJCF loaded through
+    ``replace_scene_mjcf`` / ``patch_scene_mjcf`` may carry one.
+
+    Args:
+        model: The compiled ``MjModel``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        ``{joint id: actuator id}`` for every joint some actuator commands a
+        rate on. A joint driven by anything else -- a position servo, a torque
+        motor, a stateful drive, a tendon -- appears nowhere, because its
+        ``ctrl`` is not a velocity in the joint's units and so cannot disagree
+        with one. Where several rate drives target one joint the last in model
+        order is reported.
+    """
+    rate_drives: dict[int, int] = {}
+    affine = int(mj.mjtBias.mjBIAS_AFFINE)
+    stateless = int(mj.mjtDyn.mjDYN_NONE)
+    for act_id in range(int(model.nu)):
+        target = actuator_joint_id(model, act_id, mj)
+        if target < 0:
+            continue
+        commands_a_rate = (
+            int(model.actuator_biastype[act_id]) == affine
+            and float(model.actuator_biasprm[act_id, 1]) == 0.0
+            and float(model.actuator_biasprm[act_id, 2]) < 0.0
+            and int(model.actuator_dyntype[act_id]) == stateless
+        )
+        if commands_a_rate:
+            rate_drives[target] = act_id
+    return rate_drives
+
+
 def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
     """Return every joint id actuator ``act_id`` drives.
 

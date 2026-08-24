@@ -33,6 +33,7 @@ from strands_robots.simulation.mujoco.backend import (
 from strands_robots.simulation.mujoco.scene_ops import (
     fromto_fixed_size_components,
     joint_drive_map,
+    joint_rate_drive_map,
     persist_body_mass,
     persist_geom_properties,
     refresh_body_inertial_from_geometry,
@@ -1744,6 +1745,20 @@ class PhysicsMixin:
         resolved inside ``robot_name``'s namespace before the cross-robot
         fallback, so a bare name reaches the robot the caller addressed, and a
         ``robot_name`` no robot carries is refused in both call forms.
+
+        The write is a state write, so on a joint driven by a *rate* actuator --
+        one whose ``ctrl`` is the joint's own velocity, per
+        :func:`~strands_robots.simulation.mujoco.scene_ops.joint_rate_drive_map`
+        -- it survives exactly as long as nothing steps: the drive is still
+        commanding whatever rate it held, and the next step resolves that
+        disagreement in the drive's favour. The success report therefore names
+        the written joints whose rate drive is commanded elsewhere, on the same
+        terms :meth:`set_joint_positions` reports a position servo holding a
+        different setpoint, and points at ``send_action`` -- which writes that
+        ``ctrl`` -- as the way to command the rate rather than only the state. A
+        joint driven by a torque motor, a stateful drive or a tendon is not
+        reported: its ``ctrl`` is not a velocity in the joint's units, so there
+        is no rate for it to disagree with.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1825,12 +1840,30 @@ class PhysicsMixin:
             return err
 
         with self._lock:
+            rate_drives = joint_rate_drive_map(model, mj)
+            stale: list[str] = []
             for jnt_name, value in velocities.items():
-                dof_adr = model.jnt_dofadr[joint_ids[jnt_name]]
+                jnt_id = joint_ids[jnt_name]
+                dof_adr = model.jnt_dofadr[jnt_id]
                 data.qvel[dof_adr] = float(value)
+
+                act_id = rate_drives.get(jnt_id)
+                if act_id is None:
+                    continue
+                if float(data.ctrl[act_id]) != float(value):
+                    # Exact inequality is the claim being reported: the drive is
+                    # commanding a different rate in this joint's own units, so
+                    # the next step moves the velocity off the one just written.
+                    stale.append(jnt_name)
 
         count = len(velocities)
         msg = f"Set {count}/{count} joint velocities"
+        if stale:
+            msg += (
+                f". {len(stale)} of them are driven by an actuator still commanding a different rate "
+                f"({_joint_name_sample(stale)}), so the next step drives the velocity back toward that "
+                "command; command the drive itself through send_action with the rate you want held"
+            )
         return {
             "status": "success",
             "content": [{"text": msg}],
