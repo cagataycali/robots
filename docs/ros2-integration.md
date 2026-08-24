@@ -174,15 +174,18 @@ unenforceable. These surfaces are blocked by default:
 
 | Surface | Usually reached by |
 |---------|--------------------|
-| `/cmd_vel`, `/cmd_vel_unstamped` | `publish` |
+| `/cmd_vel`, `/cmd_vel_unstamped`, `/manual_drive` | `publish` |
 | `/joint_command`, `/joint_trajectory`, `/joint_trajectory_controller/joint_trajectory` | `publish` |
 | `/emergency_stop`, `/e_stop` | `service_call`, sometimes `publish` |
 | `/motor_enable`, `/enable_motor`, `/disable_motor` | `service_call` |
+| `/vehicle_state`, `/enable_state` | `service_call` |
 | `/navigate_to_pose`, `/follow_path` | `action_send_goal` |
 
 Matching is on the final path segment, so a namespaced form
-(`/my_robot/cmd_vel`, `/fleet/robot1/emergency_stop`) is caught while a lookalike
-(`/cmd_vel_evil`, `/joint_trajectory_status`) is not. The name is compared in the
+(`/my_robot/cmd_vel`, `/fleet/robot1/emergency_stop`, and the DeepRacer's
+`/webserver_pkg/manual_drive`, `/ctrl_pkg/vehicle_state`,
+`/ctrl_pkg/enable_state`) is caught while a lookalike (`/cmd_vel_evil`,
+`/joint_trajectory_status`) is not. The name is compared in the
 form rclpy resolves it to, so the unrooted `cmd_vel` and the trailing-separator
 `/cmd_vel/` are the same surface as `/cmd_vel`. Case is deliberately **not**
 folded: ROS 2 graph names are case-sensitive, so `/CMD_VEL` is a genuinely
@@ -265,7 +268,31 @@ than `max_duration` are rejected loudly rather than silently truncated. The
 same shared domains the differential-drive bridges use, so an unusable value is
 refused with identical text on every transport. The
 stock platform publishes no odometry, so there is deliberately no
-`get_pose`. See `examples/ros2/deepracer_agent.py`.
+`get_pose`.
+
+Like `RosBridgedRobot`, the bridge inherits the [command
+gate](#safety-critical-command-surfaces-need-operator-approval): the servo topic
+(`/manual_drive`) and both mode services (`/vehicle_state`, `/enable_state`) are
+blocklisted surfaces, so every command this bridge sends is gated.
+
+| Method / tool | Reaches | Gated |
+|---------------|---------|-------|
+| `drive()` / `drive_<node>` | `publish` to the servo topic (plus the handshake on the first call) | yes |
+| `stop()` / `stop_<node>` | `publish` to the servo topic | yes - the gate is keyed on the surface, not the payload |
+| `enable()` | `service_call` to both mode services | yes |
+| `get_scan()` / `get_scan_<node>` | `echo` | never gated |
+
+The `drive_<node>` and `stop_<node>` agent tools forward the operator context, so
+an agent driving the car prompts rather than failing closed. A programmatic
+`car.drive(...)` / `car.stop()` has no operator to prompt, so pre-approve the
+three surfaces for a headless run (bare names cover the namespaced DeepRacer
+spellings):
+
+```bash
+export STRANDS_ROS2_COMMAND_ALLOW=/manual_drive,/vehicle_state,/enable_state
+```
+
+See `examples/ros2/deepracer_agent.py`.
 
 
 ## Sim bridge: publish a simulation on a ROS 2 domain

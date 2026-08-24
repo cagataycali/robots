@@ -13,7 +13,13 @@ Dependencies:
   A sourced ROS 2 environment (rclpy) on the same network/domain as the car,
   with the DeepRacer core stack running (ctrl_pkg, webserver_pkg, rplidar).
 
-SAFETY: put the car on blocks or a clear track before running.
+SAFETY: put the car on blocks or a clear track before running. The servo topic
+and both mode services are gated command surfaces, so this agent prompts for
+operator approval before each command it sends. For an unattended run,
+pre-approve exactly those three surfaces instead (bare names cover the
+namespaced DeepRacer spellings):
+
+    export STRANDS_ROS2_COMMAND_ALLOW=/manual_drive,/vehicle_state,/enable_state
 
 Expected output: the agent drives a short pattern and summarizes the lidar.
 Runtime: ~20 seconds (depends on LLM latency).

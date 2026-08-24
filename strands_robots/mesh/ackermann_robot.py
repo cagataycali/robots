@@ -21,15 +21,38 @@ class absorbs:
 All ROS 2 I/O forwards through :func:`strands_robots.tools.use_ros.use_ros`,
 so the bridge owns no rclpy state and is safe to construct without ROS 2.
 
+Commanding the car goes through ``use_ros``'s operator-approval gate, because a
+servo topic that moves a vehicle and the mode services that arm it are
+safety-critical surfaces. The bridge forwards an operator context to it: the
+``drive_<node>`` / ``stop_<node>`` agent tools are declared ``@tool(context=True)``
+and hand the context to :func:`use_ros`, so an agent driving this car prompts the
+operator exactly as a direct ``use_ros`` call does. The read path
+(:meth:`get_scan`) is never gated.
+
+A **programmatic** call carries no operator context, so it is refused unless the
+surfaces are pre-approved with ``STRANDS_ROS2_COMMAND_ALLOW`` (or the gate is
+bypassed with ``BYPASS_TOOL_CONSENT=true``). That includes :meth:`stop` and the
+trailing halt of a timed :meth:`drive`: the gate is keyed on the *surface*, not
+on the payload, so a zero servo message is gated like a full-throttle one.
+
 Typical usage::
+
+    import os
 
     from strands import Agent
     from strands_robots.mesh import AckermannRosRobot
 
     car = AckermannRosRobot.from_deepracer(node_name="deepracer")
-    car.drive(linear=0.5, duration=2.0)   # forward half a metre per second
-    print(car.get_scan())
 
+    # Direct, programmatic control - nobody to prompt, so the command surfaces
+    # this car uses have to be pre-approved (bare names cover the namespaced
+    # DeepRacer spellings):
+    os.environ["STRANDS_ROS2_COMMAND_ALLOW"] = "/manual_drive,/vehicle_state,/enable_state"
+    car.drive(linear=0.5, duration=2.0)   # forward half a metre per second
+    print(car.get_scan())                 # reads are never gated
+
+    # Or hand the bridge to an agent as first-class tools - the command tools
+    # carry the operator context, so the gate prompts instead of refusing:
     agent = Agent(tools=car.tools)
     agent("drive forward slowly for two seconds, then read the lidar")
 """
@@ -40,7 +63,7 @@ import math
 from typing import Any
 
 from strands import tool
-from strands.types.tools import AgentTool
+from strands.types.tools import AgentTool, ToolContext
 
 from strands_robots.mesh.ros_bridge import _check_topic
 from strands_robots.tools.use_ros import use_ros
@@ -204,11 +227,15 @@ class AckermannRosRobot:
     def _error(text: str) -> dict[str, Any]:
         return {"status": "error", "content": [{"text": text}]}
 
-    def enable(self) -> dict[str, Any]:
+    def enable(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
         """Run the ``init_services`` handshake once; idempotent on success.
 
         Stops at the first failing call and returns its structured error
         without latching, so a later attempt retries from the start.
+
+        ``tool_context`` is the operator context forwarded to ``use_ros``: the
+        services that arm a vehicle are gated command surfaces, so a handshake
+        that forwards nothing is refused rather than prompted (see :meth:`drive`).
         """
         if self._enabled:
             return {
@@ -221,6 +248,7 @@ class AckermannRosRobot:
                 service=item["service"],
                 type=item["type"],
                 fields=item.get("fields", {}),
+                tool_context=tool_context,
             )
             if result.get("status") != "success":
                 return result
@@ -236,6 +264,7 @@ class AckermannRosRobot:
         angular: float = 0.0,
         duration: float | None = None,
         count: int = 1,
+        tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
         """Publish a velocity command, converted through the bicycle model.
 
@@ -285,7 +314,7 @@ class AckermannRosRobot:
                 "- issue shorter commands instead of one long hold"
             )
         if not self._enabled and self.init_services:
-            enabled = self.enable()
+            enabled = self.enable(tool_context=tool_context)
             if enabled.get("status") != "success":
                 return enabled
         v = max(-self.max_speed, min(self.max_speed, float(linear)))
@@ -306,10 +335,10 @@ class AckermannRosRobot:
         # ``stop``.
         halt: dict[str, Any] | None = None
         try:
-            result = self._publish_servo(angle, throttle, count=n)
+            result = self._publish_servo(angle, throttle, count=n, tool_context=tool_context)
         finally:
             if (duration is not None or n > 1) and (angle or throttle):
-                halt = self._publish_servo(0.0, 0.0, count=1)
+                halt = self._publish_servo(0.0, 0.0, count=1, tool_context=tool_context)
         if halt is not None and halt.get("status") != "success" and result.get("status") == "success":
             cause = " ".join(
                 block.get("text", "") for block in halt.get("content", []) if isinstance(block, dict)
@@ -321,7 +350,13 @@ class AckermannRosRobot:
             )
         return result
 
-    def _publish_servo(self, angle: float, throttle: float, count: int) -> dict[str, Any]:
+    def _publish_servo(
+        self,
+        angle: float,
+        throttle: float,
+        count: int,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
         return use_ros(
             action="publish",
             topic=self.servo_topic,
@@ -329,11 +364,17 @@ class AckermannRosRobot:
             fields={"angle": float(angle), "throttle": float(throttle)},
             count=count,
             rate=self.publish_rate,
+            tool_context=tool_context,
         )
 
-    def stop(self) -> dict[str, Any]:
-        """Publish a single zero servo command. Never gated on :meth:`enable`."""
-        return self._publish_servo(0.0, 0.0, count=1)
+    def stop(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
+        """Publish a single zero servo command; it does not require :meth:`enable`.
+
+        The halt reaches the servo topic through the same publish as
+        :meth:`drive`, so it passes the same operator gate - which is why
+        ``tool_context`` is forwarded here too (see :meth:`drive`).
+        """
+        return self._publish_servo(0.0, 0.0, count=1, tool_context=tool_context)
 
     def get_scan(self, timeout: float = 5.0) -> dict[str, Any]:
         """Read one sample from the laser-scan topic (error when unconfigured)."""
@@ -355,6 +396,12 @@ class AckermannRosRobot:
         multiple robots coexist in one ``Agent(tools=[...])`` call. The drive
         tool's description states the Ackermann kinematic limit (minimum
         turning radius) so the agent can plan paths the platform can follow.
+
+        Every tool that carries a command (``drive``, ``stop``) is declared
+        ``@tool(context=True)`` and forwards the injected context into
+        ``use_ros``, so its operator-approval gate prompts rather than failing
+        closed. ``get_scan`` takes no context because ``use_ros`` never gates
+        ``echo``.
         """
         suffix = self.node_name.strip("/").replace("/", "_")
         min_radius = self.wheelbase_m / math.tan(self.max_steering_rad)
@@ -368,13 +415,23 @@ class AckermannRosRobot:
                 f"stops automatically afterwards; without duration the last command "
                 f"latches until stop."
             ),
+            context=True,
         )
-        def drive(linear: float = 0.0, angular: float = 0.0, duration: float | None = None) -> dict[str, Any]:
-            return self.drive(linear=linear, angular=angular, duration=duration)
+        def drive(
+            linear: float = 0.0,
+            angular: float = 0.0,
+            duration: float | None = None,
+            tool_context: ToolContext | None = None,
+        ) -> dict[str, Any]:
+            return self.drive(linear=linear, angular=angular, duration=duration, tool_context=tool_context)
 
-        @tool(name=f"stop_{suffix}", description=f"Immediately stop the {self.node_name} robot.")
-        def stop() -> dict[str, Any]:
-            return self.stop()
+        @tool(
+            name=f"stop_{suffix}",
+            description=f"Immediately stop the {self.node_name} robot.",
+            context=True,
+        )
+        def stop(tool_context: ToolContext | None = None) -> dict[str, Any]:
+            return self.stop(tool_context=tool_context)
 
         @tool(name=f"get_scan_{suffix}", description=f"Read one laser scan from the {self.node_name} robot.")
         def get_scan() -> dict[str, Any]:

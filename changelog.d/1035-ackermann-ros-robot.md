@@ -35,3 +35,21 @@ mid-hold left the call returning `success` for a car still holding the commanded
 throttle, on a tool whose description promises that a command with a duration
 stops itself. The result now names the published command, the failed halt and
 its cause, so the agent's next action is `stop`.
+
+Its command surfaces now reach the `use_ros` operator-approval gate. Two halves
+were missing. The gate only fires on a blocklisted surface, and the stock
+DeepRacer wiring - `/webserver_pkg/manual_drive` plus the `/ctrl_pkg` mode
+services that arm the vehicle - matched no entry, so every servo publish and
+handshake call went out with no prompt, no allowlist check and no audit row while
+the functionally identical `/motor_enable` was blocked; `/manual_drive`,
+`/vehicle_state` and `/enable_state` are now default blocklist entries, spelled
+bare so the base-name rule covers the namespaced spellings. And the bridge
+forwarded no context, so a fix to the first half alone would have made every
+command - `stop` included - a fail-closed refusal: `drive`, `stop` and `enable`
+now take a `tool_context` and thread it into every `use_ros` call, and the
+`drive_<node>`/`stop_<node>` tools are declared `@tool(context=True)`, so an
+agent prompts the operator exactly as the differential-drive bridge does and a
+headless run pre-approves the three surfaces via `STRANDS_ROS2_COMMAND_ALLOW`.
+`docs/ros2-integration.md`, `docs/security.md` and
+`examples/ros2/deepracer_agent.py` state that posture where an operator sizes a
+pre-approval.
