@@ -125,9 +125,11 @@ All parameters are optional except `node_name`, `cmd_vel_topic`, and `odom_topic
 and two of its guarantees are fleet-standard too: every value is checked against
 the same numeric domains the [ROS 2](ros2-integration.md) and
 [RTPS](rtps-integration.md) bridges use, and a bare single-shot command latches.
-The velocity clamps, the `max_duration` ceiling and the trailing zero Twist are
-specific to this bridge - the other two accept no ceilings and publish no
-trailing zero, so a timed drive there leaves the last velocity latched.
+The velocity clamps and the `max_duration` ceiling are shared with the Ackermann
+car bridge (`AckermannRosRobot`, which declares a `max_speed` and a
+`max_duration` of its own) but not with those two, and the trailing zero Twist is
+this bridge's alone - the ROS 2 and RTPS bridges accept no ceilings and publish
+no trailing zero, so a timed drive there leaves the last velocity latched.
 
 ```python
 # Direct, programmatic control:
@@ -145,12 +147,16 @@ scan = robot.get_scan()  # read one laser scan (error if no scan_topic)
 - **Single-shot latch**: a bare single-message `drive()` (no `duration`, no
   `count > 1`) publishes once and latches in the robot's controller until
   `stop()` is called. This is standard cmd_vel behavior.
-- **Velocity clamps** (this bridge only): linear and angular are independently
-  clamped to `max_linear` and `max_angular`. The other two bridges accept no
-  velocity ceiling and put the requested value on the wire unchanged.
-- **Loud duration rejection** (this bridge only): `duration` must be positive,
-  finite, and at most `max_duration`; anything else returns a detailed error and
-  nothing is published. The other two bridges accept any positive finite hold.
+- **Velocity clamps** (not on every mobile base): linear and angular are
+  independently clamped to `max_linear` and `max_angular`. `AckermannRosRobot`
+  clamps to a `max_speed` of its own the same way. The ROS 2 and RTPS bridges
+  accept no velocity ceiling and put the requested value on the wire unchanged.
+- **Loud duration rejection** (not on every mobile base): `duration` must be
+  positive, finite, and at most `max_duration`; anything else returns a detailed
+  error and nothing is published. `AckermannRosRobot` refuses a longer hold
+  against a `max_duration` of its own, which is lower, so a hold this bridge
+  accepts can be refused on that car. The ROS 2 and RTPS bridges accept any
+  positive finite hold.
 - **Timed-command trailing zero** (this bridge only): every drive with a
   `duration` argument and a non-zero command (or multi-message publish)
   automatically publishes a single zero Twist afterwards - even if the main

@@ -189,15 +189,20 @@ class RosbridgeRobot:
         and a bare single-shot command latches until :meth:`stop`, like any
         raw cmd_vel publish.
 
-        Specific to this bridge: velocities are clamped to ``max_linear`` and
-        ``max_angular``, a hold beyond ``max_duration`` is refused, and every
-        timed or multi-message non-zero command is followed by a single zero
-        Twist - even if the main publish failed - so a timed drive cannot
-        leave the robot with a live velocity. :meth:`RosBridgedRobot.drive`
-        and :meth:`RtpsRobot.drive` carry none of the three: they accept no
-        velocity or duration ceiling, publish the requested burst unclamped,
-        and stop publishing without a trailing zero, so a timed drive there
-        leaves the last velocity latched in the robot's controller.
+        Not carried by every mobile base: velocities are clamped to
+        ``max_linear`` and ``max_angular``, a hold beyond ``max_duration`` is
+        refused, and every timed or multi-message non-zero command is followed
+        by a single zero Twist - even if the main publish failed - so a timed
+        drive cannot leave the robot with a live velocity.
+        :class:`~strands_robots.mesh.ackermann_robot.AckermannRosRobot`
+        declares the first two as well, as ``max_speed`` and a ``max_duration``
+        of its own, because it too wraps a platform whose limits are known - so
+        a hold this bridge accepts can be refused on that car, and the reverse.
+        :meth:`RosBridgedRobot.drive` and :meth:`RtpsRobot.drive` carry none of
+        the three: they accept no velocity or duration ceiling, publish the
+        requested burst unclamped, and stop publishing without a trailing zero,
+        so a timed drive there leaves the last velocity latched in the robot's
+        controller.
 
         Args:
             linear: Forward linear velocity (m/s), mapped to ``linear.x``. Must

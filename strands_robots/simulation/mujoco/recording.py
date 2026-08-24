@@ -81,6 +81,17 @@ class RecordingMixin(DatasetRecordingMixin):
         ``get_actions`` call - the recorded frames advance with the robot
         rather than freezing on the chunk-start observation.
 
+        Multi-robot schema: the dataset declares state and action columns for
+        EVERY robot in the scene, prefixed with the robot's name
+        (``alice__shoulder_pan``). A single-policy rollout drives one of them,
+        and the state columns of the others are filled from the engine at each
+        step - so a declared ``observation.state`` column is a measurement,
+        never a zero pose the robot is not in
+        (:func:`~strands_robots.simulation.recording.undriven_robot_state`).
+        Their *action* columns are a separate question: no command was issued
+        to a robot this rollout does not drive, so no value is truthful, and
+        they are unchanged.
+
         Args:
             repo_id: HuggingFace dataset id (``owner/name``) or a local path. The
                 directory it records into is resolved by
