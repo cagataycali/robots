@@ -185,19 +185,27 @@ class RosbridgeRobot:
         """Publish a velocity command over rosbridge.
 
         Fleet-standard across all three mobile-base bridges: inputs are
-        validated against the shared numeric domains before any side effect,
-        a bare single-shot command latches until :meth:`stop`, like any raw
+        validated against the shared numeric domains before any side effect, a
+        bare single-shot command latches until :meth:`stop`, like any raw
         cmd_vel publish, and every timed or multi-message non-zero command is
-        followed by a single zero Twist - even if the main publish failed - so
-        a timed drive cannot leave the robot with a live velocity.
+        followed by a single zero Twist - even if the main publish failed - so a
+        timed drive cannot leave the robot with a live velocity. The trailing
+        zero was this bridge's alone until the shared mobile base took over the
+        drive contract; the other two inherit it now, so a timed drive
+        self-stops wherever it is issued.
 
-        Specific to this bridge: velocities are clamped to ``max_linear`` and
-        ``max_angular``, and a hold beyond ``max_duration`` is refused.
+        Not carried by every mobile base: velocities are clamped to
+        ``max_linear`` and ``max_angular``, and a hold beyond ``max_duration``
+        is refused.
+        :class:`~strands_robots.mesh.ackermann_robot.AckermannRosRobot`
+        declares both as well, as ``max_speed`` and a ``max_duration`` of its
+        own, because it too wraps a platform whose limits are known - so a hold
+        this bridge accepts can be refused on that car, and the reverse.
         :meth:`RosBridgedRobot.drive` and :meth:`RtpsRobot.drive` carry
-        neither, because neither knows the ceilings of the third-party robot
-        it drives: they declare no velocity or duration limit and put the
-        requested value on the wire unclamped. An unset limit there means
-        "this platform declares no limit", never zero.
+        neither: neither knows the ceilings of the third-party robot it drives,
+        so they declare no velocity or duration limit and publish the requested
+        burst unclamped. An unset limit there means "this platform declares no
+        limit", never zero.
 
         Args:
             linear: Forward linear velocity (m/s), mapped to ``linear.x``. Must
