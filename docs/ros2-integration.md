@@ -466,11 +466,12 @@ Everything below therefore holds identically for any transport:
 - A bare single-shot `drive()` latches until `stop()`, exactly like a raw
   `cmd_vel` publish. This is stated in the agent-facing tool description rather
   than hidden.
-- `stop()` is never gated on the enable handshake and never on limits. It is not
-  exempt from the transport tool's command gate: that gate is keyed on the
-  *surface*, and zero means "stationary" on a `Twist` but commands motion to the
-  zero pose on a joint-command topic, so a payload-shaped carve-out could not be
-  written correctly.
+- `stop()` reaches the transport tool's command gate exactly as `drive()` does.
+  The gate is keyed on the *surface*, and zero means "stationary" on a `Twist`
+  but commands motion to the zero pose on a joint-command topic, so a
+  payload-shaped carve-out could not be written correctly. What the halt does not
+  depend on is the enable handshake or the speed limits: an emergency stop must
+  not require a working service graph.
 - Command tools are declared `@tool(context=True)` by the base and forward the
   injected operator context to the transport, which hands it to its own tool. A
   transport whose tool gates its command surface therefore prompts rather than

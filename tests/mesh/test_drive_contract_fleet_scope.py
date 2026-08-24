@@ -3,15 +3,17 @@
 Three mobile-base bridges expose the same ``drive(linear, angular, duration,
 count)`` call over three transports, and an operator or agent that learns the
 contract from one drives the others with it. Two of the guarantees really are
-shared - the numeric domains every value is checked against, and the single-shot
-latch - while the velocity clamp, the ``max_duration`` ceiling and the trailing
-zero Twist are carried by ``RosbridgeRobot`` alone.
+shared - the numeric domains every value is checked against, the single-shot
+latch, and the trailing zero Twist - while the velocity clamp and the
+``max_duration`` ceiling are carried by ``RosbridgeRobot`` alone.
 
-That split matters most for the trailing zero, because it is the guarantee that
-a *timed* drive cannot leave a live velocity behind. Presenting it as fleet-wide
-tells a reader that ``RtpsRobot("rover", "/cmd_vel").drive(linear=1.0,
-duration=5.0)`` self-stops; it publishes fifty Twists at 1.0 m/s and then stops
-publishing, leaving the last one latched in the robot's controller.
+The trailing zero used to be this bridge's alone, and it is the guarantee that a
+*timed* drive cannot leave a live velocity behind: presenting it as fleet-wide
+told a reader that ``RtpsRobot("rover", "/cmd_vel").drive(linear=1.0,
+duration=5.0)`` self-stops, when it published fifty Twists at 1.0 m/s and left
+the last one latched in the robot's controller. It became fleet-wide when the
+ROS 2 and RTPS bridges moved onto the shared mobile base, which is exactly the
+signal the scope assertions below exist to raise - measured, then written down.
 
 Every check here therefore *measures* each guarantee on all three bridges and
 grades the prose against the measurement, rather than pinning either half to a
@@ -164,24 +166,28 @@ def test_the_drive_guarantees_split_into_fleet_wide_and_bridge_specific(monkeypa
     fleet_wide = sorted(name for name, bridges in measured.items() if set(bridges) == every)
     bridge_only = sorted(name for name, bridges in measured.items() if bridges == ["RosbridgeRobot"])
 
-    assert fleet_wide == ["single-shot latch", "validated inputs"], measured
-    assert bridge_only == ["duration ceiling", "trailing zero Twist", "velocity clamp"], measured
+    assert fleet_wide == ["single-shot latch", "trailing zero Twist", "validated inputs"], measured
+    assert bridge_only == ["duration ceiling", "velocity clamp"], measured
     assert sorted(fleet_wide + bridge_only) == sorted(_GUARANTEES), (
         f"every guarantee must be either fleet-wide or this bridge's alone, got {measured}"
     )
 
 
-def test_a_timed_drive_self_stops_on_one_bridge_and_latches_on_the_other_two(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The consequence the trailing-zero scope is about, read off the wire."""
+def test_a_timed_drive_self_stops_on_every_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The consequence the trailing-zero scope is about, read off the wire.
+
+    ``RosBridgedRobot`` and ``RtpsRobot`` used to leave 1.0 m/s latched here
+    while only ``RosbridgeRobot`` trailed a zero. They inherit the trailing zero
+    from the shared mobile base now, so the last thing on the wire is a stop on
+    all three - which is why this guarantee moved into the fleet-wide half above.
+    """
     final_velocity: dict[str, float] = {}
     for bridge in _BRIDGES:
         _, calls = _drive(monkeypatch, bridge, linear=1.0, duration=5.0)
         assert [c["count"] for c in calls][0] == 50, "round(5.0 * 10.0) messages"
         final_velocity[bridge[0]] = calls[-1]["fields"]["linear"]["x"]
 
-    assert final_velocity == {"RosBridgedRobot": 1.0, "RtpsRobot": 1.0, "RosbridgeRobot": 0.0}
+    assert final_velocity == {"RosBridgedRobot": 0.0, "RtpsRobot": 0.0, "RosbridgeRobot": 0.0}
 
 
 #: Any wording that asserts this bridge's contract is the fleet's. Matched
@@ -239,7 +245,10 @@ def test_the_docstring_names_what_the_other_two_bridges_do_instead() -> None:
     specific = _scoped_paragraph(_BRIDGE_MARKER)
     for sibling in ("RosBridgedRobot.drive", "RtpsRobot.drive"):
         assert sibling in specific, f"the bridge-specific paragraph should name {sibling}"
-    assert "latched" in specific, "it should say a timed drive on the other two leaves the velocity latched"
+    # What the other two do instead is now "no ceiling", not "leaves it latched":
+    # they inherit the trailing zero, so the only remaining local guarantees are
+    # the clamp and the ceiling, and an unset limit is what a reader needs told.
+    assert "unclamped" in specific, "it should say the other two put the requested value on the wire unclamped"
 
 
 # The docs page carries the same claim, so it is graded the same way ----------
