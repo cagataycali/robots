@@ -18,6 +18,7 @@ authored frame and cannot serve as an oracle for what the file declared.
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import numpy as np
@@ -70,6 +71,98 @@ def _write_mesh_scene(tmp_path, geom_attrs: str) -> str:
         encoding="utf-8",
     )
     return str(path)
+
+
+def _write_class_scene(tmp_path, class_attrs: str, geom_attrs: str, *, name: str) -> str:
+    """A box geom taking ``class_attrs`` from a ``<default>`` and declaring ``geom_attrs``.
+
+    A box's compiled ``geom_quat`` is the frame the file authored, so MuJoCo's
+    own answer for a class/element pair can be read straight off it. A mesh
+    geom's cannot: MuJoCo folds the mesh's principal-inertia alignment into it.
+    """
+    path = tmp_path / f"{name}.xml"
+    path.write_text(
+        f'<mujoco><compiler angle="degree"/>'
+        f'<default><default class="rot">'
+        f'<geom {class_attrs} type="box" size="0.1 0.05 0.02"/></default></default>'
+        f'<worldbody><body name="obj" pos="0.1 0.2 0.3">'
+        f'<geom name="g" class="rot" {geom_attrs}/></body></worldbody></mujoco>',
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def _write_nested_class_scene(tmp_path, parent: str, child: str, geom_attrs: str, *, name: str) -> str:
+    """The same, with the class nested inside another that also declares an orientation."""
+    path = tmp_path / f"{name}.xml"
+    path.write_text(
+        f'<mujoco><compiler angle="degree"/>'
+        f'<default><default class="outer">'
+        f'<geom {parent} type="box" size="0.1 0.05 0.02"/>'
+        f'<default class="inner"><geom {child}/></default></default></default>'
+        f'<worldbody><body name="obj" pos="0.1 0.2 0.3">'
+        f'<geom name="g" class="inner" {geom_attrs}/></body></worldbody></mujoco>',
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def _write_mesh_class_scene(tmp_path, class_attrs: str, geom_attrs: str) -> str:
+    """A mesh geom taking ``class_attrs`` from a ``<default>``: the reported frame."""
+    (tmp_path / "shape.obj").write_text(_TETRA_OBJ, encoding="utf-8")
+    path = tmp_path / "mesh_class_scene.xml"
+    path.write_text(
+        f'<mujoco><compiler angle="degree"/>'
+        f'<asset><mesh name="shape" file="shape.obj"/></asset>'
+        f'<default><default class="rot"><geom {class_attrs} type="mesh" mesh="shape"/></default></default>'
+        f'<worldbody><body name="obj" pos="0.1 0.2 0.3">'
+        f'<geom name="g" class="rot" {geom_attrs}/></body></worldbody></mujoco>',
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def _mujoco_geom_quat(path: str) -> np.ndarray:
+    """The orientation MuJoCo's compiler stored for the fixture's one geom."""
+    model = mujoco.MjModel.from_xml_path(path)
+    geom = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "g")
+    assert geom >= 0, "premise: the fixture declares a geom named 'g'"
+    return np.asarray(model.geom_quat[geom], dtype=float)
+
+
+def _reported_mesh_quat(tmp_path, class_attrs: str, geom_attrs: str, *, name: str) -> tuple[float, ...]:
+    """The frame ``load_mjcf_scene_objects`` reports for a mesh geom under ``class_attrs``.
+
+    The public path, so this measures what a caller receives rather than the
+    internals it composes.
+    """
+    (tmp_path / "shape.obj").write_text(_TETRA_OBJ, encoding="utf-8")
+    path = tmp_path / f"mesh_{name}.xml"
+    path.write_text(
+        f'<mujoco><compiler angle="degree"/>'
+        f'<asset><mesh name="shape" file="shape.obj"/></asset>'
+        f'<default><default class="rot"><geom {class_attrs} type="mesh" mesh="shape"/></default></default>'
+        f'<worldbody><body name="obj" pos="0.1 0.2 0.3">'
+        f'<geom name="g" class="rot" {geom_attrs}/></body></worldbody></mujoco>',
+        encoding="utf-8",
+    )
+    return _only(str(path)).mesh_quat
+
+
+def _reported_nested_mesh_quat(tmp_path, parent: str, child: str, geom_attrs: str, *, name: str) -> tuple[float, ...]:
+    """The same, with the geom's class nested inside another that also declares one."""
+    (tmp_path / "shape.obj").write_text(_TETRA_OBJ, encoding="utf-8")
+    path = tmp_path / f"mesh_{name}.xml"
+    path.write_text(
+        f'<mujoco><compiler angle="degree"/>'
+        f'<asset><mesh name="shape" file="shape.obj"/></asset>'
+        f'<default><default class="outer"><geom {parent} type="mesh" mesh="shape"/>'
+        f'<default class="inner"><geom {child}/></default></default></default>'
+        f'<worldbody><body name="obj" pos="0.1 0.2 0.3">'
+        f'<geom name="g" class="inner" {geom_attrs}/></body></worldbody></mujoco>',
+        encoding="utf-8",
+    )
+    return _only(str(path)).mesh_quat
 
 
 def _mujoco_body_quat(path: str) -> np.ndarray:
@@ -245,6 +338,127 @@ class TestMultipleSpellingsAreRefused:
             f"{[tuple(round(v, 4) for v in o.quat) for o in objects]}, but MuJoCo "
             "refuses that model outright, so the reported rotation is a guess"
         )
+
+
+class TestTheClassAndElementPrecedenceMatchesMujoco:
+    """A ``<default>`` class and the element may spell the orientation differently.
+
+    MuJoCo compiles such a model. It keeps the four non-``quat`` spellings in one
+    slot separate from ``quat`` and resolves that slot first, so an inner
+    declaration of one of them replaces an outer declaration of another, and any
+    of them beats a ``quat`` from any level. Reading the merged attributes as a
+    flat mapping instead loses both rules: it cannot say which alternative
+    spelling is in effect, and it reads a legal pair as the mutually exclusive
+    case MuJoCo refuses.
+
+    Graded against ``geom_quat`` for a box, which MuJoCo stores as the file
+    authored it; the mesh passthrough is graded end to end below.
+    """
+
+    @pytest.mark.parametrize("from_class", SPELLINGS)
+    @pytest.mark.parametrize("on_element", SPELLINGS)
+    def test_every_class_and_element_pair_matches_mujoco(self, tmp_path, from_class, on_element):
+        path = _write_class_scene(
+            tmp_path,
+            f'{from_class}="{DECLARATIONS[from_class]}"',
+            f'{on_element}="{DECLARATIONS[on_element]}"',
+            name=f"{from_class}_{on_element}",
+        )
+        expected = _mujoco_geom_quat(path)
+        got = _reported_mesh_quat(
+            tmp_path,
+            f'{from_class}="{DECLARATIONS[from_class]}"',
+            f'{on_element}="{DECLARATIONS[on_element]}"',
+            name=f"{from_class}_{on_element}",
+        )
+        assert _same_rotation(got, expected) < 1e-6, (
+            f"class {from_class} + element {on_element}: the loader read "
+            f"{tuple(round(v, 5) for v in got)} where MuJoCo compiled "
+            f"{tuple(round(v, 5) for v in expected)}"
+        )
+
+    def test_every_nested_class_chain_matches_mujoco(self, tmp_path):
+        """An inner class's spelling replaces its parent's, and the element's replaces both."""
+        offenders = []
+        graded = 0
+        for outer, inner, element in itertools.product(SPELLINGS, ("", *SPELLINGS), ("", *SPELLINGS)):
+            path = _write_nested_class_scene(
+                tmp_path,
+                f'{outer}="{DECLARATIONS[outer]}"',
+                f'{inner}="{DECLARATIONS[inner]}"' if inner else "",
+                f'{element}="{DECLARATIONS[element]}"' if element else "",
+                name=f"n_{outer}_{inner or 'none'}_{element or 'none'}",
+            )
+            expected = _mujoco_geom_quat(path)
+            graded += 1
+            try:
+                got = _reported_nested_mesh_quat(
+                    tmp_path,
+                    f'{outer}="{DECLARATIONS[outer]}"',
+                    f'{inner}="{DECLARATIONS[inner]}"' if inner else "",
+                    f'{element}="{DECLARATIONS[element]}"' if element else "",
+                    name=f"n_{outer}_{inner or 'none'}_{element or 'none'}",
+                )
+            except ValueError as refused:
+                offenders.append(f"outer={outer} inner={inner or '-'} element={element or '-'}: refused ({refused})")
+                continue
+            if _same_rotation(got, expected) >= 1e-6:
+                offenders.append(
+                    f"outer={outer} inner={inner or '-'} element={element or '-'}: "
+                    f"loader {tuple(round(v, 5) for v in got)} vs mujoco {tuple(round(v, 5) for v in expected)}"
+                )
+        assert graded == len(SPELLINGS) * 6 * 6, f"premise: every chain compiles, graded {graded}"
+        assert not offenders, f"{len(offenders)} of {graded} nested chains disagree with MuJoCo:\n" + "\n".join(
+            offenders[:8]
+        )
+
+    def test_a_class_spelling_beats_the_elements_own_quat(self, tmp_path):
+        """The reported mesh frame is the class's euler, not the element's quat."""
+        reference = _write_class_scene(
+            tmp_path, 'euler="90 0 0"', 'quat="0.7071068 0 0.7071068 0"', name="ref_class_euler"
+        )
+        expected = _mujoco_geom_quat(reference)
+        assert _same_rotation(expected, (0.7071068, 0.7071068, 0.0, 0.0)) < 1e-6, (
+            f"premise: MuJoCo resolves the class euler, not the element quat; it compiled {expected}"
+        )
+        got = _reported_mesh_quat(tmp_path, 'euler="90 0 0"', 'quat="0.7071068 0 0.7071068 0"', name="class_euler")
+        assert _same_rotation(got, expected) < 1e-6, (
+            f"a class euler must beat the element's own quat: reported {tuple(round(v, 5) for v in got)}, "
+            f"MuJoCo compiled {tuple(round(v, 5) for v in expected)}"
+        )
+
+    def test_an_element_spelling_beats_the_classs_quat(self, tmp_path):
+        """And the other way round: the element's euler, not the class's quat."""
+        reference = _write_class_scene(
+            tmp_path, 'quat="0.7071068 0 0.7071068 0"', 'euler="90 0 0"', name="ref_elem_euler"
+        )
+        expected = _mujoco_geom_quat(reference)
+        assert _same_rotation(expected, (0.7071068, 0.7071068, 0.0, 0.0)) < 1e-6, (
+            f"premise: MuJoCo resolves the element euler, not the class quat; it compiled {expected}"
+        )
+        got = _reported_mesh_quat(tmp_path, 'quat="0.7071068 0 0.7071068 0"', 'euler="90 0 0"', name="elem_euler")
+        assert _same_rotation(got, expected) < 1e-6, (
+            f"the element's euler must beat the class's quat: reported {tuple(round(v, 5) for v in got)}, "
+            f"MuJoCo compiled {tuple(round(v, 5) for v in expected)}"
+        )
+
+    def test_a_class_and_element_pair_loads(self, tmp_path):
+        """It is a model MuJoCo compiles, so the scene must load rather than be refused."""
+        path = _write_mesh_class_scene(tmp_path, 'euler="90 0 0"', 'quat="0.7071068 0 0.7071068 0"')
+        objects = load_mjcf_scene_objects(path)
+        assert [o.name for o in objects] == ["obj"], (
+            "a class supplying one spelling while the element declares another is not the "
+            f"mutually exclusive case; the loader reported {[o.name for o in objects]}"
+        )
+
+    def test_only_an_elements_own_attributes_are_mutually_exclusive(self, tmp_path):
+        """Two spellings across the class boundary are legal; on one element they are not."""
+        across = _write_mesh_class_scene(tmp_path, 'euler="90 0 0"', 'zaxis="1 0 0"')
+        assert len(load_mjcf_scene_objects(across)) == 1, "MuJoCo compiles a class/element pair"
+        together = _write(tmp_path, geom_attrs='euler="90 0 0" zaxis="1 0 0"')
+        with pytest.raises(Exception) as caught:  # noqa: PT011 - mujoco raises its own FatalError
+            mujoco.MjModel.from_xml_path(together)
+        assert "orientation" in str(caught.value).lower(), f"premise: MuJoCo refuses it; it said {caught.value}"
 
 
 class TestTheReadingIsNotWidened:

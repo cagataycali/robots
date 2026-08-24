@@ -897,9 +897,45 @@ def _parse_quat(quat_str: str | None) -> tuple[float, float, float, float]:
     return (parts[0], parts[1], parts[2], parts[3])
 
 
+#: MJCF's orientation spellings other than ``quat``. MuJoCo keeps these four in
+#: one "alternative orientation" slot carrying which of them was used, separate
+#: from the ``quat`` attribute, and resolves that slot in preference to ``quat``
+#: when it is set. Two consequences, both measured on mujoco 3.5.0 and 3.12.0:
+#: a ``<default>`` class supplying any of these beats a ``quat`` the element
+#: itself declares, and an inner declaration of one of these replaces an outer
+#: declaration of another rather than sitting beside it.
+_ORIENTATION_ALT_SPELLINGS = ("euler", "axisangle", "xyaxes", "zaxis")
+
 #: MJCF's mutually exclusive orientation spellings, in the order this module
-#: reports them when a model declares more than one (MuJoCo refuses that).
-_ORIENTATION_SPELLINGS = ("quat", "euler", "axisangle", "xyaxes", "zaxis")
+#: reports them when ONE element declares more than one (MuJoCo refuses that).
+_ORIENTATION_SPELLINGS = ("quat", *_ORIENTATION_ALT_SPELLINGS)
+
+
+def _merge_mjcf_attrs(outer: Mapping[str, str], inner: Mapping[str, str]) -> dict[str, str]:
+    """``inner``'s attributes over ``outer``'s, with MJCF's orientation precedence.
+
+    Every attribute merges by name -- an inner declaration replaces an outer one
+    -- except that the orientation spellings do not share a name. MuJoCo keeps
+    :data:`_ORIENTATION_ALT_SPELLINGS` in one slot, so an inner ``euler``
+    REPLACES an outer ``zaxis`` instead of joining it, and reading both would
+    leave the effective rotation ambiguous. ``quat`` is a plain attribute and
+    merges by name; whether it or a surviving alternative spelling is in effect
+    is :func:`_parse_orientation`'s decision, not this one's.
+
+    Args:
+        outer: The enclosing level's attributes -- a ``<default>`` class's, or
+            the parent class's when flattening a nested one.
+        inner: The narrower level's own attributes.
+
+    Returns:
+        The merged mapping, carrying at most one of the alternative spellings.
+    """
+    merged = {**outer, **inner}
+    if any(inner.get(spelling) for spelling in _ORIENTATION_ALT_SPELLINGS):
+        for spelling in _ORIENTATION_ALT_SPELLINGS:
+            if not inner.get(spelling):
+                merged.pop(spelling, None)
+    return merged
 
 
 def _mjcf_angle_units(elements: list[ET.Element]) -> tuple[float, str]:
@@ -992,6 +1028,7 @@ def _quat_from_basis(
 def _parse_orientation(
     attrs: Mapping[str, str],
     *,
+    own: Mapping[str, str] | None = None,
     angle_scale: float = math.pi / 180.0,
     eulerseq: str = "xyz",
 ) -> tuple[float, float, float, float]:
@@ -1013,6 +1050,15 @@ def _parse_orientation(
       orthogonalized against it, then z as their cross product.
     * ``zaxis="x y z"`` -- the minimal rotation taking ``+z`` onto that axis.
 
+    They are mutually exclusive on ONE element, but not across MJCF's
+    ``<default>`` precedence: a class may supply one spelling and the element
+    declare another, and MuJoCo compiles that model. It resolves it by keeping
+    :data:`_ORIENTATION_ALT_SPELLINGS` in a slot separate from ``quat`` and
+    preferring that slot, so an alternative spelling from ANY level beats a
+    ``quat`` from any level -- including a class ``euler`` over the element's own
+    ``quat``. :func:`_merge_mjcf_attrs` has already resolved which alternative
+    spelling survives, so at most one reaches here.
+
     A ``quat`` is reported as written rather than normalized. MuJoCo normalizes
     it, but no ``quat`` in the shipped asset corpus is unnormalized, so
     normalizing here would only move output for input no shipped model
@@ -1022,6 +1068,11 @@ def _parse_orientation(
         attrs: The element's effective attributes -- ``el.attrib``, or
             :func:`_class_attrs`' result where a ``<default>`` class may supply
             the orientation.
+        own: The element's OWN attributes when ``attrs`` merges a class's in.
+            Only the spellings an element declares itself are mutually
+            exclusive, so this is what the refusal below is measured against;
+            defaults to ``attrs``, which is correct for a ``<body>`` (MJCF has
+            no ``<body>`` default class, so nothing is merged in).
         angle_scale: Factor converting a declared angle to radians, from
             :func:`_mjcf_angle_units`.
         eulerseq: Euler axis sequence with its case intact, from
@@ -1033,19 +1084,27 @@ def _parse_orientation(
         reading for a malformed ``quat``).
 
     Raises:
-        ValueError: If the element declares more than one orientation spelling.
+        ValueError: If ``own`` declares more than one orientation spelling.
             MuJoCo refuses such a model outright ("multiple orientation
-            specifiers are not allowed"), so there is no rotation to pick.
+            specifiers are not allowed"), so there is no rotation to pick. A
+            class supplying one spelling while the element declares another is
+            NOT that case -- MuJoCo compiles it, and it is resolved above.
     """
-    declared = [s for s in _ORIENTATION_SPELLINGS if attrs.get(s)]
-    if not declared:
-        return (1.0, 0.0, 0.0, 0.0)
-    if len(declared) > 1:
+    declared_here = [s for s in _ORIENTATION_SPELLINGS if (attrs if own is None else own).get(s)]
+    if len(declared_here) > 1:
         raise ValueError(
-            f"MJCF orientation: {declared} were all declared on one element, but they are mutually "
+            f"MJCF orientation: {declared_here} were all declared on one element, but they are mutually "
             "exclusive - MuJoCo refuses a model with multiple orientation specifiers. Keep one."
         )
-    spelling = declared[0]
+    # An alternative spelling beats ``quat`` whichever level declared it, and
+    # ``_merge_mjcf_attrs`` leaves at most one of them, so the first is the one.
+    alternatives = [s for s in _ORIENTATION_ALT_SPELLINGS if attrs.get(s)]
+    if alternatives:
+        spelling = alternatives[0]
+    elif attrs.get("quat"):
+        spelling = "quat"
+    else:
+        return (1.0, 0.0, 0.0, 0.0)
     if spelling == "quat":
         return _parse_quat(attrs.get("quat"))
     try:
@@ -1216,7 +1275,7 @@ def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str,
     classes: dict[str, dict[str, str]] = {"": {}, _MJCF_ROOT_DEFAULT_CLASS: {}}
 
     def _flatten(default_el: ET.Element, inherited: dict[str, str]) -> dict[str, str]:
-        merged = {**inherited, **_attrs_of(default_el)}
+        merged = _merge_mjcf_attrs(inherited, _attrs_of(default_el))
         classes[default_el.get("class", "")] = merged
         for nested in default_el.findall("default"):
             _flatten(nested, merged)
@@ -1267,7 +1326,7 @@ def _class_attrs(el: ET.Element, defaults: dict[str, dict[str, str]], childclass
     geom's ``type``, which names a shape rather than a degree of freedom.
     """
     cls = el.get("class") or childclass
-    return {**defaults.get(cls, {}), **el.attrib}
+    return _merge_mjcf_attrs(defaults.get(cls, {}), el.attrib)
 
 
 def _mjcf_model_worldbody_bodies(root: ET.Element, base_dir: str) -> tuple[bool, list[ET.Element]]:
@@ -1383,7 +1442,7 @@ def _find_body_mesh(
             continue
         gpos = _parse_xyz(attrs.get("pos"))
         pos = (offset[0] + gpos[0], offset[1] + gpos[1], offset[2] + gpos[2])
-        quat = _parse_orientation(attrs, angle_scale=angle_scale, eulerseq=eulerseq)
+        quat = _parse_orientation(attrs, own=geom.attrib, angle_scale=angle_scale, eulerseq=eulerseq)
         is_visual = (attrs.get("group") or "0") != "0"
         if is_visual:
             return (mesh_name, pos, quat, True)
