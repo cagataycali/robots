@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import coerce_zmq_timeout_ms, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +71,24 @@ class MoveIt2InferenceClient:
         host: Server hostname or IP. Default ``"127.0.0.1"`` - bind to
             loopback by default; users opt into network exposure.
         port: Server port.
-        timeout_ms: Socket send/recv timeout in milliseconds.
+        timeout_ms: Socket send/recv timeout in milliseconds, applied as
+            ``RCVTIMEO`` and ``SNDTIMEO`` on the REQ socket. Only a positive
+            whole number up to
+            :data:`~strands_robots.utils.MAX_ZMQ_TIMEOUT_MS` names a budget;
+            an integral ``float`` or NumPy integer is accepted and stored as an
+            ``int``, since ``setsockopt`` takes only the latter. ``0`` is ZMQ's
+            "return immediately" spelling and ``-1`` its "block forever" one,
+            and both are refused - see
+            :func:`~strands_robots.utils.coerce_zmq_timeout_ms`.
         api_token: Optional token included in every request for
             authentication. When unset, no auth is sent. Sent in
             plaintext over TCP - use a TLS tunnel or SSH port-forward
             for non-localhost deployments (same caveat as
             :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient`).
+
+    Raises:
+        ValueError: If ``timeout_ms`` does not name a usable wait budget - see
+            :func:`~strands_robots.utils.coerce_zmq_timeout_ms`.
     """
 
     def __init__(
@@ -86,11 +98,26 @@ class MoveIt2InferenceClient:
         timeout_ms: int = 15000,
         api_token: str | None = None,
     ) -> None:
+        # A timeout that names no wait budget is refused here, while the caller
+        # still holds the value, because ZMQ's reaction to one is
+        # indistinguishable from an absent sidecar: ``0`` and ``False`` are its
+        # "return immediately" spelling, so every request raises ``zmq.Again``
+        # against a server that is running and reachable, and ``ping`` below
+        # reports that as ``False`` with the reason at ``logger.debug`` only.
+        # ``True`` is a silent 1 ms budget. The remaining values never reach a
+        # verdict at all - ``setsockopt`` raises ``ZMQError``, ``TypeError`` or
+        # ``OverflowError`` from inside ``pyzmq``, naming no parameter - and that
+        # includes ``15000.0`` and ``np.int64(15000)``, which name usable
+        # budgets the sibling transports accept, hence the coercion rather than
+        # a bare refusal.
+        coerced_timeout, timeout_reason = coerce_zmq_timeout_ms(type(self).__name__, "timeout_ms", timeout_ms)
+        if coerced_timeout is None:
+            raise ValueError(timeout_reason)
         self._zmq = _load_zmq()
         self.context = self._zmq.Context()
         self.host = host
         self.port = port
-        self.timeout_ms = timeout_ms
+        self.timeout_ms = coerced_timeout
         self.api_token = api_token
 
         if api_token and host not in ("localhost", "127.0.0.1", "::1"):

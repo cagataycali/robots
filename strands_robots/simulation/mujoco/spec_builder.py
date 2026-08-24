@@ -40,6 +40,61 @@ from strands_robots.simulation.terrain import (
 
 logger = logging.getLogger(__name__)
 
+
+def _absolutize_asset_paths(spec: Any) -> int:
+    """Rewrite a spec's file-backed asset references to absolute paths.
+
+    MuJoCo resolves a ``<mesh>`` / ``<hfield>`` / ``<texture>`` ``file=`` against
+    a base directory (the model file's own directory, plus ``meshdir`` /
+    ``texturedir``). That base is tracked on the spec as ``modelfiledir`` and is
+    NOT emitted by ``spec.to_xml()``, and ``spec.attach()`` does not carry it
+    onto the parent. So a spec whose assets are named relatively compiles fine
+    in the session that loaded it while serialising to an XML that resolves
+    those names against wherever the XML happens to be written - i.e. nowhere.
+    Rewriting each reference to an absolute path makes the spec self-describing,
+    so every consumer of ``to_xml()`` gets asset locations instead of an
+    implicit dependency on a directory the text never mentions.
+
+    MuJoCo honours an absolute ``file=`` regardless of any ``meshdir`` /
+    ``texturedir`` still declared, so those attributes are left untouched.
+
+    A reference is rewritten only when it is relative AND the resolved path
+    exists. An unresolvable reference is left exactly as authored: MuJoCo's own
+    "Error opening file" names the reference the model actually declares, which
+    is more useful than an invented absolute path that was never on disk.
+
+    Args:
+        spec: the ``MjSpec`` to repair in place.
+
+    Returns:
+        Number of asset references rewritten.
+    """
+    base = getattr(spec, "modelfiledir", "") or ""
+    rewritten = 0
+    # meshdir covers meshes AND height fields; textures have their own dir.
+    for assets, subdir in (
+        (spec.meshes, getattr(spec, "meshdir", "") or ""),
+        (spec.hfields, getattr(spec, "meshdir", "") or ""),
+        (spec.textures, getattr(spec, "texturedir", "") or ""),
+    ):
+        for asset in assets:
+            ref = asset.file or ""
+            if not ref or os.path.isabs(ref):
+                continue
+            resolved = os.path.abspath(os.path.join(base, subdir, ref))
+            if not os.path.isfile(resolved):
+                continue
+            asset.file = resolved
+            rewritten += 1
+    if rewritten:
+        logger.debug(
+            "absolutized %d asset reference(s) against %r so spec.to_xml() stays reloadable",
+            rewritten,
+            base,
+        )
+    return rewritten
+
+
 # Accepted keys of the ``add_object(material=...)`` spec. Single source of truth
 # shared by :func:`material_spec_error` and :meth:`SpecBuilder._build_material`.
 MATERIAL_KEYS: Final[frozenset[str]] = frozenset(
@@ -228,7 +283,7 @@ def _normalize_size(shape: str, size: list[float]) -> list[float]:
     * ``capsule``:   ``[radius, half-height]``  (cap hemisphere radius = radius)
     * ``ellipsoid``: ``[rx, ry, rz]``
     * ``plane``:     ``[hx, hy, grid_spacing]`` (hx/hy are half-sizes)
-    * ``mesh``:      ``[]``            (mesh asset dictates extent; size ignored)
+    * ``mesh``:      refused           (see below - no caller normalizes one)
 
     Box/ellipsoid use all 3 components as full extents, sphere uses ``size[0]``
     as diameter (MuJoCo halves it to radius), cylinder/capsule use ``size[0]``
@@ -237,12 +292,23 @@ def _normalize_size(shape: str, size: list[float]) -> list[float]:
     visual half-widths (a plane is infinite for collision, so only its rendered
     grid extent matters) and ``size[1]`` mirrors ``size[0]`` when omitted.
 
+    ``mesh`` is deliberately absent from the branches below and falls through to
+    the trailing ``raise``. A mesh geom takes its extent from the asset, so it
+    carries no ``size`` at all: ``SpecBuilder.build`` passes ``meshname``
+    instead of calling this function, and the ``add_geom`` patch op refuses
+    ``type="mesh"`` outright (:func:`~strands_robots.simulation.mujoco.scene_ops._geom_shape_error`)
+    because it has no key that could name the asset. So nothing should be
+    asking, and the branch that used to answer ``[0.0, 0.0, 0.0]`` -- a third
+    statement of the contract, and one the docstring above contradicted -- was
+    unreachable on both paths.
+
     Raises:
         ValueError: When :func:`_validate_size` rejects ``size`` -- too few
             components for the shape to consume, more than three, or a
             non-positive consumed extent. Every component this function reads
             is guaranteed present by that check, so a partial vector is never
-            silently completed from a default.
+            silently completed from a default. Also when ``shape`` is one no
+            caller normalizes, ``mesh`` included.
     """
     if (msg := _validate_size(shape, size)) is not None:
         raise ValueError(msg)
@@ -257,8 +323,6 @@ def _normalize_size(shape: str, size: list[float]) -> list[float]:
         sx = size[0]
         sy = size[1] if len(size) > 1 else sx
         return [sx, sy, 0.01]
-    if shape == "mesh":
-        return [0.0, 0.0, 0.0]
     raise ValueError(f"Cannot normalize size for shape {shape!r}.")
 
 
@@ -532,14 +596,23 @@ class SpecBuilder:
 
     @staticmethod
     def from_file(path: str) -> Any:
-        """Load an MJCF/URDF file as a fresh spec.
+        """Load an MJCF/URDF file as a fresh spec, with asset refs absolutized.
 
         MuJoCo 3.2+ reads URDF as well as MJCF via the same entry point - the
         file extension + XML root determines the path. Raises ``ValueError``
         on invalid files.
+
+        Every file-backed asset reference is rewritten to an absolute path via
+        :func:`_absolutize_asset_paths` before the spec is handed back, so the
+        spec carries its own asset locations instead of depending on a base
+        directory MuJoCo tracks separately and does not serialise. This is what
+        makes ``spec.to_xml()`` (and therefore ``export_xml``) reloadable from
+        anywhere; see that helper for why the repair belongs at load time.
         """
         mujoco = _ensure_mujoco()
-        return mujoco.MjSpec.from_file(str(path))
+        spec = mujoco.MjSpec.from_file(str(path))
+        _absolutize_asset_paths(spec)
+        return spec
 
     # object add
     @staticmethod
@@ -562,19 +635,13 @@ class SpecBuilder:
         # leaves an orphan body behind.
         material_name = SpecBuilder._build_material(spec, obj) if obj.material is not None else None
 
-        # ``add_body(name=...)`` raises ``repeated name`` on a collision with an
-        # existing scene body BUT still inserts the duplicate, and the steps
-        # after it (the geom type lookup, ``add_geom``) can raise as well. Any
-        # raise in this block must undo only what THIS call inserted, then
-        # re-raise so the caller reports the real reason. Deleting by name
-        # (``spec.body(name)`` / :meth:`remove_body`) is unsafe on the collision
-        # path: that accessor resolves the ORIGINAL body present at the last
-        # compile, so it would delete the pre-existing healthy body and leave
-        # the empty orphan holding its name - a silent scene corruption. Instead
-        # record how many bodies already carry this name and, on failure, delete
-        # only the surplus this call produced (the orphan is appended, so it is
-        # the tail of that run). This can never touch a body it did not create.
-        pre_count = sum(1 for b in spec.bodies if b.name == obj.name)
+        # ``add_body(name=...)`` inserts the duplicate even when the name
+        # collides with an existing scene body, and the steps after it (the geom
+        # type lookup, ``add_geom``) can raise as well. Any raise in this block
+        # must undo only what THIS call inserted, then re-raise so the caller
+        # reports the real reason - hence the body count taken before the insert
+        # and :meth:`remove_surplus_bodies` after it, never a delete by name.
+        pre_count = SpecBuilder.count_bodies_named(spec, obj.name)
         try:
             body = spec.worldbody.add_body(
                 name=obj.name,
@@ -632,8 +699,7 @@ class SpecBuilder:
 
             body.add_geom(**geom_kwargs)
         except (ValueError, RuntimeError):
-            for surplus in [b for b in spec.bodies if b.name == obj.name][pre_count:]:
-                spec.delete(surplus)
+            SpecBuilder.remove_surplus_bodies(spec, obj.name, pre_count)
             raise
 
     # material build
@@ -762,6 +828,14 @@ class SpecBuilder:
 
         If ``cam.target`` is set, the look-at direction is converted to a
         quaternion via :func:`_target_quat`.
+
+        ``add_camera(name=...)`` inserts the duplicate even when the name
+        collides with a camera the scene already declares, so - exactly as in
+        :meth:`add_object` - a raise from the insert rolls only the cameras THIS
+        call appended back out (:meth:`remove_surplus_cameras`) before
+        re-raising. Without that, a refused camera left an orphan in the spec and
+        every later scene mutation kept failing to recompile on the duplicate
+        name, bricking the world after one bad add.
         """
         mujoco = _ensure_mujoco()
         pos = list(cam.position)
@@ -787,9 +861,16 @@ class SpecBuilder:
                     f"add_camera: parent_body {parent_name!r} not found in scene. "
                     "Pass the fully-qualified body name (e.g. 'so101/gripper')."
                 )
-            parent.add_camera(**kwargs)
+            attach_to = parent
         else:
-            spec.worldbody.add_camera(**kwargs)
+            attach_to = spec.worldbody
+
+        pre_count = SpecBuilder.count_cameras_named(spec, cam.name)
+        try:
+            attach_to.add_camera(**kwargs)
+        except (ValueError, RuntimeError):
+            SpecBuilder.remove_surplus_cameras(spec, cam.name, pre_count)
+            raise
 
     # deferred (body-mounted) cameras
     @staticmethod
@@ -859,6 +940,100 @@ class SpecBuilder:
         spec.delete(body)
         return True
 
+    # surplus rollback (identify what THIS call inserted, never by name)
+    @staticmethod
+    def count_bodies_named(spec: Any, name: str) -> int:
+        """Count the bodies in ``spec`` that carry ``name``.
+
+        Take this BEFORE an insert that may have to be rolled back, and pass it
+        as the ``keep`` argument of :meth:`remove_surplus_bodies`. A plain count
+        rather than a membership test because a spec can legitimately hold two
+        bodies under one name between an insert and the compile that refuses it.
+
+        Args:
+            spec: The ``mjSpec`` to enumerate.
+            name: The body name to count.
+
+        Returns:
+            How many bodies currently carry ``name`` (0 when none do).
+        """
+        return sum(1 for body in getattr(spec, "bodies", ()) if body.name == name)
+
+    @staticmethod
+    def count_cameras_named(spec: Any, name: str) -> int:
+        """Count the cameras in ``spec`` that carry ``name``.
+
+        The camera-side counterpart of :meth:`count_bodies_named`; pair it with
+        :meth:`remove_surplus_cameras`.
+
+        Args:
+            spec: The ``mjSpec`` to enumerate.
+            name: The camera name to count.
+
+        Returns:
+            How many cameras currently carry ``name`` (0 when none do).
+        """
+        return sum(1 for camera in getattr(spec, "cameras", ()) if camera.name == name)
+
+    @staticmethod
+    def remove_surplus_bodies(spec: Any, name: str, keep: int) -> int:
+        """Delete the bodies named ``name`` beyond the first ``keep`` of them.
+
+        This is the rollback a refused insert needs, and it is deliberately NOT
+        :meth:`remove_body`. A scene injection mutates the live spec before the
+        compile that validates it, so at rollback time a colliding name is
+        carried by TWO bodies: the healthy pre-existing one and the orphan the
+        refused call appended. ``remove_body`` resolves the name through
+        ``spec.body(name)``, which answers with the body present at the last
+        compile - the ORIGINAL - so using it to roll back deleted the healthy
+        body and left the orphan holding its name. The scene then recompiled
+        successfully with the original geometry gone: a rejected add silently
+        rewrote the scene.
+
+        Identifying the surplus by position instead can never touch a body this
+        call did not create. MuJoCo appends new elements, so the bodies to delete
+        are the tail of the run carrying ``name``; ``keep`` is the count taken
+        before the insert (:meth:`count_bodies_named`). ``keep`` at or above the
+        current count is a no-op, so a rollback is safe to attempt on a path that
+        may not have inserted anything.
+
+        Args:
+            spec: The ``mjSpec`` to mutate.
+            name: The body name whose surplus copies to delete.
+            keep: How many bodies with that name to leave in place.
+
+        Returns:
+            The number of bodies deleted.
+        """
+        surplus = [body for body in getattr(spec, "bodies", ()) if body.name == name][keep:]
+        for body in surplus:
+            spec.delete(body)
+        return len(surplus)
+
+    @staticmethod
+    def remove_surplus_cameras(spec: Any, name: str, keep: int) -> int:
+        """Delete the cameras named ``name`` beyond the first ``keep`` of them.
+
+        The camera-side counterpart of :meth:`remove_surplus_bodies`, and for the
+        same reason: :meth:`remove_camera` deletes the FIRST camera carrying the
+        name, which on a collision is the one the scene already declared, so
+        rolling a refused camera back with it moved the scene's camera to the
+        rejected pose. Every later render from that name then answered with a
+        view the caller was told had been refused.
+
+        Args:
+            spec: The ``mjSpec`` to mutate.
+            name: The camera name whose surplus copies to delete.
+            keep: How many cameras with that name to leave in place.
+
+        Returns:
+            The number of cameras deleted.
+        """
+        surplus = [camera for camera in getattr(spec, "cameras", ()) if camera.name == name][keep:]
+        for camera in surplus:
+            spec.delete(camera)
+        return len(surplus)
+
     # camera remove
     @staticmethod
     def remove_camera(spec: Any, name: str) -> bool:
@@ -924,7 +1099,13 @@ class SpecBuilder:
         """
         mujoco = _ensure_mujoco()
 
-        robot_spec = mujoco.MjSpec.from_file(str(robot_file_path))
+        # Loaded through SpecBuilder.from_file (not mujoco.MjSpec.from_file) so
+        # the child's file-backed asset references are absolutized while the
+        # child still knows its own base directory. ``spec.attach`` does not
+        # carry that directory onto the parent, so a child left with bare
+        # filenames would compile here and then serialise to an XML no one can
+        # reload - see _absolutize_asset_paths.
+        robot_spec = SpecBuilder.from_file(str(robot_file_path))
 
         # Strip the robot scene's own ground/floor plane(s) before attaching.
         # Many menagerie scenes (e.g. franka_emika_panda/scene.xml) ship a
@@ -946,9 +1127,8 @@ class SpecBuilder:
         #      angled/elevated plane, e.g. a ramp or wall, which must survive).
         #   3. Debug log -- record which geoms were stripped so a disappearing
         #      (or surviving) robot floor is diagnosable.
-        world_has_ground = any(
-            g.type in (mujoco.mjtGeom.mjGEOM_PLANE, mujoco.mjtGeom.mjGEOM_HFIELD) for g in scene_spec.geoms
-        )
+        ground_types = (int(mujoco.mjtGeom.mjGEOM_PLANE), int(mujoco.mjtGeom.mjGEOM_HFIELD))
+        world_has_ground = any(int(g.type) in ground_types for g in scene_spec.geoms)
         stripped: list[str] = []
         if world_has_ground:
             for plane in [
@@ -1162,18 +1342,86 @@ _ADOPTED_OPTION_FIELDS: tuple[str, ...] = (
 )
 
 
+_ORIENTATION_TOL: Final[float] = 1e-6
+
+
+def _alt_orientation_is_identity(alt: Any) -> bool | None:
+    """Whether the alternative-orientation slot carries an identity rotation.
+
+    MJCF spells a rotation five ways - ``quat`` plus the four alternatives
+    ``euler`` / ``axisangle`` / ``xyaxes`` / ``zaxis`` - and MuJoCo keeps the
+    four alternatives in one slot (``elem.alt``) behind a discriminator,
+    leaving ``elem.quat`` at identity. Reading ``quat`` alone therefore reports
+    every alternative spelling as unrotated, and ``zaxis`` is the idiomatic
+    spelling for a plane, whose normal *is* that vector.
+
+    Only identity is decided here, never the rotation itself: a plane's normal
+    stays +Z exactly when the slot carrying the rotation is identity, and for
+    each spelling that is a direct test on the declared numbers. It needs no
+    angle unit, because zero is zero in degrees and in radians, so the model's
+    ``<compiler angle>`` does not enter into it.
+
+    Args:
+        alt: the element's ``alt`` slot.
+
+    Returns:
+        ``True``/``False`` when this slot carries the element's rotation, or
+        ``None`` when its discriminator says the rotation lives in ``quat``
+        instead, which the caller should then read.
+    """
+    mujoco = _ensure_mujoco()
+    kinds = mujoco.mjtOrientation
+    try:
+        kind = int(alt.type)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if kind == int(kinds.mjORIENTATION_EULER):
+        return bool(np.allclose(np.asarray(alt.euler, dtype=float), 0.0, atol=_ORIENTATION_TOL))
+    if kind == int(kinds.mjORIENTATION_AXISANGLE):
+        # Any axis, provided the rotation about it is zero.
+        return abs(float(alt.axisangle[3])) <= _ORIENTATION_TOL
+    if kind == int(kinds.mjORIENTATION_ZAXIS):
+        # The plane's normal IS this vector, so identity means it points +Z.
+        vec = np.asarray(alt.zaxis, dtype=float)
+        norm = float(np.linalg.norm(vec))
+        if norm <= _ORIENTATION_TOL:
+            # A zero-length axis defines no frame - MuJoCo refuses such a
+            # model outright - so it cannot be shown to point +Z.
+            return False
+        return bool(np.allclose(vec / norm, (0.0, 0.0, 1.0), atol=_ORIENTATION_TOL))
+    if kind == int(kinds.mjORIENTATION_XYAXES):
+        axes = np.asarray(alt.xyaxes, dtype=float)
+        return bool(np.allclose(axes, (1.0, 0.0, 0.0, 0.0, 1.0, 0.0), atol=_ORIENTATION_TOL))
+    return None
+
+
 def _is_z0_ground_plane(geom: Any) -> bool:
     """True if a plane geom is plausibly the z=0 axis-aligned ground.
 
     MuJoCo planes default to a +Z normal at the body origin. We treat a plane
     as "ground" when its body-frame position z is ~0 and its orientation is
-    axis-aligned (quat ~ identity, so the normal stays +Z). A robot MJCF that
-    ships an intentional ramp/wall plane (rotated or elevated) is NOT matched
-    and survives the attach. See #363.
+    identity, so the normal stays +Z. A robot MJCF that ships an intentional
+    ramp/wall plane (rotated or elevated) is NOT matched and survives the
+    attach - whichever of MJCF's five orientation spellings declares it, which
+    is why the alternative slot is read here and not only ``quat``; see
+    :func:`_alt_orientation_is_identity`.
+
+    Recognising ground is what strips a duplicate floor, so the two directions
+    are not symmetric. A plane wrongly taken for ground loses the robot a
+    surface it was authored with; a plane that merely cannot be shown to be
+    flat survives, which at worst leaves the second floor the world already
+    has. Unrecognised therefore means "kept". See #363.
     """
     pos = getattr(geom, "pos", None)
     if pos is not None and abs(float(pos[2])) > 1e-6:
         return False
+    alt = getattr(geom, "alt", None)
+    if alt is not None:
+        # A live spec element keeps the four alternative spellings here, and
+        # this slot wins over ``quat`` when it is the one MJCF declared.
+        from_alt = _alt_orientation_is_identity(alt)
+        if from_alt is not None:
+            return from_alt
     quat = getattr(geom, "quat", None)
     if quat is not None:
         # Identity quat is (1, 0, 0, 0); allow small FP noise.

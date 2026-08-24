@@ -289,12 +289,53 @@ def _has_port_range_literal(source: str) -> bool:
     return any(isinstance(node, ast.Constant) and node.value == 65535 for node in ast.walk(ast.parse(source)))
 
 
+def _port_annotations(source: str) -> list[str]:
+    """Every annotation a ``port`` parameter carries in this module."""
+    return [
+        ast.unparse(arg.annotation)
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef)
+        for arg in node.args.args + node.args.kwonlyargs
+        if arg.arg == "port" and arg.annotation is not None
+    ]
+
+
+def _declares_a_numeric_port(source: str) -> bool:
+    """True when a ``port`` parameter in this module names a TCP port.
+
+    The globs above over-approximate: they select whole directories, so they also
+    pick up modules with no ``port`` at all and modules whose ``port`` is a serial
+    device path (``/dev/ttyACM0``). A 16-bit literal in one of the latter is a
+    register width rather than the TCP port range -- ``serial_tool`` bounds
+    ``Goal_Velocity``, which is written as two bytes. The annotation is the
+    discriminator: every TCP-port surface declares it numeric, and a device path
+    is declared ``str``.
+    """
+    return any(a.replace(" ", "").removesuffix("|None") != "str" for a in _port_annotations(source))
+
+
+def _tcp_port_sources() -> dict[Path, str]:
+    return {path: src for path, src in _port_taking_sources().items() if _declares_a_numeric_port(src)}
+
+
 class TestPortRangeHasOneOwner:
     """The 16-bit range is not re-implemented beside a caller-facing port."""
 
     def test_no_caller_facing_module_spells_the_range_out(self) -> None:
-        offenders = sorted(p.name for p, src in _port_taking_sources().items() if _has_port_range_literal(src))
+        offenders = sorted(p.name for p, src in _tcp_port_sources().items() if _has_port_range_literal(src))
         assert offenders == [], f"these modules re-implement the port range: {offenders}"
+
+    def test_the_scope_still_covers_every_known_tcp_port_surface(self) -> None:
+        assert _ROUTED_MODULES <= {path.name for path in _tcp_port_sources()}
+
+    def test_the_only_port_taking_modules_dropped_are_the_device_path_tools(self) -> None:
+        """The narrowing must never exempt a module that does take a TCP port."""
+        dropped = {
+            path.name
+            for path, src in _port_taking_sources().items()
+            if _port_annotations(src) and not _declares_a_numeric_port(src)
+        }
+        assert dropped == {"serial_tool.py", "pose_tool.py"}
 
     def test_the_known_surfaces_route_through_the_shared_owner(self) -> None:
         routed = {p.name for p, src in _port_taking_sources().items() if "tcp_port_error" in src}

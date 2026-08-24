@@ -44,6 +44,37 @@ def _err(text: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"text": text}]}
 
 
+def _next_step_after_train(provider: str, res: Any) -> str:
+    """Name the step that fits a train result, never a load of an absent artifact.
+
+    A non-error ``train`` result does not always carry a loadable checkpoint.
+    ``status="running"`` is the backend whose job outlives the submitting
+    process reporting that the job is still going (the SageMaker provider
+    returns it when its local poll budget expires, pollable by ``job_id``), and
+    even ``status="success"`` carries whatever
+    :meth:`~strands_robots.training.base.Trainer.latest_checkpoint` found -
+    which is ``None`` when the run wrote no discoverable checkpoint tree.
+
+    Interpolating that value into a load instruction prints the ``None``
+    sentinel and sends the caller to ``create_policy('None')``, which raises
+    ``Unknown policy provider: 'None'`` - the dead end
+    ``docs/training/overview.md`` warns about when it notes that an unchecked
+    call "hands whatever consumes ``checkpoint_dir`` a ``None`` instead". So the
+    load instruction is named only when there is an artifact to load; a run that
+    has not finished gets the step that does apply, which is polling it through
+    this same tool's ``status`` action.
+    """
+    if res.status == "running":
+        unfinished = "The run has not finished, so there is no artifact to load yet."
+        if not res.job_id:
+            return unfinished
+        poll = f"train_policy(action='status', provider='{provider}', job_id='{res.job_id}')"
+        return f"{unfinished}\nPoll it with: {poll}"
+    if res.checkpoint_dir:
+        return f"Load the result with: create_policy('{res.checkpoint_dir}')"
+    return "The run finished but reported no checkpoint path, so there is nothing to load yet."
+
+
 @tool
 def train_policy(
     action: str = "train",
@@ -110,20 +141,43 @@ def train_policy(
         learning_rate: Optimizer learning rate. ``None`` (default) uses the
             backend's own default (the policy training preset for lerobot,
             GR00T's FinetuneConfig default, Cosmos's TOML default); an explicit
-            value is honored by every backend.
+            value must be a positive finite number and is honored by every
+            backend. ``0`` and ``inf`` are refused up front: the first trains
+            for the whole run without updating a weight, the second writes a
+            checkpoint of ``NaN``, and no backend reports either.
         save_freq: Checkpoint cadence in steps.
         num_gpus: GPUs on this node (``>1`` -> accelerate/torchrun multi-GPU).
-        num_nodes: Nodes (Cosmos HSDP / torchrun ``--nnodes``).
+            A positive integer; anything else is refused by preflight.
+        num_nodes: Nodes (Cosmos HSDP / torchrun ``--nnodes``). A positive
+            integer; anything else is refused by preflight.
         resume: Resume from the latest checkpoint under ``output_dir``.
         seed: Master seed.
         method: Tuning strategy - ``"full"`` | ``"lora"`` | ``"expert_only"`` |
             ``"frozen_backbone"``. ``lora`` and ``expert_only`` are mutually
             exclusive.
-        lora_r / lora_alpha / lora_target_modules: LoRA hyperparameters.
+        lora_r: LoRA adapter rank, read only when ``method="lora"``. A positive
+            integer, or None to keep peft's default. It is the denominator of
+            the ``lora_alpha / lora_r`` scaling, so anything else is refused by
+            preflight.
+        lora_alpha: Numerator of the LoRA ``lora_alpha / lora_r`` scaling, read
+            only when ``method="lora"``. A positive integer, or None to keep
+            peft's default. Zero trains an adapter whose scaling is ``0.0`` and
+            which therefore cannot change the model, so it is refused rather
+            than run.
+        lora_target_modules: Comma-separated module names the LoRA adapters are
+            attached to, read only when ``method="lora"``. Omit to keep the
+            backend's default target set.
         tune: Fine-grained component toggles for GR00T
             (``{"llm","visual","projector","diffusion"}``).
         val_episodes: Hold out the LAST N episodes for validation; the run
-            logs an eval loss over them at the checkpoint cadence.
+            logs an eval loss over them at the checkpoint cadence. A positive
+            integer below the dataset's episode count, or None for no held-out
+            set - the split is a fraction lerobot takes the ceiling of, so a
+            fractional count would reserve a different number of episodes. The
+            count is read from the dataset's local ``meta/info.json``, so a Hub
+            source (``dataset_repo_id`` with no populated ``dataset_root``) is
+            refused with the two ways to get a split instead of being launched
+            without one.
         augmentation: Backend-specific augmentation dict.
         fps: Dataset control rate (when a backend needs it).
         extra: Backend-specific passthrough. lerobot: ``policy_type``,
@@ -251,7 +305,7 @@ def train_policy(
                             f"job_id: {res.job_id}\n"
                             f"checkpoint_dir: {res.checkpoint_dir}\n"
                             f"metrics: {res.metrics}\n"
-                            f"Load the result with: create_policy('{res.checkpoint_dir}')"
+                            f"{_next_step_after_train(provider, res)}"
                         )
                     },
                     {

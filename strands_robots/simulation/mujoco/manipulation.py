@@ -38,12 +38,22 @@ from strands_robots.simulation.models import registry_entry
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.mujoco.scene_ops import (
     actuate_robot_in_scene,
+    actuator_driven_joint_ids,
     actuator_joint_id,
     add_weld_constraint,
     remove_equality_constraint,
 )
+from strands_robots.utils import boolean_flag_error
+
+if TYPE_CHECKING:
+    from strands_robots.simulation.models import SimRobot
 
 logger = logging.getLogger(__name__)
+
+# How many "joint <- actuator" pairs a refusal spells out before summarizing the
+# rest. A dexterous hand carries dozens, and a message that lists every one
+# buries the verdict it is there to deliver.
+_MAX_NAMED_JOINTS = 4
 
 # Keys inside world._backend_state. "attachments" is the registry of active
 # attachments (both modes) keyed by child body name; "kinematic_attachments"
@@ -107,7 +117,7 @@ class ManipulationMixin:
         def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
             """Provided by ``Simulation``; declared here for type-checkers."""
 
-        def _unknown_robot_msg(self, requested: str) -> str:
+        def _unknown_robot_msg(self, requested: object) -> str:
             """Provided by ``Simulation``; declared here for type-checkers."""
 
     # -- shared guards -----------------------------------------------------
@@ -364,8 +374,12 @@ class ManipulationMixin:
     def _apply_kinematic_attachments(self) -> None:
         """Teleport every kinematically attached child to follow its parent.
 
-        Called after each ``mj_step`` (both the ``step()`` batch loop and the
-        policy-driven ``_apply_sim_action`` substep loop). Callers MUST hold
+        Called after EVERY ``mj_step`` the backend issues - the ``step()``
+        batch loop, the single-robot ``_apply_sim_action`` substep loop, the
+        motion-primitive tick, and the synchronized ``run_multi_policy`` loop -
+        because ``attach_bodies(mode="kinematic")`` promises the child follows
+        every physics step, and a stepping path that skips this leaves the
+        carried body behind while reporting success. Callers MUST hold
         ``self._lock``. Uses the parent's ``xpos``/``xquat`` from the step's
         forward pass (one integration step of latency at the physics timestep,
         matching the example's carry). Entries whose bodies or freejoint no
@@ -410,6 +424,66 @@ class ManipulationMixin:
 
     # -- actuate ------------------------------------------------------------
 
+    @staticmethod
+    def _already_actuated_msg(
+        model: Any,
+        robot: SimRobot,
+        driven: dict[int, int],
+        mj: Any,
+    ) -> str:
+        """Word the refusal for a robot whose joints an actuator already drives.
+
+        Names the joints and the actuators driving them, because the caller's
+        next move differs by which it is: a robot driven throughout needs no
+        actuators, while one driven in part has a mechanism reason for the rest
+        (a mimic joint or a closed linkage member) that adding a servo would
+        fight. The sibling refusals in this method already answer at that
+        resolution - the unknown-``kp`` one lists the valid joints - so a bare
+        "already has actuators" was the one verdict here that named neither what
+        it found nor what it left.
+
+        Args:
+            model: The compiled ``MjModel``.
+            robot: The robot being refused.
+            driven: Driven joint id -> the id of an actuator driving it.
+            mj: The ``mujoco`` module.
+
+        Returns:
+            The refusal text.
+        """
+        prefix = robot.namespace or ""
+
+        def short(obj: Any, ident: int) -> str:
+            full = mj.mj_id2name(model, obj, ident) or f"#{ident}"
+            return full[len(prefix) :] if prefix and full.startswith(prefix) else full
+
+        pairs = sorted(
+            (short(mj.mjtObj.mjOBJ_JOINT, jnt), short(mj.mjtObj.mjOBJ_ACTUATOR, act)) for jnt, act in driven.items()
+        )
+        shown = ", ".join(f"{jnt} <- {act}" for jnt, act in pairs[:_MAX_NAMED_JOINTS])
+        if len(pairs) > _MAX_NAMED_JOINTS:
+            shown += f" and {len(pairs) - _MAX_NAMED_JOINTS} more"
+        hinge_slide = sum(
+            1
+            for jnt_id in robot.joint_ids
+            if int(model.jnt_type[jnt_id]) in (int(mj.mjtJoint.mjJNT_HINGE), int(mj.mjtJoint.mjJNT_SLIDE))
+        )
+        free = hinge_slide - len(driven)
+        tail = (
+            "The robot is already drivable through those actuators, so it needs no added ones."
+            if free <= 0
+            else (
+                f"The remaining {free} are positioned by the mechanism rather than by a ctrl of "
+                "their own - a mimic joint or a closed linkage member - so a position servo there "
+                "would fight the constraint that already holds them."
+            )
+        )
+        return (
+            f"actuate_robot: {len(driven)} of the {hinge_slide} hinge/slide joint(s) on robot "
+            f"'{robot.name}' are already driven by an existing actuator ({shown}); refusing to "
+            f"double-actuate, because a second drive on the same joint fights the first. {tail}"
+        )
+
     def actuate_robot(
         self,
         robot_name: str,
@@ -441,8 +515,10 @@ class ManipulationMixin:
         chains diverge under the default Euler integrator.
 
         Args:
-            robot_name: Robot to actuate (must exist, and not already have
-                actuators mapped to its joints).
+            robot_name: Robot to actuate. Must exist, and none of its joints
+                may already be driven by an actuator - including through a
+                fixed tendon, which couples several joints to one ``ctrl`` and
+                is the standard MJCF idiom for a coupled gripper.
             kp: Position gain. A single number applies to every hinge/slide
                 joint; a ``{short_joint_name: kp}`` dict actuates ONLY the
                 listed joints (unknown names are rejected with the valid
@@ -452,19 +528,26 @@ class ManipulationMixin:
             armature: Per-joint armature (rotor inertia) floor; existing
                 larger values are kept. Must be finite and >= 0.
             gravity_compensation: Apply ``gravcomp=1`` to the robot's bodies
-                so modest gains track tightly.
+                so modest gains track tightly. Must be a boolean - a truthy
+                string such as ``"no"`` is refused rather than read as True.
             disable_self_collision: Zero contype/conaffinity on the robot's
                 own geoms. Planners like cuRobo ignore adjacent-link contacts,
                 which otherwise block planned motion in MuJoCo. NOTE: this
                 disables ALL collision on the robot's geoms (not just
                 link-vs-link), so add contact geoms that must keep colliding
                 (e.g. fingertip pads) AFTER this call via ``patch_scene_mjcf``.
+                Must be a boolean, for the same reason and more sharply: read by
+                truthiness, ``"false"`` would disable every collision on the
+                robot for a caller spelling the opt-out.
 
         Returns:
             ``{status, content}`` tool result; ``status="error"`` when no world
-            exists, a policy is running, the robot is unknown or already
-            actuated, ``kp``/``damping``/``armature`` are invalid, or the
-            recompile fails.
+            exists, a policy is running, the robot is unknown or already driven,
+            ``kp``/``damping``/``armature`` are invalid, either posture flag was
+            not supplied as a boolean, or the recompile fails.
+            The already-driven refusal names the joints it found and the
+            actuators driving them, because what a caller does next differs by
+            whether the robot is driven throughout or only in part.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -484,27 +567,39 @@ class ManipulationMixin:
                 "content": [{"text": f"actuate_robot: 'armature' must be a finite number >= 0, got {armature!r}."}],
             }
 
+        # Read by truthiness these two would invert for exactly the spellings a
+        # caller opting out reaches for: "false", "no", "off" and "0" are all
+        # truthy, and disable_self_collision then zeroes contype/conaffinity on
+        # every one of the robot's geoms - on the spec, so it outlives the
+        # recompile - while the caller asked to keep them colliding. Their
+        # numeric siblings above have been on a shared domain all along.
+        for flag_name, flag_value in (
+            ("gravity_compensation", gravity_compensation),
+            ("disable_self_collision", disable_self_collision),
+        ):
+            if text := boolean_flag_error(flag_value, flag_name, "actuate_robot"):
+                return {"status": "error", "content": [{"text": text}]}
+
         mj = _ensure_mujoco()
         with self._lock:
             model, data = self._world._model, self._world._data
 
             robot_joint_ids = set(robot.joint_ids)
+            # Resolve the transmission rather than comparing ``actuator_trnid``
+            # raw: a site or body transmission carries an id from a different
+            # space, so a raw compare refuses a robot whose joint merely shares
+            # a number with one. A TENDON id is from another space too, but the
+            # joints that tendon wraps ARE driven by it, so the shared rule
+            # reports them instead of reporting none.
+            driven: dict[int, int] = {}
             for act_id in range(model.nu):
-                # Gate on the transmission: an actuator driving a tendon, site or
-                # body carries an id from a different space, so comparing it raw
-                # refuses a robot whose joint merely shares a number with one.
-                if actuator_joint_id(model, act_id, mj) in robot_joint_ids:
-                    return {
-                        "status": "error",
-                        "content": [
-                            {
-                                "text": (
-                                    f"actuate_robot: robot '{robot_name}' already has actuators "
-                                    "mapped to its joints; refusing to double-actuate."
-                                )
-                            }
-                        ],
-                    }
+                for jnt_id in actuator_driven_joint_ids(model, act_id, mj) & robot_joint_ids:
+                    driven.setdefault(jnt_id, act_id)
+            if driven:
+                return {
+                    "status": "error",
+                    "content": [{"text": self._already_actuated_msg(model, robot, driven, mj)}],
+                }
 
             # Eligible joints: the robot's hinge/slide joints, by SHORT name.
             prefix = robot.namespace or ""
@@ -562,8 +657,8 @@ class ManipulationMixin:
                 kp_by_joint,
                 damping=float(damping),
                 armature=float(armature),
-                gravity_compensation=bool(gravity_compensation),
-                disable_self_collision=bool(disable_self_collision),
+                gravity_compensation=gravity_compensation,
+                disable_self_collision=disable_self_collision,
             ):
                 return {
                     "status": "error",

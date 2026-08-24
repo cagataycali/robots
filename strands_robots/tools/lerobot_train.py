@@ -28,7 +28,12 @@ import psutil
 from strands import tool
 from strands.types.tools import ToolContext
 
-from strands_robots.utils import validation_split_error, validation_split_fraction
+from strands_robots.tools._hitl_audit import log_operator_response
+from strands_robots.utils import (
+    positive_count_error,
+    validation_split_error,
+    validation_split_fraction,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -104,6 +109,10 @@ _BLOCKED_EXTRA_FLAGS = frozenset(
         "wandb.api_key",
         "dataset.root",
         "policy.pretrained_path",
+        # Blocked in both spellings, and the pair is not a duplicate: the named
+        # push_to_hub parameter is gated under the policy.-prefixed key (the only
+        # one LeRobot accepts), while the bare key covers the raw extra_flags
+        # passthrough. The allowlist entry that clears one does not clear the other.
         "push_to_hub",
         "policy.push_to_hub",
         "hub_repo_id",
@@ -114,6 +123,9 @@ _EXTRA_FLAGS_ALLOW_ENV = "STRANDS_TRAIN_EXTRA_FLAGS_ALLOW"
 _BYPASS_CONSENT_ENV = "BYPASS_TOOL_CONSENT"
 
 _APPROVE_RESPONSES = frozenset({"y", "yes", "approve", "approved"})
+
+#: Event source recorded on this tool's operator-response audit rows.
+_AUDIT_SOURCE = "lerobot_train_tool"
 
 
 def _approve_response(response: object) -> bool:
@@ -201,7 +213,9 @@ def _gate_extra_flags(
             ],
         }
 
-    if not _approve_response(response):
+    approved = _approve_response(response)
+    log_operator_response(_AUDIT_SOURCE, "train", flag_names, approved=approved, response=response)
+    if not approved:
         return {
             "status": "error",
             "content": [{"text": f"extra_flags {flag_names} declined by the operator."}],
@@ -354,6 +368,55 @@ def _has_resumable_checkpoint(output_dir: str) -> Path | None:
     return last if last.exists() else None
 
 
+def _torch_device_error(device: Any) -> str | None:
+    """Error text for a ``device`` no torch build can parse, or ``None``.
+
+    ``device`` is interpolated into ``--policy.device=`` in the argv of a
+    DETACHED process, so an unusable value is not refused where the caller can
+    see it: the tool reports a started run with a PID and a log path, and only
+    the training log records that lerobot aborted before the first step. That is
+    the reason the run-size numerics in the same argv are refused up front, and
+    ``device`` is the one token beside them that was carried through unchecked.
+
+    The admitted domain is torch's own, read by handing the value to
+    ``torch.device`` rather than by comparing against a copied list of device
+    types - the same "source the domain live" shape as
+    :func:`_expert_only_policy_types` and :func:`_policy_config_field_names`
+    above. A torch build that gains a backend is admitted here with no change,
+    and torch's own exception enumerates the types it accepts, so the refusal
+    names the admitted set without restating it.
+
+    Only the spelling is graded, never availability: ``torch.device("cuda")``
+    constructs on a CPU-only box and must keep building an argv there, because a
+    queued or containerised run legitimately names a device the dispatching
+    machine does not currently have. A non-``str`` is refused before torch is
+    consulted for that reason - ``torch.device(0)`` reads the accelerator
+    inventory (``Cannot access accelerator device when none is available``),
+    which would make the same request build here and refuse there.
+
+    When torch is not importable the domain is unknown and the value passes
+    through unguarded, as :func:`_policy_config_field_names` documents for its
+    own field set.
+    """
+    if not isinstance(device, str):
+        return (
+            f"lerobot_train: device must be a torch device string, got {type(device).__name__}. "
+            "Pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
+        )
+    try:
+        import torch
+    except Exception:  # noqa: BLE001 - torch missing -> domain unknown, pass through
+        return None
+    try:
+        torch.device(device)
+    except (RuntimeError, ValueError) as e:
+        return (
+            f"lerobot_train: device={device!r} is not a torch device string ({e}). "
+            "Pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
+        )
+    return None
+
+
 def build_train_command(
     dataset_root: str,
     policy_type: str = "act",
@@ -385,10 +448,21 @@ def build_train_command(
     ``--config_path=<ckpt>/train_config.json --resume=true`` form lerobot's
     validate() requires, instead of the from-scratch flags.
 
+    ``steps`` and ``batch_size`` size the run, so each is checked against the
+    shared positive-count domain before it reaches the argv. lerobot declares
+    both as a plain ``int``: ``steps`` bounds the training loop
+    (``for _ in range(step, cfg.steps)``, which is empty for a non-positive
+    value) and ``batch_size`` reaches ``torch.utils.data.DataLoader``, which
+    requires a positive integer. Passing ``None`` for either omits the flag and
+    leaves lerobot's own default in place.
+
     Raises:
         ValueError: if ``lora`` and ``train_expert_only`` are both set (both
             freeze the VLM and are mutually exclusive), if ``train_expert_only``
-            is requested for a non-expert policy, or if ``num_gpus < 1``.
+            is requested for a non-expert policy, if ``num_gpus < 1``, or if a
+            supplied ``steps`` / ``batch_size`` - or, under ``lora``, a supplied
+            ``lora_r`` / ``lora_alpha`` - is not a positive integer, or if a
+            fresh run's ``device`` is not a device string torch can parse.
     """
     if lora and train_expert_only:
         raise ValueError(
@@ -401,6 +475,16 @@ def build_train_command(
         )
     if num_gpus < 1:
         raise ValueError(f"num_gpus must be >= 1, got {num_gpus}")
+    # The two knobs that size the run. An unusable value here is not merely
+    # rejected downstream: it is written into the argv of a DETACHED process, so
+    # the caller is told the run started and only the training log records that
+    # it could not be honored. ``None`` means "omit the flag and keep lerobot's
+    # default", so only a supplied value is checked.
+    for size_param, size_value in (("steps", steps), ("batch_size", batch_size)):
+        if size_value is not None:
+            size_error = positive_count_error(size_value, size_param, "lerobot_train")
+            if size_error:
+                raise ValueError(size_error)
 
     resume_config = _has_resumable_checkpoint(output_dir) if (resume and output_dir) else None
 
@@ -425,6 +509,14 @@ def build_train_command(
         # only honors --config_path + --resume. Other flags are ignored on resume.
         cmd.extend([f"--config_path={resume_config}", "--resume=true"])
         return cmd
+
+    # The one selector string in the fresh-run argv. Checked here rather than
+    # beside the size guards above so a resumed run - which returned already, with
+    # only --config_path + --resume and no --policy.device - is never refused for a
+    # value its argv does not carry.
+    device_error = _torch_device_error(device)
+    if device_error:
+        raise ValueError(device_error)
 
     # Fresh-run flags.
     cmd.extend(
@@ -478,6 +570,17 @@ def build_train_command(
 
     if lora:
         cmd.append("--peft.method_type=LORA")
+        # The adapter's rank and scaling numerator, on the same shared count
+        # domain as the run-size knobs above. peft judges only the rank, and only
+        # from inside get_peft_model once the base model is loaded; lora_alpha is
+        # a bare numerator nothing compares, so alpha=0 trains an adapter whose
+        # scaling is 0.0 and which cannot change the model's output. Only checked
+        # under `lora`, since neither flag is emitted otherwise.
+        for lora_param, lora_value in (("lora_r", lora_r), ("lora_alpha", lora_alpha)):
+            if lora_value is not None:
+                lora_error = positive_count_error(lora_value, lora_param, "lerobot_train")
+                if lora_error:
+                    raise ValueError(lora_error)
         if lora_r is not None:
             cmd.append(f"--peft.r={lora_r}")
         if lora_alpha is not None:
@@ -486,14 +589,22 @@ def build_train_command(
             cmd.append(f"--peft.target_modules={lora_target_modules}")
 
     if val_episodes is not None:
-        if val_episodes <= 0:
-            raise ValueError(f"val_episodes must be positive, got {val_episodes}")
+        # The same shared count domain the trainer's validate() applies, rather
+        # than a local `<= 0` test: that comparison reads True as a silent
+        # request for one episode, lets 2.7 through to a fraction that reserves
+        # a different whole number, renders nan as `eval_split=nan`, and raises
+        # out of itself for a string.
+        count_err = positive_count_error(val_episodes, "val_episodes", "lerobot_train")
+        if count_err:
+            raise ValueError(count_err)
         total = _read_total_episodes(dataset_root)
         if val_episodes >= total:
             raise ValueError(
                 f"val_episodes={val_episodes} leaves no training data (dataset has {total} episodes); reserve fewer."
             )
-        split_err = validation_split_error(val_episodes, _read_total_tasks(dataset_root), "lerobot_train")
+        split_err = validation_split_error(
+            val_episodes, _read_total_tasks(dataset_root), "lerobot_train", passthrough_param="extra_flags"
+        )
         if split_err:
             raise ValueError(split_err)
         # Hand the split to lerobot instead of restricting --dataset.episodes
@@ -595,7 +706,10 @@ def lerobot_train(
         steps: Number of training steps.
         batch_size: Training batch size.
         save_freq: Checkpoint save frequency in steps.
-        device: Torch device (cuda, cuda:0, cpu, mps).
+        device: Torch device type, optionally with an index (cuda, cuda:0,
+            cpu, mps). Refused before launch if torch cannot parse it; only
+            the spelling is graded, so naming a device this machine does not
+            have is allowed.
         dtype: Policy dtype (bfloat16, float32) for policies whose lerobot
             config declares a dtype field (e.g. the pi0 family, xvla). Default
             None lets lerobot pick; ACT and most policies have no dtype field,
@@ -607,11 +721,22 @@ def lerobot_train(
         lora_target_modules: PEFT target module spec (e.g. "all-linear").
         train_expert_only: Freeze the VLM, train only the action expert
             (policies exposing train_expert_only: pi0/pi05/smolvla).
-        val_episodes: Reserve the LAST N episodes as a held-out validation
-            split, evaluated every ``save_freq`` steps so each checkpoint has
+        val_episodes: A positive integer below the dataset's episode count, or
+            None for no held-out set. Reserves the LAST N episodes as a held-out
+            validation split, evaluated every ``save_freq`` steps so each checkpoint has
             a validation loss beside it.
         num_gpus: Number of GPUs; >1 launches via accelerate --multi_gpu.
         push_to_hub: Push the trained checkpoint to the HF Hub at the end.
+            Publishing is an outward-facing action, so a true value requires
+            operator approval through ``tool_context``. A headless run
+            pre-approves it with
+            ``STRANDS_TRAIN_EXTRA_FLAGS_ALLOW=policy.push_to_hub``: this
+            parameter is gated under the ``policy.``-prefixed key, the only
+            spelling LeRobot accepts (``push_to_hub`` is a field of its policy
+            config, not of the train config). The bare ``push_to_hub``
+            allowlist entry clears the raw ``extra_flags={'push_to_hub': True}``
+            passthrough instead -- one flag, two spellings, two entries. The
+            default false value emits the flag unchanged and is not gated.
         resume: Resume from the latest checkpoint under output_dir when present.
         action: One of start, status, stop, list.
         session_name: Session identifier (auto-generated on start; required for
@@ -676,6 +801,11 @@ def lerobot_train(
 
             if pretrained_path:
                 gate_err = _gate_extra_flags({"policy.pretrained_path": pretrained_path}, tool_context)
+                if gate_err:
+                    return gate_err
+
+            if push_to_hub:
+                gate_err = _gate_extra_flags({"policy.push_to_hub": push_to_hub}, tool_context)
                 if gate_err:
                     return gate_err
 

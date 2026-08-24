@@ -15,7 +15,11 @@ Connection strategy (when no explicit endpoint is configured):
    first process the local router.
 2. If the port is already bound, fall back to **client** mode and connect to the
    same endpoint.
-3. Zenoh scouting (multicast) handles LAN discovery automatically.
+3. Zenoh gossip scouting propagates peers reachable through those endpoints.
+   Multicast scouting is **disabled by default** (LAN discovery attack
+   surface); operators on a controlled LAN can opt in with
+   ``STRANDS_MESH_MULTICAST=true``. Cross-host peers otherwise need explicit
+   ``ZENOH_CONNECT`` endpoints.
 
 Environment variables
 ---------------------
@@ -27,6 +31,9 @@ Environment variables
     Local auto-mesh port (default ``7447``).
 ``STRANDS_MESH``
     Set to ``false`` to disable mesh globally.
+``STRANDS_MESH_MULTICAST``
+    ``true`` to opt into LAN multicast scouting (logs a warning).
+    Default ``false``.
 """
 
 from __future__ import annotations
@@ -38,8 +45,12 @@ import math
 import os
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
+
+from strands_robots.mesh._backend_select import select_backend
+from strands_robots.utils import partial_construction_repr
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +61,27 @@ logger = logging.getLogger(__name__)
 _SESSION: Any | None = None  # zenoh.Session when open, else None
 _SESSION_LOCK = threading.Lock()
 _SESSION_REFS: int = 0
+
+# One-shot guard so an absent ``eclipse-zenoh`` is reported at most once per
+# process.  Both session-open paths re-attempt the import on every call (nothing
+# is cached when it fails), so a fleet of N robots in one process would otherwise
+# emit N copies of an identical, static fact.  A set (mutated via .add, never
+# reassigned) avoids a `global` rebind so static analysis sees it as used -- the
+# same shape as ``_software_render_warned`` in the MuJoCo backend.  Mutated only
+# under ``_SESSION_LOCK``.
+_zenoh_missing_warned: set[str] = set()
+
+# One-shot-per-topic guard for a payload that cannot be JSON-encoded.  Unlike a
+# transient wire failure, an unencodable payload fails identically on every
+# retry, so a 50 Hz publisher would otherwise emit one report per tick forever.
+# Keyed on the topic because the payload builder is per-topic: a broken builder
+# is broken for every tick of ITS key and says nothing about any other.  A set
+# (mutated via .add, never reassigned) avoids a `global` rebind so static
+# analysis sees it as used.  Read and mutated WITHOUT ``_SESSION_LOCK``, because
+# :func:`_put_zenoh_directly` deliberately does not take it (a 50 Hz teleop loop
+# must not serialise on the session lock); the worst race is two threads each
+# reporting the same topic once.
+_unencodable_topics_warned: set[str] = set()
 
 
 # Constants
@@ -115,6 +147,12 @@ HAND_HZ: float = 50.0
 #: Map info publishing frequency (Hz).
 MAP_INFO_HZ: float = 0.2
 
+#: Per-step telemetry publishing frequency (Hz) -- the ``publish_step`` throttle
+#: on the hardware control loop and the simulation ``run_policy`` hook. Used
+#: when ``STRANDS_MESH_STREAM_HZ`` is unset; see
+#: :func:`stream_min_period_from_env`.
+STREAM_HZ: float = 10.0
+
 
 def hz_from_env(name: str) -> tuple[float | None, str | None]:
     """Read a loop rate (Hz) held in an environment variable.
@@ -155,6 +193,55 @@ def hz_from_env(name: str) -> tuple[float | None, str | None]:
     return hz, None
 
 
+def stream_min_period_from_env() -> float:
+    """Resolve the minimum period between per-step telemetry publishes.
+
+    Two call sites throttle ``publish_step`` against the wall clock -- the
+    hardware control loop (``HardwareRobot.__init__``) and the simulation
+    ``run_policy`` hook -- and both did it by dividing
+    ``STRANDS_MESH_STREAM_HZ`` straight from the environment. That raises
+    ``ZeroDivisionError`` on ``0`` and ``ValueError`` on any non-numeric value,
+    and one of those divisions runs in a constructor, so the failure is not
+    "telemetry degraded" but "every ``Robot(..., mode="real")`` construction
+    raises". ``0`` is a realistic input rather than an adversarial one: the
+    sibling knob ``STRANDS_MESH_CAMERA_HZ`` advertises non-positive as off, so
+    an operator disabling step telemetry the same way bricked hardware
+    bring-up.
+
+    A period rather than a rate is returned because that is what both callers
+    hold, and it lets "off" be expressed as ``inf``: no elapsed time ever
+    reaches an infinite period, so the throttle simply never fires and neither
+    caller needs a second flag to test.
+
+    The fallback for an unusable value follows :meth:`Mesh._resolve_camera_hz`,
+    the other opt-out publishing loop: warn naming the variable and the
+    offending value, then leave publishing off rather than substitute a rate
+    the operator did not ask for. Step telemetry is observability, not control,
+    so nothing downstream misbehaves when it stops -- and the warning is what
+    makes "no step tiles" diagnosable.
+
+    Returns:
+        ``1.0 / STREAM_HZ`` when ``STRANDS_MESH_STREAM_HZ`` is unset or blank,
+        ``1.0 / hz`` when it names a positive finite rate, and ``math.inf`` --
+        publishing off -- when it is non-positive or holds a value no loop can
+        honor.
+    """
+    hz, reason = hz_from_env("STRANDS_MESH_STREAM_HZ")
+    if reason is not None:
+        logger.warning(
+            "[mesh] %s; per-step telemetry publishing is OFF. "
+            "Set STRANDS_MESH_STREAM_HZ to a positive rate to enable it.",
+            reason,
+        )
+        return math.inf
+    if hz is None:
+        return 1.0 / STREAM_HZ
+    if hz <= 0:
+        # Explicit operator opt-out, same spelling as STRANDS_MESH_CAMERA_HZ.
+        return math.inf
+    return 1.0 / hz
+
+
 # Backend selection helpers - when STRANDS_MESH_BACKEND is "iot" or "bridge",
 # get_session() / put() / current_session() / session_alive() delegate to the
 # transport factory instead of opening a Zenoh session directly. The "zenoh"
@@ -164,11 +251,15 @@ def hz_from_env(name: str) -> tuple[float | None, str | None]:
 
 def _backend_choice() -> str:
     """Read STRANDS_MESH_BACKEND. Defaults to ``zenoh``. Unknown values fall
-    back to ``zenoh`` (matches strands_robots.mesh.transport.factory)."""
-    raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
-    if raw not in ("zenoh", "iot", "bridge"):
-        return "zenoh"
-    return raw
+    back to ``zenoh`` with a report.
+
+    Resolved by :func:`strands_robots.mesh._backend_select.select_backend`
+    rather than re-read here, so the accepted values and the report of an
+    unrecognized one have a single owner. This resolver is the gate the
+    transport factory sits behind, so a report living only in the factory could
+    never reach an operator who mistyped the variable.
+    """
+    return select_backend()
 
 
 def _is_transport_backend() -> bool:
@@ -218,33 +309,117 @@ class PeerInfo:
         peer_id: Unique identifier for this peer (e.g. ``"so100-a1b2"``).
         peer_type: One of ``"robot"``, ``"sim"``, or ``"agent"``.
         hostname: The hostname the peer reported.
-        last_seen: :func:`time.time` of the most recent heartbeat.
+        last_seen_mono: :func:`time.monotonic` reading taken when this process
+            last saw a heartbeat from the peer. Monotonic because every reader
+            subtracts it from a later reading to get an age, and an age decides
+            whether the peer is still alive - see :meth:`age` and
+            :func:`prune_peers`. It is a local observation, never a stamp the
+            peer sent, and it is not serialised: :meth:`to_dict` reports ``age``.
         caps: Arbitrary capability dictionary broadcast in the presence payload.
     """
 
     peer_id: str
     peer_type: str = "robot"
     hostname: str = ""
-    last_seen: float = 0.0
+    last_seen_mono: float = 0.0
     caps: dict[str, Any] = field(default_factory=dict)
 
     @property
     def age(self) -> float:
         """Seconds since the last heartbeat."""
-        return time.time() - self.last_seen
+        return time.monotonic() - self.last_seen_mono
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialise to a plain dict (JSON-friendly)."""
+        """Serialise to a plain dict (JSON-friendly).
+
+        ``caps`` merges *first* so the four locally-decided fields win a name
+        collision. ``caps`` is the peer's own presence payload, and every field
+        below it is something this process decided about the peer rather than
+        something the peer reported about itself: ``age`` is the observation
+        described on :attr:`last_seen_mono`, and ``peer_id`` is the key the
+        registry files it under.
+
+        Spread last, a payload carrying any of those four names replaced the
+        local reading. An ``age`` the sender chooses defeats every staleness
+        verdict read from it, and a ``peer_id`` the sender chooses is the key
+        ``Mesh.peers_by_id`` and ``Mesh.get_peer`` look the peer up by.
+        """
         return {
+            **self.caps,
             "peer_id": self.peer_id,
             "type": self.peer_type,
             "hostname": self.hostname,
             "age": round(self.age, 1),
-            **self.caps,
         }
 
     def __repr__(self) -> str:
-        return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
+        try:
+            return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
+        except AttributeError:
+            return partial_construction_repr(self)
+
+
+#: Presence ``robot_type`` values that name a simulation rather than metal.
+#: The two in-tree publishers set ``peer_type="sim"`` for a
+#: :class:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine` and
+#: ``"robot"`` for hardware; ``"simulation"`` / ``"mujoco"`` are accepted so a
+#: third-party publisher spelling the same fact differently is still read.
+_SIM_PEER_TYPES: frozenset[str] = frozenset({"sim", "simulation", "mujoco"})
+
+
+def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
+    """Is this peer metal? Returns ``(physical, why)``, failing closed.
+
+    Reads one entry of the :func:`get_peers` snapshot - the flat dict
+    :meth:`PeerInfo.to_dict` returns, which spreads the peer's presence payload
+    at the top level rather than nesting it under a ``presence`` key. Every
+    marker below is a key some publisher in
+    :meth:`~strands_robots.mesh.core.Mesh._build_presence` really sets, so no
+    rung is dead on arrival.
+
+    Fail-closed means: physical unless the peer can be SHOWN to be a sim. An
+    absent peer, a peer whose presence carries no sim marker, and a marker this
+    function cannot read are all metal. The direction of each rung follows from
+    that, and the two directions are deliberately different:
+
+    * ``hw`` is a positive METAL marker, so it is read permissively (any
+      non-empty string) and checked first - a peer reporting real hardware is
+      metal whatever else it claims.
+    * ``robot_type`` and ``world`` are positive SIM markers, so they are read
+      strictly (an exact token; ``world is True``, not merely truthy). A value
+      this function cannot read falls through to metal instead of being taken
+      for a sim.
+
+    The verdict is a description, never an authorisation: ``robot_type`` and
+    ``world`` arrive over the wire from the peer itself and
+    :meth:`~strands_robots.mesh.core.Mesh._on_presence` authenticates neither,
+    so a peer can claim to be a sim. That is fit to tell an operator what the
+    peer says about itself, and unfit to stand in for the operator.
+
+    Args:
+        peer: One entry of the :func:`get_peers` snapshot, or ``None`` when the
+            peer is not on it.
+
+    Returns:
+        ``(physical, why)`` - the verdict, and the reason it was reached, phrased
+        to read after the peer's name ("it reports real hardware (...)").
+    """
+    if not peer:
+        return True, "it is not on the fleet snapshot, so it cannot be shown to be a sim"
+
+    hw = peer.get("hw")
+    if isinstance(hw, str) and hw.strip():
+        return True, f"it reports real hardware ({hw.strip()})"
+
+    declared = str(peer.get("robot_type") or peer.get("type") or "").strip().lower()
+    if declared in _SIM_PEER_TYPES:
+        return False, f"it reports itself as {declared}"
+
+    sim_robots = peer.get("sim_robots")
+    if peer.get("world") is True or (isinstance(sim_robots, (list, tuple)) and len(sim_robots) > 0):
+        return False, "it reports a simulation world"
+
+    return True, "it did not report itself as a simulation"
 
 
 # Peer registry - shared across all Mesh instances in the same process
@@ -261,13 +436,13 @@ def update_peer(peer_id: str, peer_type: str, hostname: str, caps: dict[str, Any
     with _PEERS_LOCK:
         is_new = peer_id not in _PEERS
         # When a NEW peer would push us over the cap, evict the oldest
-        # peer (smallest last_seen) to make room. Updates to EXISTING peers
+        # peer (smallest last_seen_mono) to make room. Updates to EXISTING peers
         # never trigger eviction (they don't grow the dict). This bounds the
         # phantom-peer flood DoS while still admitting genuine new robots.
         if is_new:
             cap = _max_peers()
             while len(_PEERS) >= cap and _PEERS:
-                oldest_id = min(_PEERS, key=lambda pid: _PEERS[pid].last_seen)
+                oldest_id = min(_PEERS, key=lambda pid: _PEERS[pid].last_seen_mono)
                 del _PEERS[oldest_id]
                 _PEERS_VERSION += 1
                 logger.warning(
@@ -279,7 +454,7 @@ def update_peer(peer_id: str, peer_type: str, hostname: str, caps: dict[str, Any
             peer_id=peer_id,
             peer_type=peer_type,
             hostname=hostname,
-            last_seen=time.time(),
+            last_seen_mono=time.monotonic(),
             caps=caps,
         )
         if is_new:
@@ -294,10 +469,10 @@ def prune_peers(timeout: float = PEER_TIMEOUT) -> list[str]:
         List of pruned peer IDs (may be empty).
     """
     global _PEERS_VERSION  # noqa: PLW0603
-    now = time.time()
+    now = time.monotonic()
     pruned: list[str] = []
     with _PEERS_LOCK:
-        stale = [pid for pid, p in _PEERS.items() if now - p.last_seen > timeout]
+        stale = [pid for pid, p in _PEERS.items() if now - p.last_seen_mono > timeout]
         for pid in stale:
             del _PEERS[pid]
             _PEERS_VERSION += 1
@@ -543,6 +718,34 @@ def current_session() -> Any | None:
         return _SESSION
 
 
+def _report_zenoh_missing() -> None:
+    """Report an absent ``eclipse-zenoh`` at WARNING, once per process.
+
+    Every other way a session open can end with no session -- a refused
+    endpoint, a failed open -- is reported at WARNING, and even a bad
+    ``STRANDS_MESH_PORT`` that still yields a working mesh warns.  A missing
+    dependency is the most total of those outcomes: nothing publishes, nothing
+    is discovered, and ``Mesh.alive`` stays ``False`` for the whole process.
+    Reporting it below the level a default-configured consumer sees left the
+    first observable symptom to whatever downstream wait expired first.
+
+    Warning rather than raising keeps the documented contract: a robot that
+    does not need the mesh still runs, and the mesh stays off without taking
+    the host process with it.
+
+    Callers must hold ``_SESSION_LOCK``; the once-guard is read and mutated
+    without further synchronisation.
+    """
+    if _zenoh_missing_warned:
+        return
+    _zenoh_missing_warned.add("warned")
+    logger.warning(
+        "eclipse-zenoh is not installed, so the mesh stays off: this process "
+        "publishes no presence and discovers no peers, and Mesh.alive is "
+        "False. Install it with: pip install 'strands-robots[mesh]'"
+    )
+
+
 def get_session() -> Any | None:
     """Acquire the shared mesh transport (lazy, ref-counted).
 
@@ -580,7 +783,7 @@ def get_session() -> Any | None:
         try:
             import zenoh  # noqa: F811 - lazy import
         except ImportError:
-            logger.debug("eclipse-zenoh not installed - mesh disabled")
+            _report_zenoh_missing()
             return None
 
         # STRANDS_MESH_PORT is read at session-open time so a process can be
@@ -675,24 +878,41 @@ def get_session() -> Any | None:
                     exc,
                 )
 
-            # Fall back to client mode - connect to the existing listener.
+            # Fall back to PEER mode on an ephemeral listener with a
+            # background connect-retry to the hub endpoint (#9). The previous
+            # client-mode fallback never retried: when the hub process died,
+            # every client kept a dead session with no error surfaced - peers
+            # just went stale until the process was restarted. Peer mode keeps
+            # retrying ``connect/endpoints`` in the background, so a restarted
+            # hub (or any new listener on the port) re-links automatically,
+            # and surviving peers can also route to each other directly.
             # Build cfg OUTSIDE the try so a config-shape ValueError
             # (NaN env clamp, missing TLS file, bad ACL) propagates
             # loudly to Mesh.start instead of being silently downgraded
             # to "session unavailable".
             cfg = _build_config()
-            cfg.insert_json5("mode", '"client"')
+            ephemeral_ep = f"{scheme}/127.0.0.1:0"
+            cfg.insert_json5("listen/endpoints", json.dumps([ephemeral_ep]))
             cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
+            # Never give up on the hub endpoint; retry with gentle backoff.
+            cfg.insert_json5("connect/exit_on_failure", "false")
+            cfg.insert_json5(
+                "connect/retry",
+                json.dumps({"period_init_ms": 1000, "period_max_ms": 8000, "period_increase_factor": 2}),
+            )
             try:
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
-                logger.info("Zenoh mesh session opened (client -> %s)", local_ep)
+                logger.info(
+                    "Zenoh mesh session opened (peer, ephemeral listener, retrying -> %s)",
+                    local_ep,
+                )
                 return _SESSION
             except zenoh_error_types() as exc:
                 # Narrow tuple per AGENTS.md > Review Learnings (#86):
                 # transport-level failures only; config-shape ValueError
                 # propagates to caller so misconfigured mTLS surfaces loudly.
-                logger.warning("Zenoh session open failed (client mode): %s", exc)
+                logger.warning("Zenoh session open failed (peer fallback): %s", exc)
                 return None
 
         # Explicit endpoints provided via env vars.
@@ -731,7 +951,7 @@ def _get_zenoh_session_directly() -> Any | None:
         try:
             import zenoh
         except ImportError:
-            logger.debug("eclipse-zenoh not installed - mesh disabled")
+            _report_zenoh_missing()
             return None
 
         port_env = os.getenv("STRANDS_MESH_PORT", "7447")
@@ -823,27 +1043,69 @@ def release_session() -> None:
 
     Delegates to the transport factory when the active backend is
     ``iot`` / ``bridge``; otherwise falls back to the legacy Zenoh refcount.
-    """
-    global _SESSION, _SESSION_REFS  # noqa: PLW0603
 
+    On the Zenoh path the final release closes the session. That close is
+    fail-soft over the surface :func:`zenoh_error_types` documents - a broker
+    drop or socket teardown race is logged at WARNING and the reference is
+    still dropped, because nothing can retry a close once the only handle to
+    the session is gone. A failure outside that surface (a ``TypeError`` or
+    ``AttributeError``, i.e. a bug rather than a transport fault) propagates,
+    matching how :meth:`strands_robots.mesh.core.Mesh.stop` treats its
+    ``undeclare`` calls. The "session closed" INFO line is emitted only when
+    the close actually completed.
+    """
     if _is_transport_backend():
         from strands_robots.mesh.transport.factory import release_transport
 
         release_transport()
         return
 
+    _release_zenoh_session_directly()
+
+
+def _release_zenoh_session_directly() -> None:
+    """Release one reference to the raw Zenoh session, bypassing backend routing.
+
+    The teardown companion to :func:`_get_zenoh_session_directly`, and the
+    function :func:`release_session` itself calls once the backend branch is
+    not taken - so the legacy refcount and its close contract (documented on
+    :func:`release_session`) live in exactly one place.
+
+    :class:`~strands_robots.mesh.transport.zenoh_transport.ZenohTransport` must
+    release through here rather than :func:`release_session` for the same
+    reason it acquires through :func:`_get_zenoh_session_directly`: under
+    ``STRANDS_MESH_BACKEND=bridge`` the backend-aware :func:`release_session`
+    delegates to the transport factory, whose last release closes the
+    :class:`~strands_robots.mesh.transport.bridge_transport.BridgeTransport`
+    that owns that very ``ZenohTransport``, re-entering the factory's
+    non-reentrant lock from the thread already holding it.
+    """
+    global _SESSION, _SESSION_REFS  # noqa: PLW0603
+
     with _SESSION_LOCK:
         if _SESSION_REFS <= 0:
             return
         _SESSION_REFS -= 1
         if _SESSION_REFS <= 0 and _SESSION is not None:
+            closed = True
             try:
                 _SESSION.close()
-            except Exception:
-                pass
+            except zenoh_error_types() as exc:
+                # Narrow surface per :func:`zenoh_error_types`, whose docstring
+                # names ``close`` among the operations it covers and excludes
+                # programmer errors so they surface loudly instead of being
+                # swallowed by a best-effort teardown. The session reference is
+                # dropped below either way, so nothing can retry the close and
+                # this record is the only evidence it did not complete -
+                # WARNING (not the DEBUG a per-entity cleanup uses) because the
+                # INFO line below otherwise reports a clean close, and a record
+                # must be at least as loud as the claim it contradicts.
+                closed = False
+                logger.warning("Zenoh mesh session close failed: %s", exc)
             _SESSION = None
             _SESSION_REFS = 0
-            logger.info("Zenoh mesh session closed")
+            if closed:
+                logger.info("Zenoh mesh session closed")
 
 
 def session_alive() -> bool:
@@ -882,10 +1144,96 @@ def put(key: str, data: dict[str, Any]) -> None:
             logger.debug("Mesh transport put error on %s: %s", key, exc)
         return
 
+    _put_zenoh_directly(key, data)
+
+
+def _report_unencodable_payload(transport: str, key: str, exc: BaseException) -> None:
+    """Report a payload that can never reach *key*, at ERROR, once per topic.
+
+    Every transport's ``put`` is fire-and-forget and
+    :meth:`strands_robots.mesh.transport.base.MeshTransport.put`
+    scopes that tolerance to a TRANSIENT failure - a closed session, a dropped broker, a
+    socket-level write - which the next tick retries. A payload the JSON encoder
+    refuses is not transient: it fails identically forever, so the message never
+    goes out at all and no retry can change that.
+
+    Reporting it at DEBUG left the two halves of one call disagreeing.
+    :meth:`strands_robots.mesh.sensors.SensorLoopsMixin.publish_safety_event`
+    writes the event to the wire AND to the local audit log; on an unencodable
+    payload the audit half records a ``sig="SERIALISE_FAILED"`` poison record and
+    logs at ERROR (naming the peer and the reason), while the wire half dropped
+    the event silently. A default-configured operator therefore saw a forensic
+    trail asserting that a safety event had been raised, with no peer having
+    received it and nothing above DEBUG to say so.
+
+    Once per topic, because a payload builder is per-topic: the same builder runs
+    on every tick of ITS key, so a 50 Hz publisher would otherwise emit one
+    report per tick, while a different key says nothing about it. Per TOPIC and
+    not per (topic, transport): under the bridge backend both legs encode the
+    same payload with the same encoder, so the second leg's report would restate
+    one fact. The leg that noticed is named in the line rather than keyed on,
+    which is why the wording does not claim the other leg is unaffected.
+
+    Args:
+        transport: Which leg could not encode, for the log line (``"Zenoh"`` /
+            ``"MQTT"``). The wording is shared so a reader grepping the log for
+            one transport's report finds the other's.
+        key: The topic the payload was addressed to; also the once-guard key.
+        exc: What the encoder raised, quoted as the reason.
+    """
+    if key in _unencodable_topics_warned:
+        return
+    _unencodable_topics_warned.add(key)
+    logger.error(
+        "put on %s: the payload cannot be JSON-encoded, so this message and every "
+        "later one built the same way is dropped before it reaches the wire "
+        "(noticed on the %s leg; reported once for this topic): %s",
+        key,
+        transport,
+        exc,
+    )
+
+
+def _put_zenoh_directly(key: str, data: dict[str, Any]) -> None:
+    """Publish to the raw Zenoh session, bypassing transport-backend routing.
+
+    The publish companion to :func:`_get_zenoh_session_directly`, and the
+    function :func:`put` itself calls once the backend branch is not taken - so
+    the raw JSON encode-and-publish lives in exactly one place.
+
+    :class:`~strands_robots.mesh.transport.zenoh_transport.ZenohTransport` must
+    publish through here rather than :func:`put`: under
+    ``STRANDS_MESH_BACKEND=bridge`` the backend-aware :func:`put` resolves the
+    active transport, which is the
+    :class:`~strands_robots.mesh.transport.bridge_transport.BridgeTransport`
+    that owns that very ``ZenohTransport`` - so the payload would route back
+    into the bridge instead of onto the wire.
+
+    Fire-and-forget, and it reads ``_SESSION`` without taking
+    ``_SESSION_LOCK`` exactly as :func:`put` always has: a 50 Hz teleop loop
+    must not serialise on the session lock.
+
+    The JSON encode is attempted OUTSIDE the handler that absorbs a wire
+    failure, because the two outcomes are not the same kind of failure. A wire
+    failure is transient and the next tick retries it, so it stays at DEBUG. A
+    payload the encoder refuses can never be published, so it is reported
+    through :func:`_report_unencodable_payload` instead of being absorbed by the
+    same DEBUG line. Neither raises: the ``put`` contract is fire-and-forget
+    either way. The encode catch is deliberately wide because an arbitrary
+    payload object can carry an arbitrary ``__reduce__`` / ``keys`` / ``default``
+    hook, so the encoder's raise set is not enumerable here (``json.dumps``
+    itself raises ``TypeError`` for an unsupported type and ``ValueError`` for a
+    circular reference).
+    """
     if _SESSION is None:
         return
     try:
-        _SESSION.put(key, json.dumps(data).encode())
+        encoded = json.dumps(data).encode()
+    except Exception as exc:  # noqa: BLE001 - see the encode note in the docstring
+        _report_unencodable_payload("Zenoh", key, exc)
+        return
+    try:
+        _SESSION.put(key, encoded)
     except Exception as exc:
         logger.debug("Zenoh put error on %s: %s", key, exc)
 
@@ -894,14 +1242,24 @@ def put(key: str, data: dict[str, Any]) -> None:
 
 
 def _atexit_cleanup() -> None:
-    """Best-effort session teardown on process exit."""
+    """Best-effort session teardown on process exit.
+
+    Same close contract as :func:`release_session`, logged at DEBUG: this path
+    reports nothing on success, so there is no claim for the record to
+    contradict. A programmer error still propagates rather than being swallowed
+    at interpreter shutdown.
+    """
     global _SESSION, _SESSION_REFS  # noqa: PLW0603
     with _SESSION_LOCK:
         if _SESSION is not None:
             try:
                 _SESSION.close()
-            except Exception:
-                pass
+            except zenoh_error_types() as exc:
+                # Same narrow surface as :func:`release_session`. DEBUG here
+                # because this path makes no success claim to contradict and
+                # runs during interpreter shutdown, matching the level
+                # ``BridgeTransport.close`` uses for its per-backend close.
+                logger.debug("Zenoh mesh session close failed at exit: %s", exc)
             _SESSION = None
             _SESSION_REFS = 0
 

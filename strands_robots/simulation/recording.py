@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import positive_whole_number_error
+from strands_robots.utils import boolean_flag_error, positive_whole_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,14 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
     dict already enforce
     (:func:`~strands_robots.utils.positive_whole_number_error`):
     a positive whole number.
+
+    The ``fps`` reaching this guard is forwarded to
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.create` unchanged, and
+    that method applies the same shared domain to its direct callers - so this is
+    the envelope-returning half of one rule, not a rule of its own. Any narrowing
+    belongs in the shared domain rather than here: a value refused only deeper
+    would raise ``ValueError`` out of a ``start_recording`` that had already
+    reported it usable.
 
     Without this guard an unusable ``fps`` was reported as ``status="success"``
     and then cost the caller the episode: LeRobot only rejects ``fps <= 0``, so
@@ -67,6 +75,48 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
         ``None`` when the value is usable.
     """
     if text := positive_whole_number_error(fps, "fps", method):
+        return {"status": "error", "content": [{"text": text}]}
+    return None
+
+
+def dataset_recording_posture_error(method: str, param: str, value: Any) -> dict[str, Any] | None:
+    """Reject a recording posture flag that was not supplied as a boolean.
+
+    Sibling of :func:`dataset_recording_option_error` for the two flags in the
+    same ``start_recording`` signature that select a *posture* rather than
+    scaling a quantity, and for the ``push_to_hub`` that
+    :meth:`DatasetRecordingMixin.stop_recording` accepts as an override. Shared
+    by every backend (MuJoCo, Newton, Isaac) for the same reason the ``fps``
+    guard is: the three surfaces must not disagree on what a usable value is.
+
+    The domain is :func:`~strands_robots.utils.boolean_flag_error` - the one the
+    mesh provisioning entry points and ``lerobot_teleoperate``'s execution flags
+    already apply to their own posture flags. Read by truthiness instead, both
+    flags fail toward the branch the caller was opting *out* of, because every
+    non-empty string is truthy:
+
+    * ``overwrite="false"`` (also ``"no"``, ``"off"``, ``"0"``, ``1``, ``nan``)
+      reached :meth:`DatasetRecordingMixin._prepare_dataset_target` as True and
+      deleted the caller's dataset with ``shutil.rmtree``. That method already refuses to
+      clobber a non-empty *non*-dataset directory, so the one path it deleted
+      without asking was a real LeRobotDataset - the recorded episodes the caller
+      meant to append to. ``start_recording`` returned ``status="success"``.
+    * ``push_to_hub="false"`` (same spellings) was stashed on the recording state
+      and *published* the finished dataset to the Hub at ``stop_recording``.
+
+    Neither could be honoured as written, and neither failure is recoverable:
+    the episodes are gone, and an upload cannot be taken back.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        param: Flag name, for the message.
+        value: The flag as supplied.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming *param*, or
+        ``None`` when the value is a boolean and can be honoured.
+    """
+    if text := boolean_flag_error(value, param, method):
         return {"status": "error", "content": [{"text": text}]}
     return None
 
@@ -404,9 +454,17 @@ class DatasetRecordingMixin:
         * existing NON-empty, non-dataset dir: raise ``ValueError`` with an
           actionable message instead of clobbering unrelated files.
 
+        ``overwrite`` is a *posture*, and every public caller checks it on
+        :func:`dataset_recording_posture_error` first, so the value arriving here
+        is a boolean. That bound matters because the branch below is the only one
+        that deletes a real LeRobotDataset without asking: a truthy non-boolean -
+        ``"false"``, the spelling an operator reaches for when opting out - used
+        to land in it.
+
         Args:
             dataset_dir: Resolved on-disk dataset root.
-            overwrite: When True, replace any existing target.
+            overwrite: When True, replace any existing target. Bounded to a
+                boolean by every public caller.
 
         Returns:
             True if an existing dataset should be resumed (append), False if a
@@ -519,7 +577,9 @@ class DatasetRecordingMixin:
             push_to_hub: Publish to a versioned HF *dataset* repo (the finished
                 artifact). Overrides the ``push_to_hub`` set at start_recording.
                 Requires an open recording session; on the idle path this
-                returns ``status="error"`` instead of a silent no-op.
+                returns ``status="error"`` instead of a silent no-op. Must be a
+                boolean: a publication posture is not read by truthiness
+                (:func:`dataset_recording_posture_error`).
             bucket: If set (e.g. ``"my-org/robot-fave"``), sync the dataset into
                 a mutable HF Storage Bucket instead of/in addition to the dataset
                 repo - the Phase 1/2 collection target (Xet-deduped, overwrite in
@@ -527,6 +587,12 @@ class DatasetRecordingMixin:
                 sim finalized (errors if there is none).
             run_id: Optional subpath inside the bucket (defaults to dataset name).
         """
+        # ``push_to_hub`` selects whether the finished dataset is published, so
+        # it is checked before it is read - by the idle path just below and by
+        # the upload after the episode is finalized. Read by truthiness a
+        # non-boolean opt-out ("false", "no", "off", "0") published the dataset.
+        if error := dataset_recording_posture_error("stop_recording", "push_to_hub", push_to_hub):
+            return error
         state = self._recording_state()
         if state is None or not state.get("recording", False):
             return self._stop_recording_idle(push_to_hub=push_to_hub, bucket=bucket, run_id=run_id)
@@ -584,11 +650,14 @@ class DatasetRecordingMixin:
                     {
                         "text": (
                             "stop_recording captured no frames - dataset would be empty "
-                            "(0 frames). Frames are written only by run_policy(...) while "
-                            "recording is active (its on_frame hook calls add_frame). "
-                            "eval_policy / evaluate / replay_episode and bare step loops do "
-                            "NOT feed the recorder. To record a dataset: start_recording -> "
-                            "run_policy (once per episode) -> stop_recording."
+                            "(0 frames). run_policy(...) feeds the recorder on its own: it "
+                            "installs the per-step on_frame hook that calls add_frame. "
+                            "eval_policy / evaluate_benchmark take an on_frame hook, so they "
+                            "record only when the caller passes one that calls add_frame. "
+                            "replay_episode, teleoperate and bare step loops have no such "
+                            "hook and cannot feed the recorder. To record a dataset: "
+                            "start_recording -> run_policy (once per episode) -> "
+                            "stop_recording."
                         )
                     }
                 ],
@@ -799,7 +868,12 @@ class DatasetRecordingMixin:
             for _ in range(n_episodes):
                 sim.run_policy(robot_name=..., n_steps=...)
                 sim.save_episode()   # flush this rollout as its own episode
+                sim.reset()          # next rollout starts from the scene pose
             sim.stop_recording()
+
+        ``run_policy(n_episodes=N)`` does all three and is the first-class API
+        for the common case; drive the loop yourself only when episodes need
+        different instructions, randomization or conditional logic.
 
         Without this call, every ``run_policy`` rollout in a session appends to
         the SAME buffer, so ``stop_recording`` flushes them as a single
@@ -809,10 +883,21 @@ class DatasetRecordingMixin:
         and resets the per-episode frame buffer; ``stop_recording`` flushes any
         trailing rollout automatically, so a final ``save_episode`` is optional.
 
+        The ``reset()`` is not optional bookkeeping. This method cuts a dataset
+        episode boundary; it does not re-initialize the world. Without it the
+        next rollout begins wherever the last one left the robot, so the dataset
+        has the requested episode COUNT but a bimodal set of recorded start
+        states - episode 0 from the scene's reset pose and every later episode
+        from a pose the robot is never reset into. ``verify_dataset_episodes``
+        counts episodes and passes either way, so nothing downstream reports it.
+        (``reset()`` is itself an episode boundary while recording: it flushes
+        buffered frames before teleporting, so the explicit ``save_episode``
+        above is what makes the boundary unconditional rather than what creates
+        it - see ``docs/recording.md``.)
+
         Per-episode stats (LeRobot computes ``stats.json`` per episode, then
         aggregates) stay correct because each rollout's frames are isolated to
-        their own episode rather than being mixed across mid-session
-        ``reset()`` teleports.
+        their own episode across the ``reset()`` teleport between rollouts.
 
         Idempotent on an empty buffer: when no frames have been captured since
         the last boundary (or since ``start_recording``), it succeeds with a

@@ -8,7 +8,7 @@ produced, so the same interface fits VLA-style providers (consume images +
 instruction) and non-VLA providers (cuRobo, MoveIt2, MPC, pure-IK / scripted
 trajectories).  Non-VLA providers typically set ``requires_images=False`` and
 read their goal from the well-known ``**kwargs`` keys (``target_pose``,
-``target_joints``, ``world_update``) documented on
+``target_joints``, ``target_velocity``, ``world_update``) documented on
 :meth:`Policy.get_actions`.
 
 Built-in providers (see policies.json for full list):
@@ -52,8 +52,10 @@ from strands_robots.policies.cosmos3 import Cosmos3Policy
 from strands_robots.policies.factory import (
     UntrustedRemoteCodeError,
     create_policy,
+    list_aliases,
     list_providers,
     policy_mapping_error,
+    policy_provider_error,
     preflight_policy,
     register_policy,
 )
@@ -76,9 +78,11 @@ __all__ = [
     "CompositePolicy",
     "create_policy",
     "preflight_policy",
+    "policy_provider_error",
     "policy_mapping_error",
     "register_policy",
     "list_providers",
+    "list_aliases",
     "list_policy_types",
     "UntrustedRemoteCodeError",
     "PersistentPolicy",

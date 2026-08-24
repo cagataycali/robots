@@ -1,0 +1,176 @@
+# .github/workflows/closing-reference.yml
+#
+# Refuses a pull request whose closing keyword appears only in its title.
+#
+# GitHub parses closing keywords from the body and from commit messages, never
+# from the title. A title reading `... (closes #1891)` therefore links nothing,
+# and nothing on either side of the merge says the claim was dropped -- a bare
+# cross-reference renders identically to the start of a closing link.
+#
+# Measured over the last 100 pull requests here: 29 titles carry a closing
+# keyword before an issue number, 27 also linked the issue, and 2 did not --
+# #1894 (`closes #1891`; #1891 was still open two days after the merge) and #1923
+# (`closes #1912`; closed by hand afterwards). Issue #1961 counts the wider cost:
+# 18 of the last 30 merges have neither a board item nor a closing link, so the
+# merged record is not countable. A dropped keyword is the half of that a machine
+# can catch.
+#
+# The check does not scan the body. #1894's body *does* say `closes #1891` -- in a
+# code span, which GitHub does not link -- so a text scan would have reported that
+# pull request clean. `closingIssuesReferences` is the link set itself, so the
+# only text parsed is the title, where GitHub does nothing and there is no ground
+# truth to read. See scripts/check_closing_reference.py for the full account.
+#
+# Out of scope, deliberately: a pull request that claims nothing anywhere. Whether
+# every change must trace to an issue is undecided (#1961, decision B) and 18 of
+# the last 30 merges would fail such a rule today. This job reads only what a
+# title already claims, so it needs no answer to that question.
+#
+# Unlike last-push-approval.yml, this one is self-clearing: moving the keyword
+# into the body makes GitHub create the link, and the `edited` trigger below means
+# the branch author alone can turn it green without pushing anything. That is why
+# it fails rather than warns.
+#
+# Whether a failure here blocks a merge is a branch-protection decision, not a
+# property of this file. Until the job is added to the required set it surfaces
+# the dropped claim and leaves the call to the reviewer.
+#
+
+name: Closing Reference Check
+
+on:
+  pull_request:
+    branches: [main, dev]
+    # GitHub's default three, plus `edited`. That addition is load-bearing here, and is the deliberate opposite of the
+    # narrowing #1914 applied to the required test job. That job's input is the
+    # code, so re-running it for an event that changes no code buys nothing. This
+    # job's inputs are the *title* and the *link set*, and both change on exactly
+    # this event and on no other. Without it the remedy the report asks for --
+    # move the keyword into the body -- could not be verified without an
+    # unrelated push, which is the one thing a self-clearing check must not need.
+    #
+    # tests/test_pull_request_trigger_types.py refuses a sha-invariant type by
+    # default and exempts this file by name, because the harm it measures needs
+    # the required check to be started by the event: `pr-and-push.yml` does not
+    # subscribe to `edited` and keys its concurrency group on its own workflow
+    # name, so an edit starts no run in that group and cancels nothing. Both
+    # halves of that premise are pinned there, so this exemption cannot outlive
+    # its justification.
+    #
+    # That premise is checked against the wrong concurrency group, and #2216
+    # measured what it costs. It asks whether an edit can cancel the *required*
+    # check, which it cannot. It never asks whether an edit can cancel *this*
+    # workflow's own in-flight run, which it can: that run shares a workflow name
+    # and a pull request number with the one already going, so a group keyed on
+    # either holds both. Being exempt is what makes it reachable -- an exempt
+    # workflow is the only kind that can be started twice on one head sha -- so
+    # the cancelled context lands on the live head instead of a superseded one.
+    # Measured on #1722 and #2205: each head carried this check as `SUCCESS` and
+    # `CANCELLED` together, every other context `SUCCESS`, and #2205's roll-up
+    # read SUCCESS, then FAILURE, then SUCCESS across three reads of one
+    # unchanged sha. That is why this file now carries no `concurrency` block.
+    types: [opened, synchronize, reopened, edited]
+
+# No `concurrency` block, deliberately, and this is the one workflow here for
+# which that is the right spelling (#2216).
+#
+# Cancelling is a saving only when a newer head supersedes an older run, and in
+# that case the cancelled context attaches to a sha that is no longer the head,
+# where nobody reads it. Every other `pull_request` workflow in this repository
+# takes GitHub's default activity types, so a superseded head is the only case any
+# of them can produce and `cancel-in-progress: true` is correct in all of them.
+# This one also subscribes to `edited`, so two of its runs can share one head, and
+# cancelling either leaves a red context on a pull request that satisfies the
+# check -- unclearable without a push, which is the one thing a self-clearing
+# report must not require.
+#
+# What is given up is seconds of runner time: a checkout, a `setup-python`, and
+# one standard-library script with nothing to install. Overlapping runs are
+# idempotent, because neither reads the tree and neither is handed the title (see
+# the step below), so both resolve the same verdict from the API.
+
+permissions:
+  contents: read
+  # closingIssuesReferences is GraphQL-only and reads the pull request, so this
+  # is the one scope beyond `contents` the job needs. A fork's read-only token
+  # carries it, so cross-repository pull requests -- which is how every branch
+  # here is opened -- are checked the same way.
+  pull-requests: read
+
+jobs:
+  closing-reference:
+    name: Refuse a closing keyword that only appears in the title
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # The BASE branch, for the reason changelog-fragment.yml documents at
+      # length (#1791): a branch that forked before this job landed does not
+      # carry the script, and running it out of the head tree dies with exit 2
+      # before the check begins -- a red X that accuses a branch which may have
+      # done nothing wrong, and which can never carry the real signal because it
+      # never gets far enough to compute one.
+      #
+      # Checking out the base costs nothing here because the script reads no file
+      # from the tree at all: its inputs are the title, which arrives through the
+      # environment, and the API. `fetch-depth` is left at its default for the
+      # same reason -- unlike that job, this one computes no merge base.
+      - name: Checkout the base branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: ${{ github.base_ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      # Standard library only, so there is nothing to install.
+      #
+      # The title is deliberately not passed in, and that is load-bearing for the
+      # absent `concurrency` block above rather than a tidy-up. `main()` resolves
+      # `title = args.title or api_title`, so a `PR_TITLE` taken from the event
+      # payload outranks `resolve_pull_request`'s copy for the whole life of that
+      # run. Once runs are no longer cancelled, a run started by `synchronize` can
+      # still be going when an `edited` run passes, and with the payload's title it
+      # would report the pre-edit verdict afterwards -- stranding a red context on
+      # a head that had already cleared, which is the same harm #2216 removed by
+      # one route arriving by another. Reading the title from the API is what makes
+      # two runs on one head agree.
+      #
+      # It also retires an injection seam instead of documenting one. The payload
+      # title is author-controlled text, and the reason it travelled through the
+      # environment at all was that `${{ }}` interpolation of it into a shell in a
+      # job holding a token is a risk. Not interpolating it anywhere is stronger
+      # than interpolating it carefully.
+      #
+      # The absence guard is the residual case #1791 could not cover. Checking out
+      # the base fixes a head that predates the script; it cannot fix a *base*
+      # that predates it, which is true for exactly one branch -- the one adding
+      # it. Measured on this pull request's own first run:
+      #
+      #     python3: can't open file '.../scripts/check_closing_reference.py'
+      #     Process completed with exit code 2
+      #
+      # and exit 2 is the state that issue reserves its argument for: it is
+      # neither the script's 0 nor its 1, and the checks UI renders it as the same
+      # red X as a real finding. The honest verdict when the base carries no copy
+      # of the check is that this base has no such rule to enforce, so the job
+      # says so and passes.
+      #
+      # It cannot become a standing no-op. The ref checked out is the base branch
+      # *tip*, not the merge base, so the file is absent only for runs that happen
+      # before this lands. Deleting it later is loud rather than silent: the pins
+      # in tests/test_closing_reference_gate.py load the script by path and fail
+      # at import if it is gone, and that suite is in the required check.
+      - name: Check for a closing keyword that links nothing
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f scripts/check_closing_reference.py ]; then
+            echo "::notice title=No closing-reference rule on this base::The base branch carries no scripts/check_closing_reference.py, so there is no rule here to enforce."
+            exit 0
+          fi
+          python3 scripts/check_closing_reference.py

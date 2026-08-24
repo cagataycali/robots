@@ -9,7 +9,9 @@ context and on both Linux and macOS.
 """
 
 import os
+import re
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -51,6 +53,141 @@ def test_rejects_symlink_target(tmp_path):
     link.symlink_to(victim)
     with pytest.raises(ValueError, match="symlink"):
         validate_output_path(str(link), sandbox_root=None, allow_abs=True)
+
+
+# --- the symlink refusal names where the link points (issue #327) ---
+#
+# Refusing is right, but the refusal has to leave the caller somewhere to go.
+# On macOS the single most reachable scratch path IS a symlink (/tmp ->
+# /private/tmp), so a caller that asked for the most ordinary directory on the
+# machine got a refusal that read like an attack had been detected and named no
+# way forward. These pin both halves of the fix: the destination is named, and
+# every path the message *offers* is one this same call accepts.
+
+
+def _macos_tmp_shape(tmp_path):
+    """Build the /tmp -> /private/tmp shape: a real dir reached through a link."""
+    real = tmp_path / "private_tmp"
+    real.mkdir()
+    link = tmp_path / "tmp"
+    link.symlink_to(real)
+    return link, real
+
+
+def test_symlink_refusal_names_the_destination_it_will_not_follow(tmp_path):
+    """The refusal names where the link points, not just that it is a link.
+
+    The verdict must not soften into advice either: naming a way forward is an
+    addition to the refusal, not a replacement for it, so "refusing to follow"
+    still has to be in the message a caller reads.
+    """
+    link, real = _macos_tmp_shape(tmp_path)
+    with pytest.raises(ValueError, match="symlink") as excinfo:
+        validate_output_path(str(link), sandbox_root=None, allow_abs=True, label="output_dir")
+    message = str(excinfo.value)
+    assert "refusing to follow" in message, message
+    assert str(real) in message, message
+
+
+def test_the_path_the_symlink_refusal_offers_is_one_this_call_accepts(tmp_path):
+    """Follow the remedy verbatim: an offered path must not hit a second refusal.
+
+    Parses the destination back out of the message and passes it, which is what
+    a caller acting on the refusal does. A message that offers a path this same
+    call would reject is a dead end wearing a remedy.
+    """
+    link, real = _macos_tmp_shape(tmp_path)
+    with pytest.raises(ValueError) as excinfo:
+        validate_output_path(str(link), sandbox_root=None, allow_abs=True, label="output_dir")
+    offered = re.search(r"it points at '([^']+)', pass that path instead", str(excinfo.value))
+    assert offered, f"no path offered: {excinfo.value}"
+    resolved = validate_output_path(offered.group(1), sandbox_root=None, allow_abs=True, label="output_dir")
+    assert resolved == real.resolve()
+
+
+@pytest.mark.parametrize("unresolvable", [RuntimeError("Symlink loop from 'x'"), OSError("ELOOP")])
+def test_a_symlink_the_call_cannot_resolve_is_still_a_value_error(tmp_path, monkeypatch, unresolvable):
+    """Naming the destination must not change which exception class escapes.
+
+    ``Path.resolve(strict=False)`` is not total, and which class it raises for a
+    cycle depends on the interpreter: CPython 3.12 raises ``RuntimeError``
+    ("Symlink loop from ...") while 3.13 returns the link unresolved. Both are
+    inside ``requires-python = ">=3.12"``, so a handler naming only ``OSError``
+    would let 3.12's ``RuntimeError`` escape a function documented to raise
+    ``ValueError`` - past the ``except ValueError`` every sink maps to a
+    structured tool error. Both classes are driven here so the guard holds on
+    either interpreter rather than only the one running it.
+    """
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "target")
+
+    def boom(self, strict=False):
+        raise unresolvable
+
+    monkeypatch.setattr(Path, "resolve", boom)
+    with pytest.raises(ValueError, match="symlink"):
+        validate_output_path(str(link), sandbox_root=None, allow_abs=True, label="output_dir")
+
+
+def test_a_real_symlink_loop_is_refused_without_a_hint(tmp_path):
+    """A cycle has no destination to name, so the refusal stays bare."""
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.symlink_to(b)
+    b.symlink_to(a)
+    with pytest.raises(ValueError, match="symlink") as excinfo:
+        validate_output_path(str(a), sandbox_root=None, allow_abs=True, label="output_dir")
+    assert "it points at" not in str(excinfo.value), str(excinfo.value)
+
+
+def test_a_broken_symlink_still_names_its_destination(tmp_path):
+    """A dangling link resolves fine, and its destination is a usable target.
+
+    ``resolve(strict=False)`` does not raise for a link whose target is absent -
+    it returns the target path - and a not-yet-existing path is exactly what an
+    output sink is about to create. So this case gets a hint like any other.
+    """
+    link = tmp_path / "broken"
+    target = tmp_path / "not_created_yet"
+    link.symlink_to(target)
+    with pytest.raises(ValueError, match="symlink") as excinfo:
+        validate_output_path(str(link), sandbox_root=None, allow_abs=True, label="output_dir")
+    assert str(target) in str(excinfo.value), str(excinfo.value)
+    assert validate_output_path(str(target), sandbox_root=None, allow_abs=True) == target.resolve()
+
+
+def test_a_confined_symlink_pointing_outside_is_named_but_not_offered(tmp_path):
+    """Under confinement, an outside destination is a diagnosis, not a remedy.
+
+    Offering it would send the caller straight into the confinement refusal, so
+    the message names where the link goes and then points back into the sandbox.
+    """
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = sandbox / "escape"
+    link.symlink_to(outside)
+    with pytest.raises(ValueError, match="symlink") as excinfo:
+        validate_output_path(str(link), sandbox_root=sandbox, allow_abs=False)
+    message = str(excinfo.value)
+    assert str(outside) in message, message
+    assert "pass that path instead" not in message, message
+    assert "outside the sandbox" in message, message
+
+
+def test_a_confined_symlink_pointing_inside_the_sandbox_is_offered(tmp_path):
+    """A destination confinement would accept is offered as the way forward."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    inner = sandbox / "inner"
+    inner.mkdir()
+    link = sandbox / "shortcut"
+    link.symlink_to(inner)
+    with pytest.raises(ValueError, match="symlink") as excinfo:
+        validate_output_path(str(link), sandbox_root=sandbox, allow_abs=False)
+    offered = re.search(r"it points at '([^']+)', pass that path instead", str(excinfo.value))
+    assert offered, f"no path offered: {excinfo.value}"
+    assert validate_output_path(offered.group(1), sandbox_root=sandbox, allow_abs=False) == inner.resolve()
 
 
 @pytest.mark.parametrize("bad", ["../escape.mp4", "../../etc/x.mp4", "sub/../../etc/x.mp4"])
@@ -150,25 +287,29 @@ def test_sandbox_accepts_intermediate_symlink_staying_inside(tmp_path):
 def test_video_sandbox_args_default_allows_abs(monkeypatch):
     """Without STRANDS_ROBOTS_VIDEO_ROOT, video paths are unconfined (historic contract)."""
     monkeypatch.delenv("STRANDS_ROBOTS_VIDEO_ROOT", raising=False)
-    root, allow_abs = video_sandbox_args()
+    root, allow_abs, allow_abs_env = video_sandbox_args()
     assert root is None
     assert allow_abs is True
+    # The opt-in name is reported even when nothing is confined, so a sink can
+    # quote it without re-deriving the spelling.
+    assert allow_abs_env == "STRANDS_ROBOTS_VIDEO_ALLOW_ABS"
 
 
 def test_video_sandbox_args_confines_when_root_set(monkeypatch, tmp_path):
     """Setting STRANDS_ROBOTS_VIDEO_ROOT switches to sandbox-confined mode."""
     monkeypatch.setenv("STRANDS_ROBOTS_VIDEO_ROOT", str(tmp_path / "vids"))
     monkeypatch.delenv("STRANDS_ROBOTS_VIDEO_ALLOW_ABS", raising=False)
-    root, allow_abs = video_sandbox_args()
+    root, allow_abs, allow_abs_env = video_sandbox_args()
     assert root == (tmp_path / "vids").resolve()
     assert allow_abs is False
+    assert allow_abs_env == "STRANDS_ROBOTS_VIDEO_ALLOW_ABS"
 
 
 def test_video_sandbox_args_allow_abs_override(monkeypatch, tmp_path):
     """STRANDS_ROBOTS_VIDEO_ALLOW_ABS re-permits absolute paths inside sandbox mode."""
     monkeypatch.setenv("STRANDS_ROBOTS_VIDEO_ROOT", str(tmp_path / "vids"))
     monkeypatch.setenv("STRANDS_ROBOTS_VIDEO_ALLOW_ABS", "1")
-    _, allow_abs = video_sandbox_args()
+    _, allow_abs, _env = video_sandbox_args()
     assert allow_abs is True
 
 
@@ -223,3 +364,96 @@ def test_atomic_write_preserves_existing_on_failure(tmp_path, monkeypatch):
     assert target.read_bytes() == b"ORIGINAL"
     leftovers = [p for p in target.parent.iterdir() if p.name.endswith(".tmp")]
     assert leftovers == []
+
+
+# --- bare filenames anchor to the sandbox instead of the process CWD ---------
+
+
+def test_sandbox_anchors_bare_filename_to_root(tmp_path):
+    """A one-component name lands in the sandbox, not under the process CWD."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    resolved = validate_output_path("frame.png", sandbox_root=root, allow_abs=False)
+    assert resolved == (root / "frame.png").resolve()
+
+
+def test_bare_filename_anchoring_ignores_cwd(tmp_path, monkeypatch):
+    """The destination is the sandbox root wherever the process happens to be."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    resolved = validate_output_path("frame.png", sandbox_root=root, allow_abs=False)
+    assert resolved == (root / "frame.png").resolve()
+    assert not str(resolved).startswith(str(elsewhere.resolve()))
+
+
+def test_sandbox_still_rejects_relative_path_with_separator(tmp_path, monkeypatch):
+    """Anchoring is narrow: a multi-component relative path is untouched.
+
+    ``sub/frame.png`` names a directory, so it keeps resolving against the CWD
+    and stays subject to confinement. Only a bare name is anchored.
+    """
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="outside the sandbox"):
+        validate_output_path("sub/frame.png", sandbox_root=root, allow_abs=False)
+
+
+def test_sandbox_rejects_bare_dotdot_before_anchoring(tmp_path):
+    """``..`` is one component, so only the traversal guard's position saves it.
+
+    ``Path("..").parts`` is ``("..",)`` - a single component that is not
+    absolute, i.e. exactly the shape the anchoring branch matches. The traversal
+    check runs first, so the escape is refused rather than anchored.
+    """
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    with pytest.raises(ValueError, match="path traversal"):
+        validate_output_path("..", sandbox_root=root, allow_abs=False)
+
+
+def test_sandbox_refuses_symlink_planted_at_anchored_destination(tmp_path):
+    """The symlink probe inspects the anchored path, not the CWD-relative one.
+
+    A symlink planted inside the sandbox at the bare name's destination is an
+    arbitrary-write vector. Anchoring happens before the symlink check so the
+    check sees the path that would actually be opened.
+    """
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"x")
+    (root / "frame.png").symlink_to(outside)
+    # Match the reason, not the word "symlink": pytest derives tmp_path from the
+    # test name, so that word appears in every interpolated path in this test.
+    with pytest.raises(ValueError, match="refusing to follow"):
+        validate_output_path("frame.png", sandbox_root=root, allow_abs=False)
+
+
+def test_anchored_bare_filename_still_rejects_metacharacters(tmp_path):
+    """Anchoring does not bypass the unconditional character guards."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    with pytest.raises(ValueError, match="metacharacters"):
+        validate_output_path("frame;rm.png", sandbox_root=root, allow_abs=False)
+
+
+def test_guards_only_leaves_bare_filename_cwd_relative(tmp_path, monkeypatch):
+    """With no sandbox root a bare name stays CWD-relative (historic contract)."""
+    monkeypatch.chdir(tmp_path)
+    resolved = validate_output_path("clip.mp4", sandbox_root=None, allow_abs=True)
+    assert resolved == (tmp_path / "clip.mp4").resolve()
+
+
+def test_allow_abs_leaves_bare_filename_cwd_relative(tmp_path, monkeypatch):
+    """``allow_abs`` opts out of confinement, so anchoring does not apply."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    resolved = validate_output_path("clip.mp4", sandbox_root=root, allow_abs=True)
+    assert resolved == (elsewhere / "clip.mp4").resolve()

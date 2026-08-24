@@ -40,6 +40,7 @@ mujoco = pytest.importorskip("mujoco")
 
 from strands_robots.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.mujoco.backend import mj_name_to_id  # noqa: E402
+from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 
 # Names that cannot identify an entity. ``None`` is the one an agent produces by
 # omitting a value it believes optional; the others cover the neighbouring scalar
@@ -204,6 +205,18 @@ class TestTheSessionSurvives:
         assert sim.apply_force(body_name=None, force=[1.0, 0.0, 0.0])["status"] == "error"
         assert sim.get_body_state(body_name="crate")["status"] == "success"
         assert sim.step(n_steps=5)["status"] == "success"
+
+    @requires_gl
+    def test_the_world_still_renders_after_a_refused_lookup(self, sim) -> None:
+        """Rendering is the one liveness check that needs a host GL context.
+
+        Split from the case above so the assertions that need no GL keep running
+        on a headless host without EGL/OSMesa. Left inline, ``render`` returns
+        ``{"status": "error"}`` there for a reason unrelated to entity-name
+        lookups, and the whole liveness pin was reported as a failure.
+        """
+        _seeded_world(sim)
+        assert sim.get_body_state(body_name=None)["status"] == "error"
         assert sim.render(camera_name="default")["status"] == "success"
 
 

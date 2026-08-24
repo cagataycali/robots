@@ -44,6 +44,7 @@ import hashlib
 import heapq
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -269,13 +270,28 @@ def _resolve_dedup_ttl() -> float:
 
     NOTE: read once at ``BridgeTransport`` construction; mid-process
     env-var changes require a bridge restart to take effect.
+
+    A non-finite value falls back like any other unusable one, and the
+    finiteness test is not implied by the positivity test beside it.
+    ``float("inf")`` - and ``float("1e999")``, which overflows to it - is
+    greater than zero, so it was returned as the resolved TTL, and the
+    deduplicator's ``cutoff = now - inf`` then leaves every entry in its cache.
+    Under the ``_MAX_DEDUP_ENTRIES`` cap that turns the window into "for the
+    life of the process", so a heartbeat that legitimately recurs with the same
+    canonical triple is deduplicated away on its second delivery instead of
+    after the TTL. ``nan`` already fell back here because ``nan > 0`` is
+    ``False``, which is what made the hole one-sided and easy to miss.
+
+    The other env-float resolvers in this package all test finiteness; see
+    :func:`~strands_robots.mesh.core._parse_positive_float_env` for the same
+    rule and the reasoning behind it.
     """
     raw = os.getenv("STRANDS_MESH_DEDUP_TTL")
     if raw is None:
         return _DEFAULT_DEDUP_TTL_S
     try:
         v = float(raw)
-        return v if v > 0 else _DEFAULT_DEDUP_TTL_S
+        return v if math.isfinite(v) and v > 0 else _DEFAULT_DEDUP_TTL_S
     except ValueError:
         logger.warning("[bridge] STRANDS_MESH_DEDUP_TTL=%r invalid -- using default", raw)
         return _DEFAULT_DEDUP_TTL_S
@@ -593,20 +609,23 @@ class BridgeTransport:
         """Close both backends. Idempotent.
 
         Narrow exception surface per AGENTS.md > Review Learnings:
-        idempotent teardown swallows the documented transport-failure
-        surface (RuntimeError = already-closed session,
-        ConnectionError = connection drop racing with close,
-        OSError = socket teardown race) and lets unexpected exceptions
-        propagate.
+        idempotent teardown swallows ``RuntimeError`` (already-closed
+        session) and ``OSError`` (socket teardown race - a connection drop
+        racing with close arrives as ``ConnectionError``, an ``OSError``
+        subclass). Both names are class trees rather than single classes,
+        so the absorbed surface is wider than the two: a
+        ``NotImplementedError`` raised by an incomplete leg is a
+        ``RuntimeError`` and is swallowed here too. An exception outside
+        both trees propagates.
         """
         with self._lock:
             try:
                 self._zenoh.close()
-            except (RuntimeError, ConnectionError, OSError) as exc:
+            except (RuntimeError, OSError) as exc:
                 logger.debug("[bridge] zenoh.close() failed: %s", exc)
             try:
                 self._iot.close()
-            except (RuntimeError, ConnectionError, OSError) as exc:
+            except (RuntimeError, OSError) as exc:
                 logger.debug("[bridge] iot.close() failed: %s", exc)
             self._zenoh_alive = False
             self._iot_alive = False
@@ -656,10 +675,25 @@ class BridgeTransport:
         """Publish to Zenoh always; publish to IoT only if the topic bridges.
 
         Failure of one side does not affect the other. Narrow exception
-        surface per AGENTS.md > Review Learnings: transport-level failures
-        (RuntimeError from closed session, ConnectionError from broker
-        drop, OSError from socket-level write) are absorbed; everything
-        else propagates.
+        surface per AGENTS.md > Review Learnings: a transport-level failure
+        is absorbed as ``RuntimeError`` (closed session) or ``OSError``
+        (socket-level write - a broker drop arrives as ``ConnectionError``,
+        an ``OSError`` subclass). Both names are class trees rather than
+        single classes, so the absorbed surface is wider than the two:
+        ``NotImplementedError`` and ``RecursionError`` are ``RuntimeError``
+        subclasses and are swallowed here too.
+
+        These handlers cover a leg that raises, which no shipped leg does: both
+        :meth:`~strands_robots.mesh.transport.zenoh_transport.ZenohTransport.put`
+        and :meth:`~strands_robots.mesh.transport.iot_transport.IotMqttTransport.put`
+        honour the fire-and-forget contract themselves. In particular an
+        unencodable payload - once cited here as an example of something that
+        propagates - does not: each leg encodes on its own and reports the
+        permanent failure through
+        :func:`~strands_robots.mesh.session._report_unencodable_payload`, once
+        per topic across both legs, then returns. So this method raises nothing
+        for a bad payload, and the operator gets one ERROR naming the topic
+        rather than an exception the mesh's publish paths do not expect.
         """
         # AWS IoT reserved topics ($aws/..., e.g. named-shadow updates) are
         # cloud-plane only. They are meaningless on the Zenoh LAN (and would
@@ -669,7 +703,7 @@ class BridgeTransport:
             if self._iot.is_alive():
                 try:
                     self._iot.put(key, data)
-                except (RuntimeError, ConnectionError, OSError) as exc:
+                except (RuntimeError, OSError) as exc:
                     logger.debug("[bridge] iot.put error on %s: %s", key, exc)
             return
 
@@ -677,14 +711,14 @@ class BridgeTransport:
         if self._zenoh.is_alive():
             try:
                 self._zenoh.put(key, data)
-            except (RuntimeError, ConnectionError, OSError) as exc:
+            except (RuntimeError, OSError) as exc:
                 logger.debug("[bridge] zenoh.put error on %s: %s", key, exc)
 
         # Filtered IoT.
         if self._iot.is_alive() and _should_bridge(key, self._bridge_suffixes, self._bridge_prefixes):
             try:
                 self._iot.put(key, data)
-            except (RuntimeError, ConnectionError, OSError) as exc:
+            except (RuntimeError, OSError) as exc:
                 logger.debug("[bridge] iot.put error on %s: %s", key, exc)
 
     def declare_subscriber(self, key_expr: str, handler: Callable[[Any], None]) -> _BridgeSubHandle:
@@ -768,7 +802,7 @@ class BridgeTransport:
         if self._zenoh.is_alive():
             try:
                 zenoh_sub = self._zenoh.declare_subscriber(key_expr, make_dedup_handler("zenoh"))
-            except (RuntimeError, ConnectionError, OSError) as exc:
+            except (RuntimeError, OSError) as exc:
                 # Narrow per AGENTS.md > Review Learnings: subscribe-side
                 # transport failures (closed session, broker drop, socket
                 # error) degrade to the surviving side; unexpected errors
@@ -778,7 +812,7 @@ class BridgeTransport:
         if self._iot.is_alive():
             try:
                 iot_sub = self._iot.declare_subscriber(key_expr, make_dedup_handler("iot"))
-            except (RuntimeError, ConnectionError, OSError) as exc:
+            except (RuntimeError, OSError) as exc:
                 logger.debug("[bridge] iot.declare_subscriber(%s) failed: %s", key_expr, exc)
 
         if zenoh_sub is None and iot_sub is None:

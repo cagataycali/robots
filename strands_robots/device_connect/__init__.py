@@ -26,6 +26,7 @@ from device_connect_edge import DeviceRuntime
 from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
 from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
+from strands_robots.utils import is_boolean
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,12 @@ __all__ = [
 
 _INSECURE_TRUE = ("true", "1", "yes")
 
+# ``init_device_connect_sync`` bounds the background bring-up: the awaited half
+# constructs a ``DeviceRuntime``, which can block on a broker, so the wrapper
+# must not hang its caller forever. Expiry is a failed bring-up, not a slow one
+# that later succeeds -- the wrapper has already returned by then.
+_INIT_TIMEOUT_S: float = 30.0
+
 
 def resolve_allow_insecure(
     explicit: bool | None = None,
@@ -53,10 +60,57 @@ def resolve_allow_insecure(
 
     Extracted as a pure function so the secure-by-default posture is unit
     testable without standing up a DeviceRuntime.
+
+    The two sources carry the same setting in different shapes, and each is held
+    to its own declared type rather than to the other's. An environment variable
+    is a string by construction, so *env_value* is **parsed**: only
+    ``("true", "1", "yes")`` opt in and every other spelling is secure. The
+    argument is declared ``bool | None``, so it is **checked**: a non-boolean is
+    refused rather than parsed with that same vocabulary.
+
+    Checking the argument is what keeps the two sources from disagreeing about
+    one value. A non-empty string is truthy, so returning the argument as given
+    made ``resolve_allow_insecure("false")`` enable insecure transport while
+    ``DEVICE_CONNECT_ALLOW_INSECURE=false`` disabled it: every falsy spelling
+    inverted, and only on the path documented here as the higher precedence.
+    Parsing the argument with the environment vocabulary instead would move
+    which spellings invert rather than remove the inversion - ``"on"``,
+    ``"enabled"`` and ``"y"`` are absent from that vocabulary, so each would
+    silently resolve to secure while reading as an opt-in.
+
+    Args:
+        explicit: The caller's setting, or ``None`` to fall through to the
+            environment variable. Must be a python or numpy boolean when given.
+        env_value: The raw ``DEVICE_CONNECT_ALLOW_INSECURE`` value, or ``None``
+            when it is unset.
+
+    Returns:
+        Whether insecure transport is enabled, always as a real ``bool`` - so a
+        numpy boolean from a caller's own comparison satisfies the annotation
+        and the identity assertions the runtime's setting is pinned with.
+
+    Raises:
+        ValueError: If *explicit* is neither a boolean nor ``None``, or
+            *env_value* is neither a string nor ``None``.
     """
     if explicit is not None:
-        return explicit
+        if not is_boolean(explicit):
+            raise ValueError(
+                f"allow_insecure must be a bool or None, got {explicit!r}. A string "
+                "spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where "
+                f"{_INSECURE_TRUE} opt in and anything else is secure; passed as this "
+                "argument a non-empty string is truthy, so 'false' would enable insecure "
+                "transport rather than refuse it."
+            )
+        return bool(explicit)
     if env_value is not None:
+        if not isinstance(env_value, str):
+            raise ValueError(
+                f"env_value must be a str or None, got {env_value!r}. It carries the raw "
+                "DEVICE_CONNECT_ALLOW_INSECURE value, which is a string by construction; a "
+                "caller that has already resolved a boolean should pass it as the explicit "
+                "argument instead, where it is checked rather than parsed."
+            )
         return env_value.lower() in _INSECURE_TRUE
     return False
 
@@ -88,7 +142,10 @@ async def init_device_connect(
             None = auto-detect from MESSAGING_BACKEND env var (default "zenoh").
         tenant: Device Connect tenant namespace.
         allow_insecure: Allow insecure (unencrypted, unauthenticated)
-            transport. None = auto-detect: respects the
+            transport. Must be a boolean or None; a string spelling such as
+            ``"false"`` is refused here rather than read, because the string
+            vocabulary belongs to DEVICE_CONNECT_ALLOW_INSECURE and a non-empty
+            string is truthy as an argument. None = auto-detect: respects the
             DEVICE_CONNECT_ALLOW_INSECURE env var if set, otherwise defaults
             to False (secure). Insecure transport must be explicitly opted
             into; a prominent warning is logged whenever it is active.
@@ -162,6 +219,14 @@ def init_device_connect_sync(
     The runtime stays alive as long as the process (daemon thread).
 
     Same parameters as :func:`init_device_connect`.
+
+    Raises:
+        Exception: Whatever :func:`init_device_connect` raised on the
+            background thread, re-raised here so a failed bring-up reaches
+            the caller rather than being confined to a thread it cannot see.
+        TimeoutError: If the bring-up does not finish within the wrapper's
+            budget. The runtime is not returned in that case, so the caller
+            is never handed ``None`` in place of a ``DeviceRuntime``.
     """
     loop = asyncio.new_event_loop()
     ready = threading.Event()
@@ -192,10 +257,19 @@ def init_device_connect_sync(
 
     thread = threading.Thread(target=_run, daemon=True, name="device-connect-runtime")
     thread.start()
-    ready.wait(timeout=30.0)
+    started = ready.wait(timeout=_INIT_TIMEOUT_S)
 
+    # The recorded failure first: ``_start``'s ``finally`` sets the event on both
+    # paths, so a bring-up that failed inside the budget arrives with ``started``
+    # true and its own exception, which names the cause better than the budget.
     if error_holder[0] is not None:
         raise error_holder[0]
+    if not started:
+        raise TimeoutError(
+            f"init_device_connect_sync: the Device Connect runtime did not come up "
+            f"within {_INIT_TIMEOUT_S:g}s. The bring-up is still running on its "
+            f"background thread; check that the messaging URL / broker is reachable."
+        )
 
     runtime = runtime_holder[0]
     if runtime is not None:

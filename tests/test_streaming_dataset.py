@@ -84,14 +84,19 @@ def test_repo_type_forwarded_when_supported(monkeypatch):
 def test_repo_type_bucket_raises_when_unsupported(monkeypatch):
     """repo_type='bucket' on a constructor without the parameter must raise,
     never silently open the versioned dataset namespace instead (a different
-    storage system - the forbidden silent-kwarg-drop class)."""
+    storage system - the forbidden silent-kwarg-drop class).
+
+    The message names the lerobot version that serves bucket streaming rather
+    than the pre-0.6.1 "no released lerobot supports this" - that claim was
+    true when written and left the caller with no remedy; the capability
+    shipped in 0.6.1, which the [lerobot] extra now floors."""
 
     class _Narrow:
         def __init__(self, repo_id):
             raise AssertionError("constructor must never be reached")
 
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    with pytest.raises(RuntimeError, match=r"repo_type='bucket' is not supported by any released lerobot"):
+    with pytest.raises(RuntimeError, match=r"repo_type='bucket' requires lerobot >= 0\.6\.1"):
         sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
 
 
@@ -113,7 +118,7 @@ def test_bucket_guard_message_survives_unresolvable_lerobot_version(monkeypatch)
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
     with pytest.raises(RuntimeError, match=r"installed: unknown") as exc:
         sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-    assert "repo_type='bucket' is not supported by any released lerobot" in str(exc.value)
+    assert "repo_type='bucket' requires lerobot >= 0.6.1" in str(exc.value)
 
 
 def test_repo_type_bucket_forwarded_via_var_kwargs(monkeypatch):

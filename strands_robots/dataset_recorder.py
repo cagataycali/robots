@@ -21,6 +21,7 @@ Usage:
     recorder.push_to_hub()
 """
 
+import difflib
 import importlib.util
 import json
 import logging
@@ -32,7 +33,16 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import lerobot_version
+from strands_robots.utils import (
+    boolean_flag_error,
+    lerobot_version,
+    name_list_error,
+    non_negative_whole_number_error,
+    partial_construction_repr,
+    positive_count_error,
+    positive_whole_number_error,
+    sequence_length,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +154,7 @@ def sync_dataset_to_bucket(
     Mutable, Xet-deduplicated dump target for COLLECTION - avoids git-LFS
     history bloat of push_to_hub during recording. Daily re-sync uploads
     only changed chunks (content-defined chunking). Requires the ``hf`` CLI
-    with the ``buckets``/``sync`` subcommands (``huggingface_hub>=1.0``)
+    with the ``buckets``/``sync`` subcommands (``huggingface_hub>=1.5``)
     and ``hf auth login``.
 
     ``bucket`` and ``run_id`` are validated against an allowlist before any
@@ -153,6 +163,17 @@ def sync_dataset_to_bucket(
     ``[A-Za-z0-9._-]`` (no path traversal or shell metacharacters). This
     path is agent-reachable via ``stop_recording(bucket=, run_id=)``. A
     rejected value returns ``{"status": "error", ...}`` without running ``hf``.
+
+    ``create``, ``private`` and ``delete`` select *postures* rather than
+    scaling a quantity, so each is checked against
+    :func:`~strands_robots.utils.boolean_flag_error` before the ``hf`` CLI is
+    even located - the same domain the mesh provisioning entry points apply to
+    their own capability flags. Read by truthiness they fail toward the
+    permissive posture in *both* directions, because every non-empty string is
+    truthy and every falsy non-boolean takes the other branch:
+    ``delete="false"`` - the spelling an operator reaches for when opting out -
+    appends ``--delete`` and mirror-deletes remote files absent locally, while
+    ``private=0`` drops ``--private`` and creates the bucket *public*.
 
     The shard layout is already Xet/bucket-friendly at lerobot's defaults
     (100 MB data parquet / 200 MB video MP4 shards), and ``meta/`` MUST
@@ -165,27 +186,38 @@ def sync_dataset_to_bucket(
         run_id: Subpath inside the bucket; defaults to the dataset directory
             name (``Path(root).name``).
         create: Create the bucket first (pre-existing bucket is not an error).
+            Must be a boolean.
         private: Create the bucket as private (only used with ``create=True``).
+            Must be a boolean.
         delete: Forward ``--delete`` to ``hf sync`` (mirror semantics -
-            remove remote files absent locally).
+            remove remote files absent locally). Must be a boolean.
 
     Returns:
         ``{"status": "success", "bucket_uri": ...}`` or
         ``{"status": "error", "message": ...}``. Never raises on ``hf``
-        failure; errors are surfaced in the result dict.
+        failure; errors are surfaced in the result dict. A flag outside its
+        domain is reported the same way, without locating or running the CLI.
     """
+    # Before the CLI probe so the same caller mistake reports identically
+    # whether or not `hf` is installed, and so a refused posture flag can
+    # never reach `hf buckets create` or `hf sync`.
+    for flag_name, flag_value in (("create", create), ("private", private), ("delete", delete)):
+        if flag_error := boolean_flag_error(flag_value, flag_name, "sync_dataset_to_bucket"):
+            return {"status": "error", "message": flag_error}
+
     import subprocess
 
     hf = _hf_executable()
     if hf is None:
         return {
             "status": "error",
-            "message": '`hf` CLI not found. pip install -U "huggingface_hub>=1.0" and run `hf auth login`.',
+            "message": f'`hf` CLI not found. pip install -U "{_HF_BUCKET_CLI_MIN_SPEC}" and run `hf auth login`.',
         }
 
-    # `hf buckets` / `hf sync` need huggingface_hub>=1.0; on 0.x the CLI
-    # exists but rejects those subcommands with argparse noise. Gate on the
-    # installed package version so users get an upgrade instruction instead.
+    # `hf buckets` / `hf sync` need huggingface_hub>=1.5; on every older
+    # release (0.36.x, but also 1.0-1.4.x) the CLI exists and rejects those
+    # subcommands with usage noise. Gate on the installed package version so
+    # users get an upgrade instruction instead.
     version_error = _huggingface_hub_version_error()
     if version_error is not None:
         return {"status": "error", "message": version_error}
@@ -272,19 +304,42 @@ def _hf_executable() -> str | None:
     return shutil.which("hf")
 
 
+#: Oldest ``huggingface_hub`` release whose ``hf`` CLI carries the
+#: ``hf buckets`` / ``hf sync`` subcommands :func:`sync_dataset_to_bucket`
+#: invokes.
+#:
+#: They first ship in 1.5.0, as ``huggingface_hub/cli/buckets.py`` registered by
+#: ``cli/hf.py`` (``app.add_group(buckets_cli, name="buckets")`` and
+#: ``app.command()(sync)``). 1.0-1.4.x install the ``hf`` entry point without
+#: that module, so they answer both invocations with
+#: ``Error: No such command 'buckets'`` / ``'sync'``.
+#:
+#: This is the single source of the floor: the version gate below, the upgrade
+#: instructions it and :func:`sync_dataset_to_bucket` emit, and the pin the
+#: ``[wbc]`` extra declares are all checked against it, so the accepted domain
+#: cannot drift from the release that can actually honor a bucket sync.
+_HF_BUCKET_CLI_MIN_VERSION = (1, 5)
+
+#: The requirement string every bucket-sync upgrade instruction quotes, derived
+#: from :data:`_HF_BUCKET_CLI_MIN_VERSION` so the advice cannot name a release
+#: that does not ship the subcommands.
+_HF_BUCKET_CLI_MIN_SPEC = "huggingface_hub>=" + ".".join(str(part) for part in _HF_BUCKET_CLI_MIN_VERSION)
+
+
 def _huggingface_hub_version_error() -> str | None:
     """Return an actionable error message if ``huggingface_hub`` is too old for bucket sync.
 
-    The ``hf buckets`` / ``hf sync`` subcommands ship in huggingface_hub>=1.0.
-    On older releases (e.g. the 0.36.x stable line) the ``hf`` binary exists,
-    so :func:`_hf_executable` succeeds, but the subcommands fail with argparse
-    usage noise ("invalid choice: 'buckets'") that gives no hint the fix is an
+    The ``hf buckets`` / ``hf sync`` subcommands ship in
+    :data:`_HF_BUCKET_CLI_MIN_VERSION` and later. On any older release - the
+    0.36.x stable line, but equally 1.0-1.4.x - the ``hf`` binary exists, so
+    :func:`_hf_executable` succeeds, but the subcommands fail with usage noise
+    (``Error: No such command 'buckets'``) that gives no hint the fix is an
     upgrade. Version-checking the installed package up front turns that noise
     into a clear upgrade instruction without spawning a subprocess.
 
     Returns ``None`` (no error) when:
 
-    - the installed version is >= 1.0, or
+    - the installed version is >= :data:`_HF_BUCKET_CLI_MIN_VERSION`, or
     - ``huggingface_hub`` is not importable in this interpreter (the ``hf``
       binary may come from a different environment on PATH whose version we
       cannot see; the normal subprocess error path still applies), or
@@ -300,11 +355,11 @@ def _huggingface_hub_version_error() -> str | None:
     match = re.match(r"(\d+)\.(\d+)", version)
     if match is None:
         return None
-    if (int(match.group(1)), int(match.group(2))) >= (1, 0):
+    if (int(match.group(1)), int(match.group(2))) >= _HF_BUCKET_CLI_MIN_VERSION:
         return None
     return (
-        f"bucket sync requires huggingface_hub>=1.0 (`hf buckets`/`hf sync`); "
-        f"installed: {version}. pip install -U 'huggingface_hub>=1.0'."
+        f"bucket sync requires {_HF_BUCKET_CLI_MIN_SPEC} (`hf buckets`/`hf sync`); "
+        f"installed: {version}. pip install -U '{_HF_BUCKET_CLI_MIN_SPEC}'."
     )
 
 
@@ -644,6 +699,105 @@ def unrecordable_action_columns_error(
     )
 
 
+def _frame_shape_error(
+    camera_dims: Any,
+    camera_keys: Sequence[str] | None,
+    video_width: Any,
+    video_height: Any,
+    context: str = "DatasetRecorder.create",
+) -> str | None:
+    """Error text when the declared camera frame shape cannot be honored.
+
+    ``camera_dims`` and the ``video_width`` / ``video_height`` pair are one
+    quantity in two spellings. :meth:`DatasetRecorder._build_features` reads
+    ``camera_dims.get(camera, (video_height, video_width))`` once per declared
+    camera, so the pair is the shape of every camera the mapping does not
+    cover. Both spellings are checked here on the same domain: a value refused
+    through one and accepted through the other would let the same unusable
+    shape into the schema by choosing where to write it.
+
+    The shape is a declaration rather than a resize - the recorder rescales
+    nothing - so it goes straight into the LeRobot feature as ``(3, height,
+    width)`` and is not compared against a real frame until the first
+    ``add_frame``. Three mistakes could not be honored as written and were
+    reported nowhere near the parameter that caused them:
+
+    * A key ``camera_keys`` does not declare is dropped by that ``.get``, so
+      the camera it was meant for silently takes the global pair instead and
+      the schema declares a shape that camera does not stream. This is the
+      quiet one: nothing is logged, the dataset is created, and the mismatch
+      surfaces later against ``add_frame``.
+    * A component that is not a positive integer is written into the feature
+      as given - ``(3, 480, nan)``, ``(3, 480, '640')`` - so the schema
+      declares a shape no frame can match.
+    * A value that is not a two-element sequence unpacks as a bare
+      ``TypeError`` / ``ValueError``, and a non-mapping ``camera_dims`` as a
+      bare ``AttributeError`` from the ``.get`` - none of which names this
+      parameter.
+
+    :func:`~strands_robots.utils.positive_count_error` owns the component
+    domain because a pixel count here is written into ``meta/info.json``: it
+    has to be a true ``int``. An integral float lands in the schema as
+    ``480.0``, and a ``numpy`` integer raises ``TypeError: Object of type
+    int64 is not JSON serializable`` from the metadata write, so the wider
+    whole-number domain would accept values this consumer refuses.
+
+    Args:
+        camera_dims: Per-camera ``{name: (height, width)}`` mapping, or None.
+        camera_keys: The camera names the schema declares. Authoritative: it is
+            the only source of camera names, and where it is empty no image
+            feature is built, so neither spelling is read.
+        video_width: Fallback frame width for every camera not covered above.
+        video_height: Fallback frame height for every camera not covered above.
+        context: Caller name for the message prefix.
+
+    Returns:
+        The first problem found, or None when the declared shape is usable.
+    """
+    declared = list(camera_keys or ())
+
+    # The pair is read exactly where ``_build_features`` reads it - per declared
+    # camera - so with no camera declared it decides nothing and is left alone.
+    if declared:
+        for value, param in ((video_width, "video_width"), (video_height, "video_height")):
+            if text := positive_count_error(value, param, context):
+                return text
+
+    if camera_dims is None:
+        return None
+    if not isinstance(camera_dims, Mapping):
+        return (
+            f"{context}: camera_dims must be a mapping of camera name to a "
+            f"(height, width) pair, got {type(camera_dims).__name__}. Its entries are "
+            f"read per declared camera, so a non-mapping cannot be looked up at all."
+        )
+    if camera_dims and not declared:
+        return (
+            f"{context}: camera_dims declares a frame shape for "
+            f"{sorted(map(str, camera_dims))} but no camera is declared. Pass the same "
+            f"names as camera_keys, or drop camera_dims - with no camera_keys no image "
+            f"feature is built, so every entry would be ignored."
+        )
+    for name, dims in camera_dims.items():
+        if name not in declared:
+            hint = difflib.get_close_matches(str(name), declared, n=1, cutoff=0.6)
+            suggestion = f" Did you mean {hint[0]!r}?" if hint else ""
+            return (
+                f"{context}: camera_dims key {name!r} is not a declared camera."
+                f"{suggestion} Declared cameras: {declared}. An entry keyed by any other "
+                f"name is never looked up, so that camera would be declared at the global "
+                f"video_height/video_width instead of the shape given here."
+            )
+        if isinstance(dims, str | bytes | Mapping) or sequence_length(dims) != 2:
+            return (
+                f"{context}: camera_dims[{name!r}] must be a (height, width) pair of positive integers, got {dims!r}."
+            )
+        for value, axis in zip(dims, ("height", "width"), strict=True):
+            if text := positive_count_error(value, f"camera_dims[{name!r}] {axis}", context):
+                return text
+    return None
+
+
 class RecordingFrameError(RuntimeError):
     """A frame the dataset recorder could not write, in fail-fast mode.
 
@@ -762,13 +916,50 @@ class DatasetRecorder:
 
         Args:
             repo_id: HuggingFace dataset ID (e.g. "user/my_dataset")
-            fps: Recording frame rate
+            fps: Recording frame rate, as a positive whole number of frames per
+                second. This is the rate the dataset is DECLARED at (it is
+                written into ``meta/info.json`` and every frame timestamp is
+                derived from it), not a rate anything is throttled to. The domain
+                is the shared one every backend's ``start_recording`` applies to
+                the ``fps`` it forwards here
+                (:func:`~strands_robots.utils.positive_whole_number_error`), so
+                the facade and this method cannot disagree about which rates are
+                usable.
             robot_type: Robot type string (e.g. "so100", "panda")
             robot_features: Dict of observation feature names → types
                 (from robot.observation_features or sim joint names)
             action_features: Dict of action feature names → types
-            camera_keys: List of camera names (images become video features)
-            joint_names: List of joint names (alternative to robot_features for sim)
+            camera_keys: List of DISTINCT camera names (images become video
+                features). One name per camera, in schema order; a single name
+                still has to be a one-element list.
+            camera_dims: Per-camera declared frame shape as
+                ``{camera_key: (height, width)}``, keyed by the same names
+                ``camera_keys`` declares. Note the order: ``(height, width)``,
+                the reverse of the ``video_width`` / ``video_height`` pair it
+                falls back to on this same call. Every backend that supplies it
+                reads the camera's real render resolution, so a camera present
+                here is declared at its own shape rather than the global one; a
+                camera absent from the mapping (or ``None``, the default) takes
+                ``(video_height, video_width)``.
+                Every key has to be a name ``camera_keys`` declares: an entry
+                keyed by anything else is never looked up, so that camera would
+                be declared at the global pair instead of the shape given here.
+                Each value is a two-element ``(height, width)`` of positive
+                integers.
+            video_width/video_height: Declared frame shape for every camera
+                ``camera_dims`` does not cover. A declaration rather than a
+                resize - the recorder rescales nothing - so a camera streaming
+                another size is declared at a shape it does not have. This is why
+                the backends pass ``camera_dims`` read from the live cameras
+                instead of relying on this pair.
+                Each is a positive integer - a pixel count is written into
+                ``meta/info.json``, so an integral float would be declared as
+                ``480.0`` and a ``numpy`` integer is not JSON-serializable.
+            joint_names: List of DISTINCT joint names (alternative to
+                robot_features for sim). These become the ``observation.state``
+                column names, and add_frame reads each one out of the
+                observation, so a name the observation does not carry records
+                0.0 for the whole episode.
             action_names: Explicit action-column names. Use when the action
                 space diverges from the joint names (e.g. actuator short-names
                 from SimEngine.robot_action_keys, where a tendon gripper is an
@@ -782,7 +973,11 @@ class DatasetRecorder:
                 these; add_frame reads the source keys, not the expanded names.
             task: Default task description
             root: Local directory for dataset storage
-            use_videos: Encode camera frames as video (True) or keep as images
+            use_videos: Encode camera frames as video (True) or keep as images.
+                Selects a posture rather than scaling a quantity, so it must be a
+                boolean (:func:`~strands_robots.utils.boolean_flag_error`) - the
+                choice is written into the dataset schema as each camera's
+                ``dtype`` and is fixed for the life of the dataset.
             vcodec: Video codec for the per-camera MP4 streams. Defaults to
                 "h264" (H.264), which is universally decodable - including
                 by OpenCV's VideoCapture / FFmpeg build, used by many
@@ -790,7 +985,9 @@ class DatasetRecorder:
                 smaller files in storage-constrained training pipelines;
                 LeRobot read-back (torchcodec/pyav) handles AV1, but OpenCV
                 wheels commonly cannot decode it and silently yield 0 frames.
-            streaming_encoding: Stream-encode video during capture
+            streaming_encoding: Stream-encode video during capture. Must be a
+                boolean, on the same domain as ``use_videos``; it is forwarded to
+                LeRobot's own boolean parameter.
             image_writer_threads: Threads for writing image frames
             video_backend: LeRobot video *decode* backend for read-back
                 ("torchcodec" or "pyav"). Left as None by default so LeRobot
@@ -814,7 +1011,126 @@ class DatasetRecorder:
                 cleared so ``create`` does not dead-end on its own existence
                 guard; a non-empty NON-dataset directory raises ``ValueError``
                 rather than clobbering unrelated files.
+
+                This flag is a confirmation gate in front of a delete, so it must
+                be a boolean (:func:`~strands_robots.utils.boolean_flag_error`),
+                on the same domain every backend's ``start_recording`` applies to
+                the ``overwrite`` it forwards here. It is checked before the
+                on-disk target is touched, so an unusable value cannot remove a
+                dataset on the way to being reported.
+
+        Raises:
+            ValueError: ``camera_keys``, ``joint_names`` or ``action_names`` is
+                not a list of distinct non-blank names (a bare string, a
+                mapping, or a repeated name); or the declared camera frame shape
+                cannot be honored - ``camera_dims`` is not a mapping, is keyed by
+                a name ``camera_keys`` does not declare, or holds anything but a
+                ``(height, width)`` pair of positive integers, or
+                ``video_width`` / ``video_height`` is not a positive integer;
+                or ``fps`` is not a positive whole number; or ``use_videos``,
+                ``streaming_encoding`` or ``overwrite`` is not a boolean.
+                Refused before the on-disk target is touched, so an
+                ``overwrite=True`` call that is refused leaves an existing
+                dataset intact.
+            FileExistsError: The resolved dataset directory already holds a
+                dataset and ``overwrite`` is False.
         """
+        # ``camera_keys`` / ``joint_names`` / ``action_names`` each name an
+        # ordered list of DISTINCT schema column names, so each is refused on the
+        # shared name-list domain here - before the lerobot extra is probed, so
+        # the same caller mistake reports identically on every install, and
+        # before the on-disk target is touched, because ``overwrite=True``
+        # removes an existing dataset directory and a refusal arriving after that
+        # would already have destroyed it.
+        #
+        # Neither mistake this catches could be honored as written, and both used
+        # to be reported nowhere: the dataset was created, every frame was
+        # accepted and the episode saved. A single name passed as a bare string
+        # is iterable per character, so ``joint_names="gripper"`` declared seven
+        # columns (``g``, ``r``, ``i``, ``p``, ``p``, ``e``, ``r``) and every one
+        # recorded 0.0 - add_frame reads each declared name out of the
+        # observation, and none of those names is in it. A repeated name collapses
+        # where it keys a dict (two ``camera_keys`` entries with the same name
+        # declare ONE camera column, so the schema has fewer cameras than the
+        # caller asked for) and doubles where it indexes a position (a repeated
+        # joint name records that joint twice and the joint the caller meant not
+        # at all).
+        for value, param in (
+            (camera_keys, "camera_keys"),
+            (joint_names, "joint_names"),
+            (action_names, "action_names"),
+        ):
+            if value and (text := name_list_error(value, param, "DatasetRecorder.create")):
+                raise ValueError(text)
+        # ``camera_dims`` and the ``video_width`` / ``video_height`` pair are the
+        # other half of the same schema declaration: they set the frame shape of
+        # every declared camera. Checked on the same shared domain, in the same
+        # place and for the same two reasons as the names above - before the
+        # lerobot extra is probed, so one caller mistake reports identically on
+        # every install, and before the on-disk target is touched, because
+        # ``overwrite=True`` removes an existing dataset and a refusal arriving
+        # after that would already have destroyed it. Runs after the loop above
+        # so ``camera_keys`` is known to be a list of distinct names before it is
+        # used as the authoritative set of camera names.
+        if text := _frame_shape_error(camera_dims, camera_keys, video_width, video_height):
+            raise ValueError(text)
+        # ``fps`` is the recording RATE the same declaration fixes - it is written
+        # into the dataset metadata and every timestamp is derived from it - so it
+        # is refused here too, in the same block and ahead of the same two side
+        # effects as the names and the shape above.
+        #
+        # The domain is deliberately the one the facades already apply, and via the
+        # same function rather than a restatement of it: every backend's
+        # ``start_recording`` calls ``dataset_recording_option_error``, which is a
+        # thin ``{"status": "error"}`` envelope around
+        # ``positive_whole_number_error``, and then forwards ``fps`` here
+        # unchanged. Any narrower rule at this depth would refuse a value those
+        # facades had already reported usable, turning a returned error envelope
+        # into a ``ValueError`` raised out of a method that returns one.
+        #
+        # Direct callers were the only ones left unguarded, and an unusable rate
+        # cost them the episode silently: LeRobot rejects only ``fps <= 0``, so a
+        # fractional ``2.7``, a ``nan`` or an ``inf`` created the dataset and then
+        # saved ZERO frames with ``create``, ``add_frame``, ``save_episode`` and
+        # ``finalize`` all returning normally; ``fps=True`` recorded a 1 fps
+        # dataset (an ``int`` subclass acting as a 1); and ``fps="30"`` dead-ended
+        # in a bare ``TypeError: '<=' not supported between instances of 'str' and
+        # 'int'`` naming neither the parameter nor the method.
+        if text := positive_whole_number_error(fps, "fps", "DatasetRecorder.create"):
+            raise ValueError(text)
+        # ``use_videos`` / ``streaming_encoding`` / ``overwrite`` are the posture
+        # half of the same guard block: each selects a branch rather than scaling
+        # a quantity, so each is checked on
+        # :func:`~strands_robots.utils.boolean_flag_error` - the inverse domain to
+        # the numeric ones above, which reject ``bool`` because it would pass as a
+        # silent ``1``. Checked here for the same two reasons and in the same
+        # place: before the lerobot extra is probed, and before the on-disk target
+        # is touched.
+        #
+        # Read by truthiness instead, each failed toward the branch the caller was
+        # opting *out* of, because every non-empty string is truthy. ``overwrite``
+        # is the destructive one: ``overwrite="false"`` (also ``"no"``, ``"off"``,
+        # ``"0"``) reached ``_prepare_create_target`` as True and ``shutil.rmtree``-d
+        # the caller's dataset. Measured end to end: a dataset holding one recorded
+        # episode came back with zero, and ``create`` returned a working recorder
+        # throughout. ``use_videos="false"`` declared the cameras as ``dtype="video"``
+        # where ``False`` declares ``"image"``, a schema decision written into
+        # ``meta/info.json`` and fixed for the life of the dataset; the same string
+        # then reached LeRobot's own boolean parameter unconverted, as
+        # ``streaming_encoding="false"`` did on both entry points.
+        #
+        # ``push_to_hub`` and ``sync_dataset_to_bucket`` in this module, and every
+        # backend's ``start_recording`` facade, already check their own posture
+        # flags; the documented direct creation API was the surface left reading
+        # them by truthiness, so the two disagreed about which values are usable.
+        for flag_value, flag_name in (
+            (use_videos, "use_videos"),
+            (streaming_encoding, "streaming_encoding"),
+            (overwrite, "overwrite"),
+        ):
+            if text := boolean_flag_error(flag_value, flag_name, "DatasetRecorder.create"):
+                raise ValueError(text)
+
         # Lazy import - this is where we actually need lerobot
         LeRobotDatasetCls = _get_lerobot_dataset_class()
 
@@ -917,7 +1233,9 @@ class DatasetRecorder:
             vcodec: Video codec for the per-camera MP4 streams (default
                 "h264"; routed into the version-appropriate encoder
                 config). See create() for the H.264-vs-AV1 trade-off.
-            streaming_encoding: Stream-encode video during capture.
+            streaming_encoding: Stream-encode video during capture. Must be a
+                boolean, on the same domain :meth:`create` applies to the flag it
+                forwards here (:func:`~strands_robots.utils.boolean_flag_error`).
             image_writer_threads: Threads for writing image frames.
             video_backend: LeRobot video *decode* backend for read-back
                 ("torchcodec" or "pyav"); None uses LeRobot's platform default.
@@ -927,8 +1245,23 @@ class DatasetRecorder:
 
         Returns:
             A DatasetRecorder wrapping the resumed dataset.
+
+        Raises:
+            ValueError: ``streaming_encoding`` is not a boolean. Refused before
+                the lerobot extra is probed, so the same caller mistake reports
+                identically on every install.
+            RuntimeError: The installed LeRobot has no ``LeRobotDataset.resume``
+                (append needs ``lerobot>=0.5.2``).
         """
         import inspect
+
+        # Same posture flag as :meth:`create` forwards, on the same domain and
+        # ahead of the same lerobot probe, so the two creation entry points cannot
+        # disagree about which values are usable. Read by truthiness,
+        # ``streaming_encoding="false"`` selected streaming and handed LeRobot's
+        # own boolean parameter the string unconverted.
+        if text := boolean_flag_error(streaming_encoding, "streaming_encoding", "DatasetRecorder.resume"):
+            raise ValueError(text)
 
         LeRobotDatasetCls = _get_lerobot_dataset_class()
 
@@ -1097,7 +1430,18 @@ class DatasetRecorder:
             observation: Raw observation dict from robot/sim
                 (joint_name → float, camera_name → np.ndarray)
             action: Action dict (joint_name → float)
-            task: Task description (uses default if None)
+            task: Task description written to this frame's ``task`` column.
+                This argument is the top of a three-level chain and the only
+                place it is stated: it falls back to the recorder's
+                ``default_task`` (set from ``create(task=...)`` /
+                ``resume(task=...)``, which is what a backend's
+                ``start_recording(task=...)`` supplies) and then to the literal
+                ``"untitled"``. Every simulation rollout hook passes
+                ``run_policy(instruction=...)`` here, so a non-empty instruction
+                overrides the recording session's task, and a rollout driven with
+                neither annotates its frames ``"untitled"`` - a constant
+                instruction for any language-conditioned policy trained on the
+                result.
             camera_keys: Which keys in observation are camera images
             required_action_keys: Action column names this frame must
                 supply a value for - typically the action keys of the robot
@@ -1353,6 +1697,15 @@ class DatasetRecorder:
           * leave the buffer in place and warn (caller must ``stop_recording`` /
             ``save_episode`` to drain it before recording again).
 
+        Discarded frames are un-counted from both ``frame_count`` and
+        ``episode_frame_count``, because ``add_frame`` counts at buffer time
+        while frames only reach disk on ``save_episode``. Both counters
+        therefore describe frames that reached, or will reach, disk - never
+        frames that were thrown away. When no clear surface is available the
+        frames are still buffered and will be written by the
+        ``stop_recording``/``save_episode`` drain the warning recommends, so
+        neither counter changes in that case.
+
         Returns:
             True if the buffer was actively cleared; False if no clear surface
             was available (a warning is logged in that case).
@@ -1369,10 +1722,25 @@ class DatasetRecorder:
             logger.warning("clear_episode_buffer failed: %s", e)
             cleared = False
 
-        # Reset the per-episode frame counter regardless: the next episode
-        # reports frames from 0. frame_count (cumulative) is left untouched
-        # since those frames were really written to disk only on save_episode.
-        self.episode_frame_count = 0
+        if cleared:
+            # The buffered frames are gone. They were counted optimistically by
+            # add_frame (which counts at buffer time) but never reached disk,
+            # since frames are only written by save_episode - so un-count them
+            # from the cumulative total as well as the per-episode one. Both
+            # counters describe frames that reached, or will reach, disk:
+            # resume() seeds frame_count from dataset.meta.total_frames, and
+            # stop_recording refuses an empty dataset by asking frame_count
+            # whether anything was ever captured. Leaving the discarded frames
+            # counted makes the recorder report a total no parquet row backs,
+            # and blinds that refusal.
+            self.frame_count -= self.episode_frame_count
+            self.episode_frame_count = 0
+        # When the discard did NOT happen the frames are still buffered, and the
+        # warning below tells the caller to drain them with
+        # stop_recording()/save_episode() - which writes them to disk. Nothing
+        # was thrown away, so both counters are left as they are: the eventual
+        # flush then reports the frames it really wrote, and a later successful
+        # clear can still un-count them.
 
         if not cleared:
             logger.warning(
@@ -1401,7 +1769,7 @@ class DatasetRecorder:
 
         Args:
             tags: Optional tags for the dataset
-            private: Upload as private dataset
+            private: Upload as private dataset. Must be a boolean.
 
         Refuses to publish an empty dataset (no frames written or no episode
         saved). Pushing then would create a Hub repo containing only
@@ -1413,7 +1781,20 @@ class DatasetRecorder:
         Returns:
             Dict with push status. ``status="error"`` (no Hub call made) when
             the dataset is empty.
+
+        ``private`` selects the published repository's visibility, so it is
+        checked against :func:`~strands_robots.utils.boolean_flag_error`
+        ahead of the empty-dataset state check and any Hub call: the flag is
+        a property of this call rather than of the recorder, so the same
+        mistake reports identically whether or not the dataset happens to be
+        empty. It is otherwise forwarded verbatim to LeRobot, whose own
+        parameter is ``bool | None`` where ``None`` means *use the namespace
+        default* - a third visibility this signature's ``bool`` does not
+        describe, and one a caller reading ``private: bool = False`` would not
+        expect to select.
         """
+        if flag_error := boolean_flag_error(private, "private", "push_to_hub"):
+            return {"status": "error", "message": flag_error}
         if self.frame_count == 0 or self.episode_count == 0:
             msg = (
                 f"refusing to push empty dataset {self.dataset.repo_id} "
@@ -1479,7 +1860,10 @@ class DatasetRecorder:
         return str(self.dataset.root)
 
     def __repr__(self) -> str:
-        return f"DatasetRecorder(repo_id={self.repo_id}, episodes={self.episode_count}, frames={self.frame_count})"
+        try:
+            return f"DatasetRecorder(repo_id={self.repo_id}, episodes={self.episode_count}, frames={self.frame_count})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
 
 # Shared replay-episode helpers
@@ -1488,16 +1872,47 @@ class DatasetRecorder:
 def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None):
     """Load a LeRobotDataset and resolve the frame range for an episode.
 
+    Args:
+        repo_id: HuggingFace dataset id.
+        episode: Episode index, a non-negative whole number. Any real scalar
+            with an integral value is accepted (a ``2.0`` from a config, a
+            ``np.int64`` from arithmetic); the value is coerced with ``int()``
+            once the shared guard has round-tripped it, so an accepted index
+            reaches the O(1) ``episode_data_index`` lookup rather than the
+            last-resort frame scan a float index falls through to.
+        root: Optional local dataset root override.
+
     Returns:
         Tuple of (dataset, episode_start, episode_length) on success.
 
     Raises:
         ImportError: If lerobot is not installed.
-        ValueError: If the episode index is negative, out of range, or the
-            resolved episode has no frames.
+        ValueError: If the episode index is not a usable non-negative whole
+            number, is out of range, or the resolved episode has no frames.
     """
-    if episode < 0:
-        raise ValueError(f"Episode index must be non-negative, got {episode}")
+    # The domain is the shared non-negative whole-number rule, not a bare
+    # ``< 0`` test. That test gave a verdict to three classes of value it
+    # could not actually honor:
+    #
+    # * ``bool`` passed it (``True < 0`` is False) and then indexed the
+    #   episode table as an int, so ``episode=True`` resolved **episode 1**
+    #   and returned it as a success - a different episode than any caller
+    #   passing a flag could have meant.
+    # * A non-integral or non-finite value passed it too and was blamed on
+    #   the dataset after a full-length boundary scan ("Episode 2.5 has no
+    #   frames"), naming the data rather than the index.
+    # * A str/list/None reached the comparison itself and raised
+    #   ``TypeError``, which is not the ``ValueError`` this function
+    #   documents as its refusal channel.
+    #
+    # Shared with the ``replay_episode`` teleop knob rather than restated:
+    # that parameter is the same quantity on a neighbouring surface, and
+    # ``non_negative_whole_number_error`` already names it.
+    if msg := non_negative_whole_number_error(episode, "episode", "load_lerobot_episode"):
+        raise ValueError(msg)
+    # Safe because the guard performed this coercion and compared the result
+    # back; see its docstring on why the two steps are ordered this way.
+    episode = int(episode)
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 

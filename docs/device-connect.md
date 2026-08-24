@@ -19,7 +19,7 @@ description: Device Connect — the device-aware networking layer (discovery, RP
 uv pip install "strands-robots[device-connect]"   # device-connect-edge + device-connect-agent-tools
 ```
 
-Without the extra, `import strands_robots` still works — everything falls back to the built-in Zenoh mesh.
+Without the extra, `import strands_robots` still works — everything falls back to the built-in Zenoh mesh. The one exception is `Robot().run()` below, which serves over Device Connect only.
 
 ## Server mode — `Robot().run()`
 
@@ -31,6 +31,10 @@ r.run()              # serve on Device Connect (blocks until Ctrl+C)
 ```
 
 `.run()` stops the auto-started built-in mesh and serves the robot over Device Connect (D2D Zenoh multicast, no broker). Without `.run()` the robot is **agent-controlled** — discovered and invoked remotely via `robot_mesh` / `discover()`.
+
+Ctrl+C releases the robot before the process exits. `.run()` is the only entry point that holds a robot for the life of a process, so the interrupt handler is the only teardown it gets: it calls the instance's `cleanup()`, which on hardware reaches the driver's own `disconnect()` — where torque disable and gripper release live — and closes the motors bus and every camera. The exit itself stays abrupt (`cleanup()` drains the task executor, and a wedged rollout must not turn one Ctrl+C into a process that never exits), so the release runs under a 5 s budget on a background thread. It prints `<peer-id> stopped.` only when the release finished; a teardown that times out or raises is reported as `<peer-id> is exiting WITHOUT a completed shutdown: …` so an operator is never told the arm is safe when it may still be holding torque.
+
+Because the mesh is stopped *for* Device Connect, a bring-up that fails leaves the process on no transport at all — so `.run()` logs the cause (naming the extra when that is what is missing) and prints `<peer-id> is NOT online` instead of announcing a device that is not there. It keeps running, so a broker that comes back is not a lost process.
 
 !!! warning "Secure by default"
     Device Connect does not enable unencrypted transport implicitly. To run authenticated + encrypted, point it at a bundled credentials file (`MESSAGING_CREDENTIALS_FILE` — a single `*.creds.json` with the CA, cert and key) — this works **broker-less (D2D) or brokered**, they're independent choices. For a quick trial on a **trusted, isolated LAN** you can instead skip auth (a warning is logged while active):
@@ -48,6 +52,28 @@ Each robot is wrapped as a Device Connect device by a `DeviceDriver` adapter:
 | `SimulationDeviceDriver` | a MuJoCo `Simulation` | `execute`, `getFeatures`, `getStatus`, `reset`, `step`, `stop` |
 | `RobotDeviceDriver` | a hardware `Robot` | the same RPC surface, driving real servos |
 | `ReachyMiniDriver` | a Pollen Reachy Mini | device-native RPCs (`look`, `nod`, …) over Zenoh / WebSocket |
+
+### Published state events
+
+Besides answering RPCs, a driver publishes its own state on a 10 Hz loop while a
+policy is running. `SimulationDeviceDriver` emits two events:
+
+| Event | Payload |
+|-------|---------|
+| `stateUpdate` | `sim_time`, `step_count`, and `running_policies` (`{robot: {steps, instruction}}`) |
+| `observationUpdate` | `robot_name`, `sim_time`, `step_count`, and `joints` |
+
+`joints` is `{joint name: position}` in **radians**, and carries exactly the
+per-joint scalars the simulation's own
+[`get_observation`](simulation/overview.md) reports for that robot:
+
+- a value is read at the joint's own qpos address, so a robot with a floating
+  base reports its leg and arm angles rather than components of its base pose;
+- a floating base has no scalar joint position (its state is a position plus a
+  quaternion), so it is **not** a key in `joints` - subscribe to the simulation's
+  observation for `base_pos` / `base_quat` if you need the base pose;
+- only that robot's own joints appear, under their short names, whatever the
+  compiled model namespaces them to in a multi-robot scene.
 
 `init_device_connect()` / `init_device_connect_sync()` attach the right driver and start the runtime — `Robot().run()` calls these for you.
 
@@ -129,7 +155,18 @@ You rarely touch more than one or two of these. Grouped by what they control:
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `MESSAGING_CREDENTIALS_FILE` | unset | **The one var to enable mTLS.** A single `*.creds.json` bundling CA + cert + key. Works D2D or brokered. |
-| `DEVICE_CONNECT_ALLOW_INSECURE` | unset (secure) | `true` = skip auth/encryption. **Trusted, isolated LAN only**; logs a warning. |
+| `DEVICE_CONNECT_ALLOW_INSECURE` | unset (secure) | `true`/`1`/`yes` = skip auth/encryption; every other spelling is secure. **Trusted, isolated LAN only**; logs a warning. The string vocabulary is this variable's - the `allow_insecure=` argument must be a boolean and refuses a string, since `"false"` is truthy. |
+
+`ReachyMiniDriver` reaches its robot over a second link the variables above do not
+cover: the Reachy Mini daemon's own REST / WebSocket interface. That link is
+**plaintext by default**, and three variables secure it - the token authenticates,
+only `REACHY_DAEMON_TLS` encrypts, so they are only useful together.
+
+| Variable | Default | What it does |
+|----------|---------|--------------|
+| `REACHY_DAEMON_TLS` | unset - plaintext `http://` / `ws://` | `1`/`true`/`yes`/`on` (any case) upgrades the daemon link to `https://` / `wss://`. Until it is set the channel is unencrypted, so the token below and every actuator command cross the network in the clear, where they can be sniffed or replayed. |
+| `REACHY_DAEMON_TOKEN` | unset | Bearer credential the daemon authenticates the caller with; unset logs a one-time warning that the link is unauthenticated. It authenticates, it does not encrypt - on the default plaintext link the token itself is sent in the clear, so set `REACHY_DAEMON_TLS` alongside it. |
+| `REACHY_DAEMON_TLS_INSECURE` | unset - certificate verified | `1`/`true`/`yes`/`on` (any case) keeps the encryption but stops verifying the daemon's certificate - for a self-signed daemon with no CA provisioned yet. A one-time warning keeps the weakened posture visible. |
 
 #### Authorization & safety — who may do what
 
@@ -137,7 +174,7 @@ You rarely touch more than one or two of these. Grouped by what they control:
 |----------|---------|--------------|
 | `STRANDS_MESH_HITL_ACTIONS` | built-in set | Which actions need operator (human-in-the-loop) approval. |
 | `DEVICE_CONNECT_RPC_ALLOW` | allow all | Caller allowlist for state-mutating RPCs (`execute`/`stop`/`step`/`reset`); `*` globs. |
-| `DEVICE_CONNECT_ESTOP_ALLOW` | allow all | Caller allowlist for `emergencyStop`. |
+| `DEVICE_CONNECT_ESTOP_ALLOW` | inherits `DEVICE_CONNECT_RPC_ALLOW` | Caller allowlist for `emergencyStop`. Unset - or holding no entry after stripping, so `""`, `" "` and `","` all count - falls back to the RPC allowlist. |
 | `STRANDS_ROBOT_MESH_AGENT_ID` | anonymous | Caller id the agent presents — **required** when a device sets an allowlist (else it's denied). |
 
 #### Other
@@ -145,7 +182,6 @@ You rarely touch more than one or two of these. Grouped by what they control:
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `STRANDS_ROBOT_MESH_DC` | `on` | `off` makes `robot_mesh()` skip Device Connect and use the built-in mesh only. |
-| `REACHY_DAEMON_TOKEN` | unset | Auth token for the Reachy Mini daemon, if it requires one. |
 
 !!! warning "Allowlists are a hard boundary only under mTLS"
     Over insecure D2D the caller id is self-asserted, so `DEVICE_CONNECT_RPC_ALLOW` / `DEVICE_CONNECT_ESTOP_ALLOW` are *advisory* (a one-time warning is logged). For a real authorization boundary, run the brokered setup with mTLS, which binds the caller id to the sender's certificate.

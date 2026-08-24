@@ -130,6 +130,8 @@ class FastSacTrainer(BaseRLAlgo):
     def validate(self, spec: TrainSpec) -> list[str]:
         """Preflight an :class:`RLTrainSpec` for a FastSAC run (pure / read-only)."""
         problems = self._security_problems(spec)
+        problems.extend(self._learning_rate_problems(spec))
+        problems.extend(self._seed_problems(spec))
         if not isinstance(spec, RLTrainSpec):
             problems.append(f"fast_sac requires an RLTrainSpec, got {type(spec).__name__}")
             return problems
@@ -137,6 +139,17 @@ class FastSacTrainer(BaseRLAlgo):
             problems.append("env_factory is required (a zero-arg callable returning a SimEnv)")
         if not spec.output_dir:
             problems.append("output_dir is required")
+        # gamma discounts the return this backend optimizes; the arithmetic that
+        # consumes it never judges it, so the shared interval domain does.
+        problems.extend(self._discount_factor_problems(spec))
+        # alpha_lr is a second learning rate on a second optimizer: the actor
+        # and critics take spec.learning_rate, the entropy temperature takes
+        # this one, and only the first is covered above.
+        problems.extend(self._temperature_learning_rate_problems(spec))
+        # init_alpha is the temperature that rate moves, and it reaches
+        # torch.log on both branches, so only a positive finite value has a
+        # usable logarithm - the same domain, on the value rather than the rate.
+        problems.extend(self._initial_temperature_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:
@@ -427,7 +440,12 @@ class FastSacTrainer(BaseRLAlgo):
             "num_critic_obs": self.env.num_critic_obs,
             "num_actions": self.env.num_actions,
             "actor_obs_keys": self.env.actor_obs_keys,
-            "joint_names": (self.env.engine.robot_joint_names(self.env.robot_name) if self.env.robot_name else []),
+            # ``action_keys``, not a joint list: the field names what the
+            # ``num_actions`` outputs above it drive, so it must be the same
+            # vocabulary ``send_action`` binds a vector against. A tendon
+            # gripper's actuator has no matching joint name at all, and a
+            # Newton floating base is a joint with no commandable scalar.
+            "action_keys": (self.env.engine.robot_action_keys(self.env.robot_name) if self.env.robot_name else []),
             "hidden_dims": list(self.spec.hidden_dims),
             "iteration": iteration,
         }

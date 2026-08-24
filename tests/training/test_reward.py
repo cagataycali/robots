@@ -178,11 +178,11 @@ class TestRewardProgress:
         # ``rewards.detach().to("cpu").flatten().tolist()``. When real torch is
         # absent, tests/conftest.py installs tests/mocks/torch_mock.MockTensor as
         # ``torch``; ``pytest.importorskip("torch")`` above therefore resolves to
-        # the mock rather than skipping (the mock IS a torch module). The mock
-        # must implement every method in that chain or the "run all unit tests
-        # without PyTorch installed" contract in conftest breaks -- a
-        # torch-return test would fail with AttributeError only in the mocked
-        # (no-real-torch) environment. Pin that ``flatten``/``tolist`` (the two
+        # the mock rather than skipping (the mock IS a torch module). This chain
+        # is inside the subset the stand-in covers, so it must keep working: a
+        # link it lacked would skip this test in the mocked (no-real-torch)
+        # environment while passing everywhere else. Pin that
+        # ``flatten``/``tolist`` (the two
         # links the mock previously lacked) survive on MockTensor and that the
         # full chain a torch tensor takes through reward_progress still yields
         # the right floats.

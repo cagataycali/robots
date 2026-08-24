@@ -102,7 +102,16 @@ Every hardware `Robot` and `Simulation` host exposes:
 
 ### `teleoperate`
 
-- **`names`** - subset of attached streams to run (default: all).
+- **`names`** - subset of attached streams to run (`None`, the default, runs
+  every attached stream). The selection is read by membership, so only `None`
+  means "all": `names=[]` names no stream and is **refused** rather than widened
+  to every device, because a filter that matched nothing must not energise and
+  drive every leader attached to the host. The list is held to the shared
+  name-list domain - several distinct names, as a list - so `names="leader"` is
+  refused as a single string rather than read as one stream per character, a
+  repeated name is refused rather than polling that device twice per tick, and a
+  one-shot iterator is refused rather than being consumed before the loop can
+  poll it. Every one of these is refused before any device is connected.
 - **`robot_name`** - target robot in a multi-robot simulation world.
 - **`hz`** - control-loop rate (default `50.0`).
 - **`publish`** - also publish each device to the mesh via the host's
@@ -111,10 +120,55 @@ Every hardware `Robot` and `Simulation` host exposes:
 - **`block`** - run inline until `duration` elapses / Ctrl+C (`True`) vs
   background thread (`False`, default).
 - **`duration`** - auto-stop after N seconds (`None` = until stopped).
+  Measured on a monotonic clock, so a wall-clock correction mid-session neither
+  ends it early nor keeps the follower driven past the budget, and the reported
+  `elapsed_s` is the time that actually elapsed. It is also measured from the end
+  of setup: connecting the devices and resolving the slew helpers happen before
+  the clock starts, so `duration` is time spent teleoperating rather than time
+  since the call. `teleoperate(block=False)` therefore returns once setup is
+  done - on the first session in a process that costs about two seconds, after
+  which the loop is polling.
 
 Each tick: poll every selected device's `get_action()` → apply its `map_fn` →
-**merge** (last-wins on key conflict, with a one-time warning) → apply via
+**merge** (last-wins on key conflict, with a one-time warning) → check the
+merged frame against the **per-joint slew bound** → apply via
 `self.send_action(merged, robot_name=...)`.
+
+The slew bound is `STRANDS_TELEOP_SLEW_ABS` (default 500 units/second): the
+fastest any single joint may be commanded to travel. The local loop carries its
+own default because the shipped SO hardware speaks driver units - arm joints in
+degrees, gripper in 0-100 - while the mesh receive path's
+`STRANDS_MESH_INPUT_SLEW_ABS` (8π) is radian-scoped. Either bound is above what a
+leader arm's own servos can produce, so a physical leader never trips it - what does is a frame no arm could
+have generated, such as an encoder glitch or a USB re-enumerate reading
+full-scale. Such a frame is **refused and counted** in `slew_rejected`, not
+clamped: clamping toward the commanded value would silently alter an actuator
+command. Because the bound is a speed measured from each joint's last applied
+value, the allowance grows while a joint is still, so a refused stream resumes
+by itself once the commanded pose is reachable safely - there is no resync step.
+
+A device that stops reporting keeps its place. When a teleoperator returns `{}`
+for a while - a disconnect, a USB re-enumerate - the loop still applies the other
+attached devices' frames, and the quiet device's joints keep their last applied
+value as their baseline. Its first read back on reconnecting is therefore
+measured against where it actually left the follower, so a full-scale first read
+is refused like any other over-speed frame rather than applied because the device
+had been away.
+
+Refusals are not errors, but a session with any of them does not report
+`success`, so a device whose units the bound does not expect (degree-valued or
+normalized-percent) cannot look like a clean run while moving nothing - widen
+the bound for those.
+
+### `detach_teleop`
+
+- **`name`** - which attached stream to remove. `None` (the default) detaches
+  every one; any other value names a single stream. Read by membership, like
+  `teleoperate(names=)`, so a value naming no attached stream is refused rather
+  than widened to the whole set - `detach_teleop("")` reports
+  `No teleop named ''.` and leaves every stream attached. That matters mid-
+  session: `detach_teleop` stops the loop once nothing is left to drive, so a
+  detach widened to all streams would also end a running session.
 
 ## Action-key compatibility
 
@@ -245,6 +299,16 @@ robot.stop_teleoperate()                     # stop loop + publishers + disconne
 `start_teleop_receive`) is the **transport** for streaming actions between
 peers. `teleoperate(publish=True)` composes the two: drive locally **and**
 publish so remote followers mirror.
+
+Because that composition drives both followers from one `get_action()` stream,
+both paths hold a frame to a per-joint slew bound - the local loop to
+`STRANDS_TELEOP_SLEW_ABS`, the mesh receive path to
+`STRANDS_MESH_INPUT_SLEW_ABS` - otherwise one device would be judged by one rule
+and no rule, and the follower physically next to the operator would be the unguarded
+one. The mesh receive path adds guards the local path has no need of, since it
+accepts frames from another host: sender scoping, replay freshness, an
+apply-rate ceiling (`STRANDS_MESH_INPUT_MAX_HZ`) and a magnitude clamp
+(`STRANDS_MESH_INPUT_VALUE_ABS`).
 
 ## See also
 

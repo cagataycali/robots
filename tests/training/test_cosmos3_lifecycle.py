@@ -341,7 +341,7 @@ class TestValidateBranches:
 
     def test_nonpositive_steps(self, spec):
         spec.steps = -5
-        assert any("steps must be > 0" in p for p in Cosmos3Trainer().validate(spec))
+        assert any("steps must be a positive integer" in p for p in Cosmos3Trainer().validate(spec))
 
     def test_sft_toml_does_not_exist(self, spec):
         spec.extra["sft_toml"] = "/no/such/recipe.toml"

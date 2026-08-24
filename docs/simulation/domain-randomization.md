@@ -33,7 +33,55 @@ sim.randomize(randomize_position=True)   # singular
 #                      'randomize_positions', 'seed']
 ```
 
-**Destructive** - writes into MuJoCo model arrays. To restore: `load_scene(...)` or recreate the sim.
+**An axis flag must be a boolean.** The four flags select a *posture* - run this
+axis or leave it alone - so each is checked rather than read for truthiness.
+Every non-empty string is truthy, so `"false"`, `"no"`, `"off"` and `"0"` - the
+spellings you reach for when turning an axis off - each turned that axis **on**,
+and the call reported it applied. That is the same guarantee as the misspelled
+key above, one level down: a value an axis cannot be read from can never look
+like a successful randomization either.
+
+```python
+sim.randomize(randomize_physics="false")
+# status=error: randomize: randomize_physics must be a boolean, got 'false'.
+#              It selects a posture, so it is not read for truthiness ...
+```
+
+Both backends that implement `randomize()` (MuJoCo and Newton) check the same
+domain, so an axis you can turn off on one is not left on by the other. The
+numeric knobs in the same signature keep their own domain: a `mass_range` is a
+quantity, and it is still refused as a range rather than as a flag.
+
+**Destructive** - writes into MuJoCo model arrays. To restore: `load_scene(...)` or recreate
+the sim. Every *other* scene mutation restores it too, as a side effect of rebuilding the
+model from the spec: `add_object`, `remove_object`, `add_camera`, `remove_camera`,
+`add_robot`, `remove_robot` and `patch_scene_mjcf`. There is no `recompile` action - any of
+those is the undo, so randomize **after** the episode's scene is built.
+
+**Every axis survives `reset()`.** A reset restores the world's initial state,
+and each axis writes that initial state rather than only the live state - the
+colour, friction and mass axes write `model` arrays, and `randomize_positions`
+writes `model.qpos0` (the pose a reset restores) alongside the live `data.qpos`.
+This is what makes randomization reach a rollout at all: `run_policy` and
+`eval_policy` reset before an episode's first step, so an axis a reset undid
+would be gone before the policy ever saw it.
+
+`randomize_positions` measures its offset from each object's **commanded** pose -
+where `add_object` / `move_object` placed it - not from wherever physics has left
+it. The commanded pose is a fixed reference, so calling `randomize()` once per
+episode draws independent offsets that always stay inside `position_noise`
+instead of compounding into a random walk that eventually leaves the workspace.
+
+`randomize_lighting` measures its offset the same way, from each light's
+**authored** position - the pose the scene spec declares, which is also what a
+recompile restores - so a per-episode loop keeps every light inside +/-0.5 m of
+where the scene put it. Both axes need a fixed reference for the same reason:
+offsetting the live value makes each call start from the previous call's result,
+and the displacement then grows without limit while every individual draw still
+looks correctly bounded. A light authored 3.5 m above the scene walks 4.7 m away
+over 50 episodes that way, which is 9.4x the advertised bound. Because the
+offset is absolute rather than cumulative, replaying a `seed` now reproduces the
+same lighting regardless of how many calls preceded it.
 
 `randomize()` leaves the sim in a forwarded, render-ready state: the next `render()` / `get_observation()` reflects the perturbation immediately, with no manual `step()` in between. This matters for lighting in particular - the renderer reads light positions from the derived `data.light_xpos`, not `model.light_pos`, so a light-position jitter only reaches a render after a forward.
 
@@ -42,9 +90,9 @@ sim.randomize(randomize_position=True)   # singular
 | Flag | What changes | Range param |
 |------|-------------|-------------|
 | `randomize_colors` | Object + floor RGB (alpha fixed at 1.0) | `color_range` |
-| `randomize_lighting` | Directional direction, intensity, ambient | - |
+| `randomize_lighting` | Light position (+/-0.5 m of its authored pose) + diffuse colour | - |
 | `randomize_physics` | Per-object mass (mult), per-geom friction (scale), joint damping | `mass_range`, `friction_range` |
-| `randomize_positions` | Object position offsets (metres) | `position_noise` |
+| `randomize_positions` | Dynamic-object position offsets (metres); static objects have no pose DOF and are skipped | `position_noise` |
 
 Defaults: `colors=True`, `lighting=True`; `physics` and `positions` default `False`.
 
@@ -52,9 +100,14 @@ Defaults: `colors=True`, `lighting=True`; `physics` and `positions` default `Fal
 
 ```python
 for episode in range(N):
-    sim.reset()
-    sim.randomize(randomize_colors=True, randomize_physics=True, seed=episode)
-    # eval_policy has no randomize= kwarg - call sim.randomize() before each episode
+    sim.randomize(randomize_colors=True, randomize_physics=True,
+                  randomize_positions=True, position_noise=0.03, seed=episode)
+    # eval_policy has no randomize= kwarg - call sim.randomize() before each episode.
+    # It resets at the start of every episode, which is why the perturbation has to
+    # survive a reset; no explicit sim.reset() is needed here.
+    # Order matters: a scene mutation after randomize() (adding this episode's
+    # distractors, say) rebuilds the model from the spec and undoes every axis, so
+    # build the episode's scene first and randomize last.
     result = sim.eval_policy(robot_name="so100", n_episodes=1, max_steps=300,
                              success_fn=my_fn)
 ```
@@ -81,6 +134,13 @@ rejected instead of being mixed with the compiled one:
 | `color` | 3 (RGB, alpha set to 1.0) or 4 (RGBA) |
 | `friction` | 3 (sliding, torsional, rolling) |
 | `size` | whatever the geom's type defines: sphere 1, capsule/cylinder 2, box/ellipsoid/plane 3 |
+
+`size` here is the geom's own `geom_size` - half-extents for a box - and not
+`add_object`'s full extents, so the same vector means two different objects
+depending on which call it is passed to. `add_object(size=[0.2, 0.2, 0.2])`
+builds a 20 cm box; `set_geom_properties(size=[0.2, 0.2, 0.2])` resizes that box
+to 40 cm. A capsule is `[radius, half-length]` here and
+`[diameter, unused, height]` there.
 
 ```python
 sim.set_geom_properties(geom_name="crate", size=[0.4])

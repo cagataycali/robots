@@ -35,6 +35,8 @@ CI runs `hatch run test -x --strict-markers`.
 
 **JSON registries** - new robots and policies are JSON edits + tests. No hardcoded lookups in `.py` files.
 
+**A dependency change and its relock are one commit** - editing `pyproject.toml` without running `uv lock` leaves the lock describing a manifest that no longer exists. `uv.lock` is one of the manifests GitHub's dependency graph parses, so a stale lock is a stale *security surface*, not just a stale install. Check it before pushing with `python scripts/check_lockfile_parity.py` (offline, no resolver) or `uv lock --check`.
+
 **Tool errors return, don't raise:**
 ```python
 {"status": "error", "content": [{"text": "human-readable error"}]}

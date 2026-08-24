@@ -1,21 +1,33 @@
 ---
-description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, vera, remote, curobo, moveit2, wbc, wbc_gait, motionbricks.
+description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, vera, remote, curobo, moveit2, wbc, wbc_gait, motionbricks, kimodo, protomotions.
 ---
 
 # Policy providers
 
 `strands_robots` ships several policy providers. The registry is the ground
-truth - list every provider that `create_policy("<name>")` accepts with:
+truth - list the providers with:
 
 ```bash
 python -c 'from strands_robots.policies import list_providers; print(list_providers())'
-# ['cosmos3', 'curobo', 'groot', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']
+# ['cosmos3', 'curobo', 'groot', 'kimodo', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'protomotions', 'remote', 'vera', 'wbc', 'wbc_gait']
+```
+
+`create_policy` also accepts each provider's declared aliases and shorthands,
+which `list_providers()` does not repeat. `list_aliases()` reports those, so
+the two together are every *registered* spelling. They are not every spelling
+`create_policy` resolves: `composite` and `persistent` resolve with no registry
+entry, as described under [Beyond the registry](#beyond-the-registry) below.
+
+```bash
+python -c 'from strands_robots.policies import list_aliases; print(list_aliases())'
+# {'lerobot': 'lerobot_local', 'sonic': 'wbc', 'moveit': 'moveit2', 'cumotion': 'curobo', ...}
 ```
 
 ```python
-from strands_robots.policies import create_policy, list_policy_types, list_providers
+from strands_robots.policies import create_policy, list_aliases, list_policy_types, list_providers
 
 print(list_providers())     # sorted provider names (registry ground truth)
+print(list_aliases())       # alias -> canonical, e.g. {'sonic': 'wbc', 'lerobot': 'lerobot_local'}
 print(list_policy_types())  # lerobot_local policy_type strings: ['act', 'diffusion', 'smolvla', ...]
 
 policy = create_policy("mock")                                                     # always works, no model
@@ -24,6 +36,20 @@ policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so1
 policy = create_policy("cosmos3", embodiment="droid", port=8000)
 policy = create_policy("remote", endpoint="ws://gpu-box:8765")
 ```
+
+### Beyond the registry
+
+`import_policy_class` falls back to auto-discovery, so a module under
+`strands_robots.policies` that exports a `Policy` subclass resolves under its
+own module name with no registry entry. Two ship, and neither is a registry
+provider because each wraps a policy you already hold rather than building one
+from config:
+
+- **`composite`** ([`CompositePolicy`](wbc.md#composing-an-upper-body-manipulation-on-top-of-wbc))
+  builds through the factory: `create_policy("composite", lower=..., upper=...)`.
+- **`persistent`** ([`PersistentPolicy`](persistent-worker.md)) resolves but
+  cannot be built through `create_policy`: its first parameter is named
+  `provider`, which `create_policy` has already bound. Construct it directly.
 
 ## Providers
 
@@ -45,6 +71,8 @@ is kept in sync with `list_providers()` by a regression test
 | [`wbc`](wbc.md) | `WBCPolicy` | `wbc` | NVIDIA GR00T Whole-Body-Control (SONIC) Unitree G1 humanoid locomotion, in-process ONNX, no GPU (non-VLA) |
 | [`wbc_gait`](wbc_gait.md) | `WBCGaitPolicy` | `wbc` | WBC gait-clock variant: single ONNX policy, 95-dim obs + bipedal phase clock (non-VLA) |
 | [`motionbricks`](motionbricks.md) | `MotionBricksPolicy` | `motionbricks` | Generative kinematic Unitree G1 motion (style-driven: walk/stealth_walk/...), in-process torch (non-VLA) |
+| [`kimodo`](kimodo.md) | `KimodoPolicy` | `kimodo` | Text-to-motion diffusion for the Unitree G1 (free-form prompt -> kinematic qpos), in-process torch (non-VLA) |
+| [`protomotions`](protomotions.md) | `ProtoMotionsPolicy` | `protomotions` | ProtoMotions Generalist Tracking Policy: tracks a reference motion clip on the Unitree G1, in-process ONNX (non-VLA) |
 
 ## Policy ABC
 
@@ -113,4 +141,6 @@ structured error naming the parameter, before any policy is created.
 - [WBC](wbc.md) - GR00T Whole-Body-Control (SONIC) G1 locomotion (non-VLA, in-process ONNX).
 - [WBC gait-clock variant](wbc_gait.md) - single-ONNX gait-clock G1 controller (non-VLA).
 - [MotionBricks](motionbricks.md) - generative kinematic G1 motion (non-VLA, in-process torch).
+- [Kimodo](kimodo.md) - text-to-motion diffusion for the G1 (non-VLA, in-process torch).
+- [ProtoMotions](protomotions.md) - GTP reference-motion tracker for the G1 (non-VLA, in-process ONNX).
 - [Custom policies](custom-policies.md) - implement the ABC.

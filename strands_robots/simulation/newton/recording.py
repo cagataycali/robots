@@ -24,13 +24,13 @@ per-camera MP4).
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     dataset_recording_option_error,
+    dataset_recording_posture_error,
 )
 from strands_robots.utils import name_list_error
 
@@ -90,23 +90,51 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         Requires the ``lerobot`` extra for the dataset schema.
 
         Args:
-            repo_id: HuggingFace dataset id (``owner/name``) or a local path.
-            task: Default task description recorded with every frame.
+            repo_id: HuggingFace dataset id (``owner/name``) or a local path. The
+                directory it records into is resolved by
+                :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` -
+                the same resolver ``DatasetRecorder.create`` uses - so an
+                ``owner/name`` id lands in ``$HF_LEROBOT_HOME/{repo_id}`` while a
+                value that is itself a path is taken as the directory. That home
+                is read from LeRobot's own ``HF_LEROBOT_HOME`` constant, so
+                relocating it moves both this recording and where
+                ``LeRobotDataset`` later reads the dataset back from.
+            task: Task description for frames that do not carry their own. It
+                is the middle of a three-level chain owned by
+                :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`:
+                the task passed with a frame wins, then this value, then the
+                literal ``"untitled"``. Every rollout hook passes
+                ``run_policy(instruction=...)`` as the frame task, so a non-empty
+                instruction overrides this value; supply neither and each frame is
+                annotated ``"untitled"``, which conditions a
+                language-conditioned policy on a constant instruction.
             fps: Recording frame rate. Must be a positive whole number;
                 a rate no dataset can be written at is rejected up front. When
                 an existing dataset is RESUMED (``overwrite=False``) it must
                 equal that dataset's on-disk rate, which a resume cannot change.
-            root: Explicit on-disk dataset directory (overrides the repo_id
-                cache-path resolution).
-            push_to_hub: Publish to the Hub at ``stop_recording``.
+            root: Explicit on-disk dataset directory, used verbatim - it replaces
+                the ``repo_id`` resolution above rather than being joined to it.
+                See :func:`~strands_robots.dataset_recorder.resolve_dataset_dir`
+                for the full precedence.
+            push_to_hub: Publish to the Hub at ``stop_recording``. Must be a
+                boolean - a publication posture is not read by truthiness
+                (:func:`~strands_robots.simulation.recording.dataset_recording_posture_error`).
             vcodec: Video codec for the per-camera MP4 streams. Defaults to
                 "h264" (H.264), universally decodable including by OpenCV's
                 VideoCapture (used by many downstream VLM video readers). Use
                 "libsvtav1" (AV1) for smaller files in storage-constrained
                 training pipelines; LeRobot read-back handles AV1 but OpenCV
                 wheels commonly cannot decode it and silently yield 0 frames.
-            overwrite: Wipe and recreate an existing dataset dir instead of
-                appending to it.
+            overwrite: When True, wipe any existing dataset at the resolved
+                directory and record from scratch. When False (default) an
+                existing dataset is RESUMED (episodes appended), a pre-existing
+                EMPTY directory (e.g. from ``tempfile.mkdtemp()``) is cleared and
+                recorded into, and a non-empty non-dataset directory is reported
+                as an error rather than clobbered - the four outcomes of
+                :meth:`~strands_robots.simulation.recording.DatasetRecordingMixin._prepare_dataset_target`.
+                Must be a boolean: a truthy non-boolean opt-out reached the
+                wipe branch and deleted the dataset it was meant to append
+                to (:func:`~strands_robots.simulation.recording.dataset_recording_posture_error`).
             cameras: Camera names to record into the dataset. When ``None``
                 (default) every named scene camera is recorded. Pass a subset
                 (e.g. ``cameras=["camera1", "camera2"]``) to scope the dataset
@@ -131,6 +159,17 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         # which optional extras this install has.
         if error := dataset_recording_option_error("start_recording", fps):
             return error
+        # ``push_to_hub`` and ``overwrite`` select postures, not quantities, so
+        # each is checked on the shared boolean-flag domain before any dataset is
+        # created, resumed or wiped - and before the lerobot-extra probe, so the
+        # same caller mistake reports the same way on every install. Read by
+        # truthiness both failed toward the branch the caller was opting out of:
+        # ``overwrite="false"`` deleted the dataset it was meant to append to,
+        # and ``push_to_hub="false"`` published it (see
+        # dataset_recording_posture_error).
+        for _flag, _value in (("push_to_hub", push_to_hub), ("overwrite", overwrite)):
+            if error := dataset_recording_posture_error("start_recording", _flag, _value):
+                return error
         # ``cameras`` names an ordered list of DISTINCT camera names, so it is
         # refused on the shared name-list domain before any dataset is created. Neither
         # mistake this catches could be honored as written: a single name passed
@@ -183,13 +222,23 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         world._backend_state["trajectory"] = []
         world._backend_state["push_to_hub"] = push_to_hub
 
-        # Resolve the on-disk dataset dir (shared by overwrite + resume logic).
-        if root:
-            dataset_dir = Path(root)
-        elif "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
-            dataset_dir = Path(repo_id)
-        else:
-            dataset_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
+        # Resolve the on-disk dataset dir (shared by overwrite + resume logic)
+        # through the same resolver ``DatasetRecorder.create`` uses, as the MuJoCo
+        # and Isaac backends' ``start_recording`` already do. The three-branch
+        # copy this replaces matched it on the first two branches and hard-coded
+        # ``~/.cache/huggingface/lerobot`` on the third, so it ignored
+        # ``$HF_LEROBOT_HOME`` - the override LeRobot itself honours and the only
+        # way to move the dataset home. Every consumer of the value then read a
+        # directory this session never writes to: ``overwrite=True`` removed a
+        # dataset OUTSIDE the configured home while leaving the addressed one for
+        # ``create()`` to remove, the resume probe missed an existing dataset so
+        # appending dead-ended in ``FileExistsError`` advising the caller to
+        # bypass this method, and ``last_dataset_root`` - which
+        # ``stop_recording(bucket=...)`` syncs and ``verify_dataset_episodes``
+        # reads once the recorder is dropped - named the stale path.
+        from strands_robots.dataset_recorder import resolve_dataset_dir
+
+        dataset_dir = resolve_dataset_dir(repo_id, root)
         world._backend_state["last_dataset_root"] = str(dataset_dir)
 
         try:
@@ -199,7 +248,14 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             # and wipe on overwrite. See DatasetRecordingMixin._prepare_dataset_target.
             resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
-            joint_names, camera_keys, camera_dims, robot_type, recording_cameras = self._collect_recording_schema()
+            (
+                joint_names,
+                action_names,
+                camera_keys,
+                camera_dims,
+                robot_type,
+                recording_cameras,
+            ) = self._collect_recording_schema()
 
             # Backend parity with the MuJoCo recorder: a floating-base robot
             # (humanoid / mobile) exposes full base kinematics via
@@ -288,6 +344,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                     fps=fps,
                     robot_type=robot_type,
                     joint_names=joint_names,
+                    action_names=action_names,
                     extra_state_specs=base_state_specs,
                     camera_keys=camera_keys,
                     camera_dims=camera_dims,
@@ -317,13 +374,17 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
 
     def _collect_recording_schema(
         self,
-    ) -> tuple[list[str], list[str], dict[str, tuple[int, int]], str, list[tuple[str, str, int, int]]]:
+    ) -> tuple[list[str], list[str], list[str], dict[str, tuple[int, int]], str, list[tuple[str, str, int, int]]]:
         """Build the dataset schema from the live Newton scene.
 
         Returns:
-            A 5-tuple of:
-              * ``joint_names``: ordered state/action joint ids (namespaced
+            A 6-tuple of:
+              * ``joint_names``: ordered scalar state joint ids (namespaced
                 ``robot__joint`` when more than one robot exists).
+              * ``action_names``: ordered action column ids, taken from
+                :meth:`robot_action_keys` - the same authority ``send_action``
+                and the recording hook's ``required_action_keys`` resolve, so a
+                declared column is always a key ``add_frame`` can receive.
               * ``camera_keys``: sanitized camera feature names (``/`` -> ``__``).
               * ``camera_dims``: map of camera feature name -> ``(height, width)``.
               * ``robot_type``: the dataset ``robot_type`` string.
@@ -333,6 +394,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         world = self._world
         assert world is not None  # guarded by start_recording
         joint_names: list[str] = []
+        action_names: list[str] = []
         robot_type = "unknown"
         multi_robot = len(world.robots) > 1
         free_base = getattr(self, "_robot_free_base_joint", {})
@@ -344,10 +406,23 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             # Mirrors get_observation / get_robot_state.
             free_short = free_base.get(rname)
             scalar_jn = [jn for jn in robot.joint_names if jn != free_short]
+            # Action columns come from ``robot_action_keys``, not from the
+            # scalar joint list computed above, even though the two agree for
+            # every robot this backend can build today. They agree only because
+            # both apply the free-base exclusion, and each applied it from its
+            # own copy of the rule; declaring the action schema from the joint
+            # list makes that agreement load-bearing. A column declared under a
+            # name the hook never emits is not a mismatch the recorder can
+            # report - ``add_frame`` reads the action dict by declared name, so
+            # an unmatched column takes the ``0.0`` fill and the episode records
+            # a command nobody issued under a success result (#1715).
+            act_keys = self.robot_action_keys(rname)
             if multi_robot:
                 joint_names.extend(f"{rname}__{jn}" for jn in scalar_jn)
+                action_names.extend(f"{rname}__{ak}" for ak in act_keys)
             else:
                 joint_names.extend(scalar_jn)
+                action_names.extend(act_keys)
             robot_type = robot.data_config or rname
 
         camera_keys: list[str] = []
@@ -360,7 +435,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             camera_keys.append(safe_name)
             camera_dims[safe_name] = (height, width)
             recording_cameras.append((cam_name, safe_name, width, height))
-        return joint_names, camera_keys, camera_dims, robot_type, recording_cameras
+        return joint_names, action_names, camera_keys, camera_dims, robot_type, recording_cameras
 
     def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
         """Build the per-step ``on_frame`` recording hook for Newton.

@@ -21,14 +21,13 @@ See :class:`~strands_robots.policies.mock.MockPolicy` for the canonical
 non-VLA reference implementation.
 """
 
-import asyncio
-import concurrent.futures
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
+from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.utils import (
     non_negative_count_error,
     positive_count_error,
@@ -171,6 +170,15 @@ class Policy(ABC):
                 - ``target_joints: dict[str, float]`` - joint-space goal
                   keyed by joint name; values are in radians (revolute) or
                   metres (prismatic).
+                - ``target_velocity: list[float]`` - base-velocity goal as
+                  ``[vx, vy, omega]`` (linear m/s, angular rad/s, in the robot
+                  base frame), read by locomotion providers.  Unlike the keys
+                  above, the component count is deliberately NOT fixed by this
+                  contract, because shipped receivers disagree: whole-body
+                  controllers require the three components named above, while
+                  planar drivers read ``[vx, vy]``.  Each receiver states its
+                  own arity and refuses a shape it cannot use, so this key
+                  crosses a transport on the per-component domain alone.
                 - ``world_update: dict | None`` - per-call world refresh
                   for collision-aware planners (e.g. point cloud / depth
                   image / mesh updates).  ``None`` means "reuse the world
@@ -201,23 +209,22 @@ class Policy(ABC):
     def get_actions_sync(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
-        """Synchronous convenience wrapper around get_actions().
+        """Synchronous convenience wrapper around :meth:`get_actions`.
 
-        Safe to call from sync code, event loops, or notebooks.
+        Safe to call from sync code, event loops, or notebooks. Resolution is
+        delegated to :mod:`strands_robots._async_utils`, the one owner of
+        "resolve a policy coroutine in a sync context": with no running loop it
+        is ``asyncio.run``, and inside one the coroutine is offloaded to that
+        module's single reused worker thread.
+
+        Delegating rather than re-deriving is what keeps this callable at
+        control rate from a running loop -- a notebook cell and any async host
+        take the offload branch, and constructing a private executor there
+        starts and joins one OS thread per call. Every in-process rollout path
+        already resolves through the same owner, so the wrapper and the runner
+        cannot drift on which branch a caller lands in.
         """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(
-                    asyncio.run,
-                    self.get_actions(observation_dict, instruction, **kwargs),
-                ).result()
-        else:
-            return asyncio.run(self.get_actions(observation_dict, instruction, **kwargs))
+        return _resolve_coroutine(self.get_actions(observation_dict, instruction, **kwargs))
 
     @abstractmethod
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
@@ -318,6 +325,72 @@ class Policy(ABC):
         no cameras are needed.
         """
         return True
+
+    @property
+    def required_bodies(self) -> tuple[str, ...]:
+        """Named rigid bodies whose world pose this policy needs in its observation.
+
+        Default ``()`` - most policies are driven by joint state alone and pay
+        nothing for this. A whole-body **motion-mimic tracker** (ProtoMotions
+        GTP, PHC, OmniH2O and the text-to-motion pipelines built on them) is the
+        motivating case: its network consumes the world orientation of a single
+        *anchor* link - ``torso_link`` on a Unitree G1 - which is NOT derivable
+        from the observation's floating-base signals. ``base_quat`` is the
+        pelvis, and the torso differs from it by the three waist joints, so a
+        tracker written against ``base_quat`` silently feeds the network the
+        wrong frame whenever the waist is not neutral.
+
+        Declaring the bodies here is the same "policy declares, runtime
+        supplies" contract as :attr:`requires_images`: the runtime
+        (:class:`~strands_robots.simulation.policy_runner.PolicyRunner`)
+        resolves the names ONCE before the rollout and merges the pose of each
+        into every observation it hands to :meth:`get_actions`, under the keys
+        documented on
+        :meth:`~strands_robots.simulation.base.SimEngine.get_observation`::
+
+            body.<name>.pos      # world x, y, z (m)
+            body.<name>.quat     # world orientation w, x, y, z
+            body.<name>.lin_vel  # world linear velocity x, y, z (m/s)
+            body.<name>.ang_vel  # world angular velocity x, y, z (rad/s)
+
+        A policy that declares a body the scene does not contain fails at the
+        start of the rollout with the available body names, rather than reading
+        a missing key as a zero pose on every tick.
+
+        Returns:
+            Ordered, de-duplicated body names. Empty (the default) means the
+            observation is left exactly as the backend produced it.
+        """
+        return ()
+
+    @property
+    def children(self) -> tuple["Policy", ...]:
+        """The policies this one delegates to, in the order it consults them.
+
+        Default ``()`` - a leaf policy that runs its own inference. A *wrapper*
+        returns the policies it drives:
+        :class:`~strands_robots.policies.composite.CompositePolicy` its ``lower``
+        and ``upper`` children,
+        :class:`~strands_robots.policies.persistent.PersistentPolicy` the single
+        policy it holds warm.
+
+        This is the same "policy declares, runtime supplies" contract as
+        :attr:`requires_images` and :attr:`required_bodies`, applied to a
+        capability probe rather than an observation. A probe answers about the
+        object it is handed, and a wrapper is a different object than the policy
+        inside it, so an ``isinstance`` test against a wrapper reports the
+        wrapped policy's capability as absent. The MuJoCo backend's WBC torque
+        shim is the motivating case: it is required for a
+        :class:`~strands_robots.policies.wbc.WBCPolicy` to hold a stable gait on
+        a position-servo scene, and the physics does not change when that policy
+        is wrapped - only the type of the object the probe sees does. Declaring
+        the children lets one probe walk to the policy that answers, instead of
+        every probe having to learn the name of every wrapper.
+
+        Returns:
+            The child policies. Empty (the default) means this policy is a leaf.
+        """
+        return ()
 
     @property
     def execution_horizon(self) -> int:
@@ -577,3 +650,38 @@ def chunk_count_error(value: object, param: str, provider: str) -> str | None:
     if error:
         return f"{error} Omit it to use the provider default."
     return None
+
+
+def iter_policy_tree(policy: Policy) -> Iterator[Policy]:
+    """Yield ``policy`` then every policy reachable through :attr:`Policy.children`.
+
+    Pre-order, so an outer wrapper is visited before the policies it wraps and
+    the outermost policy that answers a capability probe wins. Each object is
+    yielded at most once, so two wrappers sharing one child do not double-report
+    it and a cycle in the graph terminates instead of recursing forever.
+
+    ``children`` is read with :func:`getattr` rather than as an attribute, so a
+    duck-typed policy object that does not subclass :class:`Policy` yields
+    itself instead of raising ``AttributeError``. That input class is one the
+    surrounding call chain deliberately tolerates - ``policy_runner`` probes
+    ``is_chunk_emitting`` the same way "so a duck-typed policy_object that
+    predates is_chunk_emitting() simply stays on the synchronous path" - and
+    the callers of this walk are capability probes whose documented answer for
+    an object declaring no tree is "no match", not a crash.
+
+    Args:
+        policy: Root of the tree to walk. A leaf policy, or any object that
+            declares no ``children``, yields just itself.
+
+    Yields:
+        Each distinct policy in the tree, root first.
+    """
+    seen: set[int] = set()
+    stack = [policy]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        stack.extend(reversed(tuple(getattr(current, "children", ()))))

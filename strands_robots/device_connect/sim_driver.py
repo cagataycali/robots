@@ -219,6 +219,47 @@ class SimulationDeviceDriver(DeviceDriver):
 
     # ── Periodic state publishing ─────────────────────────────
 
+    def _joint_positions(self, robot_name: str, robot: Any) -> dict[str, float]:
+        """Per-joint positions for ``robot_name``, in radians.
+
+        Read through the simulation's own ``get_observation`` surface rather
+        than by indexing its state arrays here. That surface already answers
+        this exact question, and it owns three facts a second reader has to
+        reproduce and can silently get wrong:
+
+        * a joint's position lives at its qpos ADDRESS, not at its joint id.
+          The two coincide only while every joint is single-DoF: one floating
+          base ahead of a chain shifts every later joint by six, so a humanoid
+          reports its pelvis height and base quaternion under leg-joint names.
+        * a free joint has no scalar position at all (its qpos is
+          ``[xyz, quat]``), so it is excluded from the per-joint state rather
+          than reported as a degenerate number.
+        * the read is serialised against a concurrent physics step, so a
+          published value is a whole number rather than a torn one.
+
+        Images are skipped: this runs on the 10Hz publish loop, which wants
+        joint state only.
+
+        Args:
+            robot_name: Registered name of the robot to read.
+            robot: The world's record for that robot, read for its
+                ``joint_names`` so only its own joints are published.
+
+        Returns:
+            ``{joint name: position}`` for every joint the observation reports
+            a scalar for. Empty when the simulation exposes no observation
+            surface.
+        """
+        get_observation = getattr(self._sim, "get_observation", None)
+        if not callable(get_observation):
+            return {}
+        obs = get_observation(robot_name, skip_images=True)
+        return {
+            name: float(obs[name])
+            for name in getattr(robot, "joint_names", [])
+            if isinstance(obs.get(name), (int, float)) and not isinstance(obs.get(name), bool)
+        }
+
     @periodic(interval=0.1, wait_for_completion=True)
     async def _publishState(self):
         """Publish simulation state at 10Hz."""
@@ -236,17 +277,11 @@ class SimulationDeviceDriver(DeviceDriver):
                 step_count=world.step_count,
                 running_policies=running,
             )
-            # Publish per-robot joint observations from MuJoCo state
-            data = getattr(world, "_data", None)
+            # Publish per-robot joint observations.
             robots = world.robots if isinstance(world.robots, dict) else {}
             for name, robot in robots.items():
                 try:
-                    joint_names = getattr(robot, "joint_names", [])
-                    joint_ids = getattr(robot, "joint_ids", [])
-                    joints = {}
-                    if data is not None and joint_names and joint_ids:
-                        for jname, jid in zip(joint_names, joint_ids):
-                            joints[jname] = float(data.qpos[jid])
+                    joints = self._joint_positions(name, robot)
                     await self.observationUpdate(
                         robot_name=name,
                         sim_time=world.sim_time,

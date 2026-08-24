@@ -94,7 +94,8 @@ Known collateral (observed with isaacsim 6.0.0.1 and 6.0.1.0):
 - **Exit code 134 after successful work.** Isaac Sim has a known atexit
   segfault that makes otherwise-clean scripts exit 134 *after* completing
   successfully. The drivers in this repo guard with `os._exit(...)` after
-  SimulationApp teardown (see `examples/libero/run_isaac.py`); user scripts
+  SimulationApp teardown (see the `isaac` subcommand epilogue in
+  `examples/libero/run.py`); user scripts
   that boot SimulationApp should do the same.
 
 ## Usage
@@ -117,6 +118,19 @@ sim.destroy()
 `Robot("so100", backend="isaac", ...)` routes through the same factory, so the
 backend selection is identical whether you go through `Robot()` or
 `create_simulation()`.
+
+`scale=` above is an accepted alias for `add_object(size=...)`, and it is the only
+extra keyword that method reads. Any other keyword is refused by name rather than
+dropped -- the same contract `IsaacConfig` applies to `create_simulation` kwargs,
+and the same verdict the MuJoCo and Newton backends give (they declare the same
+`add_object` parameters and no `**kwargs`, so an unknown keyword is a `TypeError`
+there):
+
+```python
+sim.add_object(name="cube", heigth=0.3)
+# {"status": "error", "content": [{"text":
+#   "Unknown parameter(s) ['heigth'] for action 'add_object'. Valid: [...]"}]}
+```
 
 ## Configuration (`IsaacConfig`)
 
@@ -143,13 +157,32 @@ rejected eagerly. The commonly used fields:
 ### Environment variables
 
 The Isaac backend reads three `STRANDS_ISAAC_*` variables (resolved when
-`IsaacConfig` is constructed). An explicit kwarg always wins over the env var.
+`IsaacConfig` is constructed). `STRANDS_ISAAC_NUCLEUS_URL` is read only when
+`nucleus_url` is not passed, so there the kwarg wins; the two switches override
+their field whenever they are set. Which of those two directions the switches
+*should* have is [#2062](https://github.com/strands-labs/robots/issues/2062).
+
+Both switches accept four symmetric pairs, case-insensitively and ignoring
+surrounding whitespace:
+
+| on | off |
+|----|-----|
+| `1` | `0` |
+| `true` | `false` |
+| `yes` | `no` |
+| `on` | `off` |
+
+Unset -- or set to an empty value, which is what an undefined `${{ vars.* }}`
+interpolation in a GitHub Actions `env:` block produces -- leaves the field
+alone. Any other spelling raises `ValueError` naming both vocabularies, rather
+than falling through to the off side: `STRANDS_ISAAC_HEADLESS=enabled` used to
+open a window.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_ISAAC_NUCLEUS_URL` | Override the Omniverse Nucleus server URL when `nucleus_url` is not passed | unset (Isaac defaults) |
-| `STRANDS_ISAAC_HEADLESS` | Truthy (`1`/`true`/`yes`) forces `headless`; falsy forces windowed | unset (uses `headless` kwarg) |
-| `STRANDS_ISAAC_RTX_PATHTRACING` | Truthy forces `render_mode="rtx_pathtracing"` | unset |
+| `STRANDS_ISAAC_HEADLESS` | On forces `headless`; off forces windowed | unset (uses `headless` kwarg) |
+| `STRANDS_ISAAC_RTX_PATHTRACING` | On forces `render_mode="rtx_pathtracing"`; off leaves `render_mode` alone | unset |
 
 ## Capabilities and parity
 
@@ -160,18 +193,48 @@ The Isaac backend reads three `STRANDS_ISAAC_*` variables (resolved when
 - **Robots** - `add_robot` (procedural builders, or USD via `usd_path=`, or
   URDF), `remove_robot`, `list_robots`, `robot_joint_names`, `send_action`,
   `get_observation`.
-- **Objects** - `add_object` (`cuboid` / `sphere` / `cylinder` / `capsule`,
-  dynamic or static), `remove_object`.
+- **Objects** - `add_object` (`cuboid` / `sphere` / `cylinder` / `capsule` /
+  `mesh`, dynamic or static), `remove_object`. A `shape="mesh"` add takes a
+  `mesh_path` to an STL/OBJ/MSH asset (converted to USD once and cached under
+  `$STRANDS_BASE_DIR/asset_cache/usd_meshes/`, content-addressed) or to a
+  USD file (referenced directly). The asset defines the extent - `size` is
+  ignored for a mesh, the MuJoCo read of that parameter (the Newton backend
+  consumes it as a scale instead; see
+  [#2300](https://github.com/strands-labs/robots/issues/2300)) - and
+  collision uses the mesh's **convex hull**, also the MuJoCo contract, with
+  the same caveat for concave assets: the hull fills every cavity. A missing
+  file or an unconvertible format is refused up front, never realized as a
+  fallback primitive.
 - **Cameras & rendering** - `add_camera` (look-at, FOV), `render` (RGB + depth).
+  World-fixed only: `parent_body` (a body-mounted wrist camera, supported on
+  mujoco/newton) is refused here with an error naming those backends, because
+  camera prims are parented to the stage camera scope rather than to an
+  articulation link.
 - **Loaders** - `load_urdf` / `load_mjcf` / `load_usd` resolve to a
   `ProceduralRobot` dataclass.
 
 Because the joint-name and observation contract matches the MuJoCo backend,
 policies and observation mappings transfer unchanged between backends.
 
+LIBERO scenes get the same treatment for their *visuals*: `load_scene`
+renders each task object with its real mesh (bowls, plates - the assets a
+pixel-conditioned policy was trained on) while keeping the validated
+collision-AABB box as the invisible physics proxy, so switching backends does
+not also switch what the cameras see. That box covers both MJCF spellings of a
+capsule or cylinder - `pos` plus `size="radius half-length"`, and `fromto` plus
+`size="radius"`, where the two endpoints carry the placement and the axis
+extent - so a `fromto` bar is proxied by its full length at its midpoint rather
+than by a ball of its radius at the body origin. An object whose mesh cannot be resolved
+keeps a visible box proxy, and the `load_scene` report then carries an
+explicit caveat that pixel-conditioned policy scores on that scene are not
+comparable across backends; when every object renders its mesh, the caveat
+disappears. A mesh asset that is declared but missing on disk fails the scene
+load loudly - never a silent box.
+
 The accepted *input* domain matches too, so a call one backend refuses is
-refused by all three. For the setup methods that means the pose vectors, the
-camera `fov` and the pixel dimensions - and the entity `name`: `add_robot`,
+refused by all three. For the setup methods that means the pose vectors, an
+object's `color` and `mass`, the camera `fov` and the pixel dimensions - and the
+entity `name`: `add_robot`,
 `add_object` and `add_camera` each require a non-empty string containing no NUL.
 That matters more here than on MuJoCo because the name is interpolated into the
 USD prim path (`{stage_path}/Robots/{name}`), so an unaddressable name does not
@@ -181,6 +244,13 @@ prunes its cleanup registry by that prefix. Unlike the MuJoCo backend there is
 no "derive a label from the model" short form: `name` is also the procedural
 lookup key, so `None` / `""` are refused rather than replaced with a generated
 label.
+
+The one deliberate difference in that list is `mass=0`. The Newton backend
+documents it as an alternative spelling of `is_static=True` and honours it, so it
+stays accepted there; this backend documents no such spelling, so a zero mass is
+refused with `is_static=True` named as the remedy - the MuJoCo contract these
+docs otherwise mirror. A static object's mass is read by nobody on any backend,
+so it is not validated there.
 
 Looking an entity *up* is the other half of that contract, and it answers rather
 than refuses: a name only *addresses* an entity here, so a name that cannot be a
@@ -192,6 +262,22 @@ and `get_observation` keep answering empty, and `get_frame` /
 membership test itself raised `TypeError: unhashable type` for a list or dict
 name, so the miss escaped the envelope those methods document as their only
 failure channel - reachable with no entities registered at all.
+
+`render` is the one lookup that cannot answer with a frame, so it reports the
+same verdict as its raw sibling. Given a `camera_name` that *names* a camera the
+scene does not carry it returns `{"status": "error"}` with
+`Camera '<name>' not found. Available: [...]` - the message `get_frame` raises
+for the identical name, and the one the MuJoCo and Newton `render` give. It used
+to report `status="success"` with an all-black frame instead, tagged
+`Rendered (no camera)`, plus `pixel_mean` `0.0` as a measurement and the missing
+name in the `camera` field; because that envelope carries the PNG block the
+shared frame extractor reads, a rollout recording a mistyped camera wrote an
+all-black video and reported success. A `camera_name` that names *no* camera -
+`None`, `""`, `"default"` (the signature default) or `"free"` - still gets that
+blank frame: Isaac has no free camera to fall back to, unlike the two backends
+whose render entry points resolve those tokens to one, so for them it is a
+degradation rather than a mistake. Registering a camera under one of those names
+is accepted here and renders normally, since nothing on this backend routes them.
 
 ## Fleet (IsaacLab-style) preview
 

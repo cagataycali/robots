@@ -165,7 +165,10 @@ def _start_recording_calls_the_shared_guard(module_path: Path) -> bool:
     """True when the module's ``start_recording`` calls the shared fps guard.
 
     Parsed by AST so backends whose optional dependencies (Isaac Sim, Newton)
-    are not installed are still checked.
+    are not installed are still checked. It proves the guard is *called*, never
+    that its refusal is *returned* - a copy that keeps the call and drops the
+    ``return`` satisfies it - so the returned refusal is driven per backend in
+    ``test_recording_preflight_refusals_across_backends.py``.
     """
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):

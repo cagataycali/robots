@@ -15,6 +15,11 @@ Topic schema for ``strands/{peer_id}/input/{device_name}``::
         "action": {"motor.pos": float, ...},
         "events": {"terminate_episode": bool, ...} | null
     }
+
+``events`` is ``null`` both when the teleoperator exposes no
+``get_teleop_events()`` surface and when reading it failed, so the publisher
+side reports a failed read through ``InputPublisher.stats``
+(``event_read_errors``) and a log line rather than only on the wire.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.bus_access import write_action
+from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.security import (
     ValidationError,
     input_frame_slew_violation,
@@ -33,7 +40,7 @@ from strands_robots.mesh.security import (
     validate_mesh_identifier,
 )
 from strands_robots.mesh.session import hz_from_env
-from strands_robots.utils import positive_finite_number_error
+from strands_robots.utils import partial_construction_repr, positive_finite_number_error
 
 _log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
@@ -48,6 +55,13 @@ logger = logging.getLogger(__name__)
 
 INPUT_HZ_DEFAULT = 50.0
 
+#: How many times each :class:`InputPublisher` loop failure is logged before
+#: going quiet. The loop runs at ``hz`` (50 Hz by default), so an unbounded
+#: log of a persistent fault - a dead publish transport, a teleoperator whose
+#: event surface stopped answering - floods the operator's console at the
+#: control rate. The counters in :attr:`InputPublisher.stats` stay exact.
+_MAX_LOGGED_LOOP_ERRORS = 5
+
 #: Default ceiling on the rate at which an InputReceiver will
 #: APPLY inbound teleop frames to the robot. The publisher streams at
 #: INPUT_HZ_DEFAULT (50Hz); a malicious peer can stream far faster to slam
@@ -57,6 +71,19 @@ INPUT_HZ_DEFAULT = 50.0
 #: rejected. Operator-tunable via ``STRANDS_MESH_INPUT_MAX_HZ`` (0 disables
 #: the cap for trusted closed networks).
 INPUT_MAX_HZ_DEFAULT = 100.0
+
+
+#: How many refused frames of ONE cause are logged before that cause goes quiet.
+#: Spent per cause rather than per receiver: a cause that keeps refusing must not
+#: silence the FIRST refusal of a different one, because the log line is the only
+#: place a refusal states which value it refused and against which bound.
+_REFUSAL_LOG_BUDGET = 5
+
+#: The refusal causes that share the ``rejected`` total, in the order
+#: :meth:`InputReceiver._on_input` checks them. Each is reported as
+#: ``rejected_<cause>`` in :attr:`InputReceiver.stats` and spends its own share of
+#: :data:`_REFUSAL_LOG_BUDGET`.
+_REJECTION_CAUSES: tuple[str, ...] = ("lockout", "freshness", "invalid")
 
 
 def _input_max_hz() -> float:
@@ -162,12 +189,16 @@ class InputPublisher:
         self._stop_event = threading.Event()
         self._seq = 0
         self._error_count = 0
+        self._event_read_error_count = 0
         self._frame_count = 0
-        self._start_time = 0.0
+        self._start_mono = 0.0
 
     def __repr__(self) -> str:
-        state = "running" if self._running else "stopped"
-        return f"InputPublisher(device={self.device_name!r}, method={self.method!r}, {state})"
+        try:
+            state = "running" if self._running else "stopped"
+            return f"InputPublisher(device={self.device_name!r}, method={self.method!r}, {state})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     @property
     def topic(self) -> str:
@@ -182,15 +213,19 @@ class InputPublisher:
     def stats(self) -> dict[str, Any]:
         """Live publishing counters: the target device/method, whether the
         loop is ``running``, cumulative ``frames`` published and ``errors``
-        hit, and the achieved vs. requested rate (``hz_actual`` / ``hz_target``).
+        hit, ``event_read_errors`` (frames published with ``events: null``
+        because ``get_teleop_events()`` raised, rather than because the
+        teleoperator has no event surface), and the achieved vs. requested rate
+        (``hz_actual`` / ``hz_target``).
         """
-        elapsed = time.time() - self._start_time if self._start_time else 0
+        elapsed = time.monotonic() - self._start_mono if self._start_mono else 0
         return {
             "device": self.device_name,
             "method": self.method,
             "running": self._running,
             "frames": self._frame_count,
             "errors": self._error_count,
+            "event_read_errors": self._event_read_error_count,
             "hz_actual": self._frame_count / elapsed if elapsed > 0 else 0,
             "hz_target": self.hz,
         }
@@ -201,7 +236,7 @@ class InputPublisher:
             return
         self._running = True
         self._stop_event.clear()
-        self._start_time = time.time()
+        self._start_mono = time.monotonic()
         self._thread = threading.Thread(
             target=self._publish_loop,
             name=f"mesh-input-{self.device_name}",
@@ -231,10 +266,34 @@ class InputPublisher:
         return self.stats
 
     def _publish_loop(self) -> None:
+        """Read the leader device and publish one input frame per tick.
+
+        Paced by :class:`~strands_robots.mesh.pacing.Ticker`. This loop is one of
+        two that already did the deadline arithmetic by hand -- it measured its own
+        body with ``perf_counter`` and waited ``period - elapsed`` -- so unlike the
+        state, camera and sensor loops it was already achieving its requested rate
+        where the wait itself is honest. Two things change. The subtraction now has
+        ONE owner instead of being duplicated in every loop that needs it, so two
+        copies cannot drift; and the wait it fed is gone, which matters on a host
+        that inflates ``Event.wait`` (see the module docstring) -- there this loop
+        ran at ``1 / (period + penalty)`` no matter how good its arithmetic was.
+        """
         # ``hz`` is validated in __init__, so the division is safe.
         period = 1.0 / float(self.hz)
+        with Ticker(period, self._stop_event) as ticker:
+            self._publish_ticks(ticker)
+
+    def _publish_ticks(self, ticker: Ticker) -> None:
+        """Run the publish loop until stopped, pacing on ``ticker``.
+
+        Split out so :meth:`_publish_loop` owns the ticker's lifetime in a
+        ``finally``: the selector and its self-pipe must be released even when a
+        frame read raises out of the loop.
+
+        Args:
+            ticker: The ticker to pace on, owned by the caller.
+        """
         while self._running and not self._stop_event.is_set():
-            loop_start = time.perf_counter()
             try:
                 action = self.teleoperator.get_action()
                 action_dict = self._normalize_action(action)
@@ -243,8 +302,25 @@ class InputPublisher:
                 if hasattr(self.teleoperator, "get_teleop_events"):
                     try:
                         events = self.teleoperator.get_teleop_events()
-                    except Exception:
-                        pass
+                    except Exception as event_err:  # noqa: BLE001
+                        # The operator's control signals (terminate_episode /
+                        # success / rerecord_episode) are secondary to the joint
+                        # stream, so a failure reading them must not stop the
+                        # arm: letting it reach the handler below would drop the
+                        # whole frame, action included. It must not be silent
+                        # either - ``events: null`` is also what a teleoperator
+                        # with no event surface publishes, so an unreported
+                        # failure is indistinguishable from "the operator
+                        # signalled nothing" while joint commands keep flowing.
+                        self._event_read_error_count += 1
+                        if self._event_read_error_count <= _MAX_LOGGED_LOOP_ERRORS:
+                            logger.warning(
+                                "[mesh] input teleop-event read failed (%s): %s - "
+                                "publishing events=None, so operator signals are "
+                                "not reaching subscribers",
+                                self.device_name,
+                                event_err,
+                            )
 
                 payload = {
                     "peer_id": self.mesh.peer_id,
@@ -265,13 +341,11 @@ class InputPublisher:
                 self._frame_count += 1
             except Exception as exc:
                 self._error_count += 1
-                if self._error_count <= 5:
+                if self._error_count <= _MAX_LOGGED_LOOP_ERRORS:
                     logger.warning("[mesh] input publish error (%s): %s", self.device_name, exc)
 
-            elapsed = time.perf_counter() - loop_start
-            sleep_time = period - elapsed
-            if sleep_time > 0:
-                self._stop_event.wait(sleep_time)
+            if ticker.wait():
+                break
 
     @staticmethod
     def _normalize_action(action: Any) -> dict[str, float]:
@@ -340,6 +414,10 @@ class InputReceiver:
         self._last_seq = -1
         self._drops = 0
         self._rejected = 0
+        # Per-cause breakdown of ``_rejected``. Every cause that shares the total
+        # keeps its own count, so a report can say WHICH guard refused the stream
+        # and each cause spends its own log budget.
+        self._rejected_by_cause: dict[str, int] = dict.fromkeys(_REJECTION_CAUSES, 0)
         self._rate_dropped = 0
         self._slew_rejected = 0
         self._last_rate_gate_mono = 0.0
@@ -349,11 +427,14 @@ class InputReceiver:
         # merged rather than replaced, so a frame carrying a subset of the
         # joints cannot erase the baseline of the ones it omits.
         self._last_applied: dict[str, tuple[float, float]] = {}
-        self._start_time = 0.0
+        self._start_mono = 0.0
 
     def __repr__(self) -> str:
-        state = "running" if self._running else "stopped"
-        return f"InputReceiver(source={self.source_peer_id!r}, device={self.device_name!r}, {state})"
+        try:
+            state = "running" if self._running else "stopped"
+            return f"InputReceiver(source={self.source_peer_id!r}, device={self.device_name!r}, {state})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     @property
     def topic(self) -> str:
@@ -368,13 +449,22 @@ class InputReceiver:
         """Live receive counters: the ``source`` peer and device, whether the
         subscription is ``running``, ``frames_received``, ``errors``, and the
         loss/back-pressure breakdown - out-of-order ``drops``, ``rejected``
-        frames (E-stop lockout, replay-freshness, or ACL checks), and
-        ``rate_dropped`` frames (shed to hold the apply-rate cap), and
-        ``slew_rejected`` frames (refused for commanding a joint faster
+        frames, and ``rate_dropped`` frames (shed to hold the apply-rate cap),
+        and ``slew_rejected`` frames (refused for commanding a joint faster
         than the per-joint slew bound) -
         plus the achieved ``hz_actual``.
+
+        ``rejected`` is the total of a breakdown that names which guard refused
+        the frame, so a report does not have to recover the reason from the
+        log: ``rejected_lockout`` (arrived during an E-stop lockout),
+        ``rejected_freshness`` (the frame's ``t`` is missing, non-numeric, stale
+        or too far in the future - the replay defence), and ``rejected_invalid``
+        (``validate_input_frame`` refused the frame's shape or a value: too many
+        keys, an illegal key, or a value that is non-scalar, non-numeric,
+        non-finite or past the magnitude bound). ``rejected`` always equals
+        their sum.
         """
-        elapsed = time.time() - self._start_time if self._start_time else 0
+        elapsed = time.monotonic() - self._start_mono if self._start_mono else 0
         return {
             "source": self.source_peer_id,
             "device": self.device_name,
@@ -383,6 +473,9 @@ class InputReceiver:
             "errors": self._error_count,
             "drops": self._drops,
             "rejected": self._rejected,
+            # Derived from the declared causes, so a cause added to the
+            # vocabulary is reported without a second list to update here.
+            **{f"rejected_{cause}": n for cause, n in self._rejected_by_cause.items()},
             "rate_dropped": self._rate_dropped,
             "slew_rejected": self._slew_rejected,
             "hz_actual": self._frame_count / elapsed if elapsed > 0 else 0,
@@ -393,7 +486,7 @@ class InputReceiver:
         if self._running:
             return
         self._running = True
-        self._start_time = time.time()
+        self._start_mono = time.monotonic()
         self._sub_name = self.mesh.subscribe(
             self.topic,
             callback=self._on_input,
@@ -423,6 +516,29 @@ class InputReceiver:
         )
         return self.stats
 
+    def _refuse(self, cause: str, message: str, *args: Any) -> None:
+        """Count one refused frame under ``cause`` and log the first few of it.
+
+        The one place refusals on this path are accounted for. ``cause`` is a
+        member of :data:`_REJECTION_CAUSES`; the frame is counted under it and in
+        the ``rejected`` total, and :data:`_REFUSAL_LOG_BUDGET` is spent per
+        cause. Reasons this path refuses a frame outnumber the counters that
+        carried them, so a stream refused for one reason used to exhaust the
+        shared budget and leave the next reason -- stated nowhere else -- unlogged.
+
+        Args:
+            cause: Which guard refused the frame. Must be in
+                :data:`_REJECTION_CAUSES`; an unknown cause raises ``KeyError``
+                rather than being counted under a name no report enumerates.
+            message: ``logger.warning`` format string for this refusal.
+            *args: Interpolated into ``message`` only if the budget allows.
+        """
+        seen = self._rejected_by_cause[cause] + 1
+        self._rejected_by_cause[cause] = seen
+        self._rejected = getattr(self, "_rejected", 0) + 1
+        if seen <= _REFUSAL_LOG_BUDGET:
+            logger.warning(message, *args)
+
     def _on_input(self, topic: str, data: dict[str, Any]) -> None:
         if not self._running:
             return
@@ -437,12 +553,11 @@ class InputReceiver:
         # via the ``rejected`` stat and a rate-limited warning.
         lockout = getattr(self.mesh, "_estop_lockout", None)
         if lockout is not None and lockout.is_set():
-            self._rejected = getattr(self, "_rejected", 0) + 1
-            if self._rejected <= 5:
-                logger.warning(
-                    "[mesh] input frame rejected during E-stop lockout from %s",
-                    self.source_peer_id,
-                )
+            self._refuse(
+                "lockout",
+                "[mesh] input frame rejected during E-stop lockout from %s",
+                self.source_peer_id,
+            )
             return
 
         # Cross-session teleop replay defence. The CMD path got
@@ -451,7 +566,7 @@ class InputReceiver:
         # eavesdrops a teleop stream can store frames and replay them hours/days
         # later (different session/ZID, stale timestamps) and the follower
         # repeats the captured motion -- the rate cap (100Hz) and value bound
-        # (4pi) still pass because the replayed frames are legitimate-shaped.
+        # still pass because the replayed frames are legitimate-shaped.
         # Every frame already carries a wall-clock ``t`` (set by
         # InputPublisher._publish_loop), so we just have to CHECK it. We reuse
         # the same freshness/forward-skew env knobs as the resume/e-stop replay
@@ -468,22 +583,20 @@ class InputReceiver:
 
         _frame_t = data.get("t")
         if not isinstance(_frame_t, (int, float)) or isinstance(_frame_t, bool):
-            self._rejected = getattr(self, "_rejected", 0) + 1
-            if self._rejected <= 5:
-                logger.warning(
-                    "[mesh] input frame rejected (missing/invalid timestamp) from %s",
-                    self.source_peer_id,
-                )
+            self._refuse(
+                "freshness",
+                "[mesh] input frame rejected (missing/invalid timestamp) from %s",
+                self.source_peer_id,
+            )
             return
         _age = time.time() - float(_frame_t)
         if _age > _resume_freshness_window_s() or _age < -_resume_forward_skew_s():
-            self._rejected = getattr(self, "_rejected", 0) + 1
-            if self._rejected <= 5:
-                logger.warning(
-                    "[mesh] input frame rejected (stale/future t=%.1fs) from %s",
-                    _age,
-                    self.source_peer_id,
-                )
+            self._refuse(
+                "freshness",
+                "[mesh] input frame rejected (stale/future t=%.1fs) from %s",
+                _age,
+                self.source_peer_id,
+            )
             return
 
         try:
@@ -525,13 +638,12 @@ class InputReceiver:
             try:
                 safe_action = validate_input_frame(action)
             except ValidationError as verr:
-                self._rejected = getattr(self, "_rejected", 0) + 1
-                if self._rejected <= 5:
-                    logger.warning(
-                        "[mesh] input frame rejected from %s: %s",
-                        self.source_peer_id,
-                        verr,
-                    )
+                self._refuse(
+                    "invalid",
+                    "[mesh] input frame rejected from %s: %s",
+                    self.source_peer_id,
+                    verr,
+                )
                 return
             # Per-joint slew bound. The guards above bound each frame in
             # isolation - who sent it, how fresh it is, how densely frames
@@ -607,8 +719,11 @@ class InputReceiver:
 
     @staticmethod
     def _default_apply(robot: Any, action: dict[str, float]) -> None:
-        """Default: calls robot.send_action()."""
+        """Default: calls robot.send_action() under the device's bus lock."""
+        # The same lock the readers take: a write that interleaves with a
+        # sync-read corrupts both halves of the exchange, and teleop moving an
+        # arm while a probe reads its position is the common case.
         if hasattr(robot, "send_action"):
-            robot.send_action(action)
+            write_action(robot, action)
         elif hasattr(robot, "robot") and hasattr(robot.robot, "send_action"):
-            robot.robot.send_action(action)
+            write_action(robot.robot, action)

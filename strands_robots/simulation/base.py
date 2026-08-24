@@ -50,9 +50,13 @@ if TYPE_CHECKING:
 # annotations`` (already in effect) makes that a no-op at runtime.
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 from strands_robots.utils import (
+    FREE_CAMERA_TOKENS,
+    dds_domain_id_error,
     is_boolean,
+    non_negative_count_error,
     positive_count_error,
     positive_finite_number_error,
+    process_rss_mb,
     sequence_length,
 )
 
@@ -100,6 +104,58 @@ def reject_setup_kwargs(kwargs: Mapping[str, Any]) -> None:
         'builds an empty engine, not a robot. Use Robot("so101", mode="sim") for '
         'one-step setup, or create_world() then add_robot("so101").'
     )
+
+
+def close_match_hint(requested: object, known: Sequence[str]) -> str:
+    """The ``" Did you mean: a, b?"`` fragment of an unknown-entity message.
+
+    Returns ``""`` when there is no usable suggestion, so a caller can append
+    it unconditionally.
+
+    This is the *only* part of an unknown-entity message that needs
+    ``requested`` to be a :class:`str`: :func:`difflib.get_close_matches`
+    compares character sequences, and a name of another type has none. What is
+    registered - and the discovery action that lists it - is a property of the
+    world alone, so it must not be gated on the requested name's type. Owning
+    that distinction here is what keeps the two from being conflated again: one
+    ``isinstance`` test guarding both suppressed the whole listing for every
+    non-``str`` name, and such a name is exactly what
+    :func:`strands_robots.simulation.models.registered` routes to these
+    messages - it is total so an unhashable name is reported rather than
+    raising, and the report it hands off to has to be usable.
+
+    A suggestion identical to ``requested`` is dropped. ``difflib`` scores an
+    exact match 1.0 and therefore ranks it first, so a caller whose ``known``
+    set can contain the requested name would otherwise be told to try the name
+    it just refused - a suggestion that carries no information and displaces a
+    real one out of the three slots. Callers whose ``known`` set is what the
+    world holds cannot reach that (the name is absent, which is why the message
+    is being built), but a caller comparing against a wider catalogue can:
+    :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine._unknown_model_msg`
+    suggests over the whole robot registry, where a registered robot whose
+    asset is missing is exactly the case whose name is already correct. Owning
+    the rule here keeps it from being a precondition each caller has to know.
+
+    Args:
+        requested: Caller-supplied entity name, of any type.
+        known: Entity names that are registered.
+
+    Returns:
+        A leading-space ``" Did you mean: ...?"`` fragment naming up to three
+        registered names, or ``""`` when ``requested`` is not a string, nothing
+        is registered, or no registered name other than ``requested`` itself is
+        close enough to suggest.
+    """
+    if not isinstance(requested, str) or not known:
+        return ""
+    # Ask for one more than we render so dropping an exact self-match promotes
+    # the next-best candidate instead of shortening the list. difflib returns
+    # matches best-first, so the rendered three are unchanged for a caller
+    # whose known set cannot contain ``requested``.
+    matches = [m for m in difflib.get_close_matches(requested, list(known), n=4, cutoff=0.4) if m != requested][:3]
+    if not matches:
+        return ""
+    return " Did you mean: " + ", ".join(matches) + "?"
 
 
 def unknown_kwargs_error(method: str, kwargs: Mapping[str, Any], accepted: Sequence[str]) -> dict[str, Any] | None:
@@ -270,7 +326,30 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
     return None
 
 
-def randomization_seed_error(value: Any, context: str) -> str | None:
+# The largest seed a rollout can apply. ``set_eval_seed`` reseeds the legacy
+# NumPy global RNG (``numpy.random.seed``), which refuses anything above
+# 2**32 - 1 - unlike ``numpy.random.default_rng``, the destination of the
+# ``randomize`` / ``set_obs_noise`` seeds, which accepts an integer of any
+# width. That is why a rollout seed carries a ceiling those two do not: the
+# accepted domain of a parameter is bounded by what its applier can honor, and
+# ``random.seed`` / ``torch.manual_seed`` (the other two RNGs seeded there) are
+# wider still.
+#
+# It lives here, beside the ``max_seed`` parameter it feeds, rather than in
+# ``policy_runner`` with the applier it describes. The note above this module's
+# ``policy_runner`` import is the reason: CodeQL's ``py/unsafe-cyclic-import``
+# walks ``TYPE_CHECKING`` blocks, and ``policy_runner`` imports ``SimEngine``
+# from here under one, so every name added to that module-level import line
+# closes an AST-visible cycle. Adding this constant to it raised
+# ``py/unsafe-cyclic-import`` on all three names that line carries. The rollout
+# side reaches it through the function-local import it already uses for
+# ``randomization_seed_error``, so neither module gains a module-level edge.
+MAX_EVAL_SEED = 2**32 - 1
+
+
+def randomization_seed_error(
+    value: Any, context: str, *, max_seed: int | None = None, allow_none: bool = True
+) -> str | None:
     """Return why a value cannot seed a reproducible randomization stream.
 
     The seed reaches ``numpy.random.default_rng``, which accepts only
@@ -280,19 +359,69 @@ def randomization_seed_error(value: Any, context: str) -> str | None:
     after the configuring call reported success - so it is rejected at the call
     that supplied it.
 
+    Two families share this domain, and they share it because the failure is
+    the same: the ``seed`` of ``randomize`` / ``set_obs_noise``, which drives
+    the domain-randomization streams, and the ``seed`` of a policy rollout or
+    evaluation (``run_policy`` / ``eval_policy`` / ``start_policy`` /
+    ``evaluate_benchmark``), which pins the client RNGs a stochastic policy
+    samples from. The name reads for the first family and is accurate for both:
+    a rollout seed exists precisely to make the policy's randomization
+    reproducible.
+
+    Their appliers are not equally wide, so the accepted domain is not either.
+    ``randomize`` / ``set_obs_noise`` reach ``default_rng``, which takes a
+    non-negative integer of any width. A rollout seed is applied through
+    :func:`~strands_robots.simulation.policy_runner.set_eval_seed`, which also
+    reseeds the legacy NumPy global RNG (``numpy.random.seed``) - the one most
+    policies draw from - and that refuses anything above :data:`MAX_EVAL_SEED`.
+    ``max_seed`` carries that ceiling, so the rollout surfaces refuse a value
+    they could not apply while the randomization surfaces keep the width they
+    can honor. One rule with an explicit bound per destination is what stops
+    the accepted domain drifting from the applier in either direction.
+
+    ``allow_none`` is the same idea at the other end of the domain. ``None`` is
+    a legitimate *parameter* value for most callers - it selects fresh entropy
+    for ``randomize`` / ``set_obs_noise`` and means "do not seed" at the rollout
+    facades - but it is not a *seed*, so an applier that has to hand one to an
+    RNG cannot honor it: ``random`` and NumPy would reseed from entropy while
+    ``torch.manual_seed`` refuses it, leaving a process-wide RNG side effect on
+    a rollout that asked for none. ``allow_none=False`` refuses it there and
+    drops ``None`` from the messages, so the reason a caller is given always
+    describes the domain that caller actually has.
+
     Args:
         value: The candidate seed (``None`` selects fresh entropy).
         context: Method name to prefix the message with.
+        max_seed: Largest value the caller's applier can honor, or ``None``
+            when the non-negative-integer rule is the only bound.
+        allow_none: Whether ``None`` is a value this caller can honor. True for
+            a parameter where it selects fresh entropy or means "do not seed";
+            False for an applier that has to hand a seed to an RNG, which has
+            nothing to apply. When False the messages stop advertising ``None``
+            too, so a caller is never offered a value this destination refuses.
 
     Returns:
         ``None`` when the seed is usable, otherwise the reason as a string.
     """
+    none_clause = " or None" if allow_none else ""
+    entropy_hint = " (None draws fresh entropy)" if allow_none else ""
     if value is None:
-        return None
+        if allow_none:
+            return None
+        return (
+            f"{context}: seed is required; None is the absence of a seed, not a seed to apply. "
+            f"To leave the RNGs untouched, do not call {context} - reseeding them from entropy "
+            "is a global side effect an unseeded rollout must not acquire."
+        )
     if isinstance(value, bool) or not isinstance(value, numbers.Integral):
-        return f"{context}: seed must be a non-negative integer or None, got {value!r} (None draws fresh entropy)"
+        return f"{context}: seed must be a non-negative integer{none_clause}, got {value!r}{entropy_hint}"
     if int(value) < 0:
-        return f"{context}: seed must be a non-negative integer or None, got {value!r} (None draws fresh entropy)"
+        return f"{context}: seed must be a non-negative integer{none_clause}, got {value!r}{entropy_hint}"
+    if max_seed is not None and int(value) > max_seed:
+        return (
+            f"{context}: seed must be an integer in [0, {max_seed}]{none_clause}, got {value!r} "
+            "(a rollout seed is applied to the legacy NumPy global RNG, which refuses a larger value)"
+        )
     return None
 
 
@@ -405,6 +534,21 @@ def _boolean_action_error(label: str, value: Any) -> dict[str, Any] | None:
     }
 
 
+# Why a runtime *state* write refuses a boolean, kept in one place because three
+# surfaces quote it (set_joint_positions, set_joint_velocities, apply_force).
+#
+# The actuator-command path refuses one for a stronger reason - see
+# :data:`_BOOLEAN_ACTION_REASON`: 1.0 is re-read in each drive's own units, so the
+# same True commands a different pose on every actuator. Here 1.0 is a single
+# unambiguous quantity - 1 radian, 1 rad/s, 1 N - so a boolean is merely wrong
+# rather than ambiguous.
+_BOOLEAN_STATE_REASON = (
+    "float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or "
+    "1 N depending on the surface, and the call would report success. Pass the "
+    "quantity in the surface's own units."
+)
+
+
 class SimEngine(ABC):
     """Abstract base class for simulation engines.
 
@@ -482,9 +626,15 @@ class SimEngine(ABC):
                 an :class:`ImportError` is raised here if it is missing.
                 Defaults to False - the sim never touches ROS 2.
             ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+                Only an ``int`` in ``[0, 232]`` names a domain; a value
+                outside the RTPS port map raises :class:`ValueError`.
         """
         self._ros2_bridge_enabled = bool(ros2_bridge)
-        self._ros2_domain = int(ros2_domain)
+        # Refuse a domain id outside the RTPS port map here, so a backend that
+        # only publishes later still rejects it at construction.
+        if error := dds_domain_id_error(ros2_domain, "ros2_domain", type(self).__name__):
+            raise ValueError(error)
+        self._ros2_domain = ros2_domain
         self._ros_bridge: Any = None
         if self._ros2_bridge_enabled:
             from strands_robots.simulation.ros_bridge import SimRosBridge
@@ -561,7 +711,7 @@ class SimEngine(ABC):
             raise ValueError("No robots registered in the simulation. Add a robot first (add_robot or Robot factory).")
         raise ValueError(f"Multiple robots registered; specify robot_name. Available: {names}")
 
-    def _unknown_robot_msg(self, requested: str) -> str:
+    def _unknown_robot_msg(self, requested: object) -> str:
         """Actionable 'robot not found' message for the backend-agnostic facade.
 
         Keeps the "Robot 'X' not found." prefix (the consistent error shape the
@@ -572,13 +722,19 @@ class SimEngine(ABC):
         :meth:`list_robots` primitive, so every backend inherits it; the MuJoCo
         engine overrides with a ``self._world.robots``-backed variant. Mirrors the
         ``_unknown_object_msg`` / ``_unknown_camera_msg`` pattern (#1299/#1303/#1306).
+
+        ``requested`` is typed ``object`` because a name of any type reaches here:
+        :func:`~strands_robots.simulation.models.registered` is total, so a name
+        that cannot be a registry key resolves to "no such entity" and is
+        reported rather than raising. Only the close match needs a string (see
+        :func:`close_match_hint`); what is registered is a fact about the world,
+        so it is listed for every name type instead of being replaced by an
+        "empty scene" claim that would be false.
         """
         known = self.list_robots()
         msg = f"Robot '{requested}' not found."
-        if known and isinstance(requested, str):
-            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
-            if matches:
-                msg += " Did you mean: " + ", ".join(matches) + "?"
+        if known:
+            msg += close_match_hint(requested, known)
             msg += f" Available robots: {known}. Use action='list_robots' to see all."
         else:
             msg += " No robots in the scene; add one with action='add_robot'."
@@ -656,9 +812,36 @@ class SimEngine(ABC):
         """
         ...
 
+    # Steps a ``step`` implementation may advance per lock acquisition. This
+    # bounds the window in which every OTHER locked method on the engine - a
+    # concurrent ``get_state``, ``get_observation``, ``stop_policy`` or the
+    # ``cleanup`` world handoff - is blocked, so a long run is slow rather than
+    # unresponsive.
+    #
+    # It is deliberately not a limit on the total work one call may request.
+    # That is a per-backend resource policy (MuJoCo's ``_MAX_STEPS_PER_CALL``)
+    # whose value cannot be shared: 100_000 MuJoCo ``mj_step`` calls on a small
+    # arm and 100_000 RTX-rendered Isaac ``world.step`` calls are not the same
+    # amount of wall time, and a Newton step is a control step of ``substeps``
+    # solver steps, so one number does not express one policy. What IS shared is
+    # the reason above, which is why the granularity is one constant here and
+    # the ceiling is not. See #1871.
+    _STEPS_PER_BATCH = 1000
+
     @abstractmethod
     def step(self, n_steps: int = 1) -> dict[str, Any]:
-        """Advance simulation by n physics steps."""
+        """Advance simulation by n physics steps.
+
+        When the backend exposes an engine lock (``self._lock``, all in-tree
+        backends), implementations must not hold it for the whole count: they
+        release it at least every :attr:`_STEPS_PER_BATCH` steps, and re-check
+        that the world still exists on each batch boundary before advancing it,
+        aborting with a structured error naming the steps completed if it does
+        not. Releasing the lock is what makes a concurrent teardown reachable
+        mid-call, so the two halves are one contract rather than two - the same
+        pairing ``_primitive_abort_reason`` already makes for the motion-primitive
+        loops, which release the lock on the same schedule.
+        """
         ...
 
     @abstractmethod
@@ -731,9 +914,14 @@ class SimEngine(ABC):
         actuators never move and the robot silently no-ops.
 
         The default mirrors :meth:`robot_joint_names` for backends whose
-        actuator set matches their joint set. Backends with a distinct
-        actuator namespace (e.g. MuJoCo tendon grippers) override this to
-        return the actuator short-names instead.
+        actuator set matches their joint set. Two kinds of backend override it.
+        One has a distinct actuator *namespace* (MuJoCo tendon grippers) and
+        returns actuator short-names instead. The other shares the namespace but
+        commands a *subset* of it: the Newton engine drops a floating base's
+        6-DoF free joint, which is a joint and not a commandable scalar, so its
+        action keys are the joint names minus that one. An override may
+        therefore rename or narrow this list, and a caller must not assume it
+        has the same width as :meth:`robot_joint_names`.
         """
         return self.robot_joint_names(robot_name)
 
@@ -785,12 +973,23 @@ class SimEngine(ABC):
                 ``create_policy``.
             policy_config: Provider kwargs (the policy_config).
 
+        An unresolvable ``policy_provider`` is reported here too. That check
+        runs before the observation lookup below: a robot whose observation is
+        not yet available would otherwise take the early return and let the
+        unresolvable name reach ``create_policy``, whose raise escapes the
+        ``status=error`` envelope this method exists to produce.
+
         Returns:
             A ``status=error`` dict (for the caller to return) when the
-            provider's preflight rejects the configuration; ``None`` when the
-            check passes, is a no-op, or the observation is not yet available.
+            provider cannot be resolved or its preflight rejects the
+            configuration; ``None`` when the check passes, is a no-op, or the
+            observation is not yet available.
         """
-        from strands_robots.policies import preflight_policy
+        from strands_robots.policies import policy_provider_error, preflight_policy
+
+        reason = policy_provider_error(policy_provider, **(policy_config or {}))
+        if reason is not None:
+            return {"status": "error", "content": [{"text": reason}]}
 
         obs = self.get_observation(robot_name)
         if not isinstance(obs, dict) or not obs:
@@ -800,6 +999,34 @@ class SimEngine(ABC):
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
         return None
+
+    def _unresolvable_policy_provider_error(
+        self,
+        policy_provider: str,
+        policy_config: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Report an unresolvable ``policy_provider`` as a structured error.
+
+        For surfaces that cannot use :meth:`_preflight_policy_config` because
+        they build the policy elsewhere -- notably a ``start_policy`` that
+        submits the rollout to a worker thread -- this gives the same verdict
+        synchronously, so the caller is refused instead of being told a
+        rollout started that could never build its policy.
+
+        Args:
+            policy_provider: Provider name / smart string.
+            policy_config: Provider kwargs (the policy_config).
+
+        Returns:
+            A ``status=error`` dict when the provider cannot be resolved;
+            ``None`` when it resolves.
+        """
+        from strands_robots.policies import policy_provider_error
+
+        reason = policy_provider_error(policy_provider, **(policy_config or {}))
+        if reason is None:
+            return None
+        return {"status": "error", "content": [{"text": reason}]}
 
     # Object management
 
@@ -813,7 +1040,7 @@ class SimEngine(ABC):
         size: list[float] | None = None,
         color: list[float] | None = None,
         mass: float = 0.1,
-        is_static: bool = False,
+        is_static: bool | None = None,
         mesh_path: str | None = None,
         material: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -846,6 +1073,17 @@ class SimEngine(ABC):
         ``set_body_properties`` would refuse: a non-finite mass makes the first
         integration step produce ``nan`` and, because the solver shares one
         state vector, poisons every other body in the world too.
+
+        ``is_static`` is tri-state, and ``None`` is the default because it
+        is the only value that means "the caller did not specify". That is what
+        lets a backend derive the answer from ``shape``: MuJoCo forces a
+        ``shape="plane"`` static -- a plane is infinite and cannot carry a
+        dynamic mass -- and *refuses* an explicit ``is_static=False`` there
+        rather than quietly overriding it. A backend with no shape-derived rule
+        resolves ``None`` to ``False`` (dynamic). Declaring the default as
+        ``False`` would state a value the default backend does not deliver, and
+        would make restating that declared default a hard error for the one
+        shape whose whole point is being static.
 
         ``material`` (optional): backend-specific visual material/texture
         spec. ``None`` keeps the flat ``color`` rgba (unchanged); a backend
@@ -881,8 +1119,14 @@ class SimEngine(ABC):
               at the physics-engine level.
             - ``"<camera_name>"`` (np.ndarray): One RGB uint8 frame per
               camera associated with the robot, keyed by camera name.
-              Shape ``(H, W, 3)``. Cameras whose render fails MAY be
-              omitted; joint state MUST still be returned.
+              Shape ``(H, W, 3)``. A key MUST carry the view of the camera it
+              names; a backend that cannot render that camera MUST omit the key
+              rather than substitute another view (the free/overview camera in
+              particular), because every consumer of this schema - a policy
+              reading ``observation.images.<name>``, a recorded dataset column -
+              reads the key as a promise about which camera it is looking
+              through and has no way to detect a substitution. Cameras whose
+              render fails MAY be omitted; joint state MUST still be returned.
             - Floating base: a robot whose root is a 6-DoF free joint (a
               humanoid's named ``floating_base_joint`` or a mobile base's
               unnamed ``<freejoint>``) does NOT report that free joint as a
@@ -893,6 +1137,17 @@ class SimEngine(ABC):
               (w,x,y,z), ``"base_lin_vel"`` and ``"base_ang_vel"``, matching
               :meth:`get_robot_state`'s ``"base"`` entry. Absent for fixed-base
               arms.
+            - ``"body.<name>.pos"`` / ``".quat"`` / ``".lin_vel"`` /
+              ``".ang_vel"`` (list[float]): World pose + twist of a NAMED body,
+              present only when the running policy declared that body in
+              :attr:`~strands_robots.policies.base.Policy.required_bodies`.
+              Backends do not emit these from ``get_observation`` itself - the
+              runtime (:class:`~strands_robots.simulation.policy_runner.PolicyRunner`)
+              merges them in from :meth:`get_body_state` for the declared bodies
+              only, so the default observation is unchanged and nothing pays for
+              a link nobody asked for. Motion-mimic trackers need them because
+              their anchor link (``torso_link`` on a G1) is separated from
+              ``base_quat`` (the pelvis) by the waist joints.
 
         Single-camera rendering is :meth:`render`'s job, not this method's.
         For batched multi-robot observation (future Isaac / Newton), add a
@@ -902,6 +1157,19 @@ class SimEngine(ABC):
         Args:
             robot_name: Which robot to observe. If ``None`` and exactly one
                 robot exists, that robot is used; otherwise returns ``{}``.
+            skip_images: Skip camera rendering and return joint state only.
+                Rendering dominates the per-step cost, so every consumer that
+                reads joint values alone passes ``True`` - the predicate /
+                reward DSL (:mod:`~strands_robots.simulation.predicates`), the
+                LIBERO adapter's state reads, and the ROS 2 bridge when it
+                publishes ``joint_states`` without ``image_raw``. Camera keys
+                are then absent from the result rather than present and empty,
+                so a caller must not read a missing frame as a render failure.
+                A backend overrides a ``True`` here while a dataset recording is
+                active - the recorded frames must carry the camera images the
+                schema declared - so this is a hint, not a guarantee that
+                nothing renders. Defaults to False (render every attached
+                camera).
 
         Returns:
             Observation dict per schema above. Returns ``{}`` if the world
@@ -1143,6 +1411,78 @@ class SimEngine(ABC):
             bound[name] = value
         return bound, None
 
+    @staticmethod
+    def _coerce_joint_state_map(
+        values: dict[str, Any],
+        name: str,
+        method: str,
+    ) -> tuple[dict[str, float], dict[str, Any] | None]:
+        """Coerce a ``{joint_name: value}`` state map to finite floats before any write.
+
+        Backs the kinematic state writers on every backend
+        (:meth:`set_joint_positions` / :meth:`set_joint_velocities`), so the
+        accepted domain cannot differ by which engine the caller happens to be
+        driving.
+
+        Each value must be a real number (Python or NumPy scalar) and finite, and
+        must not be a boolean. A non-numeric value would otherwise raise
+        ``ValueError`` from ``float(value)`` past the structured-error dispatch
+        contract, and ``nan`` / ``inf`` would slip straight into the engine's
+        joint state - MuJoCo's ``mj_forward`` propagates the ``nan`` across the
+        whole kinematic state (or an ``inf`` velocity blows up the integrator),
+        and PhysX reports a non-finite articulation as an "Illegal
+        BroadPhaseUpdateData - non-finite bounds" error from a later step -
+        while the tool still reports ``status="success"``. A boolean is refused
+        for the reason in :data:`_BOOLEAN_STATE_REASON`: it survives ``float()``
+        as a silent ``1.0``, so it is the one invalid value the finiteness check
+        cannot see. Validating up front keeps the write atomic: an invalid value
+        leaves the joint state untouched.
+
+        Args:
+            values: The ``{joint_name: value}`` mapping to validate.
+            name: Parameter name (``"positions"`` / ``"velocities"``), used in error text.
+            method: Calling method name, used in error text.
+
+        Returns:
+            ``(coerced, None)`` on success, or ``({}, error_dict)`` on the first
+            invalid value -- matching the structured-error tool contract so the
+            caller never raises past dispatch.
+        """
+        out: dict[str, float] = {}
+        for jnt_name, value in values.items():
+            # Before float(): float(True) is 1.0, so the boolean is unrecoverable
+            # once coerced and the write would report success having set 1 rad /
+            # 1 rad/s. numpy.bool_ needs the .item() unwrap is_boolean applies.
+            if is_boolean(value):
+                return {}, {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, not a bool (got {value!r}). {_BOOLEAN_STATE_REASON}"
+                        }
+                    ],
+                }
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                return {}, {
+                    "status": "error",
+                    "content": [
+                        {"text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, got {value!r}"}
+                    ],
+                }
+            if not math.isfinite(f):
+                return {}, {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"{method}: '{name}' value for joint '{jnt_name}' must be finite (no nan/inf), got {value!r}"
+                        }
+                    ],
+                }
+            out[jnt_name] = f
+        return out, None
+
     @abstractmethod
     def send_action(
         self,
@@ -1157,6 +1497,23 @@ class SimEngine(ABC):
         relies on this - it calls send_action once per control step and
         does NOT call sim.step() separately.
 
+        ``n_substeps`` is a **positive** whole number, on the shared
+        :func:`~strands_robots.utils.positive_whole_number_error` domain every
+        backend applies. A NumPy or float count with an integral value is
+        honored and coerced; a fractional, zero, negative, non-finite, boolean
+        or non-numeric count is refused as a structured error, and nothing is
+        written when it is - a refusal arriving after the write would leave the
+        robot commanded and the world un-advanced, which is the one state this
+        surface must never report an error from. The floor is ``1`` rather than
+        :meth:`step`'s ``0`` precisely because of the write: "advance nothing"
+        is ``step(0)``, an accepted no-op that commands nothing, while a
+        ``send_action`` advancing nothing leaves a target the world never
+        integrates. It is also the floor both producers of this count already
+        enforce - ``PolicyRunner._control_substeps`` returns ``>= 1`` and
+        raises otherwise, and ``training.rl.env.SimEnv`` refuses an
+        ``n_substeps`` below 1 - so this surface was the only member of that
+        chain without the guarantee.
+
         Backends are responsible for internal thread-safety (e.g.
         MuJoCo acquires self._lock here). PolicyRunner does not manage
         locks.
@@ -1164,7 +1521,8 @@ class SimEngine(ABC):
         Returns:
             Dict with ``status`` and ``content``. When action keys cannot
             be resolved, the ``content`` list includes a ``json`` block with
-            ``unresolved_keys`` so callers can self-correct.
+            ``unresolved_keys`` so callers can self-correct. ``status`` is
+            ``"error"`` when ``n_substeps`` is outside its domain.
         """
         ...
 
@@ -1212,15 +1570,25 @@ class SimEngine(ABC):
 
         ``n_steps`` (primary) or the legacy ``max_steps`` alias specify the
         rollout length as a step count; ``duration = n_steps / control_frequency``.
-        ``n_steps`` wins when both are passed. The inputs are validated before
-        the division so a non-positive horizon or frequency is reported as a
-        caller error rather than silently producing a no-op, a negative
-        duration, or a ``ZeroDivisionError``.
+        ``n_steps`` wins when both are passed. The effective horizon is validated
+        before the division against the shared positive-count domain
+        (:func:`~strands_robots.utils.positive_count_error`) - the same domain
+        :meth:`_validate_positive_int` already applies to ``eval_policy``'s
+        ``max_steps`` and to ``n_episodes`` / ``action_horizon`` /
+        ``control_substeps`` - so a horizon that is not a whole number of steps
+        is reported as a caller error rather than silently truncated. A bare
+        ``<= 0`` test only saw the sign: ``n_steps=2.7`` ran two steps and
+        ``n_steps=True`` ran one, both reported as a successful rollout of a
+        horizon the caller never asked for, while the identically-named
+        ``eval_policy`` budget refused both.
 
         Args:
-            n_steps: Primary step-count horizon, or ``None``.
+            n_steps: Primary step-count horizon, or ``None``. Must be a
+                positive integer when given.
             max_steps: Legacy alias, normalized to ``n_steps`` when ``n_steps``
-                is ``None``.
+                is ``None``, and validated under its own name so a caller who
+                wrote ``max_steps`` is not pointed at a parameter they never
+                passed. Same domain as ``n_steps``.
             control_frequency: Target control-loop frequency in Hz.
             duration: Fallback wall-clock duration used when no step horizon
                 is given. Returned unchanged when no horizon is given, so the
@@ -1235,18 +1603,19 @@ class SimEngine(ABC):
             wall-clock duration (recomputed from the horizon when one was
             given) and ``n_steps`` is the normalized step count (or ``None``).
         """
-        if n_steps is None and max_steps is not None:
-            n_steps = int(max_steps)
         if n_steps is not None:
-            if n_steps <= 0:
-                return (
-                    duration,
-                    n_steps,
-                    {
-                        "status": "error",
-                        "content": [{"text": f"{method}: n_steps must be > 0, got {n_steps}."}],
-                    },
-                )
+            if error := positive_count_error(n_steps, "n_steps", method):
+                return duration, n_steps, {"status": "error", "content": [{"text": error}]}
+        elif max_steps is not None:
+            # Validate the alias under its OWN name: the caller wrote
+            # ``max_steps``, so a refusal naming ``n_steps`` points them at a
+            # parameter they never passed. The normalization below is then exact
+            # (an ``int()`` coercion here would be a second, weaker contract
+            # that silently truncated the value the domain just accepted).
+            if error := positive_count_error(max_steps, "max_steps", method):
+                return duration, max_steps, {"status": "error", "content": [{"text": error}]}
+            n_steps = max_steps
+        if n_steps is not None:
             # control_frequency is validated as a positive number at the public
             # entry points (run_policy / start_policy / eval_policy) via
             # _validate_positive_frequency before this helper runs, so the
@@ -1364,6 +1733,47 @@ class SimEngine(ABC):
             An error dict naming the offending parameter, or ``None``.
         """
         if error := positive_count_error(value, name, method):
+            return {"status": "error", "content": [{"text": error}]}
+        return None
+
+    @staticmethod
+    def _validate_seed(seed: Any, method: str) -> dict[str, Any] | None:
+        """Reject an unusable RNG seed at the public API.
+
+        A rollout seed is the caller's reproducibility contract: it reseeds the
+        client RNGs (and is forwarded to ``policy.reset``) so the same scene and
+        the same policy replay identically. Only a non-negative integer can do
+        that - the seed ends at ``numpy.random.seed`` / ``default_rng``, which
+        refuses everything else - so a value that cannot be applied is refused
+        at the call that supplied it rather than at the first draw.
+
+        Without this guard the same mistake surfaced three different ways, none
+        of them naming the parameter: ``run_policy`` raised NumPy's own
+        ``TypeError: Cannot cast scalar from dtype('float64') to dtype('int64')``
+        straight out of a method documented to return this envelope,
+        ``start_policy`` reported "started" and failed on its worker thread, and
+        ``True`` was accepted everywhere as a silent seed of ``1``.
+
+        Thin binding of :func:`randomization_seed_error` to this class's
+        tool-error envelope, so a seed refused for ``randomize`` cannot be
+        accepted for the rollout whose reproducibility it is supposed to pin.
+
+        The rollout binding supplies :data:`MAX_EVAL_SEED` as the ceiling. Its
+        applier reseeds the legacy NumPy global RNG as well as ``default_rng``,
+        and that one refuses a larger value - so without the bound a seed in
+        ``[2**32, inf)`` passed this guard and then raised NumPy's own message
+        from inside the rollout, which is the failure this guard exists to
+        replace. ``randomize`` / ``set_obs_noise`` reach only ``default_rng``
+        and keep the unbounded domain they can honor.
+
+        Args:
+            seed: The caller-supplied value (``None`` draws fresh entropy).
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None``.
+        """
+        if error := randomization_seed_error(seed, method, max_seed=MAX_EVAL_SEED):
             return {"status": "error", "content": [{"text": error}]}
         return None
 
@@ -1641,6 +2051,116 @@ class SimEngine(ABC):
             return {"status": "error", "content": [{"text": error}]}
         return None
 
+    @staticmethod
+    def _validate_rtc_inference_timeout(rtc_inference_timeout_s: Any, method: str) -> dict[str, Any] | None:
+        """Reject an async-RTC prefetch deadline the runner cannot wait out.
+
+        ``rtc_inference_timeout_s`` is the async-RTC chunk pipeline's hard
+        per-chunk deadline: the seam swap does
+        ``future.result(timeout=rtc_inference_timeout_s)`` and converts a
+        ``concurrent.futures.TimeoutError`` into "policy inference is stuck.
+        Raise the timeout or check the policy/server." That message is only true
+        of a deadline a healthy inference could have met, and every value
+        outside the accepted domain makes it false:
+
+        * ``0`` / a negative value / ``nan`` make ``Future.result`` raise
+          immediately - ``nan`` because every comparison against it is false, so
+          the deadline is never considered met - and the rollout is reported as
+          ``status="error"`` blaming a policy that answered on time. The value
+          the caller supplied is quoted back in a sentence accusing the model.
+        * ``inf`` cannot be honored either: it reaches ``time_t`` arithmetic and
+          raises ``OverflowError: timestamp out of range for platform time_t``,
+          which names neither the parameter nor the method. ``None`` - not
+          ``inf`` - is this parameter's documented "wait without a deadline"
+          spelling, so refusing ``inf`` costs no capability.
+        * ``True`` is an ``int`` subclass and acts as a silent 1-second budget.
+        * A string or a list reaches the same comparison and leaks
+          ``TypeError: '>' not supported between instances of 'str' and 'int'``.
+
+        The accepted domain is
+        :func:`~strands_robots.utils.positive_finite_number_error` - the same
+        rule as :meth:`_validate_duration` and
+        :meth:`_validate_positive_frequency`, the other wall-clock knobs of a
+        rollout - plus ``None``, which this parameter documents as "no deadline"
+        and which is its default.
+
+        Validated unconditionally rather than only when the async path is
+        active. Whether that path runs is not knowable here: ``async_rtc=None``
+        (the default) auto-resolves from the policy's own chunk-emitting shape
+        one layer down, after the policy has been constructed. Gating the check
+        on the flag would therefore leave the dominant path - every
+        chunk-emitting VLA - unguarded, and give one value two answers depending
+        on a resolution the caller cannot see. Checking here instead costs a bad
+        deadline no weight download and no frame.
+
+        Args:
+            rtc_inference_timeout_s: The caller-supplied value to validate.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None`` when the
+            value is valid (including when it is ``None``).
+        """
+        if rtc_inference_timeout_s is None:
+            return None
+        error = positive_finite_number_error(rtc_inference_timeout_s, "rtc_inference_timeout_s", method)
+        if error:
+            return {"status": "error", "content": [{"text": error}]}
+        return None
+
+    @staticmethod
+    def _validate_onframe_failure_limit(max_onframe_failures: Any, method: str) -> dict[str, Any] | None:
+        """Reject an ``on_frame`` failure tolerance the watchdog cannot count against.
+
+        ``max_onframe_failures`` is the consecutive-failure ceiling that stops a
+        broken ``on_frame`` hook from producing an empty capture behind a
+        successful-looking rollout (GH #117). The runner counts failures into a
+        plain ``int`` and compares ``consecutive_onframe_failures >= limit``, so a
+        value outside the accepted domain does not merely mis-size the tolerance -
+        it silences the mechanism whose own abort text reads "aborting episode to
+        avoid silent dataset corruption":
+
+        * ``nan`` and ``inf`` make that comparison false for every counter value,
+          so the abort never fires. Measured on a 100-step rollout whose hook
+          raises on every step: 100 of 100 frames lost and
+          ``status="success"``. Both values also break the per-failure warning
+          that would otherwise report the hook - it interpolates the limit with
+          ``%d``, and ``"%d" % nan`` raises ``ValueError`` while ``"%d" % inf``
+          raises ``OverflowError``, so ``logging`` emits its own error instead of
+          the warning and the operator is told nothing at all.
+        * ``0`` is a duplicate spelling of ``1`` carrying a false message. The
+          counter is incremented before the comparison, so a limit of ``1``
+          already aborts on the first failure; ``0`` aborts on the same failure
+          and reports "failed 0 times in a row" when one failure occurred.
+          Refusing it costs no capability, and ``-5`` is the same abort with a
+          message that names a negative count.
+        * ``2.7`` tolerates two failures and aborts on the third while reporting
+          "failed 2.7 times in a row" - a tolerance the caller never asked for.
+          ``True`` is an ``int`` subclass and reports "failed True times in a row".
+        * A string or a list reaches the same comparison and leaks
+          ``TypeError: '>=' not supported between instances of 'int' and 'str'``
+          from inside the hook's own exception handler - and only once the hook
+          first fails, so the value is accepted and inert until then.
+
+        The accepted domain is :meth:`_validate_positive_int`
+        (:func:`~strands_robots.utils.positive_count_error`) - the same rule this
+        method already applies to ``n_steps``, ``max_steps`` and ``n_episodes``,
+        the other step counts of the same signature - plus ``None``, which this
+        parameter documents as "use the runner's own limit" and which is its
+        default.
+
+        Args:
+            max_onframe_failures: The caller-supplied value to validate.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None`` when the
+            value is valid (including when it is ``None``).
+        """
+        if max_onframe_failures is None:
+            return None
+        return SimEngine._validate_positive_int(max_onframe_failures, "max_onframe_failures", method)
+
     def _validate_recording_rate(self, control_frequency: float, method: str) -> dict[str, Any] | None:
         """Reject a rollout whose rate the active dataset recording cannot describe.
 
@@ -1852,6 +2372,50 @@ class SimEngine(ABC):
                 dataset recording), backends plug into
                 ``PolicyRunner.run``'s ``on_frame`` hook via
                 :meth:`_make_run_policy_hook`.
+            policy_object: Already-constructed
+                :class:`~strands_robots.policies.Policy` to drive the rollout,
+                bypassing ``create_policy`` entirely (``policy_provider`` /
+                ``policy_config`` are then unused). Reuse one instance across
+                calls so the checkpoint is not reloaded per rollout - the
+                ``policy_load_cache_hit`` field below reports when a caller
+                rebuilt it instead. ``None`` (default) builds the policy from
+                ``policy_provider`` / ``policy_config``.
+            n_steps: Exact control-step horizon. When given it REPLACES
+                ``duration``, which is recomputed as
+                ``n_steps / control_frequency``, and it bypasses the lossy
+                ``int(duration * control_frequency)`` conversion so the rollout
+                executes exactly this many control steps. Must be a positive
+                integer; ``0``, a negative value, a bool, or a fractional or
+                non-numeric value is reported as a structured caller error
+                rather than truncated to a horizon the caller never asked for.
+                ``None`` (default) falls back to ``max_steps``, then to
+                ``duration``.
+            max_steps: Legacy alias for ``n_steps``, kept for callers written
+                against the older name. Consulted only when ``n_steps`` is
+                ``None`` - ``n_steps`` wins when both are passed - and refused
+                under its own name on the same domain.
+            max_onframe_failures: Maximum *consecutive* ``on_frame``-hook
+                exceptions tolerated before the rollout aborts the episode. That
+                hook is where a backend attaches dataset recording and video
+                capture, so a broken recorder otherwise fills an empty dataset
+                behind a successful-looking rollout. Two classes are exempt from
+                the count rather than tolerated by it: ``CooperativeStop`` is the
+                documented graceful stop, and
+                :class:`~strands_robots.dataset_recorder.RecordingFrameError` is
+                data loss rather than telemetry, so a lost dataset frame aborts on
+                the FIRST occurrence whatever this is set to. ``None`` (default)
+                uses the runner's own limit (currently ``5``); non-consecutive
+                failures reset the counter. Must otherwise be a positive integer - the
+                same domain as ``n_steps`` and ``n_episodes`` above, since the
+                runner compares it against a plain integer counter. ``nan`` and
+                ``inf`` make that comparison false forever and so disable the
+                abort entirely; ``0`` aborts on the first failure exactly as
+                ``1`` does while reporting a count of zero. Both are reported as
+                a structured caller error rather than silencing the watchdog -
+                see
+                :meth:`~strands_robots.simulation.base.SimEngine._validate_onframe_failure_limit`.
+                Forwarded verbatim to
+                :meth:`~strands_robots.simulation.policy_runner.PolicyRunner.run`.
             seed: Optional master RNG seed for a reproducible single rollout.
                 When set, reseeds Python / NumPy / torch / cuDNN and forwards
                 ``policy.reset(seed=...)`` so a stochastic policy (VLA action-
@@ -2028,6 +2592,23 @@ class SimEngine(ABC):
             ``rtc_prefetch_blocks``, ``rtc_avg_inference_ms`` and
             ``rtc_max_inference_ms``.
 
+            Across episodes (``n_episodes > 1``): the aggregate payload adds
+            ``total_steps``, the per-episode ``episodes`` records,
+            ``stopped_reasons`` (aligned with ``episodes``) and
+            ``video_paths``, and keeps every field above whose value the call
+            already knows - the identity fields, the policy-binding flags and
+            the policy-load telemetry, all read off the ONE policy object the
+            episodes shared. Per-episode action health (``action_errors``,
+            ``action_resolution_rate``, ``partial_action_failure_rate``) and
+            the per-episode horizon/video fields are reported by each record in
+            ``episodes`` rather than summarised, because a rate has no single
+            aggregate an N-episode call can report without choosing a summary::
+
+                worst = max(e["partial_action_failure_rate"] for e in report["episodes"])
+
+            So the binding-degradation gate reads the same way at any episode
+            count, and the action-health gate is per episode.
+
             Fail-fast: if EVERY action step in the opening probe window drives
             zero actuators - none of the policy's emitted keys resolve to any of
             the robot's actuators - the rollout can never move the robot, so it
@@ -2048,6 +2629,13 @@ class SimEngine(ABC):
         # and time.sleep(...) downstream, and time.sleep rejects a numpy.float32
         # with a bare "cannot be interpreted as an integer" TypeError.
         control_frequency = float(control_frequency)
+
+        # The seed is the caller's reproducibility contract; an unusable one
+        # cannot be applied at all, and reached NumPy as a bare cast TypeError
+        # out of a method documented to return this envelope. Refused here,
+        # before a policy is built or a frame is written.
+        if err := self._validate_seed(seed, "run_policy"):
+            return err
 
         # accept n_steps (or legacy max_steps) as an alternate horizon
         # specification. duration = n_steps / control_frequency. If both
@@ -2075,6 +2663,10 @@ class SimEngine(ABC):
         if err := self._validate_action_horizon(action_horizon, "run_policy"):
             return err
         if err := self._validate_control_substeps(control_substeps, "run_policy"):
+            return err
+        if err := self._validate_rtc_inference_timeout(rtc_inference_timeout_s, "run_policy"):
+            return err
+        if err := self._validate_onframe_failure_limit(max_onframe_failures, "run_policy"):
             return err
         # Both rates are known only here: the dataset rate was fixed by
         # start_recording one call earlier. Checked before any policy is
@@ -2233,6 +2825,233 @@ class SimEngine(ABC):
             if controller_cleanup is not None:
                 controller_cleanup()
 
+    def run_multi_policy(
+        self,
+        policies: dict[str, Policy],
+        instructions: dict[str, str] | str = "",
+        duration: float = 10.0,
+        control_frequency: float = 50.0,
+        action_horizon: int | dict[str, int] = 8,
+        n_steps: int | None = None,
+        max_steps: int | None = None,
+    ) -> dict[str, Any]:
+        """Drive MULTIPLE robots, each with its own policy, in ONE synchronized loop.
+
+        The backend-agnostic contract for concurrent multi-robot rollout
+        (e.g. two arms doing a handover, or a bimanual setup). A backend that
+        implements it must honour every clause below - they are what
+        distinguishes this driver from launching one :meth:`start_policy`
+        thread per robot, which steps physics per robot and interleaves
+        single-robot recording frames:
+
+        - **Per-robot policies**: ``policies`` maps each driven robot to its
+          own :class:`~strands_robots.policies.Policy`. Every key must name a
+          robot in the scene; ``policies`` order defines the merged
+          state/action column order.
+        - **Per-robot instructions**: ``instructions`` is either one string
+          applied to all robots or a ``{robot_name: instruction}`` mapping.
+          A mapping key naming no driven robot is rejected rather than
+          silently dropped; a robot omitted from the mapping gets an empty
+          instruction (see :meth:`_normalize_multi_policy_instructions`).
+        - **Per-robot action_horizon**: ``action_horizon`` is either one int
+          applied to all robots or a ``{robot_name: horizon}`` mapping. Every
+          horizon must be a positive integer, and the effective per-robot
+          chunk length is resolved through
+          :func:`~strands_robots.policies.base.resolve_chunk_length` exactly
+          as :meth:`run_policy` resolves its own (see
+          :meth:`_normalize_multi_policy_horizons`).
+        - **Shared control_frequency**: one target Hz for every robot's
+          policy queries, so the robots stay phase-aligned.
+        - **Lockstep physics**: each loop iteration applies EVERY robot's
+          control, then steps physics ONCE - regardless of each robot's
+          individual re-query cadence.
+        - **One merged recording frame per timestep**: when a dataset
+          recording is active, each timestep records a single frame carrying
+          ALL robots' prefixed state/action (``alice__shoulder_pan`` ...)
+          plus all camera images - never one interleaved frame per robot.
+
+        The step horizon follows :meth:`run_policy`'s resolution: ``n_steps``
+        (then its legacy alias ``max_steps``) overrides ``duration``, via
+        :meth:`_resolve_horizon` on the shared positive-count domain.
+
+        This base implementation is a documented refusal, not a fallback: a
+        backend that has no synchronized multi-robot loop must say so rather
+        than silently driving robots one at a time (which would interleave
+        frames and break the merged-frame contract above). The MuJoCo and
+        Isaac backends override it with full implementations; backends that
+        do not yet (Newton) inherit this structured error.
+
+        Args:
+            policies: Mapping ``{robot_name: Policy}`` of the robots to drive.
+            instructions: Single instruction string for all robots, or a
+                ``{robot_name: instruction}`` mapping (see contract above).
+            duration: Episode length in seconds (steps = duration x freq).
+                Used only when no ``n_steps`` / ``max_steps`` is given. Must
+                be a finite positive number.
+            control_frequency: Target Hz for policy queries / physics. Must
+                be a positive number.
+            action_horizon: Actions consumed from each policy's chunk before
+                re-querying it, as one int or a per-robot mapping (see
+                contract above).
+            n_steps: Exact step horizon (overrides ``duration`` when set).
+            max_steps: Legacy alias for ``n_steps``.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict naming this
+            backend class and stating that it does not implement synchronized
+            multi-robot rollout. Implementing backends return the standard
+            status dict with per-robot step counts.
+        """
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": f"run_multi_policy: {type(self).__name__} does not implement synchronized "
+                    "multi-robot rollout (per-robot policies driven in one lockstep physics loop with "
+                    "one merged recording frame per timestep). Use the MuJoCo backend, or drive robots "
+                    "individually with run_policy / start_policy (frames are then interleaved per robot, "
+                    "not merged)."
+                }
+            ],
+        }
+
+    @staticmethod
+    def _validate_multi_policies(policies: Mapping[str, Any], method: str) -> dict[str, Any] | None:
+        """Reject an empty ``policies`` mapping at a multi-robot entry point.
+
+        ``policies`` names the robots a synchronized multi-robot driver will
+        drive, so an empty mapping is a caller error: a loop over zero robots
+        would run zero steps and still report ``status="success"`` (the same
+        degenerate-success shape :meth:`_validate_positive_int` exists to
+        refuse). Shared by every backend's ``run_multi_policy`` so the refusal
+        text is identical everywhere.
+
+        Args:
+            policies: The caller-supplied ``{robot_name: Policy}`` mapping.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict, or ``None`` when
+            at least one robot is named.
+        """
+        if not policies:
+            return {"status": "error", "content": [{"text": f"{method}: 'policies' is empty."}]}
+        return None
+
+    @staticmethod
+    def _normalize_multi_policy_instructions(
+        policies: Mapping[str, Any],
+        instructions: Mapping[str, str] | str,
+        method: str,
+        warn_logger: logging.Logger | None = None,
+    ) -> tuple[dict[str, str] | None, dict[str, Any] | None]:
+        """Normalize ``instructions`` to a complete per-robot mapping.
+
+        A single string broadcasts to every driven robot. A mapping is an
+        override layer keyed by robot name: a key that names no robot in this
+        call is a caller error (read with ``.get(r, "")`` it was silently
+        discarded, so a typo'd robot name ran the whole episode on an empty
+        instruction and still reported success - see
+        :meth:`_validate_per_robot_mapping`), while a robot omitted from the
+        mapping legitimately gets an empty instruction. A value that is
+        neither a string nor a mapping is refused up front rather than
+        reaching ``.get()`` and surfacing as a bare ``AttributeError`` past
+        the tool-envelope contract.
+
+        LeRobot stores ONE task string per frame, so when the normalized
+        mapping carries distinct non-empty instructions (e.g. ``{alice:
+        'pour', bob: 'catch'}``) only the first robot's task is recorded - a
+        downstream pipeline that splits by task string would mis-attribute
+        the other robots' frames. That is surfaced here as a
+        ``logger.warning`` (a known limitation, not lost silently).
+
+        Args:
+            policies: ``{robot_name: Policy}`` mapping naming the driven
+                robots (the authoritative key set).
+            instructions: Caller-supplied single string or per-robot mapping.
+            method: Public method name, used to prefix error messages.
+            warn_logger: Logger for the distinct-instructions warning, so the
+                warning is attributed to the calling backend's module rather
+                than to this one. Defaults to this module's logger.
+
+        Returns:
+            ``(instr_map, None)`` with one entry per driven robot, or
+            ``(None, error_dict)``.
+        """
+        if isinstance(instructions, str):
+            instr_map = {r: instructions for r in policies}
+        elif isinstance(instructions, Mapping):
+            if err := SimEngine._validate_per_robot_mapping(instructions, policies, "instructions", method):
+                return None, err
+            instr_map = {r: instructions.get(r, "") for r in policies}
+        else:
+            return None, {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"{method}: 'instructions' must be a string applied to all robots or a "
+                        f"{{robot_name: instruction}} mapping, got {type(instructions).__name__}."
+                    }
+                ],
+            }
+
+        distinct_tasks = {t for t in instr_map.values() if t}
+        if len(distinct_tasks) > 1:
+            (warn_logger or logger).warning(
+                "%s: %d distinct per-robot instructions supplied (%s) but "
+                "LeRobot records one task per frame; only '%s' (robot '%s') will be stored. "
+                "Per-robot task columns are not yet supported.",
+                method,
+                len(distinct_tasks),
+                sorted(distinct_tasks),
+                instr_map[next(iter(policies))],
+                next(iter(policies)),
+            )
+        return instr_map, None
+
+    @staticmethod
+    def _normalize_multi_policy_horizons(
+        policies: Mapping[str, Any],
+        action_horizon: int | Mapping[str, int],
+        method: str,
+        default_horizon: int = 8,
+    ) -> tuple[dict[str, int] | None, dict[str, Any] | None]:
+        """Normalize ``action_horizon`` to a complete per-robot mapping.
+
+        A single int broadcasts to every driven robot; a ``{robot_name:
+        horizon}`` mapping overrides per robot, with a key naming no driven
+        robot refused (see :meth:`_validate_per_robot_mapping`) and a robot
+        omitted from the mapping keeping ``default_horizon``. Every horizon
+        is validated through :meth:`_validate_action_horizon` - the same
+        guard ``run_policy`` / ``start_policy`` / ``eval_policy`` enforce -
+        rather than coerced: a ``max(1, int(...))`` clamp used to turn ``0``
+        / ``-5`` into a silent 1-action horizon, truncate ``2.7``, and let
+        ``nan`` / ``None`` / ``"x"`` reach ``int()`` as a bare ``ValueError``
+        / ``TypeError`` past the tool-envelope contract.
+
+        Args:
+            policies: ``{robot_name: Policy}`` mapping naming the driven
+                robots (the authoritative key set).
+            action_horizon: Caller-supplied single int or per-robot mapping.
+            method: Public method name, used to prefix error messages.
+            default_horizon: Horizon for robots omitted from a mapping.
+
+        Returns:
+            ``(horizon_map, None)`` with one entry per driven robot, or
+            ``(None, error_dict)``.
+        """
+        if isinstance(action_horizon, Mapping):
+            if err := SimEngine._validate_per_robot_mapping(action_horizon, policies, "action_horizon", method):
+                return None, err
+            for rname, value in action_horizon.items():
+                if err := SimEngine._validate_action_horizon(value, method, f"action_horizon[{rname!r}]"):
+                    return None, err
+            # A robot omitted from the mapping keeps the signature default.
+            return {r: int(action_horizon.get(r, default_horizon)) for r in policies}, None
+        if err := SimEngine._validate_action_horizon(action_horizon, method):
+            return None, err
+        return {r: int(action_horizon) for r in policies}, None
+
     def _stop_when_unresolved_error(self, stop_when: dict[str, Any]) -> dict[str, Any] | None:
         """Structured error if a ``stop_when`` clause references unresolvable entities.
 
@@ -2363,6 +3182,9 @@ class SimEngine(ABC):
                     total_steps,
                     n_episodes,
                     status="error",
+                    robot_name=robot_name,
+                    policy=policy,
+                    instruction=instruction,
                     extra=(
                         f"Episode {ep} rollout failed; aborting remaining "
                         f"{n_episodes - ep - 1} episode(s). {self._first_text(result)}"
@@ -2381,6 +3203,9 @@ class SimEngine(ABC):
                         total_steps,
                         n_episodes,
                         status="error",
+                        robot_name=robot_name,
+                        policy=policy,
+                        instruction=instruction,
                         extra=f"save_episode failed after episode {ep}: {self._first_text(save)}",
                     )
                 episodes_saved += 1
@@ -2398,10 +3223,22 @@ class SimEngine(ABC):
                         total_steps,
                         n_episodes,
                         status="error",
+                        robot_name=robot_name,
+                        policy=policy,
+                        instruction=instruction,
                         extra=f"reset() failed after episode {ep}: {self._first_text(reset_result)}",
                     )
 
-        return self._episodes_result(episodes, episodes_saved, total_steps, n_episodes, status="success")
+        return self._episodes_result(
+            episodes,
+            episodes_saved,
+            total_steps,
+            n_episodes,
+            status="success",
+            robot_name=robot_name,
+            policy=policy,
+            instruction=instruction,
+        )
 
     @staticmethod
     def _first_text(result: dict[str, Any]) -> str:
@@ -2459,20 +3296,67 @@ class SimEngine(ABC):
         n_episodes: int,
         *,
         status: str,
+        robot_name: str,
+        policy: Policy,
+        instruction: str,
         extra: str = "",
     ) -> dict[str, Any]:
         """Aggregate per-episode records into one ``run_policy`` status dict.
 
         Mirrors the single-rollout result shape: a human-readable ``text``
-        block plus an agent-consumable ``{"json": {...}}`` block carrying typed
-        aggregate fields (``n_episodes_completed``, ``episodes_saved``,
-        ``total_steps``, per-episode list, ``video_paths``). The payload keeps
-        ONE shape across episode counts: ``stopped_reason`` / ``steps_used``
-        are present here just as on the single-episode payload -
+        block plus an agent-consumable ``{"json": {...}}`` block. Three groups
+        of field carry over from the single-episode payload, because their
+        aggregate value is one the call already knows:
+
+        * **Identity** - ``robot_name``, ``policy``, ``instruction`` are the
+          call's own inputs, so they are constant across the episodes rather
+          than something to aggregate.
+        * **Policy binding** - ``positional_fallback_used``,
+          ``generic_state_keys_used`` and ``missing_state_keys_used``, read off
+          the ONE policy object every episode ran with. A True flag is the
+          signature of a robot moving on meaningless inputs, and
+          :meth:`run_policy` tells callers to gate on it - so dropping it from
+          the loop's payload leaves that gate reading the healthy default.
+        * **Policy load** - ``policy_load_time_s``, ``policy_load_cache_hit``
+          and ``policy_resident_rss_mb``. Both of the latter are documented
+          for a LOOP specifically (a cache miss on episode 2+ means the caller
+          rebuilt the policy; RSS staying flat means the model stayed
+          resident), so the multi-episode payload is the one that has to carry
+          them.
+
+        Reading the six policy fields off the shared policy object after the
+        last episode is exactly what :meth:`eval_policy` and
+        :meth:`evaluate_benchmark` already do for their own multi-episode
+        aggregates, so the aggregation is the established one rather than a
+        new choice here.
+
+        Aggregate-only fields: ``n_episodes_completed``, ``episodes_saved``,
+        ``total_steps``, the per-episode ``episodes`` list and ``video_paths``.
         ``stopped_reason`` is ``"error"`` on error results and otherwise the
         LAST episode's reason (why the call as a whole stopped running), with
         the per-episode attribution in ``stopped_reasons`` (aligned with
         ``episodes``); ``steps_used`` equals ``total_steps``.
+
+        Per-episode action health (``action_errors``,
+        ``action_resolution_rate``, ``partial_action_failure_rate``) and the
+        per-episode horizon/video fields stay in the ``episodes`` records: a
+        rate or a per-step count has no single aggregate an N-episode call can
+        report without choosing a summary, so each episode reports its own.
+
+        Args:
+            episodes: Per-episode records collected so far.
+            episodes_saved: Episodes flushed to a dataset by this call.
+            total_steps: Control steps summed over ``episodes``.
+            n_episodes: Episodes the caller requested.
+            status: ``"success"`` or ``"error"`` for the call as a whole.
+            robot_name: Robot every episode drove; echoed as identity.
+            policy: The ONE policy object every episode ran with, read for the
+                binding and load telemetry.
+            instruction: Instruction every episode ran with.
+            extra: Optional human-readable note appended to the text block.
+
+        Returns:
+            The standard agent-tool envelope, shaped as described above.
         """
         completed = len(episodes)
         video_paths = [e["video_path"] for e in episodes if e.get("video_path")]
@@ -2496,6 +3380,10 @@ class SimEngine(ABC):
             total_episodes = int(getattr(meta, "total_episodes", 0) or 0) if meta is not None else 0
             dataset_episode_indices = list(range(total_episodes))
         payload: dict[str, Any] = {
+            # Identity: the call's own inputs, constant across the episodes.
+            "robot_name": robot_name,
+            "policy": type(policy).__name__,
+            "instruction": instruction,
             "n_episodes_requested": n_episodes,
             "n_episodes_completed": completed,
             "episodes_saved": episodes_saved,
@@ -2504,6 +3392,17 @@ class SimEngine(ABC):
             "steps_used": total_steps,
             "stopped_reason": stopped_reason,
             "stopped_reasons": stopped_reasons,
+            # Binding + load telemetry of the ONE policy object every episode
+            # ran with, read the same way eval_policy reads it for its own
+            # multi-episode aggregate. run_policy tells callers to gate on the
+            # binding flags, so a loop that omitted them left that gate
+            # reading the healthy default on the shape used to collect data.
+            "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
+            "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
+            "missing_state_keys_used": bool(getattr(policy, "missing_state_keys_used", False)),
+            "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
+            "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
+            "policy_resident_rss_mb": process_rss_mb(),
             "episodes": episodes,
             "video_paths": video_paths,
         }
@@ -2575,7 +3474,8 @@ class SimEngine(ABC):
         still open).
 
         Args:
-            expected: The episode count the caller intended to record.
+            expected: The episode count the caller intended to record. A
+                non-negative int; anything else is reported as an error dict.
 
         Returns:
             Standard status dict. ``status`` is ``"success"`` when the parquet
@@ -2592,13 +3492,12 @@ class SimEngine(ABC):
             since the episodes found are then only a lower bound. An unreadable
             or corrupt parquet is reported as this same error dict, never raised.
         """
-        if not isinstance(expected, int) or expected < 0:
-            return {
-                "status": "error",
-                "content": [
-                    {"text": f"verify_dataset_episodes: expected must be a non-negative int, got {expected!r}."}
-                ],
-            }
+        # Shares the count domain with the programmatic
+        # :func:`strands_robots.verify_dataset.verify_dataset` gate rather than
+        # re-deriving it: one rule for one question, so neither surface can accept
+        # an episode count the other refuses.
+        if error := non_negative_count_error(expected, "expected", "verify_dataset_episodes"):
+            return {"status": "error", "content": [{"text": error}]}
 
         root = self._active_dataset_root()
         if not root:
@@ -2808,6 +3707,12 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Replay a LeRobotDataset episode via ``PolicyRunner.replay``.
 
+        ``episode`` must be a non-negative whole number - the shared domain the
+        ``replay_episode`` teleop knob uses - and is rejected with a structured
+        error before the dataset is downloaded. A bool is refused rather than
+        read as an index: ``episode=True`` previously resolved episode 1 and
+        replayed it under a ``"success"`` status.
+
         ``speed`` is a playback-rate multiplier (1.0 = real time) and must be a
         positive number; a non-positive or non-numeric value is rejected with a
         structured error rather than raising or silently playing back at full
@@ -2869,6 +3774,14 @@ class SimEngine(ABC):
         ``n_episodes`` default lowered from 10 to 1 (callers opt in to
         longer evals explicitly).
 
+        ``seed`` pins the eval the way it pins a single :meth:`run_policy`
+        rollout: the client RNGs are reseeded once from it and then per episode
+        from a master RNG derived from it, and each per-episode seed is
+        forwarded to ``policy.reset`` so a service-mode policy can reseed its
+        own process. Two evals at the same seed replay identically; ``None``
+        leaves RNG state untouched. Only a non-negative integer can seed those
+        RNGs, so anything else is refused here rather than at the first draw.
+
         ``policy_object`` mirrors :meth:`run_policy`: pass an already-built
         ``Policy`` to skip the ``create_policy`` round-trip (e.g. a loaded
         SmolVLA checkpoint you want to evaluate without re-instantiating).
@@ -2900,9 +3813,13 @@ class SimEngine(ABC):
         monotonic index that continues across episode boundaries. Use it to
         record frames or stream telemetry synchronously on the eval thread
         (e.g. paired with ``start_cameras_recording_synchronous``) so a
-        daemon-thread recorder does not race ``mjData`` mutations. A non-
-        ``CooperativeStop`` hook exception is logged at WARN and never aborts
-        the eval; raising :class:`~strands_robots.simulation.policy_runner.CooperativeStop`
+        daemon-thread recorder does not race ``mjData`` mutations. A hook
+        exception other than ``CooperativeStop`` or
+        :class:`~strands_robots.dataset_recorder.RecordingFrameError` is logged
+        at WARN and never aborts the eval; a ``RecordingFrameError`` is data loss
+        rather than telemetry and propagates on the first occurrence, so the
+        caller learns the episode is incomplete instead of reading a successful
+        eval. Raising :class:`~strands_robots.simulation.policy_runner.CooperativeStop`
         stops the evaluation gracefully after the episodes completed so far
         (the result carries ``stopped_early=True`` and ``episodes_completed``),
         matching :meth:`run_policy`.
@@ -3007,9 +3924,13 @@ class SimEngine(ABC):
             return err
         if err := self._validate_positive_int(max_steps, "max_steps", "eval_policy"):
             return err
+        if err := self._validate_seed(seed, "eval_policy"):
+            return err
         if err := self._validate_positive_frequency(control_frequency, "eval_policy"):
             return err
         if err := self._validate_control_substeps(control_substeps, "eval_policy"):
+            return err
+        if err := self._validate_rtc_inference_timeout(rtc_inference_timeout_s, "eval_policy"):
             return err
         # Both rates are known only here: the dataset rate was fixed by
         # start_recording one call earlier. Checked before any policy is
@@ -3080,7 +4001,13 @@ class SimEngine(ABC):
         Benchmark-agnostic evaluation entry point. Looks up ``benchmark_name``
         in the global benchmark registry, validates robot compatibility, and
         forwards to :meth:`PolicyRunner.evaluate` with the spec.
-        ``max_steps`` comes from the benchmark (not a parameter here).
+        ``max_steps`` comes from the benchmark (not a parameter here), so it
+        is validated where it is read rather than at this signature: a
+        benchmark declaring a horizon that is not a positive integer is
+        rejected with a structured error, for the same reason ``n_episodes``
+        is. Both are bounds of the same nested loop, and a non-positive one
+        runs episodes of zero length and then reports a 0% success rate over
+        them.
 
         Args:
             benchmark_name: Key from :func:`register_benchmark` /
@@ -3133,8 +4060,12 @@ class SimEngine(ABC):
                 ``stopped_early=True`` and ``episodes_completed`` (matching
                 :meth:`run_policy` / :meth:`eval_policy`); any in-progress
                 episode's partial video is closed cleanly and is NOT listed
-                in ``video_paths``. A non-``CooperativeStop`` hook exception
-                is logged at WARN and never aborts the eval.
+                in ``video_paths``. A hook exception other than
+                ``CooperativeStop`` or
+                :class:`~strands_robots.dataset_recorder.RecordingFrameError` is
+                logged at WARN and never aborts the eval; a
+                ``RecordingFrameError`` is data loss rather than telemetry and
+                propagates on the first occurrence.
             policy_kwargs: Per-call goal payload forwarded verbatim to every
                 ``policy.get_actions(obs, instruction, **policy_kwargs)`` call
                 (same contract as :meth:`run_policy` / :meth:`eval_policy`).
@@ -3204,6 +4135,8 @@ class SimEngine(ABC):
         # start_recording one call earlier. Checked before any policy is
         # built so a rate disagreement costs no weight download and no frame.
         if err := self._validate_recording_rate(control_frequency, "evaluate_benchmark"):
+            return err
+        if err := self._validate_seed(seed, "evaluate_benchmark"):
             return err
         # Coerce to a plain Python float now the value is validated: a NumPy
         # scalar (accepted above via numbers.Real) flows into 1 / control_frequency
@@ -3299,7 +4232,7 @@ class SimEngine(ABC):
             lines = [f"Registered benchmarks ({len(snapshot)}):"]
             for name, meta in snapshot.items():
                 lines.append(
-                    f"  • {name}: {meta['class']} "
+                    f"  - {name}: {meta['class']} "
                     f"(robots={meta['supported_robots'] or 'any'}, "
                     f"default={meta['default_robot']}, "
                     f"max_steps={meta['max_steps']})"
@@ -3602,8 +4535,16 @@ class SimEngine(ABC):
             samples and ``points`` is aligned with the input ``pixels``
             (``None`` where the pixel had no valid depth). Backends without a
             metric-depth path (Newton), all-invalid pixel sets, out-of-bounds
-            pixels, and malformed input all return
-            ``{"status": "error", "content": [{"text": ...}]}``.
+            pixels, malformed input, and a failed frame render or
+            camera-params read all return
+            ``{"status": "error", "content": [{"text": ...}]}``, with the
+            two backend reads reporting distinguishable text so a caller
+            knows which one failed. The camera-params read can fail on input
+            this call already accepted and a frame it already rendered --
+            most notably a camera whose projection no pinhole ``K`` can
+            represent, such as MuJoCo's orthographic free camera, which
+            renders normally but has no intrinsics. So check ``status``
+            rather than inferring success from a valid pixel set.
         """
         # numpy stays TYPE_CHECKING-only at this module's top level; import at
         # use time like the backends' render paths do.
@@ -3720,7 +4661,7 @@ class SimEngine(ABC):
         # One label per camera: every free-camera token (None / "" / "free" /
         # "default") reports as "default", so the same camera never appears
         # under two names across calls.
-        camera_label = "default" if camera_name in (None, "", "free", "default") else str(camera_name)
+        camera_label = "default" if camera_name in FREE_CAMERA_TOKENS else str(camera_name)
         if not valid_points:
             return _err(
                 f"get_world_point found no valid depth at any of the {len(parsed)} requested pixels via "
@@ -3772,11 +4713,18 @@ class SimEngine(ABC):
             "methods": {
                 "get_robot_state": "(robot_name: str) -> dict",
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
-                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
+                "send_action": (
+                    "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict"
+                    "  # n_substeps must be a positive whole number; use step() to advance without commanding"
+                ),
                 "add_robot": (
                     "(name: str, urdf_path=None, data_config=None, position=None, "
                     "orientation=None) -> dict  # add a robot to the scene by "
-                    "registry name (or urdf_path); the first scene-construction step"
+                    "registry name (or urdf_path); the first scene-construction step. "
+                    "position OFFSETS the model's own authored root pose (a locomotion "
+                    "model is authored standing), so it is the world position only for "
+                    "a model whose root declares pos 0 0 0; the result reports the "
+                    "measured placement"
                 ),
                 "add_object": (
                     "(name: str, shape='box', position=None, orientation=None, "

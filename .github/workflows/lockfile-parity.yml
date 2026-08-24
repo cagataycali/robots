@@ -1,0 +1,142 @@
+# .github/workflows/lockfile-parity.yml
+#
+# Refuses a tree whose `uv.lock` no longer resolves `pyproject.toml`.
+#
+# `uv.lock` is a checked-in artifact, so it *looks* authoritative, and there was
+# no signal distinguishing "the lock is current" from "the lock is fourteen days
+# stale". Nothing ran `uv lock --check`, `uv sync --locked` or `uv sync --frozen`,
+# so the lock was never compared against the manifest at all. On `main` at
+# `9d3ad2f` it no longer resolved it, and CI stayed green throughout because
+# nothing looked. See issue #2038.
+#
+# What the drift cost is not hypothetical, and it is not confined to whoever runs
+# a locked install. `uv.lock` is a **dependency-graph manifest** -
+# `dependencyGraphManifests` lists it with `parseable: true` - so GitHub's
+# security scanning reads it, which is also how #631 resolved 51 Dependabot
+# alerts "via uv lock upgrade". A stale lock is therefore a stale security
+# surface. Measured against the repository's own SBOM while the lock was stale:
+#
+#   lerobot   -> 0.6.0     the version pyproject.toml FORBIDS (floor >=0.6.1)
+#   roslibpy  -> ABSENT    so no roslibpy advisory could ever be reported,
+#                          though [rosbridge] and [all] require it and
+#                          use_rosbridge imports it
+#
+# #1930 existed only to buy that lerobot floor ("floor lerobot at >=0.6.1 so
+# bucket streaming is resolver-guaranteed"), and
+# tests/test_lerobot_floor_guarantees_bucket_streaming.py pins it - on the
+# manifest side. The artifact that pins the build said 0.6.0, and no test looked
+# at that side, which is the gap this file closes.
+#
+# WHY THE MERGE COMMIT AND NOT THE HEAD SHA
+#
+# This job deliberately takes `actions/checkout`'s default ref for a
+# `pull_request` event - `refs/pull/<n>/merge` - rather than naming
+# `github.event.pull_request.head.sha`. The question here is "does the lock
+# resolve the manifest", which is a property of the *tree that would land*, so
+# the merge commit is the tree that has to answer it.
+#
+# Naming the head sha instead would accuse branches that changed nothing. Every
+# branch forked before the relock that ships with this workflow carries the stale
+# lock, so it would fail on the head sha while being entirely innocent; on the
+# merge commit it inherits the relocked lock from the base and passes. Measured
+# against the three pull requests open when this landed - #1722, #1035 and #1087,
+# none of which touch `pyproject.toml` or `uv.lock` - all three pass on the merge
+# tree. Pinned by
+# tests/test_lockfile_parity_gate.py::test_the_gate_reads_the_merge_tree.
+#
+# This is the opposite choice from `changelog-fragment.yml`, and the reason is
+# that the two ask different questions: that gate asks what a branch *added*,
+# which only exists as a diff between base and head, so it must name both. A
+# parity check reads two files and needs exactly one tree.
+#
+# It also needs no `--head`-style argument and no repository script, which is why
+# it is immune to the #1791 failure mode that shaped the changelog gate: `uv lock
+# --check` ships with uv, so a branch that forked before this workflow existed
+# cannot fail it for lack of a file.
+#
+# NO UV VERSION PIN, AND THAT IS MEASURED RATHER THAN ASSUMED
+#
+# The obvious worry is that `uv lock --check` is a verdict about uv's resolver, so
+# a CI uv newer than the one that wrote the lock could demand an update over
+# format or marker churn alone - a gate that fails for no defect. It does not, at
+# least across the range that matters here. uv 0.11.32 (current the day the lock
+# was last written, 2026-07-25) and uv 0.12.3 (latest) write a **byte-identical**
+# lock from this manifest, and each accepts the other's output:
+#
+#   0.11.32 writes -> 0.12.3 `--check`  ->  pass
+#   0.12.3  writes -> 0.11.32 `--check` ->  pass
+#   diff between the two written locks  ->  0 lines
+#
+# So the marker churn in the relock is attributable to the manifest edits, not to
+# a uv upgrade, and pinning uv here would add a maintenance obligation that buys
+# nothing. If a future uv does change the lock format, the fix is a deliberate
+# relock, which this gate is what asks for.
+#
+# ADVISORY, AND SELF-CLEARING
+#
+# Whether a failure here blocks a merge is a branch-protection decision, not a
+# property of this file: the `default` ruleset lists exactly one required check
+# (`call-test-lint / Test and Lint`), so until this job is added to that set it
+# surfaces the drift and leaves the call to the reviewer. The remedy is
+# `uv lock`, committed - so doing the thing the check asks for makes it pass, and
+# no bypass switch is needed.
+#
+# One caveat on that self-clearing claim, for a gate that does go red on a
+# contributor's branch: absorbing a relocked `main` is a push, and per AGENTS.md
+# > PR Workflow a push onto a contributor's branch by a maintainer consumes that
+# maintainer's approval (`require_last_push_approval`). Ask the contributor to
+# merge `main`; do not push it for them.
+#
+# The offline half of this contract - that the locked version satisfies every
+# declared floor, and that every declared dependency is present at all - lives in
+# tests/test_lockfile_parity_gate.py, so the two rows measured above are pinned
+# by the required check and not only by this advisory job.
+#
+
+name: Lockfile Parity Check
+
+# No `types` override: the default is exactly the set that can change the tree,
+# which is the only thing this job reads. Pinned repository-wide by
+# tests/test_pull_request_trigger_types.py.
+on:
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lockfile:
+    name: Refuse a lockfile that does not resolve the manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # Default ref: the pull request's merge commit. See "WHY THE MERGE COMMIT
+      # AND NOT THE HEAD SHA" above - this is load-bearing, not an omission.
+      - name: Checkout the merge commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      # Installed with pip rather than a setup action, so this gate adds no new
+      # third-party action to pin and keep fresh. Unpinned for the reason
+      # measured above, and matching how `test-lint.yml` installs hatch.
+      - name: Install uv
+        run: pip install --no-cache-dir uv
+
+      # Resolution only - this neither builds an environment nor downloads a
+      # wheel, and it reports in well under a minute. `--check` exits non-zero
+      # when the lock would have to change to match the manifest, and prints the
+      # `uv lock` hint that is the whole remedy.
+      - name: Refuse a lockfile that does not resolve the manifest
+        run: uv lock --check

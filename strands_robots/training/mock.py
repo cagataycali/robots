@@ -49,8 +49,8 @@ class MockTrainer(Trainer):
         if spec.method == "lora" and spec.tune.get("expert_only"):
             problems.append("lora and expert_only are mutually exclusive")
 
-        if spec.steps <= 0:
-            problems.append(f"steps must be > 0, got {spec.steps}")
+        problems.extend(self._run_size_problems(spec))
+        problems.extend(self._learning_rate_problems(spec))
 
         return problems
 

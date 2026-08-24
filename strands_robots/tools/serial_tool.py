@@ -1,9 +1,157 @@
+"""Raw serial-bus access: port discovery, byte-level I/O, and Feetech servo writes.
+
+Every numeric option an action consumes is checked here, before the port is
+opened, because none of them is refused by the layer that finally consumes it.
+
+The three Feetech register fields are encoded into fixed-width bytes of the
+outgoing packet with a mask -- ``motor_id`` is the frame's single ID byte, and
+``position`` / ``velocity`` are written as two little-endian bytes -- so a value
+outside a field's range is not rejected on the wire. It is silently truncated
+into a different, reachable command: ``position=70000`` encodes as 4464 and
+``position=-1`` as 65535, the largest value the field can hold, while the
+success message still quotes the number the caller supplied. Bounding the field
+is what makes that message true.
+
+``baudrate`` and ``read_bytes`` are coerced rather than checked by pyserial
+(``2.7`` becomes 2 baud, and a non-positive ``read_bytes`` reads nothing and
+reports success, which is indistinguishable from a timed-out read on a healthy
+port). A non-finite ``timeout`` either waits no time at all -- ``nan``, whose
+every comparison is false -- or fails with an ``OverflowError`` naming neither
+the tool nor the option, for ``inf``.
+
+:mod:`~strands_robots.tools.pose_tool` writes the same ``Goal_Position``
+register through the same mask and needs no bound of its own: it clamps to each
+motor's declared range before encoding, so its mask can only ever see a value
+that already fits.
+"""
+
 import time
+from collections.abc import Callable
 from typing import Any
 
 import serial
 import serial.tools.list_ports
 from strands import tool
+
+from strands_robots.utils import (
+    finite_number_error,
+    non_negative_count_error,
+    positive_count_error,
+)
+
+# Inclusive bounds and the reason for each ceiling, keyed by the parameter that
+# carries the field. The floor and the type are delegated to the shared count
+# domains so an off-type or negative value is reported in the words every other
+# surface uses; only the ceiling is decided here, because it is a property of
+# the packet field this module encodes into.
+_REGISTER_FIELDS: dict[str, tuple[int, int, str]] = {
+    "motor_id": (1, 254, "the packet carries the ID in one byte, and 255 is the frame header"),
+    "position": (
+        0,
+        4095,
+        "Goal_Position is a 12-bit register, the same full scale the reported angle divides by",
+    ),
+    "velocity": (0, 65535, "Goal_Velocity is written as two bytes"),
+}
+
+# The options each action consumes. An action absent from this map reads none of
+# them and is never refused here: ``list_ports`` returns before the port is even
+# opened, so a value it never looks at must not turn a working call into an
+# error.
+_OPTIONS_BY_ACTION: dict[str, tuple[str, ...]] = {
+    "send": ("baudrate", "timeout"),
+    "read": ("baudrate", "timeout", "read_bytes"),
+    "send_read": ("baudrate", "timeout", "read_bytes"),
+    "feetech_position": ("baudrate", "timeout", "motor_id", "position"),
+    "feetech_velocity": ("baudrate", "timeout", "motor_id", "velocity"),
+    "feetech_ping": ("baudrate", "timeout", "motor_id"),
+    "monitor": ("baudrate", "timeout"),
+}
+
+
+def _register_field_error(value: Any, param: str, action: str) -> str | None:
+    """Error text when ``value`` cannot be encoded into its Feetech register field.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter it came from; selects the field bounds.
+        action: The requested action, used as the message prefix.
+
+    Returns:
+        An error message, or ``None`` when the value fits the field.
+    """
+    low, high, why = _REGISTER_FIELDS[param]
+    floor_error: Callable[[Any, str, str], str | None] = positive_count_error if low > 0 else non_negative_count_error
+    if error := floor_error(value, param, action):
+        return error
+    if value > high:
+        return f"{action}: {param} must be at most {high} ({why}), got {value}."
+    return None
+
+
+def _read_timeout_error(value: Any, param: str, action: str) -> str | None:
+    """Error text when ``value`` is not a usable serial read budget in seconds.
+
+    The floor is ``0`` rather than the ``> 0`` of the shared
+    :func:`~strands_robots.utils.positive_finite_number_error` because pyserial
+    documents ``timeout=0`` as non-blocking mode: ``read`` then returns whatever
+    is already buffered instead of waiting, which is a real request rather than a
+    degenerate one. Finiteness, numeric-ness and ``bool`` are delegated to
+    :func:`~strands_robots.utils.finite_number_error`, so only the floor is
+    decided here.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter it came from, used in the message.
+        action: The requested action, used as the message prefix.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if error := finite_number_error(value, param, action):
+        return error
+    if value < 0:
+        return f"{action}: {param} must be at least 0 seconds, got {value}."
+    return None
+
+
+# The domain each option is checked against, in the order errors are reported.
+_OPTION_DOMAINS: tuple[tuple[str, Callable[[Any, str, str], str | None]], ...] = (
+    ("baudrate", positive_count_error),
+    ("timeout", _read_timeout_error),
+    ("read_bytes", positive_count_error),
+    ("motor_id", _register_field_error),
+    ("position", _register_field_error),
+    ("velocity", _register_field_error),
+)
+
+
+def _option_error(action: str, supplied: dict[str, Any]) -> str | None:
+    """Error text for the first numeric option ``action`` reads but cannot honor.
+
+    Only the options ``action`` consumes are checked, so a caller is never
+    refused for a value the requested action never looks at. A register field
+    left unset stays the concern of the action's own "required" check, which
+    reports the whole missing pair at once.
+
+    Args:
+        action: The requested action; decides which options are effective.
+        supplied: The numeric options as supplied, keyed by parameter name.
+
+    Returns:
+        An error message naming the action and the option, or ``None`` when
+        every option this action reads is usable.
+    """
+    consumed = _OPTIONS_BY_ACTION.get(action, ())
+    for param, check in _OPTION_DOMAINS:
+        if param not in consumed:
+            continue
+        value = supplied[param]
+        if value is None and param in _REGISTER_FIELDS:
+            continue
+        if error := check(value, param, action):
+            return error
+    return None
 
 
 @tool
@@ -34,14 +182,22 @@ def serial_tool(
     Args:
         action: Action to perform
         port: Serial port path (e.g., "/dev/ttyACM0", "COM3")
-        baudrate: Communication speed (default: 9600)
-        timeout: Read timeout in seconds
+        baudrate: Communication speed in baud; a positive integer (default: 9600)
+        timeout: Read timeout in seconds; a finite number >= 0, where 0 is
+            pyserial's non-blocking mode (return what is already buffered)
         data: String data to send
         hex_data: Hex string data to send (e.g., "FF FF 01 04 03 00 64 92")
-        motor_id: Motor ID for Feetech commands (1-254)
-        position: Target position for Feetech motors (0-4095)
-        velocity: Target velocity for Feetech motors
-        read_bytes: Number of bytes to read
+        motor_id: Motor ID for Feetech commands; an integer in [1, 254]
+        position: Target position for Feetech motors; an integer in [0, 4095]
+        velocity: Target velocity for Feetech motors; an integer in [0, 65535]
+        read_bytes: Number of bytes to read; a positive integer
+
+    Validation:
+        A numeric option the requested action consumes is checked before the
+        port is opened, so a value that cannot be honored is reported instead
+        of being masked into a different servo command, silently coerced by
+        pyserial, or read as no wait at all. An option the action ignores is
+        never checked.
 
     Returns:
         Dict containing status and response content
@@ -87,6 +243,17 @@ def serial_tool(
 
         if not port:
             return {"status": "error", "content": [{"text": "Port parameter required for this action"}]}
+
+        supplied = {
+            "baudrate": baudrate,
+            "timeout": timeout,
+            "read_bytes": read_bytes,
+            "motor_id": motor_id,
+            "position": position,
+            "velocity": velocity,
+        }
+        if option_error := _option_error(action, supplied):
+            return {"status": "error", "content": [{"text": option_error}]}
 
         # Open serial connection
         ser = serial.Serial(port, baudrate, timeout=timeout)
@@ -204,9 +371,13 @@ def serial_tool(
         elif action == "monitor":
             # Continuous monitoring (limited time for safety)
             monitor_data = []
-            start_time = time.time()
+            # The safety window is a duration, so it is measured on
+            # time.monotonic(); each record's ``timestamp`` below stays on the
+            # wall clock because that is an absolute stamp a reader correlates
+            # with other logs.
+            start_time = time.monotonic()
 
-            while time.time() - start_time < 5.0:  # 5 second limit
+            while time.monotonic() - start_time < 5.0:  # 5 second limit
                 if ser.in_waiting > 0:
                     chunk = ser.read(ser.in_waiting)
                     monitor_data.append(

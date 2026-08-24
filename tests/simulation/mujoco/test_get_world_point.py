@@ -184,12 +184,14 @@ _INTRINSICS_SCENE = """
 
 
 class TestExplicitIntrinsicsK:
-    """``_explicit_intrinsics_K`` formula pins (no GL: model compile only).
+    """Sensor-derived ``K`` pins on the installed MuJoCo (no GL: no render).
 
-    Expected values were calibrated against MuJoCo's rasterizer by
-    least-squares fitting depth-blob centroids of spheres at known
-    camera-frame positions (six positions per configuration); a positive
-    MJCF ``principal`` offset shifts the principal point toward NEGATIVE u/v.
+    ``fx``/``fy`` are the sensor's own pixel pitch and ``cx`` follows MuJoCo's
+    horizontal frustum, so all three are pinned exactly here. The vertical
+    offset's magnitude is pinned too, but not which side of the image center it
+    falls on: MuJoCo 3.6.0 changed the vertical frustum convention, so that
+    side is a property of the build. Which frustum maps to which ``cy`` is
+    pinned for both conventions by the frustum-mapping tests.
     """
 
     @staticmethod
@@ -206,8 +208,10 @@ class TestExplicitIntrinsicsK:
         </mujoco>
         """
         model = mujoco.MjModel.from_xml_string(xml)
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
         cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "c")
-        return RenderingMixin._explicit_intrinsics_K(np, model, cam_id, w, h)
+        return RenderingMixin._explicit_intrinsics_K(mujoco, np, model, data, cam_id, w, h)
 
     def test_offset_principal_point(self) -> None:
         K = self._K(
@@ -219,7 +223,8 @@ class TestExplicitIntrinsicsK:
         assert K[0, 0] == pytest.approx(300.0)
         assert K[1, 1] == pytest.approx(300.0)
         assert K[0, 2] == pytest.approx(85.0)
-        assert K[1, 2] == pytest.approx(80.0)
+        # 0.8 mm on a 4.8 mm sensor over 240 rows = 40 px off the center.
+        assert abs(K[1, 2] - 120.0) == pytest.approx(40.0)
 
     def test_non_square_sensor(self) -> None:
         K = self._K('sensorsize="0.008 0.0048" focal="0.006 0.006" resolution="320 240"', 320, 240)
@@ -239,7 +244,8 @@ class TestExplicitIntrinsicsK:
         assert K[0, 0] == pytest.approx(200.0)
         assert K[1, 1] == pytest.approx(300.0)
         assert K[0, 2] == pytest.approx(210.0)
-        assert K[1, 2] == pytest.approx(60.0)
+        # 1.2 mm on a 4.8 mm sensor over 240 rows = 60 px off the center.
+        assert abs(K[1, 2] - 120.0) == pytest.approx(60.0)
 
     def test_scales_linearly_with_render_size(self) -> None:
         """The sensor fixes the frustum; a 2x viewport doubles K per axis
@@ -286,6 +292,81 @@ def test_world_point_correct_on_explicit_intrinsics_camera(tmp_path) -> None:
             f"world point {point.tolist()} is {np.linalg.norm(point - expected):.4f} m from "
             f"the sphere surface {expected.tolist()} - explicit intrinsics not honored"
         )
+    finally:
+        sim.destroy()
+
+
+# A scene whose FREE camera is orthographic. MuJoCo rasterizes it normally --
+# ``get_frame`` returns a full RGB + depth pair -- but an orthographic
+# projection has no pinhole ``K``, so ``get_camera_params`` refuses. That makes
+# it the reachable real-world instance of a failure that arrives AFTER a
+# successful render, on pixels ``get_world_point`` has already accepted.
+_ORTHOGRAPHIC_SCENE = """
+<mujoco model="orthographic_free_camera">
+  <visual><global orthographic="true" fovy="0.35"/></visual>
+  <worldbody>
+    <light pos="0.4 -0.6 1.2" dir="-0.2 0.4 -1"/>
+    <body name="cube" pos="0.4 0 0.05">
+      <geom name="cube_g" type="box" size="0.1 0.1 0.05" rgba="0.9 0.4 0.1 1"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _load_scene_sim(tmp_path, scene_xml: str, name: str):
+    """Fresh sim with *scene_xml* loaded, mirroring the intrinsics fixture."""
+    from strands_robots.simulation import Simulation
+
+    scene = tmp_path / name
+    scene.write_text(scene_xml)
+    sim = Simulation(mesh=False)
+    assert sim.create_world(ground_plane=False)["status"] == "success"
+    assert sim.load_scene(str(scene))["status"] == "success", "load_scene failed"
+    return sim
+
+
+@requires_gl
+def test_orthographic_free_camera_renders_but_reports_unreadable_intrinsics(tmp_path) -> None:
+    """The camera-params read fails on a frame that rendered fine.
+
+    ``get_world_point`` makes two backend reads. This pins the second one
+    failing while the first succeeded, through a documented MJCF option rather
+    than a mock: the pixels are valid, the depth buffer is real, and the call
+    still has to report -- never raise, and never return a point derived from
+    intrinsics it could not read. The reported text has to carry MuJoCo's own
+    actionable reason, because nothing else in the result names the cause.
+    """
+    sim = _load_scene_sim(tmp_path, _ORTHOGRAPHIC_SCENE, "orthographic.xml")
+    try:
+        # The frame read succeeds: this is not a rendering failure.
+        rgb, depth = sim.get_frame("default")
+        assert depth is not None and depth.shape[:2] == rgb.shape[:2]
+
+        result = sim.get_world_point("default", pixels=[[320, 240]])
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "camera parameters" in text, text
+        assert "orthographic" in text, text
+        # The remedy has to survive into the envelope, not just the exception.
+        assert "add_camera" in text, text
+        # ... and it must be the params read being reported, not the render.
+        assert "render camera frame" not in text, text
+    finally:
+        sim.destroy()
+
+
+@requires_gl
+def test_a_perspective_free_camera_on_the_same_scene_still_grounds(tmp_path) -> None:
+    """Control for the case above: the identical scene, camera and pixel
+    ground successfully once the projection is perspective, so the refusal is
+    the projection and not the fixture."""
+    perspective = _ORTHOGRAPHIC_SCENE.replace('orthographic="true" fovy="0.35"', 'fovy="45"')
+    sim = _load_scene_sim(tmp_path, perspective, "perspective.xml")
+    try:
+        data = _json_block(sim.get_world_point("default", pixels=[[320, 240]]))
+        assert data["n_valid"] == 1
+        assert len(data["point"]) == 3
     finally:
         sim.destroy()
 

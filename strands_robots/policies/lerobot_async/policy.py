@@ -58,7 +58,7 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy, align_action_values, chunk_count_error
-from strands_robots.utils import name_list_error, require_optional, tcp_port_error
+from strands_robots.utils import name_list_error, positive_finite_number_error, require_optional, tcp_port_error
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +136,18 @@ class LerobotAsyncPolicy(Policy):
             round-trip per control step. ``None`` selects that default; any
             other value must be a positive ``int``, since it bounds a slice of
             the returned chunk.
-        connect_timeout: Seconds to wait for the gRPC ``Ready`` handshake.
-        request_timeout: Seconds to wait for each observation/action RPC.
+        connect_timeout: Seconds to wait for the gRPC ``Ready`` handshake. Only
+            a positive finite number names a budget. gRPC turns a value that
+            does not into ``DEADLINE_EXCEEDED``, which is what
+            :meth:`_ensure_connected` catches to report "could not reach a
+            lerobot PolicyServer ... Start one first" - so an unusable timeout
+            is reported as an absent server. ``0`` is the worst of them: it
+            succeeds against a server that answers instantly and fails against
+            one that takes a second, so it is load-dependent rather than
+            reproducible.
+        request_timeout: Seconds to wait for each observation/action RPC. Same
+            domain; it also bounds ``Ready`` on :meth:`reset`, where a failure
+            is logged rather than raised.
         rename_map: Optional ``{robot_obs_key: model_feature_key}`` map forwarded
             to the server's ``RemotePolicyConfig.rename_map``. The server applies
             it as a ``RenameObservationsProcessorStep`` (renaming each matching
@@ -154,8 +164,9 @@ class LerobotAsyncPolicy(Policy):
     client pointed at the default address.
 
     Raises:
-        ValueError: If ``policy_type`` / ``pretrained_name_or_path`` are missing
-            or ``policy_type`` is not server-supported.
+        ValueError: If ``policy_type`` / ``pretrained_name_or_path`` are missing,
+            ``policy_type`` is not server-supported, or ``connect_timeout`` /
+            ``request_timeout`` is not a positive finite number.
         ConnectionError: On first use, if the server cannot be reached.
     """
 
@@ -182,6 +193,28 @@ class LerobotAsyncPolicy(Policy):
         # the port is validated only when it is the effective spelling.
         if not server_address and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
             raise ValueError(port_error)
+        # Refused here rather than left to the RPC, because gRPC's reaction to an
+        # unusable deadline is the same ``RpcError`` an absent server produces:
+        # ``-1``, ``nan`` and ``inf`` all return ``DEADLINE_EXCEEDED`` at once,
+        # and ``_ensure_connected`` turns that into "could not reach a lerobot
+        # PolicyServer ... Start one first" against a server that is running.
+        # ``inf`` is refused deliberately and not read as "no deadline" - gRPC
+        # treats it as already exceeded, so the value that looks like an
+        # unbounded wait is the fastest failure here. Placed before the
+        # ``policy_type`` checks so the transport knobs this client owns are
+        # settled together with ``port``, and well before ``require_optional``
+        # imports grpc, so the same mistake reports identically with and without
+        # the [lerobot-async] extra.
+        # Named apart from the ``actions_per_*`` loop below rather than reusing
+        # its ``_param`` / ``_value``: these are ``float`` and those are
+        # ``int | None``, so one pair of names would bind the narrower type here
+        # and make the later loop an assignment error.
+        for _timeout_param, _timeout_value in (
+            ("connect_timeout", connect_timeout),
+            ("request_timeout", request_timeout),
+        ):
+            if error := positive_finite_number_error(_timeout_value, _timeout_param, type(self).__name__):
+                raise ValueError(error)
         address = server_address or f"{host}:{port}"
         if "://" in address:
             address = address.split("://", 1)[1]

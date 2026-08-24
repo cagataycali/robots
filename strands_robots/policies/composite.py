@@ -14,7 +14,16 @@ rest. Ownership is explicit (``lower_joints`` / ``upper_joints``) or, when left
 default, the lower policy takes precedence on any name it emits and the upper
 policy contributes the remaining names. A genuine ownership conflict (both
 children emit a value for a name each claims) is raised, never silently
-resolved - a dropped command on a humanoid is a fall, not a warning.
+resolved - a dropped command on a humanoid is a fall, not a warning. By the same
+rule, a child whose ENTIRE action dict is discarded by routing is refused: a
+composite in which one child reaches no actuator is the other child alone.
+
+This class composes joint groups in PARALLEL; it is not a cascade. A whole-body
+kinematic generator (Kimodo / MotionBricks) and a controller that tracks its
+reference drive the SAME joints and run in SERIES - the generator's targets are
+the controller's input, not a disjoint half of one action dict. No composite
+expresses that: a reference tracker has to consume the reference through its own
+interface.
 
 Example::
 
@@ -31,7 +40,8 @@ Example::
         upper_joints=ARM_JOINTS,                 # both arms
     )
     sim.run_policy(robot_name="unitree_g1", policy_object=policy,
-                   target_velocity=[0.5, 0.0, 0.0])
+                   policy_kwargs={"target_velocity": [0.5, 0.0, 0.0]},
+                   control_frequency=50.0, n_steps=500)
 """
 
 import asyncio
@@ -57,6 +67,16 @@ class CompositePolicy(Policy):
       every name it emits that the lower policy did not already claim - lower
       precedence).
 
+    An explicit group is EXCLUSIVE: the policy it names is the only one allowed to
+    command those joints. A defaulted ``lower_joints`` therefore still may not
+    command into an explicit ``upper_joints`` - that tick is refused, on every tick
+    alike, rather than resolved by whichever child emitted the name. Precedence
+    only decides between two DEFAULTED groups, where the caller declared no owner.
+
+    Routing that discards a child's ENTIRE action dict raises: the composite
+    would otherwise silently be the surviving child alone. Two children that
+    drive the same joint set cannot be composed, only cascaded (module docstring).
+
     The merged chunk length is the shorter of the two children's chunks, so the
     more frequently re-querying child sets the re-query cadence
     (:attr:`execution_horizon`). This keeps a per-tick controller (WBC,
@@ -67,10 +87,13 @@ class CompositePolicy(Policy):
         lower: Policy driving the lower joint group (e.g. legs+waist locomotion).
         upper: Policy driving the upper joint group (e.g. arms manipulation).
         lower_joints: Joint/actuator names the lower policy is authoritative for.
-            ``None`` (default) accepts every name the lower policy emits.
+            ``None`` (default) accepts every name the lower policy emits, minus
+            any that ``upper_joints`` assigns to the upper policy - commanding
+            into an explicit upper group is refused, not silently resolved.
         upper_joints: Joint/actuator names the upper policy is authoritative for.
-            ``None`` (default) accepts every upper name not already owned by the
-            lower policy.
+            Exclusive: no other child may command these, whichever names the upper
+            policy emits on a given tick. ``None`` (default) accepts every upper
+            name not already owned by the lower policy.
         lower_obs_keys: Observation keys to forward to the lower policy. ``None``
             (default) forwards the full observation (children read by name).
         upper_obs_keys: Observation keys to forward to the upper policy. ``None``
@@ -118,6 +141,15 @@ class CompositePolicy(Policy):
     def upper(self) -> Policy:
         """The upper-body (e.g. manipulation) child policy."""
         return self._upper
+
+    @property
+    def children(self) -> tuple[Policy, ...]:
+        """Both child policies, ``lower`` first - the order they are merged in.
+
+        Lets a runtime capability probe reach the concrete policies inside the
+        composite; see :attr:`Policy.children`.
+        """
+        return (self._lower, self._upper)
 
     @property
     def provider_name(self) -> str:
@@ -183,8 +215,10 @@ class CompositePolicy(Policy):
             child that owns that name.
 
         Raises:
-            ValueError: If either child returns an empty chunk, or if the routed
-                lower and upper action dicts both assign the same joint name.
+            ValueError: If either child returns an empty chunk, if routing
+                discards a child's entire action dict (the composite would be
+                the other child alone), or if the lower policy commands a joint
+                ``upper_joints`` assigns to the upper policy.
         """
         lower_obs = self._filter_obs(observation_dict, self._lower_obs_keys)
         upper_obs = self._filter_obs(observation_dict, self._upper_obs_keys)
@@ -212,15 +246,111 @@ class CompositePolicy(Policy):
         lo = self._route(lower_action, self._lower_joints)
         # Upper default: every name not already claimed by the routed lower dict.
         up = self._route(upper_action, self._upper_joints, exclude=None if self._upper_joints else set(lo))
-        collision = set(lo) & set(up)
-        if collision:
-            raise ValueError(
-                "CompositePolicy: lower and upper policies both produced joint(s) "
-                f"{sorted(collision)}. Set lower_joints / upper_joints so each joint "
-                "is driven by exactly one policy."
-            )
+        self._reject_discarded_child("lower", self._lower, lower_action, lo, self._lower_joints, set())
+        self._reject_discarded_child("upper", self._upper, upper_action, up, self._upper_joints, set(lo))
+        self._reject_contested_upper_ownership(lo)
         lo.update(up)
         return lo
+
+    def _reject_discarded_child(
+        self,
+        role: str,
+        child: Policy,
+        emitted: dict[str, Any],
+        routed: dict[str, Any],
+        group: set[str] | None,
+        claimed_by_lower: set[str],
+    ) -> None:
+        """Refuse a tick in which routing discarded everything ``child`` commanded.
+
+        A child whose whole action dict is dropped reaches no actuator, so the
+        composite commands exactly what the other child alone would - a no-op
+        wearing the shape of a composition. That is the same dropped command this
+        class raises on elsewhere, so name the child, the joints it commanded and
+        the reason instead of returning a tick the caller will read as composed.
+
+        Args:
+            role: The seat ``child`` occupies - ``"lower"`` or ``"upper"``.
+            child: The child policy whose routed output is being checked.
+            emitted: The action dict ``child`` returned for this tick.
+            routed: What survived routing for ``child``.
+            group: ``child``'s explicit joint group, or ``None`` when defaulted.
+            claimed_by_lower: Names the routed lower dict already claims. Empty
+                for the lower seat, which is routed first and claims freely.
+
+        Raises:
+            ValueError: If ``child`` commanded at least one joint and none of them
+                survived routing. A child that commanded nothing is left alone -
+                there is no command to drop.
+        """
+        if routed or not emitted:
+            return
+        names = sorted(emitted)
+        head = (
+            f"CompositePolicy: the {role} policy '{child.provider_name}' commanded "
+            f"{len(names)} joint(s) and none of them reached the merged action"
+        )
+        if group is not None:
+            raise ValueError(
+                f"{head} - the {role}_joints group {sorted(group)} shares no name with the "
+                f"joints it emits {names}. Set {role}_joints to names this policy emits."
+            )
+        lower_name = self._lower.provider_name
+        raise ValueError(
+            f"{head} - the lower policy '{lower_name}' already drives every one of "
+            f"{sorted(set(names) & claimed_by_lower)}, so this composite commands exactly what "
+            f"'{lower_name}' alone would. CompositePolicy merges DISJOINT joint groups (e.g. "
+            "locomotion legs+waist plus manipulation arms); it does not feed one policy's targets "
+            "into another policy. Give each joint exactly one owner via lower_joints / "
+            "upper_joints, or drive the whole body with a single policy."
+        )
+
+    def _reject_contested_upper_ownership(self, lo: dict[str, Any]) -> None:
+        """Refuse a tick in which the lower policy commands an upper-owned joint.
+
+        ``upper_joints`` names the joints the upper policy is authoritative for. A
+        defaulted ``lower_joints`` keeps every name the lower policy emits, so a
+        lower policy whose action space covers the whole robot (a whole-body
+        kinematic generator emits all 29 G1 joints) also commands the names the
+        caller assigned to the upper policy. Which value reached the actuator then
+        depended on whether the upper policy happened to emit that name on this
+        tick: when it did, the merge raised; when it did not, the lower policy's
+        value was written to a joint the caller had given away, with no error. One
+        configuration, two outcomes, chosen per tick by the upper policy's chunk
+        contents.
+
+        Refusing on the condition that is actually ambiguous - the lower policy
+        commanding into an explicit upper group - is the same answer on every tick.
+        Dropping the lower policy's value instead would leave that joint on its
+        previous command with nothing to say so, which is the silent dropped
+        command this class raises on everywhere else.
+
+        Only an explicit ``upper_joints`` can be contested: with it defaulted the
+        upper dict is routed with the lower's names excluded, so the two dicts are
+        disjoint by construction and there is nothing to arbitrate.
+
+        Args:
+            lo: The routed lower action dict for this tick.
+
+        Raises:
+            ValueError: If the lower policy commanded any name ``upper_joints``
+                assigns to the upper policy.
+        """
+        if self._upper_joints is None:
+            return
+        contested = set(lo) & self._upper_joints
+        if not contested:
+            return
+        raise ValueError(
+            f"CompositePolicy: upper_joints assigns joint(s) {sorted(contested)} to the upper "
+            f"policy '{self._upper.provider_name}', but the lower policy "
+            f"'{self._lower.provider_name}' also commanded them this tick. An explicit joint "
+            "group is exclusive - the policy that owns a name is the only one allowed to "
+            "command it, whether or not the other child emits that name on a given tick. Set "
+            "lower_joints so the lower policy does not command into the upper group (e.g. "
+            "lower_joints=WBC_G1_LEG_WAIST_JOINTS for a G1 locomotion policy), or remove those "
+            "names from upper_joints."
+        )
 
     @staticmethod
     def _route(action: dict[str, Any], joints: set[str] | None, *, exclude: set[str] | None = None) -> dict[str, Any]:

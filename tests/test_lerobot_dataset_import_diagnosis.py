@@ -45,6 +45,11 @@ def lerobot_present(monkeypatch: pytest.MonkeyPatch) -> None:
     The three lerobot-present branches must be reachable whether or not lerobot
     is installed in the environment running the tests, so the contract holds
     everywhere rather than only where a real lerobot happens to be importable.
+
+    Stubbing the probe is what keeps that true, and it leaves the probe's own
+    behaviour to something else: which of its branches answers, at what cost, and
+    what it does with a spec lookup that raises are pinned in
+    ``tests/test_lerobot_install_probe_contract.py``.
     """
     monkeypatch.setattr(dr, "_lerobot_installed", lambda: True)
     monkeypatch.setattr(dr, "lerobot_version", lambda: "0.6.0")

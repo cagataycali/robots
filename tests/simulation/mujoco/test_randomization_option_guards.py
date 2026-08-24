@@ -233,9 +233,16 @@ class TestRandomizeRefusesUnusablePhysics:
 class TestBackendGuardParity:
     """Every backend with a randomization mixin routes through the shared guards.
 
-    AST-based so it runs with Newton/Isaac uninstalled: a backend that stops
-    calling a guard (or a new backend that never starts) fails here rather than
-    silently re-acquiring its own accepted domain.
+    AST-based so it covers a backend whose optional dependencies are absent, and
+    a backend added later: one that stops calling a guard, or never starts, fails
+    here rather than silently re-acquiring its own accepted domain.
+
+    It is a forward-looking net rather than the pin for the shipped backends,
+    because a call whose verdict is discarded still satisfies it. Both shipped
+    backends drive these refusals behaviourally - MuJoCo above, Newton in
+    ``TestSeedRefusalOnBothEntryPoints`` and its sibling guard classes, which
+    reach the guards on a pure-Python host with neither Newton nor Warp
+    installed.
     """
 
     _GUARD_NAMES = {"randomization_range_error", "finite_non_negative_error", "randomization_seed_error"}

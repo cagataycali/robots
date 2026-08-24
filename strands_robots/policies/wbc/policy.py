@@ -63,7 +63,7 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import require_optional
+from strands_robots.utils import finite_number_error, require_optional, sequence_length
 
 from .config import WBCConfig
 from .control import compute_targets, pd_control, projected_gravity
@@ -197,10 +197,12 @@ class WBCPolicy(Policy):
             through the mesh ``tell()`` / ``policy_config`` path that forwards
             only constructor kwargs. Per-call ``target_velocity`` overrides it.
         allow_missing_models: Test/CI seam. When ``True`` the ONNX sessions are
-            not loaded eagerly (so unit tests can inject a stub session via
-            :attr:`policy_session` / :attr:`walk_session`). Production callers
-            leave this ``False`` so a missing checkpoint fails loudly at
-            construction.
+            not loaded eagerly, so a caller can install one by assigning to the
+            :attr:`policy_session` / :attr:`walk_session` attributes after
+            construction. Assignment is the only route: ``**kwargs`` below
+            absorbs unknown keywords, so a session passed to this constructor is
+            dropped. Production callers leave this ``False`` so a missing
+            checkpoint fails loudly at construction.
         **kwargs: Forward-compatibility absorber for the smart-string / registry
             resolution path. Per the #300 contract, providers MUST ignore
             unknown kwargs rather than raising.
@@ -493,6 +495,12 @@ class WBCPolicy(Policy):
         - ``target_orientation = [roll, pitch, yaw]`` -> rpy command slots.
         - ``height`` -> the height command slot.
 
+        Every caller-supplied component is validated on the domain
+        :class:`~strands_robots.policies.wbc.config.WBCConfig` enforces for the
+        field it overrides - a command block goes into the observation the
+        network is given, so a value the config refuses must not reach it
+        through the kwarg documented to take precedence over the config.
+
         Returns:
             ``(command, raw_velocity)`` where ``command`` is the ``command_dim``-
             wide (default 7) observation block with ``cmd_scale`` already applied
@@ -523,13 +531,17 @@ class WBCPolicy(Policy):
         # Slot [3]: target base height (per-call ``height`` overrides the config).
         if c > 3:
             height = kwargs.get("height")
-            command[3] = float(height) if height is not None else float(self._config.height_cmd)
+            command[3] = self._validate_height(height) if height is not None else float(self._config.height_cmd)
 
         # Slots [4:7]: target roll/pitch/yaw (per-call ``target_orientation``
         # overrides the config ``rpy_cmd``).
         if c > 4:
             rpy_src = kwargs.get("target_orientation")
-            rpy = np.asarray(rpy_src if rpy_src is not None else self._config.rpy_cmd, dtype=np.float64).ravel()
+            rpy = (
+                self._validate_orientation(rpy_src)
+                if rpy_src is not None
+                else np.asarray(self._config.rpy_cmd, dtype=np.float64).ravel()
+            )
             n_rpy = min(c - 4, rpy.shape[0])
             command[4 : 4 + n_rpy] = rpy[:n_rpy]
 
@@ -620,7 +632,12 @@ class WBCPolicy(Policy):
         # Flat-vector form: index into the flat array by each joint's position.
         flat_key = "observation.state" if kind == "position" else "observation.velocity"
         flat = obs.get(flat_key)
-        if flat is not None and hasattr(flat, "__len__"):
+        # The flat/per-joint discriminator asks for a component count, so it
+        # asks ``sequence_length``. A 0-d array is a scalar that declares
+        # ``__len__``, and a ``hasattr`` probe sent it down the flat branch
+        # while a plain float went down the per-joint one - two spellings of
+        # one scalar answering differently for the same observation (#1883).
+        if flat is not None and sequence_length(flat) is not None:
             arr = np.asarray(flat if not hasattr(flat, "tolist") else flat.tolist(), dtype=np.float64).ravel()
             if self._robot_state_keys:
                 # Name-resolved indexing: map each observed joint to its slot in
@@ -664,7 +681,12 @@ class WBCPolicy(Policy):
     def _read_vec(obs: dict[str, Any], keys: tuple[str, ...], n: int) -> np.ndarray | None:
         for k in keys:
             v = obs.get(k)
-            if v is not None and hasattr(v, "__len__") and len(v) == n:
+            # ``sequence_length`` answers ``None`` for a value with no
+            # readable length, which is never ``n``, so the width test and
+            # the has-a-width test are one expression. The ``hasattr`` +
+            # ``len()`` spelling raised on a 0-d entry instead of returning
+            # the ``None`` every caller of this method is written against.
+            if v is not None and sequence_length(v) == n:
                 return np.asarray(v if not hasattr(v, "tolist") else v.tolist(), dtype=np.float64).ravel()
         return None
 
@@ -689,8 +711,11 @@ class WBCPolicy(Policy):
             # if a caller forgot to inject a session. Never silently emit zeros.
             raise RuntimeError(
                 "WBCPolicy has no ONNX session loaded. Construct with a valid "
-                "checkpoint (allow_missing_models=False), or inject a stub via "
-                "policy_session=/walk_session= in tests."
+                "checkpoint (allow_missing_models=False), or construct with "
+                "allow_missing_models=True and then assign a session to the "
+                "`policy_session` / `walk_session` attributes. The constructor "
+                "absorbs unknown keywords per the provider contract, so a "
+                "session handed to it is dropped rather than installed."
             )
 
         net_in = np.asarray(obs, dtype=np.float32).reshape(1, -1)
@@ -1009,6 +1034,86 @@ class WBCPolicy(Policy):
         for i, v in enumerate(arr):
             if math.isnan(v) or math.isinf(v):
                 raise ValueError(f"target_velocity[{i}]={v!r} must be finite")
+        return arr
+
+    @staticmethod
+    def _validate_height(height: Any) -> float:
+        """Validate a per-call ``height`` command (the ``height_cmd`` override).
+
+        Adopts the domain :class:`~strands_robots.policies.wbc.config.WBCConfig`
+        enforces for ``height_cmd`` verbatim, so the two spellings of one field
+        cannot diverge: a target base height the config refuses must not be
+        reachable through the kwarg documented to override it. Signed, because
+        the slot is an absolute height in metres and only finiteness is
+        constrained; a non-finite one is written straight into the observation
+        block the network is given.
+
+        Args:
+            height: The caller-supplied value.
+
+        Returns:
+            The value as a ``float``.
+
+        Raises:
+            ValueError: If it is not a usable finite number.
+        """
+        if error := finite_number_error(height, "height", "WBCPolicy"):
+            raise ValueError(error)
+        return float(height)
+
+    @staticmethod
+    def _validate_orientation(rpy_src: Any) -> np.ndarray:
+        """Validate a per-call ``target_orientation`` (the ``rpy_cmd`` override).
+
+        Mirrors the per-component rule
+        :class:`~strands_robots.policies.wbc.config.WBCConfig` applies to
+        ``rpy_cmd``, and both the numeric-sequence AND at-least-three-elements
+        rules :meth:`_validate_velocity` applies to the sibling command
+        component, so a roll/pitch/yaw target the config refuses is not
+        reachable through the kwarg that overrides it. Without the sequence rule
+        a non-numeric sequence surfaces as NumPy's own ``could not convert
+        string to float`` - which names neither the kwarg nor the policy - and a
+        non-finite component reaches the network.
+
+        Arity: roll, pitch and yaw are a triple, so at least three components are
+        required and a SHORT sequence is refused. The command block is
+        zero-initialised and the write is clamped to what the caller supplied, so
+        accepting two components would leave yaw at 0.0 rather than at the
+        ``rpy_cmd`` value the omitted kwarg falls back to - discarding a
+        configured target for an axis the caller never mentioned. A LONGER
+        sequence is NOT refused: every component the block has room for is
+        honored and only the surplus is dropped, which is what
+        :meth:`_validate_velocity` does with a packed velocity too.
+
+        Args:
+            rpy_src: The caller-supplied ``[roll, pitch, yaw]`` sequence.
+
+        Returns:
+            The flattened ``float64`` array.
+
+        Raises:
+            ValueError: If it is not a numeric sequence, has fewer than three
+                components, or any component is not a usable finite number.
+        """
+        try:
+            arr = np.asarray(rpy_src, dtype=np.float64).ravel()
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"target_orientation must be a numeric sequence, got {rpy_src!r}") from e
+        # Arity before values, the order :meth:`_validate_velocity` uses. A short
+        # sequence is refused rather than zero-filled: the block is
+        # zero-initialised, so writing only the components supplied would leave
+        # the rest at 0.0 - not at the ``rpy_cmd`` value that applies when the
+        # kwarg is omitted - silently commanding zero for axes the caller never
+        # mentioned and discarding the ones they did configure.
+        if arr.shape[0] < 3:
+            raise ValueError(f"target_orientation must have at least 3 elements [roll, pitch, yaw], got {arr.shape[0]}")
+        # Inspect the ORIGINAL elements, not ``arr``: the float coercion above
+        # turns a ``True`` into a silent 1.0, and the config refuses a bool
+        # component of ``rpy_cmd``. An object view keeps the two spellings of the
+        # field on the same domain.
+        for index, component in enumerate(np.asarray(rpy_src, dtype=object).ravel()):
+            if error := finite_number_error(component, f"target_orientation[{index}]", "WBCPolicy"):
+                raise ValueError(error)
         return arr
 
 

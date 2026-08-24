@@ -186,7 +186,7 @@ def test_run_multi_policy_rejects_nonpositive_horizon_settings(sim_two_robots):
         control_frequency=50.0,
     )
     assert r["status"] == "error"
-    assert "must be > 0" in r["content"][0]["text"]
+    assert "n_steps must be a positive integer" in r["content"][0]["text"]
 
 
 def test_run_multi_policy_requires_world():

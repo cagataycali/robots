@@ -14,7 +14,7 @@ while every scene-construction vector refused the same value. #1837 settled the
 scope for numeric-element validation". The decision this pins is that they refuse
 it, for consistency with the domain
 :func:`strands_robots.utils.finite_vector_error` already states - the full
-argument is in ``physics._BOOLEAN_STATE_REASON``.
+argument is in ``simulation.base._BOOLEAN_STATE_REASON``.
 
 Every boolean assertion here fails on pre-fix code, where the call returned
 ``status="success"``. The ``StillAccepted`` / ``still`` tests are the over-reach
@@ -32,10 +32,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from strands_robots.simulation.mujoco.physics import (
-    _BOOLEAN_STATE_REASON,
-    _coerce_finite_joint_map,
-)
+from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, SimEngine
 from strands_robots.utils import is_boolean
 
 # Every spelling of a boolean that can reach a writer: a python bool, a numpy
@@ -53,7 +50,7 @@ _NUMBER_IDS = ["int_0", "int_1", "int_neg1", "float", "neg_float", "np_float", "
 
 
 class TestSharedJointMapCoercionRefusesABoolean:
-    """``_coerce_finite_joint_map`` backs both joint writers, so one gate covers both.
+    """``SimEngine._coerce_joint_state_map`` backs both joint writers, so one gate covers both.
 
     Exercised directly so the domain is pinned even where MuJoCo is unavailable;
     the sim-level classes below prove the writers actually route through it.
@@ -62,14 +59,14 @@ class TestSharedJointMapCoercionRefusesABoolean:
     @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
     @pytest.mark.parametrize("param", ["positions", "velocities"])
     def test_every_boolean_spelling_is_refused(self, value: Any, param: str) -> None:
-        out, err = _coerce_finite_joint_map({"j0": value}, param, f"set_joint_{param}")
+        out, err = SimEngine._coerce_joint_state_map({"j0": value}, param, f"set_joint_{param}")
         assert err is not None, f"{value!r} was accepted as a {param} value"
         assert err["status"] == "error"
         assert out == {}, "a refused map must coerce nothing"
 
     @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
     def test_the_refusal_names_the_joint_the_parameter_and_the_units(self, value: Any) -> None:
-        _, err = _coerce_finite_joint_map({"shoulder_pan": value}, "positions", "set_joint_positions")
+        _, err = SimEngine._coerce_joint_state_map({"shoulder_pan": value}, "positions", "set_joint_positions")
         assert err is not None
         text = err["content"][0]["text"]
         assert "set_joint_positions" in text
@@ -80,23 +77,25 @@ class TestSharedJointMapCoercionRefusesABoolean:
 
     def test_a_boolean_among_valid_values_refuses_the_whole_map(self) -> None:
         """The write is all-or-nothing: one bad value coerces none of them."""
-        out, err = _coerce_finite_joint_map({"j0": 0.5, "j1": True, "j2": -0.25}, "positions", "set_joint_positions")
+        out, err = SimEngine._coerce_joint_state_map(
+            {"j0": 0.5, "j1": True, "j2": -0.25}, "positions", "set_joint_positions"
+        )
         assert err is not None
         assert "j1" in err["content"][0]["text"]
         assert out == {}, "a partial coercion would let a partial pose through"
 
     @pytest.mark.parametrize("value", _NUMBERS, ids=_NUMBER_IDS)
     def test_numbers_are_still_accepted(self, value: Any) -> None:
-        out, err = _coerce_finite_joint_map({"j0": value}, "positions", "set_joint_positions")
+        out, err = SimEngine._coerce_joint_state_map({"j0": value}, "positions", "set_joint_positions")
         assert err is None, f"{value!r} must remain a usable position"
         assert out == {"j0": float(value)}
 
     def test_one_is_accepted_though_it_is_what_true_would_have_written(self) -> None:
         """The gate keys on the type, not the value - 1.0 rad is a real request."""
-        out, err = _coerce_finite_joint_map({"j0": 1}, "positions", "set_joint_positions")
+        out, err = SimEngine._coerce_joint_state_map({"j0": 1}, "positions", "set_joint_positions")
         assert err is None
         assert out == {"j0": 1.0}
-        _, bool_err = _coerce_finite_joint_map({"j0": True}, "positions", "set_joint_positions")
+        _, bool_err = SimEngine._coerce_joint_state_map({"j0": True}, "positions", "set_joint_positions")
         assert bool_err is not None, "True must not ride in on int's acceptance"
 
     @pytest.mark.parametrize(
@@ -106,7 +105,7 @@ class TestSharedJointMapCoercionRefusesABoolean:
     )
     def test_the_pre_existing_domain_is_unchanged(self, value: Any, expected: str) -> None:
         """The bool gate is additive: non-numeric and nan/inf keep their own messages."""
-        _, err = _coerce_finite_joint_map({"j0": value}, "positions", "set_joint_positions")
+        _, err = SimEngine._coerce_joint_state_map({"j0": value}, "positions", "set_joint_positions")
         assert err is not None
         text = err["content"][0]["text"]
         assert expected in text
@@ -150,7 +149,7 @@ class TestOneBooleanPredicateNotThree:
         from strands_robots.simulation.mujoco import physics
 
         assert physics.is_boolean is is_boolean
-        assert "is_boolean(value)" in inspect.getsource(physics._coerce_finite_joint_map)
+        assert "is_boolean(value)" in inspect.getsource(SimEngine._coerce_joint_state_map)
         assert "is_boolean(_elem)" in inspect.getsource(physics.PhysicsMixin.apply_force)
 
     def test_the_retired_scope_note_is_gone_from_apply_force(self) -> None:

@@ -19,10 +19,11 @@ JPEG bytes in MQTT we:
 3. Subscribers GET the frame from the presigned URL directly - no MQTT
    payload size pressure.
 
-The Zenoh path (LAN multicast) keeps publishing inline JPEG frames on
-``strands/{peer_id}/camera/{cam}`` as before. Visual-servo control loops
-in the same process / LAN can keep polling those without touching the
-cloud. This is exactly the §4.2 design from the original research doc.
+The Zenoh path (LAN peers, gossip-scouted by default) keeps publishing
+inline JPEG frames on ``strands/{peer_id}/camera/{cam}`` as before.
+Visual-servo control loops in the same process / LAN can keep polling
+those without touching the cloud. This is exactly the §4.2 design from
+the original research doc.
 
 Hooking in
 ----------
@@ -46,7 +47,7 @@ Configuration
 
 Bucket-ownership threat model
 -----------------------------
-The S3 PutObject path in :meth:`CameraOffloader._upload_frame` does
+The S3 PutObject path in :meth:`CameraOffloader.upload_frame` does
 not pass an ``ACL=`` kwarg. The contract for the offload bucket is
 that the operator configures it with object-ownership control
 ``BucketOwnerEnforced`` (and a bucket policy that denies public
@@ -62,6 +63,8 @@ import logging
 import os
 import time
 from typing import Any
+
+from strands_robots.bus_access import read_observation
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +255,7 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
             return
 
         try:
-            obs = inner.get_observation()
+            obs = read_observation(inner)
         except Exception as exc:  # noqa: BLE001 -- LeRobot get_observation() may raise hardware-specific errors
             logger.debug("[camera_offload] get_observation failed: %s", exc)
             return

@@ -1,5 +1,5 @@
 ---
-description: Robot(name, mode, backend, urdf_path, cameras, position, data_config, mesh, peer_id, **kwargs) - the full signature with every kwarg explained.
+description: Robot(name, mode, backend, urdf_path, cameras, position, data_config, mesh, peer_id, orientation, keyframe, **kwargs) - the full signature with every kwarg explained.
 ---
 
 # Robot factory
@@ -21,13 +21,15 @@ robot = Robot("so100", mode="auto")  # probes USB, falls back to sim
 | `name` | str | required | Catalog name or alias. Resolved via `registry/robots.json`. |
 | `mode` | str | `"sim"` | `"sim"` / `"real"` / `"auto"`. Overridden by `STRANDS_ROBOT_MODE`. |
 | `backend` | str | `"mujoco"` | Sim backend. Ignored when `mode="real"`. |
-| `urdf_path` | str | `None` | Explicit MJCF/URDF path - bypasses registry. |
+| `urdf_path` | str | `None` | Explicit MJCF/URDF path - bypasses registry. Ignored when `mode="real"` (reported at debug level). |
 | `cameras` | dict | `None` | Real-hardware camera config. **Rejected in `mode="sim"`** - raises `ValueError`. |
-| `position` | list | `None` | Robot position `[x, y, z]` in sim world. |
-| `data_config` | str | `None` | GR00T data_config name. |
-| `mesh` | bool | `True` | Auto-join Zenoh mesh. |
+| `position` | list | `None` | Robot position `[x, y, z]` in sim world. Ignored when `mode="real"` (reported at debug level). |
+| `data_config` | str | `None` | GR00T data_config name. Honoured in both modes: `mode="sim"` defaults it to the canonical robot name, `mode="real"` forwards it to the hardware driver, which carries it into the `policy_config` a policy is built with. |
+| `mesh` | bool \| None | `None` | Join the Zenoh fleet mesh. `None` consults `STRANDS_MESH`, which leaves it **off** unless set to `true`/`1`/`yes` - pass `mesh=True` to opt in per robot. |
 | `peer_id` | str | `None` | Stable mesh peer id. Auto-generated if omitted. |
-| `**kwargs` | | | Forwarded to backend constructor. Unknown kwargs raise `ValueError`. |
+| `orientation` | list | `None` | Robot base orientation `[w, x, y, z]` in sim world. Ignored when `mode="real"` (reported at debug level). |
+| `keyframe` | str \| int | `None` | Spawn in a model `<keyframe>` pose (name or index) instead of the zero configuration. Ignored when `mode="real"` (reported at debug level). |
+| `**kwargs` | | | Forwarded to the backend or driver constructor as given. A name it does not recognize is ignored, not refused, so check the spelling against the forwardable list below. |
 
 ## Name resolution
 
@@ -76,14 +78,22 @@ the clamp disabled.
 
 ## Mesh
 
+Mesh is opt-in, so a bare `Robot(...)` never starts Zenoh, ACL or e-stop machinery:
+
 ```python
 sim = Robot("so100")
-sim.mesh.peer_id   # 'so100_sim-a1b2c3d4'
-sim.mesh.alive     # True
+sim.mesh                     # None - never joined
 
-Robot("so100", mesh=False)   # per-robot off
-# STRANDS_MESH=false         # process-wide off
+sim = Robot("so100", mesh=True)   # per-robot on
+sim.mesh.peer_id             # 'so100_sim-a1b2c3d4'
+sim.mesh.alive               # True
+
+# STRANDS_MESH=true          # process-wide on, for a bare Robot(...)
 ```
+
+`STRANDS_MESH=false` is a kill switch: it keeps mesh off even where a caller passed
+`mesh=True`. The environment never forces mesh on for a robot constructed with
+`mesh=False`.
 
 Mesh failure is non-fatal; `.mesh = None` if Zenoh unavailable.
 

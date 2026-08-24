@@ -47,11 +47,19 @@ def sim_with_robot():
 
 class TestStepValidation:
     def test_step_negative_errors(self, sim_with_world):
-        """step(n_steps=-5) must error and NOT decrement step_count."""
+        """step(n_steps=-5) must error and NOT decrement step_count.
+
+        The wording is the shared cross-backend one
+        (:func:`~strands_robots.utils.non_negative_whole_number_error`) rather
+        than this backend's own: Newton and Isaac state the same refusal
+        verbatim, which is what
+        ``tests/simulation/test_step_count_domain_across_backends.py`` pins. The
+        refusal itself, and the untouched ``step_count``, are unchanged.
+        """
         initial = sim_with_world._world.step_count
         res = sim_with_world.step(n_steps=-5)
         assert res["status"] == "error"
-        assert "n_steps must be >= 0" in res["content"][0]["text"]
+        assert "n_steps must be a non-negative whole number" in res["content"][0]["text"]
         assert sim_with_world._world.step_count == initial, "step_count must not change on rejected call"
 
     def test_step_zero_is_noop(self, sim_with_world):
@@ -75,13 +83,18 @@ class TestStepValidation:
         assert sim_with_world._world.step_count == 3
 
     def test_step_non_coercible_type_errors(self, sim_with_world):
-        """A non-int n_steps that cannot be coerced errors and names the type."""
+        """A non-numeric n_steps errors and names the value it was given.
+
+        Names the VALUE rather than its type name, which is the convention of
+        every helper in this family (``got {value!r}``) and the more actionable
+        half: a caller who passed the wrong variable learns which one it was.
+        """
         initial = sim_with_world._world.step_count
         res = sim_with_world.step(n_steps="not-a-number")
         assert res["status"] == "error"
         msg = res["content"][0]["text"]
-        assert "n_steps must be an integer" in msg
-        assert "str" in msg
+        assert "n_steps must be a non-negative whole number" in msg
+        assert "'not-a-number'" in msg
         assert sim_with_world._world.step_count == initial, "step_count must not change on rejected call"
 
     def test_step_exceeds_max_per_call_errors(self, sim_with_world):

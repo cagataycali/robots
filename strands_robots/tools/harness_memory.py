@@ -85,6 +85,11 @@ _MAX_RULE_CHARS = 2000
 _MAX_RULES_PER_KIND = 1000
 _MAX_TRACE_ENTRIES = 2000
 _MAX_TRACE_BYTES = 5 * 1024 * 1024  # serialized JSONL budget per task
+# Budget for the summary as stored, which is the caller's payload plus the
+# provenance block ``save_trace`` injects. Accounting for the stored payload
+# at both ends is what keeps every summary a save accepts loadable: the load
+# path re-validates the file, so a save-side budget over the caller's payload
+# alone would admit a summary ``load_trace`` then refuses.
 _MAX_SUMMARY_BYTES = 64 * 1024
 
 _TRACE_SUFFIX = ".trace.jsonl"
@@ -212,6 +217,11 @@ def _validate_trace(trace: Any) -> list[dict[str, Any]]:
 def _validate_summary(summary: Any) -> dict[str, Any]:
     """Validate a summary: a JSON object within the size budget.
 
+    Applied to the payload as stored -- :meth:`HarnessMemory.save_trace`
+    passes the caller's summary plus its provenance block, and
+    :meth:`HarnessMemory.load_trace` passes the file it read back -- so both
+    ends account for the same bytes.
+
     Args:
         summary: Untrusted summary payload from the agent.
 
@@ -324,6 +334,13 @@ class HarnessMemory:
         failed save never leaves a torn trace/summary pair or an orphaned
         trace (a summary-less trace would be listed by ``list_tasks`` but
         never loadable by ``load_trace``).
+
+        Raises:
+            ValueError: If the summary as stored -- the caller's payload plus
+                the provenance block written beside it -- exceeds
+                ``_MAX_SUMMARY_BYTES``. Checked here rather than on the
+                caller's payload alone so that every summary a save accepts
+                is one :meth:`load_trace` can read back.
         """
         self._ensure_dirs()
         provenance = {
@@ -334,6 +351,12 @@ class HarnessMemory:
         }
         stored_summary = dict(summary)
         stored_summary["provenance"] = provenance
+        # The budget covers the payload that is stored, not the one passed
+        # in: ``load_trace`` re-validates the file, which carries this
+        # provenance block, so checking the caller's summary alone accepts a
+        # summary the store cannot read back -- and the "delete and re-save"
+        # remedy that failure names reproduces it byte for byte.
+        _validate_summary(stored_summary)
         trace_path = self._trace_path(task)
         summary_path = self._summary_path(task)
         trace_lines = "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in trace)
@@ -417,7 +440,22 @@ class HarnessMemory:
         return sorted(tasks)
 
     def append_rule(self, kind: str, text: str) -> int:
-        """Append one rule line under *kind*; returns the new rule count."""
+        """Append one rule line under *kind*.
+
+        Args:
+            kind: Rule kind to append under; a key of ``_RULE_FILES``.
+            text: Validated single-line rule text.
+
+        Returns:
+            The new rule count for *kind*.
+
+        Raises:
+            ValueError: If *kind* already holds ``_MAX_RULES_PER_KIND`` rules,
+                or if its store is not valid UTF-8 -- the existing rules are
+                counted before one more is appended, so a store that cannot be
+                read cannot be appended to either. The other kind is
+                unaffected: each kind has its own file.
+        """
         self._ensure_dirs()
         path = self.global_dir / _RULE_FILES[kind]
         existing = self._read_rules(path)
@@ -428,7 +466,19 @@ class HarnessMemory:
         return len(existing) + 1
 
     def load_rules(self) -> dict[str, list[str]]:
-        """Return all global rules keyed by kind."""
+        """Return all global rules keyed by kind.
+
+        Returns:
+            One list per key of ``_RULE_FILES``. A kind with no store yet maps
+            to an empty list.
+
+        Raises:
+            ValueError: If any store is not valid UTF-8. The read is
+                all-or-nothing rather than per-kind: rules are loaded together
+                into one prompt, so returning a partial mapping would present a
+                store that could not be read as a kind with no rules. The
+                message names the file to repair or remove.
+        """
         return {kind: self._read_rules(self.global_dir / fname) for kind, fname in _RULE_FILES.items()}
 
     @staticmethod

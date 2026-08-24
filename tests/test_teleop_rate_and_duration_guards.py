@@ -17,15 +17,27 @@ where the caller could see it:
 The same rate knob reaches the mesh publish loop through
 ``Robot.start_teleop_publish`` and :class:`InputPublisher`, so all three entry
 points share one domain: :func:`strands_robots.utils.positive_finite_number_error`.
+
+All three are driven here, including the hardware entry point in the middle of
+that chain. It is the only guard a direct caller passes through - the
+``teleoperate(publish=True)`` tests reach the publisher through a stand-in host
+whose ``start_teleop_publish`` validates nothing - and it sits ahead of the
+teardown of any publisher already registered under that device name, so a
+refused rate must leave a live stream alone rather than stopping it first.
 """
 
 from __future__ import annotations
 
 import math
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import numpy as np
 import pytest
 
+from strands_robots.hardware_robot import Robot as HardwareRobot
+from strands_robots.hardware_robot import RobotTaskState
 from strands_robots.mesh.input import InputPublisher
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import positive_finite_number_error
@@ -162,3 +174,111 @@ class TestOneDomainForEveryRateAndDurationKnob:
     def test_a_numpy_rate_is_usable_but_a_bool_is_not(self):
         assert positive_finite_number_error(np.float32(50.0), "hz", "teleoperate") is None
         assert positive_finite_number_error(True, "hz", "teleoperate") == ("teleoperate: hz must be > 0, got True.")
+
+
+class _FakeMesh:
+    """Minimal live mesh: a peer_id plus a publish that records payloads."""
+
+    def __init__(self, peer_id: str = "leader-1") -> None:
+        self.peer_id = peer_id
+        self.alive = True
+        self.published: list[tuple[str, Any]] = []
+
+    def publish(self, topic: str, payload: Any) -> None:
+        self.published.append((topic, payload))
+
+
+class _LivePublisher:
+    """Stand-in for a running publisher that records being stopped."""
+
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> dict[str, Any]:
+        self.stopped = True
+        return {}
+
+
+def _hardware_robot() -> Any:
+    """A hardware ``Robot`` carrying only the teleop state the guard reads."""
+    hw = HardwareRobot.__new__(HardwareRobot)
+    hw.tool_name_str = "rate_guard_arm"
+    hw.mesh = _FakeMesh()
+    hw.peer_id = "leader-1"
+    hw.robot = object()
+    hw._task_state = RobotTaskState()
+    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rate_guard")
+    hw._shutdown_event = threading.Event()
+    hw._task_admission = threading.Lock()
+    hw._task_claimed = False
+    return hw
+
+
+class TestTheHardwarePublishEntryPointSharesTheRateDomain:
+    """``Robot.start_teleop_publish`` refuses a rate its publish loop cannot honor.
+
+    The third entry point named in this module's docstring, driven directly. The
+    ``teleoperate(publish=True)`` tests above reach the mesh publisher through
+    :class:`~tests.test_teleop.FakePublishHost`, whose ``start_teleop_publish``
+    records the call and returns success without validating anything, so the real
+    method's own refusal never ran. That refusal is the only one a direct caller
+    passes through: the mixin validates ``hz`` before forwarding it, and
+    :class:`InputPublisher` raises rather than reporting, which a caller holding
+    an agent-tool envelope cannot use.
+    """
+
+    @pytest.mark.parametrize("hz", UNUSABLE)
+    def test_unusable_rate_is_refused_in_the_shared_domains_words(self, hz):
+        """One rule, one wording - the entry point adds only its own name."""
+        hw = _hardware_robot()
+        result = hw.start_teleop_publish(teleoperator=FakeTeleop({"a.pos": 1.0}), hz=hz)
+        assert result["status"] == "error"
+        assert result["content"][0]["text"] == positive_finite_number_error(hz, "hz", "start_teleop_publish")
+
+    @pytest.mark.parametrize("hz", [0, float("nan"), True])
+    def test_a_refused_rate_registers_no_publisher(self, hz):
+        """Nothing is constructed, so no loop thread divides by the bad rate."""
+        hw = _hardware_robot()
+        assert hw.start_teleop_publish(teleoperator=FakeTeleop({"a.pos": 1.0}), hz=hz)["status"] == "error"
+        assert getattr(hw, "_input_publishers", {}) == {}
+        assert hw.mesh.published == []
+
+    def test_a_refused_rate_leaves_a_live_publisher_running(self):
+        """The guard precedes the teardown, so a rejected call loses no stream."""
+        hw = _hardware_robot()
+        live = _LivePublisher()
+        hw._input_publishers = {"leader": live}
+        result = hw.start_teleop_publish(teleoperator=FakeTeleop({"a.pos": 1.0}), device_name="leader", hz=0)
+        assert result["status"] == "error"
+        assert live.stopped is False
+        assert hw._input_publishers == {"leader": live}
+
+    def test_a_usable_rate_replaces_the_live_publisher(self):
+        """The mirror: the teardown the guard precedes does happen when accepted."""
+        hw = _hardware_robot()
+        live = _LivePublisher()
+        hw._input_publishers = {"leader": live}
+        result = hw.start_teleop_publish(teleoperator=FakeTeleop({"a.pos": 1.0}), device_name="leader", hz=50.0)
+        try:
+            assert result["status"] == "success"
+            assert live.stopped is True
+            assert hw._input_publishers["leader"] is not live
+            assert hw._input_publishers["leader"].hz == 50.0
+        finally:
+            hw._input_publishers["leader"].stop()
+
+    @pytest.mark.parametrize("hz", UNUSABLE + [1, 50.0, np.float32(2.5)])
+    def test_the_entry_point_and_the_constructor_agree(self, hz):
+        """Neither surface may accept a rate the other refuses."""
+        hw = _hardware_robot()
+        result = hw.start_teleop_publish(teleoperator=FakeTeleop({"a.pos": 1.0}), hz=hz)
+        entry_refused = result["status"] == "error"
+        try:
+            InputPublisher(mesh=_FakeMesh(), teleoperator=object(), hz=hz)
+        except ValueError:
+            constructor_refused = True
+        else:
+            constructor_refused = False
+        assert entry_refused is constructor_refused
+        if not entry_refused:
+            hw._input_publishers["leader"].stop()

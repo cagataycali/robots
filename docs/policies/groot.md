@@ -40,11 +40,11 @@ Gr00tPolicy(
 
 ## Strict key matching
 
-When no explicit `observation_mapping`/`action_mapping` is given, GR00T
-auto-infers the robot<->model key mapping: exact name matches first, then
-positional fallback for any leftover keys (with a log line). On a
-multi-camera or multi-DOF rig, positional fallback can silently bind the
-wrong camera or action column. Pass `strict_keys=True` to raise a
+When no explicit `observation_mapping`/`action_mapping` is given, a
+**local-mode** policy auto-infers the robot<->model key mapping: exact name
+matches first, then positional fallback for any leftover keys (with a log
+line). On a multi-camera or multi-DOF rig, positional fallback can silently
+bind the wrong camera or action column. Pass `strict_keys=True` to raise a
 `ValueError` (listing the unmatched robot keys vs available model keys)
 instead of guessing:
 
@@ -55,6 +55,16 @@ policy = create_policy("groot", data_config="so100_dualcam",
 
 `strict_keys` defaults to `False` (positional fallback preserved) and is a
 no-op when an explicit mapping is supplied.
+
+Auto-inference is local-mode only, because it reads the checkpoint's modality
+configs and service mode cannot introspect the remote server. A service-mode
+policy given no mapping therefore infers nothing and sends the keys its
+`data_config` declares, and `strict_keys` has nothing to be strict about
+there. An *explicit* mapping needs no model metadata - the video/state split
+comes from the `video.` / `state.` prefixes of the caller's own values - so it
+is parsed and honoured in **either** mode. What service mode cannot do is
+cross-check it: a mapping naming a key the server does not have surfaces as a
+server-side error rather than a constructor refusal.
 
 ## Versions
 
@@ -78,22 +88,43 @@ unitree_g1_real     unitree_g1_sonic
 agibot_*            galaxea_r1_pro
 ```
 
+Every name above is also a robot identifier: the registry declares each
+embodiment's `data_config` spellings as aliases of the robot they name, so
+`unitree_g1_sonic` resolves the same Unitree G1 that `unitree_g1` does.
+
+```python
+Robot("unitree_g1_sonic", mode="sim")          # same robot as Robot("unitree_g1")
+sim.add_robot(name="g1", data_config="unitree_g1_sonic")
+```
+
+That is what lets `add_robot(data_config=...)` find the model to load, lets the
+Isaac IK solve resolve an MJCF for the robot, and lets `move_to` read the
+registry `gripper` block instead of guessing the gripper heuristically.
+
 ## Container lifecycle
 
 ```python
 from strands_robots.tools import gr00t_inference
 
-gr00t_inference(action="build_image",         tag="gr00t-n1.7:latest")
-gr00t_inference(action="download_checkpoint", model_id="nvidia/GR00T-N1.7-3B")
-gr00t_inference(action="start_container",     tag="gr00t-n1.7:latest",
-                                              model_id="nvidia/GR00T-N1.7-3B",
-                                              data_config="so100_dualcam")
+# The image name is operator config, not an agent parameter: set
+# STRANDS_GR00T_IMAGE (default "gr00t:latest") and it must pass the
+# STRANDS_GR00T_IMAGE_ALLOW allowlist.
+gr00t_inference(action="build_image")
+gr00t_inference(action="download_checkpoint", hf_repo="nvidia/GR00T-N1.7-3B")
+gr00t_inference(action="start_container",     data_config="so100_dualcam")
 # ... run policy ...
 gr00t_inference(action="stop", container_name="gr00t-inference")  # stop only
 gr00t_inference(action="lifecycle", lifecycle="teardown",
                 container_name="gr00t-inference",
                 remove_volumes=True)  # stop + remove container (and volumes)
 ```
+
+`action="stop"` escalates SIGTERM then SIGKILL over every process serving the
+port, inside the GR00T container first and on the host as a fallback. A process
+that had already exited is not a failure, but a port still held after both
+signals is: the result is then `{"status": "error", ...}` naming the port and the
+surviving pid, because reporting success there would send the next `start` into a
+bind that cannot succeed. Check the status before rebinding the same port.
 
 ## See also
 

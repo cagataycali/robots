@@ -41,13 +41,67 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error
+from strands_robots.utils import finite_number_error, name_list_error, positive_finite_number_error
 
 from .client import VeraWebsocketClient
 from .config import VeraConfig
 from .server_runner import VeraServerRunner, make_server_runner
 
 logger = logging.getLogger(__name__)
+
+
+#: Upper bound (exclusive) on the IK output-smoothing coefficient. ``alpha``
+#: weights the *previous* joint target in the EMA
+#: ``target = (1 - alpha) * solved + alpha * previous``, so ``1.0`` weights the
+#: previous value alone and the arm never leaves the pose it was first solved
+#: to; anything above ``1.0`` puts a negative weight on the IK solution and the
+#: targets diverge away from it, growing without bound down the chunk.
+MAX_IK_SMOOTHING = 1.0
+
+
+def _ik_smoothing_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable IK output-smoothing coefficient.
+
+    The EMA blending each IK solution toward the previous target only has a
+    meaning for ``alpha`` in ``[0, 1)``: ``0`` disables the smoothing (the
+    documented default) and a value approaching ``1`` damps harder. Outside that
+    interval the blend is not a smoother:
+
+    * ``1.0`` (and ``True``, which is ``1.0``) makes every commanded target the
+      previous one, so the arm freezes at the pose the first solve produced and
+      the whole chunk is discarded.
+    * above ``1.0`` the weight on the IK solution is negative, so each target
+      extrapolates *away* from where the solver put it - measured at ``-5.9x``
+      the solved joint travel for ``1.5`` and ``-35.3x`` for ``2.0``.
+    * a negative value and ``nan`` both fail the ``alpha > 0`` test the EMA is
+      gated on, so the smoothing the caller asked for is silently not applied.
+    * ``inf`` makes every target after the first non-finite.
+
+    Only the interval is decided here; numeric-ness, ``bool`` rejection and
+    finiteness are :func:`~strands_robots.utils.finite_number_error`'s, whose
+    domain this is a bounded subset of. The rule is private to this module
+    because the interval is a property of this EMA rather than of a shared
+    quantity - :func:`~strands_robots.utils.positive_finite_number_error` is the
+    nearest shared domain and its ``> 0`` floor is wrong here, since ``0`` is
+    the documented "no smoothing" default.
+
+    Args:
+        value: The caller-supplied coefficient.
+        param: The parameter it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if (err := finite_number_error(value, param, context)) is not None:
+        return err
+    if not 0.0 <= float(value) < MAX_IK_SMOOTHING:
+        return (
+            f"{context}: {param} must be in [0, {MAX_IK_SMOOTHING}) - 0 disables "
+            f"the smoothing, and {MAX_IK_SMOOTHING} would weight only the previous "
+            f"target so the arm never leaves its first solved pose. Got {value!r}."
+        )
+    return None
 
 
 def _is_image_value(value: Any) -> bool:
@@ -99,13 +153,16 @@ class VeraPolicy(Policy):
 
     Args:
         embodiment: ``"pusht"`` | ``"mimicgen"`` | ``"allegro"`` | ``"droid"``.
-        server_port: Policy-server websocket port (per-embodiment default).
-        vis_port: MJPEG live-viewer port; ``None`` / ``0`` disables it.
+        server_port: Policy-server websocket port. ``None`` applies the
+            per-embodiment default; any other value must be an ``int`` in
+            ``[1, 65535]``.
+        vis_port: MJPEG live-viewer port. ``None`` applies the per-embodiment
+            default; ``0`` disables the viewer; any other value must be an
+            ``int`` in ``[1, 65535]``.
         algo_config: WAN planner ``algo_config.yaml`` (point at omni to swap).
         text_prompt: Optional text conditioning for the video planner.
         ckpt_root: Root of downloaded VERA checkpoints (``VERA_CKPT_ROOT``).
         auto_launch_server: Launch + manage the server subprocess on first use.
-        n_action_steps: Deploy chunk size (actions per infer).
         dynamics_run_id: Jacobian/IDM checkpoint id (per-embodiment default).
         tracker_backend: IDM point-tracker backend override.
         motion_plan_scale: IDM motion-plan scale (applied live via ``configure``).
@@ -139,7 +196,6 @@ class VeraPolicy(Policy):
         text_prompt: str | None = None,
         ckpt_root: Any = None,
         auto_launch_server: bool = True,
-        n_action_steps: int | None = None,
         dynamics_run_id: str | None = None,
         tracker_backend: str | None = None,
         motion_plan_scale: float | None = None,
@@ -161,6 +217,12 @@ class VeraPolicy(Policy):
         # policy server has been launched and the model loaded.
         if image_keys and (err := name_list_error(image_keys, "image_keys", "VeraPolicy")):
             raise ValueError(err)
+        # Same reason, same place: the smoothing coefficient blends every
+        # commanded joint target with the previous one inside get_actions, so
+        # a value outside [0, 1) freezes or diverges the arm mid-rollout
+        # instead of damping it.
+        if (err := _ik_smoothing_error(ik_smoothing, "ik_smoothing", "VeraPolicy")) is not None:
+            raise ValueError(err)
         self.config = config or VeraConfig(
             embodiment=embodiment,  # type: ignore[arg-type]
             host=host,
@@ -170,7 +232,6 @@ class VeraPolicy(Policy):
             text_prompt=text_prompt,
             ckpt_root=ckpt_root,
             auto_launch_server=auto_launch_server,
-            n_action_steps=n_action_steps,
             dynamics_run_id=dynamics_run_id,
             tracker_backend=tracker_backend,
             motion_plan_scale=motion_plan_scale,
@@ -262,15 +323,46 @@ class VeraPolicy(Policy):
             mj_model: The arm's ``mujoco.MjModel``.
             ee_frame_name: End-effector frame the IK tracks (e.g. ``"hand"``).
             ee_frame_type: ``"body"`` | ``"site"`` | ``"geom"``.
-            rotation_dim: Override the delta rotation encoding (3=axis-angle,
-                6=rot6d). Defaults to the embodiment's convention.
-            translation_scale: Optional scale on the translation delta.
+            rotation_dim: Override the delta rotation encoding. ``None`` (the
+                default) keeps the embodiment's convention; a supplied one must
+                be 3 (axis-angle) or 6 (rot6d), the two encodings the decoder
+                implements. Any other width is refused here rather than stored:
+                it reaches the decoder mid-rollout, inside ``get_actions``, long
+                after this call returned.
+            translation_scale: Multiplier on the translation delta, composed
+                on top of the OSC position scale. ``None`` (the default)
+                leaves the current value; a supplied one must be a positive
+                finite number, since it scales every translation delta the
+                policy converts to joint targets.
         """
+        # Validate before mutating any state, so a refused call leaves the
+        # policy untouched (guard-before-mutation discipline).
+        #
+        # The width selects which rotation parameterization the decoder reads out
+        # of each delta, and it implements exactly two. An unusable one is not
+        # refused here-and-now by anything downstream: it is stored, then raises
+        # from inside ``get_actions`` on the first inference - after the server
+        # handshake and the IK bridge build - and an ``int()`` coercion truncated
+        # a fractional value first, so that refusal named a width the caller
+        # never supplied. Imported here rather than at module scope, matching the
+        # other :mod:`~strands_robots.policies.vera.sim_ik` uses in this class.
+        from .sim_ik import coerce_rotation_dim
+
+        resolved_rotation_dim: int | None = None
+        if rotation_dim is not None:
+            resolved_rotation_dim, dim_err = coerce_rotation_dim(rotation_dim, "rotation_dim", "set_ik_target")
+            if resolved_rotation_dim is None:
+                raise ValueError(dim_err)
+        if translation_scale is not None:
+            if (
+                err := positive_finite_number_error(translation_scale, "translation_scale", "set_ik_target")
+            ) is not None:
+                raise ValueError(err)
         self._mj_model = mj_model
         self._ee_frame_name = ee_frame_name
         self._ee_frame_type = ee_frame_type
-        if rotation_dim is not None:
-            self._rotation_dim = int(rotation_dim)
+        if resolved_rotation_dim is not None:
+            self._rotation_dim = resolved_rotation_dim
         if translation_scale is not None:
             self._translation_scale = float(translation_scale)
         self._ik_bridge = None  # force rebuild
@@ -409,7 +501,14 @@ class VeraPolicy(Policy):
                 "VeraPolicy requires at least one camera frame in the observation "
                 f"(keys: {list(observation_dict)}); none look like (H, W, 3) images."
             )
-        rw = int(self.config.render_width or 128)
+        # ``VeraConfig.__post_init__`` holds ``render_width`` to the shared media
+        # pixel domain and normalizes it to a plain ``int``, so there is nothing
+        # left to coerce or to fall back to here. This line used to read
+        # ``int(self.config.render_width or 128)``, which substituted 128 for a
+        # width of 0 and truncated a ``2.7`` to a 2-pixel view, both under a
+        # success result.
+        rw = self.config.render_width
+        assert rw is not None  # guaranteed by VeraConfig.__post_init__
         frames = [_resize_frame(_to_uint8_frame(observation_dict[k]), rw) for k in view_keys]
         if len(frames) == 1:
             return frames[0]
@@ -421,9 +520,15 @@ class VeraPolicy(Policy):
         view_keys = self._resolve_view_keys(observation_dict, meta)
         context_rgb = np.stack(list(self._window), axis=0)  # (T, H, W, 3) uint8
         # Each view was resized to render_width before concat, so view_widths is
-        # simply render_width per view (sum == concatenated rgb width).
+        # simply render_width per view (sum == concatenated rgb width). Read from
+        # the config rather than divided back out of the frame: the second
+        # fallback this line used to carry (``context_rgb.shape[2] // n_views``)
+        # was a second definition of the same falsy case that ``_extract_frame``
+        # spelled as 128, and the invariant above is what made the two agree
+        # rather than anything asserting they must.
         n_views = max(1, len(view_keys))
-        per_w = int(self.config.render_width or (context_rgb.shape[2] // n_views))
+        per_w = self.config.render_width
+        assert per_w is not None  # guaranteed by VeraConfig.__post_init__
         view_widths = [per_w] * n_views
         req: dict[str, Any] = {
             "context_rgb": context_rgb,

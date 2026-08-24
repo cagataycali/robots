@@ -11,7 +11,8 @@ description: Error → fix table for the most common gotchas across install, sim
 | `ModuleNotFoundError: mujoco` | Missing `[sim-mujoco]` | `uv pip install "strands-robots[sim-mujoco]"` |
 | `move_to: IK bridge unavailable: ... No module named 'mink'` | Missing `[sim-mujoco]` (the extra declares the IK solver) | `uv pip install "strands-robots[sim-mujoco]"` |
 | `ModuleNotFoundError: lerobot` | Missing `[lerobot]` | `uv pip install "strands-robots[lerobot]"` |
-| `ImportError: cannot import name '...' from 'lerobot'` | LeRobot version skew | `uv pip install "strands-robots[lerobot]"` (pins `lerobot>=0.6.0,<0.7.0`) |
+| `training failed: 'accelerate' is required but not installed` | Missing LeRobot's `[training]` extra. `strands-robots[lerobot]` does not pull `accelerate` in, and `train()` requires it on CPU as well as GPU | `uv pip install "lerobot[training]"` |
+| `ImportError: cannot import name '...' from 'lerobot'` | LeRobot version skew | `uv pip install "strands-robots[lerobot]"` (pins `lerobot>=0.6.1,<0.7.0`) |
 | `ImportError: cannot import name 'MolmoAct2Policy'` | `lerobot < 0.6` (`MolmoAct2Policy` ships in lerobot >= 0.6) | `uv pip install "strands-robots[molmoact2]"` |
 | pyav build fails on Jetson/aarch64 | No prebuilt wheel for sm_110 | Use `--no-build-isolation` or install `torchcodec>=0.7` and skip pyav. See [installation](getting-started/installation.md#molmoact2-on-jetson) |
 | numpy ABI mismatch on Jetson | System pandas vs pip numpy | `uv pip install "numpy<2" "pandas==2.1.4"` then reinstall |
@@ -25,9 +26,16 @@ description: Error → fix table for the most common gotchas across install, sim
 | Black frames from `render(...)` | Headless, no GL backend | `export MUJOCO_GL=osmesa` (Linux) or `=egl` |
 | Rendering very slow (~100x), warning `rendering on a CPU software rasterizer` | `MUJOCO_GL=egl` but no GPU EGL vendor ICD registered, so EGL falls back to Mesa `llvmpipe` (CPU) | On an NVIDIA host the library auto-registers the vendor ICD: when `libEGL_nvidia` is installed but no NVIDIA ICD is present, it stages one in `~/.strands_robots/egl_vendor.d/` and points glvnd at it via `__EGL_VENDOR_LIBRARY_FILENAMES` (no root needed) before importing mujoco. If the warning persists, ensure `NVIDIA_DRIVER_CAPABILITIES` includes `graphics`, or register the ICD system-wide: write `/usr/share/glvnd/egl_vendor.d/10_nvidia.json` = `{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}`. Set `__EGL_VENDOR_LIBRARY_FILENAMES` yourself to opt out. Verify with `GL_RENDERER` (should report the NVIDIA GPU, not `llvmpipe`). |
 | `Robot("foo")` raises ValueError | Unknown name | Check `list_robots("all")`; or pass `urdf_path=...` |
+| `add_robot` refuses with `is registered but its model file is not on disk` | The name is correct - the registry knows the robot, its MJCF is just not present on any asset search path | Do what the refusal names. It prints the `<dir>/<model_xml>` it looked for and every path it searched. An entry it reports as `auto_download=false` (`google_robot`, `trossen_wxai`) never fetches its own asset - place the file there yourself, under `STRANDS_ASSETS_DIR`. Any other entry is fetchable: `download_assets(robots="<name>")` |
 | Sim hangs on `create_world` | Asset download | Wait - first call downloads MJCF, then cached |
 | `ModuleNotFoundError: trs_so_arm100_mj_description` | Auto-install failed | `uv pip install trs-so-arm100-mj-description` |
+| `move_to: the requested POSE is not achievable ... The position ... on its own IS reachable` | The point is fine, the `orientation` is not - a damped least-squares solve honours the rotation and gives up the position, and an arm with fewer than 6 DOF (SO-100/SO-101) cannot realize an arbitrary full pose | Omit `orientation=` for a position-only solve, or command the pose on an arm with enough DOF. Loosening `tol` would only accept a solve that still points the wrong way |
+| `move_to` reached the point but the wrist points the wrong way | `tol` bounds the POSITION in meters; the rotation is bounded by `orientation_tol` in radians (default 0.1, ~5.7 deg) | Read `orientation_error_rad` in the result's json block, and pass a tighter `orientation_tol=` if the default is too loose for the task |
+| `move_to: 'orientation_tol' only bounds an 'orientation' target` | `orientation_tol` passed for a position-only move, where it would have nothing to bound | Pass `orientation=[w, x, y, z]` to command a full pose, or drop `orientation_tol` |
 | `add_robot` raises after `load_scene` | Scene XML overrides world | Use `add_robot` before `load_scene` |
+| `add_robot` refuses with `has no single index to drive it by` | The MJCF declares a multi-control actuator - mujoco 3.12 gave `<pid>` two controls (`input="pos vel"`) and `<orientation>` up to four, so the model compiles with more control slots than actuators. This backend addresses an actuator by its control index, which such an actuator has no single value for | Do what the refusal names. It prints each wide actuator and the control slots it owns, so the MJCF line is findable. Replace it with a single-control actuator (`<position>`, `<motor>`, `<velocity>`, `<intvelocity>`, `<general>`), or drive that joint outside this backend. The refused add leaves the scene exactly as it was, so a corrected model reuses the same robot name |
+| `render(output_path=...)` refuses with `is outside the sandbox` | `output_path` resolved outside the render sandbox (`~/.strands_robots/renders`, or `STRANDS_ROBOTS_RENDER_ROOT`). Artifact sinks confine LLM-supplied paths | Write under the sandbox (a bare filename like `frame.png` is placed INTO it). A *relative* path with a directory part (`views/front.png`) is resolved against the process CWD, so it is refused; that refusal quotes the sandbox-anchored spelling to pass instead. Or set the variable the refusal names - `STRANDS_ROBOTS_RENDER_ALLOW_ABS=1` for `render`, `STRANDS_ROBOTS_VIDEO_ALLOW_ABS=1` for the video/recording sinks under `STRANDS_ROBOTS_VIDEO_ROOT` |
+| `move_to` refuses with `is unreachable ... The same target solves to ... once the N degree(s) of freedom move_to does not command are free too` | The target needs motion `move_to` does not produce. It drives the arm's position servos only, so a mobile base, a floating pelvis or any unactuated joint is not available to the solve - and 35 of the shipped sim robots have one | Move those degrees of freedom first (drive the base to the work area), then call `move_to`. The refusal's `uncommanded_joints_moved` names them and `unrestricted_ik_residual_m` is what the whole robot could reach |
 
 ## Hardware
 
@@ -57,7 +65,7 @@ description: Error → fix table for the most common gotchas across install, sim
 | `start_recording` fails: lerobot missing | `[lerobot]` not installed | `uv pip install "strands-robots[lerobot]"` |
 | Need MP4 without LeRobot | - | Use `start_cameras_recording` / `stop_cameras_recording` |
 | Empty MP4 files | Stopped before any frames | Check `get_recording_status()` frame count |
-| Push fails | Not logged into HF | `huggingface-cli login` |
+| Push fails | Not logged into HF | `hf auth login` (the `huggingface-cli` entry point is not published at the declared `huggingface_hub>=1.5` floor) |
 
 ## Mesh
 
@@ -65,8 +73,9 @@ description: Error → fix table for the most common gotchas across install, sim
 |---------|--------------|-----|
 | `mesh.peers` empty | Other peer not running | Wait ~1s; verify `mesh.alive == True` on both |
 | Port already bound | Another zenoh process | Mesh auto falls back to client mode; or set `STRANDS_MESH_PORT` |
-| `init_mesh` raises | `eclipse-zenoh` missing | `uv pip install "strands-robots[mesh]"` |
+| `mesh.alive` is `False`, `mesh.peers` stays empty | `eclipse-zenoh` missing (logged at WARNING: "eclipse-zenoh is not installed") | `uv pip install "strands-robots[mesh]"` |
 | Want mesh off | - | `STRANDS_MESH=false` or `Robot(..., mesh=False)` |
+| Peer is present and `connected`, but publishes no `state` (no joints) | A `_read_state` probe raised. Logged once per category at WARNING: "state probe 'hw_joints' failed" | Read the named probe: `hw_joints` is the motor bus (contended port, missing calibration), `sim_world` / `sim_joints` a sim back-reference, `task_state` the task record. Repeat failures are at DEBUG |
 
 ## Agent integration
 

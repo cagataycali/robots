@@ -53,6 +53,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from strands_robots.mesh.session import _report_unencodable_payload
+from strands_robots.utils import positive_finite_number_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -294,6 +297,34 @@ class IotMqttTransport:
     -------------
     The ``awscrt`` library calls handlers on its own IO thread. We protect
     the subscription dict with a small lock; ``put`` is lock-free.
+
+    Args:
+        thing_name: AWS IoT Thing name, which MUST equal the cert's CN and the
+            :class:`~strands_robots.mesh.core.Mesh` peer_id. Falls back to
+            ``STRANDS_IOT_THING_NAME``.
+        endpoint: The AWS IoT Core ATS endpoint. Falls back to
+            ``STRANDS_IOT_ENDPOINT``.
+        cert_dir: Directory holding the cert, private key and root CA. Falls
+            back to ``STRANDS_IOT_CERT_DIR``, then ``~/.strands_robots/iot``.
+        ca_file: Path to the root CA file. Falls back to
+            ``STRANDS_IOT_CA_FILE``, then ``AmazonRootCA1.pem`` in ``cert_dir``.
+        connect_timeout: Seconds :meth:`connect` waits for CONNACK before
+            reporting the broker unreachable. Only a positive finite number can
+            be honored, and the value is refused here rather than at the wait:
+            :meth:`connect` spends it on ``threading.Event.wait``, which returns
+            ``False`` at once for ``0``, a negative and ``nan`` - so a broker
+            that is connecting normally is reported as having "timed out", and
+            its client is torn down. ``inf`` and a numeric string instead raise
+            ``OverflowError`` / ``TypeError`` out of a method documented to
+            return ``bool``, after the MQTT5 client has been started and with
+            nothing left to stop it. ``None`` is not a spelling for an unbounded
+            wait: ``Event.wait(None)`` blocks forever while :meth:`connect`
+            holds the instance lock, so :meth:`close` can never run. This is the
+            domain the two remote-inference clients already apply to the
+            parameter of the same name (#1984).
+
+    Raises:
+        ValueError: If ``connect_timeout`` is not a positive finite number.
     """
 
     def __init__(
@@ -304,6 +335,16 @@ class IotMqttTransport:
         ca_file: str | None = None,
         connect_timeout: float = 15.0,
     ) -> None:
+        # Refuse a wait budget that names no budget while the caller still holds
+        # the value. ``connect()`` spends it on ``Event.wait``, whose reaction to
+        # an unusable one is indistinguishable from an unreachable broker: it
+        # returns ``False`` immediately, and ``connect()`` then logs "timed out
+        # after 0.0s" and stops a client that was connecting fine. Placed here,
+        # and not beside the wait, so the refusal also precedes the ``awsiot``
+        # import inside ``connect()`` - the same mistake then reports identically
+        # with and without the [mesh-iot] extra installed.
+        if error := positive_finite_number_error(connect_timeout, "connect_timeout", type(self).__name__):
+            raise ValueError(error)
         self._thing_name = thing_name or os.getenv("STRANDS_IOT_THING_NAME", "")
         self._endpoint = endpoint or os.getenv("STRANDS_IOT_ENDPOINT", "")
         self._cert_dir = Path(cert_dir or os.getenv("STRANDS_IOT_CERT_DIR") or Path.home() / ".strands_robots" / "iot")
@@ -324,6 +365,10 @@ class IotMqttTransport:
         Returns ``True`` once connected, ``False`` if the SDK is missing,
         configuration is invalid, or the broker is unreachable within
         ``connect_timeout`` seconds.
+
+        Every failure is reported through that return value, including one where
+        tearing the half-open client down is itself what fails: a ``stop()``
+        that raises is recorded at debug and does not replace the ``False``.
         """
         with self._lock:
             if self._client is not None and self._connected.is_set():
@@ -411,7 +456,15 @@ class IotMqttTransport:
                     self._endpoint,
                     self._connect_timeout,
                 )
-                self._client.stop()
+                try:
+                    self._client.stop()
+                except Exception as stop_exc:
+                    # Same contract as the construction-failure path above: the
+                    # connect() has already failed and we return False
+                    # regardless, so a stop() error here must not replace that
+                    # report with a raise out of a method documented to return
+                    # bool. Log at debug and move on.
+                    logger.debug("IoT client stop after connect timeout: %s", stop_exc)
                 self._client = None
                 return False
 
@@ -423,14 +476,32 @@ class IotMqttTransport:
             return True
 
     def close(self) -> None:
-        """Disconnect and tear down the MQTT5 client. Idempotent."""
+        """Disconnect and tear down the MQTT5 client. Idempotent.
+
+        A ``stop()`` that raises does not prevent teardown - the client
+        reference is dropped either way. That is what makes the failure worth
+        recording rather than swallowing: nothing can reach that client
+        afterwards to retry, so the WARNING is the only trace an operator gets
+        of an IO thread and socket that may still be open.
+        """
         with self._lock:
             if self._client is None:
                 return
             try:
                 self._client.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                # The two connect()-side teardowns log this; close() is the
+                # public one, and it is the only path whose visible report is a
+                # success, so a silent swallow leaves "session closed" as the
+                # sole record of a client that did not stop. Warn rather than
+                # debug: the reference is dropped below either way, so nothing
+                # can reach that client afterwards to retry.
+                logger.warning(
+                    "IoT MQTT client stop() failed during close (thing=%s): %s; "
+                    "its IO thread and socket may still be open",
+                    self._thing_name,
+                    exc,
+                )
             self._client = None
             self._connected.clear()
             self._handlers.clear()
@@ -457,6 +528,13 @@ class IotMqttTransport:
         Per-topic QoS and retain flags come from :data:`_TOPIC_POLICY`.
         Topics in :data:`_NEVER_BRIDGE_PREFIXES` (camera/input/hand) are
         silently dropped - they belong on Zenoh-LAN, not MQTT-WAN.
+
+        A broker or client failure stays at DEBUG: it is transient and the next
+        tick retries it. A payload the JSON encoder refuses is not, so it is
+        reported at ERROR once per topic through
+        :func:`~strands_robots.mesh.session._report_unencodable_payload` - the
+        same report the Zenoh leg emits, so a reader grepping the log for one
+        transport's wording finds the other's.
         """
         if self._client is None or not self._connected.is_set():
             return
@@ -468,6 +546,18 @@ class IotMqttTransport:
         if qos < 0:
             return  # explicit DROP
 
+        # Encoded BEFORE the publish attempt, and outside its handler: a payload
+        # the encoder refuses can never be published, whereas a broker failure is
+        # transient and the next tick retries it. Absorbing both in one DEBUG line
+        # made a permanently-undeliverable message indistinguishable from a
+        # dropped one. Hoisting the encode above the ``awscrt`` import also keeps
+        # the two apart: an absent [mesh-iot] extra is not a bad payload.
+        try:
+            encoded = json.dumps(data).encode()
+        except Exception as exc:  # noqa: BLE001 - the encoder's raise set is payload-defined
+            _report_unencodable_payload("MQTT", key, exc)
+            return
+
         try:
             from awscrt import mqtt5
 
@@ -475,7 +565,7 @@ class IotMqttTransport:
             self._client.publish(
                 mqtt5.PublishPacket(
                     topic=key,
-                    payload=json.dumps(data).encode(),
+                    payload=encoded,
                     qos=qos_enum,
                     retain=retain,
                 )

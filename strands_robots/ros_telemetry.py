@@ -31,12 +31,31 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import dds_domain_id_error, finite_number_error, require_optional
 
 if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+#: Remedy for a missing ``rclpy``, shared by every surface that refuses for want
+#: of it. ``rclpy`` is not published on PyPI: it arrives with a system ROS 2
+#: install, which is why the ``[ros2]`` extra declares only the pip-installable
+#: cyclonedds RMW binding (see ``pyproject.toml`` and ``docs/ros2-integration.md``).
+#: An install hint naming a pip command for it is therefore a remedy the caller
+#: can follow to no effect - ``pip install 'strands-robots[ros2]'`` exits 0 with
+#: ``rclpy`` exactly as missing, and ``pip install rclpy`` fails outright - so
+#: this names the step that does supply it. Callers that also offer the pure-RTPS
+#: transport append that alternative, which needs no sourced distro.
+ROS2_SYSTEM_INSTALL_HINT = (
+    "rclpy is not published on PyPI - it ships with a system ROS 2 install "
+    "(apt / RoboStack / conda).\n"
+    "Source a distro in the shell that launches this process:\n"
+    "  source /opt/ros/jazzy/setup.bash   # or your distro / RoboStack / conda env\n"
+    "The [ros2] extra installs only the cyclonedds RMW binding; it does not "
+    "provision ROS 2 by itself."
+)
 
 
 #: Env var an operator sets to explicitly run an INBOUND ``joint_command``
@@ -117,14 +136,15 @@ class RosTelemetryBase:
     ) -> dict[str, tuple[float, float]] | None:
         """Validate and normalize a ``joint_limits`` mapping at construction.
 
-        Returns ``{motor: (min, max)}`` with floats and ``min <= max``, or
+        Returns ``{"<motor>.pos": (min, max)}`` with floats and ``min <= max``,
+        or
         ``None`` when no limits are configured. Failing fast here (rather than
         per-command) means a malformed bound surfaces at bridge construction,
         not as a silent mid-run rejection of every command.
 
         Raises:
             ValueError: If ``joint_limits`` is not a mapping of name to a
-                ``(min, max)`` numeric pair with ``min <= max``.
+                ``(min, max)`` pair of finite numbers with ``min <= max``.
         """
         if joint_limits is None:
             return None
@@ -134,9 +154,26 @@ class RosTelemetryBase:
         for name, bounds in joint_limits.items():
             try:
                 low, high = bounds
-                low, high = float(low), float(high)
             except (TypeError, ValueError):
                 raise ValueError(f"joint_limits[{name!r}] must be a (min, max) numeric pair, got {bounds!r}") from None
+            # Each bound goes through the shared signed-scalar domain before the
+            # ordering comparison below, which cannot see a non-finite bound:
+            # every comparison against ``nan`` is False, so ``(low, nan)`` passes
+            # ``low > high`` and then makes the ``low <= pos <= high`` test in
+            # :meth:`_command_action` False for every position - the bridge drops
+            # EVERY inbound command for that joint, which is the silent mid-run
+            # rejection this validator exists to surface at construction.
+            # ``(inf, inf)`` and ``(-inf, -inf)`` pass the ordering check the same
+            # way and admit nothing either. The domain also answers for an int
+            # past the float64 range, which raised ``OverflowError`` out of the
+            # ``float()`` below rather than the documented ``ValueError``. The
+            # sibling declaration of this parameter,
+            # :class:`~strands_robots.simulation.isaac.delta_eef.IsaacDeltaEEFController`,
+            # refuses a non-finite bound for the same reason.
+            for side, bound in (("min", low), ("max", high)):
+                if error := finite_number_error(bound, side, f"joint_limits[{name!r}]"):
+                    raise ValueError(error)
+            low, high = float(low), float(high)
             if low > high:
                 raise ValueError(f"joint_limits[{name!r}] has min {low} > max {high}")
             normalized[str(name)] = (low, high)
@@ -231,10 +268,14 @@ class RosTelemetryBase:
         empty sample (a DDS dispose / keep-alive, which is not a real actuation
         request) is dropped silently; an empty or length-mismatched message is
         otherwise rejected with a warning rather than partially applied, so a
-        malformed command never drives the arm to a surprising pose.
+        malformed command never drives the arm to a surprising pose. A position
+        that is not a readable number rejects the message the same way - it is
+        reported and returns ``None`` rather than raising, so the failure costs
+        exactly the one message on either transport.
 
-        When ``joint_limits`` is supplied (``{motor: (min, max)}``), the command
-        is range-checked against the declared bounds: if ANY commanded joint
+        When ``joint_limits`` is supplied (``{"<motor>.pos": (min, max)}``), the
+        command is range-checked against the declared bounds: if ANY commanded
+        joint
         falls outside its range the ENTIRE command is rejected (returns
         ``None``) - no partial application - so one out-of-range joint can never
         drive part of the arm to a surprising pose while the rest holds. Joints
@@ -243,8 +284,12 @@ class RosTelemetryBase:
         Args:
             msg: The inbound ``JointState``-like message (``name``/``position``).
             skip_empty: Drop a wholly empty sample silently (DDS keep-alive).
-            joint_limits: Optional ``{motor: (min, max)}`` clamp ranges; a
-                command with any joint outside its range is rejected whole.
+            joint_limits: Optional ``{"<motor>.pos": (min, max)}`` clamp ranges;
+                a command with any joint outside its range is rejected whole.
+                Keys are matched against this message's own ``name`` entries,
+                which are the ``<motor>.pos`` names the bridges publish in
+                ``joint_states`` - a key that names no commanded joint
+                constrains nothing.
         """
         names = list(getattr(msg, "name", []) or [])
         positions = list(getattr(msg, "position", []) or [])
@@ -258,7 +303,29 @@ class RosTelemetryBase:
                 len(positions),
             )
             return None
-        action = {name: float(pos) for name, pos in zip(names, positions)}
+        action: dict[str, float] = {}
+        for name, pos in zip(names, positions):
+            try:
+                action[name] = float(pos)
+            except (TypeError, ValueError):
+                # A position this cannot read is a malformed command, not a
+                # reason to raise: this method's contract is an action dict or
+                # None. Refusing the message WHOLE matches the length-mismatch
+                # and out-of-range branches - no partial application - and it
+                # keeps the failure inside the parser, where it costs exactly
+                # the one message. Escaping instead reached each transport's
+                # loop tolerance, and the cyclonedds loop has already taken a
+                # batch by then, so the samples behind this one were dropped
+                # with it. Finiteness is deliberately not checked here: a nan
+                # position is a readable number that ``send_action`` refuses
+                # naming the joint.
+                logger.warning(
+                    "%s: ignoring joint_command with a non-numeric position for %r: %r",
+                    type(self).__name__,
+                    name,
+                    pos,
+                )
+                return None
         if joint_limits:
             for name, pos in action.items():
                 bounds = joint_limits.get(name)
@@ -310,10 +377,15 @@ class RosTelemetryBridge(RosTelemetryBase):
 
     Args:
         domain_id: ROS 2 domain (``ROS_DOMAIN_ID``) the bridge publishes on.
+            Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
+            discovery ports from it, and 233 lands past the end of the port space.
         node_name: Name of the internal rclpy node.
         qos_depth: Depth of the publishers' KEEP_LAST history.
 
     Raises:
+        ValueError: If ``domain_id`` is outside ``[0, 232]``. Checked before the
+            process-wide ``ROS_DOMAIN_ID`` write, so a refused domain leaves the
+            environment as it found it.
         ImportError: When ``rclpy`` / the ROS 2 message packages are not
             importable, with an install hint (system ROS 2 or the docker image).
     """
@@ -322,13 +394,22 @@ class RosTelemetryBridge(RosTelemetryBase):
     default_node_name = "strands_robots"
 
     def __init__(self, domain_id: int = 0, node_name: str | None = None, qos_depth: int = 10) -> None:
+        # Refuse a domain id outside the RTPS port map BEFORE writing it. The
+        # write below is process-wide and lands ahead of the rclpy import, so an
+        # unusable value would otherwise outlive this call and steer every later
+        # participant - a value the transport is never given the chance to reject.
+        if error := dds_domain_id_error(domain_id, "domain_id", type(self).__name__):
+            raise ValueError(error)
+
         # Pin the domain before rclpy reads it. Set it unconditionally so the
         # bridge publishes where the caller asked, not where the shell happened
         # to point.
-        os.environ["ROS_DOMAIN_ID"] = str(int(domain_id))
+        os.environ["ROS_DOMAIN_ID"] = str(domain_id)
 
         rclpy_mod: Any = require_optional(
-            "rclpy", extra="ros2", purpose="the ROS 2 telemetry bridge (ros2_bridge=True)"
+            "rclpy",
+            system_install=ROS2_SYSTEM_INSTALL_HINT,
+            purpose="the ROS 2 telemetry bridge (ros2_bridge=True)",
         )
         sensor_msgs: Any = require_optional(
             "sensor_msgs.msg", pip_install="ros-<distro>-sensor-msgs", purpose="the ROS 2 telemetry bridge"

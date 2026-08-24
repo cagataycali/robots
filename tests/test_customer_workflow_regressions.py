@@ -127,7 +127,11 @@ class TestMolmoact2Extra:
         assert not spec.contains(Version("0.5.1")), (
             f"lerobot floor too loose: {spec} admits 0.5.1, which predates MolmoAct2 and its transformers>=5.4.0 dep"
         )
-        assert spec.contains(Version("0.6.0")), f"lerobot pin {spec} must admit 0.6.0 (MolmoAct2 floor)"
+        # Assert the declared lower BOUND, not membership of one version: the
+        # floor is >=0.6.1 for bucket streaming, which excludes 0.6.0 while
+        # still satisfying the >=0.6 MolmoAct2 requirement this guards.
+        lower = min(Version(s.version) for s in spec if s.operator == ">=")
+        assert lower >= Version("0.6"), f"lerobot pin {spec} floors below the >=0.6 MolmoAct2 release"
         # An upper bound must exist so an incompatible future major is excluded.
         assert any(s.operator in ("<", "<=", "==", "~=") for s in spec), f"lerobot pin {spec} must carry an upper bound"
 

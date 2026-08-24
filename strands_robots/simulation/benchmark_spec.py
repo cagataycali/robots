@@ -12,7 +12,7 @@ Spec schema (top-level keys)::
 
     name: string                          # required
     max_steps: int                        # default 300
-    supported_robots: list[str]           # default [] (any)
+    supported_robots: list[str]           # default [] (any); must contain default_robot
     default_robot: string                 # required - registry data_config
     scene: string                         # optional MJCF/URDF path for sim.load_scene()
     instruction: string                   # optional natural-language task command
@@ -47,6 +47,15 @@ Example::
       - {predicate: distance_neg, body_a: gripper, body_b: drawer_handle, weight: 1.0}
       - {predicate: joint_progress, joint: drawer_slide, target: 0.2, weight: 5.0}
 
+Every value in that schema is held to one domain, applied identically whether
+it arrives as a spec key or as a keyword to :meth:`DeclarativeBenchmark.from_dict`
+or the constructor - so a spec file and a direct construction cannot disagree on
+what they accept. ``max_steps`` is a positive whole count, ``supported_robots``
+is a list of distinct non-blank names containing ``default_robot``, and the four
+string fields go through :func:`_spec_string_error`: ``name`` and
+``default_robot`` are non-empty, ``instruction`` is a possibly-empty string, and
+``scene`` is a string or omitted.
+
 Load + register via :func:`register_benchmark_from_file`; agents call this
 through the ``register_benchmark_from_file`` tool action.
 
@@ -58,9 +67,9 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.simulation.benchmark import (
     BenchmarkProtocol,
@@ -68,7 +77,7 @@ from strands_robots.simulation.benchmark import (
     register_benchmark,
 )
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, make_predicate, predicate_kind
-from strands_robots.utils import require_optional
+from strands_robots.utils import name_list_error, positive_count_error, require_optional
 
 if TYPE_CHECKING:
     import random
@@ -92,6 +101,66 @@ _ALLOWED_TOP_LEVEL = frozenset(
         "dense_reward",
     }
 )
+
+
+def _spec_string_error(
+    value: Any,
+    param: str,
+    context: str,
+    *,
+    allow_empty: bool = False,
+    allow_none: bool = False,
+) -> str | None:
+    """Return an error message if ``value`` cannot be honored as ``param``'s text.
+
+    The string half of the spec vocabulary, shared by
+    :meth:`DeclarativeBenchmark.from_dict` and
+    :meth:`DeclarativeBenchmark.__init__` so the key a spec file sets and the
+    keyword a direct construction passes cannot drift apart on what they accept
+    - the same reason ``max_steps`` and ``supported_robots`` share their
+    domains with the shared helpers in :mod:`strands_robots.utils`.
+
+    It lives here rather than there because what it refuses is this module's own
+    vocabulary and nothing else's. The comparable shared helper,
+    :func:`~strands_robots.utils.entity_name_error`, scopes itself in its
+    docstring to the creation sites in the simulation backends, and its reasons
+    are MuJoCo's (``""`` is that engine's unnamed-entity sentinel, a NUL
+    truncates in the compiled model) - neither applies to a benchmark id.
+
+    Two axes, because the four fields differ only along them:
+
+    * ``allow_empty`` - ``name`` and ``default_robot`` are identifiers, so the
+      empty string names nothing; ``instruction`` and ``scene`` are content, and
+      an empty one is the documented "not declared" spelling.
+    * ``allow_none`` - ``scene`` alone is optional, so ``None`` is how a spec
+      says it declares no scene.
+
+    A ``bool`` is refused by the type test rather than separately: it is not a
+    ``str`` at all, unlike the numeric domains where ``bool`` is an ``int``
+    subclass and has to be turned away by name.
+
+    Args:
+        value: The value supplied for ``param``.
+        param: Field name, quoted in the message.
+        context: Where the value came from - ``"spec"`` for a spec dict, the
+            class name for a direct construction.
+        allow_empty: Accept the empty string.
+        allow_none: Accept ``None``.
+
+    Returns:
+        A message naming the field, the accepted set and the type supplied, or
+        ``None`` when the value can be honored.
+    """
+    if value is None:
+        if allow_none:
+            return None
+        return f"{context}: {param} must be a string, got NoneType."
+    if not isinstance(value, str):
+        omitted = " or omitted" if allow_none else ""
+        return f"{context}: {param} must be a string{omitted}, got {type(value).__name__}."
+    if not value and not allow_empty:
+        return f"{context}: {param} must be a non-empty string."
+    return None
 
 
 def _compile_bool_group(
@@ -247,6 +316,15 @@ def compile_stop_when(stop_when: Any, *, context: str = "stop_when") -> Callable
 # to a constant False at evaluation time, and burn the whole step budget
 # reporting stopped_reason="budget" - indistinguishable from an honest miss.
 _BODY_NAME_KWARGS = frozenset({"body", "body_a", "body_b", "container"})
+# Kwargs that carry a SEQUENCE of body names (the particle-proxy pour
+# predicates). Collected element-wise so every particle / container in a
+# stop_when clause is probed against the live sim exactly like a singular body
+# kwarg. The accepted container shape is the one the predicate factories accept
+# - name_list_error's, i.e. any Sequence that is not a str/bytes (a bare string
+# is a name-per-character mistake, not a name list). This walker only ever sees
+# a clause compile_stop_when already accepted, so a shape a factory takes and
+# this misses is a clause whose names are silently never probed.
+_BODY_LIST_KWARGS = frozenset({"particles", "containers"})
 _JOINT_NAME_KWARGS = frozenset({"joint"})
 
 
@@ -256,7 +334,10 @@ def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str]]
     Walks the same shapes :func:`compile_stop_when` accepts (a single
     predicate call or an ``all``/``any`` group) and gathers the values of the
     entity-naming kwargs (``body`` / ``body_a`` / ``body_b`` / ``container``
-    for bodies, ``joint`` for joints) so the caller can probe each one
+    for bodies, plus each element of the sequence-valued ``particles`` /
+    ``containers`` - every shape the predicate factories accept for them, which
+    is :func:`~strands_robots.utils.name_list_error`'s domain rather than
+    ``list`` alone - and ``joint`` for joints) so the caller can probe each one
     against the live sim before arming the clause. Geom names
     (``contact_between``) are not collected - there is no generic geom
     lookup on the engine ABC to probe them with.
@@ -281,6 +362,10 @@ def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str]]
                     bodies.setdefault(value)
                 elif key in _JOINT_NAME_KWARGS:
                     joints.setdefault(value)
+            elif key in _BODY_LIST_KWARGS and isinstance(value, Sequence) and not isinstance(value, str | bytes):
+                for entry in value:
+                    if isinstance(entry, str) and entry:
+                        bodies.setdefault(entry)
 
     if isinstance(stop_when, dict):
         if "predicate" in stop_when:
@@ -332,10 +417,63 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         scene: str | None = None,
         instruction: str = "",
     ):
+        # Mirror the four string checks ``from_dict`` runs, for the reason the two
+        # mirrors below state: a directly constructed benchmark must not carry a
+        # value the evaluation loop, or the policy it drives, has to deal with
+        # later. Measured before this: ``instruction=42`` was handed to the
+        # policy verbatim as its task command (``PolicyRunner`` falls back to
+        # ``spec.instruction`` when the caller passes none), and a falsy
+        # non-string ``scene`` such as ``[]`` was skipped by the truthiness test
+        # in :meth:`on_episode_start`, so a declared scene was never loaded -
+        # both under ``status="success"``.
+        #
+        # ``default_robot`` is checked here, ahead of the membership test below:
+        # on ``default_robot=7`` that test would report ``7 not in [...]``, which
+        # describes the symptom rather than the mistake. Same ordering reason as
+        # the shape-before-membership note on ``supported_robots``.
+        cls_name = type(self).__name__
+        if error := _spec_string_error(name, "name", cls_name):
+            raise ValueError(error)
+        if error := _spec_string_error(default_robot, "default_robot", cls_name):
+            raise ValueError(error)
+        if error := _spec_string_error(scene, "scene", cls_name, allow_empty=True, allow_none=True):
+            raise ValueError(error)
+        if error := _spec_string_error(instruction, "instruction", cls_name, allow_empty=True):
+            raise ValueError(error)
         self._name = name
+        # Mirrors the two checks ``from_dict`` runs on this value, for the
+        # reason the ``max_steps`` mirror below states: a directly constructed
+        # benchmark must not carry a robot set the evaluation loop has to
+        # refuse later. ``list()`` alone read a single name passed as a bare
+        # string one character at a time, so ``supported_robots="panda"``
+        # became five one-letter robots, ``list_benchmarks`` advertised them,
+        # and the evaluation then refused the benchmark's own ``default_robot``
+        # by naming them.
+        #
+        # Shape first: on a bare string the membership check below would report
+        # ``'panda' not in ['p', 'a', 'n', 'd', 'a']``, which describes the
+        # symptom rather than the mistake. Ungated, unlike the callers that
+        # derive the list when it is falsy - an empty list is this parameter's
+        # documented "any robot" spelling and ``name_list_error`` accepts it,
+        # while ``""`` is a mistyped name that would otherwise widen the
+        # benchmark to every robot silently.
+        if error := name_list_error(supported_robots, "supported_robots", type(self).__name__):
+            raise ValueError(error)
+        if supported_robots and default_robot not in supported_robots:
+            raise ValueError(
+                f"{type(self).__name__}: default_robot={default_robot!r} not in "
+                f"supported_robots={list(supported_robots)}; either add it to "
+                "supported_robots or leave supported_robots empty for any-robot benchmarks"
+            )
         self._supported_robots = list(supported_robots)
         self._default_robot = default_robot
-        self.max_steps = int(max_steps)
+        # Mirrors the check ``from_dict`` runs on the raw spec value, so a
+        # directly constructed benchmark cannot carry a horizon the
+        # evaluation loop has to refuse later. ``int()`` alone silently
+        # truncated ``2.7`` to 2 and read ``True`` as 1.
+        if error := positive_count_error(max_steps, "max_steps", type(self).__name__):
+            raise ValueError(error)
+        self.max_steps = max_steps
         self._success_fn = success_fn
         self._failure_fn = failure_fn
         self._reward_terms = list(reward_terms)
@@ -348,6 +486,10 @@ class DeclarativeBenchmark(BenchmarkProtocol):
 
         Used as the registry key by :func:`register_benchmark_from_file`;
         registering two specs with the same ``name`` overwrites the first.
+
+        The constructor holds this to :func:`_spec_string_error`: a non-empty
+        ``str``, on both construction paths. A non-string was previously stored
+        and then advertised by ``sim.list_benchmarks()`` as the benchmark's id.
         """
         return self._name
 
@@ -358,6 +500,13 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         Implements :attr:`BenchmarkProtocol.supported_robots`. Returns a fresh
         copy so callers cannot mutate the compiled spec. An empty list (the
         spec omitted the key) means "any robot".
+
+        The constructor holds this to the shared
+        :func:`~strands_robots.utils.name_list_error` domain: several distinct
+        non-blank names, as a list or tuple rather than a single bare string,
+        and containing :attr:`default_robot` whenever it is non-empty. So the
+        names read back here are the names that were asked for, and a benchmark
+        cannot declare a robot set that its own default robot is outside of.
         """
         return list(self._supported_robots)
 
@@ -368,6 +517,11 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         Implements :attr:`BenchmarkProtocol.default_robot`;
         :meth:`on_episode_start` adds it via ``sim.add_robot`` before the first
         observation when no robot is present.
+
+        The constructor holds this to :func:`_spec_string_error` - a non-empty
+        ``str`` - before the :attr:`supported_robots` membership test, so a
+        non-string is reported as the wrong type rather than as a robot missing
+        from the supported set.
         """
         return self._default_robot
 
@@ -381,6 +535,12 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         caller passes no ``instruction=`` to ``evaluate_benchmark``, so a
         language-conditioned policy (GR00T, OpenVLA, ...) receives the command
         instead of an empty string (the #187 off-task failure mode).
+
+        The constructor holds this to :func:`_spec_string_error`: a ``str``,
+        possibly empty, on both construction paths. That fallback is why the
+        mirror matters - a non-string stored here was handed to the policy
+        verbatim as its task command, so a language-conditioned policy received
+        a value its tokenizer cannot take while the evaluation reported success.
         """
         return self._instruction
 
@@ -458,16 +618,31 @@ class DeclarativeBenchmark(BenchmarkProtocol):
             )
 
         name = spec.get("name")
-        if not isinstance(name, str) or not name:
-            raise ValueError("spec.name: required non-empty string")
+        # Shared string domain, so the key a spec file sets and the keyword a
+        # direct construction passes cannot drift apart on what they accept -
+        # the same reason ``supported_robots`` and ``max_steps`` below share
+        # theirs.
+        if error := _spec_string_error(name, "name", "spec"):
+            raise ValueError(error)
+        # The guard above is what proves the type; the cast only carries that
+        # proof forward for the type checker, which cannot see through a helper
+        # returning a message. Both fields are required, so neither can be None
+        # by the time they reach the constructor.
+        name = cast("str", name)
 
         default_robot = spec.get("default_robot")
-        if not isinstance(default_robot, str) or not default_robot:
-            raise ValueError("spec.default_robot: required non-empty string")
+        if error := _spec_string_error(default_robot, "default_robot", "spec"):
+            raise ValueError(error)
+        default_robot = cast("str", default_robot)
 
         supported_robots = spec.get("supported_robots", [])
-        if not isinstance(supported_robots, list) or not all(isinstance(r, str) for r in supported_robots):
-            raise ValueError("spec.supported_robots: must be a list of strings")
+        # Shared name-list domain, so the key a spec file sets and the keyword a
+        # direct construction passes cannot drift apart on what they accept -
+        # the same reason ``max_steps`` below shares its count domain. The
+        # hand-rolled check this replaces accepted a repeated name and a blank
+        # one, neither of which names a robot the registry can resolve.
+        if error := name_list_error(supported_robots, "supported_robots", "spec"):
+            raise ValueError(error)
 
         # default_robot should be in supported_robots (unless list is empty = any)
         if supported_robots and default_robot not in supported_robots:
@@ -477,16 +652,18 @@ class DeclarativeBenchmark(BenchmarkProtocol):
             )
 
         max_steps_raw = spec.get("max_steps", 300)
-        if not isinstance(max_steps_raw, int) or isinstance(max_steps_raw, bool) or max_steps_raw <= 0:
-            raise ValueError(f"spec.max_steps: must be a positive int, got {max_steps_raw!r}")
+        # Shared count domain, so the key a spec file sets and the keyword a
+        # direct construction passes cannot drift apart on what they accept.
+        if error := positive_count_error(max_steps_raw, "max_steps", "spec"):
+            raise ValueError(error)
 
         scene = spec.get("scene")
-        if scene is not None and not isinstance(scene, str):
-            raise ValueError(f"spec.scene: must be a string path or omitted, got {type(scene).__name__}")
+        if error := _spec_string_error(scene, "scene", "spec", allow_empty=True, allow_none=True):
+            raise ValueError(error)
 
         instruction = spec.get("instruction", "")
-        if not isinstance(instruction, str):
-            raise ValueError(f"spec.instruction: must be a string or omitted, got {type(instruction).__name__}")
+        if error := _spec_string_error(instruction, "instruction", "spec", allow_empty=True):
+            raise ValueError(error)
 
         success_fn = _compile_bool_group(spec.get("success"), default=False, context="success")
         failure_fn = _compile_bool_group(spec.get("failure"), default=False, context="failure")

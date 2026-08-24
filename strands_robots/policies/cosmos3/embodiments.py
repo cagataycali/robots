@@ -28,10 +28,15 @@ class Cosmos3Embodiment:
         camera_keys: Server observation image keys (OpenPI ``/`` namespace).
         action_layouts: ``{action_space: [column_name, ...]}`` naming each
             output action column so :class:`Cosmos3Policy` can build
-            per-actuator step dicts. The released DROID policy serves
-            ``joint_pos`` (8D = 7 joints + gripper) and ``midtrain``
-            (10D = 3 pos + 4 quat + ... + gripper). Used by the ``service``
-            backend (the RoboLab server post-processes to these layouts).
+            per-actuator step dicts. Used by the ``service`` backend. The
+            RoboLab server post-processes only ``joint_pos``, converting the
+            unified action's effector pose into joint targets (DROID: 8D =
+            7 joints + gripper); ``midtrain`` is the model's own unified
+            action served through, so a ``midtrain`` entry names the same
+            columns as :attr:`raw_action_layout`. A narrower ``midtrain``
+            entry does not shorten the served row - it leaves the surplus
+            columns unnamed and shifts every name it does carry onto the
+            wrong column.
         raw_action_layout: Column names for the **raw unified action** that the
             in-process ``diffusers`` :class:`Cosmos3OmniPipeline` emits directly
             (width = :attr:`raw_action_dim`). This is the model's native action
@@ -63,10 +68,10 @@ class Cosmos3Embodiment:
 # ordered joint convention used by the released Cosmos3-Nano-Policy-DROID.
 _FRANKA_JOINTS = [f"joint_{i}" for i in range(7)]
 
-# DROID joint_pos action = [7 joint deltas/targets, 1 gripper].
+# DROID joint_pos action = [7 joint deltas/targets, 1 gripper]. This is the one
+# layout the RoboLab server converts, so it is the only one that legitimately
+# differs from the model's unified action width.
 _DROID_JOINT_POS = _FRANKA_JOINTS + ["gripper"]
-# DROID midtrain action = [3 EE position, 4 quaternion (xyzw), gripper].
-_DROID_MIDTRAIN = ["ee_x", "ee_y", "ee_z", "ee_qx", "ee_qy", "ee_qz", "ee_qw", "gripper"]
 
 # Raw unified-action layouts: the native action the Cosmos3OmniPipeline emits
 # (diffusers backend), BEFORE the RoboLab server's joint_pos conversion. The
@@ -91,7 +96,8 @@ EMBODIMENTS: dict[str, Cosmos3Embodiment] = {
         ],
         action_layouts={
             "joint_pos": _DROID_JOINT_POS,
-            "midtrain": _DROID_MIDTRAIN,
+            # ``midtrain`` is the unified action itself, un-converted.
+            "midtrain": _RAW_POSE9_GRASP,
         },
         raw_action_layout=_RAW_POSE9_GRASP,
         default_action_space="joint_pos",
@@ -148,6 +154,44 @@ EMBODIMENTS: dict[str, Cosmos3Embodiment] = {
         raw_action_layout=_RAW_POSE9_GRASP,
         default_action_space="midtrain",
     ),
+    # Enactic OpenArm (7-DOF + gripper; registry ``openarm``, lerobot
+    # ``openarm_follower``). **Requires post-training** - no released Cosmos 3
+    # checkpoint ships this domain, so the entry promises no zero-shot
+    # behavior: it is the deploy-side mapping for a checkpoint post-trained on
+    # OpenArm episodes via the existing ``cosmos3`` trainer
+    # (:class:`strands_robots.training.cosmos3.Cosmos3Trainer`: SFT recipe TOML
+    # -> ``cosmos_framework`` launch). The unified action is the standard
+    # single-arm 9D EE pose + 1D grasp (eef-space), so the MuJoCo sim loop
+    # closes through the de-normalize + IK bridge
+    # (:func:`strands_robots.policies.cosmos3.sim_ik.decode_cosmos_chunk_to_targets`).
+    # No action stats are bundled for ``openarm_lerobot`` - post-training
+    # produces the domain's own ``q01``/``q99``, which the caller passes as
+    # ``stats=`` + ``stats_domain="openarm_lerobot"`` (another domain's stats
+    # are refused by name, never silently substituted). Camera keys mirror the
+    # recorded OpenArm episode set (front + wrist, the ``openarm_real``
+    # lerobot embodiment); chunk size and FPS mirror the DROID single-arm
+    # manipulator recipe defaults and must match the post-training recipe.
+    # ``bi_openarm`` (16-DOF bimanual) is a deliberate follow-up once this
+    # single-arm mapping is validated on post-trained weights.
+    "openarm": Cosmos3Embodiment(
+        name="openarm",
+        domain_name="openarm_lerobot",
+        raw_action_dim=10,
+        action_chunk_size=32,
+        fps=15,
+        camera_keys=[
+            "observation/image",
+            "observation/wrist_image",
+        ],
+        action_layouts={
+            # ``midtrain`` is the unified action itself, un-converted. There is
+            # no ``joint_pos`` entry: the RoboLab server's joint conversion is
+            # DROID-only, so promising a joint layout here would fabricate one.
+            "midtrain": _RAW_POSE9_GRASP,
+        },
+        raw_action_layout=_RAW_POSE9_GRASP,
+        default_action_space="midtrain",
+    ),
 }
 
 # Aliases → canonical embodiment key.
@@ -157,6 +201,11 @@ _EMBODIMENT_ALIASES = {
     "franka": "droid",
     "bridge_orig_lerobot": "bridge",
     "autonomous_vehicle": "av",
+    # OpenArm: the conditioning domain, the lerobot driver type, and the
+    # registry alias all resolve to the one canonical entry.
+    "openarm_lerobot": "openarm",
+    "openarm_follower": "openarm",
+    "enactic_openarm": "openarm",
 }
 
 

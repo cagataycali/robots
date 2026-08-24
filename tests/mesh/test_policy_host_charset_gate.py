@@ -103,11 +103,16 @@ class TestIsSafePolicyHostStandaloneCharsetGate:
 
 
 class TestValidateCommandPolicyHostStillRejectsControlBytes:
-    """Pin: ``validate_command`` still raises on CRLF in ``policy_host``.
+    """Pin: ``validate_command`` refuses a CRLF ``policy_host``.
 
-    The R6 post-check is now redundant with the R7 in-function gate,
-    but kept as defence-in-depth. This test pins both layers fail
-    closed on the same input.
+    Two layers can refuse this input and only one of them runs.
+    ``is_safe_policy_host`` applies the charset rule before its
+    internal strip, so the membership gate refuses first and the
+    post-check below it is unreachable while the two agree. These
+    tests therefore pin *which* layer refuses, so the pair stays
+    distinguishable; the post-check is exercised on its own in
+    ``TestThePostCheckHoldsWhenTheMembershipGateIsWidened``, which is
+    the only way to reach it.
     """
 
     def test_rejects_crlf_in_policy_host(self) -> None:
@@ -120,12 +125,14 @@ class TestValidateCommandPolicyHostStillRejectsControlBytes:
                     "policy_provider": "mock",
                 }
             )
-        # Either message is acceptable: the in-function gate raises
-        # "not in allowlist" because the charset gate fails before
-        # membership compare; or the post-check raises "contains
-        # control characters". Both are correct fail-closed outcomes.
-        msg = str(exc.value).lower()
-        assert "policy_host" in msg or "control" in msg
+        # Pin which layer refuses. The membership gate rejects the host
+        # because its charset check runs before the internal strip, so
+        # the message names the allowlist. Accepting either message
+        # here would make the two layers indistinguishable, which is
+        # how the post-check went unexercised.
+        msg = str(exc.value)
+        assert "not in allowlist" in msg, msg
+        assert "control characters" not in msg, msg
 
     def test_rejects_nul_in_policy_host(self) -> None:
         with pytest.raises(ValidationError):
@@ -137,6 +144,93 @@ class TestValidateCommandPolicyHostStillRejectsControlBytes:
                     "policy_provider": "mock",
                 }
             )
+
+
+_CONTROL_HOSTS = [
+    pytest.param("localhost\r\n", id="crlf"),
+    pytest.param("localhost\n", id="lf"),
+    pytest.param("localhost\r", id="cr"),
+    pytest.param("localhost\t", id="tab"),
+    pytest.param("localhost\x00", id="nul"),
+    pytest.param("l\x1bocalhost", id="esc"),
+]
+
+
+def _widen_membership_gate(monkeypatch) -> None:
+    """Make the membership gate accept every host.
+
+    Models the change the post-check's comment names: an allowlist
+    compare that no longer applies the charset rule itself.
+    """
+    monkeypatch.setattr(security, "is_safe_policy_host", lambda host: True)
+
+
+def _execute_with_host(host: str) -> dict:
+    return {
+        "action": "execute",
+        "instruction": "go",
+        "policy_host": host,
+        "policy_provider": "mock",
+    }
+
+
+class TestThePostCheckHoldsWhenTheMembershipGateIsWidened:
+    """Pin the ``policy_host`` post-check, the second of the two layers.
+
+    The post-check exists for one stated reason, recorded beside it: the
+    validator boundary rejects regardless of how the membership compare
+    is implemented, so a future refactor of the allowlist cannot
+    silently drop the wire rejection. While the membership gate applies
+    the same charset rule the post-check is unreachable, which is
+    exactly why nothing exercised it -- and why that refactor could
+    remove it with the suite green.
+
+    Widening the membership gate is the change its comment anticipates,
+    so these tests do that and assert the boundary still refuses.
+    """
+
+    @pytest.mark.parametrize("host", _CONTROL_HOSTS)
+    def test_it_refuses_every_control_byte_class(self, host, monkeypatch) -> None:
+        _widen_membership_gate(monkeypatch)
+        with pytest.raises(ValidationError) as exc:
+            validate_command(_execute_with_host(host))
+        assert "control characters" in str(exc.value), str(exc.value)
+
+    def test_the_refusal_is_the_post_check_and_not_the_membership_gate(self, monkeypatch) -> None:
+        """The message names the reason, not the allowlist.
+
+        With the gate widened the allowlist has nothing to say about
+        this host, so a message mentioning it would mean the refusal
+        came from somewhere other than the post-check.
+        """
+        _widen_membership_gate(monkeypatch)
+        with pytest.raises(ValidationError) as exc:
+            validate_command(_execute_with_host("localhost\r\nX-Injected: 1"))
+        msg = str(exc.value)
+        assert "control characters" in msg, msg
+        assert "allowlist" not in msg, msg
+        assert "policy_host" in msg, msg
+
+    def test_the_injection_shaped_host_never_reaches_the_validated_output(self, monkeypatch) -> None:
+        """A refused host is not written to ``out``.
+
+        The post-check runs before ``out["policy_host"] = policy_host``,
+        so there is no partially validated command for a caller to act
+        on.
+        """
+        _widen_membership_gate(monkeypatch)
+        with pytest.raises(ValidationError):
+            validate_command(_execute_with_host("localhost\r\nX-Injected: 1"))
+
+    def test_a_clean_host_still_passes_once_the_gate_is_widened(self, monkeypatch) -> None:
+        """Control: the post-check refuses control bytes, not every host.
+
+        Without this a post-check that rejected unconditionally would
+        satisfy the tests above.
+        """
+        _widen_membership_gate(monkeypatch)
+        out = validate_command(_execute_with_host("localhost"))
+        assert out["policy_host"] == "localhost"
 
 
 class TestMaxOverrideCodeLenConstant:

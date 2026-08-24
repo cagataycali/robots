@@ -10,6 +10,11 @@ Provides:
 Environment Variables:
     STRANDS_ROBOT_MODE: Override mode detection ("sim", "real", "auto").
         Case-insensitive; surrounding whitespace ignored.
+    STRANDS_MESH: Opt a bare ``Robot()`` into the Zenoh mesh. Mesh is OFF
+        unless asked for: only "true"/"1"/"yes" turns it ON, and unset or
+        "false" leaves it OFF. An explicit ``mesh=True``/``mesh=False``
+        kwarg wins over this default, except that "false" is a hard kill
+        switch honoured by ``init_mesh`` even against ``mesh=True``.
 
 Examples::
 
@@ -37,8 +42,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import threading
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
+from strands_robots._mesh_switch import mesh_env_request
+from strands_robots._serial_discovery import scan_serial_devices
 from strands_robots.registry import (
     get_hardware_type,
     get_robot,
@@ -82,37 +90,50 @@ def _auto_detect_mode(canonical: str) -> str:
     elif env_mode:
         logger.warning("STRANDS_ROBOT_MODE=%r ignored (expected 'sim', 'real', or 'auto')", env_mode)
 
-    # Only probe USB if the robot actually has hardware support
+    # Only probe USB if the robot actually has hardware support. Which serial
+    # device is a robot's motor bus is decided once, by
+    # :func:`~strands_robots._serial_discovery.matches_servo_bus`: the hardware
+    # layer needs the same answer to name the candidates when the caller did not
+    # supply the ``port`` its robot requires, and a second copy of the vendor-id
+    # table would let the two disagree about what a robot is. Enumeration there
+    # is best-effort (pyserial is not a declared dependency of this package), so
+    # a host that cannot enumerate reports no devices and falls back to sim,
+    # which is always safe.
     if has_hardware(canonical):
-        try:
-            import serial.tools.list_ports
-
-            ports = list(serial.tools.list_ports.comports())
-            servo_keywords = ["feetech", "dynamixel", "sts3215", "xl430", "xl330"]
-            exclude = ["bluetooth", "internal", "debug", "apple", "modem"]
-            robot_ports = [
-                p
-                for p in ports
-                if any(
-                    kw in ((p.description or "") + (getattr(p, "manufacturer", None) or "")).lower()
-                    for kw in servo_keywords
-                )
-                and not any(s in (p.description or "").lower() for s in exclude)
-            ]
-            if robot_ports:
-                logger.info(
-                    "Auto-detected robot hardware: %s",
-                    [p.device for p in robot_ports],
-                )
-                return "real"
-        except Exception as e:
-            # USB enumeration is best-effort. pyserial usually raises OSError
-            # (incl. PermissionError, SerialException) but libusb backends have
-            # been observed to raise RuntimeError on hub glitches. Falling back
-            # to sim is always safe; we log at debug for diagnosis.
-            logger.debug("USB probe failed (%s: %s); falling back to sim", type(e).__name__, e)
+        servo_ports = [device.port for device in scan_serial_devices() if device.likely_servo_bus]
+        if servo_ports:
+            logger.info("Auto-detected robot hardware: %s", servo_ports)
+            return "real"
 
     return "sim"
+
+
+def _mesh_env_opt_in() -> bool:
+    """Return True when ``STRANDS_MESH`` opts a bare ``Robot()`` into the mesh.
+
+    Mesh is OFF unless it is asked for. ``mesh=None`` (the factory default)
+    consults this function, and only ``true``, ``1`` or ``yes``
+    (case-insensitive, surrounding whitespace ignored) turns it ON. Every
+    other value -- including unset, empty and ``false`` -- leaves mesh OFF,
+    so a bare ``Robot("so100")`` never spins up Zenoh, ACL or e-stop
+    machinery.
+
+    ``STRANDS_MESH=false`` is additionally a hard kill switch honoured by
+    :func:`strands_robots.mesh.init_mesh` even when the caller passed an
+    explicit ``mesh=True``; the env var never forces mesh ON there, so an
+    explicit ``mesh=False`` is always respected.
+
+    Resolved by :func:`strands_robots._mesh_switch.mesh_env_request` rather
+    than re-read here, so the accepted spellings and the report of an
+    unrecognized one have a single owner. This reader owns only the
+    affirmative half of the vocabulary, so it cannot tell a typo from the kill
+    switch's spellings on its own -- ``mesh_env_request`` holds both halves and
+    reports the values that belong to neither.
+
+    Returns:
+        True when the environment opts in, False otherwise.
+    """
+    return mesh_env_request() is True
 
 
 def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) -> None:
@@ -162,6 +183,9 @@ def Robot(
     cameras: dict[str, dict[str, Any]] | None = ...,
     position: list[float] | None = ...,
     data_config: str | None = ...,
+    *,
+    orientation: list[float] | None = ...,
+    keyframe: str | int | None = ...,
     **kwargs: Any,
 ) -> Simulation: ...
 
@@ -175,6 +199,9 @@ def Robot(
     cameras: dict[str, dict[str, Any]] | None = ...,
     position: list[float] | None = ...,
     data_config: str | None = ...,
+    *,
+    orientation: list[float] | None = ...,
+    keyframe: str | int | None = ...,
     **kwargs: Any,
 ) -> HardwareRobot: ...
 
@@ -188,6 +215,9 @@ def Robot(
     cameras: dict[str, dict[str, Any]] | None = ...,
     position: list[float] | None = ...,
     data_config: str | None = ...,
+    *,
+    orientation: list[float] | None = ...,
+    keyframe: str | int | None = ...,
     **kwargs: Any,
 ) -> Simulation | HardwareRobot: ...
 
@@ -202,6 +232,11 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     data_config: str | None = None,
     mesh: bool | None = None,
     peer_id: str | None = None,
+    # Keyword-only: appended after the existing parameters, so no positional
+    # call shifts meaning and the overloads above stay positionally faithful.
+    *,
+    orientation: list[float] | None = None,
+    keyframe: str | int | None = None,
     **kwargs: Any,
 ) -> Simulation | HardwareRobot:
     """Create a robot - returns a Simulation or HardwareRobot instance.
@@ -233,6 +268,8 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         urdf_path: Explicit path to URDF/MJCF file. If not provided,
                    resolved via ``strands_robots.simulation.model_registry``
                    (asset manager or ``STRANDS_ASSETS_DIR`` search paths).
+                   Only applies to ``mode="sim"``; in ``mode="real"`` it is
+                   ignored and reported at debug level.
         cameras: Camera config for real hardware. Example::
 
             {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
@@ -246,10 +283,33 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             contract governs: omitting it spawns at the origin, and a
             wrong-length, non-numeric or non-finite vector is refused with an
             actionable message (surfaced here as ``RuntimeError``) instead of
-            being replaced by the origin.
+            being replaced by the origin. Only applies to ``mode="sim"``; in
+            ``mode="real"`` it is ignored and reported at debug level.
         data_config: Data configuration name for observation/action schema.
-                     Defaults to the canonical robot name. For multi-camera
-                     setups, specify explicitly: ``data_config="so100_dualcam"``.
+                     For multi-camera setups, specify explicitly:
+                     ``data_config="so100_dualcam"``. Honoured in both modes:
+                     ``mode="sim"`` defaults it to the canonical robot name,
+                     and ``mode="real"`` forwards it verbatim to
+                     ``strands_robots.hardware_robot.Robot``, which carries it
+                     into the ``policy_config`` a policy is built with.
+        orientation: Robot base orientation in the sim world as a quaternion
+            ``[w, x, y, z]``. Forwarded to the backend's ``add_robot`` verbatim
+            on the same terms as ``position``: omitting it spawns unrotated, and
+            a wrong-length, non-numeric or non-finite quaternion is refused with
+            an actionable message (surfaced here as ``RuntimeError``) rather
+            than being replaced by the identity rotation. Only applies to
+            ``mode="sim"``; in ``mode="real"`` it is ignored and reported at
+            debug level.
+        keyframe: Spawn the robot in a canonical pose declared by a
+            ``<keyframe>`` in its source model (e.g. panda ``"home"``, aloha
+            ``"neutral_pose"``) instead of the default all-zero configuration.
+            Accepts the keyframe name (``str``) or index (``int``) and is
+            forwarded to the backend's ``add_robot`` verbatim, so that method's
+            contract governs: the pose is sticky across ``reset()`` and an
+            unknown keyframe is a hard error naming the available keyframes
+            (surfaced here as ``RuntimeError``) instead of a silent zero-pose
+            spawn. Only applies to ``mode="sim"``; in ``mode="real"`` it is
+            ignored and reported at debug level.
         mesh: Attach a Zenoh fleet-coordination mesh. ``None`` (default) keeps
               mesh OFF for a quiet bare ``Robot(...)`` but honours the
               ``STRANDS_MESH=true`` opt-in. Pass ``True`` to force it on or
@@ -310,7 +370,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     # the env default. ``STRANDS_MESH=false`` remains a hard kill switch
     # enforced in ``init_mesh`` regardless of this resolution.
     if mesh is None:
-        mesh = os.getenv("STRANDS_MESH", "").strip().lower() in ("true", "1", "yes")
+        mesh = _mesh_env_opt_in()
 
     # --- Simulation ---
     if mode == "sim":
@@ -355,11 +415,23 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             # unnecessary: ``position=None`` is what ``add_robot`` already
             # documents as "spawn at the origin", so passing it through keeps ONE
             # source of truth for that default instead of a copy that can drift.
+            # ``orientation`` and ``keyframe`` travel with ``position`` for the
+            # same reason it is passed through unmodified: all three are
+            # ``SimEngine.add_robot`` parameters whose defaults and refusals that
+            # method already documents, so forwarding the caller's value verbatim
+            # keeps ONE source of truth for each. Dropping them here made the
+            # factory silently disagree with the backend it delegates to - a
+            # requested rotation or keyframe spawn was absorbed by ``**kwargs``
+            # and the robot came up unrotated in the zero configuration, and the
+            # refusals ``add_robot`` raises for a malformed quaternion or an
+            # unknown keyframe never reached the caller.
             result = sim.add_robot(
                 name=name,
                 urdf_path=urdf_path,
                 data_config=data_config or canonical,
                 position=position,
+                orientation=orientation,
+                keyframe=keyframe,
             )
             if result.get("status") == "error":
                 content = result.get("content", [])
@@ -391,6 +463,16 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             if sim_mesh is not None:
                 sim.mesh = sim_mesh
                 sim.peer_id = sim_mesh.peer_id
+                # The robot was added BEFORE the mesh existed (create_world ->
+                # add_robot -> init_mesh), so _attach_robot_to_mesh was a no-op
+                # at add_robot time. Attach the already-added robots now so
+                # each SimRobot gets its own child peer (which is what
+                # publishes per-robot joint state on strands/<peer>/state).
+                if hasattr(sim, "_attach_robot_to_mesh"):
+                    world = getattr(sim, "_world", None)
+                    for _sim_robot in (getattr(world, "robots", None) or {}).values():
+                        if getattr(_sim_robot, "mesh", None) is None:
+                            sim._attach_robot_to_mesh(_sim_robot)
         except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning("Failed to initialise mesh for %r: %s", canonical, exc)
 
@@ -405,6 +487,32 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 backend,
             )
 
+        # Report the spawn parameters this branch cannot honour. They describe a
+        # pose in a simulated world - where to place a base, how to rotate it,
+        # which <keyframe> to spawn in, which model file to load - and a physical
+        # arm is already wherever it is, so ``hardware_robot.Robot`` accepts none
+        # of them. Ignoring them is right; ignoring them silently is not, which is
+        # why ``backend`` above says so. Read by ``is not None`` rather than by
+        # truthiness: ``keyframe=0`` is a valid keyframe index and an empty
+        # ``position``/``orientation`` was still supplied, so a truthiness test
+        # would drop exactly the values a caller is most likely to be surprised by.
+        ignored_spawn_args = [
+            f"{param}={value!r}"
+            for param, value in (
+                ("urdf_path", urdf_path),
+                ("position", position),
+                ("orientation", orientation),
+                ("keyframe", keyframe),
+            )
+            if value is not None
+        ]
+        if ignored_spawn_args:
+            logger.debug(
+                "%s ignored in mode='real' (spawn pose applies to a simulated world; "
+                "a physical robot is already where it is)",
+                ", ".join(ignored_spawn_args),
+            )
+
         from strands_robots.hardware_robot import Robot as HardwareRobotCls
 
         real_type = get_hardware_type(canonical) or canonical
@@ -412,6 +520,14 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             tool_name=canonical,
             robot=real_type,
             cameras=cameras,
+            # Forwarded, not reported: unlike the spawn parameters above, the
+            # hardware class declares ``data_config`` and reads it - it is what
+            # ends up in the ``policy_config`` a policy is built with, so a
+            # multi-camera schema selected here has to arrive. Passed verbatim
+            # (``None`` is the hardware class's own default) rather than defaulted
+            # to the canonical name the way the sim path does, so a caller who
+            # names no config keeps today's behaviour.
+            data_config=data_config,
             **kwargs,
         )
 
@@ -452,12 +568,115 @@ def _attach_device_connect(instance: Any, canonical: str, mode: str, peer_id: st
     instance.run = lambda: _run_device_connect_foreground(instance)
 
 
+#: Seconds to wait for the Ctrl+C teardown before exiting anyway. Matches
+#: ``MuJoCoSimEngine._DEFAULT_POLICY_STOP_TIMEOUT``, which bounds the same
+#: decision on the same event: a teardown step that will not finish must not
+#: keep the process alive on the way out.
+_SHUTDOWN_TIMEOUT_S: float = 5.0
+
+
+def _release_resources_on_interrupt(instance: Any, peer_id: str) -> str | None:
+    """Run the instance's terminal teardown for Ctrl+C, bounded by a budget.
+
+    ``cleanup()`` is where a robot releases what it holds, and on hardware that
+    includes the physical devices: it reaches the driver's own ``disconnect()``,
+    which is where torque disable and gripper release live. Nothing else in the
+    library reaches them - ``cleanup()`` is terminal, so no entry point runs
+    after it, and lerobot's ``Robot.disconnect()`` refuses to be called by hand
+    once the robot is half-open. So the teardown either happens here or it does
+    not happen at all: the caller ends with ``os._exit``, which runs no
+    ``atexit`` hook, no ``__del__`` and no ``finally`` block.
+
+    The budget, and why the exit stays abrupt: ``Robot.cleanup()`` drains its
+    task executor with ``shutdown(wait=True)``, which a wedged rollout does not
+    finish - measured, a submitted item that never returns keeps that call
+    running indefinitely, and a ``ThreadPoolExecutor`` worker is not a daemon
+    thread, so the interpreter's own exit hook would then join it too. Awaiting
+    the teardown on the calling thread, or returning normally and letting the
+    interpreter tear down, therefore turns one operator Ctrl+C into a process
+    that never exits - and an operator who reaches for ``SIGKILL`` gets no
+    teardown at all, which is the outcome this exists to prevent. Running it on
+    a daemon thread with a budget keeps the guarantee that Ctrl+C ends the
+    process, on the same reasoning
+    :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.cleanup`
+    already applies to a wedged policy worker: bound the wait, report, proceed.
+
+    Args:
+        instance: The robot or simulation the runner was bound to. An instance
+            exposing no callable ``cleanup`` holds nothing this can release, so
+            it is reported as released rather than as a failure.
+        peer_id: Peer identifier, used to name the teardown thread.
+
+    Returns:
+        ``None`` when the teardown ran to completion, so the caller may report
+        the robot stopped. Otherwise a sentence naming what stopped it -- the
+        budget expiring, the teardown raising, or a second Ctrl+C arriving
+        during the wait -- for a caller that must not claim more than happened.
+    """
+    cleanup = getattr(instance, "cleanup", None)
+    if not callable(cleanup):
+        return None
+
+    failure: list[BaseException] = []
+    finished = threading.Event()
+
+    def _teardown() -> None:
+        try:
+            cleanup()
+        except Exception as exc:  # noqa: BLE001 - reported to the operator below
+            failure.append(exc)
+        finally:
+            finished.set()
+
+    threading.Thread(target=_teardown, name=f"{peer_id}-shutdown", daemon=True).start()
+
+    try:
+        released = finished.wait(timeout=_SHUTDOWN_TIMEOUT_S)
+    except KeyboardInterrupt:
+        # An impatient operator interrupting again lands here rather than in the
+        # loop above, and it must not escape: the caller's ``os._exit`` is what
+        # guarantees the process ends, and letting this propagate would instead
+        # unwind into interpreter shutdown, where the executor drain this wait
+        # is covering gets joined a second time by ``concurrent.futures``' own
+        # exit hook. Before this budget existed there was no window to interrupt,
+        # so the second Ctrl+C has to keep behaving the way the first one did.
+        logger.warning("%s: shutdown interrupted again; exiting immediately.", peer_id)
+        return "the shutdown was interrupted again before it finished."
+
+    if not released:
+        logger.warning(
+            "%s: cleanup() did not finish within %gs; exiting anyway.",
+            peer_id,
+            _SHUTDOWN_TIMEOUT_S,
+        )
+        return f"cleanup() did not finish within {_SHUTDOWN_TIMEOUT_S:g}s."
+    if failure:
+        logger.warning("%s: cleanup() raised during shutdown: %s", peer_id, failure[0])
+        return f"cleanup() raised {type(failure[0]).__name__}: {failure[0]}."
+    return None
+
+
 def _run_device_connect_foreground(instance: Any) -> None:
     """Start Device Connect and block - the robot listens for commands.
 
     Device Connect is the primary networking layer in server mode, so the
     auto-started built-in mesh (if any) is stopped first to avoid running two
     Zenoh presence systems in one process.
+
+    A bring-up that fails keeps the process alive - the operator asked for a
+    server and a transient broker outage is not worth losing the process over -
+    but the status line reports what actually came up. Claiming the device is
+    online is only true of the path where the runtime started; on the other one
+    the mesh has already been stopped for a replacement that never arrived, so
+    the process serves no transport at all and the operator has to be told
+    that rather than the opposite.
+
+    The operator's Ctrl+C is the only teardown this loop ever gets, on either
+    branch, so it releases the instance before exiting -- on hardware that is
+    what reaches the driver's ``disconnect()``, where torque disable and gripper
+    release live. The exit stays abrupt afterwards, and the shutdown line
+    reports whether the release actually finished; see
+    :func:`_release_resources_on_interrupt`.
     """
     import time
 
@@ -466,6 +685,7 @@ def _run_device_connect_foreground(instance: Any) -> None:
 
     # Device Connect supersedes the built-in mesh in run() mode.
     mesh = getattr(instance, "mesh", None)
+    mesh_was_stopped = mesh is not None
     if mesh is not None:
         with contextlib.suppress(Exception):
             mesh.stop()
@@ -480,15 +700,38 @@ def _run_device_connect_foreground(instance: Any) -> None:
             peer_type=peer_type,
         )
     except Exception as e:  # noqa: BLE001 - surface but keep the process alive
-        logger.warning("Device Connect init failed: %s", e)
+        # An absent extra is the common cause and the only one with a one-line
+        # remedy, so name it here: on its own the ImportError names the
+        # distribution's internal module, not the extra that installs it.
+        remedy = " Install it with: pip install 'strands-robots[device-connect]'." if isinstance(e, ImportError) else ""
+        logger.warning("Device Connect init failed: %s.%s", e, remedy)
 
-    print(f"{peer_id} is online. Ctrl+C to stop.")
+    if getattr(instance, "_device_connect_runtime", None) is None:
+        lost_transport = (
+            "The built-in mesh was stopped for it, so this process now serves no transport."
+            if mesh_was_stopped
+            else "This process serves no transport."
+        )
+        print(
+            f"{peer_id} is NOT online: the Device Connect runtime did not start "
+            f"(see the warning above). {lost_transport} Ctrl+C to stop."
+        )
+    else:
+        print(f"{peer_id} is online. Ctrl+C to stop.")
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print(f"\nShutting down {peer_id}...", flush=True)
-        print(f"{peer_id} stopped.", flush=True)
+        unreleased = _release_resources_on_interrupt(instance, peer_id)
+        if unreleased is None:
+            print(f"{peer_id} stopped.", flush=True)
+        else:
+            print(
+                f"{peer_id} is exiting WITHOUT a completed shutdown: {unreleased} "
+                f"Devices this process held may not have been released.",
+                flush=True,
+            )
         os._exit(0)
 
 

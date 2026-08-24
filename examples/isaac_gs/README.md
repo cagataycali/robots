@@ -22,9 +22,13 @@ into a clip by `render_demo.py --wave` (the same `imageio` libx264 path
 ![Front hero view of the Franka on the backdrop](assets/hero_front.jpg)
 
 *The reframed `front` hero camera: a clean full-arm shot of the Franka
-composited over the backdrop. These were rendered on the procedural
-`PanoramaBackground` fallback (gsplat not installed); the real captured-3DGS
-path (`--gsplat-ply`) swaps the backdrop for a photoreal capture.*
+composited over the backdrop. **These two gallery images show the procedural
+`PanoramaBackground` fallback** (rendered before the pre-built `gsplat` wheel
+was in the render environment), *not* the photoreal 3DGS path -- on a host
+where gsplat rasterizes, the default run composites the robot into the real
+captured `tabletop` kitchen instead. Regenerating the gallery from the real GS
+path is tracked as a follow-up (blocked on the rasterization/lighting fixes in
+#2322 / #2323 so it isn't baked twice).*
 
 ## Why this exists (and how it differs from `mujoco_gs`)
 
@@ -82,9 +86,14 @@ supplies those `CameraParams` from the Isaac RTX camera instead of MuJoCo's
 pip install 'strands-robots[sim-isaac]'          # + a working Isaac Sim (RTX GPU)
 
 # Default: the real 3DGS tabletop scene (auto-downloaded + skybox-aligned),
-# default Franka. Falls back to the procedural panorama if gsplat isn't
-# installed — so this still runs with zero ML deps:
+# default Franka. If the 3DGS path can't initialize (gsplat missing or unable
+# to CUDA-rasterize) the run FAILS with an install hint rather than silently
+# demoting to the procedural panorama (#2321):
 python -m examples.isaac_gs.render_demo --frames 1 --out rollouts/isaac_gs
+
+# Zero-ML-deps mode: opt into the procedural-panorama demotion so the demo
+# always renders something, even without gsplat:
+python -m examples.isaac_gs.render_demo --frames 1 --allow-fallback
 
 # Sweep the arm across frames to show it moving on the backdrop. A
 # multi-frame run writes the PNG stills *and* assembles them into an MP4
@@ -107,8 +116,8 @@ python -m examples.isaac_gs.render_demo --gsplat-scene 'tabletop (indoor room)'
 
 # Your own captured 3DGS background (digital-twin use case; needs gsplat + a .ply).
 # NOTE: a plain `pip install gsplat` silently disables the CUDA backend in the
-# Isaac container (no nvcc) and crashes at first rasterization. Install a
-# pre-built wheel matching your torch + CUDA build instead:
+# Isaac container (no nvcc) — the demo detects this up front and fails with
+# this hint. Install a pre-built wheel matching your torch + CUDA build:
 pip install --index-url https://docs.gsplat.studio/whl/pt24cu118 'gsplat==1.5.3+pt24cu118'
 python -m examples.isaac_gs.render_demo --gsplat-ply /path/to/kitchen.ply
 
@@ -157,8 +166,22 @@ requests marshal to the main thread via a queue.
   occluding the backdrop everywhere.
 * **Explicit lights** (`_add_lighting`): Isaac's default lighting rides with
   the default ground plane we omit, so the scene authors its own distant key
-  + dome fill light via `UsdLux` — otherwise the robot renders as an unlit
-  black silhouette.
+  + dome light via `UsdLux` — otherwise the robot renders as an unlit
+  black silhouette. By default those lights are **derived from the
+  background scene** (issue #2323): an equirect environment map is baked from
+  the 3DGS scene at the robot's position
+  (`strands_robots.rendering.bake_environment_map`) and textures the dome
+  light (image-based lighting), and the key light's direction + color come
+  from the map's dominant light (`derive_key_light`). `--no-ibl` keeps the
+  old hardcoded warm key + untextured dome.
+* **Shadow catcher** (`_add_shadow_catcher`, default on): a matte white plane
+  at the support surface (world z=0 — the curated skybox alignments seat the
+  robot's support there) receives the arm's RTX contact shadow. The
+  compositor recognizes the plane's pixels analytically
+  (`HybridCompositor(shadow_plane_z=...)`) and multiplies their shading onto
+  the backdrop in linear light instead of painting the plane, so the arm
+  grounds itself with a contact shadow on the photoreal counter.
+  `--no-shadow-catcher` disables it.
 * **Fixed-base Franka + static cube**: with no ground plane, the Franka stays
   up (fixed base) and the cube is `is_static=True` so it doesn't fall through.
 * **Depth mask**: a pixel is foreground iff the RTX camera saw finite,
@@ -209,8 +232,12 @@ a known Isaac issue, unrelated to this example's correctness.)
   full-res stills.
 * **DC-term GS color only** (inherited from the reused `GsplatBackground`) — no
   view-dependent spherical-harmonics.
-* **No view-dependent background relighting** — the captured 3DGS scene is a
-  fixed backdrop; the sim robot is lit by Isaac's RTX scene lights.
+* **LDR, static IBL** — the robot *is* lit by the captured scene (a baked
+  equirect environment map on the dome light + a key light aimed at the
+  map's dominant light), but the bake is an 8-bit LDR image rendered once
+  from a fixed point above the robot's base: no HDR radiance, no re-bake as
+  the robot moves, and the backdrop itself is still a fixed capture (nothing
+  the robot does relights the *background*).
 
 ## License
 

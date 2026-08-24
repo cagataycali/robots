@@ -56,6 +56,7 @@ _EXPECTED_CLASSES = {
 
 # Every public module-level function the package exposes.
 _EXPECTED_FUNCTIONS = {
+    "libero/adapter.py::camera_config_error",
     "libero/bddl_parser.py::parse_bddl",
     "libero/bddl_parser.py::parse_bddl_file",
     "libero/bddl_parser.py::compile_goal",

@@ -47,7 +47,14 @@ import numpy as np
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.dataset_recorder import RecordingFrameError
 from strands_robots.policies.base import resolve_chunk_length
-from strands_robots.utils import positive_whole_number_error, process_rss_mb, require_optional
+from strands_robots.utils import (
+    non_negative_whole_number_error,
+    positive_count_error,
+    positive_finite_number_error,
+    positive_whole_number_error,
+    process_rss_mb,
+    require_optional,
+)
 
 if TYPE_CHECKING:
     from strands_robots.policies.base import Policy
@@ -84,7 +91,10 @@ def set_eval_seed(seed: int) -> None:
 
     * Python ``random.seed``.
     * NumPy ``np.random.seed`` (the legacy global RNG; matches what
-      most policies use under the hood).
+      most policies use under the hood). This is the narrowest of the
+      three: it refuses a seed above
+      :data:`~strands_robots.simulation.base.MAX_EVAL_SEED`, so that is
+      the ceiling every rollout surface accepts.
     * PyTorch CPU (``torch.manual_seed``) - if torch is importable.
     * PyTorch CUDA all devices (``torch.cuda.manual_seed_all``) - if
       torch is importable AND CUDA is available.
@@ -99,10 +109,39 @@ def set_eval_seed(seed: int) -> None:
     going through ``evaluate_benchmark`` can call it directly to get
     reproducible rollouts.
 
+    ``seed`` is required. ``None`` is the absence of a seed, and the three RNGs
+    disagree about it: ``random`` and NumPy reseed from entropy while
+    ``torch.manual_seed`` refuses it outright, so passing it through would leave
+    a process-wide RNG side effect on a rollout that asked for none - and none at
+    all on an install without torch, where the same call silently succeeds. The
+    shared domain accepts ``None`` because ``randomize(seed=None)`` legitimately
+    means "draw fresh entropy"; this applier opts out with ``allow_none=False``.
+    To leave the RNGs untouched, do not call it - which is what every caller in
+    this module already does (``if seed is not None``).
+
     NumPy / torch are imported lazily so this helper works on minimal
     installs that don't have torch (e.g. ``policy_provider="mock"``
     smoke tests).
     """
+    # Local import: base.py imports this module at module level, so reaching the
+    # shared domain from here has to stay deferred - the same convention this
+    # module already uses for simulation.benchmark / .recording / .predicates.
+    from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
+
+    # This is public API (exported via ``__all__``) and documented for standalone
+    # callers, so the bound is enforced where it is owned rather than only at the
+    # facades one layer up: NumPy's own "Seed must be between 0 and 2**32 - 1"
+    # names neither the parameter nor the method that accepted it.
+    #
+    # ``allow_none=False``: this is the applier, and there is no seed to apply for
+    # ``None``. Passing it through would reseed ``random`` / NumPy from entropy and
+    # then raise out of ``torch.manual_seed`` (or, on an install without torch,
+    # silently succeed) - a process-wide side effect on a rollout that asked for no
+    # seed, which is the opposite of the rule ``evaluate`` states below: "a ``None``
+    # seed leaves the master RNG unbuilt rather than seeding it from entropy". The
+    # refusal sits ahead of every RNG, so it has no side effect either.
+    if seed_error := randomization_seed_error(seed, "set_eval_seed", max_seed=MAX_EVAL_SEED, allow_none=False):
+        raise ValueError(seed_error)
     random.seed(seed)
     try:
         import numpy as _np
@@ -129,6 +168,65 @@ OnFrame = Callable[[int, dict[str, Any], dict[str, Any]], None]
 # Success function: called after each step during evaluate().
 # success_fn(observation) -> bool
 SuccessFn = Callable[[dict[str, Any]], bool]
+
+
+def _criterion_verdict(
+    check: Callable[[Any], bool],
+    subject: Any,
+    *,
+    label: str,
+    episode: int,
+    step: int,
+) -> bool:
+    """Evaluate an episode-outcome criterion, making a raise actionable.
+
+    The eval loops call a caller-supplied outcome criterion after every applied
+    action: :meth:`PolicyRunner.evaluate`'s ``success_fn`` and a benchmark
+    spec's ``is_success`` / ``is_failure``. Every other per-step hook on those
+    paths already states what a raise means - ``on_frame`` is best-effort
+    telemetry (warn and continue), ``spec.on_step`` returns ``status="error"``
+    naming the hook, and :meth:`PolicyRunner.run`'s ``stop_when`` is fatal
+    because the caller asked for an early-return semantics the runner can no
+    longer honor. The outcome criterion decides the evaluation's headline
+    number, so a raise is fatal for the same reason: a ``success_rate``
+    averaged over episodes whose outcome was never determined is not a
+    measurement, and reporting one would misreport the evaluation. What this
+    adds is the message - which criterion, which episode, which step - not a
+    change of posture.
+
+    ``bool()`` mirrors ``stop_when``'s coercion, so a NumPy scalar verdict -
+    what ``observation["x"] > 0.5`` returns, and not an instance of ``bool`` -
+    keeps working unchanged.
+
+    Args:
+        check: The criterion. Receives ``subject``, returns a truthy verdict.
+        subject: What the criterion is evaluated against - the post-action
+            observation for ``success_fn``, the live sim for a spec predicate.
+        label: Criterion name for the message (e.g. ``"success_fn"``).
+        episode: Zero-based episode index, so the message locates the failure.
+        step: Control step within that episode, likewise.
+
+    Returns:
+        The criterion's verdict, coerced with ``bool()``.
+
+    Raises:
+        RuntimeError: If ``check`` raises. Chains the original and names the
+            criterion, the episode and the step, so the failure is locatable
+            instead of arriving as a bare ``KeyError`` from inside the loop.
+            Whether that surfaces as a raise or an error envelope stays each
+            eval method's own posture: ``run`` converts it via its terminal
+            handler, while ``evaluate`` propagates rollout failures by design
+            (a raising ``get_actions`` and a lost recording frame reach the
+            caller the same way).
+    """
+    try:
+        return bool(check(subject))
+    except Exception as e:
+        raise RuntimeError(
+            f"{label} raised at episode {episode}, step {step}: {e!r}. The episode-outcome "
+            "criterion cannot be evaluated, so the evaluation is aborted rather than reporting "
+            "a success_rate over episodes whose outcome was never determined."
+        ) from e
 
 
 def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
@@ -363,7 +461,7 @@ class _RolloutVideoWriter:
 
     Extracted from :meth:`PolicyRunner.run` so the multi-episode evaluation loop
     (:meth:`PolicyRunner.evaluate`) records rollout video identically - one
-    source of truth for the security-sensitive path validation (see PR #930)
+    source of truth for the security-sensitive path validation
     and the frame-capture cadence, rather than two copies that can drift.
     """
 
@@ -401,10 +499,16 @@ class _RolloutVideoWriter:
         # separators, ".." traversal, and a symlinked target before we makedirs +
         # open a writer on it. Absolute paths stay allowed (the historic
         # contract); set STRANDS_ROBOTS_VIDEO_ROOT to sandbox them.
-        _sb_root, _allow_abs = video_sandbox_args()
+        _sb_root, _allow_abs, _allow_abs_env = video_sandbox_args()
         try:
             resolved = str(
-                validate_output_path(video.path, sandbox_root=_sb_root, allow_abs=_allow_abs, label="video path")
+                validate_output_path(
+                    video.path,
+                    sandbox_root=_sb_root,
+                    allow_abs=_allow_abs,
+                    label="video path",
+                    allow_abs_env=_allow_abs_env,
+                )
             )
         except ValueError as _e:
             return None, {"status": "error", "content": [{"text": f"video recording: {_e}"}]}
@@ -779,6 +883,152 @@ class PolicyRunner:
     def __init__(self, sim: SimEngine):
         self.sim = sim
 
+    #: Observation key prefix for a named body's world pose, merged in by
+    #: :meth:`_observe` for every body a policy declares in
+    #: :attr:`~strands_robots.policies.base.Policy.required_bodies`.
+    _BODY_KEY_PREFIX = "body."
+
+    #: ``get_body_state`` json field -> observation key suffix. The backend
+    #: reports a body's pose under its own field names; the observation spells
+    #: them like the floating-base signals already in the schema
+    #: (``base_pos`` / ``base_quat`` / ``base_lin_vel`` / ``base_ang_vel``) so a
+    #: policy reads one convention for the base and for any other link.
+    _BODY_POSE_FIELDS: tuple[tuple[str, str], ...] = (
+        ("position", "pos"),
+        ("quaternion", "quat"),
+        ("linear_velocity", "lin_vel"),
+        ("angular_velocity", "ang_vel"),
+    )
+
+    def _resolve_required_bodies(self, policy: Policy | None) -> tuple[str, ...]:
+        """Validate a policy's declared ``required_bodies`` once, before the rollout.
+
+        Resolving up front is the whole point: a mimic tracker reads its anchor
+        link on EVERY tick, so a name the scene does not contain has to fail
+        here - with the available body names - rather than 300 steps of a
+        silently absent key that the policy reads as a zero pose.
+
+        Args:
+            policy: The policy about to be rolled out. ``None`` (replay) and a
+                policy that declares nothing both resolve to ``()``.
+
+        Returns:
+            Ordered, de-duplicated body names to merge into each observation.
+
+        Raises:
+            TypeError: If ``required_bodies`` is not a sequence of non-empty
+                strings. A bare ``str`` is refused explicitly rather than
+                iterated into one entry per character.
+            RuntimeError: If the backend exposes no ``get_body_state``, or a
+                declared body does not resolve in the current scene. Raised
+                rather than returned for the reason this layer raises
+                everywhere else: ``PolicyRunner`` is drivable directly and a
+                direct caller has no envelope to read a refusal from.
+        """
+        declared = getattr(policy, "required_bodies", ()) or ()
+        if not declared:
+            return ()
+        if isinstance(declared, str):
+            raise TypeError(
+                f"{type(policy).__name__}.required_bodies must be a sequence of body names, "
+                f"not a bare str ({declared!r}) - a str iterates into one entry per character. "
+                f"Use a tuple: ('{declared}',)."
+            )
+        bodies: list[str] = []
+        for name in declared:
+            if not isinstance(name, str) or not name.strip():
+                raise TypeError(
+                    f"{type(policy).__name__}.required_bodies entries must be non-empty "
+                    f"body-name strings, got {name!r}."
+                )
+            if name not in bodies:
+                bodies.append(name)
+
+        probe = getattr(self.sim, "get_body_state", None)
+        if not callable(probe):
+            raise RuntimeError(
+                f"{type(policy).__name__} declares required_bodies={tuple(bodies)}, but backend "
+                f"{type(self.sim).__name__} exposes no get_body_state() to read a named body's "
+                f"pose from. Run this policy on a backend that implements it (MuJoCo, Isaac)."
+            )
+        for name in bodies:
+            result = probe(name)
+            if not isinstance(result, dict) or result.get("status") != "success":
+                detail = ""
+                if isinstance(result, dict):
+                    detail = " ".join(
+                        str(block.get("text", "")) for block in result.get("content", []) if isinstance(block, dict)
+                    ).strip()
+                raise RuntimeError(
+                    f"{type(policy).__name__} declares required_bodies entry {name!r}, which does "
+                    f"not resolve to a body in the current scene. {detail}".rstrip()
+                )
+        return tuple(bodies)
+
+    def _observe(
+        self,
+        robot_name: str | None,
+        *,
+        skip_images: bool,
+        bodies: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        """Fetch one observation, merging the world pose of each declared body.
+
+        The single point where every rollout loop in this module reads state, so
+        the ``required_bodies`` contract holds identically on the synchronous,
+        chunked and RTC paths instead of only whichever one was patched.
+
+        Args:
+            robot_name: Robot to observe, forwarded verbatim to the backend.
+            skip_images: Backend's camera-render hint (from ``requires_images``).
+            bodies: Pre-resolved names from :meth:`_resolve_required_bodies`.
+                Empty (the default) returns the backend's dict untouched, so a
+                policy that declares nothing pays no extra backend call.
+
+        Returns:
+            The observation dict, plus ``body.<name>.{pos,quat,lin_vel,ang_vel}``
+            for each requested body.
+        """
+        obs = self.sim.get_observation(robot_name=robot_name, skip_images=skip_images)
+        if not bodies:
+            return obs
+        for name in bodies:
+            state = self._body_pose(name)
+            for field, suffix in self._BODY_POSE_FIELDS:
+                value = state.get(field)
+                if value is not None:
+                    obs[f"{self._BODY_KEY_PREFIX}{name}.{suffix}"] = [float(v) for v in value]
+        return obs
+
+    def _body_pose(self, body_name: str) -> dict[str, Any]:
+        """Read one body's pose json out of the backend's ``get_body_state`` envelope.
+
+        Args:
+            body_name: Body name, already validated by
+                :meth:`_resolve_required_bodies`.
+
+        Returns:
+            The backend's pose json block.
+
+        Raises:
+            RuntimeError: If the body stopped resolving mid-rollout (a scene
+                replace can remove it) or the envelope carries no json block.
+                The pose feeds the policy's network input, so an absent one is
+                fatal - not a key to quietly omit from this tick's observation.
+        """
+        result = self.sim.get_body_state(body_name)  # type: ignore[attr-defined]
+        if isinstance(result, dict) and result.get("status") == "success":
+            for block in result.get("content", []):
+                if not isinstance(block, dict):
+                    continue
+                pose = block.get("json")
+                if isinstance(pose, dict):
+                    return pose
+        raise RuntimeError(
+            f"required body {body_name!r} no longer resolves to a pose in the scene; "
+            f"a policy declaring it via required_bodies cannot be stepped."
+        )
+
     def _control_substeps(self, control_frequency: float, override: int | None = None) -> int:
         """Physics steps per applied action so a position-servo arm tracks the
         full control period (1/control_frequency), not a single physics dt.
@@ -951,11 +1201,18 @@ class PolicyRunner:
                 construction so tests can inject mocks trivially.
             instruction: Natural-language instruction forwarded to the policy.
             duration: Wall-clock seconds to run (interpreted as control steps
-                via ``control_frequency``). Used only when ``n_steps`` is None.
+                via ``control_frequency``). Used only when ``n_steps`` is None,
+                and validated only then: a finite positive number, the domain
+                :meth:`~strands_robots.simulation.base.SimEngine._validate_duration`
+                applies at the facade. Raises ``ValueError`` otherwise.
             n_steps: Explicit integer step-count horizon resolved by the caller
-                from ``n_steps`` / the legacy ``max_steps`` alias. When set (and
-                > 0) it is the exact number of control steps executed, bypassing
-                the lossy ``int(duration * control_frequency)`` recomputation.
+                from ``n_steps`` / the legacy ``max_steps`` alias. When given it
+                is the exact number of control steps executed, bypassing the
+                lossy ``int(duration * control_frequency)`` recomputation. Must
+                be a positive integer - the domain
+                :meth:`~strands_robots.simulation.base.SimEngine._resolve_horizon`
+                applies at the facade - and a value outside it raises
+                ``ValueError`` rather than deferring the horizon to ``duration``.
             control_frequency: Target Hz for ``policy.get_actions`` calls.
             action_horizon: Max actions consumed per policy call before
                 requerying observation. Clamped up to the policy's own
@@ -963,6 +1220,11 @@ class PolicyRunner:
                 open-loop chunk replay never has its chunk truncated
                 below N (the effective horizon is
                 ``max(action_horizon, policy.actions_per_step)``).
+                Must be a positive integer: a value outside that domain is
+                either clamped to 1 - running a re-query interval the caller
+                never asked for - or leaks a bare conversion error out of the
+                first inference, so it is refused here exactly as
+                ``run_policy`` refuses it.
             fast_mode: If True, skip real-time ``time.sleep`` between steps.
             video: Optional :class:`VideoConfig` - set ``video.path`` to enable
                 MP4 recording via :meth:`SimEngine.render`.
@@ -980,13 +1242,34 @@ class PolicyRunner:
                 VLA providers ignore unknown kwargs per the #300 contract, so
                 this is safe to forward unconditionally. ``None`` forwards no
                 extra kwargs (identical to the historical behaviour).
-            max_onframe_failures: Maximum *consecutive* non-``CooperativeStop``
-                exceptions from the ``on_frame`` hook before the runner aborts
-                the episode. ``None`` (default) uses
+            max_onframe_failures: Maximum *consecutive* exceptions from the
+                ``on_frame`` hook before the runner aborts the episode.
+                ``CooperativeStop`` and
+                :class:`~strands_robots.dataset_recorder.RecordingFrameError` are
+                exempt from the count rather than tolerated by it: the first is
+                the documented graceful stop and the second is data loss, so a
+                lost dataset frame aborts on the FIRST occurrence whatever this
+                is set to. ``None`` (default) uses
                 ``_MAX_CONSECUTIVE_ONFRAME_FAILURES`` (currently ``5``). A
                 broken recording hook otherwise silently produces empty
                 datasets - see GH #117. Non-consecutive failures reset the
-                counter.
+                counter. Must otherwise be a positive integer
+                (:func:`~strands_robots.utils.positive_count_error`), raised
+                rather than returned because raising is this layer's contract:
+                a value the counter cannot be compared against would disable
+                the abort above instead of resizing it.
+            control_substeps: Physics steps advanced per applied action. ``None``
+                (default) derives the count from ``control_frequency`` and the
+                backend's physics timestep, so a position-servo arm integrates
+                over the full control period instead of a single physics ``dt``.
+                An explicit value must be a positive integer: ``0``, a negative
+                value, a bool or a float raises :class:`ValueError` rather than
+                being clamped, because a clamped ``0`` reinstates the exact
+                under-integration the derivation exists to prevent - the arm
+                then covers a fraction of the way to each target before the next
+                action overwrites it, and the rollout looks like a no-op. The
+                public entry points refuse such a value with a structured error
+                before it reaches the runner.
             seed: Optional master RNG seed for a reproducible single rollout.
                 When set, ``set_eval_seed`` reseeds Python / NumPy / torch /
                 cuDNN and ``policy.reset(seed=...)`` is forwarded so the
@@ -1107,6 +1390,75 @@ class PolicyRunner:
         # state untouched, preserving historical behaviour.
         # Refuse before any frame reaches the engine's open recording.
         self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.run")
+        # The domain is enforced here as well as at the facades one layer up:
+        # PolicyRunner is drivable directly, and a direct caller has no
+        # structured envelope to read a refusal from. Same shared rule as
+        # SimEngine._validate_seed, raised rather than returned because raising
+        # is this layer's contract.
+        # Local import: base.py imports PolicyRunner at module level, so
+        # reaching the shared domain from here has to stay deferred - the
+        # same convention this module already uses for
+        # simulation.benchmark / simulation.recording / simulation.predicates.
+        from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
+
+        if seed_error := randomization_seed_error(seed, "PolicyRunner.run", max_seed=MAX_EVAL_SEED):
+            raise ValueError(seed_error)
+        # Same shared domain the facade one layer up enforces, raised rather
+        # than returned because raising is this layer's contract: PolicyRunner is
+        # drivable directly and a direct caller has no envelope to read a refusal
+        # from. A deadline outside the domain makes the seam swap's own
+        # "policy inference is stuck" diagnosis false - see
+        # SimEngine._validate_rtc_inference_timeout for the measured failure modes.
+        if rtc_inference_timeout_s is not None and (
+            timeout_error := positive_finite_number_error(
+                rtc_inference_timeout_s, "rtc_inference_timeout_s", "PolicyRunner.run"
+            )
+        ):
+            raise ValueError(timeout_error)
+        # Same shared domain, raised for the same reason: a limit outside it
+        # silences the consecutive-failure abort this runner owns, and the
+        # warning that would report the hook - see
+        # SimEngine._validate_onframe_failure_limit for the measured failure modes.
+        if max_onframe_failures is not None and (
+            limit_error := positive_count_error(max_onframe_failures, "max_onframe_failures", "PolicyRunner.run")
+        ):
+            raise ValueError(limit_error)
+        # Same shared domain the facade one layer up enforces, raised for the
+        # same reason: PolicyRunner is drivable directly and a direct caller has
+        # no envelope to read a refusal from. A horizon outside the domain is
+        # silently clamped to 1 by resolve_chunk_length - so the rollout runs a
+        # re-query interval the caller never asked for - or, when int() cannot
+        # convert it, leaks a bare conversion error out of the FIRST inference
+        # naming neither the parameter nor this method. Unconditional, exactly as
+        # the entry point is: whether the policy carries cross-chunk RTC state
+        # (and so ignores the horizon) is a property of the policy rather than of
+        # the caller's request. See SimEngine._validate_action_horizon.
+        if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.run"):
+            raise ValueError(horizon_error)
+        # The horizon is a PAIR, and it is resolved here, so both halves are
+        # validated here. ``n_steps`` whenever it is given: that is the exact
+        # condition SimEngine._resolve_horizon refuses it on, so a step count
+        # refused for a rollout through the facade cannot be accepted for the
+        # same rollout driven directly. Without it, a value outside the domain
+        # did not fail - the ``> 0`` test below handed the horizon to the OTHER
+        # knob, so ``n_steps=0`` ran ``duration``'s 10.0s default (500 steps and
+        # 500 applied actions nobody asked for), while ``2.7``/``True``
+        # truncated to a horizon nobody typed.
+        if n_steps is not None:
+            if steps_error := positive_count_error(n_steps, "n_steps", "PolicyRunner.run"):
+                raise ValueError(steps_error)
+        # ``duration`` only when no step count was given, because that is the
+        # only case in which it sets the horizon - the same ``if n_steps is
+        # None`` gate SimEngine.run_policy applies around _validate_duration,
+        # so neither layer reports on a parameter the rollout will not read.
+        # Unvalidated, ``0``/``-5`` returned status=success with zero steps and
+        # ``stopped_reason="budget"`` - the field an agent reads to decide
+        # whether to retry, asserting a horizon was exhausted when there was
+        # none - and ``nan``/``inf``/a string leaked a bare conversion or
+        # operand error out of the arithmetic below, naming neither the
+        # parameter nor this method.
+        elif duration_error := positive_finite_number_error(duration, "duration", "PolicyRunner.run"):
+            raise ValueError(duration_error)
         if seed is not None:
             set_eval_seed(seed)
             try:
@@ -1185,6 +1537,11 @@ class PolicyRunner:
         stop_predicate_fired = False
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
+        # Named-body poses the policy declared it needs (mimic trackers read an
+        # anchor link). Resolved once here so an unknown name fails before the
+        # loop instead of being read as a zero pose on every tick; () for the
+        # overwhelming majority of policies, which adds no backend call.
+        _bodies = self._resolve_required_bodies(policy)
         # Open-loop chunk replay consumes H actions from ONE observation. That
         # observation is the correct PRE-action state for the FIRST action only;
         # the sim advances as the chunk drains. When a dataset recording is
@@ -1213,7 +1570,15 @@ class PolicyRunner:
         # seam at any other frequency.
         policy.set_control_frequency(control_frequency)
         # Initialize BEFORE try so CooperativeStop never sees unbound names.
-        start_time = time.time()
+        # ``time.monotonic()``: the only thing derived from this base is how
+        # long the rollout ran, and a duration is measured rather than
+        # recorded. On ``time.time()`` a wall-clock step - an NTP correction, a
+        # ``date -s``, a resume from suspend - moved the reported ``elapsed_s``
+        # by the size of the step while the rollout itself ran exactly as long
+        # as it did, so a 30s step turned a 2s episode into a 32s record and a
+        # backward step reported it negative. Named for the clock it holds so a
+        # future reader does not reach for ``time.time()`` again.
+        start_mono = time.monotonic()
         step_count = 0
         try:
             # Prefer an explicit integer step count when the caller resolved one
@@ -1222,8 +1587,8 @@ class PolicyRunner:
             # n_steps / control_frequency`` truncates on any frequency that does
             # not divide evenly (e.g. n_steps=1 @ 49 Hz -> 0 steps reported as
             # success). Forwarding the count verbatim keeps the horizon exact.
-            if n_steps is not None and n_steps > 0:
-                total_steps = int(n_steps)
+            if n_steps is not None:
+                total_steps = n_steps
             else:
                 total_steps = int(duration * control_frequency)
             action_sleep = 1.0 / control_frequency
@@ -1484,7 +1849,7 @@ class PolicyRunner:
 
                 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rtc-prefetch")
                 try:
-                    cur_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                    cur_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                     cur_chunk = _query_chunk(cur_obs)
                     rtc_chunks_acquired += 1
                     if not cur_chunk:
@@ -1506,7 +1871,7 @@ class PolicyRunner:
                             else:
                                 # Chunk was too short to trigger a prefetch;
                                 # fall back to a synchronous re-query.
-                                cur_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                                cur_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                                 cur_chunk = _query_chunk(cur_obs)
                             rtc_chunks_acquired += 1
                             if not cur_chunk:
@@ -1519,7 +1884,7 @@ class PolicyRunner:
                                     "async-RTC chunk arrived empty; falling back to one "
                                     "synchronous re-query before erroring."
                                 )
-                                cur_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                                cur_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                                 cur_chunk = _query_chunk(cur_obs)
                                 rtc_chunks_acquired += 1
                                 if not cur_chunk:
@@ -1534,7 +1899,7 @@ class PolicyRunner:
                         # Fire the next inference once we are ~50% through the
                         # current chunk, on a fresh mid-chunk observation.
                         if prefetch is None and idx >= prefetch_trigger:
-                            prefetch_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                            prefetch_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                             # The prefetched chunk first applies after the
                             # remaining steps of the current chunk drain - a
                             # known integer, independent of how long inference
@@ -1552,7 +1917,7 @@ class PolicyRunner:
                         # unaffected - it already consumed cur_obs to produce
                         # this chunk.
                         if _record_per_step_obs:
-                            step_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                            step_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                         else:
                             step_obs = cur_obs
                         _apply(step_obs, cur_chunk[idx])
@@ -1573,7 +1938,7 @@ class PolicyRunner:
                     executor.shutdown(wait=True)
             else:
                 while step_count < total_steps:
-                    observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                    observation = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                     chunk = _query_chunk(observation)
                     for chunk_idx, action_dict in enumerate(chunk):
                         if step_count >= total_steps:
@@ -1586,7 +1951,7 @@ class PolicyRunner:
                         # the freshly-queried observation (no re-render, sim has
                         # not stepped yet). Inference is unaffected.
                         if _record_per_step_obs and chunk_idx > 0:
-                            step_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                            step_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                         else:
                             step_obs = observation
                         _apply(step_obs, action_dict)
@@ -1621,7 +1986,7 @@ class PolicyRunner:
         if stop_predicate_fired:
             stopped_early = True
             stopped_reason = "predicate"
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_mono
         sim_time = self._maybe_sim_time()
         if not stopped_early:
             prefix = "Policy complete"
@@ -1798,7 +2163,13 @@ class PolicyRunner:
                 when omitted; an explicit name not present in the sim is
                 rejected with a structured error (no silent replay onto a
                 non-existent robot).
-            episode: Episode index in the dataset (non-negative).
+            episode: Episode index in the dataset. Must be a non-negative
+                whole number; any real scalar with an integral value is
+                accepted (including a NumPy scalar such as ``np.int64(2)``),
+                and a bool, a non-integral value, a non-finite value or a
+                non-numeric one is rejected with a structured error before the
+                dataset is downloaded. Refused rather than coerced because the
+                index selects which trajectory reaches the actuators.
             root: Optional local dataset root override.
             speed: Playback speed multiplier (1.0 = real time). Must be a
                 positive, finite number (any real scalar, including a NumPy
@@ -1874,6 +2245,26 @@ class PolicyRunner:
         if key_map_error is not None:
             return key_map_error
 
+        # ``episode`` selects WHICH recorded episode is replayed, so an
+        # unusable index is not a slow replay - it is the wrong trajectory
+        # sent to a real position-servo robot. It reached
+        # ``load_lerobot_episode``'s guard as a bare ``< 0`` test, which a
+        # bool passes: ``replay(episode=True)`` resolved episode 1 and
+        # replayed it under ``status="success"``. Validated here, with
+        # ``speed`` and ``action_key_map``, for the two reasons those are:
+        # the refusal arrives through this method's documented envelope
+        # rather than as a raise, and it lands before the (potentially
+        # multi-minute) dataset download. The rule is the shared one the
+        # neighbouring ``replay_episode`` teleop knob already applies, so
+        # the refusal is identical across both spellings of the parameter
+        # rather than merely equivalent in verdict.
+        if msg := non_negative_whole_number_error(episode, "episode", "replay"):
+            return {"status": "error", "content": [{"text": msg}]}
+        # Coerced for the same reason ``speed`` is: the accepted value flows
+        # into ``load_lerobot_episode`` and the returned status field, and a
+        # NumPy scalar is not natively JSON-serialisable.
+        episode = int(episode)
+
         try:
             from strands_robots.dataset_recorder import load_lerobot_episode
         except ImportError:
@@ -1928,7 +2319,9 @@ class PolicyRunner:
         # frame, so it is deliberately excluded here.
         n_substeps = self._control_substeps(dataset_fps)
         frames_applied = 0
-        start_time = time.time()
+        # The replayed episode's own duration, on the same clock as the pacer
+        # below for the same reason: it is measured, not recorded.
+        start_mono = time.monotonic()
 
         # Replay only consumes the recorded action vector, which lives in the
         # dataset's parquet column store. A real LeRobotDataset's __getitem__
@@ -1945,7 +2338,15 @@ class PolicyRunner:
             frame_source = hf_dataset
 
         for frame_idx in range(episode_length):
-            step_start = time.time()
+            # The frame pacer's base. This one decides rather than reports: the
+            # sleep below is computed from it, so on ``time.time()`` a
+            # wall-clock step mid-episode either stalled the replay for the size
+            # of the step (backward: the subtraction goes negative and the sleep
+            # becomes ``frame_interval + step``) or dropped the pacing entirely
+            # and ran the remaining frames unthrottled (forward: the sleep goes
+            # negative). Both left a real robot tracking recorded targets at the
+            # wrong rate under ``status="success"``.
+            step_start_mono = time.monotonic()
             try:
                 frame = frame_source[episode_start + frame_idx]
             except Exception as e:  # noqa: BLE001 - decoder/library errors are opaque
@@ -2047,11 +2448,11 @@ class PolicyRunner:
                     }
                 frames_applied += 1
 
-            sleep_time = frame_interval - (time.time() - step_start)
+            sleep_time = frame_interval - (time.monotonic() - step_start_mono)
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        duration = time.time() - start_time
+        duration = time.monotonic() - start_mono
         return {
             "status": "success",
             "content": [
@@ -2106,7 +2507,7 @@ class PolicyRunner:
           ``is_success`` / ``is_failure`` hooks, cumulative dense reward,
           robot-compatibility validation. ``max_steps`` from the spec wins.
         * **``success_fn=``**: legacy sparse-success path kept for
-          backwards compatibility with PR #85. Equivalent to a
+          backwards compatibility. Equivalent to a
           ``BenchmarkProtocol`` whose ``on_step`` always returns
           ``StepInfo(reward=0.0, done=False)``.
 
@@ -2117,22 +2518,35 @@ class PolicyRunner:
             robot_name: Robot to evaluate.
             policy: Already-constructed ``Policy`` instance.
             instruction: Instruction forwarded to the policy.
-            n_episodes: Number of reset → rollout episodes.
+            n_episodes: Number of reset → rollout episodes. Must be a
+                positive integer, refused as in :meth:`run`: a bound outside
+                that domain does not shorten the evaluation, it removes it
+                while still reporting a ``success_rate`` over it.
             max_steps: Cap per episode. Ignored when ``spec`` is provided
-                (``spec.max_steps`` wins).
+                (``spec.max_steps`` wins), and validated on the same domain as
+                ``n_episodes`` only when it is the horizon actually read - so a
+                ``spec=`` call is not refused for a value it never reads.
             success_fn: Legacy success predicate (see above).
             spec: :class:`BenchmarkProtocol` to drive the eval. When
                 provided, overrides the ``success_fn`` path.
             seed: Master RNG seed. Each episode derives a child RNG from it,
                 so evaluations are reproducible within a process. Only used
                 when ``spec`` is provided.
+            action_horizon: Max actions consumed per policy call before
+                requerying the observation, as in :meth:`run`. Clamped up to the
+                policy's own chunk length when it emits more.
+                Must be a positive integer, refused as in :meth:`run`.
             on_frame: Optional ``(step, observation, action) -> None`` hook
                 fired per applied control step on the eval thread, after
                 ``sim.send_action``. Forwarded on BOTH the ``spec=`` and the
                 legacy ``success_fn`` paths; ``step`` is a monotonic index
-                that continues across episode boundaries. A non-
-                ``CooperativeStop`` hook exception is logged at WARN and never
-                aborts the eval; raising :class:`CooperativeStop` stops the
+                that continues across episode boundaries. A hook exception
+                other than ``CooperativeStop`` or
+                :class:`~strands_robots.dataset_recorder.RecordingFrameError` is
+                logged at WARN and never aborts the eval; a
+                ``RecordingFrameError`` is data loss rather than telemetry and
+                propagates on the first occurrence. Raising
+                :class:`CooperativeStop` stops the
                 evaluation gracefully after the episodes completed so far
                 (the result carries ``stopped_early=True`` and
                 ``episodes_completed``), matching :meth:`run`. Use this for
@@ -2140,6 +2554,18 @@ class PolicyRunner:
                 from the script main (e.g. Strands ``Agent`` tool dispatch
                 under asyncio) - see #191 and
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`.
+            control_frequency: Target Hz for ``policy.get_actions`` calls, as in
+                :meth:`run`. Also sets the wall-clock period each applied action
+                is integrated over, via the ``control_substeps`` derivation
+                below, so an eval steps physics for the same period per action
+                that :meth:`run` does.
+            control_substeps: Physics steps advanced per applied action, with
+                the same contract as :meth:`run`: ``None`` (default) derives the
+                count from ``control_frequency`` and the backend's physics
+                timestep, and an explicit value must be a positive integer or
+                :class:`ValueError` is raised rather than the value being
+                clamped. Passing ``1`` here is what made eval rollouts look
+                like a policy no-op before the derivation existed.
             async_rtc: Opt-in overlap of policy inference with action-chunk
                 execution on the legacy ``success_fn`` path, mirroring
                 :meth:`run`. Defaults to ``False`` (synchronous): the world is
@@ -2200,6 +2626,59 @@ class PolicyRunner:
         """
         # Refuse before any frame reaches the engine's open recording.
         self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.evaluate")
+        # Local import: base.py imports PolicyRunner at module level, so
+        # reaching the shared domain from here has to stay deferred - the
+        # same convention this module already uses for
+        # simulation.benchmark / simulation.recording / simulation.predicates.
+        from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
+
+        if seed_error := randomization_seed_error(seed, "PolicyRunner.evaluate", max_seed=MAX_EVAL_SEED):
+            raise ValueError(seed_error)
+        # Same shared domain the facade one layer up enforces, raised rather
+        # than returned because raising is this layer's contract: PolicyRunner is
+        # drivable directly and a direct caller has no envelope to read a refusal
+        # from. A deadline outside the domain makes the seam swap's own
+        # "policy inference is stuck" diagnosis false - see
+        # SimEngine._validate_rtc_inference_timeout for the measured failure modes.
+        if rtc_inference_timeout_s is not None and (
+            timeout_error := positive_finite_number_error(
+                rtc_inference_timeout_s, "rtc_inference_timeout_s", "PolicyRunner.evaluate"
+            )
+        ):
+            raise ValueError(timeout_error)
+        # Same shared domain, raised for the same reason as in run(): a horizon
+        # outside it is clamped to 1 or leaks a bare conversion error from the
+        # first inference. Checked before the spec delegation below so the
+        # benchmark path cannot reach _evaluate_with_spec with a value the
+        # entry point would have refused.
+        if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.evaluate"):
+            raise ValueError(horizon_error)
+        # The two bounds of this method's own episode loop, on the same shared
+        # domain and raised for the same reason. A horizon outside the domain
+        # degrades a rollout; a LOOP BOUND outside it removes the evaluation
+        # while still reporting one. ``n_episodes=0`` returns status="success"
+        # over zero episodes and ``max_steps=0`` over two episodes of zero
+        # length - both with ``success_rate: 0.0`` and ``success_measured:
+        # True``, the flag that exists so a 0.0 cannot be read as a
+        # measurement, and with no action ever applied. ``max_steps=inf`` is
+        # worse than degenerate: ``while steps < max_steps`` has no false case,
+        # so the episode never ends. Refused here, before ``sim.reset()``,
+        # ``set_eval_seed`` (which reseeds the process-global RNG) and the first
+        # inference, so a rejected eval costs nothing and leaves no global side
+        # effect. This is also what makes ``_evaluate_with_spec``'s claim that
+        # "every other bound of this nested loop is checked by the public entry
+        # point before it gets here" true for a direct caller of this method.
+        if episodes_error := positive_count_error(n_episodes, "n_episodes", "PolicyRunner.evaluate"):
+            raise ValueError(episodes_error)
+        # ``max_steps`` is only read on the legacy ``success_fn`` path: the
+        # ``spec=`` path takes its horizon off the benchmark
+        # (``spec.max_steps``, checked at its read below) and this parameter is
+        # not forwarded there at all, so refusing it for a ``spec=`` call would
+        # reject a value that call never reads. Effectiveness is a property of
+        # the request here - ``spec`` is a parameter of this signature - so the
+        # check can be gated on it without guessing.
+        if spec is None and (steps_error := positive_count_error(max_steps, "max_steps", "PolicyRunner.evaluate")):
+            raise ValueError(steps_error)
         if spec is not None and success_fn is not None:
             return {
                 "status": "error",
@@ -2277,10 +2756,30 @@ class PolicyRunner:
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
+        # Named-body poses the policy declared it needs (mimic trackers read an
+        # anchor link). Resolved once here so an unknown name fails before the
+        # loop instead of being read as a zero pose on every tick; () for the
+        # overwhelming majority of policies, which adds no backend call.
+        _bodies = self._resolve_required_bodies(policy)
         # Step physics for the full control period per action, same derivation
         # as run(). The default n_substeps=1 made eval rollouts under-step.
         n_substeps = self._control_substeps(control_frequency, control_substeps)
         policy.set_control_frequency(control_frequency)
+
+        # Reproducibility for this path. ``seed`` reached exactly one statement
+        # in this method - the ``_evaluate_with_spec`` delegation above - so the
+        # loop below ran unseeded while reporting success, and every
+        # ``eval_policy`` call lands here because that facade exposes no
+        # ``spec``. A caller who asked for a reproducible eval got a different
+        # rollout on every run, with ``policy.reset(seed=...)`` never forwarded -
+        # the half a service-mode policy needs to reseed its own process.
+        #
+        # A ``None`` seed leaves the master RNG unbuilt rather than seeding it
+        # from entropy: an unseeded eval must not acquire a global RNG side
+        # effect it never had.
+        master_rng = random.Random(seed) if seed is not None else None
+        if seed is not None:
+            set_eval_seed(seed)
 
         # RTC telemetry, reported in the result json so inference cost (and,
         # under async_rtc, latency masking) is provable without grepping logs.
@@ -2292,7 +2791,7 @@ class PolicyRunner:
         rtc_prefetch_blocks = 0
 
         def _observation_fn() -> dict[str, Any]:
-            return self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+            return self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
 
         def _query_chunk(observation: dict[str, Any], observed_delay: int = 0) -> list[dict[str, Any]]:
             # Tell latency-sensitive (RTC) policies how many control steps
@@ -2331,7 +2830,9 @@ class PolicyRunner:
             # Fire AFTER ``send_action`` (post-action obs unavailable yet, so
             # pass the pre-action obs the chunk was queried with - matches
             # ``_evaluate_with_spec``). The hook is best-effort telemetry: a
-            # failure is logged at WARN and never aborts the eval.
+            # GENERIC failure is logged at WARN and never aborts the eval. The
+            # two classes handled below are not telemetry and are exempt from
+            # that posture.
             nonlocal global_step
             if current_vwriter is not None:
                 current_vwriter.capture(ep_step)
@@ -2367,6 +2868,25 @@ class PolicyRunner:
                 if _video_err is not None:
                     return _video_err
 
+                # Per-episode reseed, mirroring ``_evaluate_with_spec``: episode
+                # N starts from the same RNG state regardless of what episodes
+                # 0..N-1 drew, so a stochastic policy's sampling is stable across
+                # re-runs at the same master seed. Forwarded to ``policy.reset``
+                # too, because a service-mode policy samples in another process
+                # that ``set_eval_seed`` cannot reach. Best-effort, like every
+                # other ``reset`` call site.
+                if master_rng is not None:
+                    episode_seed = master_rng.randint(0, 2**31 - 1)
+                    set_eval_seed(episode_seed)
+                    try:
+                        policy.reset(seed=episode_seed)
+                    except Exception as e:  # noqa: BLE001 - reset is best-effort
+                        logger.warning(
+                            "policy.reset(seed=%d) raised %s; continuing without per-episode reset",
+                            episode_seed,
+                            e,
+                        )
+
                 if async_rtc:
                     # Opt-in async overlap: a single background worker computes the
                     # next chunk while the current one drains, so a chunk-emitting
@@ -2390,7 +2910,9 @@ class PolicyRunner:
                             steps += 1
                             # Check success against the LIVE post-action observation
                             # (mirrors the synchronous path / _evaluate_with_spec).
-                            if resolved_check is not None and resolved_check(_observation_fn()):
+                            if resolved_check is not None and _criterion_verdict(
+                                resolved_check, _observation_fn(), label="success_fn", episode=ep, step=steps
+                            ):
                                 success = True
                                 break
                     rtc_chunks_acquired += pipeline.chunks_acquired
@@ -2409,7 +2931,9 @@ class PolicyRunner:
                             # semantics as the chunk branch below).
                             self.sim.step(n_steps=1)
                             steps += 1
-                            if resolved_check is not None and resolved_check(_observation_fn()):
+                            if resolved_check is not None and _criterion_verdict(
+                                resolved_check, _observation_fn(), label="success_fn", episode=ep, step=steps
+                            ):
                                 success = True
                                 break
                             continue
@@ -2426,7 +2950,9 @@ class PolicyRunner:
                             # task that completes on the final step -> under-reported
                             # success_rate / inflated avg_steps. Mirrors
                             # _evaluate_with_spec's post-send is_success.
-                            if resolved_check is not None and resolved_check(_observation_fn()):
+                            if resolved_check is not None and _criterion_verdict(
+                                resolved_check, _observation_fn(), label="success_fn", episode=ep, step=steps
+                            ):
                                 success = True
                                 break
                         if success:
@@ -2564,8 +3090,38 @@ class PolicyRunner:
         # `SimEngine` from base which imports this module under TYPE_CHECKING).
         from strands_robots.simulation.benchmark import BenchmarkCompatibilityError
 
+        # The per-episode horizon is read off the benchmark, so it is the one
+        # rollout count with no parameter of its own to validate: every other
+        # bound of this nested loop (``n_episodes``, ``action_horizon``,
+        # ``control_substeps``) is checked by the public entry point before it
+        # gets here. Check it at the read instead. That covers every way a
+        # benchmark can come by its horizon - ``DeclarativeBenchmark.from_dict``,
+        # direct construction, a plain ``BenchmarkProtocol`` subclass setting the
+        # documented ``max_steps`` attribute, or an assignment to it after
+        # construction - none of which this method can see. Refuse before
+        # ``set_control_frequency`` and ``set_eval_seed``: the latter reseeds the
+        # process-global RNG, so a rejected eval must not reach it.
+        if error := positive_count_error(spec.max_steps, "max_steps", "evaluate_benchmark"):
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"{error} Benchmark {type(spec).__name__!r} declares that horizon; a "
+                            "non-positive one runs episodes of zero length and reports a 0% success "
+                            "rate over them instead of surfacing the mistake."
+                        )
+                    }
+                ],
+            }
+
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
+        # Named-body poses the policy declared it needs (mimic trackers read an
+        # anchor link). Resolved once here so an unknown name fails before the
+        # loop instead of being read as a zero pose on every tick; () for the
+        # overwhelming majority of policies, which adds no backend call.
+        _bodies = self._resolve_required_bodies(policy)
         # Full control-period substeps per action (see run() / evaluate()).
         n_substeps = self._control_substeps(control_frequency, control_substeps)
         policy.set_control_frequency(control_frequency)
@@ -2650,9 +3206,9 @@ class PolicyRunner:
                 # starts from the same RNG state regardless of what happened
                 # in episodes 0..N-1.
                 #
-                # Validated on libero-10/SCENE5: pre-#179 5-ep eval ranged
-                # 0.40-1.00 across runs; post-#179 the same eval is bit-stable
-                # (same successes list every run).
+                # Validated on libero-10/SCENE5: without the per-episode
+                # reseed a 5-episode eval ranged 0.40-1.00 across runs; with
+                # it the same eval is bit-stable (same successes every run).
                 set_eval_seed(episode_seed)
 
                 # #187 - for SERVICE-mode policies (e.g. Gr00tPolicy over
@@ -2703,7 +3259,7 @@ class PolicyRunner:
                 last_info: dict[str, Any] = {}
 
                 for _ in range(max_steps):
-                    observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                    observation = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                     # Hook: benchmarks may bridge the sim's observation schema
                     # (typically joint-space) to whatever the policy was trained
                     # on (e.g. LIBERO's Cartesian state.x/y/z/roll/pitch/yaw/gripper).
@@ -2799,11 +3355,15 @@ class PolicyRunner:
                             if info.done:
                                 stop_episode = True
                                 break
-                            if spec.is_failure(self.sim):
+                            if _criterion_verdict(
+                                spec.is_failure, self.sim, label=f"{spec_name}.is_failure", episode=ep, step=steps
+                            ):
                                 failure = True
                                 stop_episode = True
                                 break
-                            if spec.is_success(self.sim):
+                            if _criterion_verdict(
+                                spec.is_success, self.sim, label=f"{spec_name}.is_success", episode=ep, step=steps
+                            ):
                                 success = True
                                 stop_episode = True
                                 break
@@ -2827,10 +3387,14 @@ class PolicyRunner:
                         last_info = dict(info.info) if info.info else {}
                         if info.done:
                             break
-                        if spec.is_failure(self.sim):
+                        if _criterion_verdict(
+                            spec.is_failure, self.sim, label=f"{spec_name}.is_failure", episode=ep, step=steps
+                        ):
                             failure = True
                             break
-                        if spec.is_success(self.sim):
+                        if _criterion_verdict(
+                            spec.is_success, self.sim, label=f"{spec_name}.is_success", episode=ep, step=steps
+                        ):
                             success = True
                             break
 
@@ -2992,4 +3556,11 @@ class PolicyRunner:
         raise ValueError(f"Unknown success_fn string: {success_fn!r}")
 
 
-__all__ = ["PolicyRunner", "OnFrame", "SuccessFn", "CooperativeStop", "TrajectoryStep", "set_eval_seed"]
+__all__ = [
+    "PolicyRunner",
+    "OnFrame",
+    "SuccessFn",
+    "CooperativeStop",
+    "TrajectoryStep",
+    "set_eval_seed",
+]

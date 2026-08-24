@@ -27,7 +27,7 @@ surface.
 LIBERO benchmark on Isaac is NOT yet runnable end-to-end
 --------------------------------------------------------
 The agent's ``evaluate_isaac_benchmark`` tool call routes through the
-same ``IsaacSimulation.evaluate_benchmark`` path as ``run_isaac.py``,
+same ``IsaacSimulation.evaluate_benchmark`` path as ``run.py isaac``,
 so it runs the same way: ``LiberoAdapter.on_episode_start`` calls
 ``sim.load_scene(...)`` and ``IsaacSimulation.load_scene`` now realizes
 the LIBERO/BDDL-compiled MJCF as USD prims on the Isaac stage (the
@@ -105,6 +105,16 @@ from prompt context); the script owns:
   viewport cameras the way MuJoCo's ``mjData`` does, so the camera
   prim has to land on the stage before any ``render`` / recorder
   pulls from it.
+* The Isaac threading model (#1896). Isaac's kit runtime only pumps
+  updates on the thread that created ``SimulationApp``, while Strands
+  executes tool calls on worker threads -- driving the eval from the
+  tool thread directly deadlocked forever (``SimulationContext.stop()``
+  waiting on a pump the parked main thread could never run). ``main()``
+  therefore runs the ``Agent(...)`` call on a side thread, parks the
+  main thread in ``IsaacSimulation.run_pump_forever`` until the agent
+  finishes, and the tool wrapper submits the eval body back to the main
+  thread via ``run_on_main`` -- the same pump-on-main + worker-callers
+  architecture as ``examples/isaac_gs/app.py``.
 * Rollout-video MP4 recording, at parity with
   ``run_mujoco_agent.py``: the script arms
   ``IsaacSimulation.start_cameras_recording`` before the agent runs and
@@ -112,7 +122,8 @@ from prompt context); the script owns:
   renderer is thread-bound, capture is synchronous -- the recorder's
   ``on_frame`` closure (stashed at module scope so it can cross the
   ``@tool`` boundary) is threaded into ``evaluate_benchmark`` and grabs
-  one ``render()`` frame per control step on the eval thread. Produces a
+  one ``render()`` frame per control step on the main (pump) thread,
+  where ``run_on_main`` executes the eval. Produces a
   real ``rollouts/<date>/{rec_name}__image.mp4``. See
   strands-labs/robots-sim#112.
 
@@ -131,7 +142,7 @@ Usage
 
     # 2) Real run against `nvidia/GR00T-N1.7-LIBERO`. Script auto-
     #    orchestrates the GR00T inference container (idempotent). Pre-
-    #    condition: HF token at `~/.cache/huggingface/token` (gated
+    #    condition: an HF token, from HF_TOKEN or `hf auth login` (gated
     #    Cosmos-Reason2-2B backbone) + Docker + an NVIDIA GPU + Isaac
     #    Sim 6.0+ installed.
     python examples/libero/run_isaac_agent.py --policy groot --port 8000 --n-episodes 5
@@ -151,7 +162,7 @@ Requires
 Notes
 -----
 - Output is non-deterministic by design (LLM-generated summary); the
-  R15 backend matrix consumes ``run_isaac.py`` (sibling file) for
+  R15 backend matrix consumes ``run.py isaac`` (sibling file) for
   grep-stable numbers.
 - Rollout video is recorded via the synchronous Isaac recorder (one
   ``render()`` frame per control step), producing a real
@@ -162,8 +173,10 @@ Notes
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as _dt
 import os
+import threading
 import time
 from typing import Any
 
@@ -189,7 +202,8 @@ _sim: IsaacSimulation | None = None
 # for the same reason ``_sim`` does: the closure isn't JSON-castable, so
 # it can't cross @tool's OpenAPI-schema boundary. Threading it through
 # module scope lets the synchronous Isaac recorder capture frames on the
-# eval thread even though the eval is dispatched from a Strands tool
+# main (pump) thread -- where the tool wrapper's ``run_on_main`` executes
+# the eval -- even though the eval is dispatched from a Strands tool
 # call. See strands-labs/robots#191 for the closure-vs-tool-boundary
 # rationale on the MuJoCo side.
 _on_frame: Any = None
@@ -300,23 +314,43 @@ def _resolve_hf_token() -> str:
     """Resolve a HuggingFace token for the gated GR00T checkpoint download.
 
     Prefers the ``HF_TOKEN`` (or ``HUGGING_FACE_HUB_TOKEN``) environment
-    variable -- CI / container environments typically inject the token that
-    way and don't have the ``~/.cache/huggingface/token`` file that
-    ``huggingface-cli login`` writes. Falls back to that file for interactive
-    dev boxes. Raises if neither is present.
-    """
-    from pathlib import Path
+    variable -- CI / container environments typically inject the token
+    that way and have no cached login. Otherwise takes the cached login,
+    asking ``huggingface_hub`` where that lives rather than assuming: it
+    resolves ``HF_TOKEN_PATH``, else ``<HF_HOME>/token``, else
+    ``<XDG_CACHE_HOME>/huggingface/token``, else ``~/.cache/huggingface/token``.
+    Reading the last of those directly names a file the Hub will not open on a
+    host that relocated its cache, so a logged-in box was refused here.
 
+    Raises:
+        RuntimeError: Neither source yields a token. The message names the
+            path the Hub resolves on this host, so a relocated cache is
+            actionable, and ``hf auth login`` - the login entry point the
+            declared ``huggingface_hub>=1.5`` floor ships. ``huggingface-cli``
+            is not published as a console script at that floor, and the later
+            1.x releases that do install it exit "deprecated and no longer
+            works", so it is a dead end across the whole declared range.
+    """
     env_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     if env_token and env_token.strip():
         return env_token.strip()
-    hf_token_path = Path("~/.cache/huggingface/token").expanduser()
-    if hf_token_path.is_file():
-        return hf_token_path.read_text().strip()
+    token_path = "the Hub's cached login"
+    try:
+        from huggingface_hub import get_token
+        from huggingface_hub.constants import HF_TOKEN_PATH
+    except ImportError:
+        # No Hub installed to ask where its cached login lives; the
+        # checkpoint download reports that missing dependency itself.
+        pass
+    else:
+        token_path = HF_TOKEN_PATH
+        cached = get_token()
+        if cached and cached.strip():
+            return cached.strip()
     raise RuntimeError(
         "--policy groot needs an HF token (Cosmos-Reason2-2B is gated). "
-        "Set the HF_TOKEN env var (preferred for CI), or run "
-        "`huggingface-cli login` to write ~/.cache/huggingface/token, then retry."
+        "Set the HF_TOKEN env var (preferred for CI), or run `hf auth login` "
+        f"to write {token_path}, then retry."
     )
 
 
@@ -450,17 +484,30 @@ def evaluate_isaac_benchmark(
             "status": "error",
             "content": [{"text": "evaluate_isaac_benchmark: _sim is not initialised. main() must run first."}],
         }
-    result = _sim.evaluate_benchmark(
-        benchmark_name=benchmark_name,
-        n_episodes=n_episodes,
-        seed=seed,
-        policy_provider=policy_provider,
-        policy_config=policy_config,
-        instruction=instruction,
-        # Thread the module-scoped rollout-video capture hook into the
-        # eval. ``_on_frame`` is None until main() arms the recorder, so
-        # this is a no-op for callers that don't want video.
-        on_frame=_on_frame,
+    # Isaac's kit runtime is main-thread affine: world.reset()/step() only
+    # complete while kit updates are being pumped on the thread that created
+    # SimulationApp. Strands executes tool calls on worker threads, so running
+    # the eval here directly deadlocked forever (#1896: the main thread was
+    # parked inside Agent.__call__ waiting on this tool's future while
+    # SimulationContext.stop() waited for a pump only that thread could run).
+    # main() therefore parks the main thread in run_pump_forever for the
+    # agent's whole run, and this wrapper submits the eval body back to it:
+    # run_on_main executes the closure inline on the pump (owning) thread and
+    # re-raises any exception here, so the @tool envelope contract is intact.
+    sim = _sim
+    result = sim.run_on_main(
+        lambda: sim.evaluate_benchmark(
+            benchmark_name=benchmark_name,
+            n_episodes=n_episodes,
+            seed=seed,
+            policy_provider=policy_provider,
+            policy_config=policy_config,
+            instruction=instruction,
+            # Thread the module-scoped rollout-video capture hook into the
+            # eval. ``_on_frame`` is None until main() arms the recorder, so
+            # this is a no-op for callers that don't want video.
+            on_frame=_on_frame,
+        )
     )
     # Stash the raw envelope so main() can fail-fast on an eval error
     # the agent would otherwise only mention in prose.
@@ -473,7 +520,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """Mirror ``run_mujoco_agent.py``'s parser surface.
 
     Argument names / defaults are kept identical to the MuJoCo file
-    (and to ``run_isaac.py``) so a matrix-driver shell wrapper that
+    (and to ``run.py isaac``) so a matrix-driver shell wrapper that
     supplies the same flags works against any of the three.
     """
     p = argparse.ArgumentParser()
@@ -600,13 +647,14 @@ def _resolve_default_franka_usd(assets_root: str) -> str:
 def _resolve_robot_asset(args: argparse.Namespace) -> tuple[str | None, str | None]:
     """Resolve which robot asset to load → ``(usd_path, urdf_path)``.
 
-    Same contract as ``run_isaac.py._resolve_robot_asset``: ``--robot-urdf``
-    > ``--robot-usd`` > default Franka Panda USD from the assets root. The
+    Same contract as ``run._resolve_robot_asset`` (sibling ``run.py``):
+    ``--robot-urdf`` > ``--robot-usd`` > default Franka Panda USD from the
+    assets root. The
     asset sub-path moved under a vendor folder in Isaac Sim 6.0
     (``Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd``) from the legacy
     4.x layout (``Isaac/Robots/Franka/franka.usd``); the resolver
     HEAD-probes both and uses whichever exists. Loads a *real* robot rather
-    than the procedural stick-figure (see ``run_isaac.py`` for the
+    than the procedural stick-figure (see ``run.py`` for the
     rationale). ``get_assets_root_path`` is imported lazily (only resolvable
     after ``create_world``) and tries the modern ``isaacsim.storage.native``
     namespace first, falling back to the legacy ``omni.isaac.nucleus`` shim
@@ -645,7 +693,7 @@ def main() -> None:
         raise SystemExit("--robot-usd and --robot-urdf are mutually exclusive; pass at most one.")
     suite = _suite_for_task(args.task)
 
-    # Fail-fast on hosts without Isaac Sim. Same probe as run_isaac.py
+    # Fail-fast on hosts without Isaac Sim. Same probe as run.py isaac
     # -- runs before the GR00T container side effects so a CPU-only
     # host exits cleanly without wasting docker bandwidth.
     available, reason = IsaacSimulation.is_available()
@@ -691,7 +739,7 @@ def main() -> None:
         # add_robot's usd_path / urdf_path branch (real Articulation,
         # observable joints) rather than the procedural builder, which
         # produces a kinematically-approximate stick-figure unusable for
-        # LIBERO. See run_isaac.py's _resolve_robot_asset docstring.
+        # LIBERO. See run.py's _resolve_robot_asset docstring.
         robot_usd, robot_urdf = _resolve_robot_asset(args)
         if robot_urdf is not None:
             print(f"[setup] loading robot from URDF: {robot_urdf}")
@@ -745,7 +793,7 @@ def main() -> None:
         print(f"[setup] RTX camera {recording_camera!r} warmed up; render product populated")
 
         # Resolve the LIBERO task. Same default-aspirational fallback
-        # as run_mujoco_agent.py / run_isaac.py. Keep the CLI-requested
+        # as run_mujoco_agent.py / run.py. Keep the CLI-requested
         # task distinct from the resolved one so the [agent-eval] line
         # below echoes what the caller passed (replayable) while the
         # actual eval / filename use what really ran.
@@ -778,7 +826,8 @@ def main() -> None:
         # module scope (`_on_frame`) because it can't cross @tool's
         # JSON-schema boundary (see #191). The tool wrapper threads it into
         # `evaluate_benchmark(on_frame=...)` so frames are captured on the
-        # eval thread (Isaac's RTX renderer is thread-bound). On stop the
+        # main (pump) thread where `run_on_main` executes the eval (Isaac's
+        # RTX renderer is thread-bound). On stop the
         # buffers flush to `rollouts/<date>/{rec_name}__image.mp4`, matching
         # MuJoCo's `{name}__{camera}.mp4` convention. See
         # strands-labs/robots-sim#112.
@@ -805,21 +854,60 @@ def main() -> None:
         # against an IsaacSimulation that doesn't yet inherit
         # AgentTool. See module docstring for migration plan.
         agent = Agent(tools=[evaluate_isaac_benchmark])
+        prompt = (
+            f"Make exactly one tool call: invoke `evaluate_isaac_benchmark` "
+            f"with `benchmark_name='{resolved_task}'`, "
+            f"`n_episodes={args.n_episodes}`, `seed={args.seed}`, "
+            f"{policy_phrase}. Do not call any other action -- the world, "
+            f"robot, and camera have already been set up. When the call "
+            f"returns, parse the `success_rate` field from the JSON "
+            f"payload and report it as a percentage of the {args.n_episodes} "
+            f"episodes."
+        )
+
+        # Threading model (#1896): Isaac's kit runtime only pumps updates on
+        # the thread that created SimulationApp -- this main thread. Strands
+        # executes the agent's tool calls on worker threads, where
+        # world.reset()/step() block forever waiting for a pump that can never
+        # run while the main thread is itself parked inside Agent.__call__
+        # waiting on the tool future. So the agent runs on a side thread, the
+        # main thread owns the kit pump (run_pump_forever), and the tool
+        # wrapper above submits the eval body back here via run_on_main --
+        # the same pump-on-main + worker-callers architecture as
+        # examples/isaac_gs/app.py (Gradio in a daemon thread). This also
+        # keeps every RTX render on the owning thread, which the thread-bound
+        # recorder requires.
+        #
+        # The side thread is a ThreadPoolExecutor rather than a hand-rolled
+        # Thread + result box (review on #1899): since we create this thread
+        # ourselves, `Future.result()` re-raises the agent's exception --
+        # RuntimeError, SystemExit and KeyboardInterrupt alike -- with object
+        # identity preserved, whereas a manual `except BaseException` box is
+        # only obliged when marshalling onto an *existing* foreign thread
+        # (run_on_main). The done-callback fires on success, exception and
+        # cancellation, so a prompt Agent(...) failure (e.g. no model
+        # credentials, see Requires above) still sets `agent_done` and the
+        # pump exits promptly rather than hanging. One caveat vs. the old
+        # daemon thread: executor threads are non-daemon and joined by
+        # concurrent.futures' atexit hook, so `shutdown(wait=False,
+        # cancel_futures=True)` on an interrupted-pump exit defers to that
+        # hook instead of abandoning the thread; on the normal path it is
+        # moot -- the callback only fires once the agent call has returned.
+        agent_done = threading.Event()
         t0 = time.time()
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="strands-agent")
         try:
-            result = agent(
-                f"Make exactly one tool call: invoke `evaluate_isaac_benchmark` "
-                f"with `benchmark_name='{resolved_task}'`, "
-                f"`n_episodes={args.n_episodes}`, `seed={args.seed}`, "
-                f"{policy_phrase}. Do not call any other action -- the world, "
-                f"robot, and camera have already been set up. When the call "
-                f"returns, parse the `success_rate` field from the JSON "
-                f"payload and report it as a percentage of the {args.n_episodes} "
-                f"episodes."
-            )
+            future = pool.submit(agent, prompt)
+            future.add_done_callback(lambda _f: agent_done.set())
+            try:
+                _sim.run_pump_forever(stop_event=agent_done)
+            finally:
+                stop = _sim.stop_cameras_recording()
+                print(f"[recording] {stop['content'][0]['text']}")
+            # Re-raises the agent's exception, identity intact.
+            result = future.result()
         finally:
-            stop = _sim.stop_cameras_recording()
-            print(f"[recording] {stop['content'][0]['text']}")
+            pool.shutdown(wait=False, cancel_futures=True)
         wall_time = time.time() - t0
         print(result)
 

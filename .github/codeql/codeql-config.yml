@@ -1,0 +1,56 @@
+# CodeQL configuration for strands-labs/robots.
+#
+# Wired in from .github/workflows/codeql.yml via `config-file`. It exists for
+# one reason: two note-severity *quality* rules in the `security-and-quality`
+# suite fire only on idioms this codebase is obliged to use, and a CodeQL alert
+# on a pull request is a hard merge gate here. See #1810.
+#
+# Why an alert gates a merge, when the workflow used to say it does not:
+# `github-advanced-security` opens a pull-request *review thread* per new
+# alert, and the `default` branch ruleset sets
+# `required_review_thread_resolution: true`. Severity never enters into it, so a
+# note-severity style preference gates a merge exactly as an error-severity
+# taint finding does. Nothing in the CodeQL workflow can observe that
+# interaction, which is how its own comment came to describe a policy the
+# repository does not implement.
+#
+# Scope discipline: this file excludes TWO rule ids and nothing else.
+# `tests/test_codeql_query_filters.py` pins that set, so widening it is a
+# deliberate, reviewed edit rather than a drive-by line.
+
+query-filters:
+  # py/ineffectual-statement -- 27 of 27 open alerts are `...` used as a
+  # typing-construct body, which is the only way to write one: `Protocol`
+  # method bodies (PEP 544), `@abstractmethod` bodies, `@overload` signatures,
+  # and TYPE_CHECKING cross-mixin stubs. There is no rewrite available: `pass`
+  # is contrary to the convention used consistently across the tree, and
+  # `raise NotImplementedError` changes a Protocol's runtime behaviour.
+  #
+  # The capability this gives up is a genuine no-op statement, and it is NOT
+  # given up -- it moves to ruff, which is merge-blocking here where CodeQL is
+  # advisory. `[tool.ruff.lint] select` in pyproject.toml gains B015
+  # (useless-comparison, the `x == 1` case) and B018 (useless-expression).
+  # Both are silent on all 27 sites above because ruff exempts `...`.
+  - exclude:
+      id: py/ineffectual-statement
+
+  # py/import-and-import-from -- 63 of 64 open alerts are under tests/ and are
+  # the standard monkeypatch idiom, where BOTH imports are load-bearing: the
+  # module object is the patch target, the symbol is the thing under test.
+  #
+  #     import strands_robots.mesh.rosbridge_robot as rbr_mod           # patch target
+  #     from strands_robots.mesh.rosbridge_robot import RosbridgeRobot  # under test
+  #     monkeypatch.setattr(rbr_mod, "use_rosbridge", recorder)
+  #
+  # Drop the alias and there is nothing to patch, so the suite would need a
+  # live rosbridge server; drop the `from` import and the test cannot name its
+  # subject. The single non-test instance (`strands_robots/hardware_robot.py`)
+  # is a deliberate function-local lazy import. The rule states a style
+  # preference with no bug class behind it, so nothing is relocated for it.
+  - exclude:
+      id: py/import-and-import-from
+
+# NOT excluded, deliberately: py/empty-except (88 open, the largest class). A
+# swallowed exception genuinely hides bugs, the instances are not one
+# mechanical idiom, and they need reading one at a time. #1810 names keeping it
+# as an explicit non-goal; the pin test asserts it stays absent from this file.

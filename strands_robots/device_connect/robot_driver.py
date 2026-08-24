@@ -18,6 +18,7 @@ from device_connect_edge.drivers import (
 )
 from device_connect_edge.types import DeviceIdentity, DeviceStatus
 
+from strands_robots.bus_access import read_joints
 from strands_robots.device_connect._authz import authz_error, is_authorized_caller
 from strands_robots.mesh.security import is_safe_policy_provider
 
@@ -140,6 +141,11 @@ class RobotDeviceDriver(DeviceDriver):
         """Get current robot state (joints, task info).
 
         Returns joint positions and task state if a task is running.
+
+        The joints are read through the shared motor-bus lock, so this RPC
+        waits its turn behind an in-flight rollout, teleop write or mesh probe
+        instead of colliding with it, and reports the joints even when a
+        camera on the same driver is failing.
         """
         result = {}
         task = getattr(self._robot, "_task_state", None)
@@ -148,11 +154,21 @@ class RobotDeviceDriver(DeviceDriver):
             result["instruction"] = task.instruction
             result["step_count"] = task.step_count
 
-        # Try to read observation from the underlying LeRobot robot
+        # Read the joint half through the shared motor-bus lock
+        # (:func:`strands_robots.bus_access.read_joints`) rather than calling the
+        # driver's ``get_observation`` directly. Both failures that replaces were
+        # reported as an absent ``joints`` key under a successful RPC, because the
+        # handler below logs at debug and returns what it has. A read that barged in
+        # on one of the five converted readers already holding the bus collided
+        # ("Port is in use!"), and lerobot's ``get_observation`` sync-reads the
+        # motors FIRST and only then loops the cameras, so one dead USB camera threw
+        # away the joint positions already in hand. The frame filter below still
+        # matters: a driver exposing no readable motor bus falls back to the full
+        # observation, frames included.
         inner = getattr(self._robot, "robot", None)
         if inner and hasattr(inner, "get_observation"):
             try:
-                obs = await asyncio.to_thread(inner.get_observation)
+                obs = await asyncio.to_thread(read_joints, inner)
                 # Filter out camera frames (numpy arrays) - only include scalars
                 result["joints"] = {k: float(v) for k, v in obs.items() if not hasattr(v, "shape")}
             except Exception as e:

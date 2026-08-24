@@ -59,6 +59,22 @@ name it in the error. That includes the `CONNECTING` bring-up window - a motors
 bus handshake plus per-camera warmup, seconds on a real arm - not just
 `RUNNING`. Call `stop_task()` to hand the bus over early.
 
+Every rollout knob is judged before that bring-up window, not inside it.
+`duration` must be positive and finite, `n_steps` a positive count, and
+`policy_port` a port in `1-65535` - the same domain the policy providers
+themselves apply, so a port the arm accepts is a port the provider can dial.
+`policy_port` is required unless `run_policy` is given a pre-built
+`policy_object`, which is the one case where the port is not read. A value none
+of them can honor is reported by name, with the arm still disconnected and the
+command bus still free for a task that could run.
+
+`duration` is measured on a monotonic clock, not on the date. It is an elapsed
+time rather than a point in time, so an NTP correction or a resume from suspend
+cannot cut a rollout short or hold the servo bus past the budget - and the
+`duration` the task reports back is the time that actually elapsed. The same
+holds for `teleoperate(duration=...)`; see
+[Teleoperation](teleoperation.md#mixin-api).
+
 `cleanup()` (and `stop()`, which delegates to it) is terminal: it latches a
 shutdown, releases the task executor, tears down the mesh and ROS bridges, and
 disconnects the robot. It holds whatever state the robot is in - never
@@ -119,6 +135,7 @@ robot.stop_teleop()   # stop all sessions
 | Reset | `reset()` rewinds to t=0 | Holds current pose |
 | Randomization | `randomize(...)` | N/A |
 | Policy execution | `run_policy()` / `start_policy()` | `start_task()` / `execute` action |
+| Rollout horizon | `duration` **or** `n_steps` (`n_steps` supersedes it) | `duration` **and** `n_steps` (ANDed, so `duration` always bounds it) |
 
 ## See also
 

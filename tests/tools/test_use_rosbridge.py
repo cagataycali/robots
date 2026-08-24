@@ -65,6 +65,7 @@ class _FakeService:
 class _FakeRos:
     instances: list[_FakeRos] = []
     fail_next_connect = False
+    ready_without_connection = False
     scripted_responses: dict[str, dict[str, Any]] = {}
     scripted_messages: dict[str, list[dict[str, Any]]] = {}
 
@@ -95,9 +96,26 @@ class _FakeRos:
         self.service_calls: list[tuple[str, str, dict[str, Any], float | None]] = []
         _FakeRos.instances.append(self)
 
+    # ``run(timeout)`` and ``is_connected`` are two independent signals in the
+    # real client, so returning from the first does not imply the second:
+    #
+    #     run()          waits on a one-shot ``on_ready`` event and raises
+    #                    RosTimeoutError if it never fires
+    #     is_connected   is a live read of ``connector.state == "connected"``,
+    #                    re-evaluated on every access
+    #         - roslibpy 1.8.1, Ros.run / RosBridgeClientFactory.is_connected
+    #
+    # A connector that dropped after signalling ready therefore returns from
+    # ``run()`` with ``is_connected`` reading False, and the tool guards that
+    # state separately from a raised dial. ``ready_without_connection``
+    # reproduces it: without it this double could only ever express "raised" or
+    # "connected", so the guard was unreachable and the two refusals - which
+    # differ in the text a caller is shown - could not be told apart.
     def run(self, timeout: float | None = None) -> None:
         if _FakeRos.fail_next_connect:
             raise RuntimeError("connection refused")
+        if _FakeRos.ready_without_connection:
+            return
         self.is_connected = True
 
     def terminate(self) -> None:
@@ -109,6 +127,7 @@ class _FakeRos:
 def fake_roslibpy(monkeypatch: pytest.MonkeyPatch) -> _types.ModuleType:
     _FakeRos.instances = []
     _FakeRos.fail_next_connect = False
+    _FakeRos.ready_without_connection = False
     _FakeRos.scripted_responses = {}
     _FakeRos.scripted_messages = {}
     mod = _types.ModuleType("roslibpy")
@@ -131,6 +150,57 @@ def test_invalid_topic_rejected(bad: str) -> None:
     result = use_rosbridge(action="echo", topic=bad)
     assert result["status"] == "error"
     assert "invalid topic" in _texts(result)
+
+
+@pytest.mark.parametrize("bad", ["/cmd vel", "/x|y", "../etc", "/a$(x)"])
+def test_invalid_service_rejected(bad: str) -> None:
+    """A mistyped service name is refused, naming the parameter that is wrong.
+
+    ``service`` is matched against the same ``_NAME_RE`` as ``topic``, so the
+    correcting error a mistyped topic already gets is owed to a mistyped service
+    too. Without it the name is carried into a rosbridge service call that
+    cannot resolve it, and the caller reads a transport failure instead of the
+    spelling mistake that caused it.
+    """
+    result = use_rosbridge(action="service_call", service=bad, type="std_srvs/Empty")
+    assert result["status"] == "error"
+    assert "invalid service name" in _texts(result)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["/cmd vel", "/x|y", "../etc", "/a$(x)", "/gazebo/reset_world", "~private"],
+)
+def test_topic_and_service_are_held_to_one_name_rule(name: str, fake_roslibpy: _types.ModuleType) -> None:
+    """The two name parameters cannot drift apart on what a name may contain.
+
+    Comparing the two verdicts rather than restating the pattern is what makes
+    this survive a change to ``_NAME_RE``: whatever the rule becomes, both
+    parameters must still answer alike. A name neither refuses goes on to fail
+    for an unrelated reason, which is the same outcome on both sides.
+    """
+    topic_result = use_rosbridge(action="echo", topic=name)
+    service_result = use_rosbridge(action="service_call", service=name, type="std_srvs/Empty")
+
+    topic_refused = "invalid topic name" in _texts(topic_result)
+    service_refused = "invalid service name" in _texts(service_result)
+    assert topic_refused == service_refused, f"{name!r}: topic and service disagree on one name rule"
+
+
+def test_an_invalid_service_name_is_refused_before_the_bridge_is_dialed(
+    fake_roslibpy: _types.ModuleType,
+) -> None:
+    """The name checks run ahead of the backend probe, so nothing is opened.
+
+    This tool caches one client per ``(host, port)``, so dialing on the way to a
+    refusal would leave a connection registered for a call that never ran.
+    """
+    result = use_rosbridge(action="service_call", service="/bad name", type="std_srvs/Empty")
+
+    assert result["status"] == "error"
+    assert "invalid service name" in _texts(result)
+    assert fake_roslibpy.Ros.instances == []  # type: ignore[attr-defined]
+    assert rb_mod._backend._connections == {}
 
 
 def test_ros1_two_segment_type_enforced() -> None:
@@ -229,8 +299,17 @@ def test_stale_connection_reused_when_factory_reconnects(fake_roslibpy: _types.M
     first = fake_roslibpy.Ros.instances[0]  # type: ignore[attr-defined]
 
     class _Flapping:
-        # is_connected reads False twice (initial check + first wait poll),
-        # then True - simulating the auto-reconnecting factory recovering.
+        # is_connected reads False twice (initial check + first wait poll), then
+        # True - simulating the auto-reconnecting factory recovering.
+        #
+        # ``__set__`` is what makes this a DATA descriptor, and it is load
+        # bearing rather than decorative: ``run()`` already stored
+        # ``is_connected`` in the instance dict, and an instance attribute
+        # shadows a non-data descriptor. Without ``__set__`` the scripted reads
+        # are never consulted, ``getattr`` returns the stored True, and the tool
+        # returns from the plain cache-hit branch - so this test passed while
+        # exercising the same path as test_connection_cached_per_host_port and
+        # the wait loop it names stayed unreached.
         def __init__(self) -> None:
             self.reads = 0
 
@@ -238,11 +317,19 @@ def test_stale_connection_reused_when_factory_reconnects(fake_roslibpy: _types.M
             self.reads += 1
             return self.reads > 2
 
-    type(first).is_connected = _Flapping()  # type: ignore[assignment]
+        def __set__(self, obj: Any, value: bool) -> None:
+            """Absorb writes so the scripted reads decide, not the instance dict."""
+
+    flapping = _Flapping()
+    type(first).is_connected = flapping  # type: ignore[assignment]
     try:
         result = use_rosbridge(action="status", timeout=1.0)
         assert "connected to" in _texts(result)
         assert len(fake_roslibpy.Ros.instances) == 1  # type: ignore[attr-defined]  # same object reused
+        # The wait loop really polled: read 1 is the cache-hit check, read 2 the
+        # first poll (both False), read 3 the recovery. Anything less means the
+        # tool answered from a stored attribute and never entered the loop.
+        assert flapping.reads >= 3, f"wait loop not entered; is_connected read {flapping.reads} time(s)"
     finally:
         del type(first).is_connected  # restore instance-attribute behavior
 
@@ -259,6 +346,57 @@ def test_failed_dial_cached_and_recovers(fake_roslibpy: _types.ModuleType) -> No
     result = use_rosbridge(action="status")
     assert "connected to" in _texts(result)
     assert len(fake_roslibpy.Ros.instances) == 1  # type: ignore[attr-defined]
+
+
+def test_ready_without_connection_is_reported_not_connected(fake_roslibpy: _types.ModuleType) -> None:
+    """A dial that reports ready without a live connector is not a connection."""
+    fake_roslibpy.Ros.ready_without_connection = True  # type: ignore[attr-defined]
+    result = use_rosbridge(action="status")
+    assert result["status"] == "success"  # status reports, it does not fail
+    assert "not connected" in _texts(result)
+    assert "rosbridge_server" in _texts(result)
+    assert "connected to" not in _texts(result)
+
+
+def test_ready_without_connection_is_an_error_for_an_action(fake_roslibpy: _types.ModuleType) -> None:
+    """The same state reaches an action through the error envelope, not `status`'s success one."""
+    fake_roslibpy.Ros.ready_without_connection = True  # type: ignore[attr-defined]
+    result = use_rosbridge(action="list_topics")
+    assert result["status"] == "error"
+    assert "could not connect to rosbridge" in _texts(result)
+
+
+def test_ready_without_connection_is_distinguishable_from_a_raised_dial(
+    fake_roslibpy: _types.ModuleType,
+) -> None:
+    """The two refusals differ in text, so a caller can tell which one happened.
+
+    A raised dial appends the library exception; a connector that reported ready
+    and then read as disconnected has no exception to name.
+    """
+    fake_roslibpy.Ros.fail_next_connect = True  # type: ignore[attr-defined]
+    raised = _texts(use_rosbridge(action="status", timeout=0.2))
+    assert "connection refused" in raised  # the library error is carried through
+
+    fake_roslibpy.Ros.fail_next_connect = False  # type: ignore[attr-defined]
+    fake_roslibpy.Ros.ready_without_connection = True  # type: ignore[attr-defined]
+    # A different port is a different cache key, so this dials fresh rather than
+    # answering from the entry the first half left behind.
+    ready = _texts(use_rosbridge(action="status", port=9091, timeout=0.2))
+    assert "not connected" in ready
+    assert "connection refused" not in ready
+
+
+def test_ready_without_connection_entry_stays_cached_and_recovers(
+    fake_roslibpy: _types.ModuleType,
+) -> None:
+    """The half-open entry is kept, so the retry reuses it once the connector is up."""
+    fake_roslibpy.Ros.ready_without_connection = True  # type: ignore[attr-defined]
+    assert "not connected" in _texts(use_rosbridge(action="status", timeout=0.2))
+    orphan = fake_roslibpy.Ros.instances[0]  # type: ignore[attr-defined]
+    orphan.is_connected = True  # connector finished coming up
+    assert "connected to" in _texts(use_rosbridge(action="status"))
+    assert len(fake_roslibpy.Ros.instances) == 1  # type: ignore[attr-defined]  # never re-dialed
 
 
 def test_unknown_action_errors(fake_roslibpy: _types.ModuleType) -> None:
@@ -375,3 +513,42 @@ def test_publish_rejects_nonpositive_count(fake_roslibpy: _types.ModuleType) -> 
     result = use_rosbridge(action="publish", topic="/cmd_vel", type="geometry_msgs/Twist", count=0)
     assert result["status"] == "error"
     assert "count" in _texts(result)
+
+
+@pytest.mark.parametrize(
+    "supplied",
+    [
+        pytest.param({"topic": "/cmd_vel"}, id="type-missing"),
+        pytest.param({"type": "geometry_msgs/Twist"}, id="topic-missing"),
+        pytest.param({}, id="both-missing"),
+    ],
+)
+def test_publish_requires_topic_and_type(fake_roslibpy: _types.ModuleType, supplied: dict[str, Any]) -> None:
+    """A publish missing either half of its address is refused, not attempted.
+
+    ``publish`` is the one action in this family that writes to the robot, and a
+    message cannot be built without both the topic to advertise and the
+    interface type to build it from.
+    """
+    result = use_rosbridge(action="publish", **supplied)
+    assert result["status"] == "error"
+    assert "publish requires topic and type" in _texts(result)
+
+
+def test_an_incomplete_publish_advertises_no_publisher(fake_roslibpy: _types.ModuleType) -> None:
+    """The refusal lands before the publisher is advertised.
+
+    An advertisement is state on the bridge rather than a local call, so a
+    publisher advertised on the way to a refusal outlives the call that never
+    published and leaves the bridge carrying a topic this tool has no message
+    type for. The complete publish that follows is what makes the empty topic
+    list mean "refused before advertising" rather than "never advertises".
+    """
+    refused = use_rosbridge(action="publish", topic="/cmd_vel")
+    assert refused["status"] == "error"
+    ros = fake_roslibpy.Ros.instances[0]  # type: ignore[attr-defined]
+    assert ros.topics == []
+
+    honored = use_rosbridge(action="publish", topic="/cmd_vel", type="geometry_msgs/Twist", count=1)
+    assert honored["status"] == "success"
+    assert [(t.name, t.advertised, t.unadvertised) for t in ros.topics] == [("/cmd_vel", True, True)]

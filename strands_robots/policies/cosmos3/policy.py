@@ -64,6 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.policies._state_keys import drop_velocity_siblings
 from strands_robots.policies.base import Policy
 from strands_robots.utils import name_list_error, tcp_port_error
 
@@ -105,7 +106,11 @@ class Cosmos3Policy(Policy):
 
     Args:
         embodiment: Embodiment key/alias (``"droid"``, ``"umi"``, ``"av"``,
-            ``"bridge"``). Selects domain, action layout, and defaults.
+            ``"bridge"``, ``"openarm"``). Selects domain, action layout, and
+            defaults. ``"openarm"`` is a post-training-only embodiment: it maps
+            a checkpoint post-trained on OpenArm episodes (see
+            :mod:`strands_robots.policies.cosmos3.embodiments`), not a released
+            zero-shot model.
         host: Policy-server hostname.
         port: Policy-server WebSocket port, an ``int`` in ``[1, 65535]``.
             Read only when this constructor builds the client; an injected
@@ -155,8 +160,14 @@ class Cosmos3Policy(Policy):
             (default ``"nvidia/Cosmos3-Nano"``). Ignored by the service backend
             (the server selects the checkpoint via ``--checkpoint-path``).
         diffusers_backend: Pre-built
-            :class:`~strands_robots.policies.cosmos3.policy_diffusers.Cosmos3DiffusersBackend`
-            (dependency injection for tests; skips the heavy import).
+            :class:`~strands_robots.policies.cosmos3.policy_diffusers.Cosmos3DiffusersBackend`.
+            Injecting one skips the heavy import (how the tests drive this
+            backend), and it is also the supported route to the backend's own
+            load and sampling knobs: this constructor forwards only
+            ``embodiment``, ``model`` and ``mode``, so ``resolution_tier``,
+            ``view_point``, ``device``, ``dtype``, ``num_inference_steps``,
+            ``guidance_scale``, ``enable_sound`` and ``enable_safety_checker``
+            are set on the backend and reach the policy through this parameter.
 
     Notes:
         * This policy needs camera frames **and** robot state in the
@@ -166,9 +177,15 @@ class Cosmos3Policy(Policy):
           views); a partial set fails fast client-side.
         * Latency is chunked (a diffusion policy), not 500 Hz servo. One
           inference returns a chunk of ~``action_chunk_size`` steps.
-        * The predicted world video/sound (diffusers backend) are surfaced on
-          :attr:`last_rollout` after each ``get_actions`` call, leaving the
-          ``list[dict]`` return type (the Policy ABC contract) unchanged.
+        * Auxiliary rollout outputs are surfaced on :attr:`last_rollout` after
+          each ``get_actions`` call, leaving the ``list[dict]`` return type
+          (the Policy ABC contract) unchanged. Both backends populate
+          ``last_rollout["action"]`` with the predicted ``np.ndarray[T, D]``
+          chunk, and leave it ``None`` on the world-only
+          ``mode="forward_dynamics"`` path, which predicts no actions. The
+          predicted world ``video``/``sound`` come from the diffusers backend
+          (the service server sends ``video`` only when launched with
+          rollout-video output, so it is often ``None`` there).
     """
 
     def __init__(
@@ -233,10 +250,14 @@ class Cosmos3Policy(Policy):
                 )
         self._action_mapping = action_mapping or {}
         self.robot_state_keys: list[str] = []
-        # Auxiliary world outputs (predicted video / sound) from the last
-        # get_actions call, surfaced WITHOUT changing the Policy ABC return
-        # type. None until the first inference, and always None for the service
-        # backend (the RoboLab server's "video" field is not consumed here).
+        # Auxiliary rollout outputs (raw action chunk, predicted video / sound)
+        # from the last get_actions call, surfaced WITHOUT changing the Policy
+        # ABC return type. None until the first inference. Both backends
+        # populate "action" with the predicted [T, D] ndarray chunk; it is None
+        # on the world-only mode="forward_dynamics" path, which predicts no
+        # actions. "video"/"sound" are the diffusers backend's world outputs
+        # (the service server sends "video" only when launched to emit rollout
+        # videos, so it is often None).
         self.last_rollout: dict[str, Any] | None = None
 
         self._client: Cosmos3WebsocketClient | None = None
@@ -382,6 +403,16 @@ class Cosmos3Policy(Policy):
             observation_dict: Flat robots observation (joint floats + camera
                 ndarrays), per the ``SimEngine.get_observation`` schema.
             instruction: Natural-language task instruction.
+            **kwargs: Extra inference options, honored on the ``diffusers``
+                backend only - they are forwarded verbatim to the world model's
+                ``infer`` call. The ``service`` backend calls the remote client
+                without them, so the same keyword is silently dropped there; the
+                ABC requires a provider to ignore what it cannot honor rather
+                than raise (:meth:`~strands_robots.policies.base.Policy.get_actions`),
+                and this provider's answer depends on the ``backend`` it was
+                constructed with. None of the well-known keys the ABC lists
+                (``target_pose``, ``target_joints``, ``target_velocity``,
+                ``world_update``) is read by either backend.
 
         Returns:
             ``list[dict]`` - one action dict per predicted timestep.
@@ -408,6 +439,14 @@ class Cosmos3Policy(Policy):
         assert self._client is not None  # set in __init__ for backend=service
         result = self._client.infer(obs)
         action = np.asarray(result["action"])
+        # Surface the raw [T, D] chunk (and the server's optional rollout
+        # video) on last_rollout, matching the diffusers backend, so callers
+        # and integration tests can assert on the un-unpacked chunk.
+        self.last_rollout = {
+            "action": action,
+            "video": result.get("video"),
+            "sound": result.get("sound"),
+        }
         return self._unpack_actions(action)
 
     def _default_obs_mapping(self) -> dict[str, str]:
@@ -478,6 +517,13 @@ class Cosmos3Policy(Policy):
         Priority:
             1. Explicit keys already present in robot_obs / via obs_mapping.
             2. ``robot_state_keys`` (first 7 = joints, a 'gripper'-named key).
+            3. When no ``robot_state_keys`` was declared, the observation's own
+               scalar keys in insertion order. That ordering is position-only:
+               :func:`~strands_robots.policies._state_keys.drop_velocity_siblings`
+               drops each ``<joint>.vel`` whose ``<joint>`` is present, so a sim
+               observation - which emits a velocity companion beside every joint
+               position - does not put a velocity in every other slot of the
+               7-joint request and truncate the trailing joints away.
         """
         if "observation/joint_position" in obs and "observation/gripper_position" in obs:
             return  # already provided via mapping
@@ -485,8 +531,11 @@ class Cosmos3Policy(Policy):
         joints: list[float] = []
         gripper: float | None = None
 
-        # Use declared state-key order when available.
-        state_keys = self.robot_state_keys or [k for k, v in robot_obs.items() if np.isscalar(v) or np.ndim(v) == 0]
+        # Use declared state-key order when available; an ordering inferred from
+        # the observation is position-only (see drop_velocity_siblings).
+        state_keys = self.robot_state_keys or drop_velocity_siblings(
+            [k for k, v in robot_obs.items() if np.isscalar(v) or np.ndim(v) == 0]
+        )
         present = [k for k in state_keys if k in robot_obs]
         # First pass: pull any explicitly gripper/finger-named key as the gripper.
         gripper_keys = [k for k in present if ("gripper" in k.lower() or "finger" in k.lower())]

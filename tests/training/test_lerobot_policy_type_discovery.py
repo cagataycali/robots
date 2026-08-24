@@ -14,6 +14,12 @@ reward-model, robot, teleop, and camera surfaces already use. The
 ``method='expert_only'`` gate is discovered the same way, off each config's
 ``train_expert_only`` field.
 
+One gate is discovered slightly differently. The QUANTILES-normalization gate
+reads each config's ``normalization_mapping`` *default* rather than a field
+name, so it is the only probe here that can hold the type and still fail to
+read its answer - and it resolves "unknown" and "declares no such field" two
+deliberately different ways. ``TestQuantileNormRegistryProbe`` pins both.
+
 These tests pin the invariant against whatever lerobot is installed (they read
 its live registry rather than hardcoding type names), so they hold across
 lerobot versions and fail on the pre-fix hardcoded gates whenever the registry
@@ -31,12 +37,14 @@ from strands_robots.training import TrainSpec
 from strands_robots.training.lerobot import (
     _EXPERT_ONLY_POLICY_TYPES_FALLBACK,
     _LEROBOT_POLICY_TYPES_FALLBACK,
+    _QUANTILE_NORM_POLICY_TYPES_FALLBACK,
     _RELATIVE_ACTION_POLICY_TYPES_FALLBACK,
     LerobotTrainer,
     _lerobot_policy_types,
     _policy_registry,
     _policy_supports_expert_only,
     _policy_supports_relative_actions,
+    _policy_uses_quantile_norm,
 )
 
 
@@ -46,6 +54,39 @@ def dataset_root(tmp_path):
     meta.mkdir()
     (meta / "info.json").write_text(json.dumps({"total_episodes": 10}))
     return str(tmp_path)
+
+
+def _broken_default_factory() -> dict[str, str]:
+    """A ``default_factory`` that cannot be evaluated (a broken config default)."""
+    raise RuntimeError("config default_factory is broken")
+
+
+@dataclasses.dataclass
+class _UnreadableNormalizationConfig:
+    """Declares ``normalization_mapping``, but its default cannot be read."""
+
+    normalization_mapping: dict[str, str] = dataclasses.field(default_factory=_broken_default_factory)
+
+
+@dataclasses.dataclass
+class _NoNormalizationMappingConfig:
+    """Declares no ``normalization_mapping`` field at all."""
+
+    chunk_size: int = 8
+
+
+def _patch_registry(monkeypatch, cfg_cls) -> None:
+    """Point the live-registry probe at ``cfg_cls`` for the types used below."""
+    assert _QUANTILE_NORM_POLICY_TYPES_FALLBACK, "the static set must be non-empty for the loops below"
+    registry = dict.fromkeys([*_QUANTILE_NORM_POLICY_TYPES_FALLBACK, "act"], cfg_cls)
+    monkeypatch.setattr("strands_robots.training.lerobot._policy_registry", lambda: registry)
+
+
+def _write_stats_without_quantiles(tmp_path) -> None:
+    """Write a v3 ``meta/stats.json`` carrying mean/std/min/max but no ``q01``/``q99``."""
+    feature = {"mean": [0.0], "std": [1.0], "min": [-1.0], "max": [1.0]}
+    stats = {"observation.state": dict(feature), "action": dict(feature)}
+    (tmp_path / "meta" / "stats.json").write_text(json.dumps(stats))
 
 
 def _spec(dataset_root, tmp_path, **extra) -> TrainSpec:
@@ -182,3 +223,78 @@ class TestOfflineFallback:
             assert _policy_supports_expert_only(ptype) is True
         assert _policy_supports_expert_only("act") is False
         assert _policy_supports_expert_only("definitely_not_a_policy") is False
+
+    def test_quantile_norm_falls_back_to_static_set(self, monkeypatch):
+        monkeypatch.setattr("strands_robots.training.lerobot._policy_registry", lambda: None)
+        for ptype in _QUANTILE_NORM_POLICY_TYPES_FALLBACK:
+            assert _policy_uses_quantile_norm(ptype) is True
+        assert _policy_uses_quantile_norm("act") is False
+        assert _policy_uses_quantile_norm("definitely_not_a_policy") is False
+
+
+class TestQuantileNormRegistryProbe:
+    """The quantile gate reads a field's *default*, not just its name.
+
+    :func:`~strands_robots.training.lerobot._policy_uses_quantile_norm` is the
+    only registry probe here that calls a ``default_factory`` instead of looking
+    a field name up, so it is the only one that can hold the type and still fail
+    to read its answer. It resolves that case and "the config declares no such
+    field" two deliberately different ways:
+
+    * an **unreadable default** means the answer is unknown, so the documented
+      static set decides - a ``molmoact2`` run keeps its quantile-stats warning;
+    * a **missing field** is itself the answer - the config does not declare
+      quantile normalization - so the result is ``False`` and the static set is
+      not consulted.
+
+    Collapsing the two would silence ``validate``'s quantile-stats preflight for
+    exactly the policies that need it, which is the consequence the last test
+    here measures at the surface a caller reads.
+    """
+
+    def test_unreadable_default_factory_falls_back_to_static_set(self, monkeypatch):
+        """An unreadable default is unknown, so the static set decides."""
+        _patch_registry(monkeypatch, _UnreadableNormalizationConfig)
+        for ptype in _QUANTILE_NORM_POLICY_TYPES_FALLBACK:
+            assert _policy_uses_quantile_norm(ptype) is True, ptype
+        assert _policy_uses_quantile_norm("act") is False
+
+    def test_config_without_normalization_mapping_is_definitively_false(self, monkeypatch):
+        """A missing field is an answer, not an unknown: the static set is not consulted."""
+        _patch_registry(monkeypatch, _NoNormalizationMappingConfig)
+        for ptype in _QUANTILE_NORM_POLICY_TYPES_FALLBACK:
+            assert _policy_uses_quantile_norm(ptype) is False, ptype
+        assert _policy_uses_quantile_norm("act") is False
+
+    def test_every_registry_config_declares_normalization_mapping(self):
+        """Why the test above must inject a registry rather than name a real type.
+
+        Every config lerobot ships declares ``normalization_mapping``, so the
+        "no such field" branch is unreachable through the live registry today.
+        This fails the day lerobot registers a config without it - at which point
+        that branch becomes reachable for a real policy type.
+        """
+        reg = _policy_registry()
+        if reg is None:
+            pytest.skip("lerobot not installed")
+        assert reg, "lerobot registry unexpectedly empty"
+        lacking = sorted(
+            ptype
+            for ptype, cfg_cls in reg.items()
+            if not any(f.name == "normalization_mapping" for f in dataclasses.fields(cfg_cls))
+        )
+        assert lacking == [], f"now reachable through the live registry: {lacking}"
+
+    def test_unreadable_default_keeps_the_quantile_stats_preflight_firing(self, dataset_root, tmp_path, monkeypatch):
+        """The fallback's purpose, at the surface a caller reads.
+
+        ``validate`` warns when a QUANTILES-normalizing policy is pointed at a
+        dataset whose stats carry no ``q01``/``q99``, because lerobot would
+        mis-normalize or fail at train time. With the registry answer unreadable,
+        the static set is what keeps that warning firing - answering ``False``
+        there instead would let the run start with nothing reported.
+        """
+        _write_stats_without_quantiles(tmp_path)
+        _patch_registry(monkeypatch, _UnreadableNormalizationConfig)
+        problems = LerobotTrainer(device="cpu").validate(_spec(dataset_root, tmp_path, policy_type="molmoact2"))
+        assert any("augment_dataset_quantile_stats" in p for p in problems), problems

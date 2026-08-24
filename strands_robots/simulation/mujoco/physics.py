@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, close_match_hint
+from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
@@ -29,51 +31,37 @@ from strands_robots.simulation.mujoco.backend import (
     mj_name_to_id,
 )
 from strands_robots.simulation.mujoco.scene_ops import (
+    fromto_fixed_size_components,
+    joint_drive_map,
+    joint_rate_drive_map,
     persist_body_mass,
     persist_geom_properties,
     refresh_body_inertial_from_geometry,
 )
-from strands_robots.utils import is_boolean
+from strands_robots.simulation.safe_output import atomic_write_bytes, validate_output_path
+from strands_robots.utils import BOOLEAN_VECTOR_REASON, boolean_flag_error, coerce_rgba, is_boolean
 
 logger = logging.getLogger(__name__)
 
+#: How many joint names a success report samples before summarizing the rest. A
+#: whole-body write is routine (``unitree_h1_2`` drives 51 joints), and the point
+#: of the sample is to make the condition recognizable, not to re-list the
+#: request the caller just made.
+_NAME_SAMPLE_LIMIT = 4
 
-# Why a runtime state write refuses a boolean, kept in one place because three
-# surfaces quote it (set_joint_positions, set_joint_velocities, apply_force).
-#
-# The actuator-command path refuses one for a stronger reason: 1.0 is re-read in
-# each drive's own units, so the same True commands a different pose on every
-# actuator. Here 1.0 is a single unambiguous quantity - 1 radian, 1 rad/s, 1 N -
-# so a boolean is merely wrong rather than ambiguous, which is why #1837 left
-# these writers alone and #1838 settled them separately.
-#
-# They refuse it anyway, and the deciding argument is consistency of the domain
-# rather than the severity of the outcome: every scene-construction vector in
-# strands_robots.utils already rejects a bool component for exactly this reason
-# ("float(True) would silently write 1.0 where a coordinate, extent or colour
-# channel belongs"). A caller who cannot place a body at True should not be able
-# to teleport a joint to True either, and no caller can plausibly mean "1 radian"
-# by True. The alternative - accepting it here - would leave the direct API and
-# the tool surface stating different domains for the same kind of number.
-_BOOLEAN_STATE_REASON = (
-    "float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or "
-    "1 N depending on the surface, and the call would report success. Pass the "
-    "quantity in the surface's own units."
-)
 
-# The vector counterpart to _BOOLEAN_STATE_REASON. It is worded separately
-# because that one names radians, rad/s and newtons, which are the wrong units
-# for what _coerce_finite_vector guards: a coordinate, a geom extent, a friction
-# coefficient or a colour channel. The wording here is the one already recorded
-# in utils.finite_vector_error, which refuses a bool component for this reason
-# on the scene-construction side - and whose docstring then defers a colour to
-# "the rgba coercion in strands_robots.simulation.mujoco.physics", i.e. to this
-# helper. Same library, same quantity, so the same answer.
-_BOOLEAN_VECTOR_REASON = (
-    "float(True) is 1.0, so a boolean would silently write 1.0 where a "
-    "coordinate, extent or colour channel belongs, and the call would report "
-    "success. Pass the component as a number."
-)
+def _joint_name_sample(names: list[str]) -> str:
+    """Render *names* as a short, deterministic sample for a success report.
+
+    Sorted so the same set reads the same way on every call, and truncated with
+    a count of the remainder in the same ``... and N more`` shape
+    :meth:`PhysicsMixin.get_contact_forces` already uses for a long list.
+    """
+    ordered = sorted(names)
+    if len(ordered) <= _NAME_SAMPLE_LIMIT:
+        return ", ".join(ordered)
+    shown = ", ".join(ordered[:_NAME_SAMPLE_LIMIT])
+    return f"{shown} and {len(ordered) - _NAME_SAMPLE_LIMIT} more"
 
 
 def _coerce_finite_vector(
@@ -138,7 +126,7 @@ def _coerce_finite_vector(
                 "status": "error",
                 "content": [
                     {
-                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {_BOOLEAN_VECTOR_REASON}"
+                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {BOOLEAN_VECTOR_REASON}"
                     }
                 ],
             }
@@ -180,24 +168,15 @@ def _coerce_finite_vector(
     return out, None
 
 
-# A MuJoCo geom stores its colour as a 4-component ``rgba`` row. Alpha is the
-# only component with a meaningful default (opaque), so an RGB triple can be
-# completed without inventing a colour, while any other count cannot.
-_RGBA_ACCEPTED_LENGTHS: tuple[int, ...] = (3, 4)
-_RGBA_LAYOUT = "RGB, or RGBA with alpha"
-
-
 def _coerce_rgba(color: Any, method: str, name: str = "color") -> tuple[list[float] | None, dict[str, Any] | None]:
     """Coerce a caller-supplied colour to the 4 components a geom's rgba stores.
 
-    Single source of the backend's colour contract, shared by the scene creator
-    (``add_object``) and the runtime mutator (``set_geom_properties``) so their
-    accepted domains cannot diverge: 3 components are read as RGB and completed
-    with an opaque alpha -- the one component MuJoCo defines a default for -- 4
-    are read as RGBA verbatim, and any other count is rejected because it can
-    only be applied by fabricating or discarding components the caller did not
-    ask about. An empty vector is rejected for the same reason: substituting the
-    backend default paints a colour nobody requested under a success result.
+    Envelope binding over :func:`strands_robots.utils.coerce_rgba`, which is the
+    single definition of the colour contract for every backend. This wrapper
+    exists only to report the shared reason in the structured-error shape the
+    MuJoCo scene creator (``add_object``) and runtime mutator
+    (``set_geom_properties``) return, so those two agreed domains stay in step
+    with Newton's and Isaac's rather than being a second copy of the rule.
 
     Args:
         color: The caller's colour sequence (list / tuple / NumPy array).
@@ -208,81 +187,10 @@ def _coerce_rgba(color: Any, method: str, name: str = "color") -> tuple[list[flo
         ``(rgba, None)`` with exactly 4 finite floats, or ``(None, error_dict)``
         matching the structured-error tool contract.
     """
-    floats, err = _coerce_finite_vector(
-        color,
-        name,
-        method,
-        accepted_lengths=_RGBA_ACCEPTED_LENGTHS,
-        layout=_RGBA_LAYOUT,
-    )
-    if floats is None:
-        return None, err
-    return (floats if len(floats) == 4 else [*floats, 1.0]), None
-
-
-def _coerce_finite_joint_map(
-    values: dict[str, Any],
-    name: str,
-    method: str,
-) -> tuple[dict[str, float], dict[str, Any] | None]:
-    """Coerce a ``{joint_name: value}`` map to finite floats before any write.
-
-    Each value must be a real number (Python or NumPy scalar) and finite, and
-    must not be a boolean. A
-    non-numeric value would otherwise raise ``ValueError`` from ``float(value)``
-    past the structured-error dispatch contract, and ``nan`` / ``inf`` would
-    slip straight into ``data.qpos`` / ``data.qvel`` -- ``mj_forward`` then
-    propagates the ``nan`` across the whole kinematic state (or an ``inf``
-    velocity blows up the integrator) while the tool still reports
-    ``status="success"``. A boolean is refused for the reason in
-    :data:`_BOOLEAN_STATE_REASON`: it survives ``float()`` as a silent ``1.0``,
-    so it is the one invalid value the finiteness check cannot see. Validating up
-    front keeps the write atomic: an invalid value leaves the model untouched.
-
-    Args:
-        values: The ``{joint_name: value}`` mapping to validate.
-        name: Parameter name (``"positions"`` / ``"velocities"``), used in error text.
-        method: Calling method name, used in error text.
-
-    Returns:
-        ``(coerced, None)`` on success, or ``({}, error_dict)`` on the first
-        invalid value -- matching the structured-error tool contract so the
-        caller never raises past dispatch.
-    """
-    out: dict[str, float] = {}
-    for jnt_name, value in values.items():
-        # Before float(): float(True) is 1.0, so the boolean is unrecoverable
-        # once coerced and the write would report success having set 1 rad /
-        # 1 rad/s. numpy.bool_ needs the .item() unwrap is_boolean applies.
-        if is_boolean(value):
-            return {}, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, not a bool (got {value!r}). {_BOOLEAN_STATE_REASON}"
-                    }
-                ],
-            }
-        try:
-            f = float(value)
-        except (TypeError, ValueError):
-            return {}, {
-                "status": "error",
-                "content": [
-                    {"text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, got {value!r}"}
-                ],
-            }
-        if not math.isfinite(f):
-            return {}, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": f"{method}: '{name}' value for joint '{jnt_name}' must be finite (no nan/inf), got {value!r}"
-                    }
-                ],
-            }
-        out[jnt_name] = f
-    return out, None
+    rgba, reason = coerce_rgba(method, name, color)
+    if reason is not None:
+        return None, {"status": "error", "content": [{"text": reason}]}
+    return rgba, None
 
 
 # A ray batch is a sequence of 3-component direction vectors. Spelling it out in
@@ -397,6 +305,30 @@ def _coerce_excluded_body(value: Any, method: str, nbody: int) -> tuple[int | No
     return body_id, None
 
 
+def _dof_joint_names(mj: Any, model: Any) -> list[str | None]:
+    """Name the joint that owns each of the model's ``nv`` DOF columns.
+
+    Every DOF-indexed payload this module reports - a Jacobian's columns, the
+    mass matrix's diagonal - is indexed by MuJoCo's DOF ordering, which a
+    caller cannot reconstruct from the width alone for two reasons that both
+    arise in ordinary scenes:
+
+    * a multi-DOF joint owns several consecutive columns (a free joint six, a
+      ball joint three), so ``nv`` exceeds the joint count for every
+      floating-base robot;
+    * ``nv`` spans the whole compiled model, so a scene holding two robots
+      reports one width covering both and the columns belonging to the robot
+      the caller asked about are an interior slice.
+
+    The returned list is exactly ``nv`` long and repeats a multi-DOF joint's
+    name once per column it owns, so it is index-aligned with the payload it
+    labels. An entry is ``None`` where the owning joint is unnamed - MJCF
+    permits a bare ``<freejoint/>`` - because dropping that column would break
+    the alignment the list exists to provide.
+    """
+    return [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, int(model.dof_jntid[dof])) for dof in range(int(model.nv))]
+
+
 def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     """Return the dense ``nv x nv`` mass matrix M(q), robust to MuJoCo drift.
 
@@ -410,7 +342,11 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     - MuJoCo >= 3.11: ``data.qM`` is removed. The joint-space inertia is kept
       only as the compressed-sparse-row ``data.M``, and ``mju_sym2dense`` is
       the conversion MuJoCo's release notes prescribe for callers that used to
-      pass ``qM`` to ``mj_fullM``.
+      pass ``qM`` to ``mj_fullM``. That helper is only exported from MuJoCo
+      3.10 onwards, while the CSR buffers and their index arrays
+      (``M_rownnz`` / ``M_rowadr`` / ``M_colind``) ship from 3.5, so when the
+      helper is absent the stored lower triangle is expanded through those
+      index arrays instead.
 
     Probe the modern signature first, then the legacy orders - but only on a
     build that still exposes ``qM``, because the CSR ``data.M`` that replaced
@@ -431,7 +367,7 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     Raises:
         TypeError: If no known ``mj_fullM`` signature accepts the arguments.
         AttributeError: If MjData exposes the joint-space inertia under
-            neither ``qM`` nor ``M``.
+            neither ``qM`` nor ``M`` (MuJoCo < 3.5 predates the CSR buffer).
     """
     nv = model.nv
     dst = np.zeros((nv, nv), dtype=np.float64, order="C")
@@ -454,7 +390,7 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
             mj.mj_fullM(model, dst, qm)
         return dst
     # MuJoCo >= 3.11: no legacy buffer to pass, so convert the CSR inertia
-    # directly. nv is taken from dst's shape by the binding.
+    # directly.
     csr = getattr(data, "M", None)
     if csr is None:
         raise AttributeError(
@@ -462,13 +398,23 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
             f"data.qM and data.M) on mujoco {getattr(mj, '__version__', 'unknown')}, "
             "so the dense mass matrix cannot be built."
         )
-    mj.mju_sym2dense(
-        dst,
-        np.ascontiguousarray(csr, dtype=np.float64),
-        model.M_rownnz,
-        model.M_rowadr,
-        model.M_colind,
-    )
+    values = np.ascontiguousarray(csr, dtype=np.float64)
+    sym2dense = getattr(mj, "mju_sym2dense", None)
+    if sym2dense is not None:
+        sym2dense(dst, values, model.M_rownnz, model.M_rowadr, model.M_colind)
+        return dst
+    # MuJoCo 3.5 - 3.9 ship the CSR buffers and their index arrays but not the
+    # conversion, so expand the stored lower triangle through those indices and
+    # mirror it. Same arithmetic mju_sym2dense performs, and it keeps the CSR
+    # rung working across the whole supported MuJoCo range rather than only on
+    # the builds that also export the helper.
+    rownnz, rowadr, colind = model.M_rownnz, model.M_rowadr, model.M_colind
+    for row in range(nv):
+        start = int(rowadr[row])
+        stored = values[start : start + int(rownnz[row])]
+        cols = np.asarray(colind[start : start + int(rownnz[row])], dtype=np.intp)
+        dst[row, cols] = stored
+        dst[cols, row] = stored
     return dst
 
 
@@ -588,11 +534,16 @@ class PhysicsMixin:
         def _require_world(self) -> dict[str, Any] | None:
             """Refuse a call made before ``create_world``."""
 
-        def _unknown_robot_msg(self, requested: str) -> str:
+        def _unknown_robot_msg(self, requested: object) -> str:
             """Build the "robot not found" message with close-match hints."""
 
         def _validate_mass(self, mass: Any, method: str, param: str = "mass") -> dict[str, Any] | None:
             """Reject a body mass the physics engine cannot honor."""
+
+        def _coerce_joint_state_map(
+            self, values: dict[str, Any], name: str, method: str
+        ) -> tuple[dict[str, float], dict[str, Any] | None]:
+            """Coerce a joint-state map to finite floats before any write."""
 
     # State Checkpointing
 
@@ -674,7 +625,7 @@ class PhysicsMixin:
             return err
 
         checkpoints = getattr(self._world, "_checkpoints", {})
-        if name not in checkpoints:
+        if not registered(checkpoints, name):
             available = list(checkpoints.keys()) if checkpoints else ["none"]
             return {
                 "status": "error",
@@ -881,7 +832,7 @@ class PhysicsMixin:
                     "text": (
                         f"Force applied to '{body_name}' (body {body_id})\n"
                         f"Force: {f.tolist()} N\n"
-                        f"Torque: {t.tolist()} N·m\n"
+                        f"Torque: {t.tolist()} N*m\n"
                         f"Point: {p.tolist()}"
                     )
                 }
@@ -926,7 +877,7 @@ class PhysicsMixin:
                     return int(mid)
         return -1
 
-    def _unknown_mj_entity_msg(self, kind: str, requested: str) -> str:
+    def _unknown_mj_entity_msg(self, kind: str, requested: object) -> str:
         """Actionable "<kind> not found" message for the physics/introspection
         lookups (``get_body_state`` / ``get_jacobian`` / ``set_body_properties`` /
         ``set_geom_properties`` / ``get_sensor_data`` ...): name the entity, offer
@@ -941,6 +892,13 @@ class PhysicsMixin:
         error shape (T15 in ``test_agenttool_contract``) is unaffected.
 
         ``kind`` is one of ``"Body" | "Site" | "Geom" | "Sensor" | "Joint"``.
+
+        ``requested`` is typed ``object``: a name of any type reaches here, and
+        only the close match needs a string (see
+        :func:`~strands_robots.simulation.base.close_match_hint`). The
+        available-entity listing is a fact about the compiled model, so it is
+        emitted for every name type rather than being suppressed into a bare
+        ``"<Kind> 'X' not found."`` dead end.
         """
         import mujoco as _mj
 
@@ -956,12 +914,8 @@ class PhysicsMixin:
             "Joint": (_mj.mjtObj.mjOBJ_JOINT, model.njnt),
         }[kind]
         known = [nm for i in range(int(count)) if (nm := _mj.mj_id2name(model, obj_type, i)) and nm != "world"]
-        if known and isinstance(requested, str):
-            import difflib
-
-            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
-            if matches:
-                msg += " Did you mean: " + ", ".join(matches) + "?"
+        if known:
+            msg += close_match_hint(requested, known)
             shown = known if len(known) <= 30 else known[:30] + ["..."]
             plural = {
                 "Body": "bodies",
@@ -974,7 +928,7 @@ class PhysicsMixin:
             if kind == "Body":
                 msg += " Use action='list_bodies' to see all."
             elif kind == "Joint":
-                msg += " Use action='robot_joint_names' to see one robot's joints."
+                msg += " Use action='get_robot_state' to see one robot's joints."
         return msg
 
     def raycast(
@@ -999,7 +953,14 @@ class PhysicsMixin:
                 model defines - an id outside ``[0, model.nbody)`` matches no
                 body, so the geoms the caller asked to skip would be included
                 and could be reported as the obstacle.
-            include_static: Whether to include static geoms.
+            include_static: Whether the ray sees static geoms (a geom on a body
+                with no degrees of freedom - the ground plane, a wall, a fixed
+                fixture). ``False`` casts against the movable scene only, so a
+                clearance check can ask about dynamic obstacles without the
+                static world answering first. Must be a boolean: read by
+                truthiness this flag inverts for exactly the spellings a caller
+                opting out reaches for, since ``"false"``, ``"no"`` and ``"0"``
+                are all truthy.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1045,6 +1006,15 @@ class PhysicsMixin:
         if err is not None:
             return err
 
+        # The static filter is a posture flag, so it is held to the shared boolean
+        # domain rather than read by truthiness (the rule ``set_joint_positions``
+        # states for ``hold``): "false", "no" and "0" are all truthy, so every
+        # string spelling of an opt-out would select the include it asks to skip.
+        # Resolved once here so the batch entry point can apply the same value.
+        if text := boolean_flag_error(include_static, "include_static", "raycast"):
+            return {"status": "error", "content": [{"text": text}]}
+        static_filter = 1 if include_static else 0
+
         pnt = np.array(origin_f, dtype=np.float64)
         vec = np.array(direction_f, dtype=np.float64)
         # Normalize direction
@@ -1073,7 +1043,7 @@ class PhysicsMixin:
                 pnt,
                 vec,
                 None,  # geom group filter (None = all)
-                1 if include_static else 0,
+                static_filter,
                 exclusion,
                 geomid,
             )
@@ -1110,9 +1080,24 @@ class PhysicsMixin:
         The Jacobian maps joint velocities to Cartesian velocities:
             v = J @ dq
 
-        Returns both positional (3×nv) and rotational (3×nv) Jacobians,
+        Returns both positional (3xnv) and rotational (3xnv) Jacobians,
         computed at the current ``qpos`` (the position pipeline is recomputed
         first so the result is never a stale earlier configuration).
+
+        Columns are MuJoCo DOFs of the whole compiled model, so ``nv`` alone
+        does not say which column belongs to which joint: a free or ball joint
+        owns several consecutive columns, and a scene holding more than one
+        robot reports one width spanning all of them. ``dof_joint_names`` in
+        the ``json`` block names the owning joint of every column, on the same
+        terms ``inverse_dynamics`` names every generalized force it reports -
+        without it, ``dq`` from this Jacobian cannot be mapped back onto joint
+        names, and a caller who pairs one robot's joint names with the leading
+        columns silently reads another robot's Jacobian.
+
+        Returns:
+            ``{"status": "success", "content": [{"text"}, {"json": {"jacp",
+            "jacr", "nv", "dof_joint_names"}}]}`` on success, an error envelope
+            when the world is absent or the named entity does not resolve.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1157,7 +1142,14 @@ class PhysicsMixin:
             "status": "success",
             "content": [
                 {"text": f"Jacobian for {label}: pos={jacp.shape}, rot={jacr.shape}, nv={model.nv}"},
-                {"json": {"jacp": jacp.tolist(), "jacr": jacr.tolist(), "nv": model.nv}},
+                {
+                    "json": {
+                        "jacp": jacp.tolist(),
+                        "jacr": jacr.tolist(),
+                        "nv": model.nv,
+                        "dof_joint_names": _dof_joint_names(mj, model),
+                    }
+                },
             ],
         }
 
@@ -1208,8 +1200,21 @@ class PhysicsMixin:
     def get_mass_matrix(self) -> dict[str, Any]:
         """Compute the full mass (inertia) matrix M(q).
 
-        M is nv×nv where nv is the number of DoFs.
+        M is nv x nv where nv is the number of DoFs.
         Useful for dynamics analysis, impedance control, etc.
+
+        The reported ``diagonal`` is DOF-indexed, and ``nv`` alone does not say
+        which entry belongs to which joint: a free or ball joint owns several
+        consecutive DOFs, and ``nv`` spans the whole compiled model rather than
+        one robot. ``dof_joint_names`` names the owning joint of every entry,
+        so a per-joint inertia can be read off it without reaching into the
+        compiled model.
+
+        Returns:
+            ``{"status": "success", "content": [{"text"}, {"json": {"shape",
+            "rank", "condition_number", "diagonal", "total_mass",
+            "dof_joint_names"}}]}`` on success, an error envelope when the
+            world is absent.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1236,7 +1241,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"Mass matrix: {nv}×{nv}, rank={rank}, cond={cond:.2e}"},
+                {"text": f"Mass matrix: {nv}x{nv}, rank={rank}, cond={cond:.2e}"},
                 {
                     "json": {
                         "shape": [nv, nv],
@@ -1244,6 +1249,7 @@ class PhysicsMixin:
                         "condition_number": cond,
                         "diagonal": np.diag(M).tolist(),
                         "total_mass": float(np.sum(model.body_mass)),
+                        "dof_joint_names": _dof_joint_names(mj, model),
                     }
                 },
             ],
@@ -1375,6 +1381,7 @@ class PhysicsMixin:
         values: dict[str, float],
         name: str,
         method: str,
+        robot_name: str | None = None,
     ) -> tuple[dict[str, int], dict[str, Any] | None]:
         """Resolve every joint name to a MuJoCo joint id before any state write.
 
@@ -1391,6 +1398,11 @@ class PhysicsMixin:
             values: The ``{joint_name: value}`` mapping about to be written.
             name: Parameter name (``"positions"`` / ``"velocities"``), used in error text.
             method: Calling method name, used in error text.
+            robot_name: The robot an unqualified key belongs to. Its namespace is
+                tried first, so a bare name reaches that robot's joint even when
+                a sibling robot declares the same short name. ``None`` leaves
+                resolution as it was; a name no robot in the world carries is
+                refused, on the same terms as the list form.
 
         Returns:
             ``({joint_name: joint_id}, None)`` when every name resolves, else
@@ -1407,16 +1419,51 @@ class PhysicsMixin:
                         "text": (
                             f"{method}: '{name}' is empty, so there is nothing to write. "
                             "Pass at least one joint (dict form) or a full ordered vector (list form); "
-                            "use action='robot_joint_names' to see one robot's joints."
+                            "use action='get_robot_state' to see one robot's joints."
                         )
                     }
                 ],
             }
 
+        # An unqualified key is resolved inside ``robot_name``'s namespace before
+        # the shared lookup gets it. ``_resolve_mj_name`` tries a bare name
+        # verbatim and then under every robot namespace in turn, returning the
+        # first hit - deliberately, for the read paths that share it - so with
+        # two robots declaring ``j1`` the first one attached wins and the write
+        # lands on a robot the caller never addressed (#2453). Scoping first
+        # keeps that fallback for everything it already resolved: a bare name
+        # that is not a joint of this robot still reaches the shared lookup.
+        #
+        # A ``robot_name`` no robot carries is refused rather than read as "no
+        # namespace". Once the namespace is load-bearing, a misspelling means
+        # "scope this write to a namespace that does not exist", which falls
+        # through to the cross-robot first-match lookup and writes some other
+        # robot's joint while the caller believes they addressed a specific one -
+        # the defect #2453 reported, reached through an unchecked scope instead of
+        # an unqualified name. The list form already refuses the same value here,
+        # so this deletes a divergence rather than adding a rule: one argument had
+        # two answers, and in the dict form the answer was success (#2549).
+        # ``registry_entry`` keeps the lookup total, so a name that cannot be a
+        # registry key at all is refused by this same branch rather than raising
+        # ``TypeError`` past the structured-error contract.
+        ns = ""
+        if robot_name is not None and self._world is not None:
+            robot = registry_entry(self._world.robots, robot_name)
+            if robot is None:
+                return {}, {
+                    "status": "error",
+                    "content": [{"text": self._unknown_robot_msg(robot_name)}],
+                }
+            ns = robot.namespace or ""
+
         resolved: dict[str, int] = {}
         unresolved: list[str] = []
         for jnt_name in values:
-            jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            jnt_id = -1
+            if ns and isinstance(jnt_name, str) and "/" not in jnt_name:
+                jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, ns + jnt_name)
+            if jnt_id < 0:
+                jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
                 resolved[jnt_name] = jnt_id
             else:
@@ -1443,15 +1490,65 @@ class PhysicsMixin:
         self,
         positions: dict[str, float] | list[float] | None = None,
         robot_name: str | None = None,
+        hold: bool = False,
     ) -> dict[str, Any]:
         """Set joint positions directly (bypassing actuators).
 
         Writes to qpos and runs mj_forward to update kinematics.
         Useful for teleportation, IK solutions, or keyframe setting.
 
+        The write is kinematic only, so on a robot whose joints are held by
+        position servos the pose survives exactly as long as nothing steps: the
+        servos are still commanded to their previous setpoint, and the next
+        ``step`` drives the pose back toward it (measured on ``so101``: a
+        6-joint pose written exactly, then 2.75 rad away from the request after
+        150 steps, with every joint back near zero). That is the hazard
+        :meth:`actuate_robot` already avoids by seeding each new actuator's
+        ``ctrl`` from its joint's current position, and the one
+        :meth:`remove_robot` carries ``ctrl`` across an eject for. Two
+        consequences the caller needs and could not previously see:
+
+        * the success text names the written joints whose servo is still
+          commanded elsewhere, so a pose that will not survive a step is no
+          longer reported as an unqualified success;
+        * ``hold=True`` moves those setpoints with the pose, which is what makes
+          "teleport and stay there" expressible - ``send_action`` writes the
+          setpoints but not ``qpos``, and it always advances at least one step.
+          It is off by default because a kinematic write is a real use (render a
+          pose, replay a planned trajectory frame by frame) and because the
+          companion state a direct ``qpos`` write leaves behind is the caller's
+          to manage, the same reason :meth:`zero_dynamics` is a separate call
+          rather than folded in here.
+
+        Only position servos are moved, meaning an actuator whose ``ctrl`` is the
+        joint target itself. A motor takes a torque and a velocity drive takes a
+        rate, so the same number is a different physical quantity there: written
+        into a motor it commands a torque numerically equal to an angle in
+        radians, and written into a velocity drive it commands a rate that moves
+        the joint straight off the pose just written. A joint a tendon couples to
+        one ``ctrl`` - every stock gripper, and the ``stretch3`` telescoping arm -
+        is left alone for two further reasons: that ``ctrl`` is in the tendon's
+        units, and it drives several joints at once, so it cannot carry any one
+        joint's angle. Those joints are left alone and the success text says how
+        many were. The split is per actuator rather than per robot - ``openarm``
+        carries 2 servos beside 16 motors - and comes from
+        :func:`~strands_robots.simulation.mujoco.scene_ops.joint_drive_map`,
+        which spells out the terms that separate the two.
+
         Accepts EITHER form:
 
-        * dict: {joint_name: value, ...} - explicit per-joint, safest in multi-robot scenes.
+        * dict: {joint_name: value, ...} - explicit per-joint, and the form to
+          reach for in a multi-robot scene *provided the key names one robot*.
+          An unqualified key is resolved inside ``robot_name``'s namespace
+          first, so ``{"j1": 0.9}`` with ``robot_name="bob"`` writes ``bob/j1``
+          even when a sibling robot also declares ``j1``. Without
+          ``robot_name`` a bare key falls back to a first-match-wins lookup
+          across robots, so pass ``robot_name`` or the qualified
+          ``"<robot>/<joint>"`` spelling when more than one robot declares the
+          name. A ``robot_name`` no robot carries is refused: because it selects
+          the namespace, a misspelling would otherwise scope the write to a
+          namespace that does not exist and fall back to that cross-robot
+          lookup, landing on a robot the caller never addressed.
         * list/tuple: [v0, v1, ...] - ordered positional. Must match a single robot's
           joint count (when ``robot_name`` is given, that robot's joints; otherwise the
           world must contain exactly one robot, or the call errors).
@@ -1469,6 +1566,25 @@ class PhysicsMixin:
         and leaves ``qpos`` untouched -- a typo can no longer report success
         while silently applying a partial pose (or no pose at all). An empty
         mapping is likewise rejected instead of reporting a successful no-op.
+
+        Args:
+            positions: The pose to write, as ``{joint_name: value}`` or as an
+                ordered vector (see the two accepted forms above).
+            robot_name: Which robot the ordered form binds to, and whose
+                namespace resolves an unqualified joint name. Optional when the
+                world holds exactly one robot. When given it must name a robot
+                in the world, in either form: a name no robot carries returns
+                ``status="error"`` and writes nothing, rather than widening the
+                lookup back across every robot.
+            hold: Also write the matching position-servo setpoints, so the servos
+                hold the pose written instead of pulling it back to wherever they
+                were last commanded. Must be a boolean. Joints with no position
+                servo are unaffected.
+
+        Returns:
+            Standard ``{"status", "content"}`` envelope. On success the text
+            reports the setpoints moved (``hold=True``) or the written joints
+            whose servo still holds a different setpoint (``hold=False``).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1484,6 +1600,11 @@ class PhysicsMixin:
                 "status": "error",
                 "content": [{"text": "set_joint_positions: 'positions' is required (list or dict of joint values)."}],
             }
+
+        # Read by truthiness this flag would invert for exactly the spellings a
+        # caller opting out reaches for: "false", "no" and "0" are all truthy.
+        if text := boolean_flag_error(hold, "hold", "set_joint_positions"):
+            return {"status": "error", "content": [{"text": text}]}
 
         # normalize list input to dict using a deterministic joint ordering
         if isinstance(positions, (list, tuple)):
@@ -1545,26 +1666,60 @@ class PhysicsMixin:
         # this a non-numeric entry raises ValueError past the structured-error
         # contract, and a nan/inf lands in data.qpos where mj_forward propagates
         # it across the whole kinematic state while the tool still reports success.
-        positions, err = _coerce_finite_joint_map(positions, "positions", "set_joint_positions")
+        positions, err = self._coerce_joint_state_map(positions, "positions", "set_joint_positions")
         if err:
             return err
 
-        joint_ids, err = self._resolve_joint_write_targets(positions, "positions", "set_joint_positions")
+        joint_ids, err = self._resolve_joint_write_targets(
+            positions, "positions", "set_joint_positions", robot_name=robot_name
+        )
         if err:
             return err
 
         with self._lock:
+            servos, other_drives = joint_drive_map(model, mj)
+            moved: list[str] = []
+            stale: list[str] = []
+            not_a_pose: list[str] = []
             for jnt_name, value in positions.items():
-                qpos_adr = model.jnt_qposadr[joint_ids[jnt_name]]
+                jnt_id = joint_ids[jnt_name]
+                qpos_adr = model.jnt_qposadr[jnt_id]
                 data.qpos[qpos_adr] = float(value)
+
+                act_id = servos.get(jnt_id)
+                if act_id is None:
+                    if jnt_id in other_drives:
+                        not_a_pose.append(jnt_name)
+                    continue
+                if hold:
+                    data.ctrl[act_id] = float(value)
+                    moved.append(jnt_name)
+                elif float(data.ctrl[act_id]) != float(value):
+                    # Exact inequality is the claim being reported: the servo is
+                    # commanded somewhere else, so the next step moves the pose.
+                    stale.append(jnt_name)
 
             mj.mj_forward(model, data)
 
         count = len(positions)
-        return {
-            "status": "success",
-            "content": [{"text": f"Set {count}/{count} joint positions, FK updated"}],
-        }
+        text = f"Set {count}/{count} joint positions, FK updated"
+        if hold:
+            if moved:
+                text += f", {len(moved)} position-servo setpoint(s) moved with it"
+            if not_a_pose:
+                text += (
+                    f". {len(not_a_pose)} written joint(s) are driven by a non-position actuator "
+                    f"({_joint_name_sample(not_a_pose)}), whose ctrl is a torque, a rate, a tendon "
+                    "length or a target behind an actuator state rather than a pose, so their setpoints "
+                    "were left alone"
+                )
+        elif stale:
+            text += (
+                f". {len(stale)} of them are held by a position servo still commanded to a different "
+                f"setpoint ({_joint_name_sample(stale)}), so the next step drives the pose back toward "
+                "that setpoint; pass hold=True to move the setpoints with the pose"
+            )
+        return {"status": "success", "content": [{"text": text}]}
 
     def set_joint_velocities(
         self,
@@ -1585,6 +1740,25 @@ class PhysicsMixin:
         The write is all-or-nothing on the same terms as
         :meth:`set_joint_positions`: an unresolvable joint name (or an empty
         mapping) returns ``status="error"`` and leaves ``qvel`` untouched.
+
+        Joint names are scoped on the same terms too: an unqualified key is
+        resolved inside ``robot_name``'s namespace before the cross-robot
+        fallback, so a bare name reaches the robot the caller addressed, and a
+        ``robot_name`` no robot carries is refused in both call forms.
+
+        The write is a state write, so on a joint driven by a *rate* actuator --
+        one whose ``ctrl`` is the joint's own velocity, per
+        :func:`~strands_robots.simulation.mujoco.scene_ops.joint_rate_drive_map`
+        -- it survives exactly as long as nothing steps: the drive is still
+        commanding whatever rate it held, and the next step resolves that
+        disagreement in the drive's favour. The success report therefore names
+        the written joints whose rate drive is commanded elsewhere, on the same
+        terms :meth:`set_joint_positions` reports a position servo holding a
+        different setpoint, and points at ``send_action`` -- which writes that
+        ``ctrl`` -- as the way to command the rate rather than only the state. A
+        joint driven by a torque motor, a stateful drive or a tendon is not
+        reported: its ``ctrl`` is not a velocity in the joint's units, so there
+        is no rate for it to disagree with.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1655,21 +1829,41 @@ class PhysicsMixin:
         # Validate every value is a finite number before any qvel write (see
         # set_joint_positions): a nan/inf velocity blows up the integrator on the
         # next step and a non-numeric entry escapes the structured-error contract.
-        velocities, err = _coerce_finite_joint_map(velocities, "velocities", "set_joint_velocities")
+        velocities, err = self._coerce_joint_state_map(velocities, "velocities", "set_joint_velocities")
         if err:
             return err
 
-        joint_ids, err = self._resolve_joint_write_targets(velocities, "velocities", "set_joint_velocities")
+        joint_ids, err = self._resolve_joint_write_targets(
+            velocities, "velocities", "set_joint_velocities", robot_name=robot_name
+        )
         if err:
             return err
 
         with self._lock:
+            rate_drives = joint_rate_drive_map(model, mj)
+            stale: list[str] = []
             for jnt_name, value in velocities.items():
-                dof_adr = model.jnt_dofadr[joint_ids[jnt_name]]
+                jnt_id = joint_ids[jnt_name]
+                dof_adr = model.jnt_dofadr[jnt_id]
                 data.qvel[dof_adr] = float(value)
+
+                act_id = rate_drives.get(jnt_id)
+                if act_id is None:
+                    continue
+                if float(data.ctrl[act_id]) != float(value):
+                    # Exact inequality is the claim being reported: the drive is
+                    # commanding a different rate in this joint's own units, so
+                    # the next step moves the velocity off the one just written.
+                    stale.append(jnt_name)
 
         count = len(velocities)
         msg = f"Set {count}/{count} joint velocities"
+        if stale:
+            msg += (
+                f". {len(stale)} of them are driven by an actuator still commanding a different rate "
+                f"({_joint_name_sample(stale)}), so the next step drives the velocity back toward that "
+                "command; command the drive itself through send_action with the rate you want held"
+            )
         return {
             "status": "success",
             "content": [{"text": msg}],
@@ -1729,7 +1923,7 @@ class PhysicsMixin:
                 "type": int(model.sensor_type[i]),
             }
 
-        if sensor_name and sensor_name not in sensors:
+        if sensor_name and not registered(sensors, sensor_name):
             return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Sensor", sensor_name)}]}
 
         lines = [f"Sensors ({len(sensors)}/{model.nsensor}):"]
@@ -1825,7 +2019,7 @@ class PhysicsMixin:
                 if reason := persist_body_mass(self._world, body_id, mass_ratio=mass_ratio):
                     return {"status": "error", "content": [{"text": f"set_body_properties: {reason}"}]}
                 model.body_mass[body_id] = mass
-                changes.append(f"mass: {old_mass:.3f} → {mass:.3f}")
+                changes.append(f"mass: {old_mass:.3f} -> {mass:.3f}")
                 # Inertia tracks mass for fixed geometry: setting a rigid body's
                 # mass to a new value at constant shape is a uniform density
                 # change, which scales its inertia tensor by the same factor
@@ -1888,6 +2082,10 @@ class PhysicsMixin:
           2 for a capsule/cylinder, 3 for a box/ellipsoid/plane. Mesh, height
           field and SDF geoms take their extent from asset data and define no
           ``geom_size`` component, so ``size`` is refused for them.
+          A geom declared with ``<fromto>`` has the compiler fix its extent
+          along that axis (and a box's / ellipsoid's cross-section), so a
+          change to one of those components is refused - pass the value the
+          compiler produces to resize the components it leaves alone.
 
         All numeric inputs are validated before any model write: ``color``,
         ``friction`` and ``size`` must contain only finite numbers (``nan`` /
@@ -1906,7 +2104,10 @@ class PhysicsMixin:
             friction: The three MuJoCo friction coefficients (sliding,
                 torsional, rolling), each ``>= 0``.
             size: The geom's half-extents, with exactly as many components as
-                its type defines, each ``> 0``.
+                its type defines, each ``> 0``. This is the compiled
+                ``geom_size``, not ``add_object``'s full extents - the same
+                vector resizes a box to twice what ``add_object`` builds
+                from it.
 
         Returns:
             A tool-result dict; ``status="error"`` if the world is missing, a
@@ -1999,6 +2200,43 @@ class PhysicsMixin:
             if err:
                 return err
 
+            # A geom declared with <fromto> has part of its geom_size fixed by
+            # the compiler rather than read from ``size``, and re-derived on
+            # every compile. Writing such a component would report a resize the
+            # next scene recompile discards, and would leave the body's inertial
+            # row - re-derived below from the spec, which the endpoints still
+            # govern - describing the old extent while the model collided as the
+            # requested one. Refused for the same reason an asset-defined extent
+            # is above; the components the fromto leaves alone still apply.
+            # ``_coerce_finite_vector`` returns a value whenever it reports no
+            # error, so the cast carries that proof rather than re-testing it.
+            # It also fixed the length at this geom type's exact component count,
+            # and every component a fromto fixes falls inside that count - 1 of a
+            # capsule's / cylinder's 2, 1 and 2 of a box's / ellipsoid's 3 - so
+            # each index below is in range. A bounds check here would stand in
+            # for that proof while reading as though a short vector could arrive.
+            requested = cast("list[float]", size)
+            for index, (component, follows) in sorted(fromto_fixed_size_components(self._world, gid).items()):
+                expected = float(requested[follows]) if follows is not None else float(model.geom_size[gid][index])
+                if float(requested[index]) == expected:
+                    continue
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"set_geom_properties: geom '{geom_name or gid}' declares a <fromto>, "
+                                f"so the compiler fixes its {component} (size component {index + 1} of "
+                                f"a {gtype}) rather than reading it from 'size'. A change to it cannot "
+                                f"be recorded durably: the next scene recompile restores {expected}. "
+                                f"Pass {expected} for that component to resize the ones the fromto "
+                                f"leaves alone, edit the fromto to resize along its axis, or declare "
+                                f"the geom with an explicit size, pos and quat."
+                            )
+                        }
+                    ],
+                }
+
         label = geom_name or f"geom_{gid}"
         changes = []
 
@@ -2018,12 +2256,12 @@ class PhysicsMixin:
             if color is not None:
                 # Already coerced to 4 components (RGB got an opaque alpha).
                 model.geom_rgba[gid] = color
-                changes.append(f"color → {model.geom_rgba[gid].tolist()}")
+                changes.append(f"color -> {model.geom_rgba[gid].tolist()}")
 
             if friction is not None:
                 # Validated as exactly the three MuJoCo coefficients.
                 model.geom_friction[gid] = friction
-                changes.append(f"friction → {friction}")
+                changes.append(f"friction -> {friction}")
 
             if size is not None:
                 # A resize changes the shape the owning body's inertial row was
@@ -2046,7 +2284,7 @@ class PhysicsMixin:
                 # smaller collision bounds and other bodies silently pass through
                 # it. Recompute both for size-defined primitives.
                 _recompute_primitive_geom_bounds(mj, model, gid)
-                changes.append(f"size → {model.geom_size[gid].tolist()}")
+                changes.append(f"size -> {model.geom_size[gid].tolist()}")
 
         return {
             "status": "success",
@@ -2108,7 +2346,7 @@ class PhysicsMixin:
 
         lines = [f"{len(contacts)} contacts:"]
         for c in contacts[:15]:
-            lines.append(f"{c['geom1']} ↔ {c['geom2']}: normal={c['normal_force']:.3f}N, dist={c['distance']:.4f}m")
+            lines.append(f"{c['geom1']} <-> {c['geom2']}: normal={c['normal_force']:.3f}N, dist={c['distance']:.4f}m")
         if len(contacts) > 15:
             lines.append(f"  ... and {len(contacts) - 15} more")
 
@@ -2124,6 +2362,7 @@ class PhysicsMixin:
         origin: list[float],
         directions: list[list[float]],
         exclude_body: int = -1,
+        include_static: bool = True,
     ) -> dict[str, Any]:
         """Cast multiple rays from a single origin (e.g., for LIDAR simulation).
 
@@ -2150,6 +2389,14 @@ class PhysicsMixin:
                 string is refused rather than read as one ray per character).
             exclude_body: Body ID whose geoms every ray passes through (``-1`` =
                 exclude nothing); see :meth:`raycast`.
+            include_static: Whether the ray sees static geoms (a geom on a body
+                with no degrees of freedom - the ground plane, a wall, a fixed
+                fixture). ``False`` casts against the movable scene only, so a
+                clearance check can ask about dynamic obstacles without the
+                static world answering first. Must be a boolean: read by
+                truthiness this flag inverts for exactly the spellings a caller
+                opting out reaches for, since ``"false"``, ``"no"`` and ``"0"``
+                are all truthy.
 
         Returns:
             Standard status dict. On success the ``{"json": ...}`` block carries
@@ -2187,6 +2434,14 @@ class PhysicsMixin:
         exclusion, err = _coerce_excluded_body(exclude_body, "multi_raycast", int(model.nbody))
         if err is not None:
             return err
+
+        # Same shared boolean domain :meth:`raycast` applies to this flag and
+        # ``set_joint_positions`` applies to ``hold``, rather than a truthiness
+        # read: "false", "no" and "0" are all truthy, so every string spelling of
+        # an opt-out would select the include the caller asked to switch off.
+        if text := boolean_flag_error(include_static, "include_static", "multi_raycast"):
+            return {"status": "error", "content": [{"text": text}]}
+        static_filter = 1 if include_static else 0
 
         # Validate and normalize EVERY direction before casting anything, so a
         # batch that cannot be cast in full is refused rather than half-cast. The
@@ -2237,7 +2492,7 @@ class PhysicsMixin:
             mj.mj_kinematics(model, data)
             for vec in vectors:
                 geomid = np.array([-1], dtype=np.int32)
-                dist = mj.mj_ray(model, data, pnt, vec, None, 1, exclusion, geomid)
+                dist = mj.mj_ray(model, data, pnt, vec, None, static_filter, exclusion, geomid)
                 results.append(
                     {
                         "distance": float(dist) if dist >= 0 else None,
@@ -2404,6 +2659,14 @@ class PhysicsMixin:
         ``replace_scene_mjcf`` / ``patch_scene_mjcf`` / the ``inject_*``
         helpers all do this). The serialised XML reflects any runtime
         mutation, so no extra caching or round-tripping is needed.
+
+        ``output_path`` is treated as untrusted (LLM-callable tool): a ``..``
+        traversal segment, a symlinked target, shell metacharacters, and
+        backslash separators are rejected with ``status=error``. An absolute
+        destination is accepted (the historic contract for this sink). The
+        write is atomic and the success text reports the RESOLVED path. A
+        destination the filesystem cannot accept (a directory, an unwritable
+        parent) is reported the same way; a missing parent is created.
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2430,9 +2693,32 @@ class PhysicsMixin:
             return {"status": "error", "content": [{"text": f"spec.to_xml() failed: {e}"}]}
 
         if output_path:
-            with open(output_path, "w") as f:
-                f.write(xml)
-            return {"status": "success", "content": [{"text": f"Model exported to {output_path}"}]}
+            # output_path is LLM-supplied (export_xml is an agent-callable
+            # action): reject traversal, a symlinked target, and shell
+            # metacharacters before writing. Guards-only (no sandbox root) keeps
+            # the historic contract that an absolute destination is accepted -
+            # unlike render(), whose output_path is documented as a newer,
+            # sandboxed-by-design feature. The write is atomic so a crash
+            # mid-export cannot truncate an existing file at the destination.
+            try:
+                safe = validate_output_path(output_path, sandbox_root=None, allow_abs=True)
+            except ValueError as e:
+                return {"status": "error", "content": [{"text": f"export_xml: {e}"}]}
+            try:
+                atomic_write_bytes(safe, xml.encode("utf-8"))
+            except OSError as e:
+                # A destination the caller supplied but the filesystem cannot
+                # accept (a directory, an unwritable parent) is the same class
+                # of caller error as an unsafe path, so it is reported through
+                # the envelope rather than raised past it. strerror keeps the
+                # internal temp filename out of the message.
+                return {
+                    "status": "error",
+                    "content": [{"text": f"export_xml: cannot write {safe}: {e.strerror or e}"}],
+                }
+            # Report the RESOLVED path: the raw argument can normalize to a
+            # different location, so echoing it would name a file we did not write.
+            return {"status": "success", "content": [{"text": f"Model exported to {safe}"}]}
 
         return {
             "status": "success",

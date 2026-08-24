@@ -377,16 +377,14 @@ class TestTheVectorCoercionRefusesABooleanComponent:
         the units of the joint writers - not of a coordinate, an extent or a
         colour channel.
         """
-        from strands_robots.simulation.mujoco.physics import (
-            _BOOLEAN_STATE_REASON,
-            _BOOLEAN_VECTOR_REASON,
-        )
+        from strands_robots.simulation.base import _BOOLEAN_STATE_REASON
+        from strands_robots.utils import BOOLEAN_VECTOR_REASON
 
         _, err = self._coerce([True, 0.0, 0.0], "origin", "raycast")
         assert err is not None
         text = _text(err)
         assert "not a bool" in text
-        assert _BOOLEAN_VECTOR_REASON in text
+        assert BOOLEAN_VECTOR_REASON in text
         assert _BOOLEAN_STATE_REASON not in text
         assert "radian" not in text, "a raycast origin is not measured in radians"
 
@@ -521,6 +519,18 @@ _NOT_AN_INPUT_DOMAIN = {
     "rollout_rate_mismatch_reason": "compares already-validated rates",
     # Reads a pose back off the USD stage - not caller input.
     "_prim_body_state": "reads state out of the engine",
+    # Measures the distance between a target _validate_move_to_args has already
+    # coerced (its position runs through coerce_pose_vector, which refuses a
+    # boolean component) and the engine-owned robot base position - a boolean
+    # cannot reach the float() here.
+    "_workspace_sanity_error": "measures an already-coerced target against engine state",
+    # The one float() here compares a value finite_number_error has already
+    # accepted, and that shared domain refuses bool and numpy.bool_ explicitly, so
+    # a boolean is answered with its own reason and never reaches the coercion.
+    # Pinned behaviourally rather than only claimed here:
+    # tests/simulation/test_predicate_tolerance_sign_domain.py fails when the
+    # delegation is dropped or the shared domain stops refusing a boolean.
+    "_kwarg_domain_error": "coerces only a value finite_number_error accepted",
 }
 
 _GUARDED_VALIDATORS = {
