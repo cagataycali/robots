@@ -908,7 +908,21 @@ class SceneObject:
 
 
 def _parse_quat(quat_str: str | None) -> tuple[float, float, float, float]:
-    """Parse an MJCF ``quat="w x y z"`` string. Identity on failure."""
+    """Parse an MJCF ``quat="w x y z"`` string, normalized. Identity on failure.
+
+    A quaternion describes a rotation only at unit norm, and MuJoCo normalizes
+    every ``quat`` its compiler reads. Reporting the four components as written
+    hands the caller a value that is not a rotation: MuJoCo's own
+    ``mju_quat2Mat`` builds the matrix from the components as given, so
+    ``quat="1 -1 0 0"`` -- the idiomatic spelling of a quarter turn, which the
+    shipped asset corpus uses on hundreds of robot links -- yields that quarter
+    turn composed with a uniform scale of ``|q|**2``, twice size.
+
+    A zero quaternion has no direction to normalize onto, so it is read as
+    malformed: identity, this function's reading for every ``quat`` it cannot
+    use. MuJoCo refuses such a model outright ("zero quaternion is not
+    allowed"), so no model that compiles reaches here with one.
+    """
     if not quat_str:
         return (1.0, 0.0, 0.0, 0.0)
     try:
@@ -917,7 +931,10 @@ def _parse_quat(quat_str: str | None) -> tuple[float, float, float, float]:
         return (1.0, 0.0, 0.0, 0.0)
     if len(parts) != 4:
         return (1.0, 0.0, 0.0, 0.0)
-    return (parts[0], parts[1], parts[2], parts[3])
+    norm = math.sqrt(sum(p * p for p in parts))
+    if norm == 0.0:
+        return (1.0, 0.0, 0.0, 0.0)
+    return (parts[0] / norm, parts[1] / norm, parts[2] / norm, parts[3] / norm)
 
 
 #: MJCF's orientation spellings other than ``quat``. MuJoCo keeps these four in
@@ -1063,7 +1080,7 @@ def _parse_orientation(
     a model rotates is placed unrotated. Each is resolved the way MuJoCo's
     compiler does:
 
-    * ``quat="w x y z"`` -- taken as written (see the note below).
+    * ``quat="w x y z"`` -- normalized (see the note below).
     * ``euler="a b c"`` -- three rotations about the axes ``eulerseq`` names,
       composed about the *moving* axes (intrinsic), with the angles in the
       units ``<compiler angle>`` declares.
@@ -1082,10 +1099,10 @@ def _parse_orientation(
     ``quat``. :func:`_merge_mjcf_attrs` has already resolved which alternative
     spelling survives, so at most one reaches here.
 
-    A ``quat`` is reported as written rather than normalized. MuJoCo normalizes
-    it, but no ``quat`` in the shipped asset corpus is unnormalized, so
-    normalizing here would only move output for input no shipped model
-    contains; that is a separate contract from reading the spelling at all.
+    Every orientation this returns is a unit quaternion. The four alternative
+    spellings are constructed at unit norm, and a ``quat`` is normalized the way
+    MuJoCo's compiler normalizes it -- see :func:`_parse_quat` for why the
+    components as written are not a rotation.
 
     Args:
         attrs: The element's effective attributes -- ``el.attrib``, or

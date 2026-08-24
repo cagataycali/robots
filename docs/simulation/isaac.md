@@ -214,7 +214,11 @@ open a window.
   `ProceduralRobot` dataclass. `load_mjcf` reports each link's pose in its
   parent's frame, reading the rotation from whichever of MJCF's five spellings
   the body uses - `quat`, `euler`, `axisangle`, `xyaxes` or `zaxis` - under the
-  model-global `<compiler angle>` and `<compiler eulerseq>`.
+  model-global `<compiler angle>` and `<compiler eulerseq>`. The reported
+  orientation is always a unit quaternion, the one MuJoCo's compiler stores: a
+  non-unit spelling such as `quat="1 -1 0 0"` (the idiomatic quarter turn) is
+  reported as the quarter turn it means, not as the components as written, which
+  applied as a rotation would scale the frame by `|q|^2` as well as turning it.
 
 Because the joint-name and observation contract matches the MuJoCo backend,
 policies and observation mappings transfer unchanged between backends.
