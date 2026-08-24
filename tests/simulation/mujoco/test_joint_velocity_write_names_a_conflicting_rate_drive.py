@@ -72,7 +72,13 @@ _DRIVES: list[tuple[str, str]] = [
 
 #: The tags whose ``ctrl`` is a velocity in the joint's own units.
 _RATE_TAGS = frozenset({"vel", "gen_vel"})
+
+#: The one of those the behavioural classes below write to. Read rather than
+#: spelled out at each call site so the joint they measure the physical outcome
+#: on cannot drift away from the tag the sweep expects the report to name.
 _RATE_TAG = "vel"
+_RATE_ACTUATOR = f"a_{_RATE_TAG}"
+_RATE_JOINT = f"arm/j_{_RATE_TAG}"
 
 
 def _scene_xml(tags: list[str]) -> str:
@@ -120,35 +126,60 @@ def _badqacc(engine: Any) -> int:
     return int(engine._world._data.warning[mj.mjtWarning.mjWARN_BADQACC].number)
 
 
+class TestTheBehaviouralFixtureIsARateDrive:
+    """The tag the behavioural classes write to is one the sweep expects to be named.
+
+    The classes below measure the physical outcome -- the sign reversal, the
+    hold -- on one joint, while :class:`TestOnlyARateDriveIsNamed` sweeps every
+    tag and grades it against ``_RATE_TAGS``. Nothing else ties the two halves
+    together: point the behavioural classes at a pose servo and they fail five
+    times over on a report that correctly says nothing, which reads as the
+    report having regressed rather than as the fixture no longer driving a rate.
+    """
+
+    def test_the_written_joint_is_a_declared_drive_the_sweep_expects_to_be_named(self) -> None:
+        declared = {tag for tag, _ in _DRIVES}
+
+        assert _RATE_TAG in declared, (
+            f"the behavioural classes write to j_{_RATE_TAG}, which the fixture does not "
+            f"declare; the drives it does are {sorted(declared)}"
+        )
+        assert _RATE_TAG in _RATE_TAGS, (
+            f"the behavioural classes write to j_{_RATE_TAG}, whose ctrl is not a rate in "
+            f"the joint's own units, so the report is right to stay silent and their "
+            f"failures would not be the report's; the rate drives are {sorted(_RATE_TAGS)}"
+        )
+
+
 class TestAConflictingRateDriveIsNamed:
     """The written joints whose rate drive commands something else are reported."""
 
     def test_the_report_names_the_joint_and_the_way_to_command_the_rate(self, sim: Any) -> None:
-        _ok(sim.send_action({"a_vel": -3.0}), "send_action")
+        _ok(sim.send_action({_RATE_ACTUATOR: -3.0}), "send_action")
 
-        report = _text(_ok(sim.set_joint_velocities({"arm/j_vel": 2.0}), "set_joint_velocities"))
+        report = _text(_ok(sim.set_joint_velocities({_RATE_JOINT: 2.0}), "set_joint_velocities"))
 
-        assert "arm/j_vel" in report, report
+        assert _RATE_JOINT in report, report
         assert "commanding a different rate" in report, report
         assert "send_action" in report, report
 
     def test_the_written_rate_is_driven_back_toward_the_drives_command(self, sim: Any) -> None:
-        _ok(sim.send_action({"a_vel": -3.0}), "send_action")
-        _ok(sim.set_joint_velocities({"arm/j_vel": 2.0}), "set_joint_velocities")
-        assert _qvel(sim, "arm/j_vel") == pytest.approx(2.0), "premise: the write landed in qvel"
+        _ok(sim.send_action({_RATE_ACTUATOR: -3.0}), "send_action")
+        _ok(sim.set_joint_velocities({_RATE_JOINT: 2.0}), "set_joint_velocities")
+        assert _qvel(sim, _RATE_JOINT) == pytest.approx(2.0), "premise: the write landed in qvel"
 
         _ok(sim.step(50), "step")
 
-        settled = _qvel(sim, "arm/j_vel")
+        settled = _qvel(sim, _RATE_JOINT)
         assert _badqacc(sim) == 0, "premise: the fixture integrates without a bad-qacc warning"
         assert settled < 0.0, f"the written +2.0 should be driven toward the commanded -3.0, got {settled}"
 
     def test_a_conflicting_drive_reads_differently_from_one_commanding_the_written_rate(self, sim: Any) -> None:
-        _ok(sim.send_action({"a_vel": 2.0}), "send_action")
-        agreeing = _text(_ok(sim.set_joint_velocities({"arm/j_vel": 2.0}), "set_joint_velocities"))
+        _ok(sim.send_action({_RATE_ACTUATOR: 2.0}), "send_action")
+        agreeing = _text(_ok(sim.set_joint_velocities({_RATE_JOINT: 2.0}), "set_joint_velocities"))
 
-        _ok(sim.send_action({"a_vel": -3.0}), "send_action")
-        conflicting = _text(_ok(sim.set_joint_velocities({"arm/j_vel": 2.0}), "set_joint_velocities"))
+        _ok(sim.send_action({_RATE_ACTUATOR: -3.0}), "send_action")
+        conflicting = _text(_ok(sim.set_joint_velocities({_RATE_JOINT: 2.0}), "set_joint_velocities"))
 
         assert agreeing != conflicting, (
             "a drive commanding the written rate and one commanding another rate are opposite "
@@ -179,19 +210,19 @@ class TestTheReportIsNotWidened:
     """A drive commanding the written rate is not a disagreement."""
 
     def test_a_drive_commanding_the_written_rate_keeps_the_plain_report(self, sim: Any) -> None:
-        _ok(sim.send_action({"a_vel": 2.0}), "send_action")
+        _ok(sim.send_action({_RATE_ACTUATOR: 2.0}), "send_action")
 
-        report = _text(_ok(sim.set_joint_velocities({"arm/j_vel": 2.0}), "set_joint_velocities"))
+        report = _text(_ok(sim.set_joint_velocities({_RATE_JOINT: 2.0}), "set_joint_velocities"))
 
         assert report == "Set 1/1 joint velocities", report
 
     def test_a_rate_drive_commanding_the_written_rate_holds_it(self, sim: Any) -> None:
-        _ok(sim.send_action({"a_vel": 2.0}), "send_action")
-        _ok(sim.set_joint_velocities({"arm/j_vel": 2.0}), "set_joint_velocities")
+        _ok(sim.send_action({_RATE_ACTUATOR: 2.0}), "send_action")
+        _ok(sim.set_joint_velocities({_RATE_JOINT: 2.0}), "set_joint_velocities")
 
         _ok(sim.step(50), "step")
 
-        settled = _qvel(sim, "arm/j_vel")
+        settled = _qvel(sim, _RATE_JOINT)
         assert _badqacc(sim) == 0, "premise: the fixture integrates without a bad-qacc warning"
         assert settled > 1.0, f"the drive commands the written rate, so it should hold it, got {settled}"
 
