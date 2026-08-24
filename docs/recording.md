@@ -75,6 +75,28 @@ matches one of them: their frames interleave into one episode whose single
 declared rate cannot describe both, so there is no `fps` to pass instead. Stop
 all but one, or restart them at a common `control_frequency`.
 
+The `run_policy` tool owns both rates at once - it takes `dataset_fps` and
+`control_frequency` as its own arguments and drives the whole
+`start_recording` -> rollout -> `stop_recording` cycle - so it settles the pair
+up front, before it opens anything. That matters because it opens its recording
+with `overwrite=True`: left to the per-episode rollout, the disagreement was
+reported only after any dataset already at `dataset_root` had been replaced with
+an empty one, and after every episode had failed with the same message.
+
+```python
+run_policy(simulation=sim, robot_name="so100", n_episodes=2,
+           control_frequency=50.0, dataset_fps=30,      # cannot both hold
+           dataset_root="/tmp/my_dataset")
+# -> "run_policy: this call would open a recording declaring 30 fps for a
+#     rollout capturing at control_frequency=50 Hz. [...] Align the two rates:
+#     pass control_frequency=30, or record at the rollout's rate
+#     (dataset_fps=50)."
+# The dataset already at /tmp/my_dataset is untouched.
+```
+
+`dataset_fps` is ignored when `dataset_root` is omitted (the recording-less
+smoke-test mode), so a rollout with no recording runs at any rate.
+
 ## Selecting which cameras to record
 
 By default every camera in the scene is recorded into the dataset - including

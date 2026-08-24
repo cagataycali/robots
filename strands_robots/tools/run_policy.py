@@ -155,7 +155,9 @@ def run_policy(
             ``run_policy`` as ``n_steps``.
         control_frequency: Target Hz for policy queries. Must be a finite
             number > 0; an unusable rate is reported before the rollout
-            starts instead of aborting every episode mid-flight.
+            starts instead of aborting every episode mid-flight. When a
+            recording is requested it must also EQUAL ``dataset_fps`` - see
+            that parameter.
         action_horizon: Lower bound on actions consumed per policy call
             before re-querying; the effective interval is
             ``max(action_horizon, policy.execution_horizon)``, so a
@@ -173,8 +175,19 @@ def run_policy(
         dataset_repo_id: Forwarded to ``start_recording``.
         dataset_task: Task label forwarded to ``start_recording``.
         dataset_fps: Dataset FPS forwarded to ``start_recording``. Must be a
-            positive whole number; an unusable rate is reported before the
-            rollout starts instead of aborting the episode mid-flight.
+            positive whole number - reported by ``start_recording`` itself,
+            which checks the rate before it touches the target directory, so
+            an unusable value costs nothing. It must also EQUAL
+            ``control_frequency`` whenever ``dataset_root`` is set: the
+            recorder captures one frame per control step and never decimates,
+            while LeRobot timestamps every frame from the declared rate, so a
+            differing pair cannot be honored, only mislabelled. The
+            disagreement is refused up front
+            (:func:`~strands_robots.simulation.recording.requested_rate_mismatch_reason`)
+            rather than by the per-episode rollout - which this tool reaches
+            only after ``start_recording(overwrite=True)`` has replaced any
+            dataset already at ``dataset_root`` with an empty one. Ignored
+            entirely when ``dataset_root`` is ``None``.
         dataset_cameras: Camera names to record into the dataset.
             When set, forwarded as ``start_recording(cameras=...)``
             (supported by both the MuJoCo and Newton backends) to
@@ -272,6 +285,27 @@ def run_policy(
 
     if horizon_error := positive_count_error(action_horizon, "action_horizon", "run_policy"):
         return _err(horizon_error)
+
+    # The one rule between two of this tool's own parameters, and the only one
+    # whose refusal no downstream guard can reach in time. Each rate is already
+    # checked on its own domain - ``control_frequency`` just above,
+    # ``dataset_fps`` by ``start_recording`` ahead of the target it resolves -
+    # but the recorder is driven once per control step with no decimation and
+    # LeRobot timestamps every frame from the declared rate, so the two must be
+    # EQUAL. That equality is enforced by the rollout entry point, which this
+    # tool reaches only inside the episode loop: measured against an existing
+    # dataset of one episode / five frames, ``dataset_fps=30`` with
+    # ``control_frequency=50.0`` wiped it to ``total_episodes=0,
+    # total_frames=0`` and then reported ``0/2 episodes ok``. Gated on a
+    # requested recording because ``dataset_fps`` is forwarded nowhere without
+    # one, so a recording-less rollout is unaffected at any rate.
+    if dataset_root is not None:
+        from strands_robots.simulation.recording import requested_rate_mismatch_reason
+
+        if rate_error := requested_rate_mismatch_reason(
+            "run_policy", dataset_fps, control_frequency, fps_param="dataset_fps"
+        ):
+            return _err(rate_error)
 
     # Same pre-flight reason as the schema checks below: the per-episode seed is
     # derived arithmetically (``seed + ep``) OUTSIDE the per-episode try, so a

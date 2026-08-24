@@ -535,6 +535,10 @@ _NOT_AN_INPUT_DOMAIN = {
 
 _GUARDED_VALIDATORS = {
     "randomization_range_error",
+    # The one rate guard that is asked before either rate has been through its
+    # own domain, so unlike the two exempted above it really does coerce raw
+    # caller input.
+    "requested_rate_mismatch_reason",
     "finite_non_negative_error",
     "_validate_timestep",
     "_validate_mass",
