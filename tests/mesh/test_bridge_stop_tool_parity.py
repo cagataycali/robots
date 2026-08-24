@@ -181,7 +181,17 @@ def test_the_rosbridge_stop_and_scan_tools_forward_to_the_instance(monkeypatch: 
 # Structural: a future transport cannot ship a drive without a halt ------------
 
 #: Bridge classes that own a mobile base's drive/stop pair today.
-EXPECTED_DRIVE_STOP_CLASSES = {"RosBridgedRobot", "RosbridgeRobot", "RtpsRobot"}
+#:
+#: ``AckermannRosRobot`` is here but deliberately not in :data:`BRIDGES`: the
+#: cross-transport parity cases above assert a ``geometry_msgs/msg/Twist`` of
+#: zeros on ``/cmd_vel``, and an Ackermann car halts with a zero
+#: ``ServoCtrlMsg`` (``angle``/``throttle``) on its servo topic instead. The
+#: rule those cases exist for - a transport that can start motion exposes the
+#: halt in the same tool set - is enforced for it by
+#: :func:`test_every_bridge_owning_a_drive_stop_pair_builds_a_stop_tool`, which
+#: reads the survey rather than a wire format, and its zero-servo halt is
+#: pinned in ``tests/mesh/test_ackermann_robot.py``.
+EXPECTED_DRIVE_STOP_CLASSES = {"AckermannRosRobot", "RosBridgedRobot", "RosbridgeRobot", "RtpsRobot"}
 
 
 def _mesh_dir() -> pathlib.Path:
