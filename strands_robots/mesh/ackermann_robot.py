@@ -46,6 +46,7 @@ from strands_robots.mesh.ros_bridge import _check_topic
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.utils import (
     finite_number_error,
+    partial_construction_repr,
     positive_finite_number_error,
     positive_whole_number_error,
 )
@@ -359,7 +360,10 @@ class AckermannRosRobot:
         return agent_tools
 
     def __repr__(self) -> str:
-        return (
-            f"AckermannRosRobot(node_name={self.node_name!r}, "
-            f"servo_topic={self.servo_topic!r}, scan_topic={self.scan_topic!r})"
-        )
+        try:
+            return (
+                f"AckermannRosRobot(node_name={self.node_name!r}, "
+                f"servo_topic={self.servo_topic!r}, scan_topic={self.scan_topic!r})"
+            )
+        except AttributeError:
+            return partial_construction_repr(self)

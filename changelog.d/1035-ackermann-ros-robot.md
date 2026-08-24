@@ -17,3 +17,13 @@ no odometry).
 `positive_whole_number_error` domains the three differential-drive bridges
 call, so the fourth transport refuses an unusable velocity, hold or count with
 byte-identical text rather than a hand-rolled copy of the contract.
+
+`__repr__` renders a half-built instance rather than raising. The constructor
+validates `node_name` before assigning it, so a refused construction left an
+instance whose `repr` raised `AttributeError: 'AckermannRosRobot' object has no
+attribute 'node_name'` - sending a reader after the attribute instead of the
+`ValueError: invalid node_name` they already caused. It now delegates to the
+single owner of that wording, `strands_robots.utils.partial_construction_repr`,
+as the three differential-drive bridges do, and the class is triaged into the
+survey in `tests/test_repr_survives_partial_construction.py` (both the
+half-built sweep and the documented-refusal cases).
