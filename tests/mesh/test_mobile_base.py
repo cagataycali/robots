@@ -575,6 +575,31 @@ def _forwards_a_context(method: Any) -> bool:
     )
 
 
+def gate_forwarding_violations(transport: type, agent_tool: Any) -> list[str]:
+    """The command verbs on ``transport`` that disagree with ``agent_tool``'s gate.
+
+    The forwarding rule, extracted so the shipped matrix below and the
+    constructed pairings that grade the rule itself exercise the same code
+    rather than two restatements of it.
+
+    Args:
+        transport: The transport class whose command verbs are inspected.
+        agent_tool: The tool ``transport`` forwards to, which either has an
+            operator gate to hand a context to or does not.
+
+    Returns:
+        The offending verbs, empty when the transport agrees with its tool. A
+        verb the transport does not declare is not an omission - it is an
+        optional capability, so it cannot be a violation either way.
+    """
+    gates = _tool_takes_a_context(agent_tool)
+    return [
+        verb
+        for verb in _TRANSPORT_COMMAND_VERBS
+        if (method := getattr(transport, verb, None)) is not None and _forwards_a_context(method) is not gates
+    ]
+
+
 @pytest.mark.parametrize("transport,agent_tool", _shipped_transports(), ids=lambda x: getattr(x, "__name__", ""))
 def test_every_transport_accepts_the_operator_context(transport: type, agent_tool: Any) -> None:
     """The base hands the context to the transport, so every one must take it.
@@ -606,34 +631,77 @@ def test_a_transport_forwards_the_context_exactly_when_its_tool_gates(transport:
     has to be right rather than remembered.
     """
     gates = _tool_takes_a_context(agent_tool)
-    for verb in _TRANSPORT_COMMAND_VERBS:
-        method = getattr(transport, verb, None)
-        if method is None:
-            continue
-        assert _forwards_a_context(method) is gates, (
-            f"{transport.__name__}.{verb} "
-            f"{'drops' if gates else 'forwards'} the operator context but its tool "
-            f"{'gates' if gates else 'has no gate'}"
-        )
+    violations = gate_forwarding_violations(transport, agent_tool)
+    assert not violations, (
+        f"{transport.__name__}.{'/'.join(violations)} "
+        f"{'drops' if gates else 'forwards'} the operator context but its tool "
+        f"{'gates' if gates else 'has no gate'}"
+    )
 
 
-def test_the_shipped_transports_cover_both_sides_of_the_gate_split() -> None:
-    """Every shipped command-bearing transport forwards the operator context.
+def _gating_stand_in(*, topic: str, tool_context: Any = None) -> None:
+    """Stands in for a tool whose command surface has an operator gate."""
 
-    Both ``use_ros`` and ``use_rtps`` gate their command surface, so every
-    shipped transport that can publish must forward ``tool_context``. The
-    parametrized rule above verifies the forwarding; this test verifies that at
-    least one transport is in the gating set so the rule is not vacuous.
+
+def _ungated_stand_in(*, topic: str) -> None:
+    """Stands in for a tool with no gate, so nothing to hand a context to."""
+
+
+class _ForwardsTheContext:
+    def publish(self, *, topic: str, tool_context: Any = None) -> None:
+        _gating_stand_in(topic=topic, tool_context=tool_context)
+
+
+class _DropsTheContext:
+    def publish(self, *, topic: str, tool_context: Any = None) -> None:
+        _gating_stand_in(topic=topic)
+
+
+@pytest.mark.parametrize(
+    "transport,agent_tool,offending",
+    [
+        (_ForwardsTheContext, _gating_stand_in, []),
+        (_DropsTheContext, _gating_stand_in, ["publish"]),
+        (_ForwardsTheContext, _ungated_stand_in, ["publish"]),
+        (_DropsTheContext, _ungated_stand_in, []),
+    ],
+    ids=["gating+forwards", "gating+drops", "ungated+forwards", "ungated+drops"],
+)
+def test_the_forwarding_rule_reports_exactly_the_two_wrong_pairings(
+    transport: type, agent_tool: Any, offending: list[str]
+) -> None:
+    """Both directions of the rule stay pinned however the shipped set moves.
+
+    Reading the gating/ungated split off the shipped tools cannot do this: every
+    shipped tool gates today, so a check driven by them only ever evaluates one
+    branch and decays silently the moment the last ungated tool grows a gate -
+    which is what happened when ``use_rtps`` gained its gate. Grading
+    constructed pairings keeps the rule itself covered regardless.
     """
-    gating = {t.__name__ for t, agent_tool in _shipped_transports() if _tool_takes_a_context(agent_tool)}
-    ungated = {t.__name__ for t, agent_tool in _shipped_transports() if not _tool_takes_a_context(agent_tool)}
-    assert gating, f"gating={sorted(gating)} - expected at least one gating transport"
-    # All shipped tools now gate; the ungated set being empty is the correct
-    # security posture after #2693 gave use_rtps its operator-approval gate.
-    # If a future ungated transport is added, it must not forward tool_context.
-    if ungated:
-        # Non-vacuity: both branches are exercised.
-        pass
+    assert gate_forwarding_violations(transport, agent_tool) == offending
+
+
+def test_every_shipped_transport_onto_a_ros2_graph_gates_its_commands() -> None:
+    """No transport is a way around the operator gate on the others.
+
+    ``use_ros`` and ``use_rtps`` reach the same physical ``/cmd_vel`` over two
+    different wires, so a gate on one but not the other makes the tool name the
+    whole difference - the defect
+    :mod:`strands_robots.tools._command_gate` exists to prevent, and one it
+    already shipped once. Stated as the positive security claim rather than as a
+    count of the two sides of a split, because the ungated side is empty and a
+    check that it is non-empty is not something to want.
+
+    A transport is exempt from forwarding only if its tool has no gate, so this
+    is also what keeps that exemption from being reachable by removing a gate.
+    """
+    shipped = _shipped_transports()
+    assert shipped, "the transport matrix is empty, so every rule in this section is vacuous"
+    ungated = sorted(t.__name__ for t, agent_tool in shipped if not _tool_takes_a_context(agent_tool))
+    assert not ungated, (
+        f"{ungated} carry commands onto a ROS 2 graph through a tool with no operator approval, "
+        "so an agent declined on another transport can re-issue the command through this one"
+    )
 
 
 def test_rtps_transport_declares_no_service_surface() -> None:
