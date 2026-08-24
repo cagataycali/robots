@@ -1342,18 +1342,86 @@ _ADOPTED_OPTION_FIELDS: tuple[str, ...] = (
 )
 
 
+_ORIENTATION_TOL: Final[float] = 1e-6
+
+
+def _alt_orientation_is_identity(alt: Any) -> bool | None:
+    """Whether the alternative-orientation slot carries an identity rotation.
+
+    MJCF spells a rotation five ways - ``quat`` plus the four alternatives
+    ``euler`` / ``axisangle`` / ``xyaxes`` / ``zaxis`` - and MuJoCo keeps the
+    four alternatives in one slot (``elem.alt``) behind a discriminator,
+    leaving ``elem.quat`` at identity. Reading ``quat`` alone therefore reports
+    every alternative spelling as unrotated, and ``zaxis`` is the idiomatic
+    spelling for a plane, whose normal *is* that vector.
+
+    Only identity is decided here, never the rotation itself: a plane's normal
+    stays +Z exactly when the slot carrying the rotation is identity, and for
+    each spelling that is a direct test on the declared numbers. It needs no
+    angle unit, because zero is zero in degrees and in radians, so the model's
+    ``<compiler angle>`` does not enter into it.
+
+    Args:
+        alt: the element's ``alt`` slot.
+
+    Returns:
+        ``True``/``False`` when this slot carries the element's rotation, or
+        ``None`` when its discriminator says the rotation lives in ``quat``
+        instead, which the caller should then read.
+    """
+    mujoco = _ensure_mujoco()
+    kinds = mujoco.mjtOrientation
+    try:
+        kind = int(alt.type)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if kind == int(kinds.mjORIENTATION_EULER):
+        return bool(np.allclose(np.asarray(alt.euler, dtype=float), 0.0, atol=_ORIENTATION_TOL))
+    if kind == int(kinds.mjORIENTATION_AXISANGLE):
+        # Any axis, provided the rotation about it is zero.
+        return abs(float(alt.axisangle[3])) <= _ORIENTATION_TOL
+    if kind == int(kinds.mjORIENTATION_ZAXIS):
+        # The plane's normal IS this vector, so identity means it points +Z.
+        vec = np.asarray(alt.zaxis, dtype=float)
+        norm = float(np.linalg.norm(vec))
+        if norm <= _ORIENTATION_TOL:
+            # A zero-length axis defines no frame - MuJoCo refuses such a
+            # model outright - so it cannot be shown to point +Z.
+            return False
+        return bool(np.allclose(vec / norm, (0.0, 0.0, 1.0), atol=_ORIENTATION_TOL))
+    if kind == int(kinds.mjORIENTATION_XYAXES):
+        axes = np.asarray(alt.xyaxes, dtype=float)
+        return bool(np.allclose(axes, (1.0, 0.0, 0.0, 0.0, 1.0, 0.0), atol=_ORIENTATION_TOL))
+    return None
+
+
 def _is_z0_ground_plane(geom: Any) -> bool:
     """True if a plane geom is plausibly the z=0 axis-aligned ground.
 
     MuJoCo planes default to a +Z normal at the body origin. We treat a plane
     as "ground" when its body-frame position z is ~0 and its orientation is
-    axis-aligned (quat ~ identity, so the normal stays +Z). A robot MJCF that
-    ships an intentional ramp/wall plane (rotated or elevated) is NOT matched
-    and survives the attach. See #363.
+    identity, so the normal stays +Z. A robot MJCF that ships an intentional
+    ramp/wall plane (rotated or elevated) is NOT matched and survives the
+    attach - whichever of MJCF's five orientation spellings declares it, which
+    is why the alternative slot is read here and not only ``quat``; see
+    :func:`_alt_orientation_is_identity`.
+
+    Recognising ground is what strips a duplicate floor, so the two directions
+    are not symmetric. A plane wrongly taken for ground loses the robot a
+    surface it was authored with; a plane that merely cannot be shown to be
+    flat survives, which at worst leaves the second floor the world already
+    has. Unrecognised therefore means "kept". See #363.
     """
     pos = getattr(geom, "pos", None)
     if pos is not None and abs(float(pos[2])) > 1e-6:
         return False
+    alt = getattr(geom, "alt", None)
+    if alt is not None:
+        # A live spec element keeps the four alternative spellings here, and
+        # this slot wins over ``quat`` when it is the one MJCF declared.
+        from_alt = _alt_orientation_is_identity(alt)
+        if from_alt is not None:
+            return from_alt
     quat = getattr(geom, "quat", None)
     if quat is not None:
         # Identity quat is (1, 0, 0, 0); allow small FP noise.

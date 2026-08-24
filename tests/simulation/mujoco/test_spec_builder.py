@@ -1115,3 +1115,216 @@ class TestSurplusRollbackTargetsOnlyWhatThisCallAppended:
         # A rollback on a path that inserted nothing is a safe no-op.
         assert SpecBuilder.remove_surplus_bodies(spec, "absent", 0) == 0
         assert SpecBuilder.remove_surplus_cameras(spec, "absent", 0) == 0
+
+
+# The five ways MJCF spells one rotation, applied to a plane. Every entry is the
+# SAME wall - a plane whose normal is +X - so MuJoCo resolves all five to one
+# quaternion, which is what makes a per-spelling disagreement in the reader
+# visible rather than a difference of geometry.
+_WALL_SPELLINGS = {
+    "quat": 'quat="0.7071068 0 0.7071068 0"',
+    "euler": 'euler="0 90 0"',
+    "axisangle": 'axisangle="0 1 0 90"',
+    "zaxis": 'zaxis="1 0 0"',
+    "xyaxes": 'xyaxes="0 0 -1 0 1 0"',
+}
+
+# The same five spellings written to carry NO rotation. A plane declared this
+# way IS the z=0 ground, so it must still be recognised: the duplicate-floor
+# strip has to keep working for the idiomatic spellings, not merely stop
+# deleting walls.
+_FLAT_SPELLINGS = {
+    "quat": 'quat="1 0 0 0"',
+    "euler": 'euler="0 0 0"',
+    "axisangle": 'axisangle="0 1 0 0"',
+    "zaxis": 'zaxis="0 0 1"',
+    "xyaxes": 'xyaxes="1 0 0 0 1 0"',
+}
+
+_IDENTITY_QUAT = (1.0, 0.0, 0.0, 0.0)
+
+
+def _write_plane_mjcf(tmp_path, attr, name):
+    path = tmp_path / f"{name}.xml"
+    path.write_text(f'<mujoco><worldbody><geom name="p" type="plane" size="2 2 0.1" {attr}/></worldbody></mujoco>')
+    return path
+
+
+def _geom_and_compiled_rotation(path):
+    """The spec's plane geom, plus whether MuJoCo compiled it unrotated.
+
+    ``geom_quat`` on the compiled model is the oracle here: it is what MuJoCo
+    itself resolved the declaration to, whichever of the five spellings wrote
+    it, so every expectation below is derived from the compiler rather than
+    restated by hand.
+    """
+    spec = mujoco.MjSpec.from_file(str(path))
+    geom = next(g for g in spec.geoms if g.name == "p")
+    model = mujoco.MjModel.from_xml_path(str(path))
+    gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "p")
+    quat = np.asarray(model.geom_quat[gid], dtype=float)
+    identity = np.asarray(_IDENTITY_QUAT)
+    # q and -q are the same rotation, so compare up to sign.
+    unrotated = bool(min(np.linalg.norm(quat - identity), np.linalg.norm(quat + identity)) < 1e-6)
+    return geom, unrotated, quat
+
+
+class TestTheGroundPredicateAgreesWithTheCompiler:
+    """``_is_z0_ground_plane`` must answer for the spelling MJCF actually used.
+
+    MJCF spells a rotation five ways and MuJoCo keeps the four non-``quat``
+    spellings in a separate slot, leaving ``quat`` at identity. A reader that
+    consults ``quat`` alone therefore reports a wall declared with ``euler``,
+    ``axisangle``, ``zaxis`` or ``xyaxes`` as unrotated - and since being
+    recognised as ground is what DELETES the plane, that silently removes a
+    surface the robot was authored with. The compiled ``geom_quat`` is the
+    oracle, so these cases assert agreement with MuJoCo rather than with a
+    hand-written table.
+    """
+
+    @pytest.mark.parametrize("spelling", sorted(_WALL_SPELLINGS))
+    def test_a_wall_is_not_ground_in_any_spelling(self, tmp_path, spelling):
+        geom, unrotated, quat = _geom_and_compiled_rotation(
+            _write_plane_mjcf(tmp_path, _WALL_SPELLINGS[spelling], f"wall_{spelling}")
+        )
+        assert not unrotated, f"premise: MuJoCo must compile this as rotated, got quat={quat}"
+        assert _is_z0_ground_plane(geom) is False, (
+            f"a wall declared with {spelling}= compiles to quat={quat}, which is not the +Z ground, "
+            "so it must survive the attach instead of being stripped as a duplicate floor"
+        )
+
+    @pytest.mark.parametrize("spelling", sorted(_FLAT_SPELLINGS))
+    def test_a_flat_plane_is_ground_in_any_spelling(self, tmp_path, spelling):
+        geom, unrotated, quat = _geom_and_compiled_rotation(
+            _write_plane_mjcf(tmp_path, _FLAT_SPELLINGS[spelling], f"flat_{spelling}")
+        )
+        assert unrotated, f"premise: MuJoCo must compile this as unrotated, got quat={quat}"
+        assert _is_z0_ground_plane(geom) is True, (
+            f"a plane declared flat with {spelling}= is the z=0 ground, so the duplicate-floor "
+            "strip must still recognise it"
+        )
+
+    def test_the_five_wall_spellings_are_one_rotation(self, tmp_path):
+        """Premise for the matrix above: the five spellings are interchangeable.
+
+        If they compiled to different rotations, a per-spelling disagreement in
+        the reader would prove nothing about the reader.
+        """
+        quats = []
+        for spelling, attr in sorted(_WALL_SPELLINGS.items()):
+            _, _, quat = _geom_and_compiled_rotation(_write_plane_mjcf(tmp_path, attr, f"one_{spelling}"))
+            quats.append((spelling, quat))
+        first_name, first = quats[0]
+        for name, quat in quats[1:]:
+            assert np.allclose(quat, first, atol=1e-6), (
+                f"{name}= compiled to {quat} but {first_name}= compiled to {first}; "
+                "the fixtures must describe one wall for the matrix to be meaningful"
+            )
+
+    def test_a_class_declared_spelling_is_read_too(self, tmp_path):
+        """A spelling inherited from a ``<default>`` class reaches the same slot."""
+        path = tmp_path / "classed.xml"
+        path.write_text(
+            "<mujoco>"
+            '<default><default class="w"><geom zaxis="1 0 0"/></default></default>'
+            '<worldbody><geom name="p" class="w" type="plane" size="2 2 0.1"/></worldbody>'
+            "</mujoco>"
+        )
+        geom, unrotated, quat = _geom_and_compiled_rotation(path)
+        assert not unrotated, f"premise: the class must rotate the plane, got quat={quat}"
+        assert _is_z0_ground_plane(geom) is False, (
+            f"a wall whose zaxis comes from a <default> class compiles to quat={quat} and must survive"
+        )
+
+    def test_a_scaled_flat_zaxis_is_still_ground(self, tmp_path):
+        """``zaxis`` is a direction, so its length carries no rotation."""
+        geom, unrotated, _ = _geom_and_compiled_rotation(_write_plane_mjcf(tmp_path, 'zaxis="0 0 5"', "scaled"))
+        assert unrotated, "premise: a +Z axis of any length is unrotated"
+        assert _is_z0_ground_plane(geom) is True
+
+
+_ROBOT_WITH_WALL = """<mujoco model="arm_with_wall">
+  <compiler angle="degree"/>
+  <worldbody>
+    <geom name="floor" size="0 0 0.05" type="plane"/>
+    <geom name="wall" size="2 2 0.05" type="plane" {attr}/>
+    <body name="base" pos="0 0 0.1">
+      <joint name="pan" type="hinge" axis="0 0 1"/>
+      <geom type="cylinder" size="0.05 0.05"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+class TestAnAuthoredWallSurvivesTheAttach:
+    """#363 guard: the strip removes the duplicate z=0 floor and nothing else.
+
+    ``test_attach_robot_keeps_non_z0_plane`` covers an ELEVATED plane, which
+    the position check answers; the rotated case is what the orientation read
+    decides, and a wall is the shape a caller is most likely to author with
+    ``zaxis``, since a plane's normal simply is that vector.
+    """
+
+    @staticmethod
+    def _plane_labels(attr, tmp_path, tag):
+        path = tmp_path / f"robot_{tag}.xml"
+        path.write_text(_ROBOT_WITH_WALL.format(attr=attr))
+        scene = SpecBuilder.build(SimWorld())
+        robot = SimRobot(name="arm1", urdf_path=str(path), position=[0.0, 0.0, 0.0])
+        SpecBuilder.attach_robot(scene, robot, str(path))
+        model = scene.compile()
+        return [
+            mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g)
+            for g in range(model.ngeom)
+            if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE
+        ]
+
+    @pytest.mark.parametrize("spelling", sorted(_WALL_SPELLINGS))
+    def test_the_wall_is_kept_and_the_duplicate_floor_is_stripped(self, tmp_path, spelling):
+        labels = self._plane_labels(_WALL_SPELLINGS[spelling], tmp_path, spelling)
+        assert any("wall" in (label or "") for label in labels), (
+            f"the robot's authored wall, declared with {spelling}=, was deleted by the "
+            f"duplicate-floor strip; surviving planes were {labels}"
+        )
+        assert "ground" in labels, f"the world ground must survive; got {labels}"
+        assert not any(label and label.endswith("floor") for label in labels), (
+            f"the robot's own z=0 floor is the duplicate and should have been stripped; got {labels}"
+        )
+
+    @pytest.mark.parametrize("spelling", sorted(_FLAT_SPELLINGS))
+    def test_a_second_flat_plane_is_still_stripped(self, tmp_path, spelling):
+        """The strip's purpose: a plane declared flat in any spelling goes."""
+        labels = self._plane_labels(_FLAT_SPELLINGS[spelling], tmp_path, f"flat_{spelling}")
+        assert "ground" in labels, f"the world ground must survive; got {labels}"
+        assert not any(label and ("wall" in label or label.endswith("floor")) for label in labels), (
+            f"both robot planes are flat duplicates of the world ground and should have been "
+            f"stripped when declared with {spelling}=; got {labels}"
+        )
+
+
+class TestTheGroundReadingIsNotWidened:
+    """Boundary cases the orientation read must leave exactly as they were."""
+
+    def test_an_elevated_plane_is_still_not_ground(self, tmp_path):
+        geom, _, _ = _geom_and_compiled_rotation(_write_plane_mjcf(tmp_path, 'pos="0 0 0.5"', "high"))
+        assert _is_z0_ground_plane(geom) is False
+
+    def test_an_elevated_flat_zaxis_plane_is_still_not_ground(self, tmp_path):
+        """Position is decided before orientation, so a flat wall up high stays."""
+        geom, unrotated, _ = _geom_and_compiled_rotation(
+            _write_plane_mjcf(tmp_path, 'pos="0 0 0.5" zaxis="0 0 1"', "high_zaxis")
+        )
+        assert unrotated, "premise: this plane is flat, so only its height can disqualify it"
+        assert _is_z0_ground_plane(geom) is False
+
+    def test_a_stand_in_geom_without_an_alt_slot_still_reads_its_quat(self):
+        """The reader stays total for an object that carries no ``alt`` slot.
+
+        ``TestIsZ0GroundPlane`` drives exactly such a stand-in, so the ``quat``
+        path must remain reachable rather than being replaced.
+        """
+        flat = types.SimpleNamespace(pos=[0.0, 0.0, 0.0], quat=list(_IDENTITY_QUAT))
+        rotated = types.SimpleNamespace(pos=[0.0, 0.0, 0.0], quat=[0.7071, 0.7071, 0.0, 0.0])
+        assert _is_z0_ground_plane(flat) is True
+        assert _is_z0_ground_plane(rotated) is False
