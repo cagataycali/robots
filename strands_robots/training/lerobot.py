@@ -149,7 +149,7 @@ _EXPERT_ONLY_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "smolvla"})
 # policy type off the config class's ``normalization_mapping`` default
 # (see :func:`_policy_uses_quantile_norm`); the static set is the offline
 # FALLBACK. Currently molmoact2 and the pi05 family normalize with quantiles.
-_QUANTILE_NORM_POLICY_TYPES_FALLBACK = frozenset({"molmoact2", "pi05"})
+_QUANTILE_NORM_POLICY_TYPES_FALLBACK = frozenset({"pi05"})
 
 # Quantile stat keys lerobot writes for ``DEFAULT_QUANTILES`` = [0.01, 0.10,
 # 0.50, 0.90, 0.99] (``qNN`` where NN = int(q * 100)). A dataset carries quantile

@@ -63,8 +63,6 @@
         "device",
         "actions_per_step",
         "norm_tag",
-        "image_keys",
-        "inference_action_mode",
         "embodiment",
         "strict_keys"
       ],

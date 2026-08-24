@@ -264,19 +264,6 @@ lerobot-async = [
     "strands-robots[lerobot]",
     "lerobot[async]>=0.6.1,<0.7.0",
 ]
-# MolmoAct2 transformers-native VLA (e.g. allenai/MolmoAct2-SO100_101). The
-# MolmoAct2Policy ships in lerobot >= 0.6 (landed via lerobot PR #3604). Rather
-# than hand-mirror lerobot's aux-dep pins here (transformers/peft/scipy) -- which
-# silently drifts whenever lerobot bumps them -- we defer entirely to lerobot's
-# own ``[molmoact2]`` extra. That extra pulls lerobot[transformers-dep],
-# lerobot[peft-dep], lerobot[scipy-dep] at exactly the versions the MolmoAct2
-# modeling/processor code was built against, so the two stay in lock-step by
-# construction. The base ``strands-robots[lerobot]`` pin (>=0.6.1,<0.7.0) already
-# fixes the lerobot floor; ``lerobot[molmoact2]`` just adds the aux deps.
-molmoact2 = [
-    "strands-robots[lerobot]",
-    "lerobot[molmoact2]>=0.6.1,<0.7.0",
-]
 sim = [
     # 1.23.0 is the oldest release that ships a description module for every
     # robot the built-in registry names, not merely the oldest that imports.
@@ -532,7 +519,6 @@ all = [
     "strands-robots[motionbricks]",
     "strands-robots[kimodo]",
     "strands-robots[protomotions]",
-    "strands-robots[molmoact2]",
     "strands-robots[ollama]",
     "strands-robots[inference]",
     "strands-robots[rosbridge]",
@@ -600,7 +586,6 @@ dependencies = [
 conflicts = [
     [{ extra = "vera-sim" }, { extra = "lerobot" }],
     [{ extra = "vera-sim" }, { extra = "lerobot-async" }],
-    [{ extra = "vera-sim" }, { extra = "molmoact2" }],
     [{ extra = "vera-sim" }, { extra = "all" }],
     [{ extra = "vera-sim" }, { extra = "benchmark-libero" }],
 ]
@@ -829,6 +814,5 @@ markers = [
     "curobo: requires NVIDIA cuRobo + a CUDA-capable GPU. Run with: pytest -m curobo (set CUROBO_LIVE=1)",
     "wbc: requires onnxruntime + a downloaded GR00T-WBC (SONIC) checkpoint + mujoco. Run with: pytest -m wbc (set WBC_LIVE=1)",
     "motionbricks: requires the [motionbricks] extra + the upstream `motionbricks` package + git-LFS checkpoints + mujoco. Run with: pytest -m motionbricks (set MOTIONBRICKS_CKPT=<out dir>)",
-    "molmoact2: requires lerobot >= 0.5.2 (from source) + the [molmoact2] extra (transformers, peft, scipy). Run with: pytest -m molmoact2",
     "rtps: requires cyclonedds ([ros2] extra) + a live ROS 2 peer (e.g. turtlesim) on the DDS domain. Run with: RTPS_LIVE=1 pytest -m rtps",
 ]

@@ -16,7 +16,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from strands_robots.policies.lerobot_local import molmoact2
 from strands_robots.policies.lerobot_local.policy import (
     LerobotLocalPolicy,
     clear_model_cache,
@@ -135,57 +134,6 @@ class _FakePolicy:
         return iter([_FakeParam(torch.device("cpu"))])
 
 
-class TestMolmoAct2ModelCache:
-    """The MolmoAct2 transformers-native load path shares the same cache.
-
-    Only the heavy ``policy`` module is cached; ``build_policy`` still rebuilds
-    the cheap config + pre/post processors each time and reuses the model via
-    its ``prebuilt_policy`` parameter, so per-instance processor state is never
-    shared.
-    """
-
-    def setup_method(self):
-        clear_model_cache()
-
-    def teardown_method(self):
-        clear_model_cache()
-
-    def _instantiate(self, build_calls):
-        def fake_build_policy(path, **kwargs):
-            build_calls.append(kwargs.get("prebuilt_policy"))
-            policy = kwargs.get("prebuilt_policy") or _FakePolicy()
-            return policy, None, None, _FakeConfig()
-
-        with (
-            patch.object(molmoact2, "is_molmoact2", return_value=True),
-            patch.object(molmoact2, "build_policy", side_effect=fake_build_policy),
-        ):
-            return LerobotLocalPolicy(
-                pretrained_name_or_path="allenai/MolmoAct2-SO100_101",
-                device="cpu",
-                use_processor=False,
-            )
-
-    def test_weights_built_once_and_shared(self):
-        calls: list = []
-        p1 = self._instantiate(calls)
-        p2 = self._instantiate(calls)
-
-        # First build constructs the model (prebuilt=None); the second receives
-        # the cached model as prebuilt_policy, skipping the weight load.
-        assert calls[0] is None
-        assert calls[1] is p1._policy
-        assert p2._policy is p1._policy
-
-    def test_clear_cache_forces_fresh_molmoact2_build(self):
-        calls: list = []
-        self._instantiate(calls)
-        clear_model_cache()
-        self._instantiate(calls)
-        # Both builds were cold (prebuilt_policy=None) because the cache was
-        # cleared between them.
-        assert calls[0] is None
-        assert calls[1] is None
 
 
 class TestSelectiveEviction:

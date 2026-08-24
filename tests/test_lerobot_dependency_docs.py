@@ -58,23 +58,6 @@ def test_lerobot_extra_requires_0_6_1() -> None:
     assert lower >= Version("0.6.1"), f"lerobot extra no longer floors >=0.6.1: {req.specifier}"
 
 
-def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
-    joined = " ".join(_extras()["molmoact2"])
-    # The molmoact2 extra defers to lerobot's own [molmoact2] extra for its
-    # transformers/peft/scipy floors instead of hand-mirroring them here (which
-    # silently drifts when lerobot bumps them). lerobot[molmoact2] pulls
-    # lerobot[transformers-dep] (>=5.4.0) transitively, so the >=5.4.0 guarantee
-    # is preserved by construction while staying in lock-step with lerobot.
-    assert "lerobot[molmoact2]" in joined, joined
-    # the lerobot floor is >=0.6 (MolmoAct2Policy landed in lerobot 0.6), so its
-    # transformers-dep (>=5.4.0) is what gets resolved - never the pre-0.6
-    # transformers==5.3.0. Asserted as a bound, not a literal substring, so a
-    # floor raise cannot strand a guard whose requirement it still satisfies.
-    req = next(r for r in map(Requirement, _extras()["molmoact2"]) if r.name == "lerobot")
-    lower = min(Version(s.version) for s in req.specifier if s.operator == ">=")
-    assert lower >= Version("0.6"), f"molmoact2 lerobot floor is below 0.6: {req.specifier}"
-    # resolves from PyPI - no git-from-source URL
-    assert "git+" not in joined, f"molmoact2 extra should not need a git URL: {joined!r}"
 
 
 # --- negative contract: stale pre-0.6 guidance must be gone from the docs ---
@@ -106,12 +89,6 @@ def test_training_overview_has_no_stale_vla_install_lore() -> None:
     assert "transformers>=5.4.0" in text
 
 
-def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
-    text = _LEROBOT_LOCAL.read_text()
-    assert "requires lerobot installed **from source**" not in text
-    assert "resolves lerobot 0.5.1, which does NOT" not in text
-    # points at the PyPI extra instead
-    assert "strands-robots[molmoact2]" in text
 
 
 # --- negative contract, extended: the pre-0.6 "lerobot from source / <0.6 pin"
@@ -120,7 +97,6 @@ def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
 
 _ARCHITECTURE = _REPO_ROOT / "docs" / "architecture.md"
 _TROUBLESHOOTING = _REPO_ROOT / "docs" / "troubleshooting.md"
-_MOLMOACT2 = _REPO_ROOT / "docs" / "policies" / "molmoact2.md"
 _INSTALLATION = _REPO_ROOT / "docs" / "getting-started" / "installation.md"
 
 
@@ -152,13 +128,6 @@ def test_troubleshooting_version_skew_remedy_does_not_conflict_with_floor() -> N
     assert "strands-robots[lerobot]" in text
 
 
-def test_troubleshooting_molmoact2_is_pypi_not_from_source() -> None:
-    text = _TROUBLESHOOTING.read_text()
-    # MolmoAct2Policy ships in lerobot >= 0.6 (PyPI); no from-source git+ remedy.
-    assert "git+https://github.com/huggingface/lerobot" not in text
-    assert "not in PyPI lerobot" not in text
-    # the remedy is the [molmoact2] extra
-    assert "strands-robots[molmoact2]" in text
 
 
 def _md_heading_slugs(text: str) -> set[str]:
@@ -174,21 +143,8 @@ def _md_heading_slugs(text: str) -> set[str]:
     return slugs
 
 
-def test_troubleshooting_jetson_anchor_resolves_to_a_real_heading() -> None:
-    """The Jetson/pyav row links into installation.md; that anchor must exist (was broken)."""
-    text = _TROUBLESHOOTING.read_text()
-    # the stale, non-existent anchor is gone
-    assert "molmoact2-on-jetson-lerobot-from-source" not in text
-    # and the anchor it now links to resolves to a real installation.md heading
-    slugs = _md_heading_slugs(_INSTALLATION.read_text())
-    assert "molmoact2-on-jetson" in slugs, "installation.md lost the '### MolmoAct2 on Jetson' heading"
-    assert "getting-started/installation.md#molmoact2-on-jetson" in text
 
 
-def test_molmoact2_doc_install_line_is_not_from_source() -> None:
-    text = _MOLMOACT2.read_text()
-    assert "lerobot from source" not in text
-    assert "[molmoact2]" in text
 
 
 # --- negative contract: lerobot renamed the training entrypoint module
@@ -354,7 +310,7 @@ def test_wbc_extra_huggingface_hub_floor_ships_the_bucket_cli() -> None:
 #     drifting back. ---
 
 # every extra a `lerobot_local` user could install to reach `trainer.train(...)`
-_LEROBOT_PATH_EXTRAS = ("lerobot", "lerobot-async", "molmoact2", "all")
+_LEROBOT_PATH_EXTRAS = ("lerobot", "lerobot-async", "all")
 
 
 def _extras_declaring_accelerate() -> set[str]:

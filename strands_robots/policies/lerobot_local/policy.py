@@ -146,78 +146,6 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
 _GENERIC_STATE_KEY_PREFIX = "joint_"
 
 
-def _undeclared_image_feature_error(
-    targets: list[str],
-    embodiment_name: str,
-    policy_config: dict[str, Any],
-) -> str | None:
-    """Report image features the embodiment feeds but ``image_keys`` withholds.
-
-    An explicit ``image_keys=`` is priority 1 in
-    :func:`~strands_robots.policies.lerobot_local.molmoact2.derive_image_keys`,
-    so it replaces the feature list that would otherwise be derived from the
-    embodiment's ``obs_rename`` targets. When the supplied list does not cover
-    those targets, the model is built declaring features the pipeline never
-    feeds, and ``EmbodimentMap.validate`` refuses the mismatch - but only after
-    the weight download, which is exactly what :meth:`LerobotLocalPolicy.preflight`
-    exists to get ahead of. Both inputs are in ``policy_config``, so the verdict
-    is available for free beforehand.
-
-    Scope: ``image_keys`` is honored only on the MolmoAct2 load path and is
-    documented as inert for every other policy type, so the check defers to
-    :func:`~strands_robots.policies.lerobot_local.molmoact2.is_molmoact2` rather
-    than refusing a list some other checkpoint would ignore. That predicate
-    short-circuits with no I/O when the caller declared ``policy_type``; in
-    auto-detect mode it reads ``config.json`` (cached, and returning ``None`` on
-    any failure), which the load path reads anyway.
-
-    Args:
-        targets: Image rename targets the embodiment feeds, as collected by
-            :meth:`LerobotLocalPolicy.preflight`.
-        embodiment_name: Resolved embodiment name, for the message.
-        policy_config: Provider kwargs (``image_keys``, ``policy_type``,
-            ``pretrained_name_or_path``, ``embodiment``, ...).
-
-    Returns:
-        The refusal message, or ``None`` when the configuration is consistent
-        (no explicit ``image_keys``, a non-MolmoAct2 checkpoint, or every target
-        declared).
-    """
-    image_keys = policy_config.get("image_keys")
-    if not image_keys:
-        # Not supplied: the feature list is derived FROM the embodiment, so the
-        # two sides cannot diverge.
-        return None
-
-    from . import molmoact2 as _molmoact2
-
-    if not _molmoact2.is_molmoact2(
-        policy_config.get("pretrained_name_or_path") or "", policy_config.get("policy_type")
-    ):
-        return None
-
-    # Forwarded verbatim rather than through list(): derive_image_keys owns the
-    # shape contract, and coercing here first would split a bare string into
-    # per-character names before it can be reported as one.
-    declared = _molmoact2.derive_image_keys(image_keys, policy_config.get("embodiment"))
-    undeclared = [t for t in targets if t not in set(declared)]
-    if not undeclared:
-        return None
-
-    return (
-        f"Embodiment {embodiment_name!r} feeds image feature(s) {undeclared}, but the explicit "
-        f"image_keys={list(declared)} does not declare them, so the model would be built without "
-        f"the inputs the embodiment routes and its configuration is refused after the weight "
-        f"download. Either:\n"
-        f"  (a) drop image_keys= so the features are derived from the embodiment "
-        f"(-> {list(targets)}), or\n"
-        f"  (b) pass image_keys={list(targets)!r} to declare what the embodiment feeds, or\n"
-        f"  (c) pass policy_config={{'obs_rename_override': {{'<your_camera_name>': "
-        f"{declared[0]!r}}}}} for EVERY key you declared, so each declared feature is a "
-        f"rename target."
-    )
-
-
 # Fallback control rate used ONLY when RTC runs without the runtime having
 # called set_control_frequency(). Used to keep a standalone (no-runner) RTC
 # call functional; the runner always plumbs the real rate. A loud one-time
@@ -409,8 +337,6 @@ class LerobotLocalPolicy(Policy):
         inference_kwargs: dict | None = None,
         embodiment: str | dict | Any | None = None,
         norm_tag: str | None = None,
-        image_keys: list[str] | None = None,
-        inference_action_mode: str = "continuous",
         camera_key_map: dict[str, str] | None = None,
         obs_rename_override: dict[str, str | None] | None = None,
         strict_keys: bool = False,
@@ -441,9 +367,8 @@ class LerobotLocalPolicy(Policy):
         # Extra keyword args forwarded verbatim to the underlying LeRobot
         # policy's select_action()/predict_action_chunk() on every inference
         # call. Required by policies that demand a runtime mode selector with
-        # no usable default - e.g. MolmoAct2 needs
-        # inference_kwargs={"inference_action_mode": "continuous"|"discrete"}
-        # (its select_action raises ValueError otherwise). RTC kwargs are
+        # no usable default (e.g. a policy whose select_action requires a
+        # runtime mode selector on every call). RTC kwargs are
         # handled separately and take precedence on the RTC path.
         self.inference_kwargs: dict[str, Any] = dict(inference_kwargs or {})
         # Declarative robot/sim -> model key mapping (SOLUTION.md). When set,
@@ -497,18 +422,10 @@ class LerobotLocalPolicy(Policy):
         # concurrent rollouts of the same checkpoint that must not share
         # per-episode model state).
         self.cache_model = cache_model
-        # MolmoAct2-specific knobs. MolmoAct2 SO-100/101 checkpoints are
-        # transformers-native (no lerobot draccus `type`), so they take a
-        # dedicated load path (see lerobot_local.molmoact2). These are inert
-        # for every other policy type.
-        self._molmoact2_norm_tag = norm_tag
-        # Refused here rather than at first use so a shape mistake is reported
-        # before the multi-minute weight download below, and before a bare
-        # string is read one feature per character.
-        if image_keys and (err := name_list_error(image_keys, "image_keys", "LerobotLocalPolicy")):
-            raise ValueError(err)
-        self._molmoact2_image_keys = image_keys
-        self._molmoact2_inference_action_mode = inference_action_mode
+        # Normalization tag for the norm_stats.json fallback (a checkpoint that
+        # ships norm_stats.json instead of the standard lerobot processor
+        # configs). Consumed by the processor bridge below; see :mod:`.norm_stats`.
+        self._norm_tag = norm_tag
 
         self._policy: Any | None = None
         self._device: torch.device | None = None
@@ -926,25 +843,6 @@ class LerobotLocalPolicy(Policy):
             ValueError: If model path is invalid or config cannot be parsed.
             RuntimeError: If model loading fails.
         """
-        # MolmoAct2 SO-100/101 checkpoints are transformers-native (config.json
-        # has model_type=molmoact2 and NO lerobot draccus `type`). The standard
-        # resolve→from_pretrained path raises ParsingError on them, so route to
-        # the dedicated wrapper that builds MolmoAct2Config(checkpoint_path=...)
-        # and the molmoact2 pre/post processor pipeline programmatically.
-        from . import molmoact2 as _molmoact2
-
-        if _molmoact2.is_molmoact2(self.pretrained_name_or_path, self.policy_type):
-            if self.revision:
-                raise ValueError(
-                    "revision pinning is not supported for transformers-native "
-                    "MolmoAct2 checkpoints (loaded via checkpoint_path, not "
-                    "PreTrainedPolicy.from_pretrained). Pin the version by passing "
-                    "a commit-SHA-qualified pretrained_name_or_path, or download the "
-                    "revision locally and point at the directory."
-                )
-            self._load_molmoact2_model()
-            return
-
         # XVLA compat: Florence2LanguageConfig.forced_bos_token_id missing
         # in transformers 5.x. Florence2 was originally built with an older
         # transformers that had this attribute. Without this patch, XVLA
@@ -1099,7 +997,7 @@ class LerobotLocalPolicy(Policy):
                 policy_type=self.policy_type,
                 policy_config=getattr(self._policy, "config", None),
                 revision=self.revision,
-                norm_tag=self._molmoact2_norm_tag,
+                norm_tag=self._norm_tag,
             )
         except (FileNotFoundError, ValueError, ImportError) as exc:
             # Processor bridge is optional - models work without it via the raw
@@ -1326,107 +1224,6 @@ class LerobotLocalPolicy(Policy):
                 type(self._policy).__name__,
             )
 
-    def _load_molmoact2_model(self) -> None:
-        """Load a transformers-native MolmoAct2 checkpoint via the lerobot wrapper.
-
-        Unlike the generic path, MolmoAct2 needs ``MolmoAct2Config(checkpoint_path=...)``
-        built explicitly and its pre/post processors created programmatically
-        (the repo ships no ``policy_preprocessor.json``). The resulting
-        ``ProcessorBridge`` is wrapped around those pipelines so the normal
-        ``get_actions`` flow (preprocess → select_action → postprocess) works
-        unchanged. The embodiment map (e.g. ``so_real``) still configures camera
-        renames + state packing on the preprocessor via ``_configure_embodiment``.
-        """
-        from . import molmoact2 as _molmoact2
-        from .processor import ProcessorBridge
-
-        self.policy_type = _molmoact2.MOLMOACT2_TYPE
-
-        # State/action dims come from the embodiment when known (SO arms = 6),
-        # else default to 6 (the SO-100/101 convention this checkpoint targets).
-        state_dim = action_dim = 6
-        if self.robot_state_keys:
-            state_dim = action_dim = len(self.robot_state_keys)
-
-        logger.info("Loading MolmoAct2 (transformers-native) from %s...", self.pretrained_name_or_path)
-        # Same contract as the generic load path above: a measured duration.
-        start_mono = time.monotonic()
-
-        # Reuse a process-cached MolmoAct2 model when one was already built for
-        # this checkpoint+device+load-knobs. The model weights (1295 files for
-        # the SO-100/101 checkpoint) are the expensive part; the config and
-        # pre/post processors are rebuilt cheaply so the returned tuple is
-        # self-consistent. norm_tag / inference_action_mode / image_keys /
-        # embodiment / dims are part of the key because they shape the processors
-        # (and thus must match the cached weights' intended pipeline).
-        model_cache_key = self._model_cache_key(
-            "molmoact2",
-            self._molmoact2_norm_tag,
-            self._molmoact2_inference_action_mode,
-            tuple(self._molmoact2_image_keys or ()),
-            repr(self._embodiment_spec),
-            state_dim,
-            action_dim,
-        )
-        cached_model = self._cache_get(model_cache_key)
-        self.load_cache_hit = cached_model is not None
-        policy, preprocessor, postprocessor, cfg = _molmoact2.build_policy(
-            self.pretrained_name_or_path,
-            device=self.requested_device,
-            norm_tag=self._molmoact2_norm_tag,
-            inference_action_mode=self._molmoact2_inference_action_mode,
-            image_keys=self._molmoact2_image_keys,
-            embodiment_spec=self._embodiment_spec,
-            state_dim=state_dim,
-            action_dim=action_dim,
-            prebuilt_policy=cached_model,
-        )
-        if cached_model is None:
-            self._cache_put(model_cache_key, policy)
-
-        self._policy = policy
-        self._device = next(policy.parameters()).device
-        self._input_features = dict(getattr(cfg, "input_features", {}) or {})
-        self._output_features = dict(getattr(cfg, "output_features", {}) or {})
-
-        # MolmoAct2.select_action requires inference_action_mode every call.
-        self.inference_kwargs.setdefault("inference_action_mode", self._molmoact2_inference_action_mode)
-
-        elapsed = time.monotonic() - start_mono
-        self.load_time_s = elapsed
-        logger.info(
-            "Loaded MolmoAct2Policy (type='molmoact2') in %.1fs on %s",
-            elapsed,
-            self._device,
-        )
-        self._loaded = True
-        self._auto_detect_actions_per_step()
-
-        # Auto-detect generic state keys from action dim if not set.
-        if not self.robot_state_keys and self._output_features:
-            action_feat = self._output_features.get("action")
-            if action_feat is not None and getattr(action_feat, "shape", None):
-                adim = action_feat.shape[0]
-                self.robot_state_keys = [f"joint_{i}" for i in range(adim)]
-
-        # Wrap the programmatic processors in a ProcessorBridge so the standard
-        # preprocess/postprocess flow applies, then configure the embodiment
-        # (camera rename + state packing) onto the preprocessor pipeline.
-        if self.use_processor:
-            self._processor_bridge = ProcessorBridge(
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                device=str(self._device) if self._device else None,
-            )
-            if self._processor_bridge.is_active:
-                logger.info("MolmoAct2 processor bridge ready: %s", self._processor_bridge)
-                self._configure_embodiment()
-            else:
-                self._processor_bridge = None
-
-        # RTC never applies to MolmoAct2 (no rtc_config); init is a safe no-op.
-        self._init_rtc()
-
     # Embodiment configuration (declarative obs/action mapping)
 
     @classmethod
@@ -1448,23 +1245,14 @@ class LerobotLocalPolicy(Policy):
         ``obs_rename`` first, so an explicit override that maps a present camera
         onto the feature satisfies the check.
 
-        The converse is also checked: an explicit ``image_keys=`` replaces the
-        feature list that would be derived from those same rename targets (it is
-        priority 1 in ``derive_image_keys``), so a list that does not cover them
-        builds a model without the inputs the embodiment routes. That mismatch is
-        refused by ``EmbodimentMap.validate`` only after the weight download, and
-        both sides of it are already in ``policy_config`` here - see
-        :func:`_undeclared_image_feature_error`, which also explains why the check
-        applies to the MolmoAct2 load path only.
-
         No-op when no ``embodiment`` is configured (the policy then uses the
         legacy heuristic camera routing, which this hook cannot reason about),
         or when the embodiment name/spec cannot be resolved (``create_policy``
         surfaces that error authoritatively).
 
-        The parameter-shape guards below (``actions_per_step``, ``image_keys``,
-        ``rtc_execution_horizon``) run before that early-return, because all
-        three are honored whether or not an embodiment is configured.
+        The parameter-shape guards below (``actions_per_step`` and
+        ``rtc_execution_horizon``) run before that early-return, because both
+        are honored whether or not an embodiment is configured.
 
         Args:
             observation_keys: Runtime observation keys (joint + camera names).
@@ -1473,11 +1261,8 @@ class LerobotLocalPolicy(Policy):
 
         Raises:
             ValueError: When ``actions_per_step`` or ``rtc_execution_horizon``
-                is not a positive whole number, when ``image_keys`` is not a
-                list of distinct non-blank names,
-                when a model image feature has no satisfiable source camera key
-                in ``observation_keys``, or when an explicit ``image_keys``
-                withholds a feature the embodiment feeds.
+                is not a positive whole number, or when a model image feature
+                has no satisfiable source camera key in ``observation_keys``.
         """
         # Checked before the embodiment early-return below, so a chunk count
         # the consumer cannot execute is refused for every configuration rather
@@ -1489,14 +1274,6 @@ class LerobotLocalPolicy(Policy):
             error = chunk_count_error(policy_config["actions_per_step"], "actions_per_step", "lerobot_local")
             if error:
                 raise ValueError(error)
-
-        # Same reasoning for the image_keys shape: it is honored whether or not
-        # an embodiment is configured, so a shape mistake must be refused on
-        # both paths. Ordered after the chunk-count guard so the parameter error
-        # that landed first keeps its existing precedence.
-        supplied_image_keys = policy_config.get("image_keys")
-        if supplied_image_keys and (err := name_list_error(supplied_image_keys, "image_keys", "preflight")):
-            raise ValueError(err)
 
         # The RTC re-query count, on the same domain as ``actions_per_step``: it
         # replaces that horizon whenever RTC is active, which the model config
@@ -1538,13 +1315,6 @@ class LerobotLocalPolicy(Policy):
                 targets.setdefault(dst, []).append(src)
         if not targets:
             return
-
-        # A declared-feature contradiction is independent of the runtime camera
-        # names and no camera rename can resolve it, so it is reported before the
-        # source-availability check below.
-        undeclared_error = _undeclared_image_feature_error(sorted(targets), embodiment.name, policy_config)
-        if undeclared_error:
-            raise ValueError(undeclared_error)
 
         obs = set(observation_keys)
         unsatisfied = {dst: srcs for dst, srcs in targets.items() if not any(s in obs for s in srcs)}

@@ -39,8 +39,6 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from strands_robots.policies.lerobot_local import molmoact2
-from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.vera import VeraPolicy
 from strands_robots.utils import name_list_error
 
@@ -141,61 +139,11 @@ class TestNameListDomain:
 # --------------------------------------------------------------------------- #
 # The defect, on the LeRobot feature-declaration path
 # --------------------------------------------------------------------------- #
-class TestLerobotFeatureKeys:
-    def test_a_bare_string_is_not_declared_as_one_feature_per_character(self) -> None:
-        with pytest.raises(ValueError, match="not a single string"):
-            molmoact2.derive_image_keys("observation.images.image", None)  # type: ignore[arg-type]
-
-    def test_a_repeated_key_is_refused_rather_than_collapsing_the_feature_dict(self) -> None:
-        with pytest.raises(ValueError, match="must not repeat a name"):
-            molmoact2.derive_image_keys(["obs.a", "obs.a"], None)
-
-    def test_a_usable_list_is_still_honored_verbatim(self) -> None:
-        keys = ["observation.images.image", "observation.images.wrist_image"]
-        assert molmoact2.derive_image_keys(keys, None) == keys
-
-    @pytest.mark.parametrize(("label", "value"), ABSENT_VALUES, ids=[c[0] for c in ABSENT_VALUES])
-    def test_an_absent_value_still_derives_the_default_list(self, label: str, value: Any) -> None:
-        assert molmoact2.derive_image_keys(value, None) == list(molmoact2.DEFAULT_IMAGE_KEYS)
-
-    def test_the_refusal_precedes_the_weight_load(self) -> None:
-        """A shape mistake must not cost a multi-minute download first."""
-        with patch.object(LerobotLocalPolicy, "_load_model") as load:
-            with pytest.raises(ValueError, match="not a single string"):
-                LerobotLocalPolicy(pretrained_name_or_path="org/mm2", image_keys="wrist")  # type: ignore[arg-type]
-        load.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
 # The pre-flight surface, including the path that used to return early
 # --------------------------------------------------------------------------- #
-class TestPreflight:
-    def test_the_shape_is_checked_with_no_embodiment_configured(self) -> None:
-        """``preflight`` returns early when no embodiment is set, but
-        ``image_keys`` is honored on that path too - so it is checked first."""
-        with pytest.raises(ValueError, match="not a single string"):
-            LerobotLocalPolicy.preflight({"front"}, image_keys="wrist")
-
-    def test_the_shape_is_checked_with_an_embodiment_configured(self) -> None:
-        with pytest.raises(ValueError, match="not a single string"):
-            LerobotLocalPolicy.preflight({"front", "wrist"}, embodiment="so_real", image_keys="wrist")
-
-    def test_a_usable_list_still_reaches_the_undeclared_feature_check(self) -> None:
-        """The sibling check that reports a list withholding a fed feature must
-        keep working: the shape guard runs before it, not instead of it."""
-        with pytest.raises(ValueError, match="does not declare them"):
-            LerobotLocalPolicy.preflight(
-                {"front", "wrist"},
-                embodiment="so_real",
-                policy_type="molmoact2",
-                pretrained_name_or_path="org/mm2",
-                image_keys=["observation.images.image"],
-            )
-
-    def test_an_absent_value_is_not_refused(self) -> None:
-        LerobotLocalPolicy.preflight({"front"})
-        LerobotLocalPolicy.preflight({"front"}, image_keys=None)
-        LerobotLocalPolicy.preflight({"front"}, image_keys=[])
 
 
 # --------------------------------------------------------------------------- #
@@ -245,31 +193,3 @@ def _verdict(call: Any) -> str:
     return "accepted"
 
 
-class TestCrossProviderParity:
-    """One option name, one shape contract.
-
-    The two providers name different vocabularies with ``image_keys`` - model
-    feature keys against observation camera keys - but a value either is a list
-    of distinct names or is not, so a shape refused by one surface cannot be
-    accepted by another.
-    """
-
-    @pytest.mark.parametrize(
-        ("label", "value"),
-        [(c[0], c[1]) for c in BAD_SHAPES] + GOOD_SHAPES + ABSENT_VALUES,
-        ids=[c[0] for c in BAD_SHAPES] + [c[0] for c in GOOD_SHAPES] + [c[0] for c in ABSENT_VALUES],
-    )
-    def test_every_surface_reaches_the_same_verdict(self, label: str, value: Any) -> None:
-        # A one-shot iterator is consumed by whichever surface reads it first,
-        # so each gets its own.
-        def fresh() -> Any:
-            return iter(["a", "b"]) if label == "a one-shot iterator" else value
-
-        with patch.object(LerobotLocalPolicy, "_load_model"):
-            verdicts = {
-                "LerobotLocalPolicy": _verdict(lambda: LerobotLocalPolicy(image_keys=fresh())),
-                "preflight": _verdict(lambda: LerobotLocalPolicy.preflight({"front"}, image_keys=fresh())),
-                "derive_image_keys": _verdict(lambda: molmoact2.derive_image_keys(fresh(), None)),
-                "VeraPolicy": _verdict(lambda: _vera(fresh())),
-            }
-        assert len(set(verdicts.values())) == 1, f"surfaces disagree for {label}: {verdicts}"

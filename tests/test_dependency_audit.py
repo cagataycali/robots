@@ -355,7 +355,7 @@ def test_vera_sim_is_forked_away_from_lerobot06_extras():
         extras = {member.get("extra") for member in pair}
         if "vera-sim" in extras:
             forked |= extras - {"vera-sim"}
-    for extra in ("lerobot", "lerobot-async", "molmoact2", "all"):
+    for extra in ("lerobot", "lerobot-async", "all"):
         assert extra in forked, (
             f"[tool.uv].conflicts must fork vera-sim from the '{extra}' extra so "
             f"its gymnasium 0.29 pin cannot drag the lock below lerobot 0.6; "
