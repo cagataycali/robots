@@ -86,6 +86,7 @@ _INFERS_REPOSITORY: tuple[str, ...] = tuple(
 #: infer. Requiring the flag of that mode would be the same false rejection this
 #: scope exists to avoid.
 _NAMES_REPOSITORY: dict[str, tuple[str, str | None]] = {
+    "check_checkout_is_pr_head.py": ("--repo", None),
     "check_closing_reference.py": ("--repo", None),
     "check_duplicate_claim.py": ("--repo", None),
     "check_last_push_approval.py": ("--repo", None),
