@@ -58,6 +58,39 @@ def test_lerobot_extra_requires_0_6_1() -> None:
     assert lower >= Version("0.6.1"), f"lerobot extra no longer floors >=0.6.1: {req.specifier}"
 
 
+def test_smolvla_extra_defers_to_lerobot_smolvla() -> None:
+    """A first-class ``smolvla`` extra must exist and defer to lerobot's own.
+
+    SmolVLA is a documented ``lerobot_local`` policy type (``resolution.py``
+    lists it, ``policy.py`` imports ``transformers`` for its tokenizer), but
+    none of its aux deps arrive through the base ``[lerobot]`` extra
+    (``lerobot[feetech,dataset]`` -- no transformers/num2words/accelerate). So
+    a ``strands-robots[lerobot]`` install running SmolVLA fails at first use.
+    The ``smolvla`` extra defers to lerobot's own ``[smolvla]`` extra (which
+    pulls ``lerobot[transformers-dep]`` >=5.4.0 + num2words + accelerate),
+    mirroring how ``[molmoact2]`` defers to ``lerobot[molmoact2]`` so the two
+    stay in lock-step and share one transformers specifier across ``[all]``.
+    """
+    extras = _extras()
+    assert "smolvla" in extras, "no `smolvla` optional-dependency group in pyproject"
+    joined = " ".join(extras["smolvla"])
+    # defers to lerobot's own extra rather than hand-mirroring transformers/num2words
+    assert "lerobot[smolvla]" in joined, joined
+    # and layers it on the base strands-robots[lerobot] extra
+    assert "strands-robots[lerobot]" in joined, joined
+    # the lerobot floor is >=0.6 (SmolVLAPolicy is a lerobot 0.6 policy), so its
+    # transformers-dep (>=5.4.0) resolves - never the pre-0.6 transformers==5.3.0.
+    # A bound, not a literal, so a floor raise cannot strand a still-satisfied guard.
+    req = next(r for r in map(Requirement, extras["smolvla"]) if r.name == "lerobot")
+    lower = min(Version(s.version) for s in req.specifier if s.operator == ">=")
+    assert lower >= Version("0.6"), f"smolvla lerobot floor is below 0.6: {req.specifier}"
+    # resolves from PyPI - no git-from-source URL
+    assert "git+" not in joined, f"smolvla extra should not need a git URL: {joined!r}"
+    # the umbrella [all] extra installs it, so `pip install strands-robots[all]`
+    # can run every documented policy type (including SmolVLA).
+    assert "strands-robots[smolvla]" in extras["all"], "smolvla missing from the [all] extra"
+
+
 def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
     joined = " ".join(_extras()["molmoact2"])
     # The molmoact2 extra defers to lerobot's own [molmoact2] extra for its
