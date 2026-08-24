@@ -29,6 +29,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import strands_robots.tools._command_gate as gate_mod
 import strands_robots.tools.use_ros as ros_mod
 from strands_robots.mesh import AckermannRosRobot
 
@@ -91,7 +92,7 @@ class TestBridgeCommandsReachTheGate:
         # (common in agent/automation shells) would make these assertions pass
         # without the gate ever running. Cases that need them opt in explicitly.
         monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
-        monkeypatch.delenv(ros_mod._COMMAND_ALLOW_ENV, raising=False)
+        monkeypatch.delenv(gate_mod.COMMAND_ALLOW_ENV, raising=False)
         monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
         self.published, self.services, self.echoed = [], [], []
 
@@ -165,7 +166,7 @@ class TestBridgeCommandsReachTheGate:
         """The documented decision: no operator context means the gate refuses."""
         result = _car().drive(linear=0.5)
         assert result["status"] == "error"
-        assert ros_mod._COMMAND_ALLOW_ENV in _texts(result)
+        assert gate_mod.COMMAND_ALLOW_ENV in _texts(result)
         assert "BYPASS_TOOL_CONSENT" in _texts(result)
         assert self.services == []
         assert self.published == []
@@ -186,7 +187,7 @@ class TestBridgeCommandsReachTheGate:
         is the namespaced surfaces the bridge actually sends to that have to be
         covered by it.
         """
-        monkeypatch.setenv(ros_mod._COMMAND_ALLOW_ENV, allow)
+        monkeypatch.setenv(gate_mod.COMMAND_ALLOW_ENV, allow)
         car = _car()
         assert car.drive(linear=0.5)["status"] == "success"
         assert car.stop()["status"] == "success"
@@ -298,14 +299,14 @@ class TestTheCommandedSurfacesAreBlocklisted:
         commanded = [car.servo_topic] + [item["service"] for item in car.init_services]
         assert commanded, "the DeepRacer wiring commands nothing - the premise is gone"
         for name in commanded:
-            assert ros_mod._is_command_blocked("publish", name) is not None, (
+            assert gate_mod.command_block_message("publish", name) is not None, (
                 f"{name} is a DeepRacer motion/arming surface but no blocklist entry covers it"
             )
 
     def test_the_bare_entries_are_what_covers_the_namespaced_spellings(self) -> None:
         """The entries are spelled bare, so the base-name rule is load-bearing."""
         for entry in ("/manual_drive", "/vehicle_state", "/enable_state"):
-            assert entry in ros_mod._DEFAULT_COMMAND_BLOCKLIST
+            assert entry in gate_mod.COMMAND_BLOCKLIST
 
 
 class TestEveryCommandingMeshBridgeHasAGateSuite:

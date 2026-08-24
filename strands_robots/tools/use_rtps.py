@@ -50,7 +50,9 @@ import typing
 from typing import Any
 
 from strands import tool
+from strands.types.tools import ToolContext
 
+from strands_robots.tools._command_gate import gate_command
 from strands_robots.tools._numeric_options import numeric_option_error
 
 logger = logging.getLogger(__name__)
@@ -192,7 +194,7 @@ def _build_sample(idl_cls: Any, fields: dict[str, Any]) -> Any:
     return idl_cls(**kwargs)
 
 
-@tool
+@tool(context=True)
 def use_rtps(
     action: str,
     topic: str | None = None,
@@ -201,6 +203,7 @@ def use_rtps(
     timeout: float = 5.0,
     count: int = 1,
     rate: float = 10.0,
+    tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Pure-RTPS ROS 2 participant tool - no rclpy, all ROS 2 distros.
 
@@ -220,6 +223,8 @@ def use_rtps(
         rate: Publish rate in Hz. A positive finite number - the inter-message
             period is ``1 / rate``, so ``0``, a negative value, ``nan`` and
             ``inf`` all leave the burst unthrottled rather than paced.
+        tool_context: Injected agent context, used to ask an operator before a
+            ``publish`` reaches a safety-critical command surface.
 
     Returns:
         A Strands tool result dict ``{"status": ..., "content": [{"text": ...}]}``.
@@ -256,6 +261,18 @@ def use_rtps(
 
         if action == "types":
             return _ok("RTPS IDL bundle types:\n" + "\n".join(sorted(REGISTRY)))
+
+        # The operator gate is consulted here - after the backend probe, so a
+        # transport that cannot publish never prompts, and before the lock, so a
+        # human deciding does not hold the process-wide DDS lock and no writer
+        # joins the graph on a refusal. Only ``publish`` can command: ``advertise``
+        # creates a publisher without writing a sample, and the rest only read.
+        # The well-formedness condition mirrors the publish branch's own, so an
+        # incomplete call is reported without asking an operator about it.
+        if action == "publish" and topic and type:
+            refusal = gate_command("publish", topic, tool_context, tool="use_rtps")
+            if refusal is not None:
+                return _err(refusal)
 
         with _backend.lock:
             if action == "advertise":

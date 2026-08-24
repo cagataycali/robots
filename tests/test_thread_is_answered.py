@@ -18,6 +18,10 @@ Measured sources:
 - #2480, thread ``PRRT_kwDORUMiZs6aqPJ-``: a ``github-advanced-security`` comment
   answered by the author, ``isOutdated: false`` even after ``e83cf51`` fixed it.
 - #1722: four threads carrying a single bot comment each.
+- #2680, thread ``PRRT_kwDORUMiZs6bmZqs``: a ``[MUST FIX]`` answered by the author
+  at head ``0fd0f4e3`` with CI green, left unresolved -- and therefore an
+  unsatisfied ``required_review_thread_resolution`` while this check reported
+  ``nothing-owed`` (#2682).
 """
 
 from __future__ import annotations
@@ -110,6 +114,8 @@ def test_the_2577_thread_is_answered_when_its_third_comment_was_posted() -> None
     assert verdict.outcome == mod.ANSWERED
     assert verdict.is_owed is False
     assert verdict.last_author == AUTHOR
+    # No reply is owed, and the resolve still is: see #2682 and the pins below.
+    assert verdict.owes_a_resolve is True
 
 
 @pytest.mark.parametrize("replies", [1, 2, 3])
@@ -128,6 +134,82 @@ def test_the_2511_thread_is_answered_from_the_first_reply_onwards(replies: int) 
         HEAD_2511,
     )
     assert verdict.outcome == mod.ANSWERED
+
+
+# --------------------------------------------------------------------------
+# The resolve, which is owed by the author and is not a reply (#2682).
+# --------------------------------------------------------------------------
+
+
+def test_the_2680_answered_thread_is_a_finding_because_the_resolve_is_owed() -> None:
+    """The cycle that read #2680 as waiting on a reviewer and stopped.
+
+    One thread carrying a ``[MUST FIX]``, the fix landed in ``0fd0f4e3``, the reply
+    posted, CI green -- and ``required_review_thread_resolution`` unsatisfied, owed
+    by the author. The sweep whose contract is "which of my pull requests need me"
+    answered ``nothing-owed`` and exited 0 over a pull request that could not merge
+    until its author acted, which is the failure this pins.
+    """
+    row = mod.evaluate(_pr([_thread([_comment(REVIEWER), _comment(AUTHOR)])], number=2680))
+    assert row.outcome == mod.AUTHOR_OWES_A_RESOLVE
+    assert row.is_finding is True
+    assert [t.path for t in row.unresolved] == ["tests/simulation/mujoco/test_randomize_persistence_boundary.py"]
+    assert "not resolved" in row.summary
+
+
+def test_the_resolve_is_owed_where_no_reply_is() -> None:
+    """Non-vacuity of the split: the two obligations move independently.
+
+    Same thread, same head. The reply is not owed because the last word is the
+    author's; that is precisely the condition under which the resolve is.
+    """
+    verdict = mod.classify(_thread([_comment(REVIEWER), _comment(AUTHOR)]), AUTHOR, HEAD_2577)
+    assert (verdict.is_owed, verdict.owes_a_resolve) == (False, True)
+
+
+def test_a_reply_outranks_a_resolve_when_one_pull_request_owes_both() -> None:
+    """A thread still owed an answer is not yet ready to be resolved.
+
+    So the per-pull-request outcome names the reply -- but the answered thread is
+    still counted, because it is a merge blocker whichever outcome is printed.
+    """
+    row = mod.evaluate(
+        _pr(
+            [
+                _thread([_comment(REVIEWER), _comment(AUTHOR)]),
+                _thread([_comment(REVIEWER)], path="strands_robots/utils.py"),
+            ]
+        )
+    )
+    assert row.outcome == mod.AUTHOR_OWES_A_REPLY
+    assert len(row.owed) == 1 and len(row.unresolved) == 1
+
+
+def test_an_answered_thread_on_another_authors_pull_request_is_owed_by_that_author() -> None:
+    """The obligation follows the pull request's author, as every outcome here does.
+
+    The sweep reads every open pull request, not only the viewer's, so the resolve
+    is attributed the same way the reply already was rather than to whoever ran it.
+    """
+    row = mod.evaluate(_pr([_thread([_comment(REVIEWER), _comment("Vivek0712")])], author="Vivek0712"))
+    assert row.outcome == mod.AUTHOR_OWES_A_RESOLVE
+    assert "@Vivek0712" in row.summary
+
+
+def test_the_remedy_for_an_answered_thread_is_the_resolve_and_forbids_a_reply() -> None:
+    """Making the resolve owed must not license the twelve-reply incident again.
+
+    The remedy has to say both things at once: resolve it, and do not reply to it.
+    A remedy that only said "work is owed here" would invite the duplicate reply
+    the check was written to prevent.
+    """
+    report = mod.render_one(
+        "strands-labs/robots",
+        mod.evaluate(_pr([_thread([_comment(REVIEWER), _comment(AUTHOR)])])),
+    )
+    assert "Resolve each `answered` thread, and do **not** reply to it." in report
+    assert "required_review_thread_resolution" in report
+    assert "| answered, not resolved | 1 |" in report
 
 
 # --------------------------------------------------------------------------
@@ -162,6 +244,8 @@ def test_a_resolved_thread_is_settled_whoever_spoke_last() -> None:
     verdict = mod.classify(_thread([_comment(AUTHOR), _comment(REVIEWER)], resolved=True), AUTHOR, HEAD_2577)
     assert verdict.outcome == mod.SETTLED
     assert verdict.is_owed is False
+    # The only outcome that owes neither move, and the only one the ruleset clears.
+    assert verdict.owes_a_resolve is False
 
 
 def test_a_reviewer_demand_on_an_outdated_thread_is_owed() -> None:
@@ -304,23 +388,26 @@ def test_an_absent_thread_total_is_not_read_as_a_shortfall() -> None:
 
 
 def test_the_remedy_appears_only_when_something_is_owed() -> None:
+    """``settled`` is now the only outcome that suppresses the remedy (#2682)."""
     owed = mod.evaluate(_pr([_thread([_comment(REVIEWER)])]))
     answered = mod.evaluate(_pr([_thread([_comment(REVIEWER), _comment(AUTHOR)])]))
+    settled = mod.evaluate(_pr([_thread([_comment(REVIEWER), _comment(AUTHOR)], resolved=True)]))
     assert "### What clears this" in mod.render_one("strands-labs/robots", owed)
-    assert "### What clears this" not in mod.render_one("strands-labs/robots", answered)
+    assert "### What clears this" in mod.render_one("strands-labs/robots", answered)
+    assert "### What clears this" not in mod.render_one("strands-labs/robots", settled)
 
 
 def test_the_single_report_names_the_outcome_and_both_commits() -> None:
     row = mod.evaluate(_pr([_thread([_comment(REVIEWER), _comment(AUTHOR)])]))
     report = mod.render_one("strands-labs/robots", row)
-    assert f"Outcome: **{mod.NOTHING_OWED}**" in report
+    assert f"Outcome: **{mod.AUTHOR_OWES_A_RESOLVE}**" in report
     assert "`d04a8969`" in report
     assert "`b966ce64`" in report
 
 
 def test_the_sweep_names_every_pull_request_and_only_findings_in_detail() -> None:
     rows = [
-        mod.evaluate(_pr([_thread([_comment(REVIEWER), _comment(AUTHOR)])], number=2577)),
+        mod.evaluate(_pr([_thread([_comment(REVIEWER), _comment(AUTHOR)], resolved=True)], number=2577)),
         mod.evaluate(_pr([_thread([_comment(REVIEWER)])], number=2511)),
     ]
     report = mod.render_sweep("strands-labs/robots", rows, [])
@@ -332,13 +419,14 @@ def test_the_sweep_names_every_pull_request_and_only_findings_in_detail() -> Non
 @pytest.mark.parametrize(
     ("threads", "expected"),
     [
-        ([_thread([_comment(REVIEWER), _comment(AUTHOR)])], 0),
+        # Answered and unresolved: no reply owed, the resolve owed, so exit 1 (#2682).
+        ([_thread([_comment(REVIEWER), _comment(AUTHOR)])], 1),
         ([_thread([_comment(REVIEWER), _comment(AUTHOR)], resolved=True)], 0),
         ([], 0),
         ([_thread([_comment(REVIEWER)])], 1),
     ],
 )
-def test_exit_status_is_one_only_when_a_thread_awaits_its_author(
+def test_exit_status_is_one_when_the_author_owes_a_reply_or_a_resolve(
     threads: list[dict], expected: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(mod, "fetch_one", lambda *_a, **_k: _pr(threads))

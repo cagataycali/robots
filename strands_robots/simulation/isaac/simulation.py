@@ -47,6 +47,7 @@ from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     camera_fov_error,
+    coerce_orientation_quaternion,
     coerce_pose_vector,
     coerce_rgba,
     coerce_size_vector,
@@ -1660,7 +1661,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         position, _perr = coerce_pose_vector("add_robot", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("add_robot", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         # The default None means identity; only a non-identity quaternion is
@@ -2197,7 +2198,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             position, _perr = coerce_pose_vector("add_object", "position", position, 3)
             if _perr is not None:
                 return {"status": "error", "content": [{"text": _perr}]}
-            orientation, _oerr = coerce_pose_vector("add_object", "orientation", orientation, 4)
+            orientation, _oerr = coerce_orientation_quaternion("add_object", "orientation", orientation)
             if _oerr is not None:
                 return {"status": "error", "content": [{"text": _oerr}]}
             # Same shared domain for the colour, whose accepted counts the
@@ -6576,7 +6577,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             position, _perr = coerce_pose_vector("set_robot_pose", "position", position, 3)
             if _perr is not None:
                 return {"status": "error", "content": [{"text": _perr}]}
-            orientation, _oerr = coerce_pose_vector("set_robot_pose", "orientation", orientation, 4)
+            orientation, _oerr = coerce_orientation_quaternion("set_robot_pose", "orientation", orientation)
             if _oerr is not None:
                 return {"status": "error", "content": [{"text": _oerr}]}
             moved_to = "same" if position is None else position
@@ -6630,7 +6631,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         position, _perr = coerce_pose_vector("move_object", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("move_object", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         try:

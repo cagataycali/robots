@@ -203,6 +203,13 @@ def test_an_invalid_service_name_is_refused_before_the_bridge_is_dialed(
     assert rb_mod._backend._connections == {}
 
 
+# A topic that is not a safety-critical command surface. The tests below exercise
+# publish plumbing; aiming them at a drive topic would route them through the
+# operator gate in :mod:`strands_robots.tools._command_gate`, which is a different
+# subject with its own suite.
+_PLUMBING_TOPIC = "/demo/twist"
+
+
 def test_ros1_two_segment_type_enforced() -> None:
     # ROS1 types are pkg/Name; a ROS2-style pkg/msg/Name must be rejected so
     # agents get a correcting error instead of a silent rosbridge failure.
@@ -212,7 +219,7 @@ def test_ros1_two_segment_type_enforced() -> None:
 
 
 def test_valid_ros1_type_accepted_shapewise(fake_roslibpy: _types.ModuleType) -> None:
-    result = use_rosbridge(action="publish", topic="/cmd_vel", type="geometry_msgs/Twist")
+    result = use_rosbridge(action="publish", topic=_PLUMBING_TOPIC, type="geometry_msgs/Twist")
     assert result["status"] == "success"
 
 
@@ -484,7 +491,7 @@ def test_echo_empty_result_discloses_timeout(fake_roslibpy: _types.ModuleType) -
 def test_publish_traffic_and_unadvertise(fake_roslibpy: _types.ModuleType) -> None:
     result = use_rosbridge(
         action="publish",
-        topic="/cmd_vel",
+        topic=_PLUMBING_TOPIC,
         type="geometry_msgs/Twist",
         fields={"linear": {"x": 1.5}, "angular": {"z": 0.0}},
         count=3,
@@ -544,11 +551,11 @@ def test_an_incomplete_publish_advertises_no_publisher(fake_roslibpy: _types.Mod
     type for. The complete publish that follows is what makes the empty topic
     list mean "refused before advertising" rather than "never advertises".
     """
-    refused = use_rosbridge(action="publish", topic="/cmd_vel")
+    refused = use_rosbridge(action="publish", topic=_PLUMBING_TOPIC)
     assert refused["status"] == "error"
     ros = fake_roslibpy.Ros.instances[0]  # type: ignore[attr-defined]
     assert ros.topics == []
 
-    honored = use_rosbridge(action="publish", topic="/cmd_vel", type="geometry_msgs/Twist", count=1)
+    honored = use_rosbridge(action="publish", topic=_PLUMBING_TOPIC, type="geometry_msgs/Twist", count=1)
     assert honored["status"] == "success"
-    assert [(t.name, t.advertised, t.unadvertised) for t in ros.topics] == [("/cmd_vel", True, True)]
+    assert [(t.name, t.advertised, t.unadvertised) for t in ros.topics] == [(_PLUMBING_TOPIC, True, True)]

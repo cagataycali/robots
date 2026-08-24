@@ -15,6 +15,13 @@ in both directions:
   ``1.0``: ``add_object(position=[True, 0, 0.3])`` reported success and placed
   the body a metre out on x. ``move_to`` refused it, and so does the agent-tool
   router - so the direct API was the only surface that took it.
+* The quaternion domain drifted the other way. ``move_to`` refused an
+  orientation whose norm rounds to zero - a value that describes no rotation -
+  with a hand-rolled check sitting right after the shared pose guard, and the
+  scene calls accepted it: ``move_object(orientation=[0, 0, 0, 0])`` reported
+  success and echoed that quaternion back while ``get_body_state`` reported
+  identity, because MuJoCo substitutes identity for a zero body quaternion
+  without complaint. Its own XML door refuses the same value outright.
 
 These pin the unified contract: every entry point refuses a pose it cannot
 read, refuses a ``bool`` where a coordinate belongs, accepts a NumPy array, and
@@ -40,6 +47,11 @@ UNREADABLE_POSES = [
     pytest.param(np.float64(1.0), id="numpy-scalar"),
     pytest.param((component for component in (0.2, 0.1, 0.2)), id="generator"),
 ]
+
+
+#: A wxyz value with four finite components and no direction. Every entry
+#: point below is asked to apply it.
+ZERO_QUATERNION = [0.0, 0.0, 0.0, 0.0]
 
 
 def _text(result):
@@ -184,3 +196,73 @@ class TestOrientationEntersTheSolve:
         result = sim.move_to(robot_name="arm", position=REACHABLE, orientation=[0.0, 0.0, 0.0, 0.0], max_steps=2)
         assert result["status"] == "error"
         assert "zero norm" in _text(result)
+
+
+class TestEveryEntryPointRefusesAQuaternionWithNoDirection:
+    """A zero-norm wxyz value is no rotation, whichever surface receives it."""
+
+    def test_mujoco_refuses_it_through_its_xml_door(self):
+        """The oracle: the same value, offered to MuJoCo as MJCF, is refused."""
+        import mujoco
+
+        xml = '<mujoco><worldbody><body name="b" quat="0 0 0 0">'
+        xml += '<geom type="box" size=".1 .1 .1"/></body></worldbody></mujoco>'
+        with pytest.raises(ValueError, match="zero quaternion"):
+            mujoco.MjModel.from_xml_string(xml)
+
+    def test_move_object_refuses_it_and_leaves_the_orientation_alone(self, sim):
+        quarter_turn = [0.7071, 0.0, 0.7071, 0.0]
+        assert sim.move_object(name="crate", orientation=quarter_turn)["status"] == "success"
+        before = _json(sim.get_body_state("crate"))["quaternion"]
+
+        refused = sim.move_object(name="crate", orientation=ZERO_QUATERNION)
+        assert refused["status"] == "error"
+        assert "zero norm" in _text(refused)
+        # The old success text named the zero quaternion while the body carried
+        # identity; the pose the body does have is the pose it had before.
+        assert _json(sim.get_body_state("crate"))["quaternion"] == pytest.approx(before)
+
+    def test_add_object_refuses_it_and_adds_nothing(self, sim):
+        refused = sim.add_object(
+            name="spun", shape="box", size=[0.05] * 3, position=[0.3, 0.0, 0.3], orientation=ZERO_QUATERNION
+        )
+        assert refused["status"] == "error"
+        assert "zero norm" in _text(refused)
+        assert "spun" not in _text(sim.list_objects())
+
+    def test_add_robot_refuses_it(self, sim, arm_path):
+        refused = sim.add_robot("spun_arm", urdf_path=arm_path, orientation=ZERO_QUATERNION)
+        assert refused["status"] == "error"
+        assert "zero norm" in _text(refused)
+
+    @pytest.mark.parametrize(
+        "op",
+        [
+            pytest.param({"op": "set_body_quat", "name": "crate"}, id="set_body_quat"),
+            pytest.param({"op": "add_body", "name": "spun_body"}, id="add_body"),
+        ],
+    )
+    def test_a_structured_scene_op_refuses_it(self, sim, op):
+        refused = sim.patch_scene_mjcf(ops=[{**op, "quat": ZERO_QUATERNION}])
+        assert refused["status"] == "error"
+        assert "zero norm" in _text(refused)
+
+    def test_the_scene_verdict_matches_move_to(self, sim):
+        """The parity this module exists for, on the orientation parameter."""
+        primitive = sim.move_to(robot_name="arm", position=REACHABLE, orientation=ZERO_QUATERNION, max_steps=2)
+        scene = sim.move_object(name="crate", orientation=ZERO_QUATERNION)
+        assert primitive["status"] == scene["status"] == "error", (
+            f"verdicts differ: move_to={primitive['status']}, move_object={scene['status']}"
+        )
+
+
+class TestMagnitudeIsStillNotPartOfTheContract:
+    """Only a norm with no direction is refused; any other magnitude is fine."""
+
+    def test_a_non_unit_quaternion_is_applied_and_reported_normalized(self, sim):
+        assert sim.move_object(name="crate", orientation=[0.0, 2.0, 0.0, 0.0])["status"] == "success"
+        assert _json(sim.get_body_state("crate"))["quaternion"] == pytest.approx([0.0, 1.0, 0.0, 0.0])
+
+    def test_a_scene_op_accepts_a_non_unit_quaternion(self, sim):
+        result = sim.patch_scene_mjcf(ops=[{"op": "set_body_quat", "name": "crate", "quat": [0.0, 2.0, 0.0, 0.0]}])
+        assert result["status"] == "success"

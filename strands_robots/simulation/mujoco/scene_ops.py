@@ -43,7 +43,13 @@ from typing import Any
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco, filter_mujoco_attach_noise, mj_name_to_id
 from strands_robots.simulation.mujoco.spec_builder import _SIZE_LAYOUT, SpecBuilder
-from strands_robots.utils import coerce_rgba, entity_name_error, finite_vector_error, pose_vector_error
+from strands_robots.utils import (
+    coerce_rgba,
+    entity_name_error,
+    finite_vector_error,
+    orientation_quaternion_error,
+    pose_vector_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2281,9 +2287,16 @@ def _rgba_field_domain(kind: str, field: str, value: Any) -> tuple[Any, str | No
 # :func:`~strands_robots.utils.coerce_rgba` defines for every backend. ``size``
 # is the one field whose count is shape-dependent, so only its components are
 # checked here and the count is left to ``_validate_size``, which knows the shape.
+#
+# A ``quat`` carries one rule beyond its width, and it arrives from the same
+# shared domain every ``orientation=`` parameter uses
+# (:func:`~strands_robots.utils.orientation_quaternion_error`): a norm that
+# rounds to zero describes no rotation, and the spec-attribute door these ops
+# write through accepts it where MuJoCo's XML door refuses it outright ("zero
+# quaternion is not allowed").
 _OP_FIELD_DOMAINS: dict[str, Callable[[str, str, Any], tuple[Any, str | None]]] = {
     "pos": lambda kind, field, value: (value, pose_vector_error(kind, field, value, 3)),
-    "quat": lambda kind, field, value: (value, pose_vector_error(kind, field, value, 4)),
+    "quat": lambda kind, field, value: (value, orientation_quaternion_error(kind, field, value)),
     "rgba": _rgba_field_domain,
     "size": lambda kind, field, value: (value, finite_vector_error(kind, field, value)),
 }
@@ -2547,7 +2560,8 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
     anything else is rejected, because an unread key would leave the op running
     on its fallback default (see :func:`_unknown_op_keys_error`). Every numeric
     field an op writes is held to its domain in :data:`_OP_FIELD_DOMAINS` - a
-    ``pos`` of exactly 3 finite components, a ``quat`` of 4, a ``rgba`` of 3
+    ``pos`` of exactly 3 finite components, a ``quat`` of 4 whose norm does not
+    round to zero, a ``rgba`` of 3
     (RGB, completed with an opaque alpha) or 4 - because MuJoCo bakes a
     ``nan``/``inf`` component into the model without complaint, and reports a
     width mismatch on the attribute writes by dumping a C++ overload table that

@@ -484,7 +484,7 @@ on an L40S GPU:
 | Provider / policy | Install | Notes |
 |---|---|---|
 | `lerobot_local` + ACT / diffusion | `pip install 'strands-robots[lerobot]' 'lerobot[training]'` | `[lerobot]` supplies torch + torchcodec + datasets; it does **not** supply `accelerate` |
-| `lerobot_local` + `smolvla` | `pip install 'strands-robots[lerobot]' 'lerobot[training]' 'lerobot[smolvla]'` | lerobot 0.6's `[smolvla]` extra layers `transformers>=5.4.0,<5.6.0` + num2words on top. Do **not** pin `transformers==5.3.0` - it conflicts with lerobot 0.6's transformers floor. |
+| `lerobot_local` + `smolvla` | `pip install 'strands-robots[smolvla]' 'lerobot[training]'` | `[smolvla]` layers lerobot's own `[smolvla]` extra (`transformers>=5.4.0,<5.6.0` + num2words) on top of `[lerobot]`. Do **not** pin `transformers==5.3.0` - it conflicts with lerobot 0.6's transformers floor. |
 | `lerobot_local` + `pi0` / `pi05` | `pip install 'strands-robots[lerobot]' 'lerobot[training]' 'lerobot[pi]'` | lerobot 0.6's `[pi]` extra (same `transformers>=5.4.0,<5.6.0` range + scipy) |
 | `groot` | Isaac-GR00T checkout, installed with `pip install -e` into the **same** environment as `strands_robots` (it pulls `omegaconf`, `tyro`, …); point `extra["groot_root"]` / `GR00T_ROOT` at the checkout | `gr00t` is imported in the calling interpreter, so it has to be importable there; `GR00T_ROOT` resolves relative configs, not the interpreter |
 | `cosmos3` | cosmos-framework checkout (`uv sync --group=cu130-train`), installed into the **same** environment as `strands_robots`; point `extra["cosmos_root"]` / `COSMOS_ROOT` at the checkout | `cosmos_framework` is imported in the calling interpreter; multi-GPU goes through torch's programmatic `elastic_launch`, not a `torchrun` binary |

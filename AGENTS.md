@@ -190,7 +190,7 @@ hatch run format            # ruff check --fix, ruff format
     it forwards the context** - `use_ros`'s operator-approval gate is keyed on
     the graph name of the surface a command targets, so it knows nothing about
     a transport added later: a bridge whose topics and services match no
-    `_DEFAULT_COMMAND_BLOCKLIST` entry sends LLM-initiated motion with no
+    `_command_gate.COMMAND_BLOCKLIST` entry sends LLM-initiated motion with no
     prompt, no allowlist check and no audit row, and its tests stay green
     because a bridge suite patches the module's `use_ros` symbol at the
     boundary the gate lives behind. The two halves are one change and neither
@@ -313,8 +313,8 @@ hatch run format            # ruff check --fix, ruff format
    - Thread's last non-bot comment is **yours** -> do not reply. You have
      already said it. If there is code to push, push it; the push is the
      message.
-   - Thread is **`isResolved`** -> do not reply. Resolution is a reviewer action
-     and terminal. Reopening it to restate a landed fix reads as noise, not
+   - Thread is **`isResolved`** -> do not reply. Resolution is terminal, whoever
+     performed it. Reopening it to restate a landed fix reads as noise, not
      diligence. `isOutdated` is **not** terminal, measured: it describes the diff
      rather than the conversation, and a thread keeps accepting comments after it
      flips - #2577's took two more after `d04a8969` moved its lines. It is also
@@ -324,6 +324,14 @@ hatch run format            # ruff check --fix, ruff format
      filed as settled.
    - Last comment is **someone else's** and your existing replies do not answer
      it -> reply once, then resolve.
+   - Thread you have **answered** and nobody has resolved -> resolve it, and still
+     do not reply. The three bullets above decide whether to *speak*, and none of
+     them reaches the thread's other terminal state.
+     `required_review_thread_resolution` is a branch ruleset rule, so a thread you
+     have answered goes on gating the merge until it is resolved, and no reviewer
+     can clear that for you. #2682 measured the cost: a cycle read #2680 as waiting
+     on a reviewer and stopped, when the fix had landed in `0fd0f4e3`, the reply was
+     posted, CI was green, and the only thing outstanding was the resolve.
 
    The authorship check is the cheap one, and it would have prevented ten of
    those twelve comments on its own: no semantic comparison, just the author of
@@ -342,13 +350,17 @@ hatch run format            # ruff check --fix, ruff format
    python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
    ```
 
-   `settled` and `answered` are not work. `awaiting-the-author` is, and it is the
-   only outcome that exits 1 - so the sweep answers "which of my open pull
-   requests actually need me" in one read. The report also names the commit each
-   thread was written against beside the pull request's head, which is what tells
-   "already fixed at `<oid>`" apart from "not yet fixed" without re-deriving the
-   fix (#2520). It reports and does not gate: what an author should do next is not
-   something a branch can turn green.
+   `settled` is not work. `awaiting-the-author` is a reply, `answered` is the
+   resolve that answer still owes, and **both** exit 1 - so the sweep answers
+   "which of my open pull requests actually need me" in one read. It did not
+   always, and the gap was in the reassuring direction: #2682 measured
+   `nothing-owed` and exit 0 over #2680, at the same head where
+   `check_merge_blockers.py` read `unresolved-threads` owed by the author.
+
+   The report also names the commit each thread was written against beside the
+   pull request's head, which is what tells "already fixed at `<oid>`" apart from
+   "not yet fixed" without re-deriving the fix (#2520). It reports and does not
+   gate: what an author should do next is not something a branch can turn green.
 
    What makes this worth writing down is that the previous rule was *satisfied*
    by all twelve. "Address all review comments", and "reply when a thread asks

@@ -371,7 +371,11 @@ def rosbridge_published_at(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 
 def _publish_over_rosbridge(**options: Any) -> dict[str, Any]:
-    return rosbridge_mod.use_rosbridge(action="publish", topic="/cmd_vel", type="geometry_msgs/Twist", **options)
+    # Not a safety-critical command surface: these cases are about pacing, and a
+    # drive topic would route the honored path through the operator gate in
+    # strands_robots.tools._command_gate. The unusable-value cases are unaffected
+    # either way - the numeric guard is consulted before the gate.
+    return rosbridge_mod.use_rosbridge(action="publish", topic="/demo/twist", type="geometry_msgs/Twist", **options)
 
 
 @pytest.mark.parametrize("rate", UNUSABLE_RATES)

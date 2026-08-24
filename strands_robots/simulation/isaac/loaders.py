@@ -378,6 +378,14 @@ def load_mjcf(path: str) -> ProceduralRobot:
     parent. Useful for LIBERO scenes (the matrix's main consumer ships
     MJCF).
 
+    Each body's pose is reported in its parent's frame, as MJCF declares it:
+    ``position`` from ``pos``, and ``orientation`` from whichever of MJCF's five
+    mutually exclusive orientation spellings the element uses (``quat``,
+    ``euler``, ``axisangle``, ``xyaxes`` or ``zaxis``). ``<compiler angle>`` and
+    ``<compiler eulerseq>`` are model-global and read from the spliced model, so
+    a robot inheriting ``angle="radian"`` from an ``<include>`` is not read as
+    degrees.
+
     Parameters
     ----------
     path : str
@@ -394,7 +402,9 @@ def load_mjcf(path: str) -> ProceduralRobot:
         If ``path`` doesn't exist.
     ValueError
         If the XML is malformed, the root tag isn't ``<mujoco>``, or no
-        ``<worldbody>`` / no descendant ``<body>`` is present.
+        ``<worldbody>`` / no descendant ``<body>`` is present, or a body
+        declares more than one orientation spelling (MuJoCo refuses such a
+        model outright, so there is no rotation to pick).
     """
     _require_existing_file(path, "MJCF")
     root = _parse_xml(path, "MJCF")
@@ -411,6 +421,11 @@ def load_mjcf(path: str) -> ProceduralRobot:
 
     geom_defaults = _mjcf_class_defaults(root, mjcf_dir, "geom")
     joint_defaults = _mjcf_class_defaults(root, mjcf_dir, "joint")
+    # Model-global, so read from the spliced model: a robot whose own
+    # <compiler> sets only meshdir still inherits angle="radian" from an
+    # <include>d fragment, and an angle read in the wrong units is a
+    # rotation wrong by a factor of 57.
+    angle_scale, eulerseq = _mjcf_angle_units(_mjcf_model_toplevel(root, mjcf_dir))
     bodies: list[BodyDef] = []
     joints: list[JointDef] = []
 
@@ -444,10 +459,18 @@ def load_mjcf(path: str) -> ProceduralRobot:
         # Geometry - first <geom> primitive type.
         shape, shape_size = _extract_mjcf_shape(body_el, geom_defaults, childclass)
 
+        # MJCF spells a body's rotation five mutually exclusive ways. The
+        # position above is read from the element, so reporting identity for
+        # the rotation half places a rotated link unrotated -- and identity
+        # is a valid orientation, so no caller can tell a link the model
+        # never rotates from one whose rotation was dropped.
+        orientation = _parse_orientation(body_el.attrib, angle_scale=angle_scale, eulerseq=eulerseq)
+
         bodies.append(
             BodyDef(
                 name=body_name,
                 position=position,
+                orientation=orientation,
                 mass=mass,
                 shape=shape,
                 shape_size=shape_size,
@@ -885,7 +908,21 @@ class SceneObject:
 
 
 def _parse_quat(quat_str: str | None) -> tuple[float, float, float, float]:
-    """Parse an MJCF ``quat="w x y z"`` string. Identity on failure."""
+    """Parse an MJCF ``quat="w x y z"`` string, normalized. Identity on failure.
+
+    A quaternion describes a rotation only at unit norm, and MuJoCo normalizes
+    every ``quat`` its compiler reads. Reporting the four components as written
+    hands the caller a value that is not a rotation: MuJoCo's own
+    ``mju_quat2Mat`` builds the matrix from the components as given, so
+    ``quat="1 -1 0 0"`` -- the idiomatic spelling of a quarter turn, which the
+    shipped asset corpus uses on hundreds of robot links -- yields that quarter
+    turn composed with a uniform scale of ``|q|**2``, twice size.
+
+    A zero quaternion has no direction to normalize onto, so it is read as
+    malformed: identity, this function's reading for every ``quat`` it cannot
+    use. MuJoCo refuses such a model outright ("zero quaternion is not
+    allowed"), so no model that compiles reaches here with one.
+    """
     if not quat_str:
         return (1.0, 0.0, 0.0, 0.0)
     try:
@@ -894,7 +931,10 @@ def _parse_quat(quat_str: str | None) -> tuple[float, float, float, float]:
         return (1.0, 0.0, 0.0, 0.0)
     if len(parts) != 4:
         return (1.0, 0.0, 0.0, 0.0)
-    return (parts[0], parts[1], parts[2], parts[3])
+    norm = math.sqrt(sum(p * p for p in parts))
+    if norm == 0.0:
+        return (1.0, 0.0, 0.0, 0.0)
+    return (parts[0] / norm, parts[1] / norm, parts[2] / norm, parts[3] / norm)
 
 
 #: MJCF's orientation spellings other than ``quat``. MuJoCo keeps these four in
@@ -1040,7 +1080,7 @@ def _parse_orientation(
     a model rotates is placed unrotated. Each is resolved the way MuJoCo's
     compiler does:
 
-    * ``quat="w x y z"`` -- taken as written (see the note below).
+    * ``quat="w x y z"`` -- normalized (see the note below).
     * ``euler="a b c"`` -- three rotations about the axes ``eulerseq`` names,
       composed about the *moving* axes (intrinsic), with the angles in the
       units ``<compiler angle>`` declares.
@@ -1059,10 +1099,10 @@ def _parse_orientation(
     ``quat``. :func:`_merge_mjcf_attrs` has already resolved which alternative
     spelling survives, so at most one reaches here.
 
-    A ``quat`` is reported as written rather than normalized. MuJoCo normalizes
-    it, but no ``quat`` in the shipped asset corpus is unnormalized, so
-    normalizing here would only move output for input no shipped model
-    contains; that is a separate contract from reading the spelling at all.
+    Every orientation this returns is a unit quaternion. The four alternative
+    spellings are constructed at unit norm, and a ``quat`` is normalized the way
+    MuJoCo's compiler normalizes it -- see :func:`_parse_quat` for why the
+    components as written are not a rotation.
 
     Args:
         attrs: The element's effective attributes -- ``el.attrib``, or
@@ -1324,6 +1364,11 @@ def _class_attrs(el: ET.Element, defaults: dict[str, dict[str, str]], childclass
     ``defaults`` must be the map :func:`_mjcf_class_defaults` collected for
     ``el``'s own tag: a joint resolved against geom defaults would inherit a
     geom's ``type``, which names a shape rather than a degree of freedom.
+
+    An ``<asset><mesh>`` reaches this with an empty ``childclass``, which is the
+    format's own rule rather than a simplification: ``<asset>`` is a top-level
+    element, so no body encloses it and its only class is the one it names -
+    else the root class.
     """
     cls = el.get("class") or childclass
     return _merge_mjcf_attrs(defaults.get(cls, {}), el.attrib)
@@ -1383,6 +1428,19 @@ def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[
 
     A ``<mesh>`` without a ``name`` defaults to the file's basename without
     extension, per the MJCF spec.
+
+    ``scale`` resolves through the mesh's ``<default>`` class, because MJCF lets
+    a class supply it: ``<default class="X"><mesh scale="0.001 0.001 0.001"/>``
+    plus ``<mesh class="X" file="palm.obj"/>`` declares a millimetre asset with
+    no ``scale`` on the element at all. Read as the element's own attribute
+    alone, such a mesh reports the unit fallback - a plausible value, so nothing
+    downstream can tell "authored at unit scale" from "the declared scale was
+    not read", and the asset is reported a thousand times too large.
+
+    ``file`` and ``name`` are read from the element only, which is what the
+    format allows: MuJoCo's schema refuses either attribute inside a
+    ``<default><mesh>`` ("unrecognized attribute"), so a class cannot name an
+    asset or its file.
     """
     elements = _mjcf_model_toplevel(root, mjcf_dir)
 
@@ -1394,6 +1452,7 @@ def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[
                 mesh_base = d if os.path.isabs(d) else os.path.join(mjcf_dir, d)
                 break
 
+    mesh_defaults = _mjcf_class_defaults(root, mjcf_dir, "mesh")
     registry: dict[str, tuple[str, tuple[float, float, float]]] = {}
     for asset_el in (el for el in elements if el.tag == "asset"):
         for mesh_el in asset_el.findall("mesh"):
@@ -1402,7 +1461,8 @@ def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[
                 continue
             name = mesh_el.get("name") or os.path.splitext(os.path.basename(file_attr))[0]
             resolved = file_attr if os.path.isabs(file_attr) else os.path.join(mesh_base, file_attr)
-            scale = _parse_axis(mesh_el.get("scale"), default=(1.0, 1.0, 1.0))
+            attrs = _class_attrs(mesh_el, mesh_defaults, "")
+            scale = _parse_axis(attrs.get("scale"), default=(1.0, 1.0, 1.0))
             registry[name] = (os.path.normpath(resolved), scale)
     return registry
 
