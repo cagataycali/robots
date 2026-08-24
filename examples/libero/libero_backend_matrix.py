@@ -44,7 +44,10 @@ For each backend row, the matrix script:
    reason is the backend's ``is_available()`` short-circuit firing on
    a host that lacks Isaac Sim / CUDA / a CDN-reachable assets root.
 3. On success, parses the two grep-stable lines and records
-   ``(label, success_rate, wall_time, "ok")``.
+   ``(label, success_rate, wall_time, "ok")``. A driver that exits 0
+   whose result line cannot be parsed records ``incomplete (...)``
+   instead: the row has no measurement, so it must not carry the same
+   status as one that has.
 4. After every row runs, prints a fixed-width table with one row per
    backend slot.
 
@@ -140,6 +143,12 @@ _RE_RESULT = re.compile(
     re.MULTILINE,
 )
 
+# Status for a row whose driver exited 0 but whose result line this module could
+# not read. Distinct from ``skip (...)``, which means the driver refused to run
+# at all: this driver DID run, so the row is a parse failure to investigate, not
+# a backend the host lacks.
+_UNPARSED_RESULT_STATUS = "incomplete (driver exited 0 but printed no parseable result line)"
+
 
 @dataclass
 class RowResult:
@@ -148,7 +157,7 @@ class RowResult:
     label: str
     success_rate: float | None
     wall_time: float | None
-    status: str  # "ok" | "unavailable (...)" | "skip (...)"
+    status: str  # "ok" | "unavailable (...)" | "skip (...)" | _UNPARSED_RESULT_STATUS
 
 
 def _find_driver(driver_filename: str) -> Path | None:
@@ -161,11 +170,18 @@ def _find_driver(driver_filename: str) -> Path | None:
 def _parse_driver_output(stdout: str) -> tuple[float | None, float | None]:
     """Extract (success_rate, wall_time) from a driver's stdout.
 
-    Returns ``(None, None)`` if the result line is missing -- the
-    driver may have exited early before the eval started (e.g., HF
-    token missing for ``--policy=groot``) and the matrix script will
-    still mark the row ``ok`` but with ``--`` cells; the user can
-    re-run the offending driver standalone to see the full traceback.
+    Returns ``(None, None)`` when the result line is absent or does not
+    match :data:`_RE_RESULT`. The caller turns that into
+    :data:`_UNPARSED_RESULT_STATUS` rather than ``ok``, because a row with
+    no measurement must not report the same status as one that measured.
+
+    A driver that gives up before the eval starts does NOT arrive here:
+    ``run.py`` raises on a refused setup step and on an eval it cannot
+    complete, and its ``main`` has no early return, so such a run exits
+    non-zero and is recorded as ``skip (...)`` by exit code. Reaching this
+    with a zero exit therefore means the driver's line and this parser
+    disagree about the shape - re-run the offending driver standalone to
+    see its full output.
     """
     m = _RE_RESULT.search(stdout)
     if not m:
@@ -261,6 +277,17 @@ def _run_one(
         return RowResult(label, None, None, f"skip ({_short_skip_reason(completed.stderr, completed.returncode)})")
 
     sr, wt = _parse_driver_output(completed.stdout)
+    if sr is None or wt is None:
+        # The driver ran to completion and reported success, but its result
+        # line is absent or unreadable, so this row has NO measurement. Saying
+        # "ok" here asserts one: the table would print the same verdict for a
+        # row that measured 0.40 and a row that measured nothing, differing
+        # only in two "--" cells that a status-column reader never sees.
+        # ``run.py`` raises on every failure and prints the line on success, so
+        # reaching this means the driver and this parser disagree about the
+        # line's shape - a contract break between two files, not a host that
+        # lacks a backend, which is why it is not a ``skip``.
+        return RowResult(label, sr, wt, _UNPARSED_RESULT_STATUS)
     return RowResult(label, sr, wt, "ok")
 
 

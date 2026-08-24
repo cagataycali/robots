@@ -820,3 +820,231 @@ def test_a_setup_that_succeeds_still_returns_a_plan_and_reports(tmp_path, monkey
     printed = capsys.readouterr().out
     assert "success_rate=0.40" in printed and "backend=mujoco" in printed, printed[:300]
     assert "evaluate_benchmark" in sim.calls, f"premise: the rollout ran (calls: {sim.calls})"
+
+
+# ---------------------------------------------------------------------------
+# A matrix row with no measurement must not report the same status as one that
+# measured. `_run_one` reads the driver's exit code for the "did it run" half
+# and `_RE_RESULT` for the numbers; a driver that exits 0 whose result line it
+# cannot read has answered the first and failed the second, so "ok" asserts a
+# measurement the row does not carry.
+# ---------------------------------------------------------------------------
+
+
+def _stub_driver(tmp_path, body: str):
+    """Write a throwaway driver script and return its path.
+
+    ``_run_one`` spawns the path with ``sys.executable``, so the stub stands in
+    for a real per-backend driver without importing any backend.
+    """
+    path = tmp_path / "stub_driver.py"
+    path.write_text(body + "\n", encoding="utf-8")
+    return path
+
+
+def _matrix_row(tmp_path, body: str):
+    """Drive the real ``_run_one`` against a stub driver with the given body."""
+    matrix = _load_example("libero_backend_matrix.py")
+    return matrix._run_one(
+        "mujoco",
+        _stub_driver(tmp_path, body),
+        [],
+        [],
+        policy="mock",
+        task="libero-spatial-pick_up_the_red_cube",
+        n_episodes=1,
+        seed=42,
+        port=8000,
+        timeout=60.0,
+    )
+
+
+def _real_result_line(backend: str = "mujoco", success_rate: float = 0.4, wall_time: float = 12.5) -> str:
+    """The driver's own result line, from the single formatter both subcommands print through."""
+    run = _load_example("run.py")
+    _, result_line = run._format_result_lines(
+        policy="mock",
+        requested_task="libero-spatial-pick_up_the_red_cube",
+        resolved_task="libero-spatial-pick_up_the_red_cube",
+        success_rate=success_rate,
+        wall_time=wall_time,
+        video_path="rollouts/2026_01_01/x.mp4",
+        backend=backend,
+    )
+    return result_line
+
+
+class TestARowWithNoMeasurementIsNotReportedAsOk:
+    """A driver that exits 0 without a readable result line is not an ``ok`` row."""
+
+    def test_a_driver_that_prints_no_result_line_is_not_ok(self, tmp_path) -> None:
+        """Exit 0, no result line: the row has no numbers, so it cannot be ``ok``."""
+        row = _matrix_row(tmp_path, "print('[setup] world ready')")
+
+        assert row.success_rate is None and row.wall_time is None, (
+            f"premise: nothing parseable was printed, so both cells stay empty: {row}"
+        )
+        assert row.status != "ok", (
+            "a row whose success_rate and wall_time could not be read reports 'ok', so the "
+            "status column claims a measurement that does not exist"
+        )
+
+    def test_a_driver_whose_result_line_does_not_parse_is_not_ok(self, tmp_path) -> None:
+        """Exit 0 with a result line the parser cannot read is the same non-measurement."""
+        row = _matrix_row(tmp_path, "print('policy=mock task=t success_rate=NaN wall_time=abcs')")
+
+        assert row.success_rate is None and row.wall_time is None, f"premise: the line does not parse: {row}"
+        assert row.status != "ok", (
+            "a driver whose line drifted out of _RE_RESULT's shape reports 'ok', so a contract "
+            "break between the driver and this parser reads as a clean cell"
+        )
+
+    def test_the_two_outcomes_no_longer_share_one_status(self, tmp_path) -> None:
+        """The measured row and the unmeasured row must not report the same status.
+
+        This is the whole defect in one assertion: before the fix both spellings
+        answered ``ok`` and differed only in two ``--`` table cells, which a
+        reader of the status column never sees.
+        """
+        measured = _matrix_row(tmp_path, f"print({_real_result_line()!r})")
+        unmeasured = _matrix_row(tmp_path, "print('[setup] world ready')")
+
+        assert measured.success_rate is not None, f"premise: the control row measured: {measured}"
+        assert unmeasured.success_rate is None, f"premise: the other row did not: {unmeasured}"
+        assert measured.status != unmeasured.status, (
+            f"both rows report {measured.status!r}: the status column cannot distinguish a row "
+            "that measured 0.40 from one that measured nothing"
+        )
+
+    def test_the_status_names_the_cause_and_is_not_a_skip(self, tmp_path) -> None:
+        """The new status must be actionable and must not read as a host-capability skip.
+
+        ``skip (...)`` means the driver refused to run; this driver ran and
+        exited 0, so classing it as a skip would send the reader to check for a
+        missing backend instead of a parse failure.
+        """
+        row = _matrix_row(tmp_path, "print('[setup] world ready')")
+
+        assert not row.status.startswith("skip ("), (
+            f"a driver that ran to completion must not be reported as a skip: {row.status!r}"
+        )
+        assert not row.status.startswith("unavailable ("), (
+            f"the driver file exists and ran, so it is not unavailable: {row.status!r}"
+        )
+        assert "result line" in row.status, (
+            f"the status must name what could not be read so the reader knows where to look: {row.status!r}"
+        )
+
+
+class TestTheOtherRowVerdictsAreUnchanged:
+    """Controls: only the unreadable-result row moves."""
+
+    @pytest.mark.parametrize("backend", ["mujoco", "isaac"])
+    def test_a_real_result_line_still_reports_ok_with_its_numbers(self, tmp_path, backend: str) -> None:
+        """The happy path keeps the ``ok`` spelling a downstream table reader greps for.
+
+        The line is built by the driver's own formatter, so this stays tied to
+        the single source of the format rather than restating it.
+        """
+        row = _matrix_row(tmp_path, f"print({_real_result_line(backend=backend)!r})")
+
+        assert row.status == "ok", f"a parseable result line must still be 'ok': {row}"
+        assert row.success_rate == pytest.approx(0.4)
+        assert row.wall_time == pytest.approx(12.5)
+
+    def test_a_nonzero_exit_is_still_a_skip_naming_the_reason(self, tmp_path) -> None:
+        """A driver that refuses to run keeps its exit-code-derived skip reason."""
+        row = _matrix_row(
+            tmp_path,
+            "import sys; print('Isaac Sim is not available on this host', file=sys.stderr); raise SystemExit(1)",
+        )
+
+        assert row.status.startswith("skip ("), f"a non-zero exit is a skip: {row.status!r}"
+        assert "not available" in row.status, f"the skip must keep the driver's own reason: {row.status!r}"
+        assert row.success_rate is None and row.wall_time is None
+
+    def test_the_matrix_still_exits_zero_so_the_table_stays_the_verdict(self) -> None:
+        """Boundary: the row's status is the report, not the process exit code.
+
+        ``main`` returns 0 after printing the table however the rows turned out -
+        an ``unavailable`` Isaac row on a CPU-only host is the documented normal
+        case. Turning an ``incomplete`` row into a non-zero exit is a separate
+        contract for the matrix's callers and is deliberately not taken here;
+        this test fails if that is changed without deciding it.
+        """
+        source = (_EXAMPLES_LIBERO / "libero_backend_matrix.py").read_text(encoding="utf-8")
+        main = next(
+            node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef) and node.name == "main"
+        )
+        returns = [ast.unparse(node.value) for node in ast.walk(main) if isinstance(node, ast.Return) and node.value]
+
+        assert returns == ["0"], f"main's exit code is not the row verdict; it returns only 0: {returns}"
+
+    def test_the_parser_reports_both_numbers_or_neither(self) -> None:
+        """The guard reads ``sr is None or wt is None``; this is why that is safe.
+
+        ``_parse_driver_output`` yields both floats on a match and ``(None, None)``
+        otherwise, so a half-read row cannot occur and ``or`` cannot differ from
+        ``and`` today. Pinning the invariant is what keeps the defensive spelling
+        correct: if the parser ever grows a path that reports one number without
+        the other, this goes red and the guard's ``or`` is what still catches it.
+        """
+        matrix = _load_example("libero_backend_matrix.py")
+        stdouts = (
+            "",
+            "[setup] world ready",
+            "policy=mock task=t success_rate=NaN wall_time=abcs",
+            "policy=mock  task=t  success_rate=0.40  wall_time=1.5s  videos=x  backend=mujoco",
+            "policy=mock  task=t  success_rate=0.40  videos=x  backend=mujoco",
+            "policy=mock  task=t  wall_time=1.5s  videos=x  backend=mujoco",
+        )
+        for stdout in stdouts:
+            sr, wt = matrix._parse_driver_output(stdout)
+            assert (sr is None) == (wt is None), (
+                f"_parse_driver_output reported one number without the other for {stdout!r}: {(sr, wt)}"
+            )
+
+
+class TestTheDriverHasNoZeroExitPathThatSkipsItsResultLine:
+    """Why the new status means a parse failure and not an early exit.
+
+    ``_parse_driver_output``'s docstring rests on this: a driver that gives up
+    before the eval starts exits non-zero and is recorded by exit code, so a
+    zero exit with no readable line means the driver's format and this parser
+    disagree. If ``run.py`` ever grows a path that returns normally without
+    printing, that reasoning stops holding and this goes red.
+    """
+
+    @staticmethod
+    def _run_py_function(name: str) -> ast.FunctionDef:
+        source = (_EXAMPLES_LIBERO / "run.py").read_text(encoding="utf-8")
+        return next(
+            node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+
+    def test_main_has_no_early_return(self) -> None:
+        """``main`` runs the eval unconditionally - it has no return at all."""
+        main = self._run_py_function("main")
+        returns = [ast.unparse(node) for node in ast.walk(main) if isinstance(node, ast.Return)]
+
+        assert returns == [], (
+            f"run.py main() can return before printing its result line, so a zero exit no longer "
+            f"implies a completed eval: {returns}"
+        )
+
+    def test_the_reporter_raises_rather_than_returning_on_a_failed_eval(self) -> None:
+        """``_evaluate_and_report`` refuses loudly; it never returns a silent failure."""
+        report = self._run_py_function("_evaluate_and_report")
+        raises = [ast.unparse(node.exc) for node in ast.walk(report) if isinstance(node, ast.Raise) and node.exc]
+        returns = [node for node in ast.walk(report) if isinstance(node, ast.Return) and node.value]
+
+        assert raises, "premise: _evaluate_and_report is the function that refuses a failed eval"
+        assert any("evaluate_benchmark failed" in text for text in raises), (
+            f"a failed evaluate_benchmark must raise, not return: {raises}"
+        )
+        assert returns == [], f"_evaluate_and_report reports by printing and raising, not by a value: {returns}"
+
+    def test_the_scan_reaches_both_functions(self) -> None:
+        """Non-vacuity: the two functions above are found by name, not silently missed."""
+        for name in ("main", "_evaluate_and_report"):
+            assert self._run_py_function(name).body, f"{name} was not found with a body in run.py"
