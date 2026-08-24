@@ -97,10 +97,15 @@ def _parse_xml(path: str, fmt: str) -> ET.Element:
     return tree.getroot()
 
 
-def _parse_axis(
-    axis_str: str | None, default: tuple[float, float, float] = (0.0, 0.0, 1.0)
-) -> tuple[float, float, float]:
-    """Parse a whitespace-separated 3-vector. Returns ``default`` if empty / malformed."""
+def _parse_axis(axis_str: str | None, default: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Parse a whitespace-separated 3-vector. Returns ``default`` if empty / malformed.
+
+    ``default`` is required rather than carrying a value of its own: the two
+    description formats this module reads declare different defaults for the
+    attributes parsed here (a URDF joint axis defaults to +X, an MJCF joint axis
+    to +Z, an MJCF mesh scale to unit scale), so a call site that omitted it
+    would silently inherit whichever format the signature happened to name.
+    """
     if not axis_str:
         return default
     try:
@@ -176,6 +181,13 @@ def _parse_urdf_rpy(rpy_str: str | None) -> tuple[float, float, float, float]:
 # limits; we surface unbounded +/-pi as the limit). "floating" / "planar" are
 # rare and don't have a clean 1-DOF axis; we surface them as "fixed" with a
 # warning-via-comment in the joint name (callers can refine if needed).
+# URDF's default joint axis. <axis> is optional, and a joint that omits it
+# rotates or slides about +X - not about the +Z an MJCF joint defaults to.
+# MuJoCo, which parses URDF, reads an absent <axis> as +X for revolute,
+# continuous and prismatic alike, so this is a property of the format rather
+# than of any one joint type.
+_URDF_DEFAULT_JOINT_AXIS = (1.0, 0.0, 0.0)
+
 _URDF_JOINT_TYPE_MAP = {
     "revolute": "revolute",
     "continuous": "revolute",
@@ -195,6 +207,10 @@ def load_urdf(path: str) -> ProceduralRobot:
     surfaced as a best-effort ``shape`` / ``shape_size`` (defaulting to a
     unit box when absent - Phase 1 doesn't render, only the kinematic
     structure matters).
+
+    A joint's axis comes from ``<axis xyz>``, and from URDF's own default of
+    ``+X`` when the optional ``<axis>`` element is absent or states no vector
+    this parser can read.
 
     Each link's pose is reported in its parent's frame, as URDF declares it:
     both halves come from the ``<origin>`` of the joint that reaches the link -
@@ -306,8 +322,16 @@ def load_urdf(path: str) -> ProceduralRobot:
                 f"URDF loader: <joint name='{jname}'> references unknown child link '{child_name}' in {path}"
             )
 
+        # <axis> is optional in URDF, so an absent one is a declaration of the
+        # format's default rather than missing information. That default is +X;
+        # reading it as the +Z an MJCF joint defaults to turns a joint the file
+        # declares in one plane into one acting in the perpendicular plane, and
+        # both are valid axes, so no caller can tell the two apart.
         axis_el = joint_el.find("axis")
-        axis = _parse_axis(axis_el.get("xyz") if axis_el is not None else None)
+        axis = _parse_axis(
+            axis_el.get("xyz") if axis_el is not None else None,
+            default=_URDF_DEFAULT_JOINT_AXIS,
+        )
 
         # URDF states a link's placement once, on the joint that reaches it:
         # <origin> is the child link's frame expressed in the parent link's.
@@ -412,6 +436,9 @@ def _parse_sphere_size(el: ET.Element) -> tuple[float, ...]:
 # - ball  -> not 1-DOF; no clean mapping - surface as "fixed" so the body
 #           index is preserved without claiming actuated DOF.
 # - free  -> 6-DOF root joint; not part of the actuated chain - "fixed".
+# MJCF's default joint axis: a <joint> that omits ``axis`` acts about +Z.
+_MJCF_DEFAULT_JOINT_AXIS = (0.0, 0.0, 1.0)
+
 _MJCF_JOINT_TYPE_MAP = {
     "hinge": "revolute",
     "slide": "prismatic",
@@ -547,7 +574,7 @@ def load_mjcf(path: str) -> ProceduralRobot:
                     f"unknown joint type (expected one of {sorted(_MJCF_JOINT_TYPE_MAP)})"
                 )
 
-            axis = _parse_axis(jattrs.get("axis"))
+            axis = _parse_axis(jattrs.get("axis"), default=_MJCF_DEFAULT_JOINT_AXIS)
             range_str = jattrs.get("range")
             lower, upper = -3.14159, 3.14159
             if range_str:
