@@ -211,7 +211,10 @@ open a window.
   camera prims are parented to the stage camera scope rather than to an
   articulation link.
 - **Loaders** - `load_urdf` / `load_mjcf` / `load_usd` resolve to a
-  `ProceduralRobot` dataclass.
+  `ProceduralRobot` dataclass. `load_mjcf` reports each link's pose in its
+  parent's frame, reading the rotation from whichever of MJCF's five spellings
+  the body uses - `quat`, `euler`, `axisangle`, `xyaxes` or `zaxis` - under the
+  model-global `<compiler angle>` and `<compiler eulerseq>`.
 
 Because the joint-name and observation contract matches the MuJoCo backend,
 policies and observation mappings transfer unchanged between backends.

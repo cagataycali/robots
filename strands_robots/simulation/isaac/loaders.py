@@ -378,6 +378,14 @@ def load_mjcf(path: str) -> ProceduralRobot:
     parent. Useful for LIBERO scenes (the matrix's main consumer ships
     MJCF).
 
+    Each body's pose is reported in its parent's frame, as MJCF declares it:
+    ``position`` from ``pos``, and ``orientation`` from whichever of MJCF's five
+    mutually exclusive orientation spellings the element uses (``quat``,
+    ``euler``, ``axisangle``, ``xyaxes`` or ``zaxis``). ``<compiler angle>`` and
+    ``<compiler eulerseq>`` are model-global and read from the spliced model, so
+    a robot inheriting ``angle="radian"`` from an ``<include>`` is not read as
+    degrees.
+
     Parameters
     ----------
     path : str
@@ -394,7 +402,9 @@ def load_mjcf(path: str) -> ProceduralRobot:
         If ``path`` doesn't exist.
     ValueError
         If the XML is malformed, the root tag isn't ``<mujoco>``, or no
-        ``<worldbody>`` / no descendant ``<body>`` is present.
+        ``<worldbody>`` / no descendant ``<body>`` is present, or a body
+        declares more than one orientation spelling (MuJoCo refuses such a
+        model outright, so there is no rotation to pick).
     """
     _require_existing_file(path, "MJCF")
     root = _parse_xml(path, "MJCF")
@@ -411,6 +421,11 @@ def load_mjcf(path: str) -> ProceduralRobot:
 
     geom_defaults = _mjcf_class_defaults(root, mjcf_dir, "geom")
     joint_defaults = _mjcf_class_defaults(root, mjcf_dir, "joint")
+    # Model-global, so read from the spliced model: a robot whose own
+    # <compiler> sets only meshdir still inherits angle="radian" from an
+    # <include>d fragment, and an angle read in the wrong units is a
+    # rotation wrong by a factor of 57.
+    angle_scale, eulerseq = _mjcf_angle_units(_mjcf_model_toplevel(root, mjcf_dir))
     bodies: list[BodyDef] = []
     joints: list[JointDef] = []
 
@@ -444,10 +459,18 @@ def load_mjcf(path: str) -> ProceduralRobot:
         # Geometry - first <geom> primitive type.
         shape, shape_size = _extract_mjcf_shape(body_el, geom_defaults, childclass)
 
+        # MJCF spells a body's rotation five mutually exclusive ways. The
+        # position above is read from the element, so reporting identity for
+        # the rotation half places a rotated link unrotated -- and identity
+        # is a valid orientation, so no caller can tell a link the model
+        # never rotates from one whose rotation was dropped.
+        orientation = _parse_orientation(body_el.attrib, angle_scale=angle_scale, eulerseq=eulerseq)
+
         bodies.append(
             BodyDef(
                 name=body_name,
                 position=position,
+                orientation=orientation,
                 mass=mass,
                 shape=shape,
                 shape_size=shape_size,
