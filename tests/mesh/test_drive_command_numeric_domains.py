@@ -1,13 +1,15 @@
 """The numeric domains a mobile-base bridge's drive command must share.
 
-Three bridges expose the same fleet-standard ``drive(linear, angular, duration,
-count)`` contract over three transports. A velocity command is the one call on
+Four bridges expose the same fleet-standard ``drive(linear, angular, duration,
+count)`` contract over four transports. A velocity command is the one call on
 any of them that physically moves the robot, so each knob it carries is checked
 before anything reaches the wire - and the accepted domain has to be the *same*
-on all three, because an agent that learns the contract from one bridge drives
-the others with it.
+on all of them, because an agent that learns the contract from one bridge drives
+the others with it. The wire message differs (a ``Twist`` for the three
+differential-drive bases, a normalized servo pair for the Ackermann car); the
+domain of every value the caller supplies does not.
 
-Every check here therefore compares the three against each other rather than
+Every check here therefore compares the bridges against each other rather than
 against a hardcoded expectation, and asserts the *reason* a value was refused
 rather than only that it was: a parity assertion on ``status == "error"`` alone
 passes when two bridges refuse one value for two unrelated causes.
@@ -27,6 +29,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.mesh.ackermann_robot as ackermann_mod
 import strands_robots.mesh.ros_bridge as ros_bridge_mod
 import strands_robots.mesh.rosbridge_robot as rosbridge_mod
 import strands_robots.mesh.rtps_robot as rtps_mod
@@ -48,21 +51,47 @@ class _Recorder:
         return {"status": "success", "content": [{"text": "ok"}]}
 
 
-#: (label, module, forwarded transport symbol, robot factory). Every bridge is
-#: built with the same publish rate so a duration hold derives the same count.
-_TRANSPORTS: list[tuple[str, Any, str, Callable[[], Any]]] = [
+#: The wire fields a bridge publishes for the usable probe command below
+#: (``linear=0.5``, ``angular=-0.25``). A differential-drive base sends the
+#: velocities straight through as a ``Twist``.
+_TWIST_FIELDS: dict[str, Any] = {"linear": {"x": 0.5}, "angular": {"z": -0.25}}
+
+#: The Ackermann car sends a normalized servo pair instead: the documented
+#: bicycle model ``atan(wheelbase * angular / linear)`` normalized by the
+#: steering limit, and the speed normalized by ``max_speed``. Re-derived here
+#: from the platform defaults rather than by calling the converter under test.
+_SERVO_FIELDS: dict[str, Any] = {
+    "angle": pytest.approx(-0.15625849618727),
+    "throttle": pytest.approx(0.3333333333333333),
+}
+
+#: (label, module, forwarded transport symbol, keyword-taking constructor,
+#: published wire fields). The constructor takes the limit keywords so a
+#: construction-time check cannot silently target the wrong bridge, and every
+#: bridge is built with the same publish rate so a duration hold derives the
+#: same message count.
+_TRANSPORTS: list[tuple[str, Any, str, Callable[..., Any], dict[str, Any]]] = [
     (
         "ros_bridge",
         ros_bridge_mod,
         "use_ros",
-        lambda: ros_bridge_mod.RosBridgedRobot("rover", "/cmd_vel", "/odom", publish_rate=10.0),
+        lambda **kw: ros_bridge_mod.RosBridgedRobot("rover", "/cmd_vel", "/odom", **kw),
+        _TWIST_FIELDS,
     ),
-    ("rtps", rtps_mod, "use_rtps", lambda: rtps_mod.RtpsRobot("rover", "/cmd_vel", publish_rate=10.0)),
+    ("rtps", rtps_mod, "use_rtps", lambda **kw: rtps_mod.RtpsRobot("rover", "/cmd_vel", **kw), _TWIST_FIELDS),
     (
         "rosbridge",
         rosbridge_mod,
         "use_rosbridge",
-        lambda: rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom", publish_rate=10.0),
+        lambda **kw: rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom", **kw),
+        _TWIST_FIELDS,
+    ),
+    (
+        "ackermann",
+        ackermann_mod,
+        "use_ros",
+        lambda **kw: ackermann_mod.AckermannRosRobot("car", "/servo", **kw),
+        _SERVO_FIELDS,
     ),
 ]
 
@@ -79,12 +108,12 @@ UNUSABLE_DURATIONS: list[Any] = ["2", [2.0], True, 0, 0.0, -1.5, float("nan"), f
 UNUSABLE_COUNTS: list[Any] = [0, -5, 2.7, float("nan"), float("inf"), "3", True, None, [3]]
 
 
-def _drive(monkeypatch: pytest.MonkeyPatch, transport: tuple[str, Any, str, Callable[[], Any]], **kwargs: Any) -> Any:
+def _drive(monkeypatch: pytest.MonkeyPatch, transport: tuple[Any, ...], **kwargs: Any) -> Any:
     """Drive one bridge with the transport recorded, returning (result, recorder)."""
-    _label, module, symbol, factory = transport
+    _label, module, symbol, ctor, _fields = transport
     rec = _Recorder()
     monkeypatch.setattr(module, symbol, rec)
-    return factory().drive(**kwargs), rec
+    return ctor(publish_rate=10.0).drive(**kwargs), rec
 
 
 def _reason(result: dict[str, Any]) -> str:
@@ -151,20 +180,20 @@ def test_every_bridge_refuses_an_unusable_count_for_the_same_reason(
 def test_every_bridge_refuses_an_unusable_publish_rate_at_construction(value: Any) -> None:
     """A publish rate that cannot be honored is refused before a robot exists.
 
-    ``publish_rate`` is the one constructor limit all three bridges share; it
+    ``publish_rate`` is the one constructor limit every bridge shares; it
     converts a hold into a message count, so an unusable value silently
     reshapes every later timed command.
+
+    The bridge is constructed through the tuple's own constructor rather than a
+    dispatch on its label: a chain with a fallback branch quietly re-checks an
+    already-covered bridge when a new transport is added, which is exactly when
+    the check matters.
     """
-    for label, _module, _symbol, _factory in _TRANSPORTS:
+    for label, _module, _symbol, ctor, _fields in _TRANSPORTS:
         expected = positive_finite_number_error(value, "publish_rate", "")
         assert expected is not None, "probe value must be outside the domain"
         with pytest.raises(ValueError, match="publish_rate must be > 0"):
-            if label == "rtps":
-                rtps_mod.RtpsRobot("rover", "/cmd_vel", publish_rate=value)
-            elif label == "rosbridge":
-                rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom", publish_rate=value)
-            else:
-                ros_bridge_mod.RosBridgedRobot("rover", "/cmd_vel", "/odom", publish_rate=value)
+            ctor(publish_rate=value)
 
 
 def test_every_bridge_still_publishes_a_usable_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,7 +206,7 @@ def test_every_bridge_still_publishes_a_usable_command(monkeypatch: pytest.Monke
         assert result["status"] == "success", f"{transport[0]} refused a usable command"
         assert rec.calls, f"{transport[0]} published nothing"
         assert rec.calls[0]["count"] == 3
-        assert rec.calls[0]["fields"] == {"linear": {"x": 0.5}, "angular": {"z": -0.25}}
+        assert rec.calls[0]["fields"] == transport[4], f"{transport[0]} published other than its wire contract"
 
         held, rec_held = _drive(monkeypatch, transport, linear=0.5, duration=1.5)
         assert held["status"] == "success"
@@ -323,7 +352,7 @@ def test_the_drive_owning_bridges_are_the_expected_ones() -> None:
     checked the moment it lands rather than after it has drifted.
     """
     names = {cls.name for _path, _tree, cls in _drive_owning_modules()}
-    assert {"MobileBaseRobot", "RosbridgeRobot"} <= names, names
+    assert {"AckermannRosRobot", "MobileBaseRobot", "RosbridgeRobot"} <= names, names
     redefined = _INHERIT_THE_CONTRACT & names
     assert not redefined, f"{sorted(redefined)} must inherit drive from MobileBaseRobot, not redefine it"
 

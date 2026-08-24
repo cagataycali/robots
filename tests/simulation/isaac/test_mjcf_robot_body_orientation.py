@@ -264,27 +264,20 @@ class TestTheReportedRotationIsNotWidened:
         assert link.shape_size == pytest.approx((0.1, 0.05, 0.02))
 
 
-class TestTheNormalizationBoundaryIsUnchanged:
-    """A ``quat`` is still reported as written, which is where this change stops.
+class TestANonUnitQuatIsNormalized:
+    """A ``quat`` is reported normalized, the way MuJoCo's compiler reads it.
 
-    MuJoCo normalizes a ``quat`` its compiler reads; ``_parse_orientation``
-    reports it as written, and that choice is shared with the scene reader
-    rather than local to this one. Reading the spelling and normalizing the
-    result are separate questions with separate blast radii, so the boundary is
-    pinned here instead of being moved silently: a non-unit ``quat`` reaches the
-    caller exactly as the file spells it.
+    A quaternion describes a rotation only at unit norm, and MJCF's idiomatic
+    quarter turn ``quat="1 -1 0 0"`` is not one -- reporting the four components
+    as written handed the caller a value that scales the frame it rotates. The
+    reading is graded across both loaders and both readers of the shared helper
+    in :mod:`tests.simulation.isaac.test_mjcf_quat_normalization`; what belongs
+    here is the link-level statement, beside the other four spellings.
     """
 
-    def test_a_non_unit_quat_is_reported_as_written(self, tmp_path):
-        path = _write_robot(tmp_path, body_attrs='quat="1 -1 0 0"')
-        got = _link(path).orientation
-        assert got == pytest.approx((1.0, -1.0, 0.0, 0.0))
-
-    def test_mujoco_normalizes_the_same_declaration(self, tmp_path):
-        """The premise of the boundary: the two answers differ, and by how much."""
+    def test_a_non_unit_quat_is_reported_as_mujoco_compiles_it(self, tmp_path):
         path = _write_robot(tmp_path, body_attrs='quat="1 -1 0 0"')
         expected = _mujoco_body_quat(path)
         assert expected == pytest.approx((math.sqrt(0.5), -math.sqrt(0.5), 0.0, 0.0))
-        assert _same_rotation(_link(path).orientation, expected) > 0.1, (
-            "premise: the reported value and MuJoCo's differ, so this boundary is load-bearing rather than decorative"
-        )
+        assert _link(path).orientation == pytest.approx(expected, abs=1e-12)
+        assert _same_rotation(_link(path).orientation, expected) < 1e-12

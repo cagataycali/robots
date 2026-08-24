@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """``encode_clip`` only accepts a ``quality`` the clip encoder can honor.
 
-``quality`` was the one knob in ``encode_clip``'s signature with no domain, and
-the dependency's own enforcement is not a substitute for one:
+``quality`` was one of two knobs in ``encode_clip``'s signature with no domain
+(``macro_block_size`` is the other -- see
+``test_encode_clip_macro_block_size_domain``), and the dependency's own
+enforcement is not a substitute for one:
 
 * ``imageio-ffmpeg`` bounds the knob with a bare ``assert 1 <= quality <= 10``,
   so the refusal is an ``AssertionError`` -- absent from the documented

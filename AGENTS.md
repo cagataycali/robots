@@ -186,6 +186,28 @@ hatch run format            # ruff check --fix, ruff format
     has to be pinned structurally. Pinned by
     tests/mesh/test_zenoh_transport_bypasses_backend_routing.py.
 
+18. **A new bridge is un-gated until its surfaces are named, and refused until
+    it forwards the context** - `use_ros`'s operator-approval gate is keyed on
+    the graph name of the surface a command targets, so it knows nothing about
+    a transport added later: a bridge whose topics and services match no
+    `_command_gate.COMMAND_BLOCKLIST` entry sends LLM-initiated motion with no
+    prompt, no allowlist check and no audit row, and its tests stay green
+    because a bridge suite patches the module's `use_ros` symbol at the
+    boundary the gate lives behind. The two halves are one change and neither
+    ships alone: naming the surfaces without threading `tool_context` through
+    every `use_ros` call and declaring the command tools `@tool(context=True)`
+    converts the silent bypass into a fail-closed refusal of the whole command
+    surface, `stop` included, and threading the context without naming the
+    surfaces changes nothing at all. Spell blocklist entries bare - matching is
+    on the final path segment, so one `/manual_drive` entry covers every
+    namespaced instance - and state the posture where an operator sizes a
+    pre-approval (`docs/ros2-integration.md`, `docs/security.md`, the example),
+    because `STRANDS_ROS2_COMMAND_ALLOW` is what makes a headless run work and
+    it cannot be discovered from a refusal that has not happened yet. Pinned by
+    tests/mesh/test_ackermann_command_gate.py, whose inventory of bridges owing
+    a gate suite is derived from the tree, so the next transport is graded on
+    arrival rather than at the review that happens to look.
+
 ## PR Workflow
 
 1. Create the feature branch **on your fork**. Branch creation in the base

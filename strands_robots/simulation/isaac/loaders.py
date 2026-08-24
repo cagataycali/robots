@@ -142,6 +142,34 @@ def _safe_float(value: str | None, default: float) -> float:
 # ---------------------------------------------------------------------------
 
 
+def _parse_urdf_rpy(rpy_str: str | None) -> tuple[float, float, float, float]:
+    """wxyz quaternion for a URDF ``rpy`` triple.
+
+    URDF fixes both conventions the MJCF reader has to look up: ``rpy`` is
+    always radians - there is no ``<compiler angle>`` to consult - and always
+    names rotations about the *fixed* axes, applied roll then pitch then yaw,
+    so the composed rotation is ``Rz(yaw) * Ry(pitch) * Rx(roll)``. An absent
+    or malformed triple reads as identity, matching :func:`_parse_xyz`'s
+    tolerant reading of the sibling ``xyz`` attribute on the same element.
+    """
+    identity = (1.0, 0.0, 0.0, 0.0)
+    if not rpy_str:
+        return identity
+    parts = rpy_str.replace(",", " ").split()
+    if len(parts) != 3:
+        return identity
+    # Only the float conversion can raise, so only it is guarded: a wider try
+    # would also swallow a refusal raised deliberately by the checks above.
+    try:
+        roll, pitch, yaw = (float(parts[0]), float(parts[1]), float(parts[2]))
+    except (ValueError, TypeError):
+        return identity
+    return _quat_mul(
+        _quat_about_axis((0.0, 0.0, 1.0), yaw),
+        _quat_mul(_quat_about_axis((0.0, 1.0, 0.0), pitch), _quat_about_axis((1.0, 0.0, 0.0), roll)),
+    )
+
+
 # Map URDF joint type -> ProceduralRobot joint type.
 # URDF spec types: revolute, continuous, prismatic, fixed, floating, planar.
 # We collapse "continuous" -> "revolute" (continuous is a revolute with no
@@ -167,6 +195,12 @@ def load_urdf(path: str) -> ProceduralRobot:
     surfaced as a best-effort ``shape`` / ``shape_size`` (defaulting to a
     unit box when absent - Phase 1 doesn't render, only the kinematic
     structure matters).
+
+    Each link's pose is reported in its parent's frame, as URDF declares it:
+    both halves come from the ``<origin>`` of the joint that reaches the link -
+    ``xyz`` into ``position`` and ``rpy`` into ``orientation`` - because URDF
+    places a link on that joint rather than on the ``<link>`` element itself. A
+    root link, reached by no joint, keeps the identity pose.
 
     Parameters
     ----------
@@ -223,7 +257,7 @@ def load_urdf(path: str) -> ProceduralRobot:
         bodies.append(
             BodyDef(
                 name=link_name,
-                position=(0.0, 0.0, 0.0),  # absolute pose computed by joint chain at instantiation time
+                position=(0.0, 0.0, 0.0),  # replaced below by the reaching joint's <origin>
                 mass=mass,
                 shape=shape,
                 shape_size=shape_size,
@@ -237,6 +271,9 @@ def load_urdf(path: str) -> ProceduralRobot:
     # Pass 2: collect joints. For each joint, look up parent / child link
     # by name and resolve to body indices.
     joints: list[JointDef] = []
+    # child body index -> (position, orientation) from the reaching joint's
+    # <origin>, applied to the bodies once the tree guard below has run.
+    child_pose: dict[int, tuple[tuple[float, float, float], tuple[float, float, float, float]]] = {}
     for joint_el in root.findall("joint"):
         jname = joint_el.get("name")
         if not jname:
@@ -272,6 +309,14 @@ def load_urdf(path: str) -> ProceduralRobot:
         axis_el = joint_el.find("axis")
         axis = _parse_axis(axis_el.get("xyz") if axis_el is not None else None)
 
+        # URDF states a link's placement once, on the joint that reaches it:
+        # <origin> is the child link's frame expressed in the parent link's.
+        origin_el = joint_el.find("origin")
+        child_pose[link_index[child_name]] = (
+            _parse_xyz(origin_el.get("xyz") if origin_el is not None else None),
+            _parse_urdf_rpy(origin_el.get("rpy") if origin_el is not None else None),
+        )
+
         # Limits - URDF requires <limit> for revolute/prismatic, optional
         # for continuous. Defaults below match the dataclass defaults.
         lower = -3.14159
@@ -300,6 +345,13 @@ def load_urdf(path: str) -> ProceduralRobot:
 
     robot = ProceduralRobot(name=name, bodies=bodies, joints=joints)
     _validate_kinematic_tree(robot)
+    # Applied after the tree guard, which establishes that at most one joint
+    # reaches each body: that is what makes "the joint that reaches this link"
+    # a single origin rather than a choice between two. A root link, reached by
+    # no joint, keeps the identity pose - its placement in the model frame.
+    for child_idx, (child_position, child_orientation) in child_pose.items():
+        robot.bodies[child_idx].position = child_position
+        robot.bodies[child_idx].orientation = child_orientation
     return robot
 
 
@@ -908,7 +960,21 @@ class SceneObject:
 
 
 def _parse_quat(quat_str: str | None) -> tuple[float, float, float, float]:
-    """Parse an MJCF ``quat="w x y z"`` string. Identity on failure."""
+    """Parse an MJCF ``quat="w x y z"`` string, normalized. Identity on failure.
+
+    A quaternion describes a rotation only at unit norm, and MuJoCo normalizes
+    every ``quat`` its compiler reads. Reporting the four components as written
+    hands the caller a value that is not a rotation: MuJoCo's own
+    ``mju_quat2Mat`` builds the matrix from the components as given, so
+    ``quat="1 -1 0 0"`` -- the idiomatic spelling of a quarter turn, which the
+    shipped asset corpus uses on hundreds of robot links -- yields that quarter
+    turn composed with a uniform scale of ``|q|**2``, twice size.
+
+    A zero quaternion has no direction to normalize onto, so it is read as
+    malformed: identity, this function's reading for every ``quat`` it cannot
+    use. MuJoCo refuses such a model outright ("zero quaternion is not
+    allowed"), so no model that compiles reaches here with one.
+    """
     if not quat_str:
         return (1.0, 0.0, 0.0, 0.0)
     try:
@@ -917,7 +983,10 @@ def _parse_quat(quat_str: str | None) -> tuple[float, float, float, float]:
         return (1.0, 0.0, 0.0, 0.0)
     if len(parts) != 4:
         return (1.0, 0.0, 0.0, 0.0)
-    return (parts[0], parts[1], parts[2], parts[3])
+    norm = math.sqrt(sum(p * p for p in parts))
+    if norm == 0.0:
+        return (1.0, 0.0, 0.0, 0.0)
+    return (parts[0] / norm, parts[1] / norm, parts[2] / norm, parts[3] / norm)
 
 
 #: MJCF's orientation spellings other than ``quat``. MuJoCo keeps these four in
@@ -1063,7 +1132,7 @@ def _parse_orientation(
     a model rotates is placed unrotated. Each is resolved the way MuJoCo's
     compiler does:
 
-    * ``quat="w x y z"`` -- taken as written (see the note below).
+    * ``quat="w x y z"`` -- normalized (see the note below).
     * ``euler="a b c"`` -- three rotations about the axes ``eulerseq`` names,
       composed about the *moving* axes (intrinsic), with the angles in the
       units ``<compiler angle>`` declares.
@@ -1082,10 +1151,10 @@ def _parse_orientation(
     ``quat``. :func:`_merge_mjcf_attrs` has already resolved which alternative
     spelling survives, so at most one reaches here.
 
-    A ``quat`` is reported as written rather than normalized. MuJoCo normalizes
-    it, but no ``quat`` in the shipped asset corpus is unnormalized, so
-    normalizing here would only move output for input no shipped model
-    contains; that is a separate contract from reading the spelling at all.
+    Every orientation this returns is a unit quaternion. The four alternative
+    spellings are constructed at unit norm, and a ``quat`` is normalized the way
+    MuJoCo's compiler normalizes it -- see :func:`_parse_quat` for why the
+    components as written are not a rotation.
 
     Args:
         attrs: The element's effective attributes -- ``el.attrib``, or
