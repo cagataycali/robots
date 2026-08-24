@@ -775,10 +775,12 @@ hatch run format            # ruff check --fix, ruff format
      `require_last_push_approval` then disqualifies the pushing account from
      re-supplying it, turning a one-approval merge into one that needs a second
      reviewer.
-   - *And that the head it names is the branch's tip.* A pull request has two
-     answers to "what is the head commit" and they can disagree for hours.
-     `headRefOid` is the value the pull request *records*; the tip of the branch
-     in the head repository is the value that exists. GitHub normally reconciles
+   - *And that the head it names is the branch's tip.* A pull request has three
+     answers to "what is the head commit" and they can disagree for hours. Two
+     of them are the API's, and are the pair this bullet compares: `headRefOid`
+     is the value the pull request *records*; the tip of the branch in the head
+     repository is the value that exists. The third is the commit your clone is
+     actually on, which is the next bullet. GitHub normally reconciles
      them within a second of a push, and when it does not, nothing on the pull
      request says so - because every gate this step tells you to poll resolves
      the head *through the pull request's own view of it*, so they all agree
@@ -862,6 +864,65 @@ hatch run format            # ruff check --fix, ruff format
 
      It agreed with `git ls-remote` on all 10 open pull requests, so it needs no
      clone. Pinned by tests/test_pr_head_is_current.py. See #2538.
+   - *And that the tree you are deriving from is that tip.* The third answer is
+     `refs/pull/N/head`, and it is the one every checkout reaches for and the
+     only one with no signal at all. It is a mirror ref GitHub refreshes on its
+     own schedule, so it trails a push to the fork branch. Measured on #2678:
+
+     ```
+     git fetch origin pull/2678/head   ->  33f8bcf4   one commit behind
+     pullRequest { headRefOid }        ->  0b070a05   the tip
+     git merge-base --is-ancestor 33f8bcf4 0b070a05   ->  true, a pure lag
+     ```
+
+     What that costs is not a wasted fetch. The run believed it *had* checked out
+     the branch, grepped the symbol its review thread named, found it genuinely
+     unused on that tree, and derived a correct fix for source that no longer
+     existed. Only `git push` refusing as non-fast-forward surfaced the drift -
+     after the work. A fix touching a different file would have pushed cleanly.
+
+     And the answer was worse than a duplicate, which is why re-reading the
+     thread against the tip is not optional. The thread was a CodeQL "unused
+     global `_RATE_TAG`". Against the stale tree the fix is deletion and the
+     suite agrees - 18 passed, `ruff` clean. Against the tip the same finding
+     means the opposite: the constant was unused because the behavioural tests
+     spelled its value out at each call site, so nothing tied the joint under
+     measurement to the tag the parametrized sweep graded, and the fix is to
+     wire it up. Deletion would have passed CI while removing the invariant the
+     symbol carried. **An unused symbol in a test file is often a missing call
+     site rather than dead code, and the two fixes are indistinguishable by test
+     outcome.**
+
+     So resolve the head from the API and fetch the branch *by name*. Never
+     `refs/pull/N/head`, and re-fetching that ref can return the same stale
+     commit again:
+
+     ```
+     git fetch https://github.com/$HEAD_REPO.git $HEAD_REF
+     git rev-parse FETCH_HEAD      # must equal headRefOid from the API
+     ```
+
+     That assertion is the cheap part and catches the whole class: if
+     `FETCH_HEAD != headRefOid`, no fix derived on the local tree is
+     trustworthy. Or run the check, which resolves the head repository's ref
+     itself and exits 1 on a stale tree, so it can sit in front of the work:
+
+     ```
+     python3 scripts/check_checkout_is_pr_head.py --repo <owner/name> --pr <N>
+     ```
+
+     It compares by **ancestry, not equality**: a clone sitting at its own
+     unpushed commit contains the tip and reads `ahead`, which is the ordinary
+     state between a commit and its push and is not a finding. A tip missing
+     from the local object database is `stale-checkout` rather than
+     indeterminate - a clone that never fetched a commit cannot contain it.
+     Pinned by tests/test_checkout_is_pr_head.py. See #2520, which records four
+     instances: #2511 (one thread, four author replies), #2566 and #2577 (two
+     runs deriving one fix, the duplicate discarded only because a plain push
+     was refused) and #2678 above. That refusal is load-bearing by accident -
+     `git pull --rebase` then push lands an empty-diff commit on top, and
+     `--amend --force-with-lease` deletes the commit that already answered the
+     thread.
    And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
    the **required** contexts' own conclusions and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
