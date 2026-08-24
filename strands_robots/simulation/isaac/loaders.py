@@ -1364,6 +1364,11 @@ def _class_attrs(el: ET.Element, defaults: dict[str, dict[str, str]], childclass
     ``defaults`` must be the map :func:`_mjcf_class_defaults` collected for
     ``el``'s own tag: a joint resolved against geom defaults would inherit a
     geom's ``type``, which names a shape rather than a degree of freedom.
+
+    An ``<asset><mesh>`` reaches this with an empty ``childclass``, which is the
+    format's own rule rather than a simplification: ``<asset>`` is a top-level
+    element, so no body encloses it and its only class is the one it names -
+    else the root class.
     """
     cls = el.get("class") or childclass
     return _merge_mjcf_attrs(defaults.get(cls, {}), el.attrib)
@@ -1423,6 +1428,19 @@ def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[
 
     A ``<mesh>`` without a ``name`` defaults to the file's basename without
     extension, per the MJCF spec.
+
+    ``scale`` resolves through the mesh's ``<default>`` class, because MJCF lets
+    a class supply it: ``<default class="X"><mesh scale="0.001 0.001 0.001"/>``
+    plus ``<mesh class="X" file="palm.obj"/>`` declares a millimetre asset with
+    no ``scale`` on the element at all. Read as the element's own attribute
+    alone, such a mesh reports the unit fallback - a plausible value, so nothing
+    downstream can tell "authored at unit scale" from "the declared scale was
+    not read", and the asset is reported a thousand times too large.
+
+    ``file`` and ``name`` are read from the element only, which is what the
+    format allows: MuJoCo's schema refuses either attribute inside a
+    ``<default><mesh>`` ("unrecognized attribute"), so a class cannot name an
+    asset or its file.
     """
     elements = _mjcf_model_toplevel(root, mjcf_dir)
 
@@ -1434,6 +1452,7 @@ def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[
                 mesh_base = d if os.path.isabs(d) else os.path.join(mjcf_dir, d)
                 break
 
+    mesh_defaults = _mjcf_class_defaults(root, mjcf_dir, "mesh")
     registry: dict[str, tuple[str, tuple[float, float, float]]] = {}
     for asset_el in (el for el in elements if el.tag == "asset"):
         for mesh_el in asset_el.findall("mesh"):
@@ -1442,7 +1461,8 @@ def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[
                 continue
             name = mesh_el.get("name") or os.path.splitext(os.path.basename(file_attr))[0]
             resolved = file_attr if os.path.isabs(file_attr) else os.path.join(mesh_base, file_attr)
-            scale = _parse_axis(mesh_el.get("scale"), default=(1.0, 1.0, 1.0))
+            attrs = _class_attrs(mesh_el, mesh_defaults, "")
+            scale = _parse_axis(attrs.get("scale"), default=(1.0, 1.0, 1.0))
             registry[name] = (os.path.normpath(resolved), scale)
     return registry
 
