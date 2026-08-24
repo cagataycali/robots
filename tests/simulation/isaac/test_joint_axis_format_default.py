@@ -23,7 +23,9 @@ The parser's *tolerance* is deliberately unchanged: an ``<axis>`` stating a
 vector it cannot read still degrades to the format's default rather than
 raising, even though MuJoCo refuses such a model outright. That boundary is
 pinned by :class:`TestTheToleranceBoundaryIsUnchanged` so it is moved
-explicitly if it is ever moved at all.
+explicitly if it is ever moved at all; only *which* default it lands on
+changed, and that is graded by
+:class:`TestAnUnreadableUrdfAxisIsTheUrdfDefault`.
 """
 
 from __future__ import annotations
@@ -67,9 +69,7 @@ UNREADABLE_AXES = (
 
 def _write_urdf(tmp_path, *, jtype: str, axis_fragment: str, name: str = "axis") -> str:
     """A two-link URDF whose single joint carries ``axis_fragment`` verbatim."""
-    limit = (
-        '<limit lower="-1" upper="1" effort="1" velocity="1"/>' if jtype in ("revolute", "prismatic") else ""
-    )
+    limit = '<limit lower="-1" upper="1" effort="1" velocity="1"/>' if jtype in ("revolute", "prismatic") else ""
     path = tmp_path / f"{name}.urdf"
     path.write_text(
         f'<robot name="{name}">'
@@ -105,7 +105,8 @@ def _compiler_axis(path: str) -> tuple[float, float, float]:
     model = mujoco.MjModel.from_xml_path(path)
     jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "j")
     assert jid >= 0, f"{path} compiled without a joint named 'j'; the oracle would be degenerate"
-    return tuple(float(v) for v in model.jnt_axis[jid])
+    axis = model.jnt_axis[jid]
+    return (float(axis[0]), float(axis[1]), float(axis[2]))
 
 
 def _only_joint_axis(path: str, *, mjcf: bool = False) -> tuple[float, float, float]:
@@ -186,19 +187,35 @@ class TestTheMjcfDefaultIsUnchanged:
         assert _only_joint_axis(path, mjcf=True) == pytest.approx(_compiler_axis(path))
 
 
-class TestTheToleranceBoundaryIsUnchanged:
-    """An unreadable axis still degrades to the format's default, never raises.
+class TestAnUnreadableUrdfAxisIsTheUrdfDefault:
+    """An axis this parser cannot read lands on URDF's default, not MJCF's.
 
-    MuJoCo refuses every fixture here, so the tolerance is this package's own
-    choice rather than something the format allows. Reading it as the *reading
-    format's* default is what changed; that a malformed vector is tolerated at
-    all did not.
+    The parser reaches its default for an absent element and for a malformed
+    one alike, so both spellings carried the borrowed +Z.
     """
 
     @pytest.mark.parametrize("fragment", UNREADABLE_AXES)
     def test_an_unreadable_urdf_axis_reads_as_the_urdf_default(self, tmp_path, fragment) -> None:
         path = _write_urdf(tmp_path, jtype="revolute", axis_fragment=fragment)
         assert _only_joint_axis(path) == pytest.approx(_URDF_DEFAULT_JOINT_AXIS)
+
+
+class TestTheToleranceBoundaryIsUnchanged:
+    """A malformed axis still degrades rather than raising -- unchanged here.
+
+    MuJoCo refuses every malformed fixture below, so tolerating one is this
+    package's own choice rather than something the format allows. *Which*
+    default the tolerance lands on is what this change moves; that the
+    tolerance exists at all is deliberately left alone, and pinning it here
+    means moving it later is an explicit decision.
+    """
+
+    @pytest.mark.parametrize("fragment", UNREADABLE_AXES)
+    def test_an_unreadable_urdf_axis_is_tolerated_rather_than_refused(self, tmp_path, fragment) -> None:
+        """The load succeeds and still reports the joint, whatever the axis."""
+        path = _write_urdf(tmp_path, jtype="revolute", axis_fragment=fragment)
+        robot = load_urdf(path)
+        assert [j.name for j in robot.joints] == ["j"]
 
     @pytest.mark.parametrize("fragment", UNREADABLE_AXES)
     def test_the_compiler_refuses_every_unreadable_fixture(self, tmp_path, fragment) -> None:
@@ -239,18 +256,14 @@ class TestNoCallSiteCanInheritAFormatsDefault:
 
     def test_every_call_site_names_its_default(self) -> None:
         """Derived, so a call site added later is graded on arrival."""
-        source = pathlib.Path(inspect.getsourcefile(loaders)).read_text(encoding="utf-8")
+        source = pathlib.Path(loaders.__file__).read_text(encoding="utf-8")
         calls = [
             node
             for node in ast.walk(ast.parse(source))
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_parse_axis"
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_parse_axis"
         ]
         assert calls, "no _parse_axis call sites found; this rule would grade nothing"
         unnamed = [
-            node.lineno
-            for node in calls
-            if len(node.args) < 2 and not any(kw.arg == "default" for kw in node.keywords)
+            node.lineno for node in calls if len(node.args) < 2 and not any(kw.arg == "default" for kw in node.keywords)
         ]
         assert not unnamed, f"_parse_axis called without naming a default at line(s) {unnamed}"
