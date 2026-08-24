@@ -794,7 +794,8 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     * The media knobs that count frames or pixels - the recorders' ``fps``,
       ``width``, ``height`` and in-memory frame cap, the
       ``run_policy(video=...)`` dict fields, and the
-      :func:`~strands_robots.rendering.encode_clip` playback rate.
+      :func:`~strands_robots.rendering.encode_clip` playback rate and
+      macro-block rounding.
     * The physics steps one applied action is held for - the ``n_substeps`` of
       every backend's
       :meth:`~strands_robots.simulation.base.SimEngine.send_action`.
@@ -823,7 +824,8 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     owns such a ceiling: :func:`coerce_zmq_timeout_ms` composes this guard and
     then applies :data:`MAX_ZMQ_TIMEOUT_MS`, because a ZMQ send/receive timeout
     is stored as a C ``int`` and this domain accepts ``2**31``.
-    Its callers are ``fps``, ``width``, ``height``, ``max_frames``, the mesh
+    Its callers are ``fps``, ``width``, ``height``, ``max_frames``,
+    ``encode_clip``'s ``macro_block_size``, the mesh
     robots' ``drive(count=...)``, ``send_action(n_substeps=)`` and the ZMQ
     clients' ``timeout_ms``. Two of those
     repeat work that nothing bounds: ``drive`` repeats an actuation command, so
