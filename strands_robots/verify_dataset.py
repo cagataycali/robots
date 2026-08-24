@@ -537,6 +537,10 @@ def _verify_feature_stats(
         known_unreadable: Episode-parquet paths (relative to ``root_path``) the
             caller has already reported as unreadable. They are skipped without
             a second problem string, so one broken shard is reported once.
+        declared_features: The ``features`` mapping from ``meta/info.json``,
+            whose per-feature ``names`` carry the per-robot column prefixes.
+            Read only to split a partially-dead vector into blocks; ``None``
+            (or anything that is not a mapping) keeps the whole-vector rule.
 
     Returns:
         A ``(checked, problems)`` tuple where ``checked`` is the number of
