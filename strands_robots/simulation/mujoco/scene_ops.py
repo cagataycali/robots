@@ -23,6 +23,8 @@ Public API:
   under ``{robot_name}/``, then recompile.
 * :func:`refresh_body_inertial_from_geometry` - re-derive a body's mass /
   center of mass / inertia after one of its geoms was resized at runtime.
+* :func:`fromto_fixed_size_components` - which ``geom_size`` components a geom's
+  ``<fromto>`` fixes, so a resize of one can be refused rather than reported.
 
 Every function takes a ``SimWorld`` whose ``_backend_state["spec"]`` holds the
 live ``MjSpec``. They return ``True`` on success, ``False`` on failure (matching
@@ -33,13 +35,21 @@ from __future__ import annotations
 
 import difflib
 import logging
+import math
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco, filter_mujoco_attach_noise, mj_name_to_id
-from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
-from strands_robots.utils import coerce_rgba, finite_vector_error, pose_vector_error
+from strands_robots.simulation.mujoco.spec_builder import _SIZE_LAYOUT, SpecBuilder
+from strands_robots.utils import (
+    coerce_rgba,
+    entity_name_error,
+    finite_vector_error,
+    orientation_quaternion_error,
+    pose_vector_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +80,37 @@ def _sync_cached_xml(world: SimWorld, spec: Any) -> None:
             world._backend_state["xml"] = spec.to_xml()
     except Exception as xml_err:
         logger.debug("spec.to_xml() failed; cached XML left stale: %s", xml_err)
+
+
+def _raise_spec_joint_damping(joint: Any, floor: float) -> None:
+    """Floor a spec joint's damping, on either MuJoCo layout of that field.
+
+    ``MjsJoint.damping`` is a per-DOF sequence on MuJoCo builds from 3.10 and a
+    plain ``float`` on the older builds this package still supports
+    (``mujoco>=3.2.0``). Reading or writing through the wrong one of those two
+    layouts raises ``TypeError``, which
+    :func:`actuate_robot_in_scene` reports as a refused spec surgery - so a
+    robot that needs a damping floor cannot be actuated at all. Both layouts are
+    handled here, once, rather than at the call site.
+
+    Existing damping larger than ``floor`` is kept, which is the floor contract
+    :meth:`strands_robots.simulation.mujoco.manipulation.ManipulationMixin.actuate_robot`
+    documents for its ``damping`` argument.
+
+    Args:
+        joint: The ``MjsJoint`` (or any object exposing a ``damping`` field in
+            one of the two layouts) to floor in place.
+        floor: Minimum damping to leave on the joint.
+    """
+    current = joint.damping
+    try:
+        first = float(current[0])
+    except TypeError:
+        # Scalar layout (mujoco < 3.10): assign the field itself.
+        joint.damping = max(float(current), floor)
+    else:
+        # Per-DOF layout: write element 0, leaving any further DOFs alone.
+        joint.damping[0] = max(first, floor)
 
 
 def _snapshot_spec(spec: Any, *, context: str) -> Any | None:
@@ -139,6 +180,303 @@ def actuator_joint_id(model: Any, act_id: int, mj: Any) -> int:
     if int(model.actuator_trntype[act_id]) not in joint_trn:
         return -1
     return int(model.actuator_trnid[act_id, 0])
+
+
+def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]]:
+    """Split the joint-driving actuators into position servos and other drives.
+
+    A *position servo* is an actuator whose ``ctrl`` IS the joint target in the
+    joint's own units, so a caller may write a pose into it. That takes three
+    terms, because MuJoCo's actuator shortcuts overlap on any one of them
+    (measured values below are what ``mujoco`` compiles each shortcut to):
+
+    * ``biastype == mjBIAS_AFFINE`` - the force carries a bias computed from the
+      joint's own state rather than from ``ctrl`` alone. Necessary but far from
+      sufficient: ``<velocity kv>`` (``biasprm = [0, 0, -kv]``) and
+      ``<intvelocity kp>`` (``biasprm = [0, -kp, 0]``) are both affine-bias too.
+    * ``biasprm[1] < 0`` - that slot is ``-kp``, the *position* feedback gain, so
+      a negative value is what makes the bias restore toward ``ctrl`` as a pose.
+      It is zero for ``<velocity>``, whose feedback is on the rate, and positive
+      bias here is not a restoring term at all (``<cylinder bias>`` is free to
+      set it).
+    * ``dyntype == mjDYN_NONE`` - ``ctrl`` reaches the force law directly. A
+      stateful drive puts an ``act`` state in between: ``<intvelocity>`` carries
+      ``-kp`` yet integrates ``ctrl`` as a *rate*, so it clears the first two
+      terms while its command is not a pose.
+    * the transmission is the joint itself, which is why the joint is resolved
+      through :func:`actuator_joint_id` (``-1`` for a tendon) rather than through
+      :func:`actuator_driven_joint_ids`. No gain inspection can supply this term:
+      every stock tendon gripper measured clears all three terms above
+      (``panda/actuator8`` and ``robotiq_2f85/fingers_actuator`` both compile to
+      ``biasprm = [0, -100, 0]``, ``shadow_hand/lh_A_FFJ0`` to ``[0, -0.5, 0]``),
+      so they are position servos *on their tendon* and read as one here unless
+      the transmission is checked. Two independent facts disqualify them:
+      ``ctrl`` is in the tendon's units rather than the joint's (``[0, 255]`` for
+      those two grippers, ``[0, 0.52]`` metres for ``stretch3/arm``), and one
+      ``ctrl`` drives several joints at once (2 for a gripper, 4 for the
+      ``stretch3`` telescoping arm), so no single joint angle can be written into
+      it at all.
+
+    Getting this wrong in the permissive direction is what a pose write cannot
+    afford: a joint angle written into a velocity drive's ``ctrl`` is commanded
+    as a *rate*, which drives the joint away from the pose that was just written
+    (measured on a single ``<velocity kv="5">`` scene: the joint spins off the
+    written pose, and under gravity ``mj_step`` reports
+    ``Nan, Inf or huge value in QACC``). The reverse error only declines to
+    help - the joint is reported as left alone - so every term above is required
+    rather than assumed.
+
+    Stock assets reach this path: Menagerie's ``pal_tiago`` ships a
+    ``tiago_velocity.xml`` variant whose arm is driven by 9 ``<velocity>``
+    actuators, and any caller MJCF loaded through ``replace_scene_mjcf`` /
+    ``patch_scene_mjcf`` may carry one.
+
+    The classification is not a per-robot property - ``openarm`` ships 2 position
+    servos beside 16 motors - so it is per actuator.
+
+    Note:
+        :func:`~strands_robots.policies.wbc.sim_control.wbc_uses_position_servo`
+        tests the bias type alone and so reads a velocity drive as a servo too.
+        That is a pre-existing read-only heuristic - it only decides whether to
+        install the whole-body torque shim, and never writes a setpoint - so it
+        is left to its own change rather than widened into this one.
+
+    Args:
+        model: The compiled ``MjModel``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        ``(servos, other_drives)`` - two disjoint ``{joint id: actuator id}``
+        maps covering every joint some actuator drives, including the joints a
+        tendon couples to one ``ctrl``; those land in *other_drives*, whose
+        ``ctrl`` a caller must not write a joint angle into. A joint no actuator
+        drives appears in neither. A joint driven by both a position servo and
+        another drive appears only in *servos*, because a setpoint written there
+        does govern the pose it settles to. Where several actuators of one kind
+        drive a joint the last in model order is reported.
+    """
+    servos: dict[int, int] = {}
+    other: dict[int, int] = {}
+    affine = int(mj.mjtBias.mjBIAS_AFFINE)
+    stateless = int(mj.mjtDyn.mjDYN_NONE)
+    for act_id in range(int(model.nu)):
+        driven = actuator_driven_joint_ids(model, act_id, mj)
+        if not driven:
+            continue
+        target = actuator_joint_id(model, act_id, mj)
+        commands_a_pose = target >= 0 and (
+            int(model.actuator_biastype[act_id]) == affine
+            and float(model.actuator_biasprm[act_id, 1]) < 0.0
+            and int(model.actuator_dyntype[act_id]) == stateless
+        )
+        if commands_a_pose:
+            servos[target] = act_id
+        else:
+            for jnt_id in driven:
+                other[jnt_id] = act_id
+    # Disjoint: a servo's setpoint governs the pose even when another drive also
+    # pulls on the joint, so the servo is the drive a pose write can move.
+    for jnt_id in servos:
+        other.pop(jnt_id, None)
+    return servos, other
+
+
+def joint_rate_drive_map(model: Any, mj: Any) -> dict[int, int]:
+    """Map each joint whose actuator commands a *rate* in the joint's own units.
+
+    The velocity counterpart of :func:`joint_drive_map`, which answers the same
+    question for a pose. A *rate drive* is an actuator whose ``ctrl`` IS the
+    joint's velocity, so a velocity a caller writes into ``qvel`` is a value the
+    drive is simultaneously commanding somewhere else -- and the next step
+    resolves that disagreement in the drive's favour.
+
+    The three terms mirror :func:`joint_drive_map`'s, read off the same compiled
+    fields (measured against every MuJoCo actuator shortcut, only ``<velocity>``
+    clears all of them):
+
+    * ``biastype == mjBIAS_AFFINE`` - the bias is computed from the joint's own
+      state. Necessary and not sufficient: ``<position kp>`` and
+      ``<intvelocity kp>`` are affine-bias too.
+    * ``biasprm[1] == 0`` and ``biasprm[2] < 0`` - slot 1 is ``-kp`` (position
+      feedback) and slot 2 is ``-kv`` (velocity feedback), so a rate command is
+      the one with feedback on the rate and none on the pose. ``<velocity kv>``
+      compiles to ``biasprm = [0, 0, -kv]``; ``<position kp>`` to
+      ``[0, -kp, 0]``, which this excludes.
+    * ``dyntype == mjDYN_NONE`` - ``ctrl`` reaches the force law directly.
+      ``<intvelocity>`` also reads ``ctrl`` as a rate, but integrates it into a
+      *pose* target behind an ``act`` state, so the joint's velocity is not what
+      it commands and it is excluded here.
+    * the transmission is the joint itself, resolved through
+      :func:`actuator_joint_id`. A tendon velocity drive is disqualified for the
+      same two reasons a tendon servo is: ``ctrl`` is in the tendon's units
+      rather than the joint's, and one ``ctrl`` drives several joints at once.
+
+    Stock assets reach this path: Menagerie's ``pal_tiago`` ships a
+    ``tiago_velocity.xml`` whose arm is driven by 9 ``<velocity>`` actuators
+    (``pal_tiago_dual`` 18), and any caller MJCF loaded through
+    ``replace_scene_mjcf`` / ``patch_scene_mjcf`` may carry one.
+
+    Args:
+        model: The compiled ``MjModel``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        ``{joint id: actuator id}`` for every joint some actuator commands a
+        rate on. A joint driven by anything else -- a position servo, a torque
+        motor, a stateful drive, a tendon -- appears nowhere, because its
+        ``ctrl`` is not a velocity in the joint's units and so cannot disagree
+        with one. Where several rate drives target one joint the last in model
+        order is reported.
+    """
+    rate_drives: dict[int, int] = {}
+    affine = int(mj.mjtBias.mjBIAS_AFFINE)
+    stateless = int(mj.mjtDyn.mjDYN_NONE)
+    for act_id in range(int(model.nu)):
+        target = actuator_joint_id(model, act_id, mj)
+        if target < 0:
+            continue
+        commands_a_rate = (
+            int(model.actuator_biastype[act_id]) == affine
+            and float(model.actuator_biasprm[act_id, 1]) == 0.0
+            and float(model.actuator_biasprm[act_id, 2]) < 0.0
+            and int(model.actuator_dyntype[act_id]) == stateless
+        )
+        if commands_a_rate:
+            rate_drives[target] = act_id
+    return rate_drives
+
+
+def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
+    """Return every joint id actuator ``act_id`` drives.
+
+    :func:`actuator_joint_id` answers the narrower question "which single joint
+    is this actuator's transmission target", which is what a caller needs when
+    it has one ``ctrl`` slot to seed from one joint's position. It reports
+    ``-1`` for a tendon, because a tendon is not a joint.
+
+    A joint can still be driven *through* that tendon, though: a fixed tendon
+    that wraps joints couples them to one ``ctrl``, which is the standard MJCF
+    gripper idiom. So a caller asking "is this joint already driven" - rather
+    than "which joint is this actuator's target" - must resolve the tendon's
+    wrap list too, or it reads an actuated joint as free. That distinction is
+    the whole reason this is a second function and not a flag on the first: the
+    two questions have different answers for the same actuator, and collapsing
+    them would make one of the two call sites wrong.
+
+    Transmissions that drive a site, body or slider-crank contribute nothing:
+    they move a frame rather than command a joint coordinate, so a joint they
+    happen to move is still free for an actuator to claim.
+
+    Args:
+        model: The compiled ``MjModel``.
+        act_id: Actuator index in ``range(model.nu)``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The driven joint ids, empty when the transmission commands no joint.
+    """
+    joint_id = actuator_joint_id(model, act_id, mj)
+    if joint_id >= 0:
+        return frozenset({joint_id})
+    if int(model.actuator_trntype[act_id]) != int(mj.mjtTrn.mjTRN_TENDON):
+        return frozenset()
+    return tendon_joint_ids(model, int(model.actuator_trnid[act_id, 0]), mj)
+
+
+def actuator_target_body_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
+    """Return the bodies actuator ``act_id``'s transmission acts on.
+
+    The third member of the transmission-reading family, and a different
+    question from the two joint ones. :func:`actuator_joint_id` answers "which
+    single joint is this actuator's target" and
+    :func:`actuator_driven_joint_ids` answers "which joints does it command,
+    including through a tendon". Both are empty for a transmission that moves a
+    *frame* rather than a joint coordinate -- ``mjTRN_SITE``, ``mjTRN_BODY``,
+    ``mjTRN_SLIDERCRANK``. That is not an exotic case: it is how an aerial
+    robot is actuated, where each rotor is a force applied at a site on the
+    airframe and the model declares no joint at all besides the floating base.
+    A caller asking "what part of the machine does this actuator move" therefore
+    cannot use either joint function, which is why this is a third function
+    rather than a flag on one of them.
+
+    Resolution per transmission, each id read from the space its own
+    ``trntype`` selects (the id spaces each start at 0, so reading
+    ``actuator_trnid`` without branching on the type matches an unrelated
+    entity that merely shares a number):
+
+    * ``mjTRN_JOINT`` / ``mjTRN_JOINTINPARENT`` -- the body the joint belongs to.
+    * ``mjTRN_SITE`` / ``mjTRN_SLIDERCRANK`` -- the body carrying the target
+      site. Only the primary target is resolved: a site transmission's second
+      id is a *reference* frame the force is measured against, not another part
+      the actuator moves.
+    * ``mjTRN_BODY`` -- that body.
+    * ``mjTRN_TENDON`` -- the bodies of the joints the tendon wraps, via
+      :func:`tendon_joint_ids`, so the tendon rule stays owned in one place. A
+      purely spatial tendon wraps sites rather than joints and so contributes
+      nothing, matching what that function reports.
+
+    Args:
+        model: The compiled ``MjModel``.
+        act_id: Actuator index in ``range(model.nu)``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The body ids the transmission acts on, empty when none resolves.
+    """
+    trntype = int(model.actuator_trntype[act_id])
+    target = int(model.actuator_trnid[act_id, 0])
+    if target < 0:
+        return frozenset()
+
+    joint_trn = {int(mj.mjtTrn.mjTRN_JOINT)}
+    if hasattr(mj.mjtTrn, "mjTRN_JOINTINPARENT"):
+        joint_trn.add(int(mj.mjtTrn.mjTRN_JOINTINPARENT))
+    if trntype in joint_trn:
+        if target >= int(model.njnt):
+            return frozenset()
+        return frozenset({int(model.jnt_bodyid[target])})
+
+    site_trn = {int(mj.mjtTrn.mjTRN_SITE), int(mj.mjtTrn.mjTRN_SLIDERCRANK)}
+    if trntype in site_trn:
+        if target >= int(model.nsite):
+            return frozenset()
+        return frozenset({int(model.site_bodyid[target])})
+
+    if trntype == int(mj.mjtTrn.mjTRN_BODY):
+        if target >= int(model.nbody):
+            return frozenset()
+        return frozenset({target})
+
+    if trntype == int(mj.mjtTrn.mjTRN_TENDON):
+        return frozenset(int(model.jnt_bodyid[j]) for j in tendon_joint_ids(model, target, mj))
+
+    return frozenset()
+
+
+def tendon_joint_ids(model: Any, tendon_id: int, mj: Any) -> frozenset[int]:
+    """Return the joint ids wired into tendon ``tendon_id`` by its wrap list.
+
+    A tendon's wrap entries live in one flat table shared by every tendon, so a
+    reader has to slice its own span (``tendon_adr`` / ``tendon_num``) and keep
+    only the ``mjWRAP_JOINT`` entries - site and pulley wraps carry ids from
+    other spaces. Walking that table is the part both "which actuator drives
+    this joint" and "which joints does this actuator drive" need, so it lives
+    here once rather than in each direction.
+
+    Args:
+        model: The compiled ``MjModel``.
+        tendon_id: Tendon index in ``range(model.ntendon)``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The wrapped joint ids, empty when the tendon wraps no joint.
+    """
+    if tendon_id < 0 or tendon_id >= int(model.ntendon):
+        return frozenset()
+    wrap_joint = int(mj.mjtWrap.mjWRAP_JOINT)
+    adr = int(model.tendon_adr[tendon_id])
+    num = int(model.tendon_num[tendon_id])
+    return frozenset(int(model.wrap_objid[w]) for w in range(adr, adr + num) if int(model.wrap_type[w]) == wrap_joint)
 
 
 def robot_owned_actuator_ids(model: Any, robot: SimRobot, mj: Any) -> list[int]:
@@ -215,6 +553,186 @@ def install_compiled_model(world: SimWorld, model: Any, data: Any) -> None:
     world._recompile_generation += 1
 
 
+def _snapshot_body_wrenches(model: Any, data: Any, mj: Any) -> dict[str, list[float]]:
+    """Capture every latched ``apply_force`` wrench, keyed by body name.
+
+    ``xfrc_applied`` is indexed by body, and a scene rebuild renumbers bodies,
+    so the wrench is carried by NAME for the same reason every other field of
+    :class:`_SceneState` is. Only non-zero rows are captured: an all-zero row is
+    "no wrench latched here", which is exactly what a fresh allocation already
+    holds, so a scene with no wrench in it costs an empty dict.
+
+    Args:
+        model: The compiled model the rows are being read against.
+        data: The ``MjData`` holding the latched wrenches.
+        mj: The resolved ``mujoco`` module.
+
+    Returns:
+        ``body name -> [fx, fy, fz, tx, ty, tz]`` for each body with a wrench.
+    """
+    wrenches: dict[str, list[float]] = {}
+    for bid in range(int(model.nbody)):
+        row = data.xfrc_applied[bid]
+        if not row.any():
+            continue
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, bid)
+        if not name:
+            # No namespace names it, so it cannot be matched across the rebuild.
+            # ``apply_force`` resolves its target by name and so cannot latch
+            # one here; a wrench on an unnamed body came from elsewhere.
+            logger.debug("snapshot_body_wrenches: body id %d has no name, wrench not carried over", bid)
+            continue
+        wrenches[name] = [float(x) for x in row]
+    return wrenches
+
+
+def _snapshot_joint_forces(model: Any, data: Any, mj: Any) -> dict[_JointKey, list[float]]:
+    """Capture every latched generalized force, keyed by joint.
+
+    The joint-space sibling of :func:`_snapshot_body_wrenches`. ``spec.recompile``
+    drops ``qfrc_applied`` for the same reason it drops ``xfrc_applied`` -- it
+    carries neither applied-force buffer -- so a grow needs this pass just as the
+    eject does. Keyed the same way as :class:`_SceneState`'s joints, because a
+    rebuild renumbers dofs. Only non-zero slices are captured: all-zero is "no
+    force latched here", which a fresh allocation already holds.
+
+    Args:
+        model: The compiled model the slices are being read against.
+        data: The ``MjData`` holding the latched forces.
+        mj: The resolved ``mujoco`` module.
+
+    Returns:
+        ``joint key -> qfrc_applied`` slice, at the dof width the joint uses.
+    """
+    forces: dict[_JointKey, list[float]] = {}
+    for jid in range(int(model.njnt)):
+        key = _joint_key(model, jid, mj)
+        if key is None:
+            continue
+        dof_adr = int(model.jnt_dofadr[jid])
+        _, dof_w = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        row = data.qfrc_applied[dof_adr : dof_adr + dof_w]
+        if not row.any():
+            continue
+        forces[key] = [float(x) for x in row]
+    return forces
+
+
+def _restore_joint_forces(model: Any, data: Any, forces: dict[_JointKey, list[float]], mj: Any) -> None:
+    """Re-apply ``forces`` to the joints that still answer to those keys.
+
+    A joint the rebuilt model no longer has is skipped: its absence is the point
+    of a rebuild that removed it. A joint whose type changed is skipped rather
+    than written with a mismatched slice, which would put one dof's force on
+    another.
+
+    Args:
+        model: The rebuilt compiled model.
+        data: The rebuilt ``MjData`` receiving the forces.
+        forces: A snapshot from :func:`_snapshot_joint_forces`.
+        mj: The resolved ``mujoco`` module.
+    """
+    for key, vals in forces.items():
+        jid = _resolve_joint_key(model, key, mj)
+        if jid < 0:
+            continue
+        _, dof_w = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        if len(vals) != dof_w:
+            logger.warning(
+                "_restore_joint_forces: dof width mismatch for %r (%d!=%d), skipping",
+                key,
+                len(vals),
+                dof_w,
+            )
+            continue
+        dof_adr = int(model.jnt_dofadr[jid])
+        for i, v in enumerate(vals):
+            data.qfrc_applied[dof_adr + i] = v
+
+
+def _restore_body_wrenches(model: Any, data: Any, wrenches: dict[str, list[float]], mj: Any) -> None:
+    """Re-latch ``wrenches`` onto the bodies that still carry those names.
+
+    A body that no longer exists is skipped: its absence is the point of a
+    rebuild that removed it. Bodies absent from ``wrenches`` keep their
+    fresh-compile zero row, which is the same "no wrench" the snapshot read.
+
+    Args:
+        model: The freshly compiled model to resolve names against.
+        data: The ``MjData`` to write the wrenches into.
+        wrenches: A snapshot from :func:`_snapshot_body_wrenches`.
+        mj: The resolved ``mujoco`` module.
+    """
+    for name, row in wrenches.items():
+        bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, name)
+        if bid < 0:
+            continue  # body no longer exists (expected for a removed robot)
+        for i, v in enumerate(row):
+            data.xfrc_applied[bid, i] = v
+
+
+def _unaddressable_actuator_reason(model: Any, mj: Any) -> str | None:
+    """Why this backend cannot address ``model``'s actuators, or ``None``.
+
+    Every actuator surface here addresses an actuator BY ITS CONTROL INDEX:
+    ``robot.actuator_ids`` holds indices into ``data.ctrl``, and the
+    ``actuator_*`` model arrays are read at that same index. The identity holds
+    only while each actuator owns exactly one control slot -- true of every
+    actuator MuJoCo shipped through 3.11, which is why ``model.nu`` served as
+    both the control width and the actuator count.
+
+    mujoco 3.12 separated the two. ``<pid>`` takes two controls by default
+    (``input="pos vel"``) and ``<orientation>`` up to four, so a model compiles
+    with ``nu > nactuator`` and the ``actuator_*`` arrays -- indexed by ACTUATOR
+    -- are shorter than ``nu``. That breaks the identity in both directions: a
+    loop over ``range(nu)`` indexes past their end, and one over
+    ``range(nactuator)`` addresses the wrong slot as soon as a multi-control
+    actuator precedes a single-control one. Measured on 3.12.0, ``<pid>`` then
+    ``<position>`` puts the servo's setpoint at ``ctrl[2]`` while such a loop
+    writes ``ctrl[1]`` -- the pid's *velocity* setpoint, so the arm is driven at
+    a rate by a value meant as a pose and the servo is never commanded at all.
+
+    Refusing is what keeps that from being settled by guesswork. Driving a
+    multi-control actuator needs a control layout this surface does not have --
+    which of an actuator's controls a pose is written to, and what
+    :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.robot_action_keys`
+    reports for the rest -- so the model is declined with the actuator named
+    rather than half-driven.
+
+    Args:
+        model: The compiled ``MjModel``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        An actionable refusal naming the offending actuators and their control
+        slots, or ``None`` when every actuator owns exactly one slot. Always
+        ``None`` on a build with no ``nactuator``, where ``nu`` IS the actuator
+        count and no multi-control actuator exists to declare.
+    """
+    n_act = getattr(model, "nactuator", None)
+    if n_act is None or int(n_act) == int(model.nu):
+        return None
+    adr = getattr(model, "actuator_ctrladr", None)
+    num = getattr(model, "actuator_ctrlnum", None)
+    offenders: list[str] = []
+    for act_id in range(int(n_act)):
+        width = int(num[act_id]) if num is not None else 1
+        if width <= 1:
+            continue
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id) or f"<unnamed actuator {act_id}>"
+        start = int(adr[act_id]) if adr is not None else act_id
+        slots = list(range(start, start + width))
+        offenders.append(f"{name!r} owns control slots {slots}")
+    listed = "; ".join(offenders) if offenders else "the build does not report which actuator is wider"
+    return (
+        f"model declares {int(n_act)} actuator(s) spanning {int(model.nu)} control slots ({listed}). "
+        "This backend addresses an actuator by its control index, so a multi-control actuator "
+        "(mujoco >= 3.12 <pid>, <orientation>) has no single index to drive it by. Replace it with a "
+        "single-control actuator (<position>, <motor>, <velocity>, <intvelocity>, <general>), or drive "
+        "that joint outside this backend."
+    )
+
+
 def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal: bool = False) -> bool:
     """Recompile ``spec`` in place, replacing ``world._model`` and ``_data``.
 
@@ -224,17 +742,63 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
 
     That transfer is POSITIONAL, not by name: the new buffers receive the old
     values for the indices both models share, and the entries past the old size
-    are whatever the fresh allocation happened to contain. For ``qpos`` (filled
-    from ``qpos0``), ``qvel`` and ``act`` the compiler defines them; for
-    ``ctrl`` it does not, so a recompile that grows ``nu`` -- adding a robot,
-    adding actuators to one -- leaves the new setpoints undefined. That is not
-    a harmless nonsense number: MuJoCo's ``mj_checkCtrl`` disables actuation for
-    the WHOLE model on any step where a single ``ctrl`` entry is non-finite, so
-    one uninitialized entry can silently release every held pose in the scene,
-    only on the runs where the leftover memory happens to be NaN. This function
-    therefore defines the new tail as zero -- the value a reset writes, and the
-    only setpoint a caller who has not commanded the new actuators can mean --
-    before the forward pass below reads it.
+    are whatever the fresh allocation happened to contain. The compiler does not
+    define that tail, so every buffer this recompile grows is defined here --
+    ``qpos`` from ``qpos0`` and ``qvel``/``ctrl``/``act`` as zero, which is what
+    a reset writes and the only state a caller who has not touched the new
+    entries can mean -- before the forward pass below reads it.
+
+    The tail is not a harmless nonsense number in either buffer:
+
+    * ``ctrl`` -- MuJoCo's ``mj_checkCtrl`` disables actuation for the WHOLE
+      model on any step where a single entry is non-finite, so one uninitialized
+      entry can silently release every held pose in the scene, only on the runs
+      where the leftover memory happens to be NaN.
+    * ``qfrc_applied`` and ``xfrc_applied`` -- ``spec.recompile`` transfers
+      neither applied-force buffer at all, so unlike the buffers above these are
+      not a tail problem: every entry is lost, including the slices of joints and
+      bodies that never moved. Both are therefore snapshotted by name before the
+      recompile and re-applied after it, rather than merely having a tail
+      defined. A force a caller latched otherwise stopped acting the moment
+      anything entered the scene, under a ``"status": "success"``.
+    * ``qpos`` -- a new joint that no name-keyed pass reaches keeps the tail as
+      its pose. The robot-scoped reset in
+      :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine._reset_robot_to_reference`
+      walks ``robot.joint_ids``, which is resolved by joint NAME, so an
+      UNNAMED ``<freejoint/>`` -- the standard MJCF idiom for a floating base,
+      used by the Unitree Go2 and by LeKiwi -- is invisible to it and to the
+      keyframe apply beside it. Measured on ``go2`` spawned with
+      ``keyframe="home"``: with one robot already in the world the tail happened
+      to hold ``qpos0`` and the base stood at ``z=0.445``, and with two it held
+      zeros -- including an all-zero quaternion, which is not a pose any
+      compiler or reset writes -- dropping the base to the floor. The hinges
+      were applied either way, so the only symptom was a quadruped lying down
+      under a ``"status": "success"``.
+
+    TWO buffers are not transferred at all rather than only in their tail --
+    both applied-force buffers come back entirely zero, so for these the tail
+    initialization above is beside the point: every entry is lost, including the
+    rows of elements that were there all along. Measured by growing a scene by
+    one body on mujoco 3.5.0 (the floor this package declares), 3.10.0 (the
+    locked version) and 3.11.0, identically on all three -- ``qpos``, ``qvel``,
+    ``ctrl`` and the clock carried, ``qfrc_applied`` and ``xfrc_applied``
+    zeroed.
+
+    * ``xfrc_applied``, the per-body row
+      :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+      latches a wrench in, IS carried here. That wrench is documented to hold
+      until the next ``apply_force`` on the same body or a ``reset()``, and a
+      scene rebuild is neither, so it is snapshotted by body name before the
+      recompile and re-latched after.
+    * ``qfrc_applied``, its joint-space sibling, is deliberately NOT carried
+      here: nothing in this package ever writes a non-zero value into it.
+      ``apply_force`` documents why it latches the per-body buffer instead (one
+      world-wide generalized-force vector has no slice that belongs to one
+      body), and no other caller touches it, so there is no value for the
+      recompile to lose and a carry here could only be exercised by writing the
+      buffer from outside the public API. A joint-force API added later must add
+      the carry with it -- ``_SceneState`` already carries this buffer on the
+      eject path, where it is free because that path snapshots joints anyway.
 
     Also re-discovers per-robot joint and actuator IDs (they may have shifted
     as new bodies were inserted earlier in the body tree). Returns True on
@@ -253,8 +817,16 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     mj = _ensure_mujoco()
     # Sizes of the buffers being handed to the compiler: everything at or past
     # these indices in the new data is an entry the old model had no value for.
+    old_nq = int(world._model.nq) if world._model is not None else 0
+    old_nv = int(world._model.nv) if world._model is not None else 0
     old_nu = int(world._model.nu) if world._model is not None else 0
     old_na = int(world._model.na) if world._model is not None else 0
+    # ``spec.recompile`` carries no part of EITHER applied-force buffer -- both
+    # ``xfrc_applied`` and ``qfrc_applied`` come back zero -- so the latched
+    # forces are read off the outgoing data here and re-applied by name below.
+    _have_state = world._model is not None and world._data is not None
+    wrenches = _snapshot_body_wrenches(world._model, world._data, mj) if _have_state else {}
+    joint_forces = _snapshot_joint_forces(world._model, world._data, mj) if _have_state else {}
     try:
         with filter_mujoco_attach_noise():
             new_model, new_data = spec.recompile(world._model, world._data)
@@ -264,15 +836,38 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
             raise
         return False
 
+    # Refuse a model this backend cannot address on the same rung as one the
+    # compiler refuses, and for the same reason: BEFORE the model is installed,
+    # so a world that keeps its previous model is the only state a caller's
+    # rollback has to find. Ungated, the unaddressable model was installed and
+    # the per-robot re-discovery below then read ``actuator_*`` at a control
+    # index past their end -- a bare numpy IndexError that escaped both this
+    # function's refusal path and the caller's spec restore, leaving the robot's
+    # bodies compiled into a scene whose registry had already dropped it.
+    unaddressable = _unaddressable_actuator_reason(new_model, mj)
+    if unaddressable is not None:
+        logger.error("spec.recompile produced a model this backend cannot address: %s", unaddressable)
+        if raise_on_refusal:
+            raise ValueError(unaddressable)
+        return False
+
     install_compiled_model(world, new_model, new_data)
-    # Define the control entries the positional transfer left untouched (see the
-    # docstring). ``act`` is measurably zero-filled today, but it comes out of
-    # the same allocation as ``ctrl`` and carries an actuator's activation -- its
-    # effective command -- so it is defined here too rather than by luck.
+    # Define every entry the positional transfer left untouched (see the
+    # docstring). ``qvel`` and ``act`` are measurably zero-filled today, but they
+    # come out of the same allocation as ``qpos`` and ``ctrl`` and carry a new
+    # joint's velocity and an actuator's activation -- its effective command --
+    # so they are defined here too rather than by luck.
+    if new_model.nq > old_nq:
+        new_data.qpos[old_nq:] = new_model.qpos0[old_nq:]
+    if new_model.nv > old_nv:
+        new_data.qvel[old_nv:] = 0.0
     if new_model.nu > old_nu:
         new_data.ctrl[old_nu:] = 0.0
     if new_model.na > old_na:
         new_data.act[old_na:] = 0.0
+    # Re-apply the latched external forces, before the forward pass reads them.
+    _restore_body_wrenches(new_model, new_data, wrenches, mj)
+    _restore_joint_forces(new_model, new_data, joint_forces, mj)
     # Forward pass so newly-injected bodies have valid xpos/xquat and any
     # camera xforms are populated. Without this, the next render() call
     # after add_object / add_robot / add_camera returns a 100% black frame
@@ -378,6 +973,11 @@ def persist_geom_properties(
             supplied are written, matching the model write: the unused tail of
             the spec's 3-wide row keeps its declared value.
 
+    A ``size`` component the geom's ``<fromto>`` fixes cannot be made durable by
+    writing this row at all; :func:`fromto_fixed_size_components` reports those
+    and the caller refuses such a change before reaching here, so what is written
+    below is what the next compile reproduces.
+
     Returns:
         ``None`` once the value is recorded, otherwise the reason it could not be.
     """
@@ -395,6 +995,57 @@ def persist_geom_properties(
     if size is not None:
         spec_geom.size[: len(size)] = size
     return None
+
+
+def fromto_fixed_size_components(world: SimWorld, geom_id: int) -> dict[int, tuple[str, int | None]]:
+    """Return the ``geom_size`` components a geom's ``<fromto>`` fixes.
+
+    ``fromto`` gives a geom's extent along its own axis as two endpoints, and the
+    compiler then FIXES part of its ``geom_size`` row rather than reading it from
+    ``size``: the axis extent comes from the endpoints, and for a box or ellipsoid
+    the cross-section is additionally made square by copying the first component.
+    Those components are re-derived on every compile, so a value written into the
+    spec's ``size`` row never reaches the model - the resize is reported and then
+    discarded by the next scene recompile, and an inertial row re-derived from the
+    spec (see :func:`refresh_body_inertial_from_geometry`) describes the extent the
+    endpoints still declare rather than the requested one.
+
+    Only the fixed components are affected. A capsule's or cylinder's radius still
+    comes from ``size``, so a caller can resize it and have the change recorded
+    durably; callers use this mapping to refuse a change to the rest instead of
+    reporting it.
+
+    Args:
+        world: The scene holding the live spec.
+        geom_id: Compiled geom index, already resolved by the caller.
+
+    Returns:
+        ``{index: (name, follows)}`` for each fixed component, where ``follows``
+        is the ``size`` index whose value that component copies, or ``None`` when
+        the segment endpoints fix it. Empty when nothing is fixed - which covers a
+        geom with no ``fromto``, a geom type ``fromto`` cannot be used with, and a
+        spec that cannot resolve ``geom_id``.
+    """
+    mj = _ensure_mujoco()
+    spec = _get_spec(world)
+    if spec is None:
+        return {}
+    spec_geom, _reason = _spec_element_by_id(spec.geoms, geom_id, "geom")
+    if spec_geom is None:
+        return {}
+    # MuJoCo marks an unset spec field with NaN in its first element, so a
+    # ``fromto`` only describes this geom when it was actually declared.
+    fromto = spec_geom.fromto
+    if fromto is None or math.isnan(float(fromto[0])):
+        return {}
+    geom = mj.mjtGeom
+    fixed: dict[int, dict[int, tuple[str, int | None]]] = {
+        int(geom.mjGEOM_CAPSULE): {1: ("half-length", None)},
+        int(geom.mjGEOM_CYLINDER): {1: ("half-length", None)},
+        int(geom.mjGEOM_BOX): {1: ("y half-extent", 0), 2: ("z half-extent", None)},
+        int(geom.mjGEOM_ELLIPSOID): {1: ("y semi-axis", 0), 2: ("z semi-axis", None)},
+    }
+    return fixed.get(int(spec_geom.type), {})
 
 
 def refresh_body_inertial_from_geometry(world: SimWorld, geom_id: int) -> str | None:
@@ -650,12 +1301,24 @@ def inject_robot_into_scene(
         world._backend_state["spec"] = backup_spec
         return False
 
-    if _recompile_preserving_state(world, spec):
+    # Ask for the refusal's own reason rather than a bare False, exactly as
+    # inject_object_into_scene does. Folded into a False it reached the caller as
+    # "Failed to inject robot '<name>' into scene." with the actionable text left
+    # in the log -- the same dead end the object path was fixed to stop
+    # producing. Either way the pre-attach spec goes back first, so the reason
+    # travels without the robot's subtree surviving in the live spec.
+    try:
+        recompiled = _recompile_preserving_state(world, spec, raise_on_refusal=True)
+    except (ValueError, RuntimeError):
+        # The attach landed in the spec but the model it produced was refused,
+        # so the robot's whole namespaced subtree is sitting in the live spec
+        # while the caller is about to report a failed add. Put the pre-attach
+        # spec back, then let the reason reach the caller.
+        world._backend_state["spec"] = backup_spec
+        raise
+    if recompiled:
         return True
 
-    # The attach landed in the spec but the model it produced was refused, so
-    # the robot's whole namespaced subtree is sitting in the live spec while the
-    # caller is about to report a failed add. Put the pre-attach spec back.
     world._backend_state["spec"] = backup_spec
     return False
 
@@ -686,11 +1349,28 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
     ``False`` return, so the caller can report the actual reason - a swallowed
     ``ValueError`` left the caller with nothing but "spec recompile refused"
     while the actionable message went to the log.
+
+    Every rollback here deletes only the bodies THIS call appended, counted
+    before the insert (``SpecBuilder.count_bodies_named`` /
+    ``remove_surplus_bodies``). A delete by name is wrong on the collision path:
+    ``load_scene`` replaces the world registry, so a body declared by the scene
+    MJCF is invisible to ``add_object``'s registry check and the insert reaches
+    MuJoCo, leaving two bodies under one name. ``SpecBuilder.remove_body``
+    resolves the name to the body present at the last compile - the ORIGINAL -
+    so rolling back with it deleted the healthy scene body and left the rejected
+    one holding its name, and the next mutation recompiled cleanly with the
+    original geometry gone.
     """
     spec = _get_spec(world)
     if spec is None or world._model is None:
         logger.error("inject_object: no spec or model in world")
         return False
+
+    # How many bodies already carry this name, taken BEFORE the insert. Every
+    # rollback below deletes only the bodies beyond this count - the ones this
+    # call appended - because a delete by name resolves the pre-existing body on
+    # a collision and would remove the healthy scene body instead of the orphan.
+    pre_bodies = SpecBuilder.count_bodies_named(spec, obj.name)
 
     try:
         # Meshes need their asset registered before the geom references it.
@@ -728,11 +1408,11 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
     try:
         recompiled = _recompile_preserving_state(world, spec, raise_on_refusal=True)
     except (ValueError, RuntimeError):
-        SpecBuilder.remove_body(spec, obj.name)
+        SpecBuilder.remove_surplus_bodies(spec, obj.name, pre_bodies)
         SpecBuilder.remove_mesh(spec, f"mesh_{obj.name}")
         raise
     if not recompiled:
-        SpecBuilder.remove_body(spec, obj.name)
+        SpecBuilder.remove_surplus_bodies(spec, obj.name, pre_bodies)
         SpecBuilder.remove_mesh(spec, f"mesh_{obj.name}")
         return False
     return True
@@ -744,11 +1424,22 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
     Mirrors :func:`inject_object_into_scene`: ``SpecBuilder.add_camera`` mutates
     the spec before the validating recompile, so a refused recompile rolls the
     just-added camera back out to keep the spec compilable for later edits.
+
+    That rollback removes only the cameras THIS call appended, counted before the
+    insert. It cannot be a delete by name: when the name collides with a camera
+    the loaded scene already declares - which ``add_camera``'s registry check
+    cannot see, because ``load_scene`` replaces the registry while the MJCF keeps
+    its cameras - ``SpecBuilder.remove_camera`` deletes the FIRST camera carrying
+    the name, i.e. the scene's own. The refused camera then inherited the name and
+    every later render of it answered with the pose the caller was told had been
+    rejected.
     """
     spec = _get_spec(world)
     if spec is None or world._model is None:
         logger.error("inject_camera: no spec or model in world")
         return False
+
+    pre_cameras = SpecBuilder.count_cameras_named(spec, cam.name)
 
     try:
         SpecBuilder.add_camera(spec, cam)
@@ -757,7 +1448,7 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
         return False
 
     if not _recompile_preserving_state(world, spec):
-        SpecBuilder.remove_camera(spec, cam.name)
+        SpecBuilder.remove_surplus_cameras(spec, cam.name, pre_cameras)
         return False
     return True
 
@@ -912,97 +1603,218 @@ def reposition_body_in_scene(
     return _recompile_preserving_state(world, spec)
 
 
-def _snapshot_joint_state(world: SimWorld) -> dict[str, tuple[list[float], list[float]]]:
-    """Snapshot per-joint ``(qpos, qvel)`` slices keyed by fully-qualified
-    MuJoCo joint name.
+# A joint is identified across a scene rebuild by the name of whichever
+# namespace can name it. ``("joint", <joint name>)`` covers every named joint.
+# ``("body", <body name>)`` covers an UNNAMED ``<freejoint/>`` -- the standard
+# MJCF floating-base idiom, used by the Unitree Go2 and by LeKiwi -- which no
+# joint-name lookup can reach. The owning body identifies it exactly because
+# the compiler refuses a free joint alongside any other joint on the same body
+# ("more than 6 dofs in body"), so such a body carries exactly one joint.
+#
+# The two namespaces are kept apart in the key because MuJoCo's joint and body
+# names are independent: a joint may be named exactly like some body, so a
+# single flat string key could collide.
+_JointKey = tuple[str, str]
 
-    Used by :func:`eject_robot_from_scene` to preserve the state of surviving
-    robots and object freejoints across a scene rebuild. Flat-index slicing
-    is unsafe here because the body-tree order may shift when a robot is
-    removed (see AGENTS.md "Per-name state copy" rule).
 
-    Returns a dict mapping ``<joint_name> -> (qpos_slice, qvel_slice)`` where
-    each slice has the appropriate width for the joint type (1 for hinge/
-    slide, 4 for ball, 7 for free).
+@dataclass(frozen=True)
+class _SceneState:
+    """The dynamic state of a scene, keyed by name so a rebuild can restore it.
+
+    :func:`eject_robot_from_scene` compiles a fresh model and allocates a fresh
+    ``MjData``, so every buffer starts at its reset value. What is captured here
+    is what has to be carried over that gap for the scene to continue as it was:
+    the same state :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.save_state`
+    checkpoints, minus the entries a rebuilt scene cannot have a surviving
+    instance of.
+
+    Flat-index slicing cannot do this: removing a robot shifts every joint, dof
+    and actuator index that came after it, so a positional copy would re-assign
+    one element's state to another. Every field below is therefore keyed by name.
+
+    Attributes:
+        joints: ``key -> (qpos, qvel, qfrc_applied)`` slices, each at the width
+            its joint type uses (free 7/6/6, ball 4/3/3, hinge or slide 1/1/1).
+        actuators: ``actuator name -> (ctrl, act)``. ``ctrl`` is the servo
+            setpoint holding a robot's pose; ``act`` is the internal activation
+            of a stateful actuator, its effective command.
+        body_wrenches: ``body name -> [fx, fy, fz, tx, ty, tz]``, the external
+            wrench :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+            latches in a body's own ``xfrc_applied`` row. ``qfrc_applied``
+            above is its joint-space sibling; both are part of the state
+            ``save_state`` checkpoints, so both are carried -- on the eject path
+            by this snapshot, and on the grow path by
+            :func:`_snapshot_joint_forces` and :func:`_snapshot_body_wrenches`,
+            since ``spec.recompile`` carries neither.
+        time: ``data.time``, the clock the physics reads.
+    """
+
+    joints: dict[_JointKey, tuple[list[float], list[float], list[float]]]
+    actuators: dict[str, tuple[float, list[float]]]
+    body_wrenches: dict[str, list[float]]
+    time: float
+
+
+def _joint_state_widths(jtype: int, mj: Any) -> tuple[int, int]:
+    """Return the ``(qpos, dof)`` width MuJoCo uses for a joint of ``jtype``."""
+    if jtype == mj.mjtJoint.mjJNT_FREE:
+        return 7, 6
+    if jtype == mj.mjtJoint.mjJNT_BALL:
+        return 4, 3
+    return 1, 1
+
+
+def _joint_key(model: Any, jid: int, mj: Any) -> _JointKey | None:
+    """Identify joint ``jid`` by name, or by its owning body when it has none.
+
+    Returns ``None`` for a joint no namespace can name -- an unnamed non-free
+    joint (its body may carry several, so the body does not single it out), or
+    an unnamed free joint on an unnamed body. Such a joint cannot be matched
+    across a rebuild, so it is reported rather than guessed at.
+    """
+    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid)
+    if name:
+        return ("joint", name)
+    if int(model.jnt_type[jid]) != mj.mjtJoint.mjJNT_FREE:
+        return None
+    body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.jnt_bodyid[jid]))
+    return ("body", body_name) if body_name else None
+
+
+def _snapshot_scene_state(world: SimWorld) -> _SceneState:
+    """Capture ``world``'s dynamic state keyed by name, for a scene rebuild.
+
+    Used by :func:`eject_robot_from_scene`. See :class:`_SceneState` for what is
+    captured and why it is keyed by name rather than by index.
     """
     if world._model is None or world._data is None:
-        return {}
+        return _SceneState(joints={}, actuators={}, body_wrenches={}, time=0.0)
     mj = _ensure_mujoco()
     model = world._model
     data = world._data
-    snap: dict[str, tuple[list[float], list[float]]] = {}
+
+    joints: dict[_JointKey, tuple[list[float], list[float], list[float]]] = {}
     for jid in range(model.njnt):
-        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid)
-        if not name:
+        key = _joint_key(model, jid, mj)
+        if key is None:
+            logger.debug(
+                "snapshot_scene_state: joint id %d has no name and no single owning body, state not carried over",
+                jid,
+            )
             continue
         qpos_adr = int(model.jnt_qposadr[jid])
-        qvel_adr = int(model.jnt_dofadr[jid])
-        jtype = int(model.jnt_type[jid])
-        # qpos width: free=7, ball=4, hinge/slide=1
-        # qvel width: free=6, ball=3, hinge/slide=1
-        if jtype == mj.mjtJoint.mjJNT_FREE:
-            qpos_w, qvel_w = 7, 6
-        elif jtype == mj.mjtJoint.mjJNT_BALL:
-            qpos_w, qvel_w = 4, 3
-        else:
-            qpos_w, qvel_w = 1, 1
-        snap[name] = (
+        dof_adr = int(model.jnt_dofadr[jid])
+        qpos_w, dof_w = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        joints[key] = (
             [float(x) for x in data.qpos[qpos_adr : qpos_adr + qpos_w]],
-            [float(x) for x in data.qvel[qvel_adr : qvel_adr + qvel_w]],
+            [float(x) for x in data.qvel[dof_adr : dof_adr + dof_w]],
+            [float(x) for x in data.qfrc_applied[dof_adr : dof_adr + dof_w]],
         )
-    return snap
+
+    actuators: dict[str, tuple[float, list[float]]] = {}
+    for aid in range(int(model.nu)):
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid)
+        if not name:
+            # No namespace names it, and its transmission target may drive
+            # several actuators, so it cannot be matched across the rebuild.
+            logger.debug("snapshot_scene_state: actuator id %d has no name, ctrl/act not carried over", aid)
+            continue
+        act_adr = int(model.actuator_actadr[aid])
+        act_num = int(model.actuator_actnum[aid])
+        act_vals = [float(x) for x in data.act[act_adr : act_adr + act_num]] if act_adr >= 0 else []
+        actuators[name] = (float(data.ctrl[aid]), act_vals)
+
+    return _SceneState(
+        joints=joints,
+        actuators=actuators,
+        body_wrenches=_snapshot_body_wrenches(model, data, mj),
+        time=float(data.time),
+    )
 
 
-def _restore_joint_state(
-    world: SimWorld,
-    snapshot: dict[str, tuple[list[float], list[float]]],
-) -> int:
-    """Restore per-joint state from a snapshot into ``world._data`` by name.
+def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
+    """Write ``snapshot`` back into ``world._data`` by name.
 
-    Joints that no longer exist in the compiled model (e.g. those belonging
-    to the ejected robot) are silently skipped. Joints that exist in the
-    new model but were not in the snapshot keep their fresh-compile defaults
-    (body pos/quat for freejoints, 0 for hinge/slide).
+    Elements that no longer exist in the compiled model (those belonging to the
+    ejected robot) are silently skipped -- their absence is the point of the
+    rebuild. Elements present in the new model but absent from the snapshot keep
+    their fresh-compile values.
 
-    Returns the number of joints actually restored, for logging.
+    Returns the number of joints restored, for logging.
     """
     if world._model is None or world._data is None:
         return 0
     mj = _ensure_mujoco()
     model = world._model
     data = world._data
+
     restored = 0
-    for name, (qpos_vals, qvel_vals) in snapshot.items():
-        jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, name)
+    for key, (qpos_vals, qvel_vals, qfrc_vals) in snapshot.joints.items():
+        jid = _resolve_joint_key(model, key, mj)
         if jid < 0:
-            continue  # joint no longer exists (expected for ejected robot)
+            continue  # element no longer exists (expected for the ejected robot)
         qpos_adr = int(model.jnt_qposadr[jid])
-        qvel_adr = int(model.jnt_dofadr[jid])
-        # Width sanity check: if joint type changed (should not happen for
-        # same-name joints across an eject), skip to avoid corrupting state.
-        jtype = int(model.jnt_type[jid])
-        if jtype == mj.mjtJoint.mjJNT_FREE:
-            expect_qp, expect_qv = 7, 6
-        elif jtype == mj.mjtJoint.mjJNT_BALL:
-            expect_qp, expect_qv = 4, 3
-        else:
-            expect_qp, expect_qv = 1, 1
-        if len(qpos_vals) != expect_qp or len(qvel_vals) != expect_qv:
+        dof_adr = int(model.jnt_dofadr[jid])
+        # Width sanity check: if the joint type changed (should not happen for a
+        # same-key joint across an eject), skip rather than corrupt the DOFs.
+        expect_qp, expect_dof = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        if len(qpos_vals) != expect_qp or len(qvel_vals) != expect_dof or len(qfrc_vals) != expect_dof:
             logger.warning(
-                "_restore_joint_state: width mismatch for %r (qpos %d!=%d or qvel %d!=%d), skipping",
-                name,
+                "_restore_scene_state: width mismatch for %r (qpos %d!=%d or dof %d/%d!=%d), skipping",
+                key,
                 len(qpos_vals),
                 expect_qp,
                 len(qvel_vals),
-                expect_qv,
+                len(qfrc_vals),
+                expect_dof,
             )
             continue
         for i, v in enumerate(qpos_vals):
             data.qpos[qpos_adr + i] = v
         for i, v in enumerate(qvel_vals):
-            data.qvel[qvel_adr + i] = v
+            data.qvel[dof_adr + i] = v
+        for i, v in enumerate(qfrc_vals):
+            data.qfrc_applied[dof_adr + i] = v
         restored += 1
+
+    for name, (ctrl_val, act_vals) in snapshot.actuators.items():
+        aid = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, name)
+        if aid < 0:
+            continue  # actuator belonged to the ejected robot
+        data.ctrl[aid] = ctrl_val
+        act_adr = int(model.actuator_actadr[aid])
+        act_num = int(model.actuator_actnum[aid])
+        if act_adr < 0 or len(act_vals) != act_num:
+            # An actuator whose activation width changed across the rebuild:
+            # leave the fresh zero rather than write a mismatched slice.
+            if act_vals or act_num:
+                logger.warning(
+                    "_restore_scene_state: act width mismatch for actuator %r (%d!=%d), skipping activation",
+                    name,
+                    len(act_vals),
+                    act_num,
+                )
+            continue
+        for i, v in enumerate(act_vals):
+            data.act[act_adr + i] = v
+
+    _restore_body_wrenches(model, data, snapshot.body_wrenches, mj)
+    data.time = snapshot.time
     return restored
+
+
+def _resolve_joint_key(model: Any, key: _JointKey, mj: Any) -> int:
+    """Resolve a :data:`_JointKey` to a joint id in ``model``, or ``-1``."""
+    kind, name = key
+    if kind == "joint":
+        return mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, name)
+    bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, name)
+    if bid < 0 or int(model.body_jntnum[bid]) != 1:
+        # The body is gone, or no longer carries exactly the one joint that made
+        # it an unambiguous handle for its unnamed free joint.
+        return -1
+    jid = int(model.body_jntadr[bid])
+    return jid if int(model.jnt_type[jid]) == mj.mjtJoint.mjJNT_FREE else -1
 
 
 def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
@@ -1015,18 +1827,37 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     ``world.robots`` / ``world.objects`` / ``world.cameras`` state, then
     re-attach the remaining robots.
 
-    Joint state preservation: before the rebuild we snapshot every joint's
-    ``(qpos, qvel)`` keyed by fully-qualified name; after the fresh compile
-    we restore state for every joint that still exists in the new model.
-    Joints belonging to the ejected robot are naturally dropped (their name
-    no longer resolves). This keeps surviving robots at their current pose
-    and object freejoints at their current world pose - the behaviour the
-    agent expects when calling ``remove_robot`` mid-scene.
+    State preservation: the fresh compile below allocates a fresh ``MjData``,
+    so every buffer starts at its reset value. Before the rebuild we snapshot
+    the scene's dynamic state keyed by name (:func:`_snapshot_scene_state`) and
+    restore it afterwards, so a surviving element continues exactly as it was --
+    which is what :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.add_robot`
+    already guarantees for the composition in the other direction ("an arm
+    already in the world keeps the pose it is in and the actuator setpoints
+    holding it there ... and the clock keeps counting"). Elements belonging to
+    the ejected robot are naturally dropped: their names no longer resolve.
+
+    Restoring the pose alone is not enough for the scene to continue:
+
+    * ``ctrl`` -- the setpoint a position servo holds a pose with. Dropped, it
+      reads as zero, and the next ``mj_step`` drives every actuator of every
+      SURVIVING robot toward its zero configuration: an arm parked mid-air sags
+      to the floor while ``remove_robot`` reported ``"success"`` and the pose
+      read back correct, because nothing had stepped yet. ``act`` carries the
+      same command for a stateful actuator.
+    * an UNNAMED ``<freejoint/>`` -- the standard MJCF floating-base idiom, used
+      by the Unitree Go2 and by LeKiwi -- is invisible to a joint-name lookup,
+      so a surviving mobile base was re-seated at its spawn pose with zero
+      velocity: measured on ``go2`` driven to ``(0.8, -0.4, 0.30)``, removing a
+      DIFFERENT robot teleported it back to ``(0, 0, 0.445)``. The recompile
+      path names this same hazard (see :func:`_recompile_preserving_state`).
+    * ``data.time`` -- reset to 0 while ``world.sim_time`` kept counting, so the
+      clock the physics reads and the clock ``get_state`` reports disagreed.
 
     Flat-index slicing is **not** safe here: removing a robot shifts every
-    body/joint index that comes after it in the kinematic tree, so
-    ``data.qpos[:]`` copies across compiles would mis-assign DOFs. Per-name
-    lookup is the only correct approach (see AGENTS.md).
+    body/joint/dof/actuator index that comes after it, so ``data.qpos[:]``-style
+    copies across compiles would mis-assign one element's state to another.
+    Per-name lookup is the only correct approach (see AGENTS.md).
     """
     spec = _get_spec(world)
     if spec is None or world._model is None:
@@ -1038,7 +1869,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     # Snapshot joint state BEFORE we rebuild. Keyed by the fully-qualified
     # MuJoCo joint name (prefix/joint for attached robots, bare name for
     # object freejoints).
-    state_snapshot = _snapshot_joint_state(world)
+    state_snapshot = _snapshot_scene_state(world)
 
     # First drop cameras that originated from the robot being ejected.
     # They're in world.cameras with origin_robot == robot_name. Without this,
@@ -1094,7 +1925,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
 
     # Step 4: restore state for every joint that survived the rebuild. Joints
     # belonging to the ejected robot simply don't resolve and get skipped.
-    restored = _restore_joint_state(world, state_snapshot)
+    restored = _restore_scene_state(world, state_snapshot)
 
     # Step 5: run a forward pass so derived quantities (xpos, cam xforms)
     # reflect the restored state. Without this, the next render() call can
@@ -1122,7 +1953,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
         "eject_robot %r: scene rebuilt, restored state for %d/%d joints",
         robot_name,
         restored,
-        len(state_snapshot),
+        len(state_snapshot.joints),
     )
     return True
 
@@ -1283,7 +2114,7 @@ def actuate_robot_in_scene(
             short = joint_name[len(pfx) :]
             if short not in kp_by_joint:
                 continue
-            joint.damping[0] = max(float(joint.damping[0]), damping)
+            _raise_spec_joint_damping(joint, damping)
             joint.armature = max(float(joint.armature), armature)
 
         for short, kp in kp_by_joint.items():
@@ -1456,9 +2287,16 @@ def _rgba_field_domain(kind: str, field: str, value: Any) -> tuple[Any, str | No
 # :func:`~strands_robots.utils.coerce_rgba` defines for every backend. ``size``
 # is the one field whose count is shape-dependent, so only its components are
 # checked here and the count is left to ``_validate_size``, which knows the shape.
+#
+# A ``quat`` carries one rule beyond its width, and it arrives from the same
+# shared domain every ``orientation=`` parameter uses
+# (:func:`~strands_robots.utils.orientation_quaternion_error`): a norm that
+# rounds to zero describes no rotation, and the spec-attribute door these ops
+# write through accepts it where MuJoCo's XML door refuses it outright ("zero
+# quaternion is not allowed").
 _OP_FIELD_DOMAINS: dict[str, Callable[[str, str, Any], tuple[Any, str | None]]] = {
     "pos": lambda kind, field, value: (value, pose_vector_error(kind, field, value, 3)),
-    "quat": lambda kind, field, value: (value, pose_vector_error(kind, field, value, 4)),
+    "quat": lambda kind, field, value: (value, orientation_quaternion_error(kind, field, value)),
     "rgba": _rgba_field_domain,
     "size": lambda kind, field, value: (value, finite_vector_error(kind, field, value)),
 }
@@ -1510,6 +2348,47 @@ def _normalized_op_vector_fields(kind: str, op: Mapping[str, Any]) -> tuple[dict
     return normalized, None
 
 
+# The shapes ``add_geom`` cannot honour, however well-formed the op is. A mesh
+# geom takes its extent from a mesh asset, and this op's key set
+# (:data:`_PATCH_OP_KEYS`) has no key that could name one - so a mesh geom it
+# adds carries no meshid, and MuJoCo refuses it at the batch's recompile with
+# ``mesh geom '<name>' (id = N) must have valid meshid``. That refusal is rolled
+# back like any other now that the recompile goes through
+# :func:`_recompile_preserving_state` inside the batch's try/except, but it is
+# still not actionable: it names a MuJoCo id rather than the op the caller
+# wrote. Refusing the value at the door is what lets the message name the op,
+# and it keeps the atomicity ``patch_scene_mjcf`` documents true for every op it
+# accepts without leaning on the compiler to describe a caller's mistake.
+_UNSUPPORTED_GEOM_SHAPES = frozenset({"mesh"})
+
+
+def _geom_shape_error(shape: Any) -> str | None:
+    """Reject an ``add_geom`` ``type`` this op cannot compile, before it mutates.
+
+    Only the shapes in :data:`_UNSUPPORTED_GEOM_SHAPES` are handled here. A
+    shape outside the vocabulary altogether is left to
+    :func:`~strands_robots.simulation.mujoco.spec_builder._geom_type`, whose own
+    message already names it and which raises inside the op loop, where the
+    rollback applies.
+
+    Args:
+        shape: The caller-supplied ``type`` value.
+
+    Returns:
+        A message naming the refused value and the surface that does support it,
+        or ``None`` when the shape is one this op may attempt.
+    """
+    if shape not in _UNSUPPORTED_GEOM_SHAPES:
+        return None
+    accepted = ", ".join(sorted(set(_SIZE_LAYOUT) - _UNSUPPORTED_GEOM_SHAPES))
+    return (
+        f"add_geom: 'type' cannot be {shape!r} - this op has no key that names a mesh asset, "
+        "so the geom it would add has no mesh to take its extent from and MuJoCo refuses the "
+        'whole scene at recompile. Add a mesh with add_object(shape="mesh", mesh_path=...), '
+        f"which registers the asset alongside the body. Accepted 'type' values: {accepted}."
+    )
+
+
 def _find_body(spec: Any, name: str, new_bodies: dict[str, Any]) -> Any:
     """Locate a body by name in a live spec, checking batch-local additions.
 
@@ -1542,6 +2421,12 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
     MuJoCo compile errors surface on the enclosing ``recompile`` call.
     ``new_bodies`` is a batch-local cache of body handles added earlier
     in the same patch (see ``_find_body`` for why this is needed).
+
+    An op that CLAIMS a name holds it to the shared
+    :func:`~strands_robots.utils.entity_name_error` domain, so this door cannot
+    create an entity a name-based surface is unable to address. An op that
+    LOOKS a name UP does not: there a name addressing nothing is honestly
+    absent, which is what its own "not found" message already reports.
     """
     if not isinstance(op, dict):
         raise ValueError(f"each op must be a dict, got {type(op).__name__}")
@@ -1561,8 +2446,10 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
     if kind == "add_body":
         parent = op.get("parent", "world")
         name = op.get("name")
-        if not name:
+        if name is None:
             raise ValueError("add_body requires 'name'")
+        if (name_err := entity_name_error("add_body", "name", name)) is not None:
+            raise ValueError(name_err)
         pos = op.get("pos", [0.0, 0.0, 0.0])
         quat = op.get("quat", [1.0, 0.0, 0.0, 0.0])
         parent_body = _find_body(spec, parent, new_bodies)
@@ -1581,6 +2468,8 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
             raise ValueError(f"add_geom: body '{body_name}' not found")
 
         shape = op.get("type", "box")
+        if (shape_err := _geom_shape_error(shape)) is not None:
+            raise ValueError(shape_err)
         from strands_robots.simulation.mujoco.spec_builder import (
             _geom_type,
             _normalize_size,
@@ -1592,6 +2481,10 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
             "rgba": op.get("rgba", [0.5, 0.5, 0.5, 1.0]),
         }
         if "name" in op:
+            # Only a supplied name is a claim: omitting the key leaves the geom
+            # unnamed, which is a legal MJCF geom and stays legal here.
+            if (name_err := entity_name_error("add_geom", "name", op["name"])) is not None:
+                raise ValueError(name_err)
             geom_kwargs["name"] = op["name"]
         if "pos" in op:
             geom_kwargs["pos"] = op["pos"]
@@ -1606,8 +2499,10 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
         if body is None:
             raise ValueError(f"add_site: body '{body_name}' not found")
         name = op.get("name")
-        if not name:
+        if name is None:
             raise ValueError("add_site requires 'name'")
+        if (name_err := entity_name_error("add_site", "name", name)) is not None:
+            raise ValueError(name_err)
         site_kwargs: dict[str, Any] = {
             "name": name,
             "pos": op.get("pos", [0.0, 0.0, 0.0]),
@@ -1665,16 +2560,26 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
     anything else is rejected, because an unread key would leave the op running
     on its fallback default (see :func:`_unknown_op_keys_error`). Every numeric
     field an op writes is held to its domain in :data:`_OP_FIELD_DOMAINS` - a
-    ``pos`` of exactly 3 finite components, a ``quat`` of 4, a ``rgba`` of 3
+    ``pos`` of exactly 3 finite components, a ``quat`` of 4 whose norm does not
+    round to zero, a ``rgba`` of 3
     (RGB, completed with an opaque alpha) or 4 - because MuJoCo bakes a
     ``nan``/``inf`` component into the model without complaint, and reports a
     width mismatch on the attribute writes by dumping a C++ overload table that
-    names neither the op nor the field.
+    names neither the op nor the field. ``add_geom``'s ``type`` is held to the
+    same standard: ``"mesh"`` is refused by :func:`_geom_shape_error` rather than
+    attempted, because this op cannot name the asset such a geom needs and
+    MuJoCo's own refusal for it lands past the rollback below.
 
     The list is applied atomically: if any op raises, the whole patch is
     rejected and the world is left in its original state. After all ops
-    succeed, ``spec.recompile(model, data)`` is called once, so joint
-    qpos/qvel for unchanged joints are preserved automatically.
+    succeed the batch is recompiled once, through the same
+    :func:`_recompile_preserving_state` every other scene mutation uses, so joint
+    qpos/qvel for unchanged joints are preserved automatically and so is the rest
+    of the state that helper carries -- notably a latched ``apply_force`` wrench,
+    which ``spec.recompile`` returns zeroed. That recompile is inside the
+    rollback too: a batch whose ops all apply and whose compiled model the
+    compiler then refuses leaves the pre-patch spec live, so the refusal costs
+    exactly the batch that was refused rather than every later mutation.
 
     Returns the number of ops applied (same as ``len(ops)`` on success).
     """
@@ -1703,16 +2608,29 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
         world._backend_state["spec"] = backup_spec
         raise ValueError(f"patch op #{applied + 1} failed: {err}") from err
 
-    # One recompile for the whole batch - preserves qpos/qvel for unchanged joints.
-    with filter_mujoco_attach_noise():
-        new_model, new_data = spec.recompile(world._model, world._data)
-    install_compiled_model(world, new_model, new_data)
+    # One recompile for the whole batch, through the same helper every other
+    # scene mutation uses. Hand-rolled here, this path kept none of what that
+    # helper preserves: it re-latches the applied-force buffers ``spec.recompile``
+    # carries no part of, defines every buffer entry the positional transfer
+    # leaves untouched, re-discovers per-robot joint and actuator ids, and runs
+    # the forward pass. A latched ``apply_force`` wrench is documented to hold
+    # until the next ``apply_force`` on that body or a ``reset()``, and a patch
+    # is neither, yet a bare recompile zeroed it -- so a crate held against
+    # gravity fell out of the sky on the first step after any successful patch,
+    # under a "status": "success".
+    #
+    # The call sits inside the rollback's scope, mirroring
+    # :func:`inject_robot_into_scene`: the ops all landed in the spec but the
+    # model they produced was refused, so the entire batch is sitting in the live
+    # spec while the caller is about to be told the patch failed. That spec is
+    # what every later mutation recompiles from, so the refusal was permanent
+    # rather than per-call -- a subsequent unrelated ``add_object`` failed too,
+    # naming the leftover element from a batch the caller was told had failed.
+    # Put the pre-patch spec back, then let the compiler's reason travel.
+    try:
+        _recompile_preserving_state(world, spec, raise_on_refusal=True)
+    except (ValueError, RuntimeError):
+        world._backend_state["spec"] = backup_spec
+        raise
 
-    # Forward pass so new bodies' xpos / xquat / cam_xmat are populated for
-    # the very next render() or get_body_state() call. Same reasoning as
-    # replace_scene_mjcf.
-    mj = _ensure_mujoco()
-    mj.mj_forward(world._model, world._data)
-
-    _sync_cached_xml(world, spec)
     return applied

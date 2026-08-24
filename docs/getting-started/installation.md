@@ -11,12 +11,12 @@ Requires **Python >= 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`c
 | Extra | Pulls in | When you need it |
 |-------|----------|------------------|
 | (none) | core only - Robot factory, registry, lazy imports | Inspect the catalog, write tools |
-| `[sim]` | `robot_descriptions` | Sim asset resolution without MuJoCo |
+| `[sim]` | `robot_descriptions>=1.23.0,<2.0.0` | Sim asset resolution without MuJoCo |
 | `[sim-mujoco]` | `sim` + `mujoco`, `imageio`, `imageio-ffmpeg` | Any `Robot()` with default `mode="sim"` |
 | `[lerobot]` | `lerobot>=0.6.1,<0.7.0` | `LerobotLocalPolicy` + dataset recording |
 | `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` (ZMQ to a GR00T container) |
-| `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` (WebSocket to Cosmos 3 server) |
-| `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh discovery + RPC |
+| `[cosmos3-service]` | `msgpack`, `websockets>=13.0` | `Cosmos3Policy` (WebSocket to Cosmos 3 server) |
+| `[mesh]` | `eclipse-zenoh>=1.6.1,<2.0.0`, `json5` | Multi-robot mesh discovery + RPC |
 | `[mesh-iot]` | `mesh` + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport for mesh |
 | `[benchmark-libero]` | `libero` eval deps | LIBERO benchmark suite |
 | `[all]` | `groot-service` + `lerobot` + `sim-mujoco` + `mesh` + `mesh-iot` | Demos, CI, exploration |
@@ -28,6 +28,21 @@ uv pip install "strands-robots[all]"                         # everything
 uv pip install "strands-robots[sim-mujoco,cosmos3-service]"  # Cosmos 3
 uv pip install "strands-robots[sim-mujoco,lerobot,mesh]"     # pick and choose
 ```
+
+The `[sim]` floor is set by the robot catalog rather than by an API: each entry in
+the built-in registry names the `robot_descriptions` submodule that fetches its
+MJCF and meshes, and that package gains one module per newly packaged robot.
+`robot_descriptions` 1.23.0 is the oldest release providing a module for every
+registered robot - on an older one, robots such as `so100` and `so101` have no
+module to import and no fallback, so `Robot("so101", mode="sim")` cannot resolve
+a model file.
+
+The `websockets` floor in `[inference]` and `[cosmos3-service]` is set the same
+way. `strands_robots/inference/server.py` annotates `PolicyServer._server` with
+`websockets.sync.server.Server`, which first ships in websockets 13.0 - 12.0
+spells that class `WebSocketServer`. Both extras declare `>=13.0`, and they
+declare the *same* floor on purpose: an environment resolves one `websockets`, so
+two different floors would leave the lower one describing an install nobody gets.
 
 ## Platform notes
 
@@ -108,7 +123,7 @@ Assets cache under `~/.strands_robots/assets/`.
 | `MUJOCO_GL` | GL backend | auto |
 | `STRANDS_TRUST_REMOTE_CODE` | Allow HF `trust_remote_code=True` | `false` |
 | `STRANDS_ROBOT_MODE` | Default `Robot()` mode | `sim` |
-| `STRANDS_MESH` | Mesh enabled by default; set to `false` to disable globally | `true` (enabled) |
+| `STRANDS_MESH` | Set to `true` to opt a bare `Robot()` into the mesh; `false` disables it globally | unset (mesh off) |
 | `GROOT_API_TOKEN` | GR00T service API token (falls back from `api_token=` kwarg) | unset |
 
 ## See also

@@ -33,6 +33,12 @@ def _reset_state(monkeypatch, tmp_path):
     monkeypatch.delenv("STRANDS_MESH_PSK", raising=False)
     monkeypatch.delenv("STRANDS_MESH_REQUIRE_AUTH", raising=False)
     monkeypatch.delenv("STRANDS_MESH_POLICY_HOST_ALLOW", raising=False)
+    # #10 gateway fallback: in a robot-less test process ``robot_mesh()``
+    # would lazily bring up a REAL zenoh gateway Mesh (session + discovery
+    # sleep + 30s RPC timeouts) before these mocks are consulted. That both
+    # breaks hermeticity and stretches a rate-limit burst past its window.
+    # These tests pin the defence layers, not transport - forbid the gateway.
+    monkeypatch.setattr(rmt, "_gateway_mesh", lambda: None)
     rmt._reset_rate_limits()
     from strands_robots.mesh import audit
 
@@ -381,8 +387,9 @@ class TestRateLimitWindowExpiry:
     window. Without expiry, three ``emergency_stop`` calls issued long
     ago would permanently lock the agent out of ever issuing another -
     the opposite of the safety property (bound nuisance, never inhibit a
-    genuine emergency). These pin the stale-entry pruning in all three
-    rate-limit helpers.
+    genuine emergency). These pin the stale-entry pruning in both
+    rate-limit helpers: the read-only check and the atomic reservation
+    that is now the only way a slot is consumed.
     """
 
     def test_check_clears_after_window_elapses(self, monkeypatch):
@@ -392,7 +399,7 @@ class TestRateLimitWindowExpiry:
 
         # Fill emergency_stop (cap 3 / 60s window) at t=0.
         for _ in range(3):
-            assert rmt._rate_limit_record("emergency_stop") is None
+            assert rmt._rate_limit_check_and_record("emergency_stop") is None
         # Bucket full: a check (which does not consume) reports rejection.
         assert rmt._rate_limit_check("emergency_stop") is not None
 
@@ -403,21 +410,6 @@ class TestRateLimitWindowExpiry:
         # Past the window the stale entries are pruned and a slot frees up.
         clock.advance(2.0)
         assert rmt._rate_limit_check("emergency_stop") is None
-
-    def test_record_prunes_stale_entries(self, monkeypatch):
-        clock = _FakeClock()
-        monkeypatch.setattr(rmt.time, "monotonic", clock)
-        rmt._reset_rate_limits()
-
-        for _ in range(3):
-            rmt._rate_limit_record("emergency_stop")
-        assert len(rmt._RATE_HISTORY["emergency_stop"]) == 3
-
-        # After the window elapses, the next record prunes the three stale
-        # timestamps before appending its own, so the bucket holds one entry.
-        clock.advance(61.0)
-        rmt._rate_limit_record("emergency_stop")
-        assert len(rmt._RATE_HISTORY["emergency_stop"]) == 1
 
     def test_check_and_record_frees_slot_after_window(self, monkeypatch):
         clock = _FakeClock()

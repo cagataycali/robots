@@ -32,6 +32,7 @@ human-readable text payload so the calling agent can recover.
 
 from __future__ import annotations
 
+import atexit
 import collections
 import functools
 import json
@@ -46,7 +47,9 @@ from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots.mesh import security as _security
-from strands_robots.utils import positive_count_error, positive_finite_number_error
+from strands_robots.mesh.core import mesh_disabled_by_env
+from strands_robots.tools._hitl_audit import log_operator_response
+from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
 
 # Literal peer-id pattern for watch(target=...). Peer ids are an enumerable
 # surface (per AGENTS.md > Review Learnings (PR #92) > "Allowlist enumerable
@@ -98,6 +101,11 @@ _GATEABLE_ACTIONS: frozenset[str] = frozenset(
 # approval. Consumers who want a narrower or wider gate override via the
 # env var below.
 _DEFAULT_INTERRUPT_ACTIONS: frozenset[str] = frozenset({"emergency_stop", "broadcast", "tell", "send", "stop", "rpc"})
+
+#: The gated actions that reach EVERY peer rather than one target. Named here so
+#: the approval prompt's scope branch and its blast-radius wording read the same
+#: set, and a third fleet-wide action cannot be added to one and not the other.
+_FLEET_WIDE_ACTIONS: frozenset[str] = frozenset({"emergency_stop", "broadcast"})
 
 
 # Sentinel raised by the resolver when the env var holds an unknown token.
@@ -175,7 +183,8 @@ def _warn_none_opt_out_once() -> None:
     logger.warning(
         "[robot_mesh] STRANDS_MESH_HITL_ACTIONS=none -- human-in-the-loop "
         "approval is DISABLED for all mesh actions. Physical-actuation "
-        "commands (tell/send/stop/broadcast/emergency_stop) will dispatch "
+        "commands (tell/send/stop/rpc/broadcast/emergency_stop) will "
+        "dispatch "
         "without operator confirmation."
     )
 
@@ -296,6 +305,66 @@ def _is_allowed_subscribe_target(target: str) -> bool:
 _AFFIRMATIVE_RESPONSES: frozenset[str] = frozenset({"y", "yes", "approve", "approved"})
 
 
+def _peer_snapshot(peer_id: str) -> dict[str, Any] | None:
+    """The :func:`~strands_robots.mesh.session.get_peers` entry for *peer_id*.
+
+    ``None`` when the peer is not on the snapshot, which the classifier reads as
+    metal. Reads the in-process peer registry only - it never starts the gateway
+    mesh, because this runs inside the approval gate and a gate must not acquire
+    a transport to decide what to tell the operator.
+    """
+    from strands_robots.mesh.session import get_peers
+
+    for entry in get_peers():
+        if entry.get("peer_id") == peer_id:
+            return entry
+    return None
+
+
+def _approval_warning(action: str, target: str) -> tuple[str, bool, str]:
+    """The operator prompt's warning line, and the classification behind it.
+
+    Returns ``(warning, physical, verified)``. The warning states what the gate
+    established rather than asserting a physical effect it never checked: this
+    tool gates by ACTION, so before this it told the operator "Physical effect on
+    peer '<target>'" for every gated single-target call, including one aimed at a
+    peer that reports itself as a sim.
+
+    Fail-closed, in both scopes:
+
+    * single target - :func:`~strands_robots.mesh.session.peer_is_physical`
+      decides, so an absent or unclassifiable peer is still announced as
+      physical;
+    * fleet-wide (``emergency_stop`` / ``broadcast``) - physical unless EVERY
+      peer on the snapshot is a classified sim, and physical when the snapshot is
+      empty, because a peer this process has not discovered yet cannot be shown
+      to be a sim.
+
+    The verdict never changes WHICH actions are gated: an operator is asked for
+    exactly the same set of actions as before, and is told what the peer says
+    about itself.
+    """
+    from strands_robots.mesh.session import get_peers, peer_is_physical
+
+    reply = "Reply 'y' to approve, anything else to deny."
+    if action in _FLEET_WIDE_ACTIONS:
+        peers = get_peers()
+        physical_peers = [p for p in peers if peer_is_physical(p)[0]]
+        if not peers:
+            verified = "no peer is on the fleet snapshot, so none can be shown to be a sim"
+            return f"Fleet-wide physical effect: {verified}. {reply}", True, verified
+        if physical_peers:
+            verified = f"{len(physical_peers)} of {len(peers)} peers on the snapshot are not known to be sims"
+            return f"Fleet-wide physical effect: {verified}. {reply}", True, verified
+        verified = f"all {len(peers)} peers on the snapshot report themselves as sims"
+        return f"Fleet-wide effect, but {verified}. {reply}", False, verified
+
+    physical, verified = peer_is_physical(_peer_snapshot(target))
+    if physical:
+        return f"Physical effect on peer '{target}': {verified}. {reply}", True, verified
+    return f"Peer '{target}' is not known to be physical: {verified}. {reply}", False, verified
+
+
 def _interrupt_approves(response: object) -> bool:
     """True iff *response* is an explicit affirmative.
 
@@ -313,9 +382,10 @@ def _rate_limit_check(action: str) -> str | None:
     """Return None if a slot is available, else the rejection message.
 
     Inspects the sliding-window history but does NOT consume a slot.
-    Use :func:`_rate_limit_record` after a fleet-wide action's HITL
-    approval is positively granted (or unconditionally for actions
-    that do not require approval).
+    Use :func:`_rate_limit_check_and_record` once the action is known to
+    run - after a HITL approval is positively granted, or directly for an
+    action the operator has taken out of the gated set. Reserving through
+    that helper is what keeps this check from being a TOCTOU.
 
     Splitting check from record means a *declined* HITL approval no
     longer consumes a slot - without the split, three nuisance LLM
@@ -344,26 +414,6 @@ def _rate_limit_check(action: str) -> str | None:
     return None
 
 
-def _rate_limit_record(action: str) -> None:
-    """Append a slot to *action*'s sliding-window history.
-
-    Call this only after a HITL-required action's approval is granted,
-    or unconditionally for actions that do not require an interrupt.
-    Pairs with :func:`_rate_limit_check`.
-    """
-    cfg = _RATE_LIMITS.get(action)
-    if cfg is None:
-        return
-    _, window = cfg
-    now = time.monotonic()
-    with _RATE_LOCK:
-        bucket = _RATE_HISTORY.setdefault(action, collections.deque())
-        cutoff = now - window
-        while bucket and bucket[0] < cutoff:
-            bucket.popleft()
-        bucket.append(now)
-
-
 def _reset_rate_limits() -> None:
     """Test helper: clear sliding-window history."""
     with _RATE_LOCK:
@@ -373,16 +423,18 @@ def _reset_rate_limits() -> None:
 def _rate_limit_check_and_record(action: str) -> str | None:
     """Atomic check+record under a single _RATE_LOCK acquisition.
 
-    Used on the post-HITL-approval path to close the TOCTOU between
-    :func:`_rate_limit_check` (called BEFORE the operator interrupt) and
-    :func:`_rate_limit_record` (called AFTER). Without this, two
-    concurrent emergency_stop or broadcast invocations could each pass
-    the pre-interrupt check, both get operator-approved on different
-    threads, and both record -- briefly exceeding the configured limit.
+    This is the only way a slot is consumed. It closes the TOCTOU left by
+    :func:`_rate_limit_check`, which reports whether a slot is free without
+    taking it: without an atomic reservation two concurrent invocations
+    could each pass that check and each record, briefly exceeding the
+    configured limit. Both gate paths reserve through here - the approved
+    path after the operator interrupt returns, and the ungated path for an
+    action outside ``STRANDS_MESH_HITL_ACTIONS`` - so neither an operator
+    wait nor the validation work in between can be raced past.
 
-    Returns None if the slot was atomically reserved, else the
-    rejection message (caller should treat as 'rate limit raced past us
-    while we were waiting on the operator interrupt; reject this one').
+    Returns None if the slot was atomically reserved, else the rejection
+    message (caller should treat as 'another call took the last slot after
+    our check; reject this one').
     """
     cfg = _RATE_LIMITS.get(action)
     if cfg is None:
@@ -398,11 +450,16 @@ def _rate_limit_check_and_record(action: str) -> str | None:
             wait = window - (now - bucket[0])
             return (
                 f"rate limit exceeded for action '{action}' between check "
-                f"and record (concurrent approval raced past): max {max_calls} "
+                f"and record (a concurrent call raced past): max {max_calls} "
                 f"calls per {window:.0f}s window. Try again in {wait:.1f}s."
             )
         bucket.append(now)
         return None
+
+
+#: Event source recorded on this tool's audit rows, including the
+#: operator-response rows :func:`log_operator_response` writes.
+_AUDIT_SOURCE = "robot_mesh_tool"
 
 
 def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> None:
@@ -422,7 +479,7 @@ def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> 
 
         log_safety_event(
             "llm_tool_action",
-            "robot_mesh_tool",
+            _AUDIT_SOURCE,
             {
                 "action": action,
                 "target": target,
@@ -513,6 +570,165 @@ def _numeric_option_error(action: str, *, timeout: Any, limit: Any) -> str | Non
     return None
 
 
+# ── #10: robot-less gateway mesh ───────────────────────────────────────────
+# A dashboard / coordinator / logger process has no Robot()/Simulation() in
+# _LOCAL_ROBOTS, so historically every robot_mesh action failed with "no local
+# mesh found" even with live peers on the wire. The gateway is a Mesh with
+# robot=None: it subscribes presence (populating session peer tracking, so
+# ``peers`` works), and its send()/broadcast() path is fully functional. It
+# is never a task target itself - incoming execute/... simply report
+# "unknown action" like any robot-less peer.
+_GATEWAY_LOCK = threading.Lock()
+
+#: Single-slot cache for the process-wide gateway, keyed ``"mesh"``. A mutable
+#: container rather than a rebound module global: the cache is written from
+#: ``_gateway_mesh`` and read there on every later call, and a ``global``
+#: rebinding makes that write look dead to any single-function analysis -- which
+#: is what code scanning reported it as. The dict is also the shape the rest of
+#: the tree already uses for lock-guarded module state.
+_GATEWAY: dict[str, Any] = {}
+
+#: Environment override for how long gateway bring-up waits for presence.
+_GATEWAY_WAIT_ENV = "STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S"
+
+#: Default gateway presence wait (seconds) -- one heartbeat period.
+_GATEWAY_DISCOVERY_WAIT_S = 3.0
+
+
+def _gateway_discovery_wait_s() -> float:
+    """Resolve how long gateway bring-up waits for presence to populate.
+
+    Read through the shared numeric domain rather than by calling ``float()`` on
+    the raw value inside the :func:`time.sleep` argument. That form gave one
+    operator knob two failures that look nothing like a misconfigured wait. A
+    non-numeric value raised :class:`ValueError`, which the best-effort handler
+    around gateway bring-up absorbed, so a typo was reported as "gateway mesh
+    unavailable" and every action fell back to ``no local mesh found`` -- naming
+    neither the variable nor the typo. ``inf`` was worse than raising:
+    :func:`time.sleep` accepts it and blocks forever while holding
+    ``_GATEWAY_LOCK``, so the call never returns and no later call can take the
+    lock either.
+
+    Same shape as :func:`~strands_robots.mesh.session.stream_min_period_from_env`
+    for the step-telemetry rate; this is the remaining mesh knob that was still
+    read inline.
+
+    Returns:
+        The override when it names a span :func:`time.sleep` can honor,
+        including ``0`` -- an operator asking not to wait is obeyed rather than
+        overridden -- and :data:`_GATEWAY_DISCOVERY_WAIT_S` when it is unset or
+        holds a value no sleep can honor. A wait that is merely wrong costs
+        first-call peer completeness; refusing to start the gateway over it
+        would cost the whole feature, so the default is the safe direction.
+    """
+    raw = os.environ.get(_GATEWAY_WAIT_ENV)
+    if raw is None or raw.strip() == "":
+        return _GATEWAY_DISCOVERY_WAIT_S
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "%s=%r is not a number; waiting the %.1fs default for gateway presence",
+            _GATEWAY_WAIT_ENV,
+            raw,
+            _GATEWAY_DISCOVERY_WAIT_S,
+        )
+        return _GATEWAY_DISCOVERY_WAIT_S
+    error = finite_number_error(value, _GATEWAY_WAIT_ENV, "gateway mesh bring-up")
+    if error is None and value < 0:
+        error = f"{_GATEWAY_WAIT_ENV} must be >= 0 seconds, got {value}"
+    if error is not None:
+        logger.warning("%s; waiting the %.1fs default for gateway presence", error, _GATEWAY_DISCOVERY_WAIT_S)
+        return _GATEWAY_DISCOVERY_WAIT_S
+    return value
+
+
+def _stop_gateway_mesh() -> None:
+    """Stop the process-wide gateway mesh, if one was ever started.
+
+    The gateway is created lazily and cached for the process lifetime, and it is
+    the one :class:`~strands_robots.mesh.core.Mesh` in the tree with no owner to
+    stop it: every other one is closed by the ``Robot`` or ``Simulation`` that
+    built it. So it held an open session plus its heartbeat and state threads,
+    and stayed advertised to the fleet as a live peer, until the interpreter
+    died. Registered with :mod:`atexit`, matching the session singleton's own
+    teardown.
+    """
+    with _GATEWAY_LOCK:
+        gateway = _GATEWAY.pop("mesh", None)
+    if gateway is None:
+        return
+    try:
+        gateway.stop()
+    except (AttributeError, OSError, RuntimeError) as exc:
+        # Interpreter shutdown: this path makes no success claim to contradict,
+        # and Mesh.stop already absorbs its own transport errors. Narrow so a
+        # programmer error still surfaces rather than being swallowed at exit.
+        logger.debug("robot_mesh: gateway mesh stop failed at exit: %s", exc)
+
+
+atexit.register(_stop_gateway_mesh)
+
+
+def _gateway_mesh() -> Any | None:
+    """Lazily create the robot-less gateway Mesh.
+
+    Returns None when zenoh is unavailable, and -- before trying -- when
+    ``STRANDS_MESH`` trips the hard kill switch.
+
+    This is the one ``Mesh`` in the tree built without going through
+    :func:`~strands_robots.mesh.core.init_mesh`, so it did not inherit that
+    function's kill-switch check. README documents ``STRANDS_MESH=false`` as
+    overriding even an explicit ``mesh=True``, but an operator who set it and
+    then used the ``robot_mesh`` tool from a robot-less process still got a real
+    Zenoh session, this peer advertised to the fleet as ``gateway-*``, and the
+    heartbeat, state and seven sensor threads :meth:`Mesh.start` spawns -- for
+    the life of the process, since the result is cached here until
+    :func:`_stop_gateway_mesh` runs at exit. A kill switch that leaves nine
+    threads publishing is not a kill switch.
+
+    The check is deliberately outside ``_GATEWAY_LOCK``: it reads one env var and
+    touches no shared state, and a disabled mesh should not queue behind a
+    bring-up that is holding the lock through its discovery sleep.
+    """
+    if mesh_disabled_by_env():
+        logger.debug(
+            "robot_mesh: gateway mesh not started: STRANDS_MESH=%r disables the mesh",
+            os.getenv("STRANDS_MESH", ""),
+        )
+        return None
+    with _GATEWAY_LOCK:
+        cached = _GATEWAY.get("mesh")
+        if cached is not None and getattr(cached, "alive", False):
+            return cached
+        try:
+            import socket as _socket
+            import uuid as _uuid
+
+            from strands_robots.mesh.core import Mesh
+
+            gw = Mesh(
+                None,
+                peer_id=f"gateway-{_socket.gethostname().split('.')[0]}-{_uuid.uuid4().hex[:4]}",
+                peer_type="gateway",
+            )
+            gw.start()
+            if not gw.alive:
+                return None
+            _GATEWAY["mesh"] = gw
+            logger.info("robot_mesh: started robot-less gateway mesh %s", gw.peer_id)
+            # First bring-up: wait one heartbeat period so presence
+            # subscription can populate session peer tracking before the
+            # caller reads peers. Once, here, rather than per call - a
+            # per-call wait stretches a burst of calls past the rate-limit
+            # window and silently raises the effective cap.
+            time.sleep(_gateway_discovery_wait_s())
+            return gw
+        except Exception as exc:  # noqa: BLE001 - gateway is best-effort
+            logger.debug("robot_mesh: gateway mesh unavailable: %s", exc)
+            return None
+
+
 def _resolve_mesh(target: str) -> Any | None:
     """Return a local Mesh in this process to use as the gateway for RPC.
 
@@ -531,7 +747,10 @@ def _resolve_mesh(target: str) -> Any | None:
 
     locals_ = get_local_robots()
     if not locals_:
-        return None
+        # #10: no in-process robot - fall back to the robot-less gateway so
+        # coordinator processes (dashboards, schedulers) can still reach the
+        # fleet. Returns None only when zenoh itself is unavailable.
+        return _gateway_mesh()
     if target:
         # Prefer a local mesh whose peer_id is NOT the target so we don't
         # send-to-self via the target's own session.
@@ -710,6 +929,15 @@ def _device_connect_dispatch(
                     if funcs:
                         names = [f["name"] if isinstance(f, dict) else f for f in funcs]
                         text += f"    Functions: {', '.join(names)}\n"
+            # Audit the read-only observation actions on this backend too. The
+            # mesh rendering of ``peers`` / ``status`` records the fleet it read
+            # (see the ``peers`` branch in the mesh dispatch below); this backend
+            # is the one tried FIRST whenever Device Connect has devices, so
+            # leaving it out made the audited implementations the fallback and
+            # the unaudited ones the default. ``peers`` in particular returns
+            # every device id and every function name the fleet exposes, so an
+            # enumeration of the callable surface would otherwise leave no trail.
+            _audit_tool_action(action, target, True, f"devices={len(devices)}")
             return _DCResult(_ok(text))
 
         if action == "tell":
@@ -903,13 +1131,13 @@ def robot_mesh(
           so a malformed or out-of-policy payload is rejected client-side
           before it hits the wire.
         * Every ``tell`` / ``send`` / ``broadcast`` / ``stop`` /
-          ``emergency_stop`` is audited.
+          ``emergency_stop`` / ``rpc`` is audited.
     """
     # Resolve which actions require a human-in-the-loop interrupt for THIS
     # call. Consumers configure the set via STRANDS_MESH_HITL_ACTIONS; the
     # default gates every physical-actuation action (emergency_stop,
-    # broadcast, tell, send, stop). A malformed env var fails loud here
-    # rather than silently degrading the gate.
+    # broadcast, tell, send, stop, rpc). A malformed env var fails loud
+    # here rather than silently degrading the gate.
     try:
         interrupt_actions = _resolve_interrupt_actions()
     except _InterruptConfigError as exc:
@@ -922,7 +1150,7 @@ def robot_mesh(
 
     # Check the per-action rate limit before doing any work - but
     # do NOT consume a slot until we know the action is going to run.
-    # See _rate_limit_check / _rate_limit_record for rationale.
+    # See _rate_limit_check / _rate_limit_check_and_record for rationale.
     rl_err = _rate_limit_check(action)
     if rl_err is not None:
         _audit_tool_action(action, target, False, f"rate_limit: {rl_err}")
@@ -1013,13 +1241,9 @@ def robot_mesh(
         # Fleet-wide actions reach every peer; single-target actions hit
         # one peer. Surface the right scope so the operator's confirmation
         # reflects the real blast radius.
-        _fleet_wide = action in ("emergency_stop", "broadcast")
+        _fleet_wide = action in _FLEET_WIDE_ACTIONS
         _approval_target = "*ALL_PEERS*" if _fleet_wide else (target or "*ALL_PEERS*")
-        _scope_warning = (
-            "Fleet-wide physical effect. Reply 'y' to approve, anything else to deny."
-            if _fleet_wide
-            else f"Physical effect on peer '{target}'. Reply 'y' to approve, anything else to deny."
-        )
+        _scope_warning, _target_physical, _target_verified = _approval_warning(action, target)
         # Surface the validated command (post-validation form) so the
         # operator approves what will actually dispatch, not the raw LLM
         # string. tell/stop/emergency_stop have no JSON command body.
@@ -1040,6 +1264,11 @@ def robot_mesh(
                     "command": _approval_command,
                     "instruction": instruction,
                     "warning": _scope_warning,
+                    # What the gate established about the target, so a host UI
+                    # can show the verdict without re-deriving it - and so the
+                    # prompt and the structured reason cannot disagree.
+                    "physical": _target_physical,
+                    "verified": _target_verified,
                 },
             )
         except RuntimeError as exc:
@@ -1060,17 +1289,25 @@ def robot_mesh(
                 f"action '{action}' requires a human-in-the-loop interrupt. Interrupts are not available here: {exc}"
             )
 
-        if not _interrupt_approves(response):
+        approved = _interrupt_approves(response)
+        # Record the human's verdict as soon as it is known, before any later
+        # refusal can return. The rate-limit re-check below can reject an
+        # APPROVED action (a concurrent invocation took the last slot while the
+        # operator was deciding), and recording after it left that path with no
+        # operator row at all: the audit log carried only ``rate_limit_race``,
+        # which does not say a human authorised a physical actuation. One
+        # unconditional site, matching use_ros and lerobot_train.
+        #
+        # #322: the operator's literal interrupt response is recorded in
+        # the LOCAL audit row (full fidelity for forensics) but MUST NOT be
+        # echoed back to the LLM. Echoing it turns the human operator into a
+        # content side-channel: a prompt-injected agent could phrase the
+        # approval reason so the operator's typed reply leaks data back into
+        # the model context. Return a flat, fixed sentinel instead.
+        log_operator_response(_AUDIT_SOURCE, action, target, approved=approved, response=response)
+        if not approved:
             # Declined approval does NOT consume a rate-limit slot -
             # see _rate_limit_check docstring for the safety rationale.
-            #
-            # #322: the operator's literal interrupt response is recorded in
-            # the LOCAL audit row (full fidelity for forensics) but MUST NOT be
-            # echoed back to the LLM. Echoing it turns the human operator into a
-            # content side-channel: a prompt-injected agent could phrase the
-            # approval reason so the operator's typed reply leaks data back into
-            # the model context. Return a flat, fixed sentinel instead.
-            _audit_tool_action(action, target, False, f"operator declined: {response!r}")
             return _err(f"action '{action}' was declined by the operator interrupt.")
         # Approval granted. Re-check under the lock and consume the
         # slot atomically -- a concurrent invocation that ALSO passed
@@ -1081,12 +1318,18 @@ def robot_mesh(
         if rl_race_err is not None:
             _audit_tool_action(action, target, False, f"rate_limit_race: {rl_race_err}")
             return _err(rl_race_err)
-        _audit_tool_action(action, target, True, f"operator approved: {response!r}")
     else:
-        # No interrupt required for this action - consume the slot
-        # unconditionally (matches the pre-split behaviour for
-        # non-fleet-wide actions like ``tell``, ``send``, ``stop``).
-        _rate_limit_record(action)
+        # No interrupt required for this action - reserve the slot with the
+        # same atomic check+record the approved path uses above. The pre-gate
+        # check does not consume a slot, so a concurrent invocation can take
+        # the last one in between; recording unconditionally here would let
+        # both callers past a full bucket. Once ``STRANDS_MESH_HITL_ACTIONS``
+        # narrows the gated set this limit is the only bound left on
+        # LLM-driven actuation, so it has to hold on this path too.
+        rl_race_err = _rate_limit_check_and_record(action)
+        if rl_race_err is not None:
+            _audit_tool_action(action, target, False, f"rate_limit_race: {rl_race_err}")
+            return _err(rl_race_err)
 
     # ── Device Connect dispatch (primary networking layer) ─────────────────
     # Every safety gate above (rate limit, HITL approval, broadcast
@@ -1115,6 +1358,11 @@ def robot_mesh(
         return _err(f"mesh module unavailable: {exc}")
 
     locals_ = get_local_robots()
+    if not locals_:
+        # #10: robot-less process - bring up the gateway BEFORE reading peers
+        # so presence subscription populates session peer tracking. The
+        # gateway itself waits one heartbeat period on first bring-up.
+        _gateway_mesh()
     peers = get_peers()
 
     # ── action: peers ─────────────────────────────────────────────────────
@@ -1154,6 +1402,15 @@ def robot_mesh(
     # All remaining actions need an outbound mesh.
     mesh = _resolve_mesh(target)
     if mesh is None:
+        if mesh_disabled_by_env():
+            # Naming the variable matters more here than anywhere else in this
+            # function: the generic remedy below is to construct a Robot(), and
+            # the kill switch would refuse that mesh too, so an operator
+            # following it learns nothing and tries twice.
+            return _err(
+                f"mesh disabled: STRANDS_MESH={os.getenv('STRANDS_MESH', '')!r} is a hard kill switch. "
+                f"Unset it (or set it to true) to use action={action!r}."
+            )
         return _err("no local mesh found. Construct a Robot()/Simulation() first to join the mesh, then retry.")
 
     # ── action: tell ──────────────────────────────────────────────────────

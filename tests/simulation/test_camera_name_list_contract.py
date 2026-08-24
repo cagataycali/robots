@@ -289,7 +289,12 @@ def _cameras_surfaces(source: str) -> list[tuple[str, bool]]:
 
 
 class TestGuardIsWiredAtEveryBackendSurface:
-    """A backend cannot add a ``cameras`` subset without the shared domain."""
+    """A backend cannot add a ``cameras`` subset without the shared domain.
+
+    Wired, not returned: this sweep is satisfied by a surface that calls the
+    domain and drops the refusal, so each backend's returned ``cameras``
+    refusal is driven in ``test_recording_preflight_refusals_across_backends.py``.
+    """
 
     def test_every_public_cameras_surface_resolves_the_shared_domain(self) -> None:
         unguarded: list[str] = []

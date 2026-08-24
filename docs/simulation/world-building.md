@@ -23,6 +23,21 @@ the world and adds the named robot for you. Constructing a backend directly -
 `create_simulation("mujoco")` or `Simulation()` - gives an **empty** engine; you
 then call `create_world()` and `add_robot("so100")` yourself.
 
+Because `Robot(...)` has already built the world, calling `create_world()` on
+what it returns is refused - a world cannot be rebuilt under a live scene. The
+refusal names what that world holds and which call applies the arguments you
+passed:
+
+| You asked for | What applies it |
+|---------------|-----------------|
+| `timestep=`, `gravity=` | `set_timestep` / `set_gravity` on the live world - contents kept |
+| `ground_plane=`, `terrain=`, `difficulty=` | compiled in at creation: `destroy()`, then `create_world(...)` |
+| nothing | the world is ready; `reset()` restarts the rollout in place |
+
+`reset()` applies no `create_world` parameter - it restores the initial state at
+the values the world was built with - so it is never the way to get a *different*
+world.
+
 `robot_name` therefore belongs to `Robot(...)` and `add_robot(...)`, never to a
 backend constructor. Passing it to the constructor
 (`Simulation(robot_name="so100")`) is rejected with a `TypeError` rather than
@@ -51,12 +66,46 @@ out-of-distribution:
 sim.add_robot(name="panda", data_config="panda", keyframe="home")  # or keyframe=0
 ```
 
+The `Robot(...)` factory forwards `keyframe=` (and `orientation=`) to
+`add_robot`, so a one-line spawn reaches the same pose:
+
+```python
+robot = Robot("panda", keyframe="home")
+```
+
 The pose is applied to the robot's joints by name and is restored by `reset()`,
-so a keyframe spawn is sticky across episodes. An
-unknown keyframe name/index
+so a keyframe spawn is sticky across episodes. A MuJoCo `<key>` pairs that pose
+with the actuator command that *holds* it, and both are applied and restored
+together - so a gravity-loaded arm stays at its home configuration instead of
+sagging out of it as soon as the world steps. 28 of the 31 built-in robots that
+ship a `<keyframe>` declare a non-zero `ctrl` in it. The keyed command is applied
+verbatim, whatever quantity each actuator reads it as (a servo setpoint, a motor
+torque, a stateful actuator's activation); the keyed `qvel` is not applied, since
+a robot is added at rest. An unknown keyframe name/index
 is an error that lists the model's available keyframes. `keyframe=None` (the
 default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 `keyframe=` as not-yet-supported.)
+
+### `position` offsets the model's own root pose
+
+`position` is written as the attach frame's translation, and MuJoCo *composes*
+that frame with the `pos` the model's root body declares - it does not replace
+it. A ground-bolted arm declares `pos="0 0 0"`, so for those the offset is the
+world position. A locomotion model is authored standing, so it is not:
+
+```python
+sim.add_robot(name="dog", data_config="unitree_go2", position=[0.0, 0.0, 0.4])
+# Position: [0.0, 0.0, 0.845] (position=[0.0, 0.0, 0.4] + model root offset [0.0, 0.0, 0.445])
+```
+
+30 of the 55 single-root robots in the built-in registry declare a non-zero root
+`pos` - the Unitree Go2 base at `z=0.445`, the JVRC pelvis at `z=1.4` - so for
+those `position=[0, 0, 0]` spawns the robot standing rather than sunk into the
+floor, which is the reason the compose is the useful default. `add_robot`
+reports the *measured* world position of the robot's root body and names the
+request and the model's offset beside it whenever they differ, so a spawn that
+did not land where it was asked is visible in the result. This differs from
+`add_object`, whose `position` places its body at exactly that world point.
 
 ### Adding a robot does not disturb the scene it joins
 
@@ -193,6 +242,13 @@ for i in range(5):
     )
 ```
 
+## Object shapes
+
+`shape` takes one of seven values: `box`, `sphere`, `cylinder`, `capsule`,
+`ellipsoid`, `plane` and `mesh`. All seven are offered by the agent-tool schema
+too, so a model driving the simulation can select any of them. How many `size`
+components each one consumes is in the table below.
+
 ## Object size
 
 `size` is the **full extent in meters** along each local axis - not MuJoCo's
@@ -212,6 +268,14 @@ differently-sized object while `add_object` reports success:
 | `mesh` | none - the asset's own units define the extent |
 
 At most 3 components are accepted; omit `size` entirely for the 5 cm default.
+
+`set_geom_properties(size=...)` resizes an existing geom and takes a *different*
+convention for the same word: the compiled geom's own MuJoCo `geom_size`
+components. The two are not interchangeable - `size=[0.2, 0.2, 0.2]` builds a
+20 cm box here and resizes that same box to 40 cm there, and this table's
+`[diameter, unused, height]` capsule triple is refused there (it wants
+`[radius, half-length]`). See
+[Domain randomization](domain-randomization.md).
 
 ```python
 sim.add_object("crate", shape="box", size=[0.5])
@@ -290,12 +354,46 @@ and one bad add never bricks later scene edits.
 
 Beyond primitives, `add_object` can inject a triangle-mesh asset (STL/OBJ) into
 the live scene at runtime. Pass `shape="mesh"` with a `mesh_path` to the asset
-file; the extent is defined by the mesh's own units, so `size` is ignored.
+file; the extent is defined by the mesh's own units, so `size` is ignored on
+this backend - a read the Isaac backend's mesh `add_object` shares. The Newton
+backend consumes it instead, as a per-axis scale on the
+loaded geometry, so a mesh add carrying a `size` does not mean the same thing
+there - which meaning is right is tracked in
+[#2300](https://github.com/strands-labs/robots/issues/2300).
 
 ```python
 sim.add_object(name="bracket", shape="mesh", mesh_path="/abs/path/bracket.stl",
                position=[0.3, 0.0, 0.1])
+# 'bracket' added: mesh at [0.3, 0.0, 0.1], extent=[0.12, 0.08, 0.03]m from the
+# asset (collision uses its convex hull), 0.1kg
 ```
+
+Because no `size` component is consumed, the success text reports the extent
+read back off the compiled geom rather than echoing the request - the request
+carries no extent for a mesh, and the asset can be any size.
+
+### A mesh geom collides as its convex hull
+
+MuJoCo collides a mesh geom as its **convex hull**, not as the triangles that
+render. For a convex asset (a bracket, a mug body, a crate) the two coincide and
+there is nothing to think about. For a concave one - a scanned or generated room
+shell, a tray, a shelf, a bowl - the hull fills every cavity, so:
+
+* an object placed "inside" the cavity starts inside solid geometry and is pushed
+  out, and one dropped in rests on the filled hull instead of on the interior
+  floor;
+* a camera still shows the open interior, because rendering uses the triangles.
+  Nothing looks wrong.
+
+To get load-bearing concave geometry, decompose the asset into convex parts and
+add one mesh object per part:
+
+```python
+for i, part in enumerate(convex_parts):          # e.g. a V-HACD decomposition
+    sim.add_object(name=f"room_{i}", shape="mesh", mesh_path=part, is_static=True)
+```
+
+A single-mesh room is still useful as a visual backdrop; it just is not a floor.
 
 `mesh_path` is required for `shape="mesh"` - a mesh without a path is rejected
 with an actionable error rather than an opaque recompile failure. If the mesh
@@ -394,6 +492,20 @@ calls apply to the same buffer:
 | `rgba` | 3 (RGB, completed with an opaque alpha) or 4 finite components |
 | `size` | finite components, in the count the geom's shape consumes |
 
+`add_geom`'s `type` takes the primitive shapes - `box`, `capsule`, `cylinder`,
+`ellipsoid`, `plane`, `sphere` - and refuses `"mesh"`: the op has no key that
+could name a mesh asset, so the geom would have no mesh to take its extent from
+and MuJoCo would refuse the whole scene at recompile. Add a mesh through
+`add_object(shape="mesh", mesh_path=...)`, which registers the asset alongside
+the body:
+
+```python
+sim.patch_scene_mjcf([{"op": "add_geom", "body": "rig", "type": "mesh"}])
+# status=error: add_geom: 'type' cannot be 'mesh' - this op has no key that names
+#               a mesh asset ... Add a mesh with add_object(shape="mesh",
+#               mesh_path=...), which registers the asset alongside the body.
+```
+
 MuJoCo bakes a `nan`/`inf` component into the model without complaint, so an
 unchecked one reports success and only surfaces later as a poisoned physics
 state. A wrong component count is reported by the library rather than left to
@@ -420,12 +532,54 @@ sim.patch_scene_mjcf([{"op": "add_geom", "body": "rig", "type": "box",
 
 The batch is atomic: if any op is rejected the world is rolled back to its
 pre-patch state, so a bad key or a non-finite component never leaves a
-half-applied scene. Use
+half-applied scene. A batch every op accepts can still be refused by MuJoCo when
+the model they add up to is one it will not build, and that refusal is rolled
+back on the same terms - it costs the batch, not the world, so the next mutation
+still succeeds.
+
+A successful batch recompiles the model once, so it keeps the dynamic state every
+other scene mutation keeps: joint positions and velocities, actuator setpoints,
+and a latched `apply_force` wrench. Use
 `replace_scene_mjcf(xml)` for MJCF elements this vocabulary does not cover.
+
+## Exporting a scene
+
+`export_xml(output_path=...)` serialises the live scene - including every runtime
+mutation - as MJCF. It is the read sibling of `replace_scene_mjcf`, so the file it
+writes is meant to be reloadable:
+
+```python
+sim.export_xml(output_path="/tmp/handoff.xml")
+other.load_scene(scene_path="/tmp/handoff.xml")   # same scene, same structure
+```
+
+Mesh, texture and height-field assets are referenced by ABSOLUTE path. MuJoCo
+resolves a relative `file=` against the model's own directory (plus `meshdir` /
+`texturedir`, or the `assetdir` that sets both), and that directory is not part
+of the serialised XML - so a
+relative reference would resolve against wherever the export happened to be
+written. Absolute references keep the export reloadable from any location, and a
+scene composed from several models needs them: each model contributes assets from
+its own root, so no single `meshdir` could cover them all.
+
+The consequence is that an export names paths on the machine that produced it.
+Copying the XML alone to another machine will not carry the assets with it;
+copy the referenced asset trees too, or re-compose the scene there from the same
+`add_robot` calls.
 
 ## Cameras
 
 Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.
+
+A discovered camera is registered under its short MJCF name (`wrist`), and the
+compiled model also carries it namespaced (`so101/wrist`); `render` takes the
+namespaced form, `get_observation` keys on the short one. The short name is
+first-come across robots: when a second robot declares a camera whose short name
+is already taken, that camera is registered under its namespaced name instead
+(logged, naming both), so two arms that both declare `wrist` give you `wrist` and
+`arm2/wrist` rather than one of them shadowing the other. Each camera belongs to
+exactly one robot, which is what makes `remove_robot` take that robot's cameras
+with it and leave every other robot's alone.
 
 To mount a camera ON a moving body (a realistic wrist/gripper view that rides with the arm), pass `parent_body`. Body names are namespaced `<robot>/<body>`; discover the exact mount point with `list_bodies` instead of guessing:
 
@@ -437,6 +591,8 @@ sim.add_camera(name="wrist", parent_body=mount,
 ```
 
 `list_bodies()` (no `robot_name`) lists every body in the world; with `robot_name` it scopes to that robot and also returns `gripper_body`, the best-guess end-effector mount.
+
+The guess matches its hint words (`gripper`, `hand`, `ee`, `tool`) on word boundaries, so a short hint cannot fire inside an unrelated word - a `knee` link or a `wheel` hub is not a gripper mount because `ee` occurs in its name. A robot with no gripper-like body reports `gripper_body: None` and omits the mount line rather than naming an unrelated body; pick the mount from the full `bodies` list in that case.
 
 A mounted camera survives `remove_robot`, which rebuilds the whole scene: it is
 re-mounted on its body once every surviving robot is re-attached, keeping its

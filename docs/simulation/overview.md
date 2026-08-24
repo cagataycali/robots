@@ -20,7 +20,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `reset` | - | State to t=0, keep model |
 | `get_state` | - | Sim time, joint positions, object poses |
 | `destroy` | - | Tear down model, data, executor |
-| `export_xml` | - | Serialise model to MJCF string |
+| `export_xml` | `output_path` | Serialise live scene to MJCF; reloadable via `load_scene` (assets referenced by absolute path) |
 
 ## Scene-MJCF
 
@@ -44,7 +44,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 
 | Action | Key params |
 |--------|-----------|
-| `add_object` | `name`, `shape="box"\|"sphere"\|"cylinder"\|"plane"\|"mesh"`, `size`, `position=[x,y,z]`, `color=[r,g,b,a]`, `orientation=[w,x,y,z]`, `mass=0.1`, `is_static=False`, `mesh_path=None` - `plane` requires `is_static=True` |
+| `add_object` | `name`, `shape="box"\|"sphere"\|"cylinder"\|"plane"\|"mesh"`, `size`, `position=[x,y,z]`, `color=[r,g,b,a]`, `orientation=[w,x,y,z]`, `mass=0.1`, `is_static=None`, `mesh_path=None` - omitted lets the shape decide: `plane` is made static and refuses an explicit `is_static=False`, every other shape is dynamic |
 | `remove_object` | `name` |
 | `move_object` | `name`, `position`, `orientation` (NOT `pos`/`quat`) |
 | `list_objects` | - |
@@ -89,6 +89,24 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     listed in `sim.describe()["methods"]`, so an agent can enumerate the full
     rendering surface in one call instead of guessing method names.
 
+!!! note "Frame reads are serialised against physics"
+    `render`, `render_depth` and `get_frame` copy mjData into the renderer under
+    the simulation lock and hand back an independent buffer, so a frame captured
+    while a policy worker, the `step()` loop or the camera recorder is advancing
+    physics is a consistent snapshot rather than a torn one. Only the PNG
+    encoding runs unlocked. This holds for a direct Python call and for a call
+    from your own thread, not just through the tool surface.
+
+!!! note "Camera intrinsics follow the renderer"
+    `sim.get_camera_params(camera_name)` returns the pinhole `K` of the frame
+    the renderer actually draws. A camera declaring a physical sensor (MJCF
+    `sensorsize` / `focal` / `principal` / `resolution`) has its `K` read from
+    the view frustum MuJoCo computes for that camera, so non-square pixels
+    (`fx != fy`) and an off-center principal point are honored - including the
+    vertical principal-point convention, which MuJoCo changed in 3.6.0. Every
+    other camera falls back to `fovy`: square pixels, principal point at the
+    image center.
+
 ## Physics
 
 | Action | Key params |
@@ -99,15 +117,27 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `set_timestep` | `timestep` |
 | `get_contacts` / `get_contact_forces` | - . `get_contacts` lists every geom pair inside the detection range (`margin` + `gap`) and marks each one `active` - MuJoCo hands only the pairs inside `margin` to the solver, so a pair between the two thresholds is a proximity report carrying no force. Contact predicates count only `active` pairs; `get_contact_forces` gives the load a touching pair carries |
 | `apply_force` | `body_name`, `force`, `torque`, `point` - latched on that body and re-applied every step until the next `apply_force` for it, so several bodies can hold wrenches at once (`force=[0,0,0]` stops one, `reset()` stops all) |
-| `get_jacobian` | `body_name` *or* `site_name` *or* `geom_name` |
-| `get_mass_matrix` | - |
+| `get_jacobian` | `body_name` *or* `site_name` *or* `geom_name`. Columns are DOFs of the whole compiled model, so the width is not the robot's joint count: a free or ball joint owns several consecutive columns, and a scene holding two robots reports one width spanning both. The `json` block's `dof_joint_names` names the joint owning each column - pair `dq` with that, not with `robot_joint_names`, or one robot's Jacobian reads as another's |
+| `get_mass_matrix` | - . The reported `diagonal` is DOF-indexed on the same terms, and `dof_joint_names` names each entry's joint |
 | `inverse_dynamics` | - (compensation torques to hold the current `qpos`/`qvel`) |
 | `forward_kinematics` | `body_name` (optional) |
 | `save_state` / `load_state` | `name` - snapshot/restore full physics. A checkpoint is valid only for the model it was taken against: any scene mutation that swaps the compiled model (`add_object`, `add_robot`, `add_camera`, `remove_camera`, `remove_robot`, `patch_scene_mjcf`, `replace_scene_mjcf`) invalidates it, and `load_state` then returns a structured error instead of writing a state vector whose indices now mean something else. Save a fresh checkpoint after mutating the scene |
-| `set_joint_positions` | `positions` (dict or ordered list), `robot_name` (optional) - write `qpos` directly + run FK (teleport / set an initial pose, bypassing actuators) |
+| `set_joint_positions` | `positions` (dict or ordered list), `robot_name` (optional), `hold` (optional) - write `qpos` directly + run FK (teleport / set an initial pose, bypassing actuators). Kinematic only: a joint held by a position servo is pulled back toward the setpoint that servo already holds by the next `step`, and the success text names those joints. `hold=True` moves the matching position-servo setpoints with the pose so it survives stepping; a joint driven by a torque or velocity actuator is left alone, since its `ctrl` is not a pose, as is a joint a tendon couples to one `ctrl` (every stock gripper, and the `stretch3` telescoping arm), whose `ctrl` is in tendon units and drives several joints at once |
 | `set_joint_velocities` | `velocities` (dict or ordered list), `robot_name` (optional) - write `qvel` directly (set an initial dynamic state) |
 | `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
+
+!!! tip "Discovering joint names"
+    The dict form of `set_joint_positions` / `set_joint_velocities` keys by
+    joint name, and a name the model cannot resolve is refused rather than
+    skipped (the write is all-or-nothing), so the refusal has to say where the
+    real names come from. From an agent that is `get_robot_state`, which reports
+    every joint of one robot by name with its position and velocity - the
+    joint-side counterpart of `list_bodies` for body names. `robot_joint_names`
+    returns the same ordering as a plain list, but it is a Python-only
+    capability: it is not in the tool schema's `action` enum, so an agent that
+    calls it is refused. Reach for it from Python, and for `get_robot_state`
+    from a tool call.
 
 !!! note "Numeric domain of the state writers"
     `set_joint_positions`, `set_joint_velocities` and the `apply_force`
@@ -192,6 +222,10 @@ The step horizon is given either as `duration` (seconds) or as `n_steps` (`durat
 
 `action_horizon` (how many actions are consumed from each policy chunk before it is re-queried) is validated the same way at every entry point, so a horizon the rollout cannot run - `0`, a negative value, a float, `nan` - is a structured error rather than a value silently clamped to 1. `run_multi_policy` additionally accepts per-robot mappings (`instructions={robot: text}`, `action_horizon={robot: horizon}`): a key must name a robot driven by that call (i.e. a key of `policies`), because an unmatched key cannot be applied to anything - a robot omitted from a mapping keeps its documented default. The same domain applies one layer down, on `PolicyRunner.run` / `PolicyRunner.evaluate` - the surfaces those entry points delegate to, which are documented as drivable directly. There it raises `ValueError` rather than returning an error dict, matching the sibling `control_substeps` and `control_frequency` guards of the same signature, because a direct caller has no envelope to read a refusal from; unvalidated, the value was clamped to 1 inside the first chunk query or leaked a bare `int()` conversion error naming neither the parameter nor the method. The two bounds of `PolicyRunner.evaluate`'s own episode loop - `n_episodes` and, on the legacy `success_fn` path, `max_steps` - carry that same domain for a stronger reason: a horizon outside it degrades a rollout, while a loop bound outside it removes the evaluation and still reports one. `n_episodes=0` returned `status="success"` over zero episodes and `max_steps=0` over episodes of zero length, both with `success_rate: 0.0` and `success_measured: true` - the flag that exists so a `0.0` cannot be read as a measurement - and with no action ever applied; `max_steps=inf` never terminated at all, since `while steps < max_steps` has no false case. `max_steps` is checked only when it is the horizon actually read, because a `spec=` call takes its horizon off the benchmark (validated at that read) and never reads the parameter.
 
+The episode-outcome criterion carries the same posture one step further in. Both eval routes call a caller-supplied criterion after every applied action - `success_fn(observation)` on the `eval_policy` route, `is_success(sim)` / `is_failure(sim)` on the `evaluate_benchmark` route - and a criterion that *raises* is fatal, with a message naming the criterion, the episode and the step and chaining the original exception. That mirrors `run_policy`'s `stop_when`, which is fatal for the same reason: the caller asked for a semantics the runner can no longer honor, and a `success_rate` averaged over episodes whose outcome was never determined is not a measurement. It is deliberately *not* the `on_frame` posture - that hook is best-effort telemetry, so a generic failure is logged and the evaluation continues (a `RecordingFrameError` from it is data loss and propagates). Which surface the failure arrives on is each method's own: `run_policy` converts it to `status="error"` via its terminal handler, while `eval_policy` propagates rollout failures by design, exactly as a raising `get_actions` does. Verdicts are read with `bool()` rather than type-checked, so the NumPy scalar an ordinary predicate returns (`observation["x"] > 0.5` is a `numpy.bool_`, not a `bool`) is accepted unchanged.
+
+A clause authored in the predicate DSL (`stop_when`, and a benchmark spec's `success` / `failure` / `dense_reward`) is held to a numeric domain when it compiles, because the alternative is a clause that runs and never fires. Every numeric kwarg must be a finite number: `nan` compiles clean and then makes every comparison `False`, so the clause is unsatisfiable and the rollout spends its whole step budget reporting an honest miss. A kwarg that names a **tolerance** - `tol`, `threshold`, or any `*_tol` such as `xy_tol` / `z_tol` - must additionally be `>= 0`, for the same reason by a second route: a tolerance is a bound on a distance, an absolute difference or a squared magnitude, none of which is ever negative, so `{predicate: distance_less_than, threshold: -0.3}` is unsatisfiable rather than loose - and unlike `nan` it reads as a *wider* bound. Signed params keep both signs, because their sign is part of the value: `body_on`'s `z_offset` is an offset a caller lowers below zero to accept a body resting slightly under the reference, `base_velocity`'s `vx` is a velocity component whose sign is a direction, and `body_below_z`'s `z` is a coordinate. Both halves are enforced in `make_predicate`, the one choke point every clause passes through - including the per-stage calls a `staged_reward` compiles by calling back into it - so the refusal names the predicate, the parameter and the value at authoring time rather than one rollout later.
+
 Pass `seed=` to `run_policy` / `start_policy` for a reproducible single rollout: it reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`, so a stochastic policy (VLA action-chunk sampling, diffusion noise) produces the same trajectory on re-run of the same scene. Without a seed the rollout draws from the process-global RNG and can differ run to run. `eval_policy` already seeds per episode via the same mechanism.
 
 ### Async-RTC chunk pipeline (latency masking)
@@ -231,7 +265,11 @@ A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc
 
 **Async-RTC in `eval_policy` (opt-in).** The success-rate eval path (`eval_policy` / `evaluate(success_fn=...)`) accepts the same `async_rtc` and `rtc_inference_timeout_s`, but defaults to `async_rtc=False`. The synchronous eval pauses the world during inference, so the success-rate is bit-stable and reproducible (the policy always sees the seam observation). Setting `async_rtc=True` evaluates a chunk-emitting policy under the realistic control latency it faces in deployment: the prefetch feeds the policy a slightly staler (mid-chunk) observation at the seam, so the measured success-rate can shift - that is the point, it measures robustness to inference latency. Either way the eval `{"json": {...}}` payload now carries the same six `rtc_*` fields (inference timing is reported even on the synchronous path). `async_rtc=True` is rejected on the benchmark/spec path (`evaluate_benchmark` / `evaluate(spec=...)`), which stays synchronous for bit-stable reproducibility; use `run_policy(async_rtc=...)` for benchmark-style wall-clock latency masking.
 
-`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames`, `sim_time_s` (when the backend reports it) and the six `rtc_*` async-RTC telemetry fields above - so an agent can read the outcome programmatically (did it move? how many steps? was inference masked?) without regex-parsing the prose. The `status` reflects whether the robot *moved*, not merely whether every key resolved: a run where **no** step resolved any key (the robot never moved) returns `status="error"`, while a run where some keys resolve every step - e.g. a policy trained on a superset embodiment that emits one extra key the robot lacks - is operational and returns `status="success"` with a non-fatal `N/M action steps had unresolved keys` note and a `partial_action_failure_rate`.
+`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames`, `sim_time_s` (when the backend reports it) and the six `rtc_*` async-RTC telemetry fields above - so an agent can read the outcome programmatically (did it move? how many steps? was inference masked?) without regex-parsing the prose. `elapsed_s` is measured on a monotonic clock, so it is the time that actually elapsed rather than the difference between two readings of a date that a correction can move. The `status` reflects whether the robot *moved*, not merely whether every key resolved: a run where **no** step resolved any key (the robot never moved) returns `status="error"`, while a run where some keys resolve every step - e.g. a policy trained on a superset embodiment that emits one extra key the robot lacks - is operational and returns `status="success"` with a non-fatal `N/M action steps had unresolved keys` note and a `partial_action_failure_rate`.
+
+At `n_episodes > 1` the same call returns an aggregate, and the aggregate keeps every field above whose value the call already knows. That is the identity fields, the policy-binding flags (`positional_fallback_used`, `generic_state_keys_used`, `missing_state_keys_used`) and the policy-load telemetry (`policy_load_time_s`, `policy_load_cache_hit`, `policy_resident_rss_mb`) - all read off the ONE policy object every episode ran with, which is how `eval_policy` and `evaluate_benchmark` already report them for their own multi-episode aggregates. Two of those fields are only meaningful across a loop in the first place: a `policy_load_cache_hit` of `false` on episode 2+ means the caller rebuilt the policy instead of reusing `policy_object=`, and a flat `policy_resident_rss_mb` is what says the model stayed resident rather than reloading per episode. The binding flags matter most here for a different reason - the multi-episode shape is the one that collects a dataset, and a `true` flag means those episodes recorded a robot moving on meaningless inputs while `status` stayed `"success"`. Read them the same way at any episode count.
+
+What the aggregate adds is `total_steps`, `stopped_reasons` (aligned with `episodes`), `video_paths` and the per-episode `episodes` records; `steps_used` equals `total_steps` and `stopped_reason` is the last episode's. Per-episode action health is *not* summarised, because a per-step rate has no single aggregate an N-episode call can report without choosing one - each record in `episodes` carries its own `action_errors`, `action_resolution_rate` and `partial_action_failure_rate`, so the worst episode is `max(e["partial_action_failure_rate"] for e in report["episodes"])`.
 
 `eval_policy` accepts the same `video={...}` recording config as `run_policy` (`path` enables it, plus `fps` / `camera` / `width` / `height` - an unknown key or a non-positive size is a caller error, never silently ignored), but writes **one MP4 per episode** with `_ep{i}` inserted into the filename (`eval.mp4` -> `eval_ep0.mp4`, `eval_ep1.mp4`, ...), so a multi-episode evaluation can be *watched* to see why episodes fail rather than only read as an aggregate `success_rate`. The written files are listed in the result json `video_paths`; the output path is validated and the camera probed up-front, so a bad camera fails the eval immediately instead of after N episodes of empty MP4s. `evaluate_benchmark` accepts the same `video={...}` config and records one MP4 per episode too, so a benchmark evaluation can be watched to see why episodes fail. Frames are captured synchronously on the eval thread (render is read-only over `mjData`), so recording does not perturb the bit-stable benchmark rollout.
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |

@@ -20,11 +20,16 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import threading
+from typing import Any
 
 import numpy as np
 import pytest
 
-from strands_robots.simulation.base import randomization_range_error
+from strands_robots.simulation.base import (
+    MAX_EVAL_SEED,
+    randomization_range_error,
+    randomization_seed_error,
+)
 from strands_robots.simulation.newton.randomization import (
     _OBS_NOISE_PARAMS,
     _RANDOMIZE_PARAMS,
@@ -280,6 +285,120 @@ def _active_host(builder: _FakeBuilder | None = None) -> _RebuildHost:
     # so the concrete type is irrelevant to the code under test.
     host._world = object()  # type: ignore[assignment]
     return host
+
+
+# --------------------------------------------------------------------------- #
+# Seed domain on both randomization entry points (no Newton required)
+# --------------------------------------------------------------------------- #
+
+_UNUSABLE_SEEDS = [2.5, 3.0, float("nan"), float("inf"), -1, True, False, "7", [7]]
+_USABLE_SEEDS = [None, 0, 7, np.int64(7)]
+
+
+def _seeded(method: str, seed: Any) -> tuple[dict, _NoiseHost]:
+    """Drive one randomization entry point with ``seed``, returning result and host.
+
+    ``seed`` is ``Any`` because the probe values are deliberately outside the
+    ``int | None`` the signatures declare - refusing them is the contract.
+
+    Both seed guards run before ``with self._lock``, so the pure-Python host the
+    sibling guard tests already use reaches them with neither Newton nor Warp
+    installed.
+    """
+    host = _NoiseHost()
+    # randomize() checks only `_world is None`; set_obs_noise() has no world guard.
+    host._world = object()  # type: ignore[assignment]
+    result = host.randomize(seed=seed) if method == "randomize" else host.set_obs_noise(seed=seed)
+    return result, host
+
+
+class TestSeedRefusalOnBothEntryPoints:
+    """A seed ``default_rng`` cannot take is refused at the call that supplied it.
+
+    Both methods store the seed and draw from it later - ``randomize`` inside
+    ``_rebuild``, ``set_obs_noise`` on the first observation drawn - so without
+    the guard an unusable value raises long after the call reported the
+    randomization configured. That deferred consumption is why the guard exists,
+    and the last two tests here pin it as a property of ``default_rng`` rather
+    than as a claim.
+
+    Newton's half of these refusals was pinned structurally only.
+    ``TestBackendGuardParity`` in the MuJoCo module asserts by AST that every
+    backend *calls* :func:`~strands_robots.simulation.base.randomization_seed_error`,
+    which a call whose verdict is discarded still satisfies, and the behavioural
+    pin beside it drives the MuJoCo backend. The sibling range and amplitude
+    guards here are driven directly (``TestRandomizeGuards``,
+    ``TestSetObsNoiseValidation``); the seed was the one shared domain on this
+    backend whose refusal nothing executed.
+    """
+
+    @pytest.mark.parametrize("method", ["randomize", "set_obs_noise"])
+    @pytest.mark.parametrize("seed", _UNUSABLE_SEEDS)
+    def test_the_refusal_is_the_shared_verdict_verbatim(self, method, seed):
+        result, _host = _seeded(method, seed)
+
+        assert result["status"] == "error"
+        # Equality, not a substring: the backend returns the shared domain's
+        # verdict rather than a locally reworded copy that could drift from it.
+        assert result["content"][0]["text"] == randomization_seed_error(seed, method)
+
+    @pytest.mark.parametrize("seed", _UNUSABLE_SEEDS)
+    def test_a_refused_randomize_configures_nothing_and_never_rebuilds(self, seed):
+        host = _active_host()
+
+        assert host.randomize(randomize_physics=True, seed=seed)["status"] == "error"
+        assert host._dr is None
+        # _dr_applied and _dr_light_dir are written by _apply_domain_randomization,
+        # which only runs from _rebuild - so both being unset is the evidence the
+        # refusal returned before the rebuild rather than after it.
+        assert host._dr_applied is None
+        assert host._dr_light_dir is None
+
+    @pytest.mark.parametrize("seed", _UNUSABLE_SEEDS)
+    def test_a_refused_set_obs_noise_configures_nothing_and_builds_no_rng(self, seed):
+        host = _NoiseHost()
+
+        assert host.set_obs_noise(joint_pos_std=0.01, seed=seed)["status"] == "error"
+        assert host._obs_noise is None
+        assert host._obs_noise_rng is None
+
+    @pytest.mark.parametrize("seed", _USABLE_SEEDS)
+    def test_usable_seeds_are_still_applied_on_both_entry_points(self, seed):
+        host = _active_host()
+        assert host.randomize(randomize_physics=True, seed=seed)["status"] == "success"
+        assert host._dr is not None and host._dr_applied is not None
+
+        noise_host = _NoiseHost()
+        assert noise_host.set_obs_noise(joint_pos_std=0.01, seed=seed)["status"] == "success"
+        assert noise_host._obs_noise_rng is not None
+
+    @pytest.mark.parametrize("seed", [2**32, 2**64])
+    def test_this_path_keeps_the_full_default_rng_width(self, seed):
+        """No ceiling here, deliberately: these seeds only reach ``default_rng``.
+
+        A rollout seed is additionally applied through the legacy NumPy global
+        RNG, which refuses anything above ``MAX_EVAL_SEED``; ``default_rng``
+        takes a non-negative integer of any width. Pinning the contrast keeps a
+        future edit from copying the rollout ceiling onto a surface that can
+        honor more than it bounds.
+        """
+        assert randomization_seed_error(seed, "randomize") is None
+        assert randomization_seed_error(seed, "eval_policy", max_seed=MAX_EVAL_SEED) is not None
+
+        host = _active_host()
+        assert host.randomize(randomize_physics=True, seed=seed)["status"] == "success"
+
+        _result, noise_host = _seeded("set_obs_noise", seed)
+        assert noise_host._obs_noise_rng is not None
+
+    @pytest.mark.parametrize("seed", [2.5, float("nan"), "7"])
+    def test_the_deferred_failure_the_guard_prevents_is_real(self, seed):
+        with pytest.raises(TypeError, match="SeedSequence expects int"):
+            np.random.default_rng(seed)
+
+    def test_a_negative_seed_is_refused_by_default_rng_too(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            np.random.default_rng(-1)
 
 
 class TestApplyDomainRandomizationNoSpec:

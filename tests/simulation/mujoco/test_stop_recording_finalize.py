@@ -24,7 +24,12 @@ import pytest
 
 pytest.importorskip("mujoco")
 
+from strands_robots.dataset_recorder import DatasetRecorder  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests.test_recorder_counters_track_on_disk_frames import (  # noqa: E402
+    _BufferedDataset,
+    _record,
+)
 
 
 class _FakeRecorder:
@@ -283,9 +288,9 @@ class TestStopRecordingEmptyDataset:
     NOT fail a dataset that was filled via per-episode save_episode.
 
     Regression for the silent empty-dataset bug. A recording driven by a path
-    that never feeds the dataset recorder (eval_policy / evaluate /
-    replay_episode / a bare step loop - only run_policy's on_frame hook calls
-    add_frame) leaves the recorder with zero frames. Previously stop_recording
+    that never fed the dataset recorder (replay_episode, teleoperate or a bare
+    step loop - none of which takes an on_frame hook, while run_policy installs
+    one itself) leaves the recorder with zero frames. Previously stop_recording
     called save_episode unconditionally, discarded its error return, and
     reported success with "0 frames, 0 episode(s)", producing a dataset with
     only meta/info.json (no parquet/video).
@@ -306,10 +311,46 @@ class TestStopRecordingEmptyDataset:
         text = result["content"][0]["text"]
         assert "captured no frames" in text
         assert "0 frames" in text
-        # actionable guidance: point to the only path that records frames.
+        # actionable guidance: name the path that records frames on its own.
         assert "run_policy" in text
         # save_episode must NOT be called on the empty buffer.
         assert rec.calls == []
+
+    def test_a_discarded_episode_does_not_blind_the_refusal(self, recording_sim):
+        """An aborted episode leaves nothing on disk, so case 3 must still fire.
+
+        ``clear_episode_buffer`` discards a buffered episode. Those frames were
+        counted by ``add_frame`` at buffer time but never flushed, so a recorder
+        whose only episode was aborted holds no on-disk frames - exactly the
+        state this refusal exists for. Driven through the real
+        ``DatasetRecorder`` so the counter contract is what makes it fire.
+        """
+        rec = DatasetRecorder(dataset=_BufferedDataset(), task="probe")
+        _record(rec, 12)
+        rec.clear_episode_buffer()  # the abort path (run_multi_policy's finally)
+        assert rec.dataset.disk_frames == 0, "premise: nothing reached disk"
+
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+
+        assert result["status"] == "error", (
+            "stop_recording reported success for a dataset with no frames on "
+            f"disk (recorder.frame_count={rec.frame_count})"
+        )
+        assert "captured no frames" in result["content"][0]["text"]
+
+    def test_a_dataset_with_frames_on_disk_is_still_finalized(self, recording_sim):
+        """Control: the refusal must not fire once an episode really saved."""
+        rec = DatasetRecorder(dataset=_BufferedDataset(), task="probe")
+        _record(rec, 6)
+        rec.save_episode()  # flushed to disk; nothing pending afterwards
+        assert rec.dataset.disk_frames == 6
+
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+
+        assert result["status"] == "success"
+        assert "6 frames" in result["content"][0]["text"]
 
     def test_empty_recording_does_not_finalize_or_upload(self, recording_sim):
         rec = _FakeRecorder(

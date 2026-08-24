@@ -18,15 +18,19 @@ Topics published:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
 
+from strands_robots.bus_access import read_observation
 from strands_robots.mesh.audit import log_safety_event
+from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.session import (
     HAND_HZ,
     HEALTH_HZ,
@@ -41,6 +45,66 @@ from strands_robots.mesh.session import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _quat_wxyz_from_rotmat(mat: Any) -> list[float]:
+    """Rotation matrix -> unit quaternion, scalar-first ``[w, x, y, z]``.
+
+    Shepperd's method: take the trace branch when the trace is positive,
+    otherwise branch on the largest diagonal term. All four branches are needed.
+    The trace branch alone divides by ``sqrt(trace + 1)``, which goes to zero as
+    the trace approaches ``-1``, so it cannot serve the ``trace <= 0`` half of
+    the domain - and that half is not an edge case. A rotation's trace is
+    ``1 + 2 * cos(angle)``, so ``trace <= 0`` is exactly ``angle >= 120
+    degrees``, which is 61% of SO(3) under the uniform measure: a robot that has
+    turned to face back the way it came is in it. Substituting the identity
+    quaternion there reports such a robot as one that has not turned at all, and
+    reports it as a valid unit quaternion, so no consumer can tell.
+
+    The result is normalized, so a matrix that is only approximately orthonormal
+    - a pose integrated from odometry or handed over by a SLAM stack - still
+    yields a unit quaternion rather than one whose length quietly carries the
+    input's drift onto the wire. It is then sign-canonicalized to ``w >= 0``:
+    ``q`` and ``-q`` encode the same rotation, so the canonical sign is safe for
+    every consumer and keeps repeated reads of an unchanged pose identical.
+
+    The MuJoCo and Isaac backends hold the same rule, and this is deliberately a
+    third copy rather than an import: :mod:`strands_robots.mesh` must not depend
+    on :mod:`strands_robots.simulation`, and the shared-domain module those two
+    layers do have in common (:mod:`strands_robots.utils`) is the refusal-guard
+    module, which holds a scanned invariant that no function in it converts a
+    caller's value outside a ``try``. Giving all three one owner is a refactor
+    of two already-correct implementations, separate from reporting a pose.
+
+    Args:
+        mat: A rotation matrix, or an SE(3) transform whose leading 3x3 block is
+            one (the translation row and column are not read).
+
+    Returns:
+        ``[w, x, y, z]`` as plain floats: a unit quaternion with ``w >= 0``.
+    """
+    import numpy as np
+
+    m = np.asarray(mat, dtype=np.float64)
+    t = float(m[0, 0] + m[1, 1] + m[2, 2])
+    if t > 0.0:
+        s = float(np.sqrt(t + 1.0)) * 2.0
+        w, x, y, z = 0.25 * s, (m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s
+    elif m[0, 0] >= m[1, 1] and m[0, 0] >= m[2, 2]:
+        s = float(np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2])) * 2.0
+        w, x, y, z = (m[2, 1] - m[1, 2]) / s, 0.25 * s, (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s
+    elif m[1, 1] >= m[2, 2]:
+        s = float(np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2])) * 2.0
+        w, x, y, z = (m[0, 2] - m[2, 0]) / s, (m[0, 1] + m[1, 0]) / s, 0.25 * s, (m[1, 2] + m[2, 1]) / s
+    else:
+        s = float(np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1])) * 2.0
+        w, x, y, z = (m[1, 0] - m[0, 1]) / s, (m[0, 2] + m[2, 0]) / s, (m[1, 2] + m[2, 1]) / s, 0.25 * s
+    q = np.array([w, x, y, z], dtype=np.float64)
+    norm = float(np.linalg.norm(q)) or 1.0
+    q = q / norm
+    if q[0] < 0.0:
+        q = -q
+    return [float(v) for v in q]
 
 
 def _resolve_hz(env_name: str, default: float) -> float:
@@ -98,6 +162,38 @@ class SensorLoopsMixin:
         """
         raise NotImplementedError("SensorLoopsMixin.publish must be provided by a host class")
 
+    def _paced(self, period: float) -> Iterator[None]:
+        """Yield once per ``period`` seconds until the host stops.
+
+        Every sensor loop in this mixin used to end with
+        ``if self._stop_event.wait(period): break``. That wait is a delay where a
+        rate needs a deadline: the time a read spends on a bus or in a driver was
+        added to the period rather than subtracted from it, so the loop ran at
+        ``1 / (period + read)`` while every consumer read the achieved rate as the
+        sensor's own limit. :class:`~strands_robots.mesh.pacing.Ticker` paces on
+        the selector timer instead, which treats the period as a deadline and
+        still notices a stop within 10ms.
+
+        Written as one generator rather than seven conversions on purpose: these
+        loops differ only in what they read, so the pacing belongs in a single
+        place where its ownership rules -- construct one ticker per loop, close it
+        even when the body raises -- cannot be got right in six loops and wrong in
+        the seventh.
+
+        Args:
+            period: Seconds per tick, forwarded to the ticker (which refuses a
+                non-positive or non-finite value).
+
+        Yields:
+            Once per tick. The ticker is closed when the caller's ``for`` ends,
+            breaks, or unwinds on an exception.
+        """
+        with Ticker(period, self._stop_event) as ticker:
+            while self._running:
+                yield
+                if ticker.wait():
+                    break
+
     # Pose
 
     def _pose_loop(self) -> None:
@@ -105,7 +201,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 pose = self._read_pose()
                 if pose:
@@ -116,8 +212,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: pose tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_pose(self) -> dict[str, Any] | None:
         r = self.robot
@@ -140,16 +234,7 @@ class SensorLoopsMixin:
                     pose["y"] = float(mat[1, 3])
                     pose["z"] = float(mat[2, 3])
                     pose["theta"] = float(np.arctan2(mat[1, 0], mat[0, 0]))
-                    trace = float(mat[0, 0] + mat[1, 1] + mat[2, 2])
-                    if trace > 0:
-                        s = 0.5 / np.sqrt(trace + 1.0)
-                        w = 0.25 / s
-                        x = (mat[2, 1] - mat[1, 2]) * s
-                        y = (mat[0, 2] - mat[2, 0]) * s
-                        z = (mat[1, 0] - mat[0, 1]) * s
-                    else:
-                        w, x, y, z = 1.0, 0.0, 0.0, 0.0
-                    pose["quat"] = [float(w), float(x), float(y), float(z)]
+                    pose["quat"] = _quat_wxyz_from_rotmat(mat)
                     pose["source"] = "provider"
                     pose["frame"] = "map"
                     return pose
@@ -187,7 +272,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 health = self._read_health()
                 if health:
@@ -198,8 +283,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: health tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_health(self) -> dict[str, Any] | None:
         r = self.robot
@@ -273,7 +356,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 imu = self._read_imu()
                 if imu:
@@ -284,8 +367,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: imu tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_imu(self) -> dict[str, Any] | None:
         r = self.robot
@@ -302,7 +383,7 @@ class SensorLoopsMixin:
         try:
             inner = getattr(r, "robot", None)
             if inner is not None and hasattr(inner, "get_observation") and getattr(inner, "is_connected", False):
-                obs = inner.get_observation()
+                obs = read_observation(inner)
                 for key in ("imu_rpy", "imu", "gyroscope", "accelerometer"):
                     if key in obs:
                         val = obs[key]
@@ -328,7 +409,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 odom = self._read_odom()
                 if odom:
@@ -339,8 +420,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: odom tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_odom(self) -> dict[str, Any] | None:
         r = self.robot
@@ -363,28 +442,30 @@ class SensorLoopsMixin:
             return
         summary_period = 1.0 / hz
         state_period = 1.0 / LIDAR_STATE_HZ
-        last_state_publish = 0.0
+        # A publish interval is a duration, so it is measured on a clock that
+        # cannot step. -inf rather than 0.0 because a monotonic reading is only
+        # meaningful relative to another one: the first tick should be due
+        # wherever a platform's monotonic epoch happens to sit.
+        last_state_publish_mono = -math.inf
 
-        while self._running:
+        for _ in self._paced(summary_period):
             try:
-                now = time.time()
+                now = time.monotonic()
                 summary = self._read_lidar_summary()
                 if summary:
                     self.publish(f"strands/{self.peer_id}/lidar/summary", summary)
 
-                if now - last_state_publish >= state_period:
+                if now - last_state_publish_mono >= state_period:
                     state = self._read_lidar_state()
                     if state:
                         self.publish(f"strands/{self.peer_id}/lidar/state", state)
-                    last_state_publish = now
+                    last_state_publish_mono = now
             except NotImplementedError:
                 # MRO contract violation: surface immediately rather than
                 # silently dropping every sensor tick (issue #258).
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: lidar tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(summary_period):
-                break
 
     def _read_lidar_summary(self) -> dict[str, Any] | None:
         r = self.robot
@@ -417,7 +498,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 hands = self._read_hands()
                 if hands:
@@ -429,8 +510,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: hand tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_hands(self) -> dict[str, dict[str, Any]] | None:
         r = self.robot
@@ -455,7 +534,7 @@ class SensorLoopsMixin:
         if hz <= 0:
             return
         period = 1.0 / hz
-        while self._running:
+        for _ in self._paced(period):
             try:
                 info = self._read_map_info()
                 if info:
@@ -466,8 +545,6 @@ class SensorLoopsMixin:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: map_info tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
 
     def _read_map_info(self) -> dict[str, Any] | None:
         r = self.robot

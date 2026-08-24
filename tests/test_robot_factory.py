@@ -2,6 +2,7 @@
 
 import importlib
 import os
+import sys
 import types
 
 import pytest
@@ -96,6 +97,22 @@ class TestRobotRegistry:
 
 
 class TestAutoDetectMode:
+    @pytest.fixture(autouse=True)
+    def _no_usb_hardware(self, monkeypatch):
+        """Pin the port list empty so the verdict is the code's, not the host's.
+
+        These tests assert the no-hardware default, but ``_auto_detect_mode``
+        reads the host's real USB serial ports - so on a dev machine with a
+        servo bus attached (an SO-10x CH34x bridge, vid 0x1a86) the detection
+        correctly answers "real" and the assertion fails for a reason that has
+        nothing to do with the code under test. Same shape as the shared-cache
+        rule in AGENTS.md #15: a test that reads shared host state has a
+        verdict that depends on what the host already holds.
+        """
+        import serial.tools.list_ports
+
+        monkeypatch.setattr(serial.tools.list_ports, "comports", lambda: [])
+
     def test_defaults_to_sim(self):
         """No hardware plugged in → sim."""
         assert _auto_detect_mode("so100") == "sim"
@@ -382,6 +399,192 @@ class TestFactoryForwardsPosition:
             assert factory_accepts is backend_accepts, f"verdicts differ for position={position!r}"
 
 
+class TestFactorySpawnParameterForwarding:
+    """``Robot(...)`` must express every spawn parameter ``add_robot`` accepts.
+
+    The factory is a thin front door to ``SimEngine.add_robot``, and ``position``
+    is documented as forwarded verbatim so the backend's contract governs both
+    its default and its refusals. ``orientation`` and ``keyframe`` are the same
+    kind of parameter on the same method - both declared by the ABC and by every
+    backend - but were not forwarded. The backend constructor's ``**kwargs``
+    absorbed them, so a requested rotation or keyframe spawn was silently dropped
+    and the robot came up unrotated in the zero configuration while the factory
+    reported success. The refusals ``add_robot`` documents did not reach the
+    caller either, including the one it states outright for a bad keyframe: "a
+    hard error that names the available keyframes; it never silently falls back
+    to zeros".
+    """
+
+    # A named actuator and a <keyframe> carrying BOTH halves of a keyframe: the
+    # pose and the actuator command that holds it. The actuator is named because
+    # a keyed ctrl is applied by actuator name, so an unnamed one is skipped and
+    # could not show whether the command travelled.
+    MJCF = """<mujoco model="test_arm">
+      <worldbody>
+        <light pos="0 0 3"/>
+        <geom type="plane" size="1 1 0.1"/>
+        <body name="link0" pos="0 0 0.1">
+          <joint name="joint0" type="hinge" axis="0 0 1"/>
+          <geom type="capsule" size="0.02" fromto="0 0 0  0 0 0.2"/>
+        </body>
+      </worldbody>
+      <actuator><position name="act0" joint="joint0" kp="10" ctrlrange="-2 2"/></actuator>
+      <keyframe><key name="home" qpos="0.6" ctrl="0.6"/></keyframe>
+    </mujoco>"""
+
+    ROTATION = [0.7071068, 0.0, 0.0, 0.7071068]  # 90 deg about x, wxyz
+
+    @classmethod
+    def _model(cls, tmp_path):
+        """Write the inline arm so no downloaded asset is needed."""
+        path = tmp_path / "keyframed_arm.xml"
+        path.write_text(cls.MJCF)
+        return str(path)
+
+    def _spawn(self, tmp_path, **kwargs):
+        """Return the spawn state the factory actually gave the backend."""
+        sim = Robot("so100", mode="sim", urdf_path=self._model(tmp_path), mesh=False, **kwargs)
+        try:
+            return {
+                "orientation": list(sim._world.robots["so100"].orientation),
+                "qpos": [float(v) for v in sim._world._data.qpos],
+                "ctrl": [float(v) for v in sim._world._data.ctrl],
+            }
+        finally:
+            sim.destroy()
+
+    def _add_robot(self, tmp_path, **kwargs):
+        """The same spawn state reached through ``add_robot`` directly."""
+        from strands_robots import Simulation
+
+        sim = Simulation(tool_name="direct", mesh=False)
+        try:
+            sim.create_world()
+            result = sim.add_robot(name="so100", urdf_path=self._model(tmp_path), **kwargs)
+            assert result["status"] != "error", result
+            return {
+                "orientation": list(sim._world.robots["so100"].orientation),
+                "qpos": [float(v) for v in sim._world._data.qpos],
+                "ctrl": [float(v) for v in sim._world._data.ctrl],
+            }
+        finally:
+            sim.destroy()
+
+    def test_factory_can_express_every_add_robot_spawn_parameter(self):
+        """Root cause: a parameter the factory cannot name is one a caller cannot reach.
+
+        ``Robot(**kwargs)`` forwards leftovers to the *backend constructor*, not
+        to ``add_robot``, and that constructor takes ``**kwargs`` of its own - so
+        an unforwarded spawn parameter is absorbed with no error and no warning
+        rather than surfacing as an unexpected-keyword failure.
+        """
+        import inspect
+
+        from strands_robots.simulation.base import SimEngine
+
+        backend = set(inspect.signature(SimEngine.add_robot).parameters) - {"self"}
+        factory = set(inspect.signature(Robot).parameters) - {"kwargs"}
+        unreachable = sorted(backend - factory)
+        assert not unreachable, (
+            f"Robot() cannot express add_robot parameter(s) {unreachable}; a caller passing "
+            "one gets it absorbed by the backend constructor's **kwargs and silently dropped. "
+            "Forward it in the factory's add_robot call, or give it a factory parameter that "
+            "documents why the front door omits it."
+        )
+
+    def test_keyframe_reaches_the_pose_the_backend_would_spawn(self, tmp_path):
+        """The whole point of the parameter: a non-zero canonical start pose."""
+        pytest.importorskip("mujoco")
+        assert self._spawn(tmp_path, keyframe="home")["qpos"] == pytest.approx([0.6])
+
+    def test_keyframe_also_carries_the_actuator_command_that_holds_the_pose(self, tmp_path):
+        """A MuJoCo ``<key>`` pairs a pose with the command that holds it.
+
+        Forwarding only the pose would leave a gravity-loaded arm standing at its
+        home configuration with its actuators commanded to zero, so the pose is
+        not self-holding and collapses as soon as the world steps.
+        """
+        pytest.importorskip("mujoco")
+        assert self._spawn(tmp_path, keyframe="home")["ctrl"] == pytest.approx([0.6])
+
+    def test_keyframe_by_index_is_forwarded_too(self, tmp_path):
+        """``add_robot`` documents a name *or* an index; both must reach it."""
+        pytest.importorskip("mujoco")
+        assert self._spawn(tmp_path, keyframe=0)["qpos"] == pytest.approx([0.6])
+
+    def test_orientation_reaches_the_backend(self, tmp_path):
+        pytest.importorskip("mujoco")
+        assert self._spawn(tmp_path, orientation=self.ROTATION)["orientation"] == pytest.approx(self.ROTATION)
+
+    def test_factory_and_add_robot_reach_the_same_spawn_state(self, tmp_path):
+        """Parity: the front door and the method it wraps must agree.
+
+        A difference here is a spawn state the caller can only reach by dropping
+        out of the factory and calling the backend directly.
+        """
+        pytest.importorskip("mujoco")
+        kwargs = {"keyframe": "home", "orientation": self.ROTATION}
+        through_factory = self._spawn(tmp_path, **kwargs)
+        through_backend = self._add_robot(tmp_path, **kwargs)
+        for field in ("orientation", "qpos", "ctrl"):
+            assert through_factory[field] == pytest.approx(through_backend[field]), (
+                f"{field}: factory gave {through_factory[field]} but add_robot gives {through_backend[field]}"
+            )
+
+    def test_unknown_keyframe_is_refused_not_silently_spawned_at_zero(self, tmp_path):
+        """``add_robot`` promises this is a hard error naming the available keyframes.
+
+        Absorbed instead, the caller gets a robot in the zero configuration -
+        out-of-distribution for a policy trained from the home pose - and nothing
+        says the requested pose was never applied.
+        """
+        pytest.importorskip("mujoco")
+        with pytest.raises(RuntimeError, match="home"):
+            Robot(
+                "so100",
+                mode="sim",
+                urdf_path=self._model(tmp_path),
+                mesh=False,
+                keyframe="not_a_keyframe",
+            )
+
+    def test_malformed_orientation_is_refused(self, tmp_path):
+        """A 3-vector is a caller mistake, not a request for the identity rotation."""
+        pytest.importorskip("mujoco")
+        with pytest.raises(RuntimeError, match="4-element vector"):
+            Robot(
+                "so100",
+                mode="sim",
+                urdf_path=self._model(tmp_path),
+                mesh=False,
+                orientation=[0.0, 0.0, 1.0],
+            )
+
+    def test_non_finite_orientation_is_refused(self, tmp_path):
+        """nan/inf in a base quaternion would propagate through the physics state."""
+        pytest.importorskip("mujoco")
+        with pytest.raises(RuntimeError, match="finite numbers"):
+            Robot(
+                "so100",
+                mode="sim",
+                urdf_path=self._model(tmp_path),
+                mesh=False,
+                orientation=[float("nan"), 0.0, 0.0, 0.0],
+            )
+
+    def test_omitting_them_keeps_the_historical_spawn(self, tmp_path):
+        """No-overreach: forwarding must not change what an existing caller gets.
+
+        Omitted, both parameters keep the documented defaults - the zero joint
+        configuration, its actuators commanded to zero, and no rotation.
+        """
+        pytest.importorskip("mujoco")
+        spawned = self._spawn(tmp_path)
+        assert spawned["qpos"] == pytest.approx([0.0])
+        assert spawned["ctrl"] == pytest.approx([0.0])
+        assert spawned["orientation"] == pytest.approx([1.0, 0.0, 0.0, 0.0])
+
+
 class TestRobotRealMode:
     """Tests for mode='real' path (mocked - no physical hardware)."""
 
@@ -486,6 +689,11 @@ class TestModeNormalization:
         from strands_robots.robot import _auto_detect_mode
 
         monkeypatch.setenv("STRANDS_ROBOT_MODE", "auto")
+        # Pin the port list empty: with a servo bus attached to the host the
+        # detection correctly answers "real" and this asserts the wrong layer.
+        import serial.tools.list_ports
+
+        monkeypatch.setattr(serial.tools.list_ports, "comports", lambda: [])
         # Auto-detect with no USB hardware → falls back to sim
         assert _auto_detect_mode("so100") == "sim"
 
@@ -1365,8 +1573,8 @@ class TestMinimalConfigContractBranches:
             hw._create_minimal_config("needs_arg_robot", cameras={})
 
 
-class TestHardwareConfigV040Followups:
-    """v0.4.0 hardware_robot follow-up bundle (#389) - PR #276 review trail."""
+class TestForwardableKwargDropIsReported:
+    """A kwarg the target dataclass cannot take is reported, never dropped silently."""
 
     def test_cross_robot_kwarg_drop_emits_debug_signal(self, caplog):
         """#294/#297: dropping a forwardable kwarg the target dataclass does
@@ -1393,6 +1601,10 @@ class TestHardwareConfigV040Followups:
             f"expected a DEBUG signal naming the dropped 'kp' kwarg; got {drop_msgs}"
         )
 
+
+class TestThirdPartyPluginGuardIsNarrow:
+    """The third-party plugin registration guard names the exceptions it absorbs."""
+
     def test_register_third_party_plugins_exception_is_narrow(self):
         """#291: the register_third_party_plugins() guard must NOT be a bare
         except Exception. Pin the narrowed (ImportError, AttributeError,
@@ -1409,6 +1621,10 @@ class TestHardwareConfigV040Followups:
         assert "except Exception as exc:  # noqa: BLE001 -- third-party plugin" not in src, (
             "the bare except Exception on plugin registration must be gone (#291)"
         )
+
+
+class TestLerobotExtraShipsAnAarch64VideoDecoder:
+    """The ``[lerobot]`` extra declares a video decoder that resolves on aarch64."""
 
     def test_lerobot_extra_provides_aarch64_video_decoder(self):
         """#378: a `pip install strands-robots[lerobot]` on Thor/Jetson must get a
@@ -1522,6 +1738,50 @@ class TestRobotNamePreservesUserInput:
             sim.destroy()
 
 
+def _stub_device_connect(monkeypatch, runtime):
+    """Substitute the Device Connect integration module for the foreground loop.
+
+    *runtime* is what ``init_device_connect_sync`` returns, or ``None`` to make
+    importing the module fail the way an uninstalled ``[device-connect]`` extra
+    does. Substituting the module is what makes the two branches selectable:
+    unstubbed, the shipped code brings up a real Zenoh session where the extra
+    happens to be installed and raises ``ImportError`` where it is not, so which
+    branch a test exercised was decided by the environment rather than the test.
+    """
+    if runtime is None:
+        monkeypatch.setitem(sys.modules, "strands_robots.device_connect", None)
+        return
+    module = types.ModuleType("strands_robots.device_connect")
+    module.init_device_connect_sync = lambda robot, peer_id=None, peer_type=None: runtime
+    monkeypatch.setitem(sys.modules, "strands_robots.device_connect", module)
+
+
+def _drive_foreground(monkeypatch, capsys, peer_id="so100-test", runtime="runtime", mesh=None, instance=None):
+    """Run the blocking foreground loop once and return its stdout.
+
+    ``time.sleep`` is patched to raise ``KeyboardInterrupt`` (the operator's
+    Ctrl+C) so the loop exits on the first tick, and ``os._exit`` is patched to
+    a sentinel raise so the test process survives. Pass *instance* to inspect
+    what the loop did to it.
+    """
+    if instance is None:
+        instance = types.SimpleNamespace(_peer_id=peer_id, _peer_type="sim", mesh=mesh)
+    _stub_device_connect(monkeypatch, runtime)
+    monkeypatch.setattr("time.sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    class _ExitCalled(Exception):
+        pass
+
+    def _fake_exit(code):
+        raise _ExitCalled()
+
+    monkeypatch.setattr(os, "_exit", _fake_exit)
+
+    with pytest.raises(_ExitCalled):
+        _run_device_connect_foreground(instance)
+    return capsys.readouterr().out
+
+
 class TestRunDeviceConnectAsciiOutput:
     """Regression: the foreground ``.run()`` device-connect loop must print
     ASCII-only status lines.
@@ -1536,38 +1796,8 @@ class TestRunDeviceConnectAsciiOutput:
     otherwise-uncovered foreground loop without blocking.
     """
 
-    def _drive_foreground(self, monkeypatch, capsys, peer_id="so100-test"):
-        """Run the blocking foreground loop once and capture its stdout.
-
-        ``time.sleep`` is patched to raise ``KeyboardInterrupt`` (the operator's
-        Ctrl+C) so the loop exits on the first tick, and ``os._exit`` is patched
-        to a sentinel raise so the test process survives.
-        """
-        instance = types.SimpleNamespace(
-            _peer_id=peer_id,
-            _peer_type="sim",
-            mesh=None,
-        )
-
-        # The device_connect import/init is wrapped in the function's own
-        # try/except, so a missing backend is logged and the loop still prints
-        # its lifecycle lines - exactly the path under test. No stubbing needed.
-        monkeypatch.setattr("time.sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
-
-        class _ExitCalled(Exception):
-            pass
-
-        def _fake_exit(code):
-            raise _ExitCalled()
-
-        monkeypatch.setattr(os, "_exit", _fake_exit)
-
-        with pytest.raises(_ExitCalled):
-            _run_device_connect_foreground(instance)
-        return capsys.readouterr().out
-
     def test_foreground_output_is_ascii_only(self, monkeypatch, capsys):
-        out = self._drive_foreground(monkeypatch, capsys)
+        out = _drive_foreground(monkeypatch, capsys)
         assert out, "foreground loop produced no output"
         offenders = [
             (i, ch, hex(ord(ch))) for i, line in enumerate(out.splitlines(), 1) for ch in line if ord(ch) > 0x7F
@@ -1576,12 +1806,98 @@ class TestRunDeviceConnectAsciiOutput:
         # Output encodes cleanly under a non-UTF-8 locale (no UnicodeEncodeError).
         out.encode("ascii")
 
+    def test_a_failed_bring_ups_report_is_ascii_too(self, monkeypatch, capsys):
+        """The status line the failed branch prints is longer, and also ASCII."""
+        out = _drive_foreground(monkeypatch, capsys, runtime=None)
+        assert out.strip(), "foreground loop produced no output"
+        out.encode("ascii")
+
     def test_foreground_output_reports_lifecycle(self, monkeypatch, capsys):
         """The ASCII messages still convey online + shutdown + peer id."""
-        out = self._drive_foreground(monkeypatch, capsys, peer_id="franka-7")
+        out = _drive_foreground(monkeypatch, capsys, peer_id="franka-7")
         assert "franka-7 is online" in out
         assert "Shutting down franka-7" in out
         assert "franka-7 stopped" in out
+
+
+class TestTheStatusLineReportsWhatCameUp:
+    """``run()`` prints one status line, and it has to match the runtime.
+
+    The foreground runner keeps the process alive when a bring-up fails, which
+    is deliberate. What it may not do is announce the device online on that
+    path: the built-in mesh has already been stopped to make way for Device
+    Connect, so a process whose bring-up failed is reachable over nothing at
+    all, and the "is online" line was the last thing the operator was told.
+    A warning was added beside it, but a warning next to a contradicting claim
+    still leaves the claim.
+    """
+
+    def test_a_started_runtime_is_reported_online(self, monkeypatch, capsys):
+        """The unchanged half: a runtime that came up is announced as before."""
+        out = _drive_foreground(monkeypatch, capsys, peer_id="arm-1", runtime="runtime")
+
+        assert "arm-1 is online. Ctrl+C to stop." in out
+        assert "NOT online" not in out
+
+    def test_a_bring_up_that_never_started_is_not_reported_online(self, monkeypatch, capsys):
+        """An absent extra must not produce an "is online" line."""
+        out = _drive_foreground(monkeypatch, capsys, peer_id="arm-1", runtime=None)
+
+        assert "arm-1 is NOT online" in out
+        assert "arm-1 is online" not in out
+        assert "serves no transport" in out
+
+    def test_the_failed_report_names_the_mesh_that_was_stopped_for_it(self, monkeypatch, capsys):
+        """A robot that had a mesh has lost it, and the line says so.
+
+        Which transport the process no longer has is the operator's next step,
+        so the two cases are distinguished rather than collapsed into one
+        message that is wrong for one of them.
+        """
+        stopped = []
+
+        class _Mesh:
+            def stop(self):
+                stopped.append(True)
+
+        out = _drive_foreground(monkeypatch, capsys, peer_id="arm-1", runtime=None, mesh=_Mesh())
+
+        assert stopped == [True], "the mesh is still stopped for a bring-up that then failed"
+        assert "The built-in mesh was stopped for it" in out
+
+        without_mesh = _drive_foreground(monkeypatch, capsys, peer_id="arm-2", runtime=None, mesh=None)
+        assert "The built-in mesh was stopped for it" not in without_mesh
+
+    def test_an_absent_extra_is_reported_with_the_command_that_installs_it(self, monkeypatch, capsys, caplog):
+        """The ImportError names an internal module; the warning names the extra."""
+        with caplog.at_level("WARNING", logger="strands_robots.robot"):
+            _drive_foreground(monkeypatch, capsys, runtime=None)
+
+        failures = [r.getMessage() for r in caplog.records if "Device Connect init failed" in r.getMessage()]
+        assert failures, [r.getMessage() for r in caplog.records]
+        assert "strands-robots[device-connect]" in failures[0], failures[0]
+
+    def test_a_broker_failure_is_reported_without_an_install_remedy(self, monkeypatch, capsys, caplog):
+        """An unreachable broker is not fixed by installing anything."""
+        module = types.ModuleType("strands_robots.device_connect")
+
+        def _no_broker(robot, peer_id=None, peer_type=None):
+            raise RuntimeError("no broker at tcp://127.0.0.1:7447")
+
+        module.init_device_connect_sync = _no_broker
+        monkeypatch.setitem(sys.modules, "strands_robots.device_connect", module)
+        monkeypatch.setattr("time.sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
+        monkeypatch.setattr(os, "_exit", lambda code: (_ for _ in ()).throw(RuntimeError("exited")))
+
+        instance = types.SimpleNamespace(_peer_id="arm-1", _peer_type="sim", mesh=None)
+        with caplog.at_level("WARNING", logger="strands_robots.robot"), pytest.raises(RuntimeError, match="exited"):
+            _run_device_connect_foreground(instance)
+
+        failures = [r.getMessage() for r in caplog.records if "Device Connect init failed" in r.getMessage()]
+        assert failures, [r.getMessage() for r in caplog.records]
+        assert "no broker" in failures[0]
+        assert "pip install" not in failures[0], failures[0]
+        assert "arm-1 is NOT online" in capsys.readouterr().out
 
     def test_built_in_mesh_is_stopped_before_device_connect(self, monkeypatch, capsys):
         """Device Connect supersedes the auto-started mesh in run() mode.
@@ -1596,17 +1912,11 @@ class TestRunDeviceConnectAsciiOutput:
                 stopped.append(True)
 
         instance = types.SimpleNamespace(_peer_id="m1", _peer_type="sim", mesh=_Mesh())
-        monkeypatch.setattr("time.sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
-
-        class _ExitCalled(Exception):
-            pass
-
-        monkeypatch.setattr(os, "_exit", lambda code: (_ for _ in ()).throw(_ExitCalled()))
-        with pytest.raises(_ExitCalled):
-            _run_device_connect_foreground(instance)
+        out = _drive_foreground(monkeypatch, capsys, instance=instance)
 
         assert stopped == [True], "built-in mesh was not stopped"
         assert instance.mesh is None, "mesh reference not detached"
+        assert "m1 is online" in out, "the substituted runtime did come up"
 
 
 class TestAttachDeviceConnectBindsRun:
@@ -1721,13 +2031,17 @@ class TestRobotFactoryErrorBranches:
 
     def test_device_connect_init_failure_keeps_process_alive(self, monkeypatch, capsys):
         """A failure inside ``init_device_connect_sync`` is logged and the
-        foreground loop still reports the device online (best-effort)."""
+        foreground loop keeps running - it reports the failure rather than
+        exiting, and the status line says the device is not online.
+
+        The integration module is substituted rather than patched through, so
+        this resolves without the ``[device-connect]`` extra installed.
+        """
         instance = types.SimpleNamespace(_peer_id="so100-dc", _peer_type="sim", mesh=None)
 
-        monkeypatch.setattr(
-            "strands_robots.device_connect.init_device_connect_sync",
-            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no broker")),
-        )
+        module = types.ModuleType("strands_robots.device_connect")
+        module.init_device_connect_sync = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no broker"))
+        monkeypatch.setitem(sys.modules, "strands_robots.device_connect", module)
         monkeypatch.setattr("time.sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
 
         class _ExitCalled(Exception):
@@ -1739,7 +2053,8 @@ class TestRobotFactoryErrorBranches:
             _run_device_connect_foreground(instance)
 
         out = capsys.readouterr().out
-        assert "so100-dc is online" in out
+        assert "so100-dc is NOT online" in out
+        assert "Shutting down so100-dc" in out
 
     def test_auto_mode_without_hardware_resolves_to_sim(self, monkeypatch):
         """``mode='auto'`` with no env override and no detected hardware routes
@@ -1863,3 +2178,231 @@ class TestHardwareSendActionTeleopContract:
         assert isinstance(r, TeleopMixin)
         for m in ("attach_teleop", "teleoperate", "stop_teleoperate", "send_action"):
             assert callable(getattr(r, m, None)), f"missing {m}"
+
+
+class TestRealModeAccountsForEverySpawnParameter:
+    """In ``mode="real"`` every declared parameter either arrives or says it did not.
+
+    ``Robot()`` is one front door onto two destinations, and its signature is the
+    union of what they accept. Two parameters already handle the mismatch: a
+    real-only ``cameras`` supplied in ``mode="sim"`` is refused with the route
+    that does work, and a sim-only ``backend`` supplied in ``mode="real"`` is
+    reported at debug level - the hardware path has no backend, so ignoring it is
+    right, and saying so is what keeps it from looking honoured.
+
+    The five remaining parameters the sim path hands to ``add_robot`` -
+    ``urdf_path``, ``data_config``, ``position``, ``orientation``, ``keyframe`` -
+    had neither. They are bound by name, so they never reach the hardware
+    constructor's ``**kwargs``, and the real branch never read them: a caller
+    asking a physical arm to come up at its ``home`` keyframe, or at a base
+    position, got a working robot that discarded the request with nothing emitted
+    at any log level.
+
+    ``data_config`` was the one with a consequence beyond silence.
+    ``hardware_robot.Robot`` declares it and carries it into the ``policy_config``
+    a policy is built with, so the schema selector its own docstring tells a
+    multi-camera user to "specify explicitly" was dropped between the two, and
+    the policy came up on its default embodiment. It is forwarded now. The four
+    that describe a pose in a simulated world cannot be forwarded anywhere - a
+    physical arm is already where it is - so they take the mechanism ``backend``
+    already uses.
+
+    The contract graded here is the union of both: a parameter the sim path
+    forwards must, in ``mode="real"``, either have its value reach the hardware
+    class or be named in a debug record. That is derived from the ``add_robot``
+    call itself rather than from a list here, so a sixth spawn parameter is held
+    to it on arrival.
+    """
+
+    # Sentinels per parameter. ``name`` has to be a registry name because the
+    # factory resolves it before either branch; the rest are only carried.
+    SENTINELS: dict[str, object] = {
+        "name": "so100",
+        "urdf_path": "/tmp/sentinel-model.xml",
+        "data_config": "so100_dualcam",
+        "position": [1.0, 2.0, 0.5],
+        "orientation": [0.0, 1.0, 0.0, 0.0],
+        "keyframe": "home",
+    }
+
+    @staticmethod
+    def _sim_forwarded_params() -> list[str]:
+        """Parameters the sim branch hands to ``add_robot``, read from the source.
+
+        The graded set is the ``add_robot`` call's own keyword arguments whose
+        value is a bare factory parameter, so it tracks that call instead of a
+        second copy of it maintained here.
+        """
+        import ast
+        import inspect
+
+        from strands_robots import robot as robot_mod
+
+        tree = ast.parse(inspect.getsource(robot_mod))
+        impl = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "Robot"][-1]
+        declared = {a.arg for a in impl.args.args} | {a.arg for a in impl.args.kwonlyargs}
+        for node in ast.walk(impl):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_robot":
+                found = [kw.arg for kw in node.keywords if kw.arg in declared]
+                if found:
+                    return found
+        raise AssertionError("no sim-path add_robot call found in the Robot() implementation")
+
+    def _call_real(self, caplog, **kwargs):
+        """Build in ``mode="real"``; return (hardware kwargs, debug records).
+
+        ``caplog`` is cleared per call so a record left by an earlier build in the
+        same test cannot answer for this one.
+        """
+        import logging
+        from unittest.mock import MagicMock, patch
+
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="strands_robots.robot"):
+            with (
+                patch("strands_robots.robot.get_hardware_type", return_value="so100_follower"),
+                patch("strands_robots.hardware_robot.Robot", return_value=MagicMock()) as mock_hw,
+                patch("strands_robots.mesh.init_mesh", return_value=None),
+            ):
+                Robot(kwargs.pop("name", "so100"), mode="real", **kwargs)
+        return mock_hw.call_args.kwargs, [r.getMessage() for r in caplog.records]
+
+    def test_every_parameter_the_sim_path_forwards_is_carried_or_reported(self, caplog):
+        """The headline contract, graded over the parameters the sim path forwards."""
+        graded = self._sim_forwarded_params()
+        assert len(graded) >= 5, f"premise: the sim path should forward several spawn parameters, got {graded}"
+        assert set(graded) <= set(self.SENTINELS), (
+            f"premise: no sentinel for {sorted(set(graded) - set(self.SENTINELS))}; add one so it is graded"
+        )
+
+        unaccounted = {}
+        for param in graded:
+            value = self.SENTINELS[param]
+            hw_kwargs, records = self._call_real(caplog, **{param: value})
+            carried = any(v == value for v in hw_kwargs.values())
+            reported = any(param in m and "ignored in mode='real'" in m for m in records)
+            if not (carried or reported):
+                unaccounted[param] = f"carried={carried} reported={reported}"
+        assert not unaccounted, (
+            "mode='real' neither carried nor reported these parameters, so a caller who "
+            f"supplied one got a working robot that discarded it in silence: {unaccounted}"
+        )
+
+    @pytest.mark.parametrize("param", ["urdf_path", "position", "orientation", "keyframe"])
+    def test_a_supplied_spawn_pose_parameter_is_reported(self, param, caplog):
+        """Each pose parameter the hardware path cannot honour names itself."""
+        value = self.SENTINELS[param]
+        _, records = self._call_real(caplog, **{param: value})
+        named = [m for m in records if param in m and "ignored in mode='real'" in m]
+        assert named, f"{param}={value!r} was ignored with nothing said; records: {records}"
+
+    def test_a_falsy_but_supplied_keyframe_index_is_reported(self, caplog):
+        """``keyframe=0`` is a valid keyframe index, so supply is read by identity.
+
+        A truthiness test would drop it, and index 0 is the first keyframe a model
+        declares - the value a caller reaches for when naming one by position.
+        """
+        _, records = self._call_real(caplog, keyframe=0)
+        assert [m for m in records if "keyframe=0" in m and "ignored in mode='real'" in m], (
+            f"keyframe=0 was supplied and ignored without a word; records: {records}"
+        )
+
+    def test_supplying_several_reports_all_of_them_once(self, caplog):
+        """One record names every ignored parameter, rather than one record each."""
+        _, records = self._call_real(
+            caplog,
+            urdf_path="/tmp/a.xml",
+            position=[1.0, 2.0, 3.0],
+            orientation=[1.0, 0.0, 0.0, 0.0],
+            keyframe=2,
+        )
+        spawn = [m for m in records if "spawn pose applies to a simulated world" in m]
+        assert len(spawn) == 1, f"expected exactly one spawn-pose record, got {spawn}"
+        for param in ("urdf_path", "position", "orientation", "keyframe"):
+            assert param in spawn[0], f"{param} missing from {spawn[0]!r}"
+
+    def test_supplying_none_of_them_reports_nothing(self, caplog):
+        """A bare hardware build stays quiet - the report is about a supplied value."""
+        _, records = self._call_real(caplog)
+        assert not [m for m in records if "spawn pose applies to a simulated world" in m], (
+            f"nothing was supplied, so nothing should be reported; records: {records}"
+        )
+
+    def test_data_config_reaches_the_hardware_class(self, caplog):
+        """The schema selector arrives, because the hardware class reads it.
+
+        ``hardware_robot.Robot`` declares ``data_config`` and puts it into the
+        ``policy_config`` a policy is built with, so dropping it here selected the
+        policy's default embodiment for a caller who named one.
+        """
+        hw_kwargs, _ = self._call_real(caplog, data_config="so100_dualcam")
+        assert hw_kwargs.get("data_config") == "so100_dualcam", (
+            f"data_config did not reach the hardware class; got kwargs {sorted(hw_kwargs)}"
+        )
+
+    def test_data_config_is_not_reported_as_ignored(self, caplog):
+        """It is forwarded, so it must not also claim to have been dropped."""
+        _, records = self._call_real(caplog, data_config="so100_dualcam")
+        assert not [m for m in records if "data_config" in m and "ignored in mode='real'" in m], (
+            f"data_config is forwarded and must not be reported as ignored; records: {records}"
+        )
+
+    def test_an_unnamed_data_config_forwards_the_hardware_default(self, caplog):
+        """Omitting it forwards ``None`` - the hardware class's own default.
+
+        The sim path defaults it to the canonical robot name; applying that here
+        would change what every existing hardware caller's policy is built with,
+        so the value is passed verbatim instead.
+        """
+        hw_kwargs, _ = self._call_real(caplog)
+        assert hw_kwargs.get("data_config", "<absent>") is None, (
+            f"an unnamed data_config must forward None, got {hw_kwargs.get('data_config', '<absent>')!r}"
+        )
+
+    def test_the_sibling_backend_report_is_unchanged(self, caplog):
+        """The parameter that already had this mechanism keeps it."""
+        _, records = self._call_real(caplog, backend="isaac")
+        assert [m for m in records if "backend='isaac'" in m and "ignored in mode='real'" in m], (
+            f"the backend report regressed; records: {records}"
+        )
+
+    def test_a_real_only_parameter_is_still_refused_in_sim(self):
+        """The opposite direction is untouched: ``cameras`` still refuses in sim.
+
+        ``cameras`` is refused rather than reported because sim cameras exist and
+        are added another way, so the caller is pointed at the route that works.
+        Reporting it instead would be a regression.
+        """
+        with pytest.raises(ValueError, match="cameras= is only supported in mode='real'"):
+            Robot("so100", mode="sim", cameras={"wrist": {"type": "opencv", "index_or_path": 0}})
+
+    @pytest.mark.parametrize("param", ["urdf_path", "position", "orientation", "keyframe"])
+    def test_each_ignored_parameter_documents_its_scope(self, param):
+        """The docstring says so too - the rule is stated as documentation and a log.
+
+        A reader deciding whether ``keyframe`` means anything on hardware reads the
+        parameter's own entry, not a debug stream they would have to enable first.
+        """
+        import inspect
+        import re
+
+        doc = inspect.getdoc(Robot) or ""
+        lines = doc.splitlines()
+        start = next(i for i, line in enumerate(lines) if line.strip() == "Args:")
+        entries: dict[str, str] = {}
+        current: str | None = None
+        indent: int | None = None
+        for line in lines[start + 1 :]:
+            if line.strip() in ("Returns:", "Raises:", "Example:", "Examples:", "Note:"):
+                break
+            match = re.match(r"^(\s+)(\*{0,2}\w+):\s?(.*)$", line)
+            width = len(line) - len(line.lstrip()) if line.strip() else None
+            if match and (indent is None or width == indent):
+                indent = len(match.group(1))
+                current = match.group(2)
+                entries[current] = match.group(3)
+            elif current is not None:
+                entries[current] += " " + line.strip()
+        assert param in entries, f"premise: no Args entry parsed for {param}; parsed {sorted(entries)}"
+        text = " ".join(entries[param].split())
+        assert 'mode="real"' in text, f"the {param} entry does not say what mode='real' does with it: {text!r}"

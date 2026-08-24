@@ -152,25 +152,33 @@ class TestUnusableRatesAreRefused:
     """Every rate above is refused, naming the parameter and the method."""
 
     @pytest.mark.parametrize(("label", "value"), UNUSABLE_RATES, ids=[r[0] for r in UNUSABLE_RATES])
-    def test_refused_naming_the_parameter_and_the_method(self, no_lerobot: None, label: str, value: Any) -> None:
+    def test_refused_naming_the_parameter_and_the_method(
+        self, no_lerobot: None, label: str, value: Any, tmp_path: Path
+    ) -> None:
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", joint_names=["j1"], fps=value)
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), joint_names=["j1"], fps=value)
         text = str(excinfo.value)
         assert "fps" in text, text
         assert "must be a positive whole number" in text, text
         assert "DatasetRecorder.create" in text, text
 
-    def test_a_rate_past_the_float_range_is_refused_for_its_own_reason(self, no_lerobot: None) -> None:
+    def test_a_rate_past_the_float_range_is_refused_for_its_own_reason(self, no_lerobot: None, tmp_path: Path) -> None:
         """``10**400`` *is* a positive whole number, so that text would be false."""
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", joint_names=["j1"], fps=10**400)
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), joint_names=["j1"], fps=10**400)
         text = str(excinfo.value)
         assert "fps must be within the range of a 64-bit float" in text, text
 
-    def test_a_camera_dataset_is_refused_on_the_same_rate(self, no_lerobot: None) -> None:
+    def test_a_camera_dataset_is_refused_on_the_same_rate(self, no_lerobot: None, tmp_path: Path) -> None:
         """The rate is not a per-camera property, so a declared camera changes nothing."""
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", camera_keys=["image"], camera_dims={"image": (240, 320)}, fps=math.nan)
+            _create(
+                repo_id="local/probe",
+                root=str(tmp_path / "dataset"),
+                camera_keys=["image"],
+                camera_dims={"image": (240, 320)},
+                fps=math.nan,
+            )
         assert "fps must be a positive whole number" in str(excinfo.value)
 
 
@@ -179,19 +187,21 @@ class TestUsableRatesStillReachTheDataset:
 
     @pytest.mark.parametrize(("label", "value"), USABLE_RATES, ids=[r[0] for r in USABLE_RATES])
     def test_accepted_and_declared_as_given(
-        self, fake_lerobot: type[_FakeLeRobotDataset], label: str, value: Any
+        self, fake_lerobot: type[_FakeLeRobotDataset], label: str, value: Any, tmp_path: Path
     ) -> None:
-        _create(repo_id="local/probe", joint_names=["j1"], fps=value)
+        _create(repo_id="local/probe", root=str(tmp_path / "dataset"), joint_names=["j1"], fps=value)
         assert len(fake_lerobot.calls) == 1
         # Forwarded verbatim: the guard refuses, it does not coerce, so the rate
         # the dataset declares is the one the caller passed.
         assert fake_lerobot.calls[0]["fps"] is value
 
-    def test_the_default_rate_is_inside_the_domain(self, fake_lerobot: type[_FakeLeRobotDataset]) -> None:
+    def test_the_default_rate_is_inside_the_domain(
+        self, fake_lerobot: type[_FakeLeRobotDataset], tmp_path: Path
+    ) -> None:
         """A default the guard refuses would break every call that omits it."""
         default = inspect.signature(DatasetRecorder.create).parameters["fps"].default
         assert positive_whole_number_error(default, "fps", "DatasetRecorder.create") is None
-        _create(repo_id="local/probe", joint_names=["j1"])
+        _create(repo_id="local/probe", root=str(tmp_path / "dataset"), joint_names=["j1"])
         assert fake_lerobot.calls[0]["fps"] == default
 
 
@@ -245,20 +255,20 @@ class TestTheRuleIsTheFacadesRule:
         ids=[r[0] for r in UNUSABLE_RATES] + [f"usable_{r[0]}" for r in USABLE_RATES],
     )
     def test_both_surfaces_reach_the_same_verdict(
-        self, fake_lerobot: type[_FakeLeRobotDataset], label: str, value: Any
+        self, fake_lerobot: type[_FakeLeRobotDataset], label: str, value: Any, tmp_path: Path
     ) -> None:
         facade_refuses = dataset_recording_option_error("start_recording", value) is not None
         try:
-            _create(repo_id="local/probe", joint_names=["j1"], fps=value)
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), joint_names=["j1"], fps=value)
             create_refuses = False
         except ValueError:
             create_refuses = True
         assert create_refuses is facade_refuses, f"verdict differs for {value!r}"
 
-    def test_the_message_is_the_shared_one_verbatim(self, no_lerobot: None) -> None:
+    def test_the_message_is_the_shared_one_verbatim(self, no_lerobot: None, tmp_path: Path) -> None:
         """No second wording for the same rule - only the surface name differs."""
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", joint_names=["j1"], fps=2.7)
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), joint_names=["j1"], fps=2.7)
         assert str(excinfo.value) == positive_whole_number_error(2.7, "fps", "DatasetRecorder.create")
 
     def test_the_facade_states_the_same_rule_against_its_own_name(self) -> None:
@@ -320,7 +330,7 @@ class TestNeighbouringSurfacesStayOutOfScope:
         assert "fps" not in inspect.signature(DatasetRecorder.resume).parameters
 
     def test_the_rate_is_not_compared_against_a_capture_frequency_here(
-        self, fake_lerobot: type[_FakeLeRobotDataset]
+        self, fake_lerobot: type[_FakeLeRobotDataset], tmp_path: Path
     ) -> None:
         """A rate a rollout is not capturing at is the facades' check, not this one.
 
@@ -329,5 +339,5 @@ class TestNeighbouringSurfacesStayOutOfScope:
         the recorder cannot see. So ``create`` accepts any usable rate on its own
         terms; only the domain moved here.
         """
-        _create(repo_id="local/probe", joint_names=["j1"], fps=1)
+        _create(repo_id="local/probe", root=str(tmp_path / "dataset"), joint_names=["j1"], fps=1)
         assert len(fake_lerobot.calls) == 1

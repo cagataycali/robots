@@ -53,6 +53,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from strands_robots.mesh.session import _report_unencodable_payload
 from strands_robots.utils import positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -364,6 +365,10 @@ class IotMqttTransport:
         Returns ``True`` once connected, ``False`` if the SDK is missing,
         configuration is invalid, or the broker is unreachable within
         ``connect_timeout`` seconds.
+
+        Every failure is reported through that return value, including one where
+        tearing the half-open client down is itself what fails: a ``stop()``
+        that raises is recorded at debug and does not replace the ``False``.
         """
         with self._lock:
             if self._client is not None and self._connected.is_set():
@@ -451,7 +456,15 @@ class IotMqttTransport:
                     self._endpoint,
                     self._connect_timeout,
                 )
-                self._client.stop()
+                try:
+                    self._client.stop()
+                except Exception as stop_exc:
+                    # Same contract as the construction-failure path above: the
+                    # connect() has already failed and we return False
+                    # regardless, so a stop() error here must not replace that
+                    # report with a raise out of a method documented to return
+                    # bool. Log at debug and move on.
+                    logger.debug("IoT client stop after connect timeout: %s", stop_exc)
                 self._client = None
                 return False
 
@@ -463,14 +476,32 @@ class IotMqttTransport:
             return True
 
     def close(self) -> None:
-        """Disconnect and tear down the MQTT5 client. Idempotent."""
+        """Disconnect and tear down the MQTT5 client. Idempotent.
+
+        A ``stop()`` that raises does not prevent teardown - the client
+        reference is dropped either way. That is what makes the failure worth
+        recording rather than swallowing: nothing can reach that client
+        afterwards to retry, so the WARNING is the only trace an operator gets
+        of an IO thread and socket that may still be open.
+        """
         with self._lock:
             if self._client is None:
                 return
             try:
                 self._client.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                # The two connect()-side teardowns log this; close() is the
+                # public one, and it is the only path whose visible report is a
+                # success, so a silent swallow leaves "session closed" as the
+                # sole record of a client that did not stop. Warn rather than
+                # debug: the reference is dropped below either way, so nothing
+                # can reach that client afterwards to retry.
+                logger.warning(
+                    "IoT MQTT client stop() failed during close (thing=%s): %s; "
+                    "its IO thread and socket may still be open",
+                    self._thing_name,
+                    exc,
+                )
             self._client = None
             self._connected.clear()
             self._handlers.clear()
@@ -497,6 +528,13 @@ class IotMqttTransport:
         Per-topic QoS and retain flags come from :data:`_TOPIC_POLICY`.
         Topics in :data:`_NEVER_BRIDGE_PREFIXES` (camera/input/hand) are
         silently dropped - they belong on Zenoh-LAN, not MQTT-WAN.
+
+        A broker or client failure stays at DEBUG: it is transient and the next
+        tick retries it. A payload the JSON encoder refuses is not, so it is
+        reported at ERROR once per topic through
+        :func:`~strands_robots.mesh.session._report_unencodable_payload` - the
+        same report the Zenoh leg emits, so a reader grepping the log for one
+        transport's wording finds the other's.
         """
         if self._client is None or not self._connected.is_set():
             return
@@ -508,6 +546,18 @@ class IotMqttTransport:
         if qos < 0:
             return  # explicit DROP
 
+        # Encoded BEFORE the publish attempt, and outside its handler: a payload
+        # the encoder refuses can never be published, whereas a broker failure is
+        # transient and the next tick retries it. Absorbing both in one DEBUG line
+        # made a permanently-undeliverable message indistinguishable from a
+        # dropped one. Hoisting the encode above the ``awscrt`` import also keeps
+        # the two apart: an absent [mesh-iot] extra is not a bad payload.
+        try:
+            encoded = json.dumps(data).encode()
+        except Exception as exc:  # noqa: BLE001 - the encoder's raise set is payload-defined
+            _report_unencodable_payload("MQTT", key, exc)
+            return
+
         try:
             from awscrt import mqtt5
 
@@ -515,7 +565,7 @@ class IotMqttTransport:
             self._client.publish(
                 mqtt5.PublishPacket(
                     topic=key,
-                    payload=json.dumps(data).encode(),
+                    payload=encoded,
                     qos=qos_enum,
                     retain=retain,
                 )

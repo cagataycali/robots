@@ -43,15 +43,16 @@ from strands_robots.registry import (
 | `has_sim(name)` / `has_hardware(name)` | Sim / real support flags. |
 | `get_hardware_type(name)` | LeRobot type string for `mode="real"`. |
 | `list_robots_by_category()` | `{category: [names]}`. |
-| `list_aliases()` | All 106 aliases. |
+| `list_aliases()` | All 119 aliases, including every GR00T `data_config` spelling (so `data_config` names resolve as robot names). |
 | `format_robot_table()` | Pretty-printed robot table. |
 | `register_robot(name, entry)` | Add user-defined robot at runtime. |
 | `unregister_robot(name)` | Remove a runtime-registered robot. |
 | `list_user_robots()` | Names from `register_robot`. |
-| `list_policy_providers()` | Providers from `policies.json`. |
+| `list_policy_providers()` | Providers from `policies.json`, canonical names only. |
+| `list_policy_aliases()` | Alias/shorthand -> canonical provider, from `policies.json`. Peer of `list_aliases()` for robots. |
 | `resolve_policy(uri)` | URI → provider name. |
 | `import_policy_class(provider)` | Lazy import of provider class. |
-| `build_policy_kwargs(provider, **kw)` | Normalise + validate kwargs. An explicit value beats the provider's registry default; the provider's own key (`host=`) beats the generic parameter (`policy_host=`). |
+| `build_policy_kwargs(provider, **kw)` | Normalise + validate kwargs. An explicit value beats the provider's registry default; the provider's own key (`host=`) beats the generic parameter (`policy_host=`). Every generic parameter defaults to `None`, meaning "unset", so an omitted one leaves the provider's own default -- registry, else constructor -- in place. |
 
 ## `strands_robots.simulation`
 
@@ -120,7 +121,8 @@ from strands_robots.policies.cosmos3 import Cosmos3Policy
 | `MockPolicy` | Sinusoidal mock. `requires_images=False`. |
 | `create_policy(provider, **kw)` | Resolve + construct. Accepts `zmq://`, `cosmos3://`, HF `org/model`. |
 | `register_policy(name, loader, aliases)` | Runtime registration. |
-| `list_providers()` | Sorted names of every JSON-registered provider (`cosmos3`, `curobo`, `groot`, `lerobot_local`, `mock`, `motionbricks`, `moveit2`, `remote`, `vera`, `wbc`, `wbc_gait`) plus any runtime `register_policy` names and their aliases. |
+| `list_providers()` | Sorted canonical names of every JSON-registered provider, plus any runtime `register_policy` names and their aliases. Canonical names only for the JSON registry: pair it with `list_aliases()` for the rest. |
+| `list_aliases()` | Every provider alias and the canonical name it resolves to, across both registries. Together with `list_providers()` they are every *registered* spelling - not every spelling `create_policy` resolves. A module under `strands_robots.policies` exporting a `Policy` subclass also resolves under its own module name: `composite` (builds through the factory) and `persistent` (resolves; constructed directly). |
 | `list_policy_types()` | `policy_type` strings the installed lerobot resolves; `[]` without lerobot. Discovery peer of `list_providers`. |
 | `UntrustedRemoteCodeError` | Raised when `STRANDS_TRUST_REMOTE_CODE` is required but unset. |
 | `Gr00tPolicy` | GR00T N1.5/N1.6/N1.7 via ZMQ (service) or in-process. |
@@ -192,11 +194,11 @@ LIBERO task suites, BDDL parser. Install: `uv pip install "strands-robots[benchm
 | `STRANDS_ASSETS_DIR` | Robot model asset cache | `~/.strands_robots/assets/` |
 | `STRANDS_ROBOT_MODE` | Force `Robot()` mode | (kwarg honoured) |
 | `STRANDS_TRUST_REMOTE_CODE` | Allow HF `trust_remote_code=True` | unset → blocked |
-| `STRANDS_MESH` | Disable mesh globally when `false` | `true` |
+| `STRANDS_MESH` | `true` opts a bare `Robot()` into the mesh; `false` is a hard kill switch | unset (mesh off) |
 | `STRANDS_MESH_AUDIT_DIR` | Safety event audit log | `~/.strands_robots/` |
 | `MUJOCO_GL` | GL backend for MuJoCo | auto |
 | `GROOT_API_TOKEN` | GR00T cloud inference token | (unset) |
-| `STRANDS_GROOT_WIRE_LOG` | Log raw ZMQ frames when `1` | (unset) |
+| `STRANDS_GROOT_WIRE_LOG` | Directory to dump pre/post-inference payloads to, e.g. `/tmp/groot-wire`; covers the in-process path as well as the service path, capped by `STRANDS_GROOT_WIRE_LOG_MAX_CALLS` | (unset) |
 
 ## See also
 

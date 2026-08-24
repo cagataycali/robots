@@ -47,17 +47,20 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import importlib.util
 import json
 import logging
 import os
 import re
 import shutil
 import time
+import types
+import typing
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
-from strands_robots.utils import validation_split_error, validation_split_fraction
+from strands_robots.utils import lerobot_version, validation_split_error, validation_split_fraction
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from lerobot.configs.train import TrainPipelineConfig
@@ -79,6 +82,48 @@ _LEROBOT_POLICY_TYPES_FALLBACK = frozenset(
 )
 
 _SUPPORTED_METHODS = {"full", "lora", "expert_only"}
+
+# Packages lerobot's own ``train()`` requires at CALL time, each with the lerobot
+# extra whose remedy names it. Transcribed from the ``require_package(...)`` call
+# sites in ``lerobot.scripts.lerobot_train``, which is the authority for what that
+# entry point will demand:
+#
+#   * ``accelerate`` (extra ``training``) is required UNCONDITIONALLY, as the first
+#     statement of ``train()`` - before it branches on device and before it loads a
+#     dataset - so every LeRobot run needs it, CPU included.
+#   * ``peft`` (extra ``peft``) is required when ``cfg.peft`` is set, which
+#     :meth:`LerobotTrainer.build_config` does exactly when ``method == "lora"``.
+#
+# ``diffusers`` (extra ``diffusion``) is the third such call site, guarded by
+# ``cfg.ema.enable``. It is deliberately absent: nothing here sets ``cfg.ema``, so
+# it is reachable only by naming ``ema.enable`` through the generic dotted
+# ``extra`` passthrough, and enumerating what an arbitrary passthrough key implies
+# is a different question from what this spec's own fields ask for.
+_LEROBOT_CALL_TIME_PACKAGES: tuple[tuple[str, str], ...] = (("accelerate", "training"),)
+_LEROBOT_LORA_PACKAGES: tuple[tuple[str, str], ...] = (("peft", "peft"),)
+
+
+def _module_available(name: str) -> bool:
+    """Whether ``name`` can be located, asked WITHOUT importing it.
+
+    Mirrors lerobot's own ``is_package_available`` - an
+    :func:`importlib.util.find_spec` lookup - so a preflight answers the very
+    question the runtime gate will ask, and keeps :meth:`Trainer.validate`
+    read-only: locating a module neither executes it nor pays its import cost.
+
+    Args:
+        name: Top-level import name of the package to locate.
+
+    Returns:
+        True when a spec was found. A lookup that raises answers False rather
+        than propagating: this runs on a preflight path whose contract is to
+        report problems, so a broken probe is "cannot confirm it is there".
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
 
 # LeRobot policy types whose config exposes ``use_relative_actions`` (the
 # relative-action processor pair: a RelativeActionsProcessorStep on the input
@@ -111,6 +156,34 @@ _QUANTILE_NORM_POLICY_TYPES_FALLBACK = frozenset({"molmoact2", "pi05"})
 # stats when ANY feature's stats dict holds one of these keys (mirrors lerobot's
 # own ``augment_dataset_quantile_stats.has_quantile_stats``).
 _QUANTILE_STAT_KEYS = ("q01", "q10", "q50", "q90", "q99")
+
+#: The LeRobotDataset format version the installed lerobot reads, mirrored for
+#: the offline case.
+#:
+#: lerobot REFUSES to load a dataset whose declared ``codebase_version`` has an
+#: older MAJOR than this one: ``check_version_compatibility`` raises
+#: ``BackwardCompatibilityError``, and that class only builds a message for
+#: exactly v2.1 - for any other older major its constructor itself raises
+#: ``NotImplementedError("Contact the maintainer on [Discord](...)")``, naming
+#: neither the dataset nor the version. An older MINOR only logs a warning and
+#: still loads, so only the major is a refusal.
+#:
+#: Read live off the installed lerobot (:func:`_lerobot_codebase_version`), which
+#: reads it from the same module the loader enforces it in; this is the offline
+#: FALLBACK for the ``validate()``-without-lerobot case.
+_LEROBOT_CODEBASE_VERSION_FALLBACK = "v3.0"
+
+#: The one dataset format version lerobot's converter accepts as its source.
+#: ``BackwardCompatibilityError`` builds a message for exactly this version and
+#: raises ``NotImplementedError`` for every other older one, so it is also the
+#: boundary between the two remedies the preflight below can honestly offer.
+_V21_TO_V30_SOURCE_VERSION = "2.1"
+
+#: lerobot's own converter that upgrades a v2.1 dataset in place to the v3
+#: format, quoted by the preflight below so the advice names lerobot's remedy
+#: rather than describing one. It is the only conversion lerobot ships; a root
+#: older than v2.1 has no automated path forward.
+_V21_TO_V30_CONVERTER = "lerobot.scripts.convert_dataset_v21_to_v30"
 
 # RA-BC (Reward-Aligned Behavior Cloning) is surfaced to the agent through the
 # ``extra['sample_weighting']`` dict. lerobot >= 0.6.0 configures sample
@@ -269,6 +342,53 @@ def _dataset_quantile_stats_present(dataset_root: str) -> bool | None:
     return _stats_have_quantiles(stats)
 
 
+def _format_version_major(version: str) -> int | None:
+    """MAJOR component of a ``vN.M`` / ``N.M`` dataset format version, or None.
+
+    Returns ``None`` for anything this cannot read a leading major out of, so an
+    unrecognized version string fails OPEN (no problem reported) rather than
+    blocking a possibly-loadable dataset on a cosmetic format - the same posture
+    as :func:`~strands_robots.dataset_recorder._huggingface_hub_version_error`.
+    """
+    match = re.match(r"v?(\d+)", version.strip())
+    return int(match.group(1)) if match else None
+
+
+def _lerobot_codebase_version() -> str:
+    """Dataset format version the installed lerobot reads.
+
+    Read off ``lerobot.datasets.dataset_metadata``, the module whose
+    ``_load_metadata`` enforces it, so the preflight compares against the very
+    constant the loader will compare against. Falls back to the documented
+    :data:`_LEROBOT_CODEBASE_VERSION_FALLBACK` when lerobot is unavailable, so
+    ``validate()`` still produces a useful offline verdict.
+    """
+    try:
+        from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
+    except ImportError:
+        return _LEROBOT_CODEBASE_VERSION_FALLBACK
+    return CODEBASE_VERSION if isinstance(CODEBASE_VERSION, str) else _LEROBOT_CODEBASE_VERSION_FALLBACK
+
+
+def _dataset_codebase_version(dataset_root: str) -> str | None:
+    """Declared ``codebase_version`` of a local LeRobotDataset root, or None.
+
+    Reads ``meta/info.json`` (the file lerobot's ``load_info`` reads, and the one
+    :meth:`LerobotTrainer._dataset_total_episodes` already reads for the episode
+    count). Returns ``None`` when the file is absent, unreadable, or carries no
+    string ``codebase_version`` - the unknown case, e.g. a Hub dataset with no
+    materialized local cache - so a DEFINITE mismatch can be reported without
+    false positives on the unknown one.
+    """
+    info_path = os.path.join(dataset_root, "meta", "info.json")
+    try:
+        with open(info_path, encoding="utf-8") as fh:
+            declared = json.load(fh).get("codebase_version")
+    except (OSError, json.JSONDecodeError):
+        return None
+    return declared if isinstance(declared, str) else None
+
+
 def _reward_registry() -> dict[str, type] | None:
     """Live ``RewardModelConfig`` ChoiceRegistry, or ``None`` when unavailable.
 
@@ -336,7 +456,11 @@ class LerobotTrainer(Trainer):
         policy_type: LeRobot policy type (default ``"act"``). Resolved from
             ``TrainSpec.extra['policy_type']`` if present, else this. Ignored for
             reward-model runs (``TrainSpec.extra['reward_model']`` is set).
-        device: Torch device string (default auto: cuda > mps > cpu).
+        device: Torch device string (default auto: cuda > mps > cpu). Graded
+            by :meth:`validate` against torch's own device-string domain -
+            a device type, optionally with an index (``'cuda'``,
+            ``'cuda:0'``, ``'cpu'``, ``'mps'``). Only the spelling is
+            checked, never whether this machine has that device.
     """
 
     def __init__(
@@ -400,7 +524,7 @@ class LerobotTrainer(Trainer):
         try:
             with open(info, encoding="utf-8") as f:
                 return int(json.load(f).get("total_episodes"))
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        except (OSError, ValueError, TypeError):
             return None
 
     def _resume_config_path(self, output_dir: str) -> str | None:
@@ -476,6 +600,64 @@ class LerobotTrainer(Trainer):
             return validation_split_fraction(spec.val_episodes, total)
         return None
 
+    def _unreadable_episode_count_problem(self, spec: TrainSpec) -> str:
+        """Refusal text for a ``val_episodes`` whose episode count cannot be read.
+
+        :meth:`_val_eval_split` turns ``val_episodes`` into lerobot's
+        ``dataset.eval_split`` FRACTION, which needs the dataset's
+        ``total_episodes``. That count is only available from a local
+        ``meta/info.json``, so it is unreadable for a Hub dataset with no local
+        copy (``dataset_repo_id`` set, ``dataset_root`` empty) and for a
+        ``dataset_root`` that is a Hub cache directory nothing has been
+        downloaded into yet.
+
+        Both remedies named here are honored by this backend: pointing
+        ``dataset_root`` at a populated local copy makes the count readable, and
+        the raw ``extra`` passthrough reaches lerobot's own two knobs directly.
+        """
+        where = (
+            f"no readable 'meta/info.json' under dataset_root={spec.dataset_root!r}"
+            if spec.dataset_root
+            else "no dataset_root was given to read one from"
+        )
+        return (
+            f"{self.provider_name}: val_episodes={spec.val_episodes} cannot be reserved because the "
+            f"dataset's episode count is unavailable ({where}). A held-out split is a FRACTION in "
+            "lerobot (it holds out ceil(episodes_in_task * eval_split)), so the count is what turns "
+            "an episode number into that fraction. Either point dataset_root at a local copy of the "
+            "dataset - for a Hub dataset that is its local cache directory - or pass the split "
+            "directly with extra={'dataset.eval_split': <fraction>, 'eval_steps': <steps>}."
+        )
+
+    def _streaming_validation_split_problem(self, spec: TrainSpec) -> str:
+        """Refusal text for ``streaming`` and ``val_episodes`` asked for together.
+
+        Each field is honored on its own, and neither survives the pair.
+        :meth:`_val_eval_split` turns ``val_episodes`` into lerobot's
+        ``dataset.eval_split``, and a non-zero ``eval_split`` sends lerobot down
+        ``make_train_eval_datasets``, which rebuilds BOTH splits as map-style
+        ``LeRobotDataset`` objects without consulting ``dataset.streaming`` - the
+        ``StreamingLeRobotDataset`` it built first is discarded. So the run
+        materializes the whole dataset, which is the outcome ``streaming``
+        exists to avoid, and it does so while reporting nothing: an annulled
+        stream is indistinguishable from ``streaming=False``.
+
+        Refusing here mirrors :meth:`_unreadable_episode_count_problem`, which
+        refuses rather than let a requested validation split be silently
+        dropped. Both remedies named here are honored by this backend: dropping
+        either field delivers the other one whole, and the raw ``extra``
+        passthrough still reaches lerobot's own knobs for a caller who wants the
+        combination anyway.
+        """
+        return (
+            f"{self.provider_name}: streaming=True cannot be combined with "
+            f"val_episodes={spec.val_episodes}. A held-out split makes lerobot rebuild both "
+            "splits as map-style datasets, so the whole dataset is materialized and the stream "
+            "is dropped - the disk/RAM blowup streaming exists to avoid. Either set "
+            "streaming=False to keep the validation split, or val_episodes=None to keep the "
+            "stream."
+        )
+
     def _dataset_total_tasks(self, dataset_root: str) -> int:
         """``total_tasks`` from ``meta/info.json``, or 0 when not recorded."""
         from pathlib import Path
@@ -540,6 +722,60 @@ class LerobotTrainer(Trainer):
             )
         return sw
 
+    def _device_problems(self) -> list[str]:
+        """Problems for a ``device`` no torch build can parse, or an empty list.
+
+        ``device`` is the trainer's one constructor knob, and it reaches lerobot
+        twice: interpolated into ``--policy.device=`` (and
+        ``--reward_model.device=``) by :meth:`build_command`, and assigned onto
+        ``policy_cfg.device`` by :meth:`build_config`. Neither refuses an
+        unusable spelling - the argv is built verbatim and the config carries the
+        string forward - so without this gate ``validate`` returns ``[]`` for a
+        run that cannot start, which is the one thing its contract says an empty
+        list does not mean.
+
+        Every other caller-supplied value this preflight sees is already held to
+        a domain: ``steps`` / ``global_batch_size`` / ``lora_r`` / ``lora_alpha``
+        through :meth:`_run_size_problems`, ``learning_rate``, ``seed``,
+        ``num_gpus`` / ``num_nodes``, ``val_episodes``, and
+        ``dataset_repo_id`` against ``_HUB_REPO_ID_RE``. ``device`` was the one
+        knob beside them with none.
+
+        The admitted domain is torch's own, read by handing the value to
+        ``torch.device`` rather than by comparing against a copied list of
+        device types, so a torch build that gains a backend is admitted here
+        with no change and torch's own exception enumerates the types it
+        accepts. Only the spelling is graded, never availability:
+        ``torch.device("cuda")`` constructs on a CPU-only box, and a spec
+        legitimately names a device the machine writing it does not have - a
+        queued or containerised run is dispatched from one host and executed on
+        another. A non-``str`` is refused before torch is consulted for that
+        same reason, because ``torch.device(0)`` reads the accelerator inventory
+        and would make one spec validate on a GPU box and fail on a CPU box.
+
+        When torch is not importable the domain is unknown and the value passes
+        through unguarded, which is the same posture the reward-model field set
+        takes when its registry cannot be read.
+        """
+        device = self.device
+        if not isinstance(device, str):
+            return [
+                f"device must be a torch device string, got {type(device).__name__}; "
+                "pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
+            ]
+        try:
+            import torch
+        except Exception:  # noqa: BLE001 - torch missing -> domain unknown, pass through
+            return []
+        try:
+            torch.device(device)
+        except (RuntimeError, ValueError) as e:
+            return [
+                f"device={device!r} is not a torch device string ({e}); "
+                "pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
+            ]
+        return []
+
     # ---- ABC ---------------------------------------------------------------
 
     def validate(self, spec: TrainSpec) -> list[str]:
@@ -548,11 +784,16 @@ class LerobotTrainer(Trainer):
         Runs the shared input-safety gate, then checks a data source -
         exactly one of a local LeRobotDataset v3 ``dataset_root`` or a Hub
         ``dataset_repo_id`` (for streaming) - an ``output_dir``, a usable run
-        size (``steps`` / ``global_batch_size``), single-node only
+        size (``steps`` / ``global_batch_size``), a ``device`` torch can parse,
+        single-node only
         (``num_nodes == 1``), a ``val_episodes``
-        split below the dataset total, usable LoRA hyperparameters when
-        ``method == "lora"``, and that ``lerobot.scripts.lerobot_train``
-        is importable. ``extra['reward_model']`` switches to reward-model
+        split below the dataset total and not asked for alongside ``streaming``
+        (lerobot's split path is map-style only), a local dataset format version
+        the installed lerobot can read, usable LoRA hyperparameters when
+        ``method == "lora"``, that ``lerobot.scripts.lerobot_train``
+        is importable, and that the packages its ``train()`` requires at call
+        time (``accelerate`` always, ``peft`` for ``method == "lora"``) are
+        installed. ``extra['reward_model']`` switches to reward-model
         preflight; otherwise the default policy path is checked. Returns the
         problem list; empty means launchable. Read-only.
         """
@@ -597,6 +838,7 @@ class LerobotTrainer(Trainer):
         problems.extend(self._run_size_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
         problems.extend(self._seed_problems(spec))
+        problems.extend(self._device_problems())
         # Captured rather than extended blind: the multi-node refusal below
         # compares num_nodes, which is only a meaningful comparison once this
         # gate has established it IS a count - a string or None would raise out
@@ -617,28 +859,93 @@ class LerobotTrainer(Trainer):
         val_problems = self._validation_episodes_problems(spec)
         problems.extend(val_problems)
 
-        if not val_problems and spec.val_episodes is not None and spec.dataset_root:
-            total = self._dataset_total_episodes(spec.dataset_root)
-            if total is not None and spec.val_episodes >= total:
-                problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
-            split_err = validation_split_error(
-                spec.val_episodes, self._dataset_total_tasks(spec.dataset_root), "LeRobotTrainer"
-            )
-            if split_err:
-                problems.append(split_err)
+        if not val_problems and spec.val_episodes is not None:
+            total = self._dataset_total_episodes(spec.dataset_root) if spec.dataset_root else None
+            if total is None:
+                # The split is a FRACTION derived from the episode count, so with
+                # no count to divide by there is nothing to emit - and a missing
+                # eval_split is indistinguishable from "no validation asked for".
+                # Refuse instead, naming both remedies, rather than launch a run
+                # that trains on every episode and records no validation loss.
+                problems.append(self._unreadable_episode_count_problem(spec))
+            else:
+                if spec.val_episodes >= total:
+                    problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
+                split_err = validation_split_error(
+                    spec.val_episodes,
+                    self._dataset_total_tasks(spec.dataset_root),
+                    self.provider_name,
+                    passthrough_param="extra",
+                )
+                if split_err:
+                    problems.append(split_err)
+                if spec.streaming and self._val_eval_split(spec) is not None:
+                    # Both fields were honored in isolation and neither survives
+                    # the pair: lerobot's split path rebuilds the dataset
+                    # map-style, so the stream is dropped. Refuse rather than
+                    # emit a config that silently delivers one of the two.
+                    problems.append(self._streaming_validation_split_problem(spec))
 
+        # Shared by BOTH run types: policy and reward-model training load the
+        # same dataset, so an unreadable format version refuses either one.
+        problems.extend(self._dataset_codebase_version_problems(spec))
         problems.extend(self._lora_hyperparameter_problems(spec))
 
         # lerobot must be importable to actually train.
         try:
-            import importlib.util
-
-            if importlib.util.find_spec("lerobot.scripts.lerobot_train") is None:
+            lerobot_present = importlib.util.find_spec("lerobot.scripts.lerobot_train") is not None
+            if not lerobot_present:
                 problems.append("lerobot is not installed (no lerobot.scripts.lerobot_train)")
         except Exception:  # noqa: BLE001
+            lerobot_present = False
             problems.append("lerobot is not installed")
 
+        # An installed lerobot is not yet a launchable one: its train() requires
+        # more packages at CALL time. Reported only once lerobot itself is
+        # present, so an install with neither gets one root cause, not two.
+        if lerobot_present:
+            problems.extend(self._call_time_dependency_problems(spec))
+
         return problems
+
+    def _call_time_dependency_problems(self, spec: TrainSpec) -> list[str]:
+        """Packages lerobot's ``train()`` will require that are not installed.
+
+        ``validate()`` already reports an absent lerobot rather than "deferring
+        the failure to the training launch", but an importable lerobot is not a
+        launchable one: ``lerobot.scripts.lerobot_train.train`` calls
+        ``require_package(...)`` for packages that are NOT module-scope imports
+        of that module, so locating it says nothing about them. The first such
+        call is ``require_package("accelerate", extra="training")``, the opening
+        statement of ``train()`` - and no ``strands-robots[lerobot]`` install
+        supplies ``accelerate``.
+
+        Left unreported, that spec validates clean and :meth:`train` proceeds
+        through :meth:`prepare` and the fresh-start hygiene that removes a
+        checkpoint-less ``output_dir`` before raising - so a run knowably
+        unlaunchable at preflight time deletes a directory first. This gate is
+        what makes "empty means launchable" true of the dependency axis.
+
+        Args:
+            spec: The spec being validated; ``method`` selects the conditional
+                requirements (``lora`` sets ``cfg.peft``, which lerobot gates
+                ``peft`` on).
+
+        Returns:
+            One problem per absent package, naming the lerobot extra that
+            supplies it. Empty when every package the run will need is present.
+        """
+        required = list(_LEROBOT_CALL_TIME_PACKAGES)
+        if spec.method == "lora":
+            required.extend(_LEROBOT_LORA_PACKAGES)
+
+        return [
+            f"'{package}' is required by lerobot's train() but is not installed; "
+            f"install it with: pip install 'lerobot[{extra}]' "
+            f"(the strands-robots[lerobot] extra does not supply it)"
+            for package, extra in required
+            if not _module_available(package)
+        ]
 
     def _validate_policy(self, spec: TrainSpec) -> list[str]:
         """Policy-training preflight (the default, ``cfg.policy`` path)."""
@@ -713,6 +1020,59 @@ class LerobotTrainer(Trainer):
             "lerobot would mis-normalize or fail at train time. Add quantile stats first: "
             f"python -m lerobot.scripts.augment_dataset_quantile_stats --repo-id={repo_id} "
             f"--root={spec.dataset_root} (datasets recorded with current lerobot already include them)."
+        ]
+
+    def _dataset_codebase_version_problems(self, spec: TrainSpec) -> list[str]:
+        """Preflight a local dataset root's format version against lerobot's.
+
+        lerobot reads ``meta/info.json``'s ``codebase_version`` and refuses a root
+        whose MAJOR is older than its own ``CODEBASE_VERSION``. That refusal is a
+        poor place to learn this: only a v2.1 root gets a message naming the
+        dataset and the converter, and every OTHER older major dies inside
+        ``BackwardCompatibilityError.__init__`` with a bare
+        ``NotImplementedError: Contact the maintainer on [Discord](...)`` that
+        names neither the dataset nor the version nor the problem. This lifts the
+        refusal to spec-validation time with a message that names the root, both
+        versions, and the remedy - the same job :meth:`_quantile_stats_problems`
+        does for the dataset's quantile stats.
+
+        Read-only and conservative, mirroring that sibling: it flags only a
+        DEFINITE mismatch (a local ``meta/info.json`` declaring an older major).
+        A Hub dataset with no materialized local cache is left unflagged (its
+        metadata is not knowable without a download - ``validate()`` does not
+        reach the network), and an unparseable version on either side fails open.
+        Only the major is checked, because an older minor loads with a warning.
+        """
+        if not spec.dataset_root:
+            return []
+        declared = _dataset_codebase_version(spec.dataset_root)
+        if declared is None:
+            return []
+        current = _lerobot_codebase_version()
+        declared_major = _format_version_major(declared)
+        current_major = _format_version_major(current)
+        if declared_major is None or current_major is None or declared_major >= current_major:
+            return []
+
+        # lerobot ships exactly one converter (v2.1 -> v3.0), so an older root
+        # gets an honest "no automated path" rather than a command that would
+        # fail. The repo id is the CONVERTER's argument, and it is a Hub id: a
+        # local-only root has none (``_dataset_source`` calls it "local", which
+        # is not a repo anyone can convert), so name the placeholder instead -
+        # the same substitution ``_quantile_stats_problems`` makes.
+        repo_id = spec.dataset_repo_id or "<your-dataset-repo-id>"
+        if declared.strip().lstrip("v") == _V21_TO_V30_SOURCE_VERSION:
+            remedy = f"Convert it with lerobot's own converter: python -m {_V21_TO_V30_CONVERTER} --repo-id={repo_id}"
+        else:
+            remedy = (
+                f"lerobot ships no converter for {declared}; its only dataset conversion is "
+                f"v2.1 -> v3.0 ({_V21_TO_V30_CONVERTER}). Re-record the dataset, or bring it to "
+                "v2.1 first."
+            )
+        return [
+            f"dataset_root '{spec.dataset_root}' declares codebase_version '{declared}' in "
+            f"meta/info.json, which lerobot {lerobot_version()} cannot read (it loads "
+            f"'{current}' and refuses an older major). {remedy}"
         ]
 
     def _validate_reward_model(self, spec: TrainSpec, rm: dict[str, Any]) -> list[str]:
@@ -844,7 +1204,7 @@ class LerobotTrainer(Trainer):
         for key, value in spec.extra.items():
             if key in _consumed:
                 continue
-            cmd.append(f"--{key}={value}")
+            cmd.append(f"--{key}={_render_extra_value(value)}")
         return cmd
 
     def _reward_model_command_flags(self, rm: dict[str, Any], base_model: str = "") -> list[str]:
@@ -1030,7 +1390,10 @@ class LerobotTrainer(Trainer):
         """Typed passthrough for remaining ``extra.*`` keys (validate()-gated).
 
         Only sets attributes that exist on the typed config tree; unknown keys
-        are ignored (never become an arbitrary flag).
+        are ignored (never become an arbitrary flag). A *text* value is decoded
+        to the field's declared type by :func:`_decode_extra_value`, so the same
+        spelling means the same thing here as on the ``--flag=value`` CLI that
+        :meth:`build_command` documents this config as corresponding to.
         """
         _consumed = {"policy_type", "job_name", "relative_actions", "sample_weighting", "reward_model"}
         for key, value in spec.extra.items():
@@ -1038,7 +1401,7 @@ class LerobotTrainer(Trainer):
                 continue
             target, attr = _resolve_dotted(cfg, key)
             if target is not None and hasattr(target, attr):
-                setattr(target, attr, value)
+                setattr(target, attr, _decode_extra_value(target, attr, key, value))
             else:
                 logger.warning("LerobotTrainer: ignoring extra '%s' (no matching config field).", key)
 
@@ -1395,6 +1758,139 @@ def _resolve_dotted(cfg: Any, key: str) -> tuple[Any, str]:
     if sub is None or "." in tail:
         return None, tail
     return sub, tail
+
+
+def _extra_field_type(target: Any, attr: str) -> Any:
+    """Resolved annotation of ``target.attr``, or ``None`` when unavailable.
+
+    ``dataclasses.fields()`` reports ``f.type`` as the *source text* of the
+    annotation for a module compiled with ``from __future__ import
+    annotations`` - 45 ``bool`` fields across 6 lerobot policy configs
+    (``eo1``, ``evo1``, ``fastwam``, ``molmoact2``, ``vla_jepa``, ``xvla``)
+    read back as the string ``"bool"`` there - so a caller that compared
+    ``f.type is bool`` would silently skip exactly those. The annotation is
+    resolved through :func:`typing.get_type_hints` instead, which evaluates
+    the string form.
+
+    Returns ``None`` when the annotation cannot be resolved (an unresolvable
+    forward reference, or a target that is not annotated at all), which the
+    caller reads as "leave the value alone".
+    """
+    try:
+        hints = typing.get_type_hints(type(target))
+    except (NameError, TypeError):
+        return None
+    return hints.get(attr)
+
+
+def _annotation_admits_text(hint: Any) -> bool:
+    """Whether ``hint`` already accepts a ``str`` as-is.
+
+    ``str``, ``str | None`` and ``Any`` need no decoding: the value the caller
+    passed is already the field's own type. A generic whose *parameters*
+    happen to include ``str`` (``dict[str, int]``) does not qualify - only a
+    union is searched - because the field itself is not a string there.
+    """
+    if hint is str or hint is Any:
+        return True
+    origin = typing.get_origin(hint)
+    if origin is typing.Union or origin is types.UnionType:
+        return any(_annotation_admits_text(arg) for arg in typing.get_args(hint))
+    return False
+
+
+def _render_extra_value(value: Any) -> str:
+    """Render an ``extra`` value as the CLI token that decodes back to it.
+
+    :meth:`LerobotTrainer.build_command` renders each ``extra`` entry as
+    ``--key=value`` for lerobot's draccus CLI, and draccus reads that token as a
+    YAML scalar before decoding it to the field's declared type. Python's own
+    text for ``None`` is not YAML's: ``None`` is a plain scalar, so a
+    ``str | None`` field receiving ``--key=None`` is assigned the *string*
+    ``"None"`` while the in-process path assigns ``None`` - and the two paths
+    stop meaning one run. ACT's ``pretrained_backbone_weights`` is such a field,
+    and the string reaches torchvision as a weights *name*
+    (``KeyError: 'None'``) rather than as "no pretrained weights".
+
+    Every other type already renders as text draccus reads back unchanged, so
+    only the null literal is translated.
+
+    Args:
+        value: Value from ``spec.extra`` for a key this command carries.
+
+    Returns:
+        The token to place after ``--key=``.
+    """
+    return "null" if value is None else str(value)
+
+
+def _decode_extra_value(target: Any, attr: str, key: str, value: Any) -> Any:
+    """Decode a text ``extra`` value the way lerobot's own CLI decodes it.
+
+    ``build_command`` renders an ``extra`` entry as ``--key=value``, where
+    lerobot's draccus parser reads the text with ``cfgparsing.parse_string``
+    (YAML scalar rules) and then decodes it to the field's declared type. The
+    in-process path assigns to the same dataclass field directly, so a text
+    value has to travel the same two stages or the two paths stop agreeing:
+    ``extra={"policy.freeze_vision_encoder": "false"}`` otherwise stores the
+    *string* ``"false"``, which is truthy, so the encoder stays frozen while
+    ``--policy.freeze_vision_encoder=false`` unfreezes it.
+
+    The decoder is borrowed from draccus rather than reimplemented so the
+    accepted spellings cannot drift from the CLI's: ``false``/``no``/``off``
+    and ``true``/``yes``/``on`` (any case) decode to bools, while ``0``/``1``
+    are *not* bools to draccus and are refused on both paths.
+
+    Args:
+        target: Config object owning the field (``cfg`` or a sub-config).
+        attr: Attribute name on ``target``.
+        key: Original ``extra`` key, quoted in the refusal so the caller can
+            find it in their spec.
+        value: Value from ``spec.extra``. A non-``str`` is returned unchanged -
+            a caller who already passed the field's own type never went through
+            text, so there is nothing to decode.
+
+    Returns:
+        The value to assign to ``target.attr``.
+
+    Raises:
+        ValueError: The text does not decode to the field's declared type.
+            The CLI refuses the same spelling, and assigning it raw is how a
+            wrong type reaches training silently, so it is refused here too.
+    """
+    if not isinstance(value, str):
+        return value
+    hint = _extra_field_type(target, attr)
+    if hint is None or _annotation_admits_text(hint):
+        return value
+
+    import draccus
+    from draccus import cfgparsing
+
+    try:
+        return draccus.decode(hint, cfgparsing.parse_string(value))
+    except Exception as e:
+        # Both stages are third-party and raise from disjoint hierarchies
+        # (draccus.ParsingError for the decode, yaml.YAMLError for the scalar
+        # parse), so the breadth here translates every decoder failure into one
+        # actionable refusal. Nothing is swallowed - the cause is chained.
+        raise ValueError(
+            f"extra['{key}']={value!r} does not decode to {_format_annotation(hint)}, "
+            f"the declared type of '{attr}' on {type(target).__name__}. "
+            f"Values are read with lerobot's own CLI decoder, so the accepted spellings are "
+            f"the ones '--{key}={value}' accepts"
+            + (
+                " - for a boolean: false/no/off or true/yes/on (any case); note 0 and 1 are not booleans."
+                if hint is bool
+                else "."
+            )
+            + f" Pass a {_format_annotation(hint)} value directly to skip decoding."
+        ) from e
+
+
+def _format_annotation(hint: Any) -> str:
+    """Human-readable name for an annotation, for use in a refusal."""
+    return getattr(hint, "__name__", None) or str(hint)
 
 
 def _lerobot_worker(policy_type: str, device: str, spec: TrainSpec, log_path: str) -> None:

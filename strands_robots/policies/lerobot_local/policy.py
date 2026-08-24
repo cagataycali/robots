@@ -22,28 +22,18 @@ import torch
 
 from ...utils import name_list_error, positive_count_error
 from .. import Policy, align_action_values, chunk_count_error
-from .embodiment import ZeroActionMonitor, diagnose_action_dim, hardware_pos_keys, state_key_remedy
+from .._state_keys import drop_velocity_siblings
+from .embodiment import (
+    ZeroActionMonitor,
+    diagnose_action_dim,
+    hardware_pos_keys,
+    observed_state_keys,
+    state_key_remedy,
+)
 from .processor import ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
 
 logger = logging.getLogger(__name__)
-
-
-def _scalar_observation_keys(observation_dict: dict[str, Any]) -> list[str]:
-    """Observation keys that can carry a joint/state scalar, in observation order.
-
-    Excludes ``task`` (the instruction string) and any array with 2+ dimensions
-    (a camera frame). Both observation-to-batch paths derive their state-ordering
-    fallback from this, and the state-key diagnostics quote it back to the
-    caller, so all three must agree on what counts as a state key.
-
-    Args:
-        observation_dict: Raw strands/sim observation for this step.
-
-    Returns:
-        The candidate state keys, in the observation's own insertion order.
-    """
-    return [k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)]
 
 
 def _state_key_cause(configured: list[str]) -> str:
@@ -155,8 +145,6 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
 # what identifies a placeholder.
 _GENERIC_STATE_KEY_PREFIX = "joint_"
 
-_VELOCITY_SUFFIX = ".vel"
-
 
 def _undeclared_image_feature_error(
     targets: list[str],
@@ -228,41 +216,6 @@ def _undeclared_image_feature_error(
         f"{declared[0]!r}}}}} for EVERY key you declared, so each declared feature is a "
         f"rename target."
     )
-
-
-def _drop_velocity_siblings(scalar_keys: list[str]) -> list[str]:
-    """Drop each ``<joint>.vel`` whose ``<joint>`` position companion is present.
-
-    Used only for the OBSERVATION-DERIVED state ordering (see
-    :meth:`LerobotLocalPolicy._resolve_state_order`), which is built from the
-    observation's own insertion order. The MuJoCo backend emits a velocity
-    sibling beside every joint position (``simulation/mujoco/rendering.py``:
-    ``obs[jnt_name] = qpos`` then ``obs[f"{jnt_name}.vel"] = qvel``), so that
-    order alternates ``[pos0, vel0, pos1, vel1, ...]``. Feeding it to a policy
-    trained on positions puts a velocity in every other slot of
-    ``observation.state`` and, once truncated to the model's state dim, drops
-    the trailing joints entirely - a wrong state vector with no error raised.
-    The producer documents ``<name>.vel`` as an ADDITIVE key that position-only
-    consumers are unaffected by; this restores that contract here.
-
-    A ``.vel`` key with NO position companion is KEPT, because some embodiments
-    legitimately declare velocity state and dropping it would corrupt those
-    instead: ``embodiments.json`` gives LeKiwi body-frame base velocities
-    ``x.vel`` / ``y.vel`` / ``theta.vel`` with no ``x`` / ``y`` / ``theta``
-    position key. Pairing is therefore decided per key, not by suffix alone.
-
-    Explicitly configured ``robot_state_keys`` are NOT filtered - an operator
-    naming ``elbow.vel`` is stating the model's input, and this only cleans up
-    an ordering inferred from whatever the observation happened to contain.
-
-    Args:
-        scalar_keys: Candidate state keys in observation insertion order.
-
-    Returns:
-        The same list, order preserved, minus the paired velocity siblings.
-    """
-    present = set(scalar_keys)
-    return [k for k in scalar_keys if not (k.endswith(_VELOCITY_SUFFIX) and k[: -len(_VELOCITY_SUFFIX)] in present)]
 
 
 # Fallback control rate used ONLY when RTC runs without the runtime having
@@ -416,10 +369,19 @@ class LerobotLocalPolicy(Policy):
             (e.g. "observation.images.top"). When omitted, cameras are
             routed by exact short-name match and then by declared order
             with a warning on mismatch.
-        strict_keys: When True, raise (instead of warning + positional
-            fallback) if any camera name cannot be matched to a declared
-            policy image key by exact name and no ``camera_key_map`` covers
-            it. Defaults to False (positional fallback).
+        strict_keys: When True, raise (instead of warning + a degraded
+            binding) wherever a key cannot be bound by name. It governs BOTH
+            halves of the key binding, not cameras alone:
+
+            * cameras - a camera name matching no declared policy image key by
+              exact name, with no ``camera_key_map`` entry covering it
+              (positional fallback otherwise);
+            * joint state - configured ``robot_state_keys`` that the observation
+              does not carry, whether none of them match or only some (an
+              observation-derived ordering, or a zero-fill in place, otherwise).
+
+            Defaults to False. A robot whose cameras and joints all bind by
+            name reaches neither refusal, so the flag is a no-op there.
         pad_short_actions: When the model emits FEWER action values than the
             robot declares actuator keys, command the unmatched actuators to
             ``0.0`` instead of omitting them. Defaults to False: an omitted
@@ -568,6 +530,7 @@ class LerobotLocalPolicy(Policy):
         # embodiment / image_keys were incompatible with the model's declared
         # features, so the bridge was discarded (see _load_processor_bridge).
         self._embodiment_config_failed = False
+        self._processor_inert_reason: str | None = None
         self._tokenizer: Any = None
         # Refused where the caller's value arrives, and before any checkpoint is
         # downloaded: the tokenizer reads this as a slice bound over the encoded
@@ -637,6 +600,15 @@ class LerobotLocalPolicy(Policy):
         # their model index, and the degradation is surfaced rather than
         # silent (mirrors _resolve_state_order's all-missing guard).
         self._state_missing_keys_warned: bool = False
+        # Warn at most once per policy when relative-action RTC re-anchoring is
+        # enabled but the leftover cannot be converted to absolute coordinates.
+        # The consequence is the one _resolve_rtc_rebase_steps warns about for a
+        # missing LeRobot helper - a stale-frame chunk-seam prefix - so it is
+        # surfaced the same way instead of degrading silently behind that
+        # method's "re-anchoring enabled" INFO line. Per-policy, not per-episode
+        # (the bridge's postprocessor shape does not change across a reset), so
+        # reset() deliberately leaves it latched.
+        self._rtc_reanchor_degraded_warned: bool = False
         # Telemetry parallel to generic_state_keys_used: flipped True the
         # first time a resolved state key is missing from the observation
         # so run_policy / eval_policy can surface a machine-checkable signal.
@@ -989,7 +961,11 @@ class LerobotLocalPolicy(Policy):
             pass
 
         logger.info("Loading %s...", self.pretrained_name_or_path)
-        start = time.time()
+        # ``load_time_s`` is a duration, so it is measured on a clock that
+        # cannot step: a wall-clock correction landing during a multi-minute
+        # weight read is exactly when this would otherwise be reported as
+        # negative or as hours.
+        start_mono = time.monotonic()
 
         # Reuse a process-cached model when one was already built for this
         # (path, policy_type, device) - skips the expensive from_pretrained
@@ -1053,7 +1029,7 @@ class LerobotLocalPolicy(Policy):
             if hasattr(config, "output_features"):
                 self._output_features = config.output_features
 
-        elapsed = time.time() - start
+        elapsed = time.monotonic() - start_mono
         self.load_time_s = elapsed
         logger.info(
             "Loaded %s (type='%s') in %.1fs on %s",
@@ -1111,6 +1087,7 @@ class LerobotLocalPolicy(Policy):
         caller error that should abort the load loudly.
         """
         self._embodiment_config_failed = False
+        self._processor_inert_reason = None
         if not (self.use_processor and self.pretrained_name_or_path):
             return
 
@@ -1165,6 +1142,12 @@ class LerobotLocalPolicy(Policy):
                     self._processor_bridge = None
                     self._embodiment_config_failed = True
             else:
+                # An inactive bridge is normally benign - the checkpoint ships no
+                # processor configs and no recognized stats file. When it instead
+                # carries a reason (a caller argument put reachable pipelines out
+                # of reach), keep that reason so the report below can name it; the
+                # bridge itself is still discarded, it applies nothing either way.
+                self._processor_inert_reason = self._processor_bridge.inert_reason
                 self._processor_bridge = None
                 logger.debug("No processor configs found, using raw obs/action flow")
 
@@ -1179,7 +1162,23 @@ class LerobotLocalPolicy(Policy):
         # misleading "no policy_postprocessor.json" message for that case.
         if self.use_processor and not self._embodiment_config_failed:
             bridge = self._processor_bridge
-            if bridge is None or not bridge.has_postprocessor:
+            inert_reason = self._processor_inert_reason
+            if inert_reason:
+                # The pipelines were within reach and a caller-supplied argument
+                # put them out of reach. Report THAT, not the generic missing-
+                # postprocessor message below, whose remedy (supply the
+                # checkpoint's postprocessor) does not address it - the same
+                # accurate-cause rule the embodiment-config failure follows.
+                logger.warning(
+                    "lerobot_local: %s loaded WITHOUT normalization: %s "
+                    "Until it is corrected, observation.state reaches the policy "
+                    "un-normalized and predicted actions reach the robot without "
+                    "unnormalization -- if the arm barely moves or reaches an "
+                    "out-of-distribution pose, this is why.",
+                    self.pretrained_name_or_path or "<model>",
+                    inert_reason,
+                )
+            elif bridge is None or not bridge.has_postprocessor:
                 logger.warning(
                     "lerobot_local: %s loaded WITHOUT an action postprocessor "
                     "(no policy_postprocessor.json). Actions are emitted in the "
@@ -1213,8 +1212,12 @@ class LerobotLocalPolicy(Policy):
                         "dataset-prefixed stats (e.g. 'so100.buffer.action') instead "
                         "of the canonical 'action'/'observation.state' keys. "
                         "Fine-tune the checkpoint (which writes proper stats) or pass "
-                        "processor_overrides={'normalizer_processor': {'stats': "
-                        "<dataset stats>}} -- if the arm reaches an out-of-distribution "
+                        "processor_overrides={'normalizer_processor': {'stats': <dataset "
+                        "stats>}, 'unnormalizer_processor': {'stats': <dataset stats>}} -- "
+                        "state normalization lives in the preprocessor's "
+                        "'normalizer_processor' step and action unnormalization in the "
+                        "postprocessor's 'unnormalizer_processor' step, so naming only one "
+                        "leaves the other inert. If the arm reaches an out-of-distribution "
                         "pose or ignores proprioception, this is why.",
                         self.pretrained_name_or_path or "<model>",
                         inert,
@@ -1346,7 +1349,8 @@ class LerobotLocalPolicy(Policy):
             state_dim = action_dim = len(self.robot_state_keys)
 
         logger.info("Loading MolmoAct2 (transformers-native) from %s...", self.pretrained_name_or_path)
-        start = time.time()
+        # Same contract as the generic load path above: a measured duration.
+        start_mono = time.monotonic()
 
         # Reuse a process-cached MolmoAct2 model when one was already built for
         # this checkpoint+device+load-knobs. The model weights (1295 files for
@@ -1388,7 +1392,7 @@ class LerobotLocalPolicy(Policy):
         # MolmoAct2.select_action requires inference_action_mode every call.
         self.inference_kwargs.setdefault("inference_action_mode", self._molmoact2_inference_action_mode)
 
-        elapsed = time.time() - start
+        elapsed = time.monotonic() - start_mono
         self.load_time_s = elapsed
         logger.info(
             "Loaded MolmoAct2Policy (type='molmoact2') in %.1fs on %s",
@@ -1861,18 +1865,60 @@ class LerobotLocalPolicy(Policy):
         full chunk then slicing.
 
         Returns ``None`` (disabling re-anchoring this step, falling back to the
-        model-space leftover) when the policy is not relative-action or the
-        postprocessor does not yield a plain action tensor.
+        model-space leftover) in three cases, only the first of which is benign:
+
+        - The policy is not relative-action (``_rtc_relative_step`` unset). Its
+          frame does not move, so there is nothing to re-anchor and nothing to
+          report.
+        - The processor bridge has no postprocessor.
+        - The postprocessor does not yield a plain action tensor.
+
+        The last two are degradations rather than no-ops: the policy *is*
+        relative-action, so every following chunk blends a stale-frame prefix -
+        exactly the outcome :meth:`_resolve_rtc_rebase_steps` warns about when
+        the LeRobot re-anchor helper is unavailable. Both therefore warn once per
+        policy instead of degrading silently behind that method's
+        "re-anchoring enabled" INFO line.
+
+        A postprocessor that *raises* is out of scope here: ``postprocess``
+        documents ``RuntimeError``, and propagating it keeps a broken pipeline
+        fatal rather than downgrading it to a silent frame shift.
         """
         if self._rtc_relative_step is None:
             return None
         bridge = self._processor_bridge
         if bridge is None or not bridge.has_postprocessor:
+            self._warn_reanchor_degraded("the processor bridge has no postprocessor")
             return None
         absolute = bridge.postprocess(leftover_model.clone())
         if not isinstance(absolute, torch.Tensor):
+            self._warn_reanchor_degraded(f"the postprocessor returned {type(absolute).__name__}, not a tensor")
             return None
         return absolute.detach()
+
+    def _warn_reanchor_degraded(self, reason: str) -> None:
+        """Report a relative-action leftover that could not be re-anchored, once.
+
+        Mirrors the wording :meth:`_resolve_rtc_rebase_steps` uses for the same
+        consequence when the LeRobot re-anchor helper is missing, so the two
+        routes to a stale-frame chunk seam read alike. Latched per policy: this
+        is a pipeline-shape problem that will recur on every inference, and
+        :meth:`_absolute_rtc_leftover` runs once per chunk.
+
+        Args:
+            reason: Why the absolute conversion was unavailable, interpolated
+                into the warning so the cause is named alongside the effect.
+        """
+        if self._rtc_reanchor_degraded_warned:
+            return
+        logger.warning(
+            "Relative-action RTC re-anchoring is enabled for '%s' but the chunk leftover "
+            "could not be converted to absolute coordinates (%s); the chunk-seam prefix "
+            "will be carried in a STALE coordinate frame.",
+            type(self._policy).__name__,
+            reason,
+        )
+        self._rtc_reanchor_degraded_warned = True
 
     def _predict_with_rtc(self, batch: dict[str, Any]) -> torch.Tensor:
         """Run inference using predict_action_chunk with RTC kwargs.
@@ -1976,10 +2022,25 @@ class LerobotLocalPolicy(Policy):
 
         # predict_action_chunk returns (batch, chunk_size, action_dim)
         assert self._policy is not None, "Policy not loaded"
-        inference_start = time.time()
+        # This latency is not a report. It is appended to
+        # ``_rtc_latency_history`` below, and ``_estimate_inference_delay``
+        # turns that window's p95 into ``inference_delay`` - the RTC paper's
+        # ``d``, which freezes the first ``d`` actions of the next chunk to the
+        # already-committed prefix and is the offset the chunk-seam slice skips.
+        # On ``time.time()`` a wall-clock step became one latency sample of the
+        # step's size, and the window it lands in outlives the correction: a
+        # lone outlier IS the p95 of a window holding 2..20 samples (it drops
+        # out from 21 on), and ``reset()`` clears the window every episode, so
+        # an episode's first inferences are always in that range. One correction
+        # there put ``step * fps`` into ``inference_delay`` for roughly the next
+        # 19 seams - past ``execution_horizon``, which freezes the whole prefix
+        # and discards each newly computed chunk while the arm executes the
+        # stale one - and then recovered by itself, which is what made it hard
+        # to attribute. A backward step recorded a negative latency instead.
+        inference_start_mono = time.monotonic()
         action_chunk = self._policy.predict_action_chunk(batch, **rtc_kwargs)
 
-        inference_elapsed = time.time() - inference_start
+        inference_elapsed = time.monotonic() - inference_start_mono
         self._rtc_latency_history.append(inference_elapsed)
 
         # Remove batch dim if present: (1, T, A) → (T, A)
@@ -2353,8 +2414,9 @@ class LerobotLocalPolicy(Policy):
         Any ordering derived from the observation (both the fallback above and
         the no-``robot_state_keys`` case) is position-only: a ``<joint>.vel``
         sibling of a present ``<joint>`` is dropped by
-        :func:`_drop_velocity_siblings`, so a MuJoCo observation does not
-        interleave velocities into ``observation.state``. An unpaired ``.vel``
+        :func:`~strands_robots.policies._state_keys.drop_velocity_siblings` - the
+        rule every provider that infers an ordering this way shares - so a MuJoCo
+        observation does not interleave velocities into ``observation.state``. An unpaired ``.vel``
         key (LeKiwi's base velocities) is kept, and an explicitly configured
         ``robot_state_keys`` ordering is returned untouched.
 
@@ -2373,7 +2435,7 @@ class LerobotLocalPolicy(Policy):
                 matches the observation.
         """
         if not self.robot_state_keys:
-            return _drop_velocity_siblings(scalar_keys)
+            return drop_velocity_siblings(scalar_keys)
         if any(k in observation_dict for k in self.robot_state_keys):
             return self.robot_state_keys
         shown = self.robot_state_keys[:8]
@@ -2398,7 +2460,7 @@ class LerobotLocalPolicy(Policy):
         if not self._state_key_mismatch_warned:
             logger.warning(msg)
             self._state_key_mismatch_warned = True
-        return _drop_velocity_siblings(scalar_keys)
+        return drop_velocity_siblings(scalar_keys)
 
     def _collect_state_values(self, observation_dict: dict[str, Any], order: list[str]) -> list[float]:
         """Pull the joint-state vector from ``observation_dict`` in ``order``.
@@ -2461,10 +2523,9 @@ class LerobotLocalPolicy(Policy):
                 f"observation: {shown}{ellipsis}. Present joints keep their index and the "
                 "missing dims are zero-filled in place, but the sim/robot does not report "
                 "those joints - commonly a mimic/tendon gripper whose actuator name differs "
-                "from the observation's finger-joint names. "
+                "from the observation's finger-joint names. " + state_key_remedy(observed_state_keys(observation_dict))
                 # Same registry-checked remedy as the all-missing guard, so one
                 # rule serves both degradations.
-                + state_key_remedy(_scalar_observation_keys(observation_dict))
             )
             if self.strict_keys:
                 raise ValueError("strict_keys=True: " + msg)
@@ -2489,7 +2550,8 @@ class LerobotLocalPolicy(Policy):
             declared image features by exact name first - either the prefixed
             form (``image`` → ``observation.images.image``) or a BARE declared
             key (``base`` → ``base``, as VLAs like MolmoAct2 declare them);
-            otherwise images fill remaining declared image slots in order.
+            otherwise images fill remaining declared image slots in order -
+            or, under ``strict_keys=True``, raise rather than fill.
           * Remaining scalar joint values are collected (in ``robot_state_keys``
             order when available, else insertion order) into ``observation.state``.
 
@@ -2569,7 +2631,7 @@ class LerobotLocalPolicy(Policy):
             used_feats.add(feat)
 
         # 2) Collect scalar joint values into observation.state.
-        scalar_keys = _scalar_observation_keys(observation_dict)
+        scalar_keys = observed_state_keys(observation_dict)
         # Resolve the joint-state ordering, raising/warning loudly when the
         # configured robot_state_keys cannot describe this observation (the
         # generic joint_0..N vs named-joint mismatch) instead of silently
@@ -2786,7 +2848,9 @@ class LerobotLocalPolicy(Policy):
              directly-declared ``top``) when the policy declares that key.
           3. Positional fallback: remaining cameras fill the remaining declared
              image slots in declaration order, with a WARN that the names did
-             not match (so a wrong wiring is loud, not silent).
+             not match (so a wrong wiring is loud, not silent). Under
+             ``strict_keys=True`` this rung raises instead of falling back, so
+             a camera never reaches a slot it was not named for.
 
         Args:
             cam_names: Camera names present in the observation.
@@ -2797,7 +2861,8 @@ class LerobotLocalPolicy(Policy):
 
         Raises:
             ValueError: If an explicit mapping targets an undeclared image key,
-                or the robot supplies fewer cameras than the policy requires.
+                if ``strict_keys`` is set and a camera cannot be bound by name,
+                or if the robot supplies fewer cameras than the policy requires.
         """
         targets = self._policy_image_keys()
         result: dict[str, str] = {}
@@ -2894,7 +2959,7 @@ class LerobotLocalPolicy(Policy):
         # raises (strict_keys) or warns + falls back to the observation's own
         # scalar keys, instead of silently dropping observation.state and
         # running the policy open-loop (see _resolve_state_order).
-        scalar_keys = _scalar_observation_keys(observation_dict)
+        scalar_keys = observed_state_keys(observation_dict)
         order = self._resolve_state_order(observation_dict, scalar_keys)
 
         # Collect state values index-aligned with the resolved order. A key in

@@ -21,6 +21,7 @@ def require_optional(
     pip_install: str | None = None,
     extra: str | None = None,
     purpose: str = "",
+    system_install: str | None = None,
 ) -> object:
     """Import an optional dependency, raising a clear error if missing.
 
@@ -31,6 +32,13 @@ def require_optional(
         pip_install: Explicit pip package name if it differs from *module_name*.
         extra: ``pyproject.toml`` extras group (e.g. ``"groot-service"``).
         purpose: Human-readable description shown in the error message.
+        system_install: Remedy for a module that arrives with a system package
+            rather than from an index - the ROS 2 client libraries are the case
+            in this package. Replaces the ``pip install`` block entirely, and
+            *pip_install* / *extra* are then not consulted, because a pip
+            command for such a module is a remedy the caller can follow to no
+            effect: it either installs something that leaves the module exactly
+            as missing, or fails outright.
 
     Returns:
         The imported module object.
@@ -46,14 +54,19 @@ def require_optional(
         _lazy_modules[module_name] = module
         return module
     except ImportError:
-        install_hint = pip_install or module_name
         parts = [f"'{module_name}' is required"]
         if purpose:
             parts[0] += f" for {purpose}"
-        parts.append("Install with:")
-        if extra:
-            parts.append(f"  pip install 'strands-robots[{extra}]'")
-        parts.append(f"  pip install {install_hint}")
+        if system_install is not None:
+            # No pip line at all: naming one here would hand the caller an
+            # instruction that reports success without supplying the module.
+            parts.append(system_install)
+        else:
+            install_hint = pip_install or module_name
+            parts.append("Install with:")
+            if extra:
+                parts.append(f"  pip install 'strands-robots[{extra}]'")
+            parts.append(f"  pip install {install_hint}")
         raise ImportError("\n".join(parts)) from None
 
 
@@ -1735,8 +1748,39 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
     The read itself is :func:`_read_finite_vector`, which returns the floats it
     built alongside this verdict; this is the verdict half, for the callers that
     want only a message. Both are one read of ``vec`` (#1906).
+
+    Deferring the count is what makes a *readable* length part of this verdict.
+    A caller holding only a message counts the components by reading ``vec``
+    again, and a value with no readable length cannot be read twice - the read
+    behind this verdict consumes it, so the caller's own count sees nothing. That
+    is a different question from the count itself ("how many components is this?"
+    versus "is that answerable at all"), and it is the one
+    :func:`sequence_length` owns and cannot raise answering (#1888). Refusing it
+    is the rule :func:`coerce_size_vector` - this function's own sibling over the
+    same read - :func:`coerce_rgba` and :func:`_read_pose_vector` already apply,
+    in the same words and for the same reason. Without it a generator of finite
+    numbers passed this verdict and then reached the caller's count as an empty
+    vector, so ``add_object`` reported a three-component extent as ``got 0
+    (size=[])`` and ``patch_scene_mjcf`` raised ``object of type 'generator' has
+    no len()`` into its envelope, naming neither the field nor the method while
+    the sibling fields of that same op named both.
+
+    The probe runs *after* the component read rather than before it, which is the
+    order :func:`coerce_size_vector` uses and the reason every refusal this guard
+    already gave is unchanged: a value whose ``__iter__`` raises, or whose read
+    fails part-way, has no readable length either, and those verdicts say what
+    actually happened instead of reporting a domain check that never ran (#1875,
+    #1878).
     """
-    return _read_finite_vector(method, param_name, vec)[1]
+    err = _read_finite_vector(method, param_name, vec)[1]
+    if err is not None:
+        return err
+    if sequence_length(vec) is None:
+        # The components were read and were finite; what the value cannot supply
+        # is a length for the caller to count. Same words as the sibling
+        # coercions, because it is the same verdict about the same value.
+        return f"{method}: '{param_name}' must be a list/tuple of numbers, got {_refusal_container_repr(vec)}"
+    return None
 
 
 def _read_pose_vector(method: str, param_name: str, vec: Any, expected_len: int) -> tuple[list[float], str | None]:
@@ -1777,6 +1821,34 @@ def _read_pose_vector(method: str, param_name: str, vec: Any, expected_len: int)
     # an oversized ``int`` that CPython itself refuses to convert, escaped this
     # guard and the structured contract its callers document. Both verdicts below
     # are unchanged, including the text for a value carrying no readable length.
+    # A str/bytes is refused on TYPE, before its length is asked for, because it
+    # carries one and the answer is meaningless: it counts characters, not
+    # components. ``add_camera(target="cube")`` - a plausible call, since a camera
+    # aimed at a named body is what the parameter looks like it takes - was refused
+    # as ``'target' must be a 3-element vector, got 4 ('cube')``, which reports the
+    # string's character count as though it were a component count and points the
+    # caller at fixing the length rather than the type.
+    #
+    # Every string is refused either way - ``"123"`` reaches the element read and is
+    # refused there, on its characters - so this changes no verdict, only which
+    # question the caller is sent to fix. That is the whole point: the two refusals
+    # a string currently draws are picked by its LENGTH, so the same mistake reads
+    # as three unrelated problems. At ``expected_len`` 3, ``target="box"`` reports
+    # ``elements must be numbers``, ``target="cube"`` reports a wrong element
+    # *count*, and ``target="0.1,0.2,0.3"`` reports a count of 11. One of those
+    # names the actual error and the other two describe the string's characters as
+    # though they were components.
+    #
+    # :func:`image_keys_error` already refuses str/bytes this way on the name-list
+    # path next door, for the same reason (a string is iterable per character), so
+    # this is one library rule applied to the surface that was missing it.
+    if isinstance(vec, str | bytes):
+        return [], (
+            f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, "
+            f"got {type(vec).__name__} {_refusal_container_repr(vec)}. A string carries a "
+            f"length, but it counts characters rather than components, so it cannot be read "
+            f"as a pose - pass the {expected_len} numbers themselves."
+        )
     length = sequence_length(vec)
     if length is None:
         return [], (
@@ -1858,7 +1930,10 @@ def coerce_pose_vector(
         param_name: Parameter name, used in error text.
         vec: The caller's value, or ``None`` when the parameter was omitted.
         expected_len: Component count the target buffer defines (3 for a
-            position, 4 for a wxyz quaternion).
+            position). An orientation is not validated through here directly:
+            four components are necessary but not sufficient for a rotation,
+            so wxyz callers use
+            :func:`coerce_orientation_quaternion`, which adds the norm rule.
 
     Returns:
         ``(None, None)`` when ``vec`` is ``None`` (omitted - the caller applies
@@ -1876,6 +1951,117 @@ def coerce_pose_vector(
     if err is not None:
         return None, err
     return floats, None
+
+
+#: The smallest quaternion norm this library reads as a rotation.
+#:
+#: A wxyz value below it cannot be turned into one. MuJoCo refuses the all-zero
+#: quaternion through its XML door outright ("XML Error: zero quaternion is not
+#: allowed"), but the spec-attribute and ``qpos`` doors this package writes
+#: through accept it, and a norm it does consider too small to normalize it
+#: stores verbatim - measured on mujoco 3.12.0, ``quat="1e-9 0 0 0"`` compiles
+#: to ``body_quat = [1e-9, 0, 0, 0]`` while ``quat="2 0 0 0"`` is normalized to
+#: identity. Either way the rotation the caller asked for is not the rotation
+#: the model carries, so the value is refused at the door instead.
+#:
+#: The bound is the one ``move_to`` has always applied; it moved here unchanged
+#: so every orientation entry point shares it.
+MIN_QUATERNION_NORM = 1e-8
+
+
+def _quaternion_direction_error(method: str, param_name: str, floats: list[float]) -> str | None:
+    """The one rule a quaternion adds over a position, shared by both wrappers.
+
+    ``floats`` has already been read and validated by :func:`_read_pose_vector`,
+    so this examines four plain ``float`` values rather than anything of the
+    caller's.
+
+    Args:
+        method: Calling method or op name, used in error text.
+        param_name: Parameter or field name, used in error text.
+        floats: The four wxyz components.
+
+    Returns:
+        A message when the components have no direction to recover, else ``None``.
+    """
+    norm = math.sqrt(sum(component * component for component in floats))
+    if norm < MIN_QUATERNION_NORM:
+        return f"{method}: '{param_name}' quaternion has ~zero norm; pass a valid [w, x, y, z]."
+    return None
+
+
+def coerce_orientation_quaternion(method: str, param_name: str, quat: Any) -> tuple[list[float] | None, str | None]:
+    """Validate an optional wxyz orientation and normalize it to plain floats.
+
+    Single definition of the library's orientation contract, shared by every
+    entry point that writes a wxyz quaternion so their accepted domains cannot
+    diverge. It is :func:`coerce_pose_vector` with ``expected_len=4`` plus the
+    one rule a quaternion adds over a position: four finite components are not
+    enough, because they can still fail to describe a rotation.
+
+    A quaternion is a DIRECTION with a magnitude the target buffers ignore, so
+    any non-unit value is fine - ``[0, 2, 0, 0]`` and ``[0, 1, 0, 0]`` are the
+    same half turn, and every consumer either normalizes or is scale-invariant.
+    A norm below :data:`MIN_QUATERNION_NORM` has no direction to recover,
+    though, and nothing downstream reports that: MuJoCo substitutes identity for
+    an all-zero body quaternion and reports success, so the rotation the caller
+    requested is silently replaced by no rotation at all. ``move_object`` then
+    echoes the requested quaternion back in its success text while
+    ``get_body_state`` reports identity - one call, two answers, neither of them
+    flagged.
+
+    Args:
+        method: Calling method name, used in error text.
+        param_name: Parameter name, used in error text.
+        quat: The caller's wxyz value, or ``None`` when the parameter was
+            omitted.
+
+    Returns:
+        ``(None, None)`` when ``quat`` is ``None`` (omitted - the caller applies
+        its own default), ``(floats, None)`` for four finite components whose
+        norm is a usable direction, or ``(None, error_message)`` otherwise.
+    """
+    if quat is None:
+        return None, None
+    # One read, through the guard's own, for the reason :func:`pose_vector_error`
+    # defers to it: the floats the direction check examines are the ones the
+    # component checks read, and reading them here cannot run the caller's code.
+    floats, err = _read_pose_vector(method, param_name, quat, 4)
+    if err is not None:
+        return None, err
+    if (direction_err := _quaternion_direction_error(method, param_name, floats)) is not None:
+        return None, direction_err
+    return floats, None
+
+
+def orientation_quaternion_error(method: str, param_name: str, quat: Any) -> str | None:
+    """Return an error message if ``quat`` is not a usable wxyz orientation.
+
+    Error-only wrapper over :func:`coerce_orientation_quaternion`, for the
+    callers that hold a value to the orientation domain without taking the
+    normalized floats back - the structured scene ops, which pass the caller's
+    value straight to the spec write.
+
+    It pairs with :func:`coerce_orientation_quaternion` the way
+    :func:`pose_vector_error` pairs with :func:`coerce_pose_vector`, and differs
+    from it in the same one respect: ``None`` is REFUSED here rather than read as
+    an omission. An op dict is not a keyword argument - a key that is PRESENT
+    carries a supplied value - so reading ``{"op": ..., "quat": None}`` as "no
+    orientation asked for" would apply identity under a success result.
+
+    Args:
+        method: Calling method or op name, used in error text.
+        param_name: Parameter or field name, used in error text.
+        quat: The caller's wxyz value, or ``None`` when omitted.
+
+    Returns:
+        ``None`` when ``quat`` is acceptable (including omitted), else the
+        message naming the method, the parameter and what is wrong.
+    """
+    floats, err = _read_pose_vector(method, param_name, quat, 4)
+    if err is not None:
+        return err
+    return _quaternion_direction_error(method, param_name, floats)
 
 
 #: The component counts a 4-component RGBA row can be built from. Alpha is the
@@ -2194,7 +2380,10 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
     does: ``add_object`` / ``add_camera`` / ``add_robot`` exist on more than one
     backend and their accepted domain must not diverge - a name one backend
     refuses must be refused by the others, and a second copy of the rule would
-    drift from the first.
+    drift from the first. The MuJoCo ``patch_scene_mjcf`` ops that claim a name
+    (``add_body`` / ``add_geom`` / ``add_site``) are a fourth door onto the same
+    spec and route through it too, because "which names may address an entity"
+    is a property of the backend, not of the call used to create one.
 
     Three values are refused, each because it produces an entity that some part
     of this API cannot address (measured on MuJoCo 3.11.0, one ``create_world``
@@ -2264,6 +2453,59 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
     return None
 
 
+def published_string_error(value: Any, param: str, context: str) -> str | None:
+    """Return an error message if a field published as a string did not arrive as one.
+
+    The agent-boundary counterpart to :func:`entity_name_error`. That guard runs
+    at the creation sites which *claim* a name; this one runs at the dispatcher,
+    for every field the tool's own schema declares ``"type": "string"`` -- names,
+    but also paths, ids, XML, and enum-valued selectors.
+
+    It exists because the dispatcher already promises this. Its documented
+    validation layer refuses an unknown parameter, refuses a missing required one
+    "(no raw Python ``TypeError``)", and checks a vector's length and dtype
+    "before the value reaches numpy / MuJoCo" -- but a scalar string field had no
+    such layer, so a non-string value was carried into the method body and failed
+    wherever that body first assumed a string. What the caller received was not a
+    refusal naming the field: it was ``AttributeError: 'int' object has no
+    attribute 'lower'`` out of a registry lookup, ``TypeError: stat: path should
+    be string, bytes, os.PathLike or integer, not list`` out of ``os.stat``, or
+    ``TypeError: unhashable type: 'list'`` out of a dict subscript. None of those
+    names the parameter, and none of them can be acted on.
+
+    Checking it here rather than at each entry point is the same reasoning
+    :func:`strands_robots.simulation.mujoco.backend.mj_name_to_id` records for
+    entity lookups: routing every one through a single funnel means a field added
+    later is safe by construction. It is also why the check keys off the
+    *published* schema -- the set it enforces is derived from that schema at
+    import time, so a field published tomorrow is covered without a second list
+    to keep in sync.
+
+    Only the type is refused. The empty string is NOT: ``instruction=""`` is the
+    documented default for a rollout and ``render(camera_name="")`` selects the
+    free camera, so the emptiness rule belongs at the creation sites that
+    :func:`entity_name_error` guards, not at the boundary. A ``str`` subclass is
+    accepted, for the same reason it is there -- it is a string by every
+    operation that follows.
+
+    Args:
+        value: The caller's value.
+        param: Parameter name, used in error text.
+        context: Calling context, used in error text (e.g. ``"Action 'add_robot'"``).
+
+    Returns:
+        ``None`` when *value* is a string, otherwise the error message to report
+        through the structured tool-result dict.
+    """
+    if isinstance(value, str):
+        return None
+    return (
+        f"{context}: '{param}' must be a string, got {_refusal_repr(value)} "
+        f"({type(value).__name__}); this tool publishes '{param}' as a string and "
+        "every agent-tool call carries it as one."
+    )
+
+
 def validation_split_fraction(val_episodes: int, total_episodes: int) -> float:
     """``dataset.eval_split`` that holds out exactly ``val_episodes`` episodes.
 
@@ -2288,7 +2530,7 @@ def validation_split_fraction(val_episodes: int, total_episodes: int) -> float:
     return (val_episodes - 0.5) / total_episodes
 
 
-def validation_split_error(val_episodes: int, total_tasks: Any, context: str) -> str | None:
+def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *, passthrough_param: str) -> str | None:
     """Error text when a global episode COUNT cannot be honored as a split.
 
     lerobot expresses a validation split as one ``eval_split`` FRACTION and
@@ -2307,6 +2549,13 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str) ->
         val_episodes: The requested held-out episode count, for the message.
         total_tasks: ``total_tasks`` from the dataset's ``meta/info.json``.
         context: Caller label the message is prefixed with.
+        passthrough_param: Name of the caller's own raw-flag passthrough
+            parameter, interpolated into the remedy. Required rather than
+            defaulted because the surfaces disagree: the ``lerobot_train`` tool
+            spells it ``extra_flags`` while :class:`TrainSpec` (and the
+            ``train_policy`` tool) spell it ``extra``, so a default would name a
+            keyword one of them does not accept - the reader would apply the
+            remedy verbatim and get a ``TypeError``.
 
     Returns:
         The error text, or None when the count can be honored exactly.
@@ -2319,8 +2568,8 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str) ->
         "fraction in lerobot (it holds out ceil(episodes_in_task * eval_split) "
         "from every task), so a single global count is not expressible: the "
         "ceiling would be applied once per task. Pass the fraction directly, "
-        "e.g. extra_flags={'dataset.eval_split': 0.1, 'eval_steps': 1000}, and "
-        "the split will hold out a tenth of each task."
+        f"e.g. {passthrough_param}={{'dataset.eval_split': 0.1, 'eval_steps': 1000}}, "
+        "and the split will hold out a tenth of each task."
     )
 
 

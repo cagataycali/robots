@@ -1,7 +1,9 @@
 """Tests for ``strands_robots.policies.base.Policy`` ABC contract.
 
-Covers the ``get_actions_sync`` event-loop dispatch paths: the 'no loop'
-fast path and the 'already-in-event-loop' ThreadPoolExecutor fallback.
+Covers both ``get_actions_sync`` dispatch paths -- the 'no loop' fast path and
+the 'already-in-a-running-loop' offload -- and pins that the offload is resolved
+by ``strands_robots._async_utils``, the one owner of that rule, rather than by a
+private per-call executor.
 """
 
 from __future__ import annotations
@@ -9,10 +11,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
+import threading
 from typing import Any
 
 import pytest
 
+from strands_robots._async_utils import _resolve_coroutine
+from strands_robots.policies import base as policy_base
 from strands_robots.policies.base import ChunkedPolicy, Policy, resolve_chunk_length
 from strands_robots.policies.mock import MockPolicy
 
@@ -42,13 +48,12 @@ def test_get_actions_sync_outside_event_loop_uses_asyncio_run():
     assert actions == [{"j0": 0.1}, {"j0": 0.2}]
 
 
-def test_get_actions_sync_inside_event_loop_uses_threadpool():
-    """When called from within a running event loop, the sync wrapper must
-    off-load to a thread pool instead of raising 'already in a loop'."""
+def test_get_actions_sync_inside_event_loop_returns_actions_instead_of_raising():
+    """From inside a running loop the wrapper must offload, not raise 'already in a loop'."""
     p = _IdentityPolicy()
 
     async def inner():
-        # Calling the sync wrapper here forces the thread-pool branch
+        # Calling the sync wrapper here forces the offload branch
         return p.get_actions_sync({"observation.state": [0.0]}, instruction="hi")
 
     actions = asyncio.run(inner())
@@ -75,24 +80,64 @@ def test_reset_default_is_noop():
     assert p.reset(seed=42) is None
 
 
+def _documented_well_known_keys() -> list[str]:
+    """The well-known goal keys ``Policy.get_actions`` documents, from its docstring."""
+    doc = Policy.get_actions.__doc__ or ""
+    start = doc.find("are **well-known**")
+    end = doc.find("Providers MUST ignore unknown")
+    if start == -1 or end == -1 or end <= start:
+        return []
+    return re.findall(r"^\s*-\s+``([A-Za-z_][A-Za-z0-9_]*)\s*:", doc[start:end], re.MULTILINE)
+
+
+# One representative value per well-known goal key, on that key's documented
+# domain. Keyed by name so the round-trip below covers whatever
+# ``Policy.get_actions`` currently documents rather than a copy of the list that
+# can fall behind it -- this smoke test asserted only the first three for as long
+# as ``target_velocity`` was missing from the ABC, so it agreed with the omission
+# instead of catching it. A key added to the contract with no sample here fails
+# the completeness assertion rather than being silently skipped.
+_WELL_KNOWN_KWARG_SAMPLES: dict[str, Any] = {
+    "target_pose": [0.5, 0.0, 0.3, 1.0, 0.0, 0.0, 0.0],
+    "target_joints": {"j0": 0.1, "j1": -0.2},
+    "target_velocity": [0.5, 0.0, 0.0],
+    "world_update": None,
+}
+
+
 def test_well_known_kwargs_are_accepted_by_contract():
-    """Non-VLA providers receive goals via ``**kwargs`` (target_pose,
-    target_joints, world_update). The Policy contract requires get_actions
-    to ignore unknown kwargs rather than raising, so callers can pass
-    shared keys across providers without coupling to a backend."""
+    """Every well-known goal key the ABC documents must round-trip through a provider.
+
+    Non-VLA providers receive goals via the well-known ``**kwargs`` keys, and the
+    Policy contract requires ``get_actions`` to ignore unknown kwargs rather than
+    raising, so callers can pass shared keys across providers without coupling to
+    a backend.
+
+    The key set is read from the contract itself. The exact vocabulary and its
+    parity with shipped provider code are pinned in
+    ``test_well_known_goal_kwargs_have_one_definition.py``; this is the
+    behavioural half -- that passing all of them at once is actually accepted.
+    """
+    documented = set(_documented_well_known_keys())
+    assert documented, "parsed no well-known goal keys from the Policy.get_actions contract"
+    unsampled = sorted(documented - set(_WELL_KNOWN_KWARG_SAMPLES))
+    assert not unsampled, (
+        f"Policy.get_actions documents well-known goal keys with no sample value "
+        f"here: {unsampled}. Add one on that key's documented domain so this "
+        "round-trip covers the whole contract."
+    )
+
     p = MockPolicy()
     p.set_robot_state_keys(["j0", "j1"])
     obs = {"observation.state": [0.0, 0.0]}
 
-    # All three well-known kwargs together must round-trip cleanly through
-    # the sync wrapper -- this is the smoke test that pins the documented
-    # API surface for non-VLA providers.
+    # All well-known kwargs together must round-trip cleanly through the sync
+    # wrapper -- this is the smoke test that pins the documented API surface for
+    # non-VLA providers.
     actions = p.get_actions_sync(
         obs,
         instruction="",
-        target_pose=[0.5, 0.0, 0.3, 1.0, 0.0, 0.0, 0.0],
-        target_joints={"j0": 0.1, "j1": -0.2},
-        world_update=None,
+        **{key: _WELL_KNOWN_KWARG_SAMPLES[key] for key in sorted(documented)},
     )
     assert isinstance(actions, list) and actions, "Policy must return a non-empty action list"
     assert all(isinstance(a, dict) for a in actions)
@@ -422,3 +467,170 @@ class TestPreflightDefault:
     def test_default_preflight_accepts_any_observation_keys(self):
         # A provider that does not override preflight must not block construction.
         assert _IdentityPolicy.preflight({"observation.state", "front"}) is None
+
+
+class _RaisingPolicy(_IdentityPolicy):
+    """A policy whose inference fails, to pin that the wrapper is transparent to it."""
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        raise RuntimeError("inference exploded")
+
+
+class _EchoKwargsPolicy(_IdentityPolicy):
+    """A policy that returns whatever kwargs reached it, to pin verbatim forwarding."""
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        return [{"obs": observation_dict, "instruction": instruction, "kwargs": kwargs}]
+
+
+class TestSyncWrapperResolvesThroughTheSharedOwner:
+    """``get_actions_sync`` delegates resolution instead of re-deriving it.
+
+    ``strands_robots._async_utils`` owns "resolve a policy coroutine in a sync
+    context", and its offload branch submits to ONE module-level worker that is
+    reused across calls -- the comment on that executor says why. Every
+    in-process rollout path resolves through it.
+
+    The offload branch is the one a documented caller lands in: this wrapper is
+    advertised as safe to call from an event loop or a notebook, and a notebook
+    cell body always runs inside a running loop. Re-deriving the branch with a
+    private ``ThreadPoolExecutor`` in a ``with`` block therefore starts and
+    joins one OS thread per call at control rate. Because the block joins before
+    returning, the live thread COUNT never grows, so nothing observing thread
+    counts can see it -- which is why the pin below counts ``Thread.start``
+    instead.
+    """
+
+    @staticmethod
+    def _count_started_threads(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+        """Count every OS thread started from here on."""
+        counter = {"n": 0}
+        original = threading.Thread.start
+
+        def counting_start(self: threading.Thread) -> None:
+            counter["n"] += 1
+            original(self)
+
+        monkeypatch.setattr(threading.Thread, "start", counting_start)
+        return counter
+
+    def test_a_call_inside_a_running_loop_starts_no_thread_of_its_own(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The offload reuses the shared worker, so N calls start 0 threads."""
+        policy = _IdentityPolicy()
+        calls = 24
+
+        async def drive() -> int:
+            # Warm the shared worker first, so what is measured afterwards is
+            # per-call thread creation rather than the one-off worker start.
+            policy.get_actions_sync({}, "")
+            counter = self._count_started_threads(monkeypatch)
+            for _ in range(calls):
+                policy.get_actions_sync({}, "")
+            return counter["n"]
+
+        started = asyncio.run(drive())
+        assert started == 0, (
+            f"{calls} calls to get_actions_sync inside a running loop started {started} OS "
+            f"threads; the shared resolver in strands_robots._async_utils reuses one worker, "
+            f"so a warm wrapper must start none"
+        )
+
+    def test_the_wrapper_resolves_through_the_shared_resolver(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Resolution is delegated to the owner, not re-implemented locally."""
+        seen: list[object] = []
+        # Read through getattr and install with raising=False so a tree whose
+        # wrapper does not consult the owner fails on the observable (nothing
+        # recorded) rather than on the name being absent.
+        real = getattr(policy_base, "_resolve_coroutine", _resolve_coroutine)
+
+        def spy(coro_or_result: Any) -> Any:
+            seen.append(coro_or_result)
+            return real(coro_or_result)
+
+        monkeypatch.setattr(policy_base, "_resolve_coroutine", spy, raising=False)
+        actions = _IdentityPolicy().get_actions_sync({}, "hi")
+
+        assert actions == [{"j0": 0.1}, {"j0": 0.2}]
+        assert len(seen) == 1, (
+            "get_actions_sync did not resolve through strands_robots._async_utils._resolve_coroutine; "
+            "a second implementation of the same rule is what lets the wrapper and the runner "
+            "disagree about which branch a caller lands in"
+        )
+
+    def test_the_wrapper_builds_no_executor_of_its_own(self) -> None:
+        """One owner for the offload, so there is one executor to reason about."""
+        source = inspect.getsource(Policy.get_actions_sync)
+        assert "ThreadPoolExecutor" not in source, (
+            "get_actions_sync constructs its own executor; the offload belongs to "
+            "strands_robots._async_utils, whose worker is created once and reused"
+        )
+
+    def test_both_branches_agree_with_the_resolver_the_runner_uses(self) -> None:
+        """The wrapper and the in-process rollout path resolve to the same actions."""
+        policy = _IdentityPolicy()
+        expected = [{"j0": 0.1}, {"j0": 0.2}]
+
+        via_wrapper_no_loop = policy.get_actions_sync({}, "")
+        via_runner_no_loop = _resolve_coroutine(policy.get_actions({}, ""))
+        assert via_wrapper_no_loop == expected
+        assert via_runner_no_loop == expected
+
+        async def inside_a_loop() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+            return (
+                policy.get_actions_sync({}, ""),
+                _resolve_coroutine(policy.get_actions({}, "")),
+            )
+
+        via_wrapper, via_runner = asyncio.run(inside_a_loop())
+        assert via_wrapper == expected
+        assert via_runner == expected
+
+    @pytest.mark.parametrize("inside_a_loop", [False, True], ids=["no-loop", "running-loop"])
+    def test_an_inference_failure_reaches_the_caller_unchanged(self, inside_a_loop: bool) -> None:
+        """The wrapper is transparent to the policy's own exception on both branches."""
+        policy = _RaisingPolicy()
+
+        def call() -> list[dict[str, Any]]:
+            return policy.get_actions_sync({}, "")
+
+        if not inside_a_loop:
+            with pytest.raises(RuntimeError, match="inference exploded"):
+                call()
+            return
+
+        async def inner() -> list[dict[str, Any]]:
+            return call()
+
+        with pytest.raises(RuntimeError, match="inference exploded"):
+            asyncio.run(inner())
+
+    @pytest.mark.parametrize("inside_a_loop", [False, True], ids=["no-loop", "running-loop"])
+    def test_the_observation_instruction_and_kwargs_are_forwarded_verbatim(self, inside_a_loop: bool) -> None:
+        """Delegating resolution must not touch what the policy is handed."""
+        policy = _EchoKwargsPolicy()
+        obs = {"observation.state": [0.1, 0.2]}
+        goal = [0.5, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]
+
+        def call() -> list[dict[str, Any]]:
+            return policy.get_actions_sync(obs, "pick it up", target_pose=goal, world_update=None)
+
+        if inside_a_loop:
+
+            async def inner() -> list[dict[str, Any]]:
+                return call()
+
+            got = asyncio.run(inner())
+        else:
+            got = call()
+
+        assert got == [
+            {
+                "obs": obs,
+                "instruction": "pick it up",
+                "kwargs": {"target_pose": goal, "world_update": None},
+            }
+        ]

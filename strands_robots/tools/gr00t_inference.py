@@ -293,6 +293,28 @@ def _resolve_host_path(host_path: str) -> str:
     return os.path.realpath(os.path.expanduser(host_path))
 
 
+def _with_resolved(paths: tuple[str, ...]) -> set[str]:
+    """Return each protected path AND the path its symlinks resolve to.
+
+    The blocklist names a path, but docker mounts the directory that path
+    resolves to, so a protected directory reachable under two names has to be
+    blocked under both. A host that reaches a protected directory through a
+    symlink whose target escapes the blocklist is the case this covers: macOS
+    ships ``/etc -> /private/etc``, and a Linux server with a separate data
+    volume may ship ``/home -> /mnt/home``. Resolving only the candidate mount
+    (#384 item 2) refuses the symlink spelling and admits the target spelling,
+    which is the same directory.
+
+    A path that is not a symlink contributes one entry, so on a host whose
+    protected paths are all real directories the returned set is the blocklist.
+    """
+    out: set[str] = set()
+    for raw in paths:
+        out.add(os.path.normpath(raw))
+        out.add(os.path.realpath(raw))
+    return out
+
+
 def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     """Return None if all bind-mount host paths are safe, else a reason.
 
@@ -303,8 +325,12 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     """
     if not volumes:
         return None
-    blocked_dirs = {os.path.normpath(p) for p in _BLOCKED_VOLUME_HOST_PATHS}
-    blocked_exact = {os.path.normpath(p) for p in _BLOCKED_VOLUME_EXACT}
+    # Both sides of the comparison are resolved: the candidate mount (#384
+    # item 2) and the blocklist itself. Resolving one side only compares a
+    # directory against a name, so a protected directory reachable under a
+    # second name was refused under one spelling and admitted under the other.
+    blocked_dirs = _with_resolved(_BLOCKED_VOLUME_HOST_PATHS)
+    blocked_exact = _with_resolved(_BLOCKED_VOLUME_EXACT)
     for host_path in volumes:
         norm = _normalize_host_path(str(host_path))
         # #384 item 2: also evaluate the symlink-resolved path so a host symlink
@@ -442,6 +468,105 @@ def _numeric_option_error(
     return None
 
 
+_ENUMERABLE_OPTION_RE = re.compile(r"^[a-z][a-z0-9_]+$")
+
+#: Per-action set of enumerable string options the action's command line reads.
+#: The keys mirror :data:`_ACTION_NUMERIC_OPTIONS` -- these five options are
+#: consumed by exactly the actions that build an inference command line, which is
+#: the same set that reads ``denoising_steps``.
+_ACTION_ENUMERABLE_OPTIONS: dict[str, tuple[str, ...]] = {
+    "start": ("data_config", "embodiment_tag", "vit_dtype", "llm_dtype", "dit_dtype"),
+    "restart": ("data_config", "embodiment_tag", "vit_dtype", "llm_dtype", "dit_dtype"),
+    "lifecycle:full": ("data_config", "embodiment_tag", "vit_dtype", "llm_dtype", "dit_dtype"),
+}
+
+
+def _is_allowed_enumerable_option(value: Any) -> bool:
+    """True iff *value* is a lowercase ``[a-z][a-z0-9_]+`` selector token.
+
+    Total over any input, like :func:`_is_allowed_image`: a non-string is refused
+    rather than carried into :mod:`re`.
+    """
+    return isinstance(value, str) and _ENUMERABLE_OPTION_RE.match(value) is not None
+
+
+def _enumerable_option_error(
+    action: str,
+    *,
+    data_config: Any,
+    embodiment_tag: Any,
+    vit_dtype: Any,
+    llm_dtype: Any,
+    dit_dtype: Any,
+    protocol: str,
+    use_tensorrt: bool,
+    lifecycle: str,
+) -> str | None:
+    """Error text for the first enumerable option ``action`` reads but cannot honor.
+
+    The enum-valued counterpart to :func:`_numeric_option_error`, and it exists for
+    the same reason that one records: these options are interpolated into the
+    ``docker exec`` command line that :func:`_build_inference_command` builds and
+    ``_start_service`` runs **detached**, so a value the server's own flag parser
+    rejects surfaces minutes later inside the container's log rather than as this
+    call's result. The numeric options in that argv were already refused here; the
+    selector strings beside them were carried through unchecked, so a mistyped
+    ``data_config`` reported a service that "failed to start" and a shell
+    metacharacter rode into the argv on the strength of it being argv-style.
+
+    Each option names a vocabulary rather than a free string -- an embodiment data
+    config, an embodiment tag, a TensorRT precision -- and every value the shipped
+    catalogue and this tool's own docstring name is a lowercase
+    ``[a-z][a-z0-9_]+`` token, so that is the domain. It is the class the
+    repository requires for exactly these fields, and holding them to it refuses
+    nothing the server would have accepted.
+
+    Only the options ``action`` actually reads are checked, so a caller is never
+    refused for a value the requested action ignores. Two carry an extra
+    condition, both read off :func:`_build_inference_command`: the N1.7 entrypoint
+    takes no ``--data-config`` flag, so under ``protocol="n1.7"`` that value is
+    genuinely inert; and the three dtype flags are only emitted when
+    ``use_tensorrt`` is set.
+
+    Args:
+        action: The requested action; decides which options are effective.
+        data_config: Embodiment data-config selector, as supplied.
+        embodiment_tag: Embodiment tag, as supplied.
+        vit_dtype: TensorRT ViT precision, as supplied.
+        llm_dtype: TensorRT LLM precision, as supplied.
+        dit_dtype: TensorRT DiT precision, as supplied.
+        protocol: The server protocol; ``"n1.7"`` ignores ``data_config``.
+        use_tensorrt: Whether the dtype flags are emitted at all.
+        lifecycle: The lifecycle phase, which selects the effective option set
+            when ``action`` is ``"lifecycle"``.
+
+    Returns:
+        An error message naming the action and the option, or ``None`` when every
+        option this call reads is usable.
+    """
+    key = f"lifecycle:{lifecycle}" if action == "lifecycle" else action
+    consumed = _ACTION_ENUMERABLE_OPTIONS.get(key, ())
+    if not consumed:
+        return None
+    candidates: list[tuple[str, Any]] = []
+    if "data_config" in consumed and protocol != "n1.7":
+        candidates.append(("data_config", data_config))
+    if "embodiment_tag" in consumed:
+        candidates.append(("embodiment_tag", embodiment_tag))
+    if use_tensorrt:
+        candidates.extend([("vit_dtype", vit_dtype), ("llm_dtype", llm_dtype), ("dit_dtype", dit_dtype)])
+    for param, value in candidates:
+        if not _is_allowed_enumerable_option(value):
+            return (
+                f"{action}: {param} must be a lowercase selector token matching "
+                f"{_ENUMERABLE_OPTION_RE.pattern} (letters, digits and underscores), "
+                f"got {value!r}. It is passed straight to the inference server's "
+                f"flag parser, which reports a value it cannot read only in the "
+                f"container log."
+            )
+    return None
+
+
 @tool
 def gr00t_inference(
     action: str,
@@ -489,7 +614,10 @@ def gr00t_inference(
         - ``stop``: Terminate a running service on the specified ``port``.
         - ``status``: Check whether a service is running on the specified ``port``.
         - ``list``: Discover all running services across common ports (5555-5558, 8000-8003).
-        - ``restart``: Stop and re-start a service (e.g., to swap checkpoints). Requires ``checkpoint_path``.
+        - ``restart``: Stop and re-start a service (e.g., to swap checkpoints). Requires
+          ``checkpoint_path``. Refused when the running service cannot be stopped: the
+          port is still held, so the new checkpoint cannot bind it and the previous one
+          keeps serving.
         - ``find_containers``: List available Isaac-GR00T Docker containers.
         - ``build_image``: Clone Isaac-GR00T at ``repo_tag`` and run ``bash docker/build.sh``.
           Idempotent - skips the build when ``image_name`` already exists in the local
@@ -616,8 +744,11 @@ def gr00t_inference(
             Defaults to 5555 (ZMQ) or auto-switches
             to 8000 when ``http_server=True``.
         data_config: Embodiment data config name (see Data configs above). N1.5/N1.6 only.
+            Must be a lowercase ``[a-z][a-z0-9_]+`` selector token - it is passed
+            to the server's ``--data-config`` flag, which reports a name it cannot
+            read only in the container log.
         embodiment_tag: Embodiment tag for the model (e.g., ``gr1``, ``so100``,
-            ``libero_sim``).
+            ``libero_sim``). Must be a lowercase ``[a-z][a-z0-9_]+`` selector token.
         denoising_steps: Number of denoising steps for action generation (default: 4).
             Must be a positive integer. Ignored by ``protocol="n1.7"``, whose
             entrypoint takes no ``--denoising-steps`` flag.
@@ -630,8 +761,14 @@ def gr00t_inference(
         use_tensorrt: Enable TensorRT acceleration (default: False).
         trt_engine_path: Directory for TensorRT engine cache (default: ``gr00t_engine``).
         vit_dtype: ViT precision with TensorRT - ``fp16`` or ``fp8`` (default: ``fp8``).
+            Must be a lowercase ``[a-z][a-z0-9_]+`` token; read only when
+            ``use_tensorrt=True``.
         llm_dtype: LLM precision with TensorRT - ``fp16``, ``nvfp4``, or ``fp8`` (default: ``nvfp4``).
+            Must be a lowercase ``[a-z][a-z0-9_]+`` token; read only when
+            ``use_tensorrt=True``.
         dit_dtype: DiT precision with TensorRT - ``fp16`` or ``fp8`` (default: ``fp8``).
+            Must be a lowercase ``[a-z][a-z0-9_]+`` token; read only when
+            ``use_tensorrt=True``.
         http_server: Use HTTP REST API instead of ZMQ (default: False).
         api_token: API token for authentication. Falls back to ``GROOT_API_TOKEN`` env var.
         protocol: Server protocol version - ``"n1.5"`` (default), ``"n1.6"``, or ``"n1.7"``.
@@ -792,6 +929,23 @@ def gr00t_inference(
     if _numeric_reason is not None:
         return {"status": "error", "message": f"gr00t_inference: {_numeric_reason}"}
 
+    # Same boundary, same argv: the selector strings sit beside those numerics on
+    # the detached ``docker exec`` command line, so a value the server's flag
+    # parser cannot read is equally invisible to this caller.
+    _enumerable_reason = _enumerable_option_error(
+        action,
+        data_config=data_config,
+        embodiment_tag=embodiment_tag,
+        vit_dtype=vit_dtype,
+        llm_dtype=llm_dtype,
+        dit_dtype=dit_dtype,
+        protocol=protocol,
+        use_tensorrt=use_tensorrt,
+        lifecycle=lifecycle,
+    )
+    if _enumerable_reason is not None:
+        return {"status": "error", "message": f"gr00t_inference: {_enumerable_reason}"}
+
     if action == "find_containers":
         return _find_gr00t_containers()
     elif action == "list":
@@ -937,8 +1091,34 @@ def gr00t_inference(
     elif action == "restart":
         if checkpoint_path is None:
             return {"status": "error", "message": "Checkpoint path required for restart"}
-        # Stop existing service and start new one
-        _stop_service(port)
+        # Stop the existing service, then rebind the port for the new checkpoint.
+        # The teardown verdict is the PRECONDITION for that rebind, not a
+        # progress note: ``_stop_service`` reports an error exactly when
+        # something still holds ``port`` after SIGTERM and SIGKILL, and its
+        # message says so in as many words ("a restart will fail to bind it").
+        #
+        # Discarding it sent the rebind ahead anyway, and the rebind cannot
+        # detect the collision on its own. The launch is a detached
+        # ``docker exec -d``, so ``subprocess.run`` returns 0 as soon as the
+        # daemon accepts it - it says nothing about whether the server inside
+        # bound the port - and the readiness wait is a bare TCP connect to
+        # ``port``, which the SURVIVING server answers on the first poll. The
+        # result was ``status="success"`` naming the new ``checkpoint_path`` as
+        # the one serving, byte-identical to a restart that really did swap it,
+        # while every inference request still reached the old checkpoint. Swapping
+        # checkpoints is the documented reason this action exists, so that is the
+        # one thing a caller cannot be left guessing about.
+        stop_result = _stop_service(port)
+        if stop_result["status"] == "error":
+            return {
+                "status": "error",
+                "port": port,
+                "message": (
+                    f"Restart aborted: the service on port {port} could not be stopped, so "
+                    f"{checkpoint_path!r} was not started and the previous checkpoint is still "
+                    f"serving. {stop_result.get('message', '')}"
+                ),
+            }
         time.sleep(2)  # Brief pause to allow port release before rebind
         return _start_service(
             checkpoint_path=checkpoint_path,
@@ -1039,8 +1219,86 @@ def _check_service_status(port: int) -> dict[str, Any]:
         }
 
 
+def _signal_service_pids(exec_prefix: list[str], pids: list[str], signal: str) -> None:
+    """Send ``signal`` to every pid in ``pids``, best effort.
+
+    Teardown is best effort *per pid*. A pid that exits between the scan that
+    listed it and the signal that targets it makes ``kill`` exit non-zero
+    ("No such process") -- and that is the outcome teardown wanted, not a
+    failure. Signalling therefore must never abort the sweep: the pids after it
+    in the list, and the SIGKILL escalation that follows, still have to run.
+
+    Args:
+        exec_prefix: Argv prefix that selects where the signal lands, e.g.
+            ``["docker", "exec", "gr00t"]`` for a container or ``[]`` for the
+            host.
+        pids: Process ids to signal. Empty strings are skipped.
+        signal: ``kill`` signal flag, e.g. ``"-TERM"`` or ``"-KILL"``.
+    """
+    for pid in pids:
+        if pid:
+            subprocess.run([*exec_prefix, "kill", signal, pid], capture_output=True, text=True, check=False)
+
+
+def _service_pids_in_container(container_name: str, port: int) -> list[str]:
+    """Return the inference-service pids serving ``port`` inside a container.
+
+    Args:
+        container_name: Container to scan.
+        port: Port the inference service was started on.
+
+    Returns:
+        The matching pids, or an empty list when the container has none or
+        cannot be scanned at all. A container that cannot be scanned is
+        skipped by the caller rather than aborting the whole teardown.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [pid for pid in result.stdout.strip().split("\n") if pid]
+
+
+def _service_pids_on_host(port: int) -> list[str]:
+    """Return the host pids holding ``port``.
+
+    Args:
+        port: Port to inspect.
+
+    Returns:
+        The pids holding the port, or an empty list when it is free (or when
+        ``lsof`` is unavailable).
+    """
+    try:
+        result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True, check=False)
+    except (subprocess.CalledProcessError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [pid for pid in result.stdout.strip().split("\n") if pid]
+
+
 def _stop_service(port: int) -> dict[str, Any]:
-    """Stop GR00T inference service running on specific port."""
+    """Stop the GR00T inference service running on ``port``.
+
+    Escalates SIGTERM -> SIGKILL over every pid found, then rescans and reports
+    what is actually true. A pid that had already exited is not an error, but a
+    port still held after the escalation is: reporting success there would tell
+    the caller the port is free when the next bind is about to fail.
+
+    Args:
+        port: Port whose inference service should be stopped.
+
+    Returns:
+        A tool result. ``"success"`` only when nothing is left holding ``port``.
+    """
     try:
         containers_result = _find_gr00t_containers()
         if containers_result["status"] == "success":
@@ -1048,67 +1306,63 @@ def _stop_service(port: int) -> dict[str, Any]:
 
             for container in running_containers:
                 container_name = container["name"]
-                try:
-                    result = subprocess.run(
-                        ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}"],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-
-                    if result.returncode == 0 and result.stdout.strip():
-                        pids = result.stdout.strip().split("\n")
-                        for pid in pids:
-                            if pid:
-                                subprocess.run(["docker", "exec", container_name, "kill", "-TERM", pid], check=True)
-
-                        time.sleep(2)
-
-                        result = subprocess.run(
-                            ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}"],
-                            capture_output=True,
-                            text=True,
-                            check=False,
-                        )
-
-                        if result.returncode == 0 and result.stdout.strip():
-                            pids = result.stdout.strip().split("\n")
-                            for pid in pids:
-                                if pid:
-                                    subprocess.run(["docker", "exec", container_name, "kill", "-KILL", pid], check=True)
-
-                        return {
-                            "status": "success",
-                            "port": port,
-                            "container": container_name,
-                            "message": f"GR00T service on port {port} stopped in container {container_name}",
-                        }
-
-                except subprocess.CalledProcessError:
+                alive = _service_pids_in_container(container_name, port)
+                if not alive:
                     continue
 
+                exec_prefix = ["docker", "exec", container_name]
+                _signal_service_pids(exec_prefix, alive, "-TERM")
+                time.sleep(2)
+
+                alive = _service_pids_in_container(container_name, port)
+                if alive:
+                    _signal_service_pids(exec_prefix, alive, "-KILL")
+                    alive = _service_pids_in_container(container_name, port)
+
+                if alive:
+                    return {
+                        "status": "error",
+                        "port": port,
+                        "container": container_name,
+                        "message": (
+                            f"GR00T service on port {port} in container {container_name} survived SIGTERM and "
+                            f"SIGKILL: pid(s) {', '.join(alive)} still match. The port is still held, so a "
+                            f"restart will fail to bind it. Check the container with "
+                            f"'docker exec {container_name} ps -ef'."
+                        ),
+                    }
+
+                return {
+                    "status": "success",
+                    "port": port,
+                    "container": container_name,
+                    "message": f"GR00T service on port {port} stopped in container {container_name}",
+                }
+
         # Fallback: try host system
-        result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True)
-
-        if result.returncode == 0:
-            pids = result.stdout.strip().split("\n")
-            for pid in pids:
-                if pid:
-                    subprocess.run(["kill", "-TERM", pid], check=True)
-
-            time.sleep(2)
-
-            result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True)
-
-            if result.returncode == 0:
-                pids = result.stdout.strip().split("\n")
-                for pid in pids:
-                    if pid:
-                        subprocess.run(["kill", "-KILL", pid], check=True)
-
-            return {"status": "success", "port": port, "message": f"Service on port {port} stopped"}
-        else:
+        alive = _service_pids_on_host(port)
+        if not alive:
             return {"status": "success", "port": port, "message": f"No service running on port {port}"}
+
+        _signal_service_pids([], alive, "-TERM")
+        time.sleep(2)
+
+        alive = _service_pids_on_host(port)
+        if alive:
+            _signal_service_pids([], alive, "-KILL")
+            alive = _service_pids_on_host(port)
+
+        if alive:
+            return {
+                "status": "error",
+                "port": port,
+                "message": (
+                    f"Port {port} is still held by pid(s) {', '.join(alive)} after SIGTERM and SIGKILL. "
+                    f"The owning process may belong to another user; inspect it with 'lsof -i:{port}'."
+                ),
+            }
+
+        return {"status": "success", "port": port, "message": f"Service on port {port} stopped"}
 
     except Exception as e:
         return {"status": "error", "message": f"Failed to stop service: {e}"}
@@ -1305,8 +1559,10 @@ def _start_service(
 
         # Wait for service to start
         wire_protocol = "HTTP" if http_server else "ZMQ"
-        start_time = time.time()
-        while time.time() - start_time < timeout:
+        # time.monotonic(): a wall-clock step during startup would abandon a
+        # container that was still coming up, or wait far past ``timeout``.
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < timeout:
             if _is_service_running(port):
                 response: dict[str, Any] = {
                     "status": "success",
@@ -1378,7 +1634,7 @@ def _image_exists(image_name: str) -> bool:
             check=False,
         )
         return result.returncode == 0
-    except (FileNotFoundError, OSError):
+    except OSError:
         return False
 
 
@@ -1400,7 +1656,7 @@ def _container_state(name: str) -> str:
         if result.returncode != 0:
             return "absent"
         return result.stdout.strip() or "absent"
-    except (FileNotFoundError, OSError):
+    except OSError:
         return "absent"
 
 
@@ -1603,7 +1859,7 @@ def _download_checkpoint(
         "hf_subfolder": hf_subfolder,
         "local_dir": str(local_dir),
         "skipped": False,
-        "message": f"Downloaded {hf_repo}{('/' + hf_subfolder) if hf_subfolder else ''} → {local_dir}",
+        "message": f"Downloaded {hf_repo}{('/' + hf_subfolder) if hf_subfolder else ''} -> {local_dir}",
     }
 
 
@@ -1628,7 +1884,7 @@ def _container_has_wrapper_mount(name: str) -> bool:
         if result.returncode != 0:
             return False
         return _DETERMINISTIC_WRAPPER_CONTAINER_PATH in result.stdout.split()
-    except (FileNotFoundError, OSError):
+    except OSError:
         return False
 
 

@@ -25,6 +25,45 @@ one rule with no gate behind it, and a pull request could reach ``APPROVED`` /
 ``SUCCESS`` / ``CLEAN`` having ignored it -- which is how this check came to be
 written.
 
+The second question this answers
+--------------------------------
+A branch that correctly records its change as a fragment adds no heading to the
+log, so the comparison above is silent -- correctly. Nothing in it looks at the
+fragment's own contents, and nothing else fast did either: fragment validity was
+enforced only by ``tests/test_changelog_fragments.py``, inside the one required
+check. Measured on #2144, whose only defect was a fragment first line reading
+``Fixed: ...`` instead of ``### Fixed: ...``::
+
+    Refuse a changelog entry written outside a fragment    SUCCESS      10s
+    call-test-lint / Test and Lint                         FAILURE    20.8 min
+
+The check named for the convention passed it, and the verdict arrived from a
+general suite instead -- 125x later, worded as a test failure on a branch whose
+diff was 28 lines of ``strands_robots/utils.py`` and two test files. A misnamed
+file is the same class reached by a different path: ``collect_fragments`` raises,
+so ``validate_fragments`` returns that one message and the same suite carries it.
+
+So this also validates the fragments the branch *adds or modifies*, using the
+assembler's own ``FRAGMENT_NAME`` and ``validate_fragment`` rather than a second
+copy of either rule -- a copy could refuse a fragment the assembler accepts,
+which is the contradiction #2139 had to remove for ``save_episode``.
+
+Two boundaries are deliberate rather than incidental:
+
+- *Only the branch's own fragments.* ``validate_fragments()`` walks the whole
+  directory, 315 pending fragments of it, so wiring that in would accuse a branch
+  of a malformed fragment already on the base -- the positional-baseline mistake
+  #1879 paid a review round for.
+- *Bodies read from the object database.* ``git show <head>:<path>``, never the
+  working tree, so the verdict stays independent of the checked-out tree. The
+  validator itself does come from the checked-out tree, which in CI is the base
+  branch, and that is deliberate twice over: the base is the only tree guaranteed
+  to carry it, and a branch cannot relax the gate it is judged by in the same diff
+  that trips it.
+
+Both remedies stay self-clearing, as the append one is: add the ``### ``, or
+rename the file. See issue #2163.
+
 Why it is a base diff, not a test
 ---------------------------------
 The obvious pin -- assert ``[Unreleased]`` holds no entries, since the assembler
@@ -89,18 +128,21 @@ Usage
                 by ``test_a_merge_commit_head_still_sees_the_branchs_append``.
 ``--repo``      repository root (default: the current working directory).
 
-Exit status is ``1`` when an unaccounted entry was added, else ``0``.
+Exit status is ``1`` when an unaccounted entry was added or a fragment this
+branch adds is invalid, else ``0``.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import subprocess
 import sys
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from types import ModuleType
 
 #: The log the convention protects, and the anchor within it.
 CHANGELOG_PATH = "CHANGELOG.md"
@@ -113,6 +155,53 @@ FRAGMENT_DIR = "changelog.d"
 #: step with ``scripts/assemble_changelog.py``'s ``RESERVED_NAMES``; a deleted
 #: README is not a consumed fragment and must not excuse an added entry.
 RESERVED_NAMES = frozenset({"README.md"})
+
+
+def _load_assembler() -> ModuleType:
+    """Load ``assemble_changelog`` from beside this script.
+
+    By path rather than by name: ``scripts/`` is not a package and is not on
+    ``sys.path`` when this module is loaded by its own tests, which use
+    ``spec_from_file_location``. Loading by path also keeps the import free of a
+    ``sys.path`` mutation at module scope.
+
+    Registered in ``sys.modules`` *before* execution, and not merely returned.
+    ``@dataclass`` resolves its own module to decide whether an annotation is a
+    ``KW_ONLY`` sentinel -- ``sys.modules.get(cls.__module__).__dict__`` -- so a
+    module executed outside the table dies on its first dataclass with
+    ``AttributeError: 'NoneType' object has no attribute '__dict__'``, naming
+    neither this file nor the reason. An already-loaded copy is reused, so the
+    assembler is executed once however many callers ask for it.
+
+    Which tree it comes from is load-bearing. In CI that is the base branch, and
+    both reasons matter: the base is the only tree guaranteed to carry the
+    validator (issue #1791), and a branch therefore cannot relax the naming or
+    heading rule it is judged by in the same diff that trips it.
+    """
+    loaded = sys.modules.get("assemble_changelog")
+    if loaded is not None:
+        return loaded
+
+    path = Path(__file__).resolve().parent / "assemble_changelog.py"
+    spec = importlib.util.spec_from_file_location("assemble_changelog", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load the fragment validator from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["assemble_changelog"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        # Do not leave a half-executed module behind for the next importer to
+        # find and trust. Re-raised lexically, so nothing is swallowed.
+        del sys.modules["assemble_changelog"]
+        raise
+    return module
+
+
+#: The single source of the fragment naming and heading contracts. Reused rather
+#: than restated, so this check and the assembler can never disagree about
+#: whether a fragment is valid.
+_ASSEMBLER = _load_assembler()
 
 
 class GitError(RuntimeError):
@@ -196,6 +285,77 @@ def deleted_fragments(start: str, end: str, repo: Path | None = None) -> tuple[s
     return tuple(sorted(line for line in output.splitlines() if line and Path(line).name not in RESERVED_NAMES))
 
 
+def changed_fragments(start: str, end: str, repo: Path | None = None) -> tuple[str, ...]:
+    """Return the fragment paths this branch adds or modifies, sorted.
+
+    ``--diff-filter=AM``, because those are the fragments the branch is answerable
+    for. A fragment already on the base is not this branch's to fix, and naming it
+    would accuse a branch of a defect it did not introduce.
+
+    ``--no-renames`` so a renamed fragment arrives as an add under its new name,
+    which is the name that has to satisfy the naming rule.
+
+    The reserved and dotfile skips mirror ``collect_fragments``, so a file the
+    assembler never reads as a fragment is not judged as one here either.
+    """
+    output = _git(
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--diff-filter=AM",
+        f"{start}..{end}",
+        "--",
+        FRAGMENT_DIR,
+        repo=repo,
+    )
+    return tuple(
+        sorted(
+            line
+            for line in output.splitlines()
+            if line and Path(line).name not in RESERVED_NAMES and not Path(line).name.startswith(".")
+        )
+    )
+
+
+def fragment_problems(
+    paths: Iterable[str], head: str, repo: Path | None = None
+) -> tuple[tuple[str, str], ...]:
+    """Return ``(path, problem)`` for every contract violation in those fragments.
+
+    The verdicts are the assembler's own and are passed through verbatim, so the
+    wording a contributor reads here is the wording
+    ``python scripts/assemble_changelog.py --check`` prints locally.
+
+    A name that fails ``FRAGMENT_NAME`` short-circuits: ``collect_fragments``
+    would refuse the whole directory on it, so there is no ``Fragment`` to build
+    and reporting the heading of a file the assembler will not read would be
+    noise.
+
+    Bodies come from ``git show``, never from the working tree, which is what
+    keeps the verdict independent of the checked-out tree.
+    """
+    problems: list[tuple[str, str]] = []
+    for path in paths:
+        name = Path(path).name
+        match = _ASSEMBLER.FRAGMENT_NAME.match(name)
+        if match is None:
+            problems.append(
+                (
+                    path,
+                    f"{name}: not a valid fragment name - expected '<number>-<slug>.md' "
+                    "(lowercase slug, words joined by '-')",
+                )
+            )
+            continue
+        fragment = _ASSEMBLER.Fragment(
+            path=Path(path),
+            number=int(match.group("number")),
+            body=file_at(head, path, repo=repo),
+        )
+        problems.extend((path, problem) for problem in _ASSEMBLER.validate_fragment(fragment))
+    return tuple(problems)
+
+
 def unreleased_entries(changelog_text: str) -> tuple[str, ...]:
     """Return the ``### `` entry headings under ``[Unreleased]``, in file order.
 
@@ -260,6 +420,7 @@ def render_report(
     added: Sequence[str],
     accounted: Sequence[str],
     unaccounted: Sequence[str],
+    problems: Sequence[tuple[str, str]] = (),
 ) -> str:
     """Render the job-summary report for this run."""
     lines = [
@@ -270,11 +431,12 @@ def render_report(
     ]
 
     if not added:
+        # No early return: a branch can add no entry to the log and still add a
+        # fragment the assembler would refuse, which is the #2144 shape.
         lines += [
             f"No entry was added to `{CHANGELOG_PATH}`'s `{UNRELEASED_HEADING}` section.",
             "",
         ]
-        return "\n".join(lines) + "\n"
 
     if unaccounted:
         lines += [
@@ -307,6 +469,33 @@ def render_report(
         lines += [f"- `{entry}`" for entry in accounted]
         lines += [""]
 
+    if problems:
+        lines += [
+            f"This branch adds or changes {len(problems)} changelog fragment"
+            + ("" if len(problems) == 1 else "s")
+            + " the assembler would refuse:",
+            "",
+        ]
+        # The assembler prefixes every verdict with the fragment's own name, and
+        # the line already names the path, so drop that prefix rather than print
+        # the name twice. Only the exact prefix is dropped: an unrecognised
+        # wording is passed through whole rather than sliced blind, and the
+        # annotation below is always the assembler's message byte for byte.
+        for path, problem in problems:
+            prefix = f"{Path(path).name}: "
+            detail = problem[len(prefix) :] if problem.startswith(prefix) else problem
+            lines.append(f"- `{path}`: {detail}")
+        lines += [
+            "",
+            "Each verdict is `python scripts/assemble_changelog.py --check`'s own, so that command "
+            + "reproduces this locally. Only the fragments this branch adds or modifies are read, "
+            + f"so nothing already in `{FRAGMENT_DIR}` is attributed to it.",
+            "",
+            f"An invalid fragment is a hard error rather than a skip - see `{FRAGMENT_DIR}/README.md` - "
+            + "so the entry would otherwise be dropped from the assembled log entirely.",
+            "",
+        ]
+
     return "\n".join(lines) + "\n"
 
 
@@ -333,6 +522,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             for path in deleted_fragments(fork_point, args.head, repo=repo)
             if (entry := fragment_entry(file_at(fork_point, path, repo=repo))) is not None
         ]
+        problems = fragment_problems(
+            changed_fragments(fork_point, args.head, repo=repo), args.head, repo=repo
+        )
     except GitError as error:
         # Loud and non-zero: a check that cannot compute its answer must not
         # report the reassuring one.
@@ -349,6 +541,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         added=added,
         accounted=accounted,
         unaccounted=unaccounted,
+        problems=problems,
     )
 
     print(report, end="")
@@ -364,7 +557,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"record it as {FRAGMENT_DIR}/<number>-<slug>.md instead (see {FRAGMENT_DIR}/README.md)."
         )
 
-    return 1 if unaccounted else 0
+    for path, problem in problems:
+        print(f"::error file={path},line=1::{problem}")
+
+    return 1 if unaccounted or problems else 0
 
 
 if __name__ == "__main__":

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import ast
 import inspect
+import threading
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -32,18 +34,32 @@ from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine  # noqa:
 
 _EXAMPLES_DIR = Path(inspect.getfile(MuJoCoSimEngine)).resolve().parents[3] / "examples"
 
-# Actions that fold flat video keys into a structured ``video`` dict; the router
-# accepts those flat keys at its boundary even though the method takes ``video``.
+# Actions that fold flat video keys into a structured ``video`` dict, and the flat
+# keys they fold. Restated here so the table below grades the engine rather than
+# importing its answer; ``test_the_restated_fold_matches_the_engine`` pins the two
+# together. Acceptance is NOT simply "these keys for these actions": the fold is
+# payload-dependent, so ``_accepted_params`` runs the engine's own fold instead of
+# reasoning from these names.
 _VIDEO_FOLDING_ACTIONS = frozenset({"run_policy", "start_policy", "eval_policy", "evaluate_benchmark"})
 _VIDEO_FLAT_KEYS = frozenset({"output_path", "fps", "camera_name"})
 
 
-def _accepted_params(action: str) -> frozenset[str] | None:
-    """Names the router accepts for ``action``, or ``None`` if it accepts anything.
+def _accepted_params(action: str, param_names: Sequence[str] = ()) -> frozenset[str] | None:
+    """Names the router accepts for ``action`` in a payload carrying *param_names*.
 
     Mirrors ``MuJoCoSimEngine._validate_and_build_kwargs``: a method declaring
     ``**kwargs`` legitimately passes residual keys through, so the router skips
     the unknown-key check for it and so does this guard.
+
+    Acceptance of a flat video key is payload-dependent, so the payload's key set
+    is part of the question: a bare ``camera_name`` has no path to attach itself
+    to, and a flat key sent alongside an explicit ``video=`` is not folded at all.
+    Rather than restate that rule, this RUNS it -
+    ``MuJoCoSimEngine._fold_flat_video_keys`` is the router's own code, and a key
+    it removes from the probe is a key validation never sees. Restating it is the
+    defect this replaces: the mirror modelled the three flat keys as accepted for
+    all four folding actions, while the router accepted a bare ``camera_name``
+    for ``run_policy`` alone.
     """
     method_name = MuJoCoSimEngine._ACTION_ALIASES.get(action, action)
     method = getattr(MuJoCoSimEngine, method_name, None)
@@ -58,8 +74,14 @@ def _accepted_params(action: str) -> frozenset[str] | None:
         if n != "self" and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
     }
     accepted = named | set(MuJoCoSimEngine._FIELD_ALIASES) | set(MuJoCoSimEngine._ROUTER_PASSTHROUGH)
-    if action in _VIDEO_FOLDING_ACTIONS:
-        accepted |= _VIDEO_FLAT_KEYS
+    # Keys the router's own fold consumes before validation are accepted by
+    # construction: validation never sees them.
+    probe: dict[str, object] = dict.fromkeys(param_names, "probe")
+    MuJoCoSimEngine._fold_flat_video_keys(action, probe)
+    accepted |= {key for key in param_names if key not in probe}
+    # ...plus the residue ``run_policy`` alone accepts at the boundary.
+    if action == "run_policy":
+        accepted |= set(MuJoCoSimEngine._RUN_POLICY_RESIDUAL_VIDEO_KEYS)
     # name/robot_name are aliased in both directions by the router.
     if "name" in named:
         accepted.add("robot_name")
@@ -121,7 +143,7 @@ class TestExamplesUseParametersTheRouterAccepts:
     def test_no_example_passes_a_parameter_the_router_refuses(self) -> None:
         offenders: list[str] = []
         for path, lineno, action, keys in _all_calls():
-            accepted = _accepted_params(action)
+            accepted = _accepted_params(action, keys)
             if accepted is None:
                 continue
             for key in keys:
@@ -153,23 +175,110 @@ class TestExamplesUseParametersTheRouterAccepts:
         assert "name" in accepted
 
 
+# Payload shapes that reach the flat-video rule. The fold consumes what it can
+# honor and leaves the rest to the unknown-key check, so the same key is accepted
+# in one shape and refused in another - which is why a mirror keyed on the key
+# NAME alone cannot track the router.
+_FLAT_VIDEO_PAYLOADS: tuple[tuple[str, dict[str, object]], ...] = (
+    ("output_path alone", {"output_path": "r.mp4"}),
+    ("fps alone", {"fps": 15}),
+    ("camera_name alone", {"camera_name": "wrist"}),
+    ("output_path + camera_name", {"output_path": "r.mp4", "camera_name": "wrist"}),
+    ("output_path + fps", {"output_path": "r.mp4", "fps": 15}),
+    ("video + output_path", {"video": {"path": "a.mp4"}, "output_path": "b.mp4"}),
+    ("video + fps", {"video": {"path": "a.mp4"}, "fps": 15}),
+)
+
+
+def _router_refuses(action: str, payload: dict[str, object]) -> bool:
+    """True when the LIVE router rejects *payload* for *action* as an unknown key.
+
+    The unknown-key check runs before the method body, so a bare engine with no
+    world answers the routing question without a scene, a GL context or a fixture:
+    an accepted payload falls through to the method's own "no world" refusal.
+    """
+    engine = MuJoCoSimEngine.__new__(MuJoCoSimEngine)
+    engine._lock = threading.RLock()
+    engine._world = None
+    result = engine._dispatch_action(action, dict(payload))
+    text = next((b["text"] for b in result.get("content", []) if isinstance(b, dict) and "text" in b), "")
+    return "Unknown parameter" in text
+
+
 class TestTheAcceptanceMirrorAgreesWithTheRouter:
     """The derived set must match what the live router actually does."""
 
     @pytest.mark.parametrize(
-        ("action", "param", "accepted"),
+        ("action", "params", "param", "accepted"),
         [
-            ("add_camera", "name", True),
-            ("add_camera", "camera_name", False),  # the #244 defect
-            ("add_camera", "position", True),
-            ("get_observation", "robot_name", True),
-            ("get_observation", "camera_name", False),  # same file, same mistake
-            ("render", "camera_name", True),  # the render-side spelling is correct here
-            ("get_world_point", "camera_name", True),
-            ("run_policy", "camera_name", True),  # folded into video.camera
+            ("add_camera", ("name",), "name", True),
+            ("add_camera", ("camera_name",), "camera_name", False),  # the #244 defect
+            ("add_camera", ("position",), "position", True),
+            ("get_observation", ("robot_name",), "robot_name", True),
+            ("get_observation", ("camera_name",), "camera_name", False),  # same file, same mistake
+            ("render", ("camera_name",), "camera_name", True),  # the render-side spelling is correct here
+            ("get_world_point", ("camera_name",), "camera_name", True),
+            # A bare camera_name has no path to attach itself to, so the fold leaves
+            # it behind. run_policy swallows the residue; its three siblings refuse
+            # it. The mirror modelled all four as accepting it.
+            ("run_policy", ("camera_name",), "camera_name", True),
+            ("start_policy", ("camera_name",), "camera_name", False),
+            ("eval_policy", ("camera_name",), "camera_name", False),
+            ("evaluate_benchmark", ("camera_name",), "camera_name", False),
+            # Paired with a path the fold consumes it, for every folding action.
+            ("eval_policy", ("output_path", "camera_name"), "camera_name", True),
+            ("evaluate_benchmark", ("output_path", "camera_name"), "camera_name", True),
+            # output_path and fps are always folded, so always accepted.
+            ("eval_policy", ("output_path",), "output_path", True),
+            ("start_policy", ("fps",), "fps", True),
         ],
     )
-    def test_mirror_verdict(self, action: str, param: str, accepted: bool) -> None:
-        allowed = _accepted_params(action)
+    def test_mirror_verdict(self, action: str, params: tuple[str, ...], param: str, accepted: bool) -> None:
+        allowed = _accepted_params(action, params)
         assert allowed is not None, f"{action} accepts **kwargs; nothing to assert"
         assert (param in allowed) is accepted
+
+    @pytest.mark.parametrize("action", sorted(_VIDEO_FOLDING_ACTIONS))
+    @pytest.mark.parametrize(("label", "extra"), _FLAT_VIDEO_PAYLOADS, ids=[label for label, _ in _FLAT_VIDEO_PAYLOADS])
+    def test_the_mirror_matches_the_router_for_every_folding_payload(
+        self, action: str, label: str, extra: dict[str, object]
+    ) -> None:
+        """Drive the live router and require the mirror to reach the same verdict.
+
+        The class name is a promise about the router, so the router is the oracle.
+        Keying acceptance on the key name alone made the mirror bless a bare
+        ``camera_name`` on the three sibling folding actions, where the router
+        refuses it - so an example naming the video camera for an eval rollout
+        passed this guard and no-oped at runtime.
+        """
+        base: dict[str, object] = (
+            {"benchmark_name": "bench"} if action == "evaluate_benchmark" else {"robot_name": "arm"}
+        )
+        payload = {**base, **extra}
+        allowed = _accepted_params(action, tuple(payload))
+        assert allowed is not None, f"{action} accepts **kwargs; nothing to assert"
+        mirror_refuses = sorted(key for key in payload if key not in allowed)
+        router_refuses = _router_refuses(action, payload)
+        assert bool(mirror_refuses) is router_refuses, (
+            f"{action} with {label}: the mirror says refused={bool(mirror_refuses)} {mirror_refuses}, "
+            f"the router says refused={router_refuses}"
+        )
+
+    def test_a_planted_flat_video_key_on_a_sibling_action_is_reported(self) -> None:
+        """The #244 shape, on a folding action: the mirror must not bless a refusal."""
+        planted = 'sim._dispatch_action("eval_policy", {"robot_name": "arm", "camera_name": "wrist"})\n'
+        assert _literal_dispatch_calls(planted) == [(1, "eval_policy", ("robot_name", "camera_name"))]
+        router_refuses = _router_refuses("eval_policy", {"robot_name": "arm", "camera_name": "wrist"})
+        assert router_refuses, "premise: the router must refuse a bare camera_name for eval_policy"
+        allowed = _accepted_params("eval_policy", ("robot_name", "camera_name"))
+        assert allowed is not None
+        assert "camera_name" not in allowed, (
+            "the mirror accepts a bare camera_name for eval_policy while the router refuses it, "
+            "so an example written that way passes this guard and no-ops at runtime"
+        )
+
+    def test_the_restated_folding_actions_match_the_engine(self) -> None:
+        """Non-vacuity: the table's restatement must track the engine's own owner."""
+        assert _VIDEO_FOLDING_ACTIONS == MuJoCoSimEngine._VIDEO_FOLDING_ACTIONS
+        # The keys ``run_policy`` accepts as residue are the same three the fold folds.
+        assert _VIDEO_FLAT_KEYS == MuJoCoSimEngine._RUN_POLICY_RESIDUAL_VIDEO_KEYS

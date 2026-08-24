@@ -94,6 +94,49 @@ def _resolve_version(import_name: str, dist_name: str) -> str:
     return str(getattr(module, "__version__", "unknown"))
 
 
+def _hf_token_path() -> Path:
+    """Path a cached HuggingFace login token is read from.
+
+    ``huggingface_hub`` owns this resolution: ``HF_TOKEN_PATH`` when set, else
+    ``<HF_HOME>/token``, where ``HF_HOME`` is ``$HF_HOME`` when set, else
+    ``<XDG_CACHE_HOME>/huggingface``, else ``~/.cache/huggingface``. Answering
+    about a hardcoded ``~/.cache/huggingface/token`` instead describes a file the
+    Hub will not open on any host that relocated its cache, and it is wrong in
+    both directions: a relocated token reads as "not logged in", and a stale
+    token left at the default path reads as "logged in" for an environment where
+    every Hub call resolves no token at all.
+
+    Prefer the constant the Hub computed for itself, so the two cannot drift.
+    ``huggingface_hub`` ships only in the extras that pull a checkpoint
+    (``[wbc]``, ``[kimodo]``, ``[protomotions]``), so a base install has no Hub
+    to ask and the fallback transcribes the same rule. Each variable is read by
+    presence rather than truthiness, so an explicitly empty value resolves the
+    way the Hub resolves it rather than being treated as unset.
+
+    Returns:
+        The token path, with ``~`` and ``$VAR`` expanded.
+    """
+    try:
+        from huggingface_hub.constants import HF_TOKEN_PATH
+
+        return Path(HF_TOKEN_PATH)
+    except ImportError:
+        # No Hub installed, so nothing here can ask it where it would look;
+        # fall through to the transcription of its rule below.
+        pass
+
+    default_home = os.path.join(os.path.expanduser("~"), ".cache")
+    hf_home = os.path.expandvars(
+        os.path.expanduser(
+            os.environ.get(
+                "HF_HOME",
+                os.path.join(os.environ.get("XDG_CACHE_HOME", default_home), "huggingface"),
+            )
+        )
+    )
+    return Path(os.path.expandvars(os.path.expanduser(os.environ.get("HF_TOKEN_PATH", os.path.join(hf_home, "token")))))
+
+
 def check_python_version() -> str:
     """Python >= 3.12 required."""
     v = sys.version_info
@@ -125,15 +168,74 @@ def check_mujoco() -> str:
 
 
 def check_mujoco_gl() -> str:
-    """MUJOCO_GL set for headless rendering."""
-    gl = os.environ.get("MUJOCO_GL", "")
-    if gl in ("egl", "osmesa"):
-        return _pass(f"MUJOCO_GL={gl}")
-    if gl == "glfw":
-        return _warn("MUJOCO_GL=glfw (needs display)", note="Set MUJOCO_GL=egl or osmesa for headless")
-    # Not set - check if a display exists
-    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
-        return _pass("MUJOCO_GL unset (display detected, glfw will work)")
+    """MUJOCO_GL names a backend MuJoCo accepts, and one that can render here.
+
+    Answers about the value MuJoCo will read rather than about the string that was
+    typed. MuJoCo folds ``MUJOCO_GL`` with ``.lower().strip()``, reads one family
+    of values as "build no GL context at all", and raises ``RuntimeError`` at
+    import for anything outside the set it builds for the platform. Re-deriving
+    that vocabulary loosely answered about a spelling: ``MUJOCO_GL=EGL`` renders
+    through EGL and read as unrecognised, while every unrecognised value - a
+    disabled GL context, or one MuJoCo refuses outright - read as "not set" and so
+    passed on any machine with a display.
+
+    The vocabulary and the display question both belong to the MuJoCo backend
+    module, which sets this variable when it is unset, so both are asked there
+    rather than restated here.
+    """
+    from strands_robots.simulation.mujoco.backend import (
+        _is_headless,
+        _mujoco_gl_disables_rendering,
+        _mujoco_gl_offscreen_values,
+        _mujoco_gl_valid_values,
+        _mujoco_gl_value,
+    )
+
+    raw = os.environ.get("MUJOCO_GL", "")
+    value = _mujoco_gl_value()
+    # Name the value MuJoCo reads whenever folding changed it, so a verdict about
+    # ``EGL`` does not read as a verdict about a variable nobody set.
+    shown = f"MUJOCO_GL={raw}" if raw == value else f"MUJOCO_GL={raw!r} (MuJoCo reads it as {value!r})"
+    valid = _mujoco_gl_valid_values()
+    # What to recommend has to be valid here: on a platform whose only backend
+    # draws through the window server there is no offscreen value to offer, and
+    # naming one would send the reader after a value MuJoCo refuses.
+    offscreen_here = sorted(_mujoco_gl_offscreen_values())
+
+    if _mujoco_gl_disables_rendering(value):
+        fix = (
+            f"export MUJOCO_GL={offscreen_here[0]}  # or unset it for the platform default"
+            if offscreen_here
+            else "unset MUJOCO_GL  # the platform's own backend renders through its window server"
+        )
+        return _fail(f"{shown} disables MuJoCo's GL context, so nothing can render", fix=fix)
+
+    if value not in valid:
+        offered = ", ".join(sorted(v for v in valid if v))
+        return _fail(
+            f"{shown} is a value MuJoCo refuses at import on {platform.system()}",
+            fix=f"export MUJOCO_GL=<one of: {offered}>  # or unset it for the platform default",
+        )
+
+    if value in offscreen_here:
+        return _pass(shown)
+
+    # Every remaining accepted value routes MuJoCo to a backend that draws through
+    # the platform's window server.
+    if value:
+        note = (
+            f"Set MUJOCO_GL={' or '.join(offscreen_here)} for headless"
+            if offscreen_here
+            else f"{platform.system()} has no offscreen MuJoCo backend, so a window server is required"
+        )
+        return _warn(f"{shown} (needs display)", note=note)
+
+    if not _is_headless():
+        if platform.system() == "Linux":
+            return _pass("MUJOCO_GL unset (display detected, glfw will work)")
+        return _pass(f"MUJOCO_GL unset ({platform.system()} renders through its native backend)")
+    # ``_is_headless`` is only ever true on Linux, so the remedy below is reached
+    # on the one platform where those two backends exist.
     return _fail(
         "MUJOCO_GL not set and no display detected",
         fix="export MUJOCO_GL=egl  # or osmesa; add to ~/.bashrc",
@@ -224,13 +326,18 @@ def check_hf_auth() -> str:
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     if token:
         return _pass("HF_TOKEN set")
-    # Check huggingface-cli login token
-    hf_token_path = Path.home() / ".cache" / "huggingface" / "token"
-    if hf_token_path.exists() and hf_token_path.read_text().strip():
-        return _pass("HuggingFace token found (~/.cache/huggingface/token)")
+    # Read the file the Hub reads (see _hf_token_path), and name it: on a host
+    # that relocated its cache the default path is not the one being consulted,
+    # so a verdict that does not say which file it read cannot be acted on.
+    hf_token_path = _hf_token_path()
+    # ``is_file`` rather than ``exists``: an explicitly empty ``HF_TOKEN_PATH``
+    # resolves to ``Path(".")``, a directory that exists, and reading it raises.
+    if hf_token_path.is_file() and hf_token_path.read_text().strip():
+        return _pass(f"HuggingFace token found ({hf_token_path})")
     return _warn(
         "No HuggingFace token found",
-        note="Needed for dataset push + gated models. Run: huggingface-cli login  # or export HF_TOKEN=hf_...",
+        note=f"Looked in {hf_token_path}. Needed for dataset push + gated models. "
+        "Run: hf auth login  # or export HF_TOKEN=hf_...",
     )
 
 

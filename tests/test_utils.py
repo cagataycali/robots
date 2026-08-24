@@ -56,6 +56,56 @@ class TestRequireOptional:
         mod = require_optional("os.path")
         assert hasattr(mod, "join")
 
+    def test_system_install_replaces_the_pip_block(self):
+        """A system-provided module must be refused with its own remedy, no pip line.
+
+        Some modules arrive with a system package and are absent from PyPI, so any
+        ``pip install`` line is an instruction the caller can follow to no effect.
+        ``system_install`` is the way to say that, and it has to leave the message
+        with no pip command at all.
+        """
+        with pytest.raises(ImportError) as excinfo:
+            require_optional(
+                "nonexistent_xyz",
+                purpose="testing",
+                system_install="Source a distro:\n  source /opt/ros/jazzy/setup.bash",
+            )
+        message = str(excinfo.value)
+        assert "'nonexistent_xyz' is required for testing" in message
+        assert "source /opt/ros/jazzy/setup.bash" in message
+        assert "pip install" not in message
+        assert "Install with:" not in message
+
+    def test_system_install_wins_over_a_pip_remedy(self):
+        """Neither ``extra`` nor ``pip_install`` may leak back into the message.
+
+        A caller migrating a site is likely to leave the old arguments in place;
+        emitting both would put the dead-end command back in front of the reader
+        next to the one that works.
+        """
+        with pytest.raises(ImportError) as excinfo:
+            require_optional(
+                "nonexistent_xyz",
+                pip_install="not-a-real-distribution",
+                extra="my-extra",
+                system_install="Source a distro first.",
+            )
+        message = str(excinfo.value)
+        assert message.endswith("Source a distro first.")
+        assert "not-a-real-distribution" not in message
+        assert "my-extra" not in message
+
+    def test_pip_block_is_unchanged_without_system_install(self):
+        """Omitting ``system_install`` must leave the pip remedy exactly as it was."""
+        with pytest.raises(ImportError) as excinfo:
+            require_optional("nonexistent_xyz", purpose="testing", extra="my-extra", pip_install="my-package")
+        assert str(excinfo.value) == (
+            "'nonexistent_xyz' is required for testing\n"
+            "Install with:\n"
+            "  pip install 'strands-robots[my-extra]'\n"
+            "  pip install my-package"
+        )
+
 
 # safe_join / get_search_paths tests (added for PR #84 follow-up)
 
@@ -387,6 +437,30 @@ class TestPoseVectorDomain:
         values, error = coerce_pose_vector("m", "position", bad, 3)
         assert values is None
         assert error and error.startswith("m: 'position'")
+
+    @pytest.mark.parametrize("text", ["box", "cube", "0.1,0.2,0.3", "123", b"abc"])
+    def test_a_string_is_refused_on_its_type_not_its_length(self, text):
+        """A string names its own type in the refusal, whatever its length.
+
+        Every one of these was already refused, so this pins WHICH question the
+        caller is sent to fix. A string carries a length, so before the type guard
+        the verdict was picked by that length: at ``expected_len`` 3, ``"box"``
+        drew ``elements must be numbers``, ``"cube"`` drew a wrong element *count*
+        of 4, and ``"0.1,0.2,0.3"`` drew a count of 11 - one mistake reported three
+        ways, two of them describing the string's characters as though they were
+        pose components. ``add_camera(target="cube")`` is the call that found it,
+        a camera aimed at a named body being what the parameter looks like it takes.
+        """
+        values, error = coerce_pose_vector("add_camera", "target", text, 3)
+        assert values is None
+        assert error is not None
+        assert error.startswith("add_camera: 'target' must be a list/tuple of 3 numbers")
+        assert type(text).__name__ in error
+        # The character count must not appear as a component count. "123" would
+        # make this vacuous by containing its own digits, so it is checked on the
+        # phrase the length gate produces rather than on the number.
+        assert "-element vector" not in error
+        assert "elements must be numbers" not in error
 
 
 class TestLerobotVersion:

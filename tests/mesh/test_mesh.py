@@ -2,7 +2,7 @@
 
 All tests are 100% mocked.  No ``eclipse-zenoh`` install required: a
 ``MagicMock`` session is injected in place of the real Zenoh session by
-patching :func:`strands_robots.mesh_session.get_session`.
+patching :func:`strands_robots.mesh.core.get_session`.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from strands_robots import mesh as mesh_mod
 from strands_robots.mesh import Mesh, get_local_robots, init_mesh
+from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import session as mesh_session
 
 # ---------------------------------------------------------------------------
@@ -68,12 +68,12 @@ class _FakeRobot:
 def _clean_state() -> Iterator[None]:
     """Reset peer registry and local-robot registry between tests."""
     mesh_session.clear_peers()
-    with mesh_mod._LOCAL_ROBOTS_LOCK:
-        mesh_mod._LOCAL_ROBOTS.clear()
+    with mesh_core._LOCAL_ROBOTS_LOCK:
+        mesh_core._LOCAL_ROBOTS.clear()
     yield
     mesh_session.clear_peers()
-    with mesh_mod._LOCAL_ROBOTS_LOCK:
-        mesh_mod._LOCAL_ROBOTS.clear()
+    with mesh_core._LOCAL_ROBOTS_LOCK:
+        mesh_core._LOCAL_ROBOTS.clear()
 
 
 @pytest.fixture
@@ -672,10 +672,22 @@ class TestTelemetryRobustness:
         assert p["topics"] == ["health"]
 
     def test_read_state_swallows_every_attribute_error(self) -> None:
-        """A hostile robot yields no useful state -> None, never an exception."""
+        """A hostile robot yields no telemetry, but says which probes failed.
+
+        The contract is that nothing propagates: every probe is wrapped in
+        ``except Exception`` so a hostile driver cannot kill the state thread.
+        What it yields is not nothing, though -- each probe that raised names
+        itself in ``degraded``, so a peer whose every read fails is
+        distinguishable on the wire from one that simply has nothing to report.
+        """
         m = Mesh(_HostileRobot(), peer_id="hostile-2")
 
-        assert m._read_state() is None  # must not raise
+        out = m._read_state()  # must not raise
+
+        assert out is not None
+        assert "joints" not in out and "task" not in out, "no telemetry survived"
+        assert set(out["degraded"]) == {"hw_joints", "task_state", "sim_world"}
+        assert {r["reason"] for r in out["degraded"].values()} == {"RuntimeError"}
 
 
 class TestOnPresenceNonDict:

@@ -38,8 +38,8 @@
 
 `strands-robots` gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
 hands. One `Robot()` call returns a **MuJoCo simulation** (default - no GPU, no
-hardware) or a **real robot** - same code, same natural-language control, both
-auto-joined to a peer-to-peer **mesh**.
+hardware) or a **real robot** - same code, same natural-language control, and
+the same opt-in peer-to-peer **mesh** (`mesh=True`).
 
 ```python
 from strands import Agent
@@ -63,7 +63,8 @@ from strands_robots.tools import train_policy
 # 1. TELEOPERATE a real SO-101 with its leader arm and RECORD demos as a
 #    LeRobotDataset (one prompt drives cameras + teleop + recording).
 follower = Robot("so101", mode="real", port="/dev/ttyACM0",
-                 cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}})
+                 cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}},
+                 mesh=True)   # step 4 needs the mesh; joining is opt-in
 follower.attach_teleop("so101_leader", port="/dev/ttyACM1", id="leader")
 Agent(tools=[follower])(
     "start_recording(repo_id='me/pick', root='/tmp/pick', fps=30, "
@@ -172,6 +173,7 @@ extras you need:
 | `motionbricks` | torch + vector-quantize-pytorch, pytorch-lightning, hydra-core (install `motionbricks` from source) | NVIDIA MotionBricks generative kinematic motion for the G1 - in-process torch, composes with `wbc` |
 | `mesh` | eclipse-zenoh, json5 | Peer-to-peer robot mesh |
 | `mesh-iot` | awsiotsdk, awscrt, boto3 | AWS IoT Core mesh transport for fleets |
+| `sagemaker` | boto3 | Submit a `TrainSpec` as a managed SageMaker training job (`create_trainer("sagemaker")`) |
 | `device-connect` | device-connect-edge, device-connect-agent-tools | Device-aware networking - discovery, RPC, events, safety (falls back to the built-in mesh if absent) |
 | `benchmark-libero` | libero | LIBERO benchmark evaluation |
 | `all` | everything above except the GPU-only `sim-isaac` / `sim-gs` extras | Kitchen sink |
@@ -437,7 +439,7 @@ Robot("my_arm", urdf_path="arm.xml") # bring your own MJCF/URDF
 | `cameras` | `dict` | `None` | Camera config (**`mode="real"` only**) |
 | `position` | `list[float]` | `[0,0,0]` | Spawn position in the sim world |
 | `data_config` | `str` | name | Observation/action schema name |
-| `mesh` | `bool` | `True` | Auto-join the Zenoh mesh |
+| `mesh` | `bool \| None` | `None` | Join the Zenoh mesh. `None` consults `STRANDS_MESH`, which leaves it **off** unless set to `true`/`1`/`yes` - pass `mesh=True` to opt in per robot. |
 
 Safety/validation rules:
 - **Defaults to sim.** Real hardware is always an explicit `mode="real"`.
@@ -538,7 +540,7 @@ AgentTool returning `{"status", "content"}`.
 | `start` | `instruction`, `policy_port`, `duration` | Non-blocking async start |
 | `status` | - | Current task status |
 | `stop` | - | Interrupt running task (emergency stop) |
-In sim mode the same tool exposes the 67 Simulation actions - see Simulation (MuJoCo).
+In sim mode the same tool exposes the 77 Simulation actions - see Simulation (MuJoCo).
 </details>
 
 <details>
@@ -599,7 +601,7 @@ create_policy("lerobot/act_aloha_sim_transfer_cube")   # local HF inference
 |----------|---------|-------|
 | `mock` | none | Sinusoidal trajectories; `requires_images=False` (~10x faster) |
 | `groot` | NVIDIA GR00T N1.5/N1.6/N1.7 | Service mode (ZMQ to a Docker container) or local in-process (`model_path=`) |
-| `cosmos3` | NVIDIA Cosmos 3 omnimodal VLA | Service mode (WebSocket to a Cosmos Framework RoboLab policy server); embodiments: `droid`, `umi`, `av`, `bridge` |
+| `cosmos3` | NVIDIA Cosmos 3 omnimodal VLA | Service mode (WebSocket to a Cosmos Framework RoboLab policy server); embodiments: `droid`, `umi`, `av`, `bridge`, `openarm` |
 | `lerobot_local` | HuggingFace | Direct ACT / Pi0 / SmolVLA / Diffusion inference, no server |
 | `lerobot_async` | HuggingFace via gRPC | Offload a LeRobot policy to a remote `PolicyServer` over lerobot's native async-inference gRPC transport (edge/light robot host) |
 | `remote` | any policy, over WebSocket | Drop-in client that forwards observations to a remote `PolicyServer` and returns its action chunk: `create_policy("remote", endpoint="ws://gpu-box:8765")` (or the smart string `create_policy("ws://gpu-box:8765")`). For a light robot host with a GPU box elsewhere; mirrors the server policy's RTC support |
@@ -727,7 +729,8 @@ arm, so use the `franka` (or `panda`) sim asset:
 MUJOCO_GL=egl python examples/vla/cosmos3_sim_rollout.py --record /tmp/c3.mp4
 ```
 
-Embodiments: `droid` (10D, chunk 32, 15 fps), `umi`, `av`, `bridge`. If the
+Embodiments: `droid` (10D, chunk 32, 15 fps), `umi`, `av`, `bridge`, `openarm`
+(post-training only). If the
 server is not running, the policy raises a `ConnectionError` with the exact
 command to start it.
 
@@ -816,10 +819,13 @@ actions = policy.get_actions_sync(
 )
 ```
 
-Agents share one goal vocabulary across VLA and planner providers:
-`Robot.start_task(..., policy_provider="curobo", target_pose=[...])` and
-`mesh.tell(peer, "...", policy_provider="curobo", target_pose=[...])` flow the
-same `target_pose` / `target_joints` / `world_update` kwargs through.
+`mesh.tell(peer, "...", policy_provider="curobo", target_pose=[...])` forwards
+the same `target_pose` / `target_joints` / `world_update` vocabulary to a sim
+peer. In-process, the goal goes to `run_policy(policy_kwargs={...})`, which the
+runner hands to every `get_actions()` call - `run_policy` itself has no
+`target_pose` parameter. `Robot.start_task` takes no goal payload: its
+parameters are `instruction`, `policy_port`, `policy_host`, `policy_provider`
+and `duration`.
 
 </details>
 
@@ -850,6 +856,7 @@ ppo = create_trainer("ppo")   # or create_trainer("fast_sac")
 | `groot` | Imitation / post-tuning | NVIDIA GR00T fine-tune; needs an `embodiment` tag |
 | `cosmos3` | Imitation / post-tuning | NVIDIA Cosmos 3 fine-tune (multi-node HSDP capable) |
 | `mock` | Imitation (test) | No-op trainer for tests and dry runs |
+| `sagemaker` | Managed cloud transport | Submits the spec as one SageMaker training job wrapping a containerized trainer image (`[sagemaker]` extra) |
 | `ppo` | Reinforcement learning | On-policy PPO; pairs with `VecSimEnv` for parallel rollouts |
 | `fast_sac` | Reinforcement learning | Off-policy Soft Actor-Critic |
 
@@ -859,11 +866,65 @@ They collect trajectories through `VecSimEnv` (N independent `SimEnv` as one
 batched env) and score with `BaseRLAlgo.evaluate()`. The training package stays
 torch-free until an RL provider is resolved on first use.
 
+### SageMaker managed training jobs
+
+The `sagemaker` provider is transport, not behavior: it submits the same
+`TrainSpec` as one managed training job and waits for the terminal verdict.
+The training logic lives in the container image you point it at, which
+packages one of the local trainer paths (the `groot` and `cosmos3` providers
+are directly containerizable). Install with `pip install
+"strands-robots[sagemaker]"` (boto3 only; validate works without it).
+
+```python
+from strands_robots.training import create_trainer, TrainSpec
+
+trainer = create_trainer(
+    "sagemaker",
+    image_uri="123456789012.dkr.ecr.us-east-1.amazonaws.com/strands-trainer:latest",
+    role_arn="arn:aws:iam::123456789012:role/StrandsSageMakerTraining",
+    instance_type="ml.g5.xlarge",
+)
+spec = TrainSpec(
+    dataset_root="s3://my-bucket/datasets/pick",   # -> the "training" input channel
+    output_dir="s3://my-bucket/checkpoints/pick",  # -> the job's S3OutputPath
+    base_model="lerobot/smolvla_base",
+    steps=20000,
+    extra={"policy_type": "act"},                  # -> string hyperparameters
+)
+result = trainer.train(spec)   # validates locally BEFORE submitting
+# result.checkpoint_dir -> s3://.../<job name>/output/model.tar.gz on success;
+# a failed job is an error result naming the job + FailureReason.
+```
+
+`dataset_root` and `output_dir` must be `s3://` URIs; every other spec field
+plus `extra` travels as string hyperparameters (strings verbatim, everything
+else JSON-encoded) that the container's entry point decodes back into a
+`TrainSpec` with `dataset_root=/opt/ml/input/data/training` and
+`output_dir=/opt/ml/model`. `spec.num_nodes` maps onto the job's
+`InstanceCount`. A job that outlives the local poll budget reports `running`
+and stays pollable via `trainer.status(job_name)`.
+
+Required IAM surface - the **caller** (the identity running `train`) needs:
+
+- `sagemaker:CreateTrainingJob`, `sagemaker:DescribeTrainingJob`
+- `iam:PassRole` on the execution role passed as `role_arn`
+
+and the **execution role** itself needs S3 read on the dataset prefix, S3
+write on the output prefix, ECR pull on the image, and CloudWatch Logs write
+(`AmazonSageMakerFullAccess` is a superset, but the above is the minimal set).
+
+The integration smoke (`tests_integ/training/test_sagemaker_smoke.py`) skips
+without AWS credentials; its full submission half additionally reads
+`STRANDS_SAGEMAKER_SMOKE_IMAGE_URI`, `STRANDS_SAGEMAKER_SMOKE_ROLE_ARN`,
+`STRANDS_SAGEMAKER_SMOKE_S3_PREFIX` (and optionally
+`STRANDS_SAGEMAKER_SMOKE_INSTANCE_TYPE`) - test-only variables, not read by
+the library.
+
 
 ## Simulation (MuJoCo)
 
 `Robot("so100")` (sim mode) returns a `Simulation` - a MuJoCo-backed AgentTool
-exposing **67 actions** for world composition, physics, rendering, policy
+exposing **77 actions** for world composition, physics, rendering, policy
 execution, and dataset recording. Build it directly when you want full control:
 
 ```python
@@ -941,8 +1002,14 @@ frame = sim.render(camera_name="topdown")   # {status, content:[text, image]}
 
 **Self-healing:** unknown parameters are rejected with *"Unknown parameter X
 for action Y. Valid: [...]"*, missing required params produce *"Action X
-requires parameter Y."*, and vectors/dtypes are validated before MuJoCo sees
-them - so the agent learns the contract without crashing the process.
+requires parameter Y."*, a field the schema publishes as a string is refused
+unless it is one (*"Action X: 'Y' must be a string, got 7 (int)"*), and
+vectors/dtypes are validated before MuJoCo sees them - so the agent learns the
+contract without crashing the process. Every one of those refusals names the
+field by the spelling you sent, or by the one this schema publishes: the router
+rewrites a few wire names to their method parameter (`torque_vec` -> `torque`)
+before validating, and a refusal naming the rewritten name would point at a
+field the schema does not carry.
 
 **Third-party backends.** `create_simulation(name)` discovers backends beyond
 the built-in `mujoco`/`newton`/`isaac` registry via Python
@@ -970,15 +1037,22 @@ backend's install, usage, config, and `STRANDS_ISAAC_*` env vars.
   <img src="docs/assets/mesh_network.svg" alt="Strands Robots mesh - robot peers discovering and coordinating over the Zenoh mesh" width="100%">
 </p>
 
-Every `Robot()` and `Simulation()` is automatically a peer on a local Zenoh
-mesh - no setup. Peers on the same LAN discover each other via multicast
-scouting, sharing a single ref-counted `zenoh.Session` per process.
+`Robot("so100", mesh=True)` joins a local Zenoh mesh. Joining is opt-in: a bare
+`Robot()` leaves `robot.mesh` as `None` unless `STRANDS_MESH` is `true`/`1`/`yes`.
+Once joined, peers on the same host find each other with nothing further to
+configure (gossip scouting plus a shared local endpoint), sharing a single
+ref-counted `zenoh.Session` per process. Cross-host discovery is deliberately
+explicit: point peers at each other with `ZENOH_CONNECT`
+(e.g. `tcp/10.0.0.1:7447`).
+Multicast scouting is **off by default** - it lets any device on the LAN
+enumerate and attract the fleet - and is opt-in via
+`STRANDS_MESH_MULTICAST=true`, which logs a loud warning.
 
 ```python
 from strands_robots import Robot
 
-a = Robot("so100")              # auto-joins the mesh
-b = Robot("so100")              # second peer (another process)
+a = Robot("so100", mesh=True)   # joining is opt-in
+b = Robot("so100", mesh=True)   # second peer (another process)
 print(a.mesh.peers)             # list[dict] - discovers b
 print(a.mesh.peers_by_id[b.peer_id])   # dict[peer_id -> info] for O(1) lookup
 info = a.mesh.get_peer(b.peer_id)      # None-safe single lookup
@@ -987,10 +1061,12 @@ a.mesh.tell(b.peer_id, "pick up the cube")
 a.mesh.emergency_stop()         # broadcast E-STOP, audited to disk
 ```
 
-`tell()` routes to hardware **and** sim peers. Per-call policy kwargs
-(`target_pose`, `target_joints`, `world_update`) and constructor extras are
-forwarded end-to-end via `policy_config`, so a planner-style policy on a sim
-peer sees the goal payload it needs:
+`tell()` routes to hardware **and** sim peers. Each payload is forwarded to
+the sink that reads it: constructor extras (`model_path`, `server_address`,
+...) via `policy_config`, and the per-call goal (`target_pose`,
+`target_joints`, `world_update`) via `policy_kwargs`, which the runner hands
+to every `get_actions()` call. So a planner-style policy on a sim peer sees
+the goal payload it needs:
 
 ```python
 a.mesh.tell(
@@ -1005,8 +1081,10 @@ a.mesh.tell(
 
 Expose the mesh to an agent with the `robot_mesh` tool (`peers`, `status`,
 `tell`, `send`, `broadcast`, `stop`, `emergency_stop`, `subscribe`, `watch`,
-`inbox`). Disable globally with `STRANDS_MESH=false` or per-robot with
-`Robot("so100", mesh=False)`. Install with `uv pip install "strands-robots[mesh]"`.
+`inbox`). Opt in per robot with `Robot("so100", mesh=True)` or process-wide with
+`STRANDS_MESH=true`; `STRANDS_MESH=false` is a hard kill switch that overrides an
+explicit `mesh=True`, and `Robot("so100", mesh=False)` opts a single robot out.
+Install with `uv pip install "strands-robots[mesh]"`.
 
 For frictionless single-machine experiments, set `STRANDS_MESH_LOCAL_DEV=1` -
 one env var that runs the mesh without mTLS/ACL on localhost. It defaults the
@@ -1084,9 +1162,10 @@ touches ROS 2.
 | `STRANDS_ISAAC_RTX_PATHTRACING` | Isaac Sim backend: on (`1`/`true`/`yes`/`on`) enables RTX path-tracing (photorealistic, slow) instead of the default render mode; off leaves the render mode alone, any other spelling is refused | unset |
 | `STRANDS_ISAAC_NUCLEUS_URL` | Isaac Sim backend: override the Omniverse Nucleus asset-server URL | unset (Isaac default) |
 | `GROOT_API_TOKEN` | API token for the GR00T inference service | unset |
-| `STRANDS_MESH` | Set `false` to disable Zenoh mesh globally | `true` |
+| `STRANDS_MESH` | Opt a bare `Robot()` into the Zenoh mesh: `true`/`1`/`yes` turns it on. `false`/`0`/`no` is a hard kill switch that also overrides an explicit `mesh=True`, and refuses the robot-less gateway peer the `robot_mesh` tool would otherwise start in a coordinator process. Any other value -- including `off` and `on` -- is ignored, leaving the mesh neither opted into nor disabled, and is logged once as a warning naming the spellings above | unset (mesh off) |
 | `STRANDS_MESH_LOCAL_DEV` | Set `1` for a one-var localhost preset (auth `none`, no second factor needed) | unset |
 | `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE` | Second factor to expose a `Robot(ros2_transport="rtps")` inbound `joint_command` surface with no `dds_security_config` (DDS Security). Truthy: `1`/`true`/`yes` | unset |
+| `STRANDS_ROS2_COMMAND_ALLOW` | Comma-separated ROS 2 surfaces pre-approved for `use_ros` commands, for headless use where no operator can be prompted (e.g. `/cmd_vel,/navigate_to_pose`). An entry matches by base name, so `/cmd_vel` also pre-approves every namespaced `cmd_vel` in the graph - name the namespace (`/turtle1/cmd_vel`) to scope the approval to one robot. Every blocklisted surface with a base name no entry lists stays gated, including a zero-velocity halt: the gate is keyed on the surface, not on the payload, so a deployment that must halt unattended pre-approves its `cmd_vel` topic. Reads are never gated. See [safety-critical command surfaces](docs/ros2-integration.md#safety-critical-command-surfaces-need-operator-approval) | unset |
 <details>
 <summary><b>Mesh / IoT / GR00T-container env vars (advanced)</b></summary>
 
@@ -1097,23 +1176,30 @@ touches ROS 2.
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
 | `ZENOH_CONNECT` | Comma-separated remote Zenoh endpoints to connect to | unset |
 | `ZENOH_LISTEN` | Comma-separated endpoints for the local Zenoh listener | unset |
+| `STRANDS_MESH_MULTICAST` | Opt in to multicast scouting for LAN discovery. Off by default: any device on the LAN can enumerate and attract the fleet, so enabling it logs a WARNING. Prefer explicit `ZENOH_CONNECT` endpoints | `false` |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
 | `STRANDS_MESH_CA_PINS` | Additional SHA-256 CA pins (comma-separated 64-char hex) | unset |
 | `STRANDS_MESH_DISABLE_CA_PIN` | Skip CA pin check on download path (break-glass) | `false` |
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | TTL (s) for S3 presigned camera URLs; capped at 3600 | `60` |
 | `STRANDS_MESH_ACL_FILE` | Path to a JSON5 Zenoh ACL file; unset = permissive default. See `examples/mesh/mesh_acl_example.json5` (role-scoped) and `examples/mesh/mesh_acl_strict_per_peer.json5` (per-peer). **⚠️ Required on any WAN/cloud router: mTLS gives identity, not least-privilege — without a topic-level ACL one device cert can read all fleet traffic and command any robot. See [security docs](docs/security.md#production-posture-required-off-trusted-networks).** | unset |
 | `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated allowlist of VLA policy-server hosts/CIDRs for inference | loopback only |
-| `STRANDS_MESH_HITL_ACTIONS` | `robot_mesh` actions needing a human-in-the-loop interrupt: `all` / `none` / subset of `emergency_stop,broadcast,tell,send,stop,subscribe,watch` | actuation default |
+| `STRANDS_MESH_HITL_ACTIONS` | `robot_mesh` actions needing a human-in-the-loop interrupt: `all` / `none` / subset of `emergency_stop,broadcast,tell,send,stop,rpc,subscribe,watch` | actuation default |
 | `STRANDS_MESH_SUBSCRIBE_ALLOW` | Extra Zenoh key-expr patterns the `robot_mesh` `subscribe` action may target, beyond the built-in low-impact set | shared classes only |
 | `STRANDS_MESH_OVERRIDE_CODE` | Shared secret for e-stop resume HMAC proof; unset means no remote resume possible | unset |
-| `STRANDS_MESH_INPUT_VALUE_ABS` | Absolute value clamp for teleop joint commands (radians) | `12.566` (4pi) |
+| `STRANDS_MESH_INPUT_VALUE_ABS` | Absolute value clamp for teleop joint commands, in frame units -- whichever unit the leader driver puts on the wire (shipped SO leaders stream degrees, and a 0-100 gripper). Narrow it for radian or normalized -1..1 actuators, whose units are smaller | `720` (two full turns) |
 | `STRANDS_MESH_INPUT_MAX_HZ` | Per-receiver teleop apply-rate ceiling (0 = unlimited). A value no rate check can be built from -- unparsable, or non-finite like `inf`/`nan` -- falls back to the default so the ceiling stays enforced | `100` |
-| `STRANDS_MESH_INPUT_SLEW_ABS` | Per-joint speed bound for teleop commands, in frame units per second (widen for degree-valued or normalized actuators; cannot be disabled) | `25.133` (8pi) |
+| `STRANDS_MESH_INPUT_SLEW_ABS` | Per-joint speed bound for the mesh receive path, in frame units per second (narrow for radian or normalized actuators, whose units are smaller; cannot be disabled) | `1440` (the value envelope traversed once per second) |
+| `STRANDS_TELEOP_SLEW_ABS` | Per-joint speed bound for the local `teleoperate()` loop, in frame units per second (default accommodates degree-valued and range-0-100 devices; cannot be disabled) | `500.0` |
 | `STRANDS_MESH_POSE_HZ`, `_IMU_HZ`, `_ODOM_HZ`, `_HEALTH_HZ`, `_LIDAR_SUMMARY_HZ`, `_HAND_HZ`, `_MAP_INFO_HZ` | Per-topic sensor publish rate; `0` (or any non-positive value) switches that topic off. A value the loop cannot pace itself with keeps the built-in rate | per topic: `10`/`10`/`10`/`0.5`/`5`/`50`/`0.2` |
 | `STRANDS_MESH_CAMERA_HZ` | Camera publish rate; opt-in because frames are large. Unset, non-positive, or unusable leaves camera publishing off | `0` (off) |
+| `STRANDS_MESH_STREAM_HZ` | Per-step task telemetry rate while a robot or a rollout is executing. Non-positive or unusable -- unparsable, or non-finite like `inf`/`nan` -- switches step publishing off rather than changing the rate, so an unreadable value cannot remove the throttle | `10` |
+| `STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S` | How long a robot-less `robot_mesh` gateway waits once at bring-up for presence to populate before the first `peers` read. `0` means do not wait; a value no sleep can honor -- unparsable, negative, or non-finite -- falls back to the default | `3` |
 | `STRANDS_MESH_MAX_PEERS` | Peer registry cap; evicts oldest on overflow | `1024` |
 | `STRANDS_MESH_RESUME_MAX_FAILS` | Failed resume attempts before cooldown engages | `5` |
 | `STRANDS_MESH_RESUME_BACKOFF_S` | Cooldown (seconds) after exceeding resume fail threshold. A value no cooldown instant can be built from -- unparsable, negative, or non-finite like `inf`/`nan` -- falls back to the default, so the throttle both engages and expires (shared with `STRANDS_MESH_RESUME_FRESHNESS_S` / `_FORWARD_SKEW_S`) | `30` |
+| `STRANDS_MESH_RESUME_FRESHNESS_S` | How far in the past a resume envelope's timestamp may be before a receiver refuses it as stale. A receiver whose clock is more than this *ahead of* the operator reads every resume as stale and stays locked out, so keep fleet clocks in NTP sync or widen this on every peer (a receiver *behind* the operator is refused by `STRANDS_MESH_RESUME_FORWARD_SKEW_S` instead) | `60` |
+| `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | How far in the future a resume envelope's timestamp may be before a receiver refuses it as future-dated. This is the tighter of the two bounds: a receiver whose clock is more than this *behind* the operator sees every resume as future-dated and stays locked out, so widen this on every peer (a receiver *ahead of* the operator is refused by `STRANDS_MESH_RESUME_FRESHNESS_S` instead) | `5` |
+| `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | Entries in the per-receiver resume replay cache; also bounds the per-issuer fairness cap (max/4) so one flooding issuer cannot evict a legitimate operator's slot | `4096` |
 | `STRANDS_MESH_INPUT_AUDIT_EVERY` | Emit `input_stream_applied` audit event every N frames (0 = off) | `100` |
 | `STRANDS_ESTOP_DEDUP_TTL_S` | E-stop fan-out Lambda dedup window (seconds) | `30` |
 | `STRANDS_MESH_DEDUP_TTL` | Window (seconds) the Zenoh<->IoT bridge remembers a delivered `(sender_id, turn_id, command)` triple for cross-transport deduplication. Unparsable, non-positive or non-finite falls back to the default, so a legitimately recurring heartbeat is forgotten again | `120` |
@@ -1122,7 +1208,7 @@ touches ROS 2.
 | `STRANDS_GR00T_IMAGE` | Container image the `gr00t_inference` tool runs (must pass the image allowlist; agent cannot choose it) | `gr00t:latest` |
 | `STRANDS_GR00T_IMAGE_ALLOW` | Extra image-name patterns (trailing `*` = tag wildcard) added to the built-in allowlist (`gr00t:*`, `nvcr.io/nvidia/isaac-gr00t:*`) | built-in only |
 | `STRANDS_GR00T_SERVER_SEED` | Default seed the GR00T determinism wrapper applies at server start and on seedless `reset` calls (used with `gr00t_inference(..., deterministic=True)`; forwarded into the container) | `42` |
-| `STRANDS_GR00T_STRICT_DETERMINISTIC` | `1` makes the determinism wrapper additionally enable `torch.use_deterministic_algorithms(True, warn_only=True)` (slower kernels, strictest reproducibility; forwarded into the container) | `0` |
+| `STRANDS_GR00T_STRICT_DETERMINISTIC` | `1` makes the determinism wrapper additionally enable `torch.use_deterministic_algorithms(True, warn_only=True)` (slower kernels, strictest reproducibility; forwarded into the container). Best-effort: an op with no deterministic kernel makes torch refuse, degrading the server to non-strict rather than killing it, and the startup banner reports `strict=` as the mode the server ended up in | `0` |
 
 </details>
 
@@ -1154,7 +1240,7 @@ other spelling is refused. See
 |----------|-------------|---------|
 | `STRANDS_LIBERO_ACTION_LOG` / `_MAX` | Per-step OSC controller diagnostics | unset / `50` |
 | `STRANDS_LIBERO_STATE_LOG` / `_MAX` | Per-step state values fed to GR00T | unset / `50` |
-| `STRANDS_GROOT_WIRE_LOG` / `_MAX_CALLS` | Dump pre/post inference payloads to verify LOCAL vs SERVICE parity | unset / `10` |
+| `STRANDS_GROOT_WIRE_LOG` / `_MAX_CALLS` | Directory to dump pre/post inference payloads to, e.g. `/tmp/groot-wire`, to verify LOCAL vs SERVICE parity | unset / `10` |
 
 </details>
 
@@ -1170,6 +1256,58 @@ other spelling is refused. See
 
 Clear with `rm -rf ~/.strands_robots/assets/`; relocate with
 `export STRANDS_ASSETS_DIR=/path/to/dir`.
+
+### CA Pin Rotation Runbook
+
+The AWS IoT transport pins the SHA-256 of the canonical Amazon Root CA1 PEM, so
+a network-level attacker (DNS hijack, captive portal, BGP, malicious local
+proxy) cannot substitute a rogue CA at the download URL. The accepted set is a
+*collection*, not a scalar, so old and new pins can both be valid at once - that
+is what makes a rotation expressible without a flag-day deploy.
+
+When AWS rotates the root, every fleet member refuses the new certificate until
+a pin covering it is accepted, on both the download path and the on-disk re-use
+path. Deleting the cached PEM does not help: the re-download fetches the same
+unpinned bytes and is refused again. Rotation therefore needs an ordered
+procedure, which is this one.
+
+**Recompute** the pin of whatever the URL currently serves:
+
+```bash
+python -c "import hashlib, urllib.request as u; \
+print(hashlib.sha256(u.urlopen( \
+'https://www.amazontrust.com/repository/AmazonRootCA1.pem' \
+).read()).hexdigest())"
+```
+
+**Monitor** for rotations before they bite: AWS announces root-CA changes in its
+security bulletins with a deprecation timeline, so a planned rotation can be
+shipped ahead of the cutover rather than during an outage.
+
+**Rotate (planned):**
+
+1. **Verify the new certificate out of band.** A digest computed from the same
+   connection that served the bytes proves nothing. Confirm the certificate
+   against an independent source before it becomes a pin.
+2. **Ship a release that adds the new pin and keeps the old one.** Both stay
+   valid, so peers still on the previous release keep verifying.
+3. **Wait for fleet uptake.** The overlap is bounded by the slowest fleet member,
+   not by the release cadence.
+4. **Drop the old pin in a follow-up release** once uptake is complete.
+
+**Emergency (a rotation lands faster than a release can ship):** stage the
+verified new pin in `STRANDS_MESH_CA_PINS` (comma-separated, 64-char lowercase
+hex). It is *additive* - the built-in pin stays accepted and verification stays
+on - so it buys the grace period a release would have provided. Entries that are
+not valid hex digests are rejected with a warning and skipped rather than
+weakening the set. Remove the override once the release carrying the pin is
+deployed.
+
+`STRANDS_MESH_DISABLE_CA_PIN` is **not** part of this procedure. It turns the
+download-path pin check off rather than widening it, accepts whatever the URL
+serves, and marks the result as unverified-origin so later runs warn about
+re-using it. It is a break-glass for a broken pin, never the response to a
+rotation - a rotation has a verified pin to stage.
 
 ## Benchmarks
 
@@ -1227,7 +1365,9 @@ process in [SECURITY.md](SECURITY.md) (AWS VDP / HackerOne).
 
 Note the `trust_remote_code` gate on `lerobot_local` (see
 [Policy providers](#policy-providers)) and the mesh CA-pinning / thing-name
-validation controls in the [Configuration](#configuration) matrix.
+validation controls in the [Configuration](#configuration) matrix
+Rotating the pinned Amazon Root CA1 has an ordered procedure:
+[CA Pin Rotation Runbook](#ca-pin-rotation-runbook).
 
 ## Contributing
 

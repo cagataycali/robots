@@ -57,6 +57,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from strands_robots import refusal_codes
+
 logger = logging.getLogger(__name__)
 
 # --- Constants -----------------------------------------------------------
@@ -108,6 +110,15 @@ _PEER_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 #: downstream string ops.
 _SAFE_PASSTHROUGH_RE = re.compile(r"^[\x20-\x7E]+$")
 
+#: Control characters refused in a natural-language payload
+#: (``instruction``): C0 (0x00-0x1F, which includes NUL, CR and LF), DEL
+#: (0x7F), and C1 (0x80-0x9F). Deliberately *not*
+#: :data:`_SAFE_PASSTHROUGH_RE`: that gate admits only printable ASCII, so
+#: reusing it here would refuse a legitimate instruction written in any
+#: language that needs a non-ASCII letter. A natural-language field bounds
+#: the control range and nothing else.
+_NATURAL_TEXT_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
 #: Maximum length of wire-routing passthrough fields (``turn_id``,
 #: ``sender_id``). These are ULID/UUID-shaped correlation tokens; 128
 #: chars is generous for any legitimate usage.
@@ -148,13 +159,21 @@ def _env_pos_float(env_var: str, default: float) -> float:
     return val
 
 
-# Operators with degree-valued
-#: actuators or multi-turn joints can widen via
+#: Default per-joint magnitude bound, in *frame units*: how far a single
+#: teleop command may reach. The unit is whichever one the leader driver puts
+#: on the wire, so the default is sized for that unit rather than for radians.
+#: lerobot's SO leader/follower default to ``use_degrees=True``
+#: (:class:`~lerobot.motors.MotorNormMode` ``DEGREES``), and its gripper is
+#: ``RANGE_0_100`` whatever ``use_degrees`` says, so a shipped SO-100 class arm
+#: streams degrees and a 0-100 gripper -- never radians. The bound is two full
+#: turns, which clears a multi-turn wrist with headroom while still refusing a
+#: runaway three orders of magnitude out. Operators whose actuators use a
+#: smaller unit (radians, or normalized -1..1) can narrow it via
 #: ``STRANDS_MESH_INPUT_VALUE_ABS``. The module-level constant is captured
 #: at import for backward compat; the hot path calls
 #: :func:`_input_value_abs` so an operator-set env var takes effect
 #: without a process restart.
-DEFAULT_INPUT_VALUE_ABS: float = 12.566370614359172  # 4 * pi
+DEFAULT_INPUT_VALUE_ABS: float = 720.0  # two full turns, in frame units
 MAX_INPUT_VALUE_ABS: float = _env_pos_float("STRANDS_MESH_INPUT_VALUE_ABS", DEFAULT_INPUT_VALUE_ABS)
 
 
@@ -170,14 +189,15 @@ def _input_value_abs() -> float:
 #: :data:`MAX_INPUT_VALUE_ABS` bounds how far a command may reach and
 #: ``STRANDS_MESH_INPUT_MAX_HZ`` bounds how densely frames may arrive, but
 #: neither bounds the distance between consecutive commands for one joint, so a
-#: stream inside both caps can still command a full-scale reversal every frame
-#: (a 1.8-unit step at 50 Hz is 90 units/s). The default is the full
-#: :data:`MAX_INPUT_VALUE_ABS` envelope traversed once per second (2 * 4 * pi),
-#: roughly 4x the no-load speed of the Feetech STS3215 servos on an SO-100 class
-#: arm (~6.5 rad/s at 12 V): a physical leader arm cannot reach it, so only a
-#: synthetic stream trips it. Widen via ``STRANDS_MESH_INPUT_SLEW_ABS`` for
-#: degree-valued or normalized-percent actuators, whose units are larger.
-DEFAULT_INPUT_SLEW_ABS: float = 25.132741228718345  # 8 * pi units/second
+#: stream inside both caps can still command a full-scale reversal every frame.
+#: The default is the full :data:`MAX_INPUT_VALUE_ABS` envelope traversed once
+#: per second (2 * 720), which is roughly 4x the no-load speed of the Feetech
+#: STS3215 servos on an SO-100 class arm -- ~6.5 rad/s at 12 V, and those frames
+#: arrive in degrees, so ~372 deg/s. Sized against the unit the frames carry, a
+#: physical leader arm cannot reach the bound and only a synthetic stream trips
+#: it. Operators whose actuators use a smaller unit (radians, or normalized
+#: -1..1) can narrow it via ``STRANDS_MESH_INPUT_SLEW_ABS``.
+DEFAULT_INPUT_SLEW_ABS: float = 1440.0  # frame units/second (2 * 720)
 MAX_INPUT_SLEW_ABS: float = _env_pos_float("STRANDS_MESH_INPUT_SLEW_ABS", DEFAULT_INPUT_SLEW_ABS)
 
 
@@ -202,6 +222,18 @@ MAX_INPUT_KEY_LEN: int = 64
 #: keeps a malicious payload from forcing an unbounded dict walk.
 MAX_TARGET_JOINTS: int = 256
 
+#: Bound on the number of components accepted in a sim ``execute`` /
+#: ``start`` payload's ``target_velocity`` list (issue #300 well-known
+#: kwarg). The wire cannot own the arity verdict: WBC and ``wbc_gait``
+#: require at least ``[vx, vy, omega]`` and read the first three, while
+#: MotionBricks reads ``[vx, vy]`` or ``[vx, vy, vz]`` - so a fixed
+#: length here would refuse a shape one of them accepts, and each names
+#: its own requirement when a caller gets it wrong. This cap is purely
+#: DoS defence, the same role :data:`MAX_TARGET_JOINTS` plays: 16 is well
+#: above any shipped receiver's read and keeps a malicious payload from
+#: forcing an unbounded list walk.
+MAX_TARGET_VELOCITY_COMPONENTS: int = 16
+
 #: Bound on a sim ``execute`` / ``start`` payload's ``world_update``
 #: nested dict size, in JSON-encoded bytes. Mesh does not interpret the
 #: per-call collision-world refresh payload; it forwards it to the
@@ -212,8 +244,8 @@ MAX_WORLD_UPDATE_BYTES: int = 65536
 #: Charset for entries in ``STRANDS_MESH_HF_REPO_ALLOW``. Operator-supplied
 #: HuggingFace org / ``<org>/<repo>`` prefixes; rejects shell metacharacters,
 #: whitespace, NUL bytes, and any byte outside the printable ASCII subset.
-#: Symmetric with :data:`_POLICY_HOST_ENTRY_RE` so a reviewer reading this
-#: module sees a uniform fail-loud-on-misconfig posture across every
+#: Symmetric with :data:`_POLICY_HOST_ENTRY_RE` so this module presents a
+#: uniform fail-loud-on-misconfig posture across every
 #: operator-extensible env-var allowlist.
 _HF_REPO_ENTRY_RE = re.compile(r"^[A-Za-z0-9_./\-]+$")
 
@@ -222,17 +254,11 @@ _HF_REPO_ENTRY_RE = re.compile(r"^[A-Za-z0-9_./\-]+$")
 #: :data:`_DEFAULT_POLICY_TYPES` set.
 _POLICY_TYPE_ENTRY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
-#: Built-in policy_type allowlist. Mirrors the LeRobot policy registry
-#: families plus the providers registered in registry/policies.json. Keep this
-#: in sync with the registry so a provider that ``create_policy`` can build can
-#: also be driven over the mesh ``tell()`` path and Device Connect. Operators
-#: extend via ``STRANDS_MESH_POLICY_TYPE_ALLOW`` (comma-separated).
-_DEFAULT_POLICY_TYPES: frozenset[str] = frozenset(
+#: LeRobot policy *families* accepted as ``policy_type``. This half of the
+#: allowlist names an external vocabulary (LeRobot's own policy registry), not
+#: something this package owns, so it stays a literal.
+_LEROBOT_POLICY_FAMILIES: frozenset[str] = frozenset(
     {
-        "mock",
-        "groot",
-        "lerobot",
-        "lerobot_local",
         "act",
         "diffusion",
         "tdmpc",
@@ -241,13 +267,81 @@ _DEFAULT_POLICY_TYPES: frozenset[str] = frozenset(
         "pi0fast",
         "smolvla",
         "sac",
-        # GR00T Whole-Body-Control (SONIC) locomotion provider (registry: wbc,
-        # shorthand sonic). Without these, tell(..., policy_provider="wbc") and
-        # the Device Connect drivers reject WBC at the security gate.
-        "wbc",
-        "sonic",
     }
 )
+
+#: Every spelling of every provider in ``registry/policies.json``: each
+#: provider's canonical name plus its declared aliases and shorthands, because
+#: ``create_policy`` resolves all of them to the same policy class. A provider
+#: this package can build but does not list here is refused on the mesh
+#: ``tell()`` path and by the Device Connect drivers, so the operator's only
+#: recourse is ``STRANDS_MESH_POLICY_TYPE_ALLOW`` -- a broad grant that reopens
+#: the gate this list exists to close.
+#:
+#: Deliberately a literal rather than derived from the registry at import: a
+#: provider added to ``policies.json`` must not silently widen a security
+#: allowlist. Adding a provider is expected to include the corresponding edit
+#: here, as the WBC provider did; a guard test refuses any registry spelling
+#: this set omits, so the omission fails CI instead of shipping as a
+#: mesh-only availability bug.
+_REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
+    {
+        # MockPolicy
+        "mock",
+        "random",
+        "test",
+        # Gr00tPolicy
+        "groot",
+        # LerobotLocalPolicy
+        "lerobot_local",
+        "lerobot",
+        # LerobotAsyncPolicy
+        "lerobot_async",
+        # Cosmos3Policy
+        "cosmos3",
+        "c3",
+        # MoveIt2Policy
+        "moveit2",
+        "moveit",
+        # CuroboPolicy
+        "curobo",
+        "cumotion",
+        # WBCPolicy (GR00T Whole-Body-Control / SONIC locomotion)
+        "wbc",
+        "sonic",
+        # VeraPolicy
+        "vera",
+        # WBCGaitPolicy
+        "wbc_gait",
+        "sonic_gait",
+        # MotionBricksPolicy
+        "motionbricks",
+        "motion_bricks",
+        # KimodoPolicy
+        "kimodo",
+        "kimodo_g1",
+        "text2motion",
+        # ProtoMotionsPolicy
+        "protomotions",
+        "gtp",
+        "gtp_g1",
+        "protomotions_g1",
+        # RemotePolicy
+        "remote",
+    }
+)
+
+#: Built-in policy_type allowlist: the LeRobot policy families accepted as
+#: ``policy_type`` plus every provider spelling accepted as
+#: ``policy_provider``. The two vocabularies share one allowlist by design
+#: (see #239 bucket C); operators extend both at once via
+#: ``STRANDS_MESH_POLICY_TYPE_ALLOW`` (comma-separated).
+#:
+#: Widening this set does not relax any other gate: ``validate_command``
+#: applies the ``policy_host``, ``server_address``, ``pretrained_name_or_path``
+#: and ``model_path`` allowlists to every ``execute`` / ``start`` payload
+#: regardless of which provider it names.
+_DEFAULT_POLICY_TYPES: frozenset[str] = _LEROBOT_POLICY_FAMILIES | _REGISTRY_POLICY_PROVIDERS
 
 #: Action vocabulary accepted by :func:`validate_command`. Mirrors the
 #: dispatch table in :meth:`Mesh._dispatch`. Keep these two sets in sync
@@ -295,7 +389,35 @@ _DEFAULT_POLICY_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::
 
 
 class SecurityError(Exception):
-    """Base class for payload-validation rejections."""
+    """Base class for payload-validation rejections.
+
+    A *continuable* rejection also carries a stable machine-readable
+    :attr:`code` from :data:`~strands_robots.refusal_codes.REFUSAL_CODES` and
+    the :attr:`subject` the refusal is about, so a consumer offering the
+    operator a choice classifies on identity instead of matching the message
+    text. Both default to ``None``: a rejection with no operator grant behind
+    it -- a schema or bounds failure -- has nothing for a consumer to offer.
+
+    The message is unchanged by this and stays free to improve. See
+    :mod:`strands_robots.refusal_codes`.
+
+    Args:
+        message: The operator-facing reason, unchanged by the code.
+        code: A member of :data:`~strands_robots.refusal_codes.REFUSAL_CODES`,
+            or ``None`` when the rejection is not continuable.
+        subject: What the refusal is about -- the repo, host, policy type or
+            joint key -- so a consumer need not parse it back out of
+            ``message``.
+
+    Attributes:
+        code: The stable identifier for this refusal, or ``None``.
+        subject: What the refusal is about, or ``None``.
+    """
+
+    def __init__(self, message: str = "", *, code: str | None = None, subject: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.subject = subject
 
 
 class ValidationError(SecurityError):
@@ -789,8 +911,20 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     Performed checks:
 
     * ``action`` must be a string and a member of :data:`ALLOWED_ACTIONS`.
+    * ``turn_id`` and ``sender_id`` (both optional) are checked on *every*
+      action, not per-action: each must be a str of at most
+      :data:`MAX_PASSTHROUGH_LEN` characters, printable ASCII only (no C0/DEL
+      or non-printable byte). They are wire-routing fields rather than action
+      payload -- ``Mesh`` correlates an RPC turn on ``turn_id`` and keys its
+      command-replay cache on ``(sender_id, turn_id)`` -- so a publisher
+      minting them needs the bound, and a control byte must not reach the
+      audit trail through either. Any other unvalidated key is dropped from
+      the sanitised copy rather than refused.
     * ``execute`` and ``start`` actions require:
-        - ``instruction``: non-empty str up to :data:`MAX_INSTRUCTION_LEN`.
+        - ``instruction``: non-empty str up to :data:`MAX_INSTRUCTION_LEN`,
+          carrying no C0/DEL/C1 control character. Printable non-ASCII is
+          admitted -- it is a natural-language field, so the charset gate
+          bounds only the control range.
         - ``policy_host``: in the allowlist (defaults to ``"localhost"``).
         - ``duration``: ``[0, MAX_DURATION_S]``, defaults to 30.
         - ``policy_port`` (optional): integer in ``[1, 65535]``.
@@ -801,14 +935,21 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
           No silent default -- a peer that omits this is rejected so it is
           never ambiguous whether ``mock`` was an explicit choice or a bug.
         - ``server_address`` (optional): in :func:`is_safe_server_address`.
-        - ``robot_name`` (optional): peer-id charset, used by sim peers
+        - ``robot_name`` (optional): peer-id charset, at most
+          :data:`MAX_PEER_ID_LEN` characters, used by sim peers
           to disambiguate which robot in the world the policy targets.
         - ``target_pose`` (optional): list of 7 floats
           ``[x, y, z, qw, qx, qy, qz]`` for planner-style providers
           (issue #300 well-known kwarg).
         - ``target_joints`` (optional): dict of joint-name to float
-          (issue #300 well-known kwarg). Bounded by
-          :data:`MAX_TARGET_JOINTS`.
+          (issue #300 well-known kwarg). Key count bounded by
+          :data:`MAX_TARGET_JOINTS`, and each key by
+          :data:`MAX_PEER_ID_LEN` characters.
+        - ``target_velocity`` (optional): list of floats
+          ``[vx, vy, omega]`` (m/s, m/s, rad/s) for locomotion providers
+          (issue #300 well-known kwarg). Component count bounded by
+          :data:`MAX_TARGET_VELOCITY_COMPONENTS`; the arity a given
+          policy needs is that policy's verdict, not the wire's.
         - ``world_update`` (optional): opaque dict forwarded to the
           policy via ``policy_config``. Bounded by
           :data:`MAX_WORLD_UPDATE_BYTES` JSON-encoded bytes.
@@ -817,7 +958,19 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         - ``fast_mode`` (optional): boolean.
         - ``n_steps`` (optional): integer in ``[1, 10_000_000]``.
     * ``step``: ``steps`` integer in ``[1, 10_000]``, defaults to 1.
-    * ``teleop_receive``: ``source_peer_id`` non-empty str.
+    * ``teleop_receive``: both identifiers are checked by
+      :func:`validate_mesh_identifier`, so the admitted charset is
+      ``[A-Za-z0-9_.-]+`` rather than any non-empty string -- a Zenoh
+      wildcard is refused instead of silently widening the subscription
+      the follower builds out of them.
+        - ``source_peer_id``: REQUIRED.
+        - ``device_name`` (optional): defaults to ``"leader"`` downstream.
+    * ``teleop_stop``: ``device_name`` (optional) must be a str or null.
+    * ``resume``: ``override_code`` (optional, defaults to ``""``): str of at
+      most :data:`MAX_OVERRIDE_CODE_LEN` characters, printable ASCII only
+      (no C0/DEL/CRLF). The operator's second factor for clearing an e-stop
+      lockout is bounded here so it cannot carry a control character into the
+      audit trail, and cannot reach ``Mesh._resume_lockout`` as a non-string.
 
     Raises :class:`ValidationError` on any rule violation.
     """
@@ -862,12 +1015,25 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError("execute/start requires non-empty `instruction`")
         if len(instruction) > MAX_INSTRUCTION_LEN:
             raise ValidationError(f"instruction exceeds {MAX_INSTRUCTION_LEN} chars (got {len(instruction)})")
+        control = _NATURAL_TEXT_CONTROL_RE.search(instruction)
+        if control is not None:
+            # Identified by codepoint and offset rather than echoed. A
+            # ValidationError is itself logged by the dispatcher, so
+            # interpolating the payload would carry the injection into the
+            # very record that reports it.
+            raise ValidationError(
+                f"instruction contains a control character (U+{ord(control.group()):04X} "
+                f"at offset {control.start()}); send printable text only "
+                "(CRLF, NUL and other C0/C1 bytes are refused)"
+            )
         out["instruction"] = instruction
 
         policy_host = cmd.get("policy_host", "localhost")
         if not is_safe_policy_host(str(policy_host)):
             raise ValidationError(
-                f"policy_host={policy_host!r} not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend."
+                f"policy_host={policy_host!r} not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend.",
+                code=refusal_codes.POLICY_HOST_NOT_ALLOWED,
+                subject=str(policy_host),
             )
         # R7 defence-in-depth. ``is_safe_policy_host`` now applies the
         # same charset gate before its internal strip, so this
@@ -898,7 +1064,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(value, str) or not is_safe_model_path(value, hf_only=True):
                 raise ValidationError(
                     f"pretrained_name_or_path={value!r} not in allowlist. Set "
-                    "STRANDS_MESH_HF_REPO_ALLOW to add an org/repo prefix."
+                    "STRANDS_MESH_HF_REPO_ALLOW to add an org/repo prefix.",
+                    code=refusal_codes.HF_REPO_NOT_ALLOWED,
+                    subject=value if isinstance(value, str) else None,
                 )
             out["pretrained_name_or_path"] = value
 
@@ -914,7 +1082,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             value = cmd["policy_type"]
             if not isinstance(value, str) or not is_safe_policy_type(value):
                 raise ValidationError(
-                    f"policy_type={value!r} not in allowlist. Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend."
+                    f"policy_type={value!r} not in allowlist. Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend.",
+                    code=refusal_codes.POLICY_TYPE_NOT_ALLOWED,
+                    subject=value if isinstance(value, str) else None,
                 )
             out["policy_type"] = value.strip().lower()
 
@@ -924,7 +1094,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 raise ValidationError(
                     f"policy_provider={value!r} not in allowlist. "
                     "Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend "
-                    "(provider and policy_type share one allowlist)."
+                    "(provider and policy_type share one allowlist).",
+                    code=refusal_codes.POLICY_TYPE_NOT_ALLOWED,
+                    subject=value if isinstance(value, str) else None,
                 )
             out["policy_provider"] = value.strip().lower()
         else:
@@ -938,7 +1110,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             value = cmd["server_address"]
             if not isinstance(value, str) or not is_safe_server_address(value):
                 raise ValidationError(
-                    f"server_address={value!r} host not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend."
+                    f"server_address={value!r} host not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend.",
+                    code=refusal_codes.POLICY_HOST_NOT_ALLOWED,
+                    subject=value if isinstance(value, str) else None,
                 )
             # Same CRLF/NUL/control-byte gate as policy_host.
             if not _SAFE_PASSTHROUGH_RE.fullmatch(value):
@@ -968,8 +1142,17 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             out["robot_name"] = value
 
         # Issue #300 well-known per-call policy kwargs. Forwarded into
-        # ``policy_config`` by the dispatcher; planner-style providers
-        # (cuRobo, MoveIt2, MPC) consume them, VLA providers ignore them.
+        # ``policy_kwargs`` by the dispatcher, which is what reaches
+        # ``get_actions(obs, instruction, **policy_kwargs)``. Planner-style
+        # providers (cuRobo, MoveIt2) read a Cartesian or joint-space goal;
+        # locomotion providers (WBC, wbc_gait, MotionBricks) read
+        # ``target_velocity``. VLA providers ignore all of them.
+        #
+        # Every key ``SimEngine.run_policy`` documents as a #300 goal key is
+        # admitted here, because that docstring offers the mesh ``tell()``
+        # path as the analogue of the local call. A key it names and this
+        # allowlist omits is dropped without a word - the ``out`` dict below
+        # is built key by key, so an unlisted one simply never arrives.
         if "target_pose" in cmd:
             value = cmd["target_pose"]
             if not isinstance(value, list) or len(value) != 7:
@@ -1004,6 +1187,28 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     f"target_joints[{joint_name}]", joint_value, lo=-1e6, hi=1e6, default=None
                 )
             out["target_joints"] = coerced_joints
+
+        if "target_velocity" in cmd:
+            value = cmd["target_velocity"]
+            if not isinstance(value, list) or not value:
+                raise ValidationError(
+                    "target_velocity must be a non-empty list of floats [vx, vy, omega] (m/s, m/s, rad/s)"
+                )
+            if len(value) > MAX_TARGET_VELOCITY_COMPONENTS:
+                raise ValidationError(
+                    f"target_velocity has {len(value)} components > "
+                    f"MAX_TARGET_VELOCITY_COMPONENTS ({MAX_TARGET_VELOCITY_COMPONENTS})."
+                )
+            # Per-component domain shared with ``target_pose``: finite, in
+            # range, and a bool is refused by name rather than read as 1.
+            # The component COUNT is not checked against any receiver's
+            # arity here - see :data:`MAX_TARGET_VELOCITY_COMPONENTS`.
+            coerced_velocity: list[float] = []
+            for i, component in enumerate(value):
+                coerced_velocity.append(
+                    _coerce_float(f"target_velocity[{i}]", component, lo=-1e6, hi=1e6, default=None)
+                )
+            out["target_velocity"] = coerced_velocity
 
         if "world_update" in cmd:
             value = cmd["world_update"]
@@ -1177,11 +1382,21 @@ def validate_input_frame(action: Any) -> dict[str, float]:
 
     * Frame must be a ``dict``.
     * At most :data:`MAX_INPUT_FRAME_KEYS` keys (DoS bound).
-    * Each key: ``str``, ``<= MAX_INPUT_KEY_LEN`` chars, matching
-      :data:`_INPUT_KEY_RE` (no control bytes / path separators / shell
-      metacharacters).
-    * Each value: coercible to ``float``, **finite** (no ``nan`` /
-      ``inf``), and within ``+/- MAX_INPUT_VALUE_ABS``.
+    * Each key: a non-empty ``str`` of at most ``MAX_INPUT_KEY_LEN`` chars,
+      matching :data:`_INPUT_KEY_RE` (no control bytes / path separators /
+      shell metacharacters).
+    * Each value: an ``int`` or a ``float``. The *type* is checked rather than
+      the value's coercibility, so a numeric-looking ``str`` is refused. A
+      numpy scalar is unwrapped to a python scalar first, and a ``bool`` is
+      then refused explicitly: ``bool`` is an ``int`` subclass, so ``True``
+      would otherwise reach an actuator as a ``1.0`` command.
+    * Each value: **finite** (no ``nan`` / ``inf``) and within ``+/-``
+      :func:`_input_value_abs` (``STRANDS_MESH_INPUT_VALUE_ABS``).
+
+    The envelope the last check applies is that resolver, not the import-time
+    :data:`MAX_INPUT_VALUE_ABS` snapshot of it, so an operator who narrows the
+    teleop envelope takes effect without a process restart. The two agree until
+    the env var is set after import, and it is the resolver that refuses.
 
     Returns a sanitised ``dict[str, float]`` containing only validated
     entries. Raises :class:`ValidationError` on any violation.
@@ -1223,7 +1438,11 @@ def validate_input_frame(action: Any) -> dict[str, float]:
             raise ValidationError(f"input frame value for {key!r} must be finite, got {fval}")
         _value_abs = _input_value_abs()
         if abs(fval) > _value_abs:
-            raise ValidationError(f"input frame value for {key!r} out of range: |{fval}| > {_value_abs}")
+            raise ValidationError(
+                f"input frame value for {key!r} out of range: |{fval}| > {_value_abs}",
+                code=refusal_codes.TELEOP_VALUE_OUT_OF_RANGE,
+                subject=key,
+            )
         out[key] = fval
 
     return out

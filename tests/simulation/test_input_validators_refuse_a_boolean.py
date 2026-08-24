@@ -519,6 +519,18 @@ _NOT_AN_INPUT_DOMAIN = {
     "rollout_rate_mismatch_reason": "compares already-validated rates",
     # Reads a pose back off the USD stage - not caller input.
     "_prim_body_state": "reads state out of the engine",
+    # Measures the distance between a target _validate_move_to_args has already
+    # coerced (its position runs through coerce_pose_vector, which refuses a
+    # boolean component) and the engine-owned robot base position - a boolean
+    # cannot reach the float() here.
+    "_workspace_sanity_error": "measures an already-coerced target against engine state",
+    # The one float() here compares a value finite_number_error has already
+    # accepted, and that shared domain refuses bool and numpy.bool_ explicitly, so
+    # a boolean is answered with its own reason and never reaches the coercion.
+    # Pinned behaviourally rather than only claimed here:
+    # tests/simulation/test_predicate_tolerance_sign_domain.py fails when the
+    # delegation is dropped or the shared domain stops refusing a boolean.
+    "_kwarg_domain_error": "coerces only a value finite_number_error accepted",
 }
 
 _GUARDED_VALIDATORS = {

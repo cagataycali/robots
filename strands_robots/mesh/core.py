@@ -22,8 +22,11 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots._mesh_switch import mesh_env_request
+from strands_robots.bus_access import read_joints, read_observation
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
+from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
@@ -187,15 +190,28 @@ RESUME_FORWARD_SKEW_S: float = _parse_positive_float_env("STRANDS_MESH_RESUME_FO
 #: See :data:`RESUME_FRESHNESS_WINDOW_S` for lazy-resolution note.
 RESUME_REPLAY_CACHE_MAX: int = _parse_positive_int_env("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "4096")
 
+#: Longest ``detail`` string a degraded-probe record carries onto the state
+#: topic. The text is a third-party driver's exception message, the state topic
+#: publishes at ``STATE_HZ``, and a driver that puts a whole device dump in that
+#: message would otherwise put ten copies of it on the wire every second. The
+#: ``reason`` beside it is the exception's type name, which is bounded already.
+MAX_DEGRADED_DETAIL_LEN: int = 256
+
 
 def _resume_freshness_window_s() -> float:
     """Lazy resolver for ``STRANDS_MESH_RESUME_FRESHNESS_S``.
 
-    re-reads the env var on every call so operator-set values
-    take effect without a process restart. Cheap (one ``os.getenv``
-    + a regex parse via ``_parse_positive_float_env``) and called
-    only on safety-handler entry, which is bounded by the transport
-    rate cap.
+    Re-reads the env var on every call so operator-set values take effect
+    without a process restart. One ``os.getenv`` plus a validating parse via
+    :func:`_parse_positive_float_env` -- and, when the operator value is
+    unusable, a log record as well, so the cost is not constant.
+
+    Four paths resolve it, not only the safety handlers: presence
+    (``_on_presence``), inbound command dispatch (``_exec_cmd``) and both
+    ``_on_safety_estop`` / ``_on_safety_resume``. Each resolves it once, into a
+    local, before taking a replay-cache lock, so no critical section carries the
+    parse and the value cannot change mid-envelope. The next envelope re-reads
+    the env, which is what keeps the knob operator-tunable.
     """
     return _parse_positive_float_env("STRANDS_MESH_RESUME_FRESHNESS_S", "60")
 
@@ -311,7 +327,10 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
     Returns ``None`` when:
 
     * the sample carries no ``source_info`` (publisher did not attach one --
-      e.g. the bridge/IoT transport path or a legacy publisher),
+      e.g. the bridge/IoT transport path or a legacy publisher), or the
+      installed zenoh-python predates the ``Sample.source_info`` descriptor
+      (first shipped in eclipse-zenoh 1.6.1, the declared floor), in which case
+      no sample on this install can ever carry a wire zid,
     * the ``source_id`` is missing,
     * the stringified value does not match the strict 1..32 hex digest
       shape (a malformed sample, third-party transport shim, or unit-test
@@ -340,10 +359,12 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
 def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
     """Identify responders that explicitly reported they did NOT stop.
 
-    An emergency stop is only as trustworthy as its accounting. A peer whose
-    registered robot exposes no ``stop_task`` answers ``{"ok": False, ...}``
-    (see ``Mesh._dispatch``), and a peer whose ``stop_task`` itself failed
-    answers ``{"status": "error", ...}``. Counting either as an acknowledgement
+    An emergency stop is only as trustworthy as its accounting. Three shapes
+    from ``Mesh._dispatch`` report a stop that did not happen: a peer whose
+    registered robot exposes no ``stop_task`` answers ``{"ok": False, ...}``, a
+    hardware stop that failed answers ``{"ok": False, "error": "stop_task
+    failed: ..."}``, and a sim peer whose ``stop_policy`` refused answers
+    ``{"status": "error", ...}``. Counting any of them as an acknowledgement
     tells the operator the fleet halted while a robot is still executing.
 
     Deliberately conservative: only responses that AFFIRMATIVELY report failure
@@ -395,6 +416,19 @@ class Mesh(SensorLoopsMixin):
         self._subs_lock = threading.Lock()
         self._inbox_lock = threading.Lock()
         self._stop_event = threading.Event()
+
+        # Which _read_state probe categories have already been warned about.
+        # The state loop retries at STATE_HZ, so a persistent fault is reported
+        # once and then kept at debug level rather than once per tick.
+        self._read_state_warned: set[str] = set()
+
+        # Which _read_state probes are degraded RIGHT NOW, keyed by category.
+        # Separate from _read_state_warned, which answers a different question:
+        # this one is cleared when a probe answers again, so the published
+        # snapshot stops claiming a fault that has cleared, while the log gate
+        # above stays armed for the life of the peer so a probe that flaps at
+        # STATE_HZ cannot re-arm the warning ten times a second.
+        self._read_state_degraded: dict[str, dict[str, Any]] = {}
 
         # RPC correlation state.
         #
@@ -679,7 +713,17 @@ class Mesh(SensorLoopsMixin):
                 # state.
                 _acl_config._clear_thread_snapshot()
             if session is None:
-                logger.debug("[mesh] %s: zenoh unavailable, mesh off", self.peer_id)
+                # The sibling refusal above leaves the mesh not-started and says
+                # so at ERROR.  Arriving here leaves it not-started too, so the
+                # caller learns that ``mesh.alive`` is False from the same level
+                # rather than from whichever downstream wait expires first.  The
+                # cause is reported by the session/transport layer that returned
+                # None; this names the peer it applies to.
+                logger.warning(
+                    "[mesh] %s: no mesh transport - mesh off (mesh.alive is False, so this "
+                    "peer publishes no presence and discovers no peers)",
+                    self.peer_id,
+                )
                 return
 
             self._has_session_ref = True
@@ -745,6 +789,30 @@ class Mesh(SensorLoopsMixin):
 
             # Optional camera loop
             camera_hz = self._resolve_camera_hz()
+            if camera_hz <= 0:
+                # Opt-in surface (#7): frames are heavy, so publishing stays
+                # off by default - but say so ONCE when the robot actually has
+                # cameras, otherwise "no camera tiles" is undiagnosable.
+                _has_cams = False
+                try:
+                    inner = getattr(self.robot, "robot", None)
+                    cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
+                    _has_cams = bool(cam_cfg) or getattr(self.robot, "_world", None) is not None
+                except Exception:  # noqa: BLE001
+                    # Whether to emit one advisory log line is the only thing
+                    # this probe decides, so an unreadable robot config leaves
+                    # _has_cams False and the line unsaid. Raising here would
+                    # let a third-party robot whose .config property throws
+                    # fail mesh bring-up over a diagnostic, and naming the
+                    # exception types would couple this to whichever
+                    # attribute chain a future robot class exposes.
+                    pass
+                if _has_cams:
+                    logger.info(
+                        "[mesh] %s: camera publishing is OFF (opt-in). "
+                        "Set STRANDS_MESH_CAMERA_HZ=5 to stream frames on the mesh.",
+                        self.peer_id,
+                    )
             if camera_hz > 0:
                 cam_thread = threading.Thread(
                     target=self._camera_loop,
@@ -774,7 +842,15 @@ class Mesh(SensorLoopsMixin):
             logger.info("[mesh] %s on mesh (%s)", self.peer_id, self.peer_type)
 
     def stop(self) -> None:
-        """Stop all loops and release the session reference."""
+        """Stop all loops and release the session reference.
+
+        Drops every :meth:`subscribe` subscription and clears :attr:`inbox`:
+        the subscribers are undeclared with the session reference, and the
+        ``(topic, callback)`` pairs behind them are not retained, so
+        :meth:`start` re-declares only this peer's built-in topics. A rejoining
+        caller re-declares its own subscriptions; the count dropped is reported
+        at INFO so that is visible rather than inferred.
+        """
         with self._lifecycle_lock:
             if not self._running:
                 return
@@ -786,10 +862,23 @@ class Mesh(SensorLoopsMixin):
 
         with self._subs_lock:
             subs_to_drop = list(self._subs)
+            user_sub_names = sorted(self._user_subs)
             self._subs.clear()
             self._user_subs.clear()
         with self._inbox_lock:
             self.inbox.clear()
+
+        # The peer's own built-in topics are re-declared by ``start()``; a
+        # caller's :meth:`subscribe` topics are not, and their callbacks are
+        # not retained anywhere, so this is the only notice that a rejoin
+        # leaves them to be re-declared.
+        if user_sub_names:
+            logger.info(
+                "[mesh] %s: dropped %d subscription(s) on leaving the mesh (%s); re-declare after start()",
+                self.peer_id,
+                len(user_sub_names),
+                ", ".join(user_sub_names),
+            )
 
         for sub in subs_to_drop:
             try:
@@ -962,15 +1051,26 @@ class Mesh(SensorLoopsMixin):
         return payload
 
     def _heartbeat_loop(self) -> None:
-        period = 1.0 / HEARTBEAT_HZ
-        while self._running:
-            try:
-                self.publish(f"strands/{self.peer_id}/presence", self._build_presence())
-                prune_peers()
-            except Exception as exc:
-                logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
+        """Announce this peer and prune stale ones at ``HEARTBEAT_HZ``.
+
+        Paced by :class:`~strands_robots.mesh.pacing.Ticker`, and the stakes here
+        are the smallest of the converted loops -- worth saying rather than
+        borrowing the camera loop's severity. ``HEARTBEAT_HZ`` is 2.0 and the tick
+        body is cheap, so the period the old ``Event.wait`` added the work to was
+        already close to right. ``PEER_TIMEOUT`` is 10s, so staleness was never at
+        risk; what suffered was freshness -- how fast a newly started robot
+        appears in the fleet view, how recent "last seen" really is, and how
+        promptly the pruning that shares this tick notices a peer that went away.
+        """
+        with Ticker(1.0 / HEARTBEAT_HZ, self._stop_event) as ticker:
+            while self._running:
+                try:
+                    self.publish(f"strands/{self.peer_id}/presence", self._build_presence())
+                    prune_peers()
+                except Exception as exc:
+                    logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
+                if ticker.wait():
+                    break
 
     def _on_presence(self, sample: Any) -> None:
         """Handle a peer's presence broadcast.
@@ -1038,25 +1138,205 @@ class Mesh(SensorLoopsMixin):
 
     # State - outgoing
     def _state_loop(self) -> None:
-        period = 1.0 / STATE_HZ
-        while self._running:
-            try:
-                state = self._read_state()
-                if state:
-                    self.publish(f"strands/{self.peer_id}/state", state)
-            except Exception as exc:
-                logger.debug("[mesh] %s: state tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
+        """Publish this peer's state at ``STATE_HZ``.
+
+        Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than by
+        ``self._stop_event.wait(period)``, which is a delay where a rate needs a
+        deadline: the time :meth:`_read_state` spends on the serial bus was added
+        to the period instead of being subtracted from it, so the loop published
+        at ``1 / (period + read)`` and the achieved rate was reported as if it
+        were the robot's limit. ``wait()`` keeps ``Event.wait``'s sense -- True
+        means stop -- and notices a stop within a 10ms slice rather than at the
+        end of a tick.
+        """
+        with Ticker(1.0 / STATE_HZ, self._stop_event) as ticker:
+            while self._running:
+                try:
+                    state = self._read_state()
+                    if state:
+                        self.publish(f"strands/{self.peer_id}/state", state)
+                except Exception as exc:
+                    logger.debug("[mesh] %s: state tick error: %s", self.peer_id, exc)
+                if ticker.wait():
+                    break
+
+    def _warn_read_state_once(self, category: str, exc: BaseException) -> None:
+        """Report a degraded :meth:`_read_state` probe, once per category.
+
+        Args:
+            category: Which probe degraded -- ``hw_joints``, ``task_state``,
+                ``sim_world`` or ``sim_joints``.
+            exc: The exception the probe raised. Logged as ``repr`` so the type
+                survives even when the message is empty, because the type is
+                what selects the operator's next move: a ``ConnectionError``
+                from a contended serial port and a ``RuntimeError`` from an
+                uncalibrated arm need different actions. That same type name is
+                what the published record carries as its ``reason``.
+
+        Each probe stays wrapped in ``except Exception`` on purpose -- a flaky
+        read must not kill the state thread -- so this exists to keep that
+        recovery from also being silent. Only the FIRST failure of each category
+        is warned about; the rest drop to debug, because the loop retries at
+        ``STATE_HZ`` and a persistent fault would otherwise emit ten warnings a
+        second.
+
+        The log gate and the published record are deliberately separate. The
+        gate arms once and stays armed for the life of the peer, so a probe that
+        flaps cannot emit a warning per tick; the record is cleared by
+        :meth:`_note_read_state_ok` as soon as the probe answers, so the
+        snapshot stops claiming a fault the moment it clears. Every call updates
+        the record's failure count, reason and detail, because a probe whose
+        failure mode CHANGES -- a contended port that becomes an uncalibrated
+        arm -- would otherwise keep publishing the first reason forever.
+        """
+        records = getattr(self, "_read_state_degraded", None)
+        if records is None:
+            # A Mesh built through __new__ (several tests, and the sim paths)
+            # never ran __init__. Bookkeeping must not be able to raise inside
+            # the handler that exists to report a failure.
+            records = {}
+            self._read_state_degraded = records
+        record = records.get(category)
+        if record is None:
+            records[category] = {
+                "reason": type(exc).__name__,
+                "detail": str(exc)[:MAX_DEGRADED_DETAIL_LEN],
+                "failures": 1,
+                # Monotonic: for_seconds answers "how long has this been
+                # failing", a duration, and a wall-clock stamp would make that
+                # duration jump by the size of any NTP correction mid-fault.
+                "since_mono": time.monotonic(),
+            }
+        else:
+            record["failures"] = int(record.get("failures", 0)) + 1
+            record["reason"] = type(exc).__name__
+            record["detail"] = str(exc)[:MAX_DEGRADED_DETAIL_LEN]
+
+        warned = getattr(self, "_read_state_warned", None)
+        if warned is None:
+            warned = set()
+            self._read_state_warned = warned
+        if category in warned:
+            logger.debug(
+                "[mesh] %s: state probe %r still failing: %r",
+                self.peer_id,
+                category,
+                exc,
+            )
+            return
+        warned.add(category)
+        logger.warning(
+            "[mesh] %s: state probe %r failed, that section of the snapshot is "
+            "omitted (further failures logged at debug): %r",
+            self.peer_id,
+            category,
+            exc,
+        )
+
+    def _note_read_state_ok(self, category: str) -> None:
+        """Clear ``category``'s degraded record: the probe answered.
+
+        Called from inside each probe once the operation that can raise has
+        returned, so the record is dropped only on a real answer and never on a
+        tick where the probe did not run at all -- a sim peer with no hardware
+        must not read as an ``hw_joints`` recovery.
+
+        Args:
+            category: The probe that answered. Unknown or already-clear
+                categories are a no-op, so a probe may call this every tick.
+
+        The recovery is reported on the wire -- the record disappears from the
+        next snapshot -- and at debug in the log. It is deliberately not a
+        warning: the whole point of publishing the record is that an observer no
+        longer has to read the log, and a probe flapping at ``STATE_HZ`` would
+        otherwise trade ten silent ticks for twenty noisy lines.
+        """
+        records = getattr(self, "_read_state_degraded", None)
+        if not records:
+            return
+        record = records.pop(category, None)
+        if record is None:
+            return
+        logger.debug(
+            "[mesh] %s: state probe %r answered again after %d failure(s) over %.1fs",
+            self.peer_id,
+            category,
+            int(record.get("failures", 0)),
+            time.monotonic() - float(record.get("since_mono", time.monotonic())),
+        )
+
+    def _degraded_probes(self) -> dict[str, dict[str, Any]] | None:
+        """The ``degraded`` block for the snapshot, or ``None`` when healthy.
+
+        Returns:
+            One entry per currently-degraded probe, keyed by category, each
+            carrying ``reason`` (the exception's type name -- the discriminator
+            :meth:`_warn_read_state_once` documents as selecting the operator's
+            next move), ``detail`` (that exception's message, bounded by
+            :data:`MAX_DEGRADED_DETAIL_LEN`), ``failures`` (how many ticks have
+            raised since the fault began) and ``for_seconds`` (how long it has
+            been failing). ``None`` when no probe is degraded, so a healthy
+            peer's snapshot is byte-for-byte what it always was.
+
+        ``since_mono`` is process-local and stays off the wire: seconds of local
+        uptime mean nothing to the machine reading the snapshot, so the elapsed
+        duration is computed here and only the difference is published.
+        """
+        records = getattr(self, "_read_state_degraded", None)
+        if not records:
+            return None
+        now = time.monotonic()
+        return {
+            category: {
+                "reason": record.get("reason", ""),
+                "detail": record.get("detail", ""),
+                "failures": int(record.get("failures", 0)),
+                "for_seconds": round(now - float(record.get("since_mono", now)), 3),
+            }
+            for category, record in sorted(records.items())
+        }
 
     def _read_state(self) -> dict[str, Any] | None:
+        """Build this peer's state snapshot for ``strands/{peer_id}/state``.
+
+        Returns:
+            The snapshot, or ``None`` when nothing but ``peer_id`` and ``t``
+            survived -- the state loop publishes nothing for a ``None``.
+
+        Every section is optional and probed defensively, because a robot may be
+        hardware, sim, both or neither. A section is present when its probe
+        answered and has something to report: ``joints`` (per-joint positions,
+        from the motor bus or from the sim world), ``task`` (the running
+        rollout's status), ``sim_time`` and ``robots``.
+
+        A section that is ABSENT is therefore ambiguous on its own -- a robot
+        with no joints and a robot whose joint probe just raised look identical
+        -- so a probe that fails names itself in ``degraded``, keyed by
+        category, with the ``reason`` / ``detail`` / ``failures`` /
+        ``for_seconds`` block :meth:`_degraded_probes` documents. That block is
+        the guarantee: while a probe is failing the snapshot says so, and the
+        entry disappears on the tick the probe answers again. It also keeps the
+        peer publishing at all. Before it, a hardware peer whose only section
+        was ``joints`` returned ``None`` for every tick of a contended bus, so
+        it went silent on the state topic while its presence heartbeat kept
+        advertising it -- indistinguishable from a peer whose state thread had
+        died, and explicable only by reading that peer's log.
+        """
         r = self.robot
         snapshot: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
 
         try:
             inner = getattr(r, "robot", None)
             if inner is not None and hasattr(inner, "get_observation") and getattr(inner, "is_connected", False):
-                obs = inner.get_observation()
+                # Through the device's bus lock: this probe shares one serial
+                # conversation with the camera publisher, the sensors probe and
+                # teleop, and two readers at once make the SDK refuse the whole
+                # exchange ("Port is in use!"). Joints ONLY, because a camera
+                # raising inside get_observation() discards the joint positions
+                # already in hand -- one dead USB camera used to erase an arm's
+                # entire joint telemetry while its presence stayed healthy.
+                obs = read_joints(inner)
+                self._note_read_state_ok("hw_joints")
                 cam_keys = set(getattr(getattr(inner, "config", None), "cameras", {}).keys())
                 joints: dict[str, Any] = {}
                 for key, value in obs.items():
@@ -1071,8 +1351,8 @@ class Mesh(SensorLoopsMixin):
                         joints[key] = value
                 if joints:
                     snapshot["joints"] = joints
-        except Exception:
-            pass
+        except Exception as exc:
+            self._warn_read_state_once("hw_joints", exc)
 
         try:
             ts = getattr(r, "_task_state", None)
@@ -1084,8 +1364,9 @@ class Mesh(SensorLoopsMixin):
                     "steps": getattr(ts, "step_count", 0),
                     "duration": getattr(ts, "duration", 0.0),
                 }
-        except Exception:
-            pass
+                self._note_read_state_ok("task_state")
+        except Exception as exc:
+            self._warn_read_state_once("task_state", exc)
 
         try:
             world = getattr(r, "_world", None)
@@ -1119,10 +1400,19 @@ class Mesh(SensorLoopsMixin):
                                 }
                         if sim_joints:
                             snapshot["joints"] = sim_joints
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                        self._note_read_state_ok("sim_joints")
+                    except Exception as exc:
+                        self._warn_read_state_once("sim_joints", exc)
+                self._note_read_state_ok("sim_world")
+        except Exception as exc:
+            self._warn_read_state_once("sim_world", exc)
+
+        # Unconditional: a probe that is failing says so on the wire for as long
+        # as it fails, which is also what keeps a hardware-only peer publishing
+        # at all when its one section is the one that raised.
+        degraded = self._degraded_probes()
+        if degraded is not None:
+            snapshot["degraded"] = degraded
 
         return snapshot if len(snapshot) > 2 else None
 
@@ -1147,14 +1437,27 @@ class Mesh(SensorLoopsMixin):
         return hz if hz > 0 else 0.0
 
     def _camera_loop(self, hz: float) -> None:
-        period = 1.0 / hz
-        while self._running:
-            try:
-                self._publish_cameras_once()
-            except Exception as exc:
-                logger.debug("[mesh] %s: camera tick error: %s", self.peer_id, exc)
-            if self._stop_event.wait(period):
-                break
+        """Publish camera frames at ``hz``.
+
+        This is the loop where the old pacing cost the most, because grabbing a
+        frame is slow AND that cost was added on top of the period rather than
+        subtracted from it -- and the rate a recorded dataset's video was
+        actually captured at is the rate this loop achieved, not the ``hz`` the
+        run reported. The ticker treats the period as a deadline, and it DROPS
+        missed deadlines rather than chasing them: a burst of frames stamped
+        microseconds apart is a worse lie about a camera than a gap.
+
+        ``hz`` is resolved by :meth:`_resolve_camera_hz`, which returns 0.0 for
+        anything unusable and disables the loop, so the division is safe.
+        """
+        with Ticker(1.0 / hz, self._stop_event) as ticker:
+            while self._running:
+                try:
+                    self._publish_cameras_once()
+                except Exception as exc:
+                    logger.debug("[mesh] %s: camera tick error: %s", self.peer_id, exc)
+                if ticker.wait():
+                    break
 
     def _publish_cameras_once(self) -> None:
         # Privacy kill switch. Operators on sensitive deployments set
@@ -1185,7 +1488,9 @@ class Mesh(SensorLoopsMixin):
 
         obs = None
         try:
-            obs = inner.get_observation()
+            # lerobot reads the MOTORS before it grabs any frame, so this is a
+            # bus reader too and must take the same lock as the probes.
+            obs = read_observation(inner)
         except Exception:
             pass
 
@@ -1486,11 +1791,17 @@ class Mesh(SensorLoopsMixin):
             _now_mono = time.monotonic()
             _key = (sender, turn)
             _is_replay = False
+            # Resolve the lazy tunables BEFORE taking the lock. Each one is an
+            # os.getenv plus a validating parse, and on a bad operator value it
+            # also logs -- work that has no reason to sit inside a critical
+            # section other peers are waiting on. Mirrors the hoist the two
+            # safety handlers do at entry (issue #265).
+            _ttl = _resume_freshness_window_s() + _resume_forward_skew_s()
+            _replay_cache_max = _resume_replay_cache_max()
             with self._cmd_replay_lock:
-                _ttl = _resume_freshness_window_s() + _resume_forward_skew_s()
                 _evict_replay_cache(
                     self._cmd_replay_cache,
-                    max_size=_resume_replay_cache_max(),
+                    max_size=_replay_cache_max,
                     ttl_s=_ttl,
                     now_mono=_now_mono,
                 )
@@ -1670,11 +1981,82 @@ class Mesh(SensorLoopsMixin):
         if action == "status":
             if hasattr(r, "get_task_status"):
                 return dict(r.get_task_status())
+            # Sim peer: synthesize a structured status from the running-
+            # policy registry so a rollout is wire-visible. Previously sims
+            # answered {"status": "unknown"} and their state topic hardcoded
+            # active=True - a running sim policy was invisible on the wire.
+            if hasattr(r, "_active_policy_robots"):
+                try:
+                    active = list(r._active_policy_robots())
+                    return {
+                        "status": "running" if active else "idle",
+                        "robots_running": active,
+                    }
+                except Exception:  # noqa: BLE001 - status must not raise
+                    pass
             ts = getattr(r, "_task_state", None)
             return {"status": getattr(getattr(ts, "status", None), "value", "unknown")}
         if action == "stop":
+            # A robot-less peer -- the coordinator gateway of
+            # ``robot_mesh._gateway_mesh`` -- is subscribed to
+            # ``strands/broadcast`` like every other peer, so the
+            # ``{"action": "stop"}`` fanout from :meth:`emergency_stop` reaches
+            # it too. It has nothing to halt, which makes "did not stop"
+            # affirmatively wrong rather than conservative: falling through to
+            # the terminal ``ok=False`` answer below put the operator's own
+            # dashboard in ``peers_not_stopped`` and fired the CRITICAL
+            # "robots may still be executing" warning on every e-stop -- the
+            # standing false alarm ``_peers_that_did_not_stop`` documents as
+            # the thing that trains operators to ignore the warning. An empty
+            # ``stopped`` list is the truth the aggregation needs.
+            if r is None:
+                return {"ok": True, "stopped": [], "note": "no robot registered on this peer"}
             if hasattr(r, "stop_task"):
-                return dict(r.stop_task())
+                # A hardware stop that fails must ANSWER, exactly as the two sim
+                # branches below do ("stop must answer, not raise"). An exception
+                # escaping here reaches ``_exec_cmd``, which publishes
+                # ``{"type": "error", "error": "dispatch error"}`` -- an envelope
+                # carrying no ``result``, so :func:`_peers_that_did_not_stop`
+                # finds neither ``ok`` nor ``status`` and ``emergency_stop``
+                # counts the peer as having halted. Raising is the ONLY way a
+                # hardware stop reports failure: both return paths of
+                # ``Robot.stop_task`` answer ``status="success"``.
+                try:
+                    return dict(r.stop_task())
+                except Exception as exc:  # noqa: BLE001 - stop must answer, not raise
+                    logger.error(
+                        "[safety] %s: stop_task() failed; NOTHING was stopped on this peer: %s",
+                        self.peer_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    return {"ok": False, "error": f"stop_task failed: {exc}"}
+            # Sim peer: route to stop_policy (cooperative cancellation).
+            # Without this branch every sim peer was UNSTOPPABLE over the
+            # mesh - {"action": "stop"} answered "peer exposes no stop_task"
+            # while the rollout kept running, and emergency_stop() counted
+            # every sim in peers_not_stopped.
+            if hasattr(r, "stop_policy"):
+                robot_name = cmd.get("robot_name", "")
+                try:
+                    if robot_name:
+                        return dict(r.stop_policy(robot_name))
+                    # No robot_name: stop every active rollout in the world.
+                    active = list(r._active_policy_robots()) if hasattr(r, "_active_policy_robots") else []
+                    if not active:
+                        return {"ok": True, "stopped": [], "note": "no policies running"}
+                    results = {name: dict(r.stop_policy(name)) for name in active}
+                    return {"ok": True, "stopped": list(results), "results": results}
+                except Exception as exc:  # noqa: BLE001 - stop must answer, not raise
+                    return {"ok": False, "error": f"stop_policy failed: {exc}"}
+            # Child SimRobot peer: delegate stop to the parent sim
+            # scoped to this robot.
+            _sp = getattr(r, "_sim_parent", None)
+            if _sp is not None and hasattr(_sp, "stop_policy"):
+                try:
+                    return dict(_sp.stop_policy(getattr(r, "name", "")))
+                except Exception as exc:  # noqa: BLE001
+                    return {"ok": False, "error": f"stop_policy failed: {exc}"}
             # No stop_task means NOTHING was stopped. Reporting ok=True here was
             # an affirmative lie on the fleet safety path: an operator issuing
             # emergency_stop counted this peer as having halted while its robot
@@ -1723,12 +2105,29 @@ class Mesh(SensorLoopsMixin):
             # has neither, so this is unambiguous.
             #
             # Forwards the well-known per-call kwargs from #300
-            # (``target_pose`` / ``target_joints`` / ``world_update``) plus
-            # the existing ``extra`` set (model_path / server_address / ...)
-            # via ``policy_config``. ``create_policy(provider, **policy_config)``
-            # passes them to the Policy constructor; per the #300 contract
-            # planner-style providers consume them and VLA providers ignore
-            # unknown kwargs without raising.
+            # (``target_pose`` / ``target_joints`` / ``target_velocity`` /
+            # ``world_update``) via ``policy_kwargs``, and the ``extra`` set
+            # (model_path / server_address / ...) via ``policy_config``.
+            # Per the #300 contract a goal-conditioned provider consumes the
+            # goal keys and a VLA provider ignores them without raising.
+            # Child SimRobot peer: a SimRobot dataclass carries no
+            # run_policy/list_robots of its own - delegate to the parent
+            # Simulation with robot_name pre-bound to this robot, so a task
+            # sent to the addressable child peer actually executes instead
+            # of answering "unknown action: execute".
+            _sim_parent = getattr(r, "_sim_parent", None)
+            if action in ("execute", "start") and _sim_parent is not None:
+                child_cmd = dict(cmd)
+                child_cmd.setdefault("robot_name", getattr(r, "name", None))
+                return self._dispatch_sim_policy_on(
+                    _sim_parent,
+                    action=action,
+                    cmd=child_cmd,
+                    instruction=instruction,
+                    policy_provider=policy_provider,
+                    duration=duration,
+                    extra=extra,
+                )
             if (
                 action in ("execute", "start")
                 and hasattr(r, "run_policy")
@@ -1793,18 +2192,35 @@ class Mesh(SensorLoopsMixin):
             return {"error": "robot does not support stop_teleop"}
         return {"error": f"unknown action: {action}"}
 
-    # Well-known per-call policy kwargs from issue #300 - keys that planner-
-    # style providers (cuRobo, MoveIt2, MPC) consume to encode goals beyond
-    # natural-language ``instruction``. Forwarded from ``tell()`` payload
-    # into ``policy_config`` so a ``policy_provider="curobo"`` peer sees the
-    # ``target_pose`` it needs without the dispatch layer dropping it
-    # silently.
+    # Well-known per-call policy kwargs from issue #300 - keys a goal-
+    # conditioned provider consumes to encode a goal beyond natural-language
+    # ``instruction``. Forwarded from the ``tell()`` payload into
+    # ``policy_kwargs`` -- the run_policy/start_policy parameter that reaches
+    # ``get_actions(obs, instruction, **policy_kwargs)`` -- so a
+    # ``policy_provider="curobo"`` peer sees the ``target_pose`` it needs and a
+    # ``policy_provider="wbc"`` peer sees the ``target_velocity`` it needs,
+    # without the dispatch layer dropping either silently.
+    #
+    # This is the set ``SimEngine.run_policy`` documents, because its
+    # ``policy_kwargs`` entry offers this path as the analogue of the local
+    # call ("the local-sim analogue of the mesh ``tell()`` path, which already
+    # forwards these keys"). Two directions, both mechanical: a key that
+    # docstring names and this tuple omits is dropped after the wire admits
+    # it, and a key admitted here that no provider reads is inert.
+    #
+    # ``target_velocity`` is the locomotion goal - WBC / wbc_gait read
+    # ``[vx, vy, omega]``, MotionBricks reads a planar direction. Every one of
+    # those providers is reachable over the mesh: the policy-provider
+    # allowlist is derived from the registry (see
+    # ``strands_robots.mesh.security``), so a locomotion peer can be told to
+    # walk and has to be able to receive where.
     #
     # See AGENTS.md > Public API Hygiene: "Forward all advertised kwargs
     # end-to-end. Silent drops are bugs masquerading as features."
     _SIM_WELL_KNOWN_POLICY_KWARGS: tuple[str, ...] = (
         "target_pose",
         "target_joints",
+        "target_velocity",
         "world_update",
     )
 
@@ -1832,15 +2248,50 @@ class Mesh(SensorLoopsMixin):
             * Otherwise return an error - ambiguous targets must be
               explicit so the agent can't accidentally drive the wrong arm.
 
-        Forwards both the existing ``extra`` constructor kwargs
-        (``model_path``, ``server_address``, ``policy_type``,
-        ``pretrained_name_or_path``) and the issue #300 well-known per-call
-        kwargs (``target_pose``, ``target_joints``, ``world_update``) via
-        ``policy_config``. Per #300 the receiving Policy ignores unknown
-        kwargs rather than raising, so VLA providers stay compatible.
+        Each forwarded payload goes to the sink that reads it. The
+        ``extra`` constructor kwargs (``model_path``, ``server_address``,
+        ``policy_type``, ``pretrained_name_or_path``) travel in
+        ``policy_config``, which ``create_policy`` hands to the Policy
+        constructor. The issue #300 well-known per-call goal
+        (``target_pose``, ``target_joints``, ``target_velocity``,
+        ``world_update``) travels in ``policy_kwargs``, which the runner
+        forwards verbatim to every
+        ``get_actions(obs, instruction, **policy_kwargs)`` call. Sent as
+        ``policy_config`` instead, a goal reaches the Policy constructor,
+        where no provider reads it as a per-call goal - cuRobo and MoveIt2
+        name no goal key there at all, and WBC's constructor
+        ``target_velocity`` is a *static* default a per-call kwarg overrides -
+        so the goal would be absorbed and the provider would then refuse the
+        payload the caller supplied. Per #300
+        the receiving Policy ignores unknown per-call kwargs rather than
+        raising, so VLA providers stay compatible.
         """
-        sim = self.robot
+        return self._dispatch_sim_policy_on(
+            self.robot,
+            action=action,
+            cmd=cmd,
+            instruction=instruction,
+            policy_provider=policy_provider,
+            duration=duration,
+            extra=extra,
+        )
 
+    def _dispatch_sim_policy_on(
+        self,
+        sim: Any,
+        *,
+        action: str,
+        cmd: dict[str, Any],
+        instruction: str,
+        policy_provider: str,
+        duration: Any,
+        extra: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Body of :meth:`_dispatch_sim_policy`, parameterised on the sim.
+
+        Split out so a child SimRobot peer's dispatch can route to its
+        parent Simulation without owning one itself.
+        """
         if sim._world is None:
             return {"error": "sim peer has no world; call create_world first"}
 
@@ -1865,13 +2316,13 @@ class Mesh(SensorLoopsMixin):
         if robot_name not in available:
             return {"error": f"robot_name={robot_name!r} not in sim (available: {available})"}
 
-        # Build policy_config: existing constructor kwargs + well-known
-        # per-call kwargs from #300. ``policy_config`` is the documented
-        # passthrough on SimEngine.run_policy/start_policy.
+        # Constructor kwargs and the per-call goal have different sinks:
+        # ``policy_config`` is expanded into the Policy constructor, while
+        # ``policy_kwargs`` is forwarded verbatim to every ``get_actions``
+        # call. Every provider reads the #300 goal in ``get_actions``, so
+        # routing it through the constructor drops it.
         policy_config: dict[str, Any] = dict(extra)
-        for key in self._SIM_WELL_KNOWN_POLICY_KWARGS:
-            if key in cmd:
-                policy_config[key] = cmd[key]
+        policy_kwargs: dict[str, Any] = {key: cmd[key] for key in self._SIM_WELL_KNOWN_POLICY_KWARGS if key in cmd}
 
         # Optional sim-side controls. We expose only the fields that already
         # have validator coverage in the wire schema - control_frequency,
@@ -1881,6 +2332,7 @@ class Mesh(SensorLoopsMixin):
         run_kwargs: dict[str, Any] = {
             "policy_provider": policy_provider,
             "policy_config": policy_config,
+            "policy_kwargs": policy_kwargs,
             "instruction": instruction,
             "duration": duration,
         }
@@ -2129,7 +2581,12 @@ class Mesh(SensorLoopsMixin):
         # most ``per_issuer_cap`` slots so a single attacker cannot
         # fill the global cache. Default cap is _resume_replay_cache_max()
         # / 4 -- four legitimate operators always have working slots.
-        per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
+        # Resolved here, outside the lock below, for the same reason the two
+        # float tunables are resolved at handler entry: the eviction call in
+        # the critical section reuses this local instead of re-parsing the env
+        # while holding _estop_replay_lock.
+        replay_cache_max = _resume_replay_cache_max()
+        per_issuer_cap = max(1, replay_cache_max // 4)
         # cache TTL bookkeeping uses time.monotonic() so an NTP step
         # backward cannot leave entries un-evictable and a step forward
         # cannot age fresh entries out early. Envelope freshness still
@@ -2233,7 +2690,7 @@ class Mesh(SensorLoopsMixin):
             ts_view: dict[float, float] = {k: v[1] for k, v in self._estop_replay_cache.items()}
             _evict_replay_cache(
                 ts_view,
-                max_size=_resume_replay_cache_max(),
+                max_size=replay_cache_max,
                 # include forward_skew so a forward-skewed envelope
                 # at t=now+skew stays cached for the full freshness window
                 # rather than the lesser ``freshness`` only.
@@ -2568,6 +3025,10 @@ class Mesh(SensorLoopsMixin):
         # wire_zid="ab12cd" no longer conflate into the same slot.
         issuer_key = ("wire", wire_zid) if wire_zid is not None else ("body", issuer_id)
         cache_key = (issuer_key, proof_nonce)
+        # Resolved before the lock, matching the estop site: both the eviction
+        # bound and the per-issuer cap below read this local rather than
+        # re-parsing the env inside _resume_replay_lock.
+        replay_cache_max = _resume_replay_cache_max()
         with self._resume_replay_lock:
             if cache_key in self._resume_replay_cache:
                 logger.warning(
@@ -2604,7 +3065,7 @@ class Mesh(SensorLoopsMixin):
             now_mono = time.monotonic()
             _evict_replay_cache(
                 self._resume_replay_cache,
-                max_size=_resume_replay_cache_max(),
+                max_size=replay_cache_max,
                 # see _evict_replay_cache docstring.
                 ttl_s=freshness_window_s + forward_skew_s,
                 now_mono=now_mono,
@@ -2618,7 +3079,7 @@ class Mesh(SensorLoopsMixin):
             # branch, suppressing real replay-rejection signals. The cap
             # is computed from the SAME expression as the estop site so
             # the two replay-cache defenses stay symmetric.
-            per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
+            per_issuer_cap = max(1, replay_cache_max // 4)
             issuer_slots = sum(1 for k in self._resume_replay_cache if k[0] == issuer_key)
             if issuer_slots >= per_issuer_cap:
                 logger.warning(
@@ -2696,6 +3157,43 @@ class Mesh(SensorLoopsMixin):
                 )
 
     # RPC -- outgoing
+    def _cmd_topic_size_problem(self, msg: dict[str, Any]) -> str | None:
+        """Report why *msg* would be dropped by the cmd-topic byte cap.
+
+        The transport's ``low_pass_filter`` caps ``**/cmd`` AND
+        ``**/broadcast`` with one rule (``strands_cmd_size_cap``, default
+        16 KiB, ingress and egress) while the command validator admits a
+        ``world_update`` up to :data:`~strands_robots.mesh.security.MAX_WORLD_UPDATE_BYTES`
+        (64 KiB). A valid command in that gap is silently dropped, so both
+        publishers on that rule ask this before handing the payload over.
+
+        One owner rather than a copy per publisher: a second inline check is
+        how the two topics come to disagree about the cap they share.
+
+        Returns:
+            A reason naming the encoded size, the cap and the env var that
+            raises it, or ``None`` when the message fits -- and also ``None``
+            when the cap cannot be read at all. The check is a diagnostic, not
+            part of publishing: it turns a silent transport drop into a
+            reported one. If the config helper cannot be imported there is no
+            cap to compare against, so the caller publishes and an over-cap
+            message behaves as it did before this check existed. Failing every
+            command because an optional module is missing would be worse.
+        """
+        try:
+            from strands_robots.mesh._zenoh_config import cmd_bytes_cap
+        except ImportError:
+            return None
+        encoded_len = len(json.dumps(msg).encode("utf-8"))
+        cap = cmd_bytes_cap()
+        if encoded_len <= cap:
+            return None
+        return (
+            f"command message is {encoded_len} bytes; the transport drops "
+            f"cmd messages over {cap} bytes (STRANDS_MESH_MAX_CMD_BYTES). "
+            "Shrink world_update/instruction or raise the cap on BOTH peers."
+        )
+
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
         """Send a command to a single peer and return the first response.
 
@@ -2753,6 +3251,15 @@ class Mesh(SensorLoopsMixin):
                 raise ValueError("send: target may not equal BROADCAST_RESPONDER or contain NUL")
             self._expected_responders[turn] = target
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
+        # An over-cap command is dropped by the transport with no diagnostics,
+        # so report it here instead of publishing into the filter.
+        size_problem = self._cmd_topic_size_problem(msg)
+        if size_problem is not None:
+            with self._rpc_lock:
+                self._pending.pop(turn, None)
+                self._responses.pop(turn, None)
+                self._expected_responders.pop(turn, None)
+            return {"status": "error", "error": size_problem}
         try:
             self.publish(f"strands/{target}/cmd", msg)
             event.wait(timeout=timeout)
@@ -2790,6 +3297,19 @@ class Mesh(SensorLoopsMixin):
             # Sentinel -- broadcast accepts responses from any peer.
             self._expected_responders[turn] = BROADCAST_RESPONDER
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
+        # ``strands/broadcast`` shares the cmd-topic byte cap with ``**/cmd``
+        # (one ``strands_cmd_size_cap`` rule), so an over-cap broadcast is
+        # dropped by the filter and returns the same empty list a broadcast
+        # nobody answered returns. Report it the way this method already
+        # reports a client-side rejection: log the reason, return no responses.
+        size_problem = self._cmd_topic_size_problem(msg)
+        if size_problem is not None:
+            logger.warning("[mesh] %s: broadcast rejected client-side: %s", self.peer_id, size_problem)
+            with self._rpc_lock:
+                self._pending.pop(turn, None)
+                self._responses.pop(turn, None)
+                self._expected_responders.pop(turn, None)
+            return []
         try:
             self.publish("strands/broadcast", msg)
             # A broadcast has no single expected responder, so collect acks for
@@ -2815,11 +3335,40 @@ class Mesh(SensorLoopsMixin):
     def subscribe(
         self, topic: str, callback: Callable[[str, dict[str, Any]], None] | None = None, name: str | None = None
     ) -> str | None:
-        """Subscribe to any Zenoh topic and receive parsed JSON dicts."""
+        """Subscribe to any Zenoh topic and receive parsed JSON dicts.
+
+        Returns:
+            The subscription name (``name`` when given, else *topic*) once the
+            subscriber is declared, or ``None`` when it was not. Every
+            ``None`` says why at WARNING, matching how the rest of this class
+            reports a client-side refusal: the peer is not on the mesh, there
+            is no session to declare against, or ``declare_subscriber`` itself
+            failed.
+
+        A subscription does not survive :meth:`stop`. That method drops every
+        subscription this one records and :meth:`start` re-declares only the
+        peer's own built-in topics, so a caller that rejoins the mesh
+        re-declares its own subscriptions - which is what the WARNING above
+        makes visible when a rejoin has not happened yet.
+        """
         if not self._running:
+            # Silent until now, unlike the declare_subscriber failure below and
+            # every other client-side refusal in this class. A caller
+            # re-subscribing after a stop()/start() round trip reads the
+            # ``None`` as "subscribed" unless it checks, so name the reason.
+            logger.warning(
+                "[mesh] %s: subscribe(%s) refused: peer is not on the mesh (start() first)",
+                self.peer_id,
+                topic,
+            )
             return None
         session = current_session()
         if session is None:
+            logger.warning(
+                "[mesh] %s: subscribe(%s) refused: no mesh session",
+                self.peer_id,
+                topic,
+            )
             return None
         sub_name = name or topic
         with self._inbox_lock:
@@ -3266,6 +3815,13 @@ class Mesh(SensorLoopsMixin):
         path falls back to the body-level HMAC binding alone -- the
         cross-session-forgery defence is Zenoh-specific because only
         Zenoh exposes a TLS-bound publisher identity.
+
+        Also returns ``None`` if the session module import fails. That arm is
+        defence in depth rather than a reachable configuration: this module
+        imports ``strands_robots.mesh.session`` at module scope, so by the time
+        any method runs the module is already resolved and the local import
+        cannot raise. It is kept so a future refactor that drops the
+        module-scope import degrades here instead of raising on the safety path.
         """
         try:
             from strands_robots.mesh.session import _current_zenoh_session_directly
@@ -3288,10 +3844,13 @@ class Mesh(SensorLoopsMixin):
         """Return the wire ``source_zid`` a safety envelope on *key* will carry.
 
         Returns the local Zenoh session ZID only when the full native
-        publish path is ready (session open, publisher declarable, and the
-        ``zenoh.SourceInfo`` constructor present). Returns ``None`` when the
-        SourceInfo-less fallback ``put()`` path -- which strips ``source_zid``
-        from the body -- will be taken instead.
+        publish path is ready (session open, publisher declarable, ``zenoh``
+        importable, and the ``zenoh.SourceInfo`` constructor present -- it first
+        ships in eclipse-zenoh 1.6.1, the declared ``[mesh]`` floor). Returns
+        ``None`` when the SourceInfo-less fallback ``put()`` path -- which
+        strips ``source_zid`` from the body -- will be taken instead. An install
+        without the ``mesh`` extra has no ``zenoh`` to import, so every envelope
+        there is bound to, and published as, a zid-less body.
 
         This is the single decision point an issuer must consult BEFORE
         binding ``source_zid`` into an HMAC (the resume override proof) so the
@@ -3332,9 +3891,11 @@ class Mesh(SensorLoopsMixin):
           predictably; a replay across the same session is bounded by
           our own ``_safety_sn`` counter (bound into ``source_sn``).
 
-        Returns ``None`` for non-Zenoh transports or when no session
-        is currently open. The caller falls back to the legacy
-        ``put()`` path in that case.
+        Returns ``None`` for non-Zenoh transports, when no session is
+        currently open, and when ``declare_publisher`` fails. The caller falls
+        back to the legacy ``put()`` path in that case. A failing session
+        module import is handled the same way, but is defence in depth rather
+        than a reachable configuration -- see :meth:`_local_session_zid`.
         """
         try:
             from strands_robots.mesh.session import _current_zenoh_session_directly
@@ -3416,8 +3977,12 @@ class Mesh(SensorLoopsMixin):
         * no Zenoh session is currently open,
         * ``declare_publisher`` failed for any reason (logged at
           WARNING by ``_safety_publisher_for``),
+        * ``zenoh`` is not importable at all -- an install without the
+          ``mesh`` extra still publishes the envelope, stripped,
         * the ``zenoh.SourceInfo`` constructor is unavailable on the
-          installed zenoh-python version.
+          installed zenoh-python version -- it first ships in
+          eclipse-zenoh 1.6.1, which is the declared ``[mesh]`` floor, so
+          this is reachable only below the supported range.
 
         In the fallback case the body-level HMAC binding still holds;
         only the additional cross-session-forge defence is omitted.
@@ -3450,8 +4015,9 @@ class Mesh(SensorLoopsMixin):
         try:
             source_info = zenoh.SourceInfo(pub.id, sn)
         except (TypeError, AttributeError):
-            # zenoh-python without the SourceInfo ctor (very old build);
-            # fall back to body-level binding only.
+            # zenoh-python below the declared ``[mesh]`` floor, which exposes no
+            # SourceInfo ctor (first shipped in eclipse-zenoh 1.6.1); fall back
+            # to body-level binding only.
             put(key, self._strip_wire_zid(payload))
             return
         try:
@@ -3483,6 +4049,31 @@ class Mesh(SensorLoopsMixin):
         put(key, payload)
 
 
+def mesh_disabled_by_env() -> bool:
+    """Report whether ``STRANDS_MESH`` forces the mesh off.
+
+    ``STRANDS_MESH=false`` (or ``0`` / ``no``) is documented in README's
+    Configuration table as "a hard kill switch that also overrides an explicit
+    ``mesh=True``". An operator who sets it is asking for no Zenoh session and no
+    presence on the fleet, so every path that can open one answers this -- not
+    only :func:`init_mesh`.
+
+    The switch is one-directional here: it only ever forces mesh OFF. Opting a
+    bare ``Robot()`` *on* via ``STRANDS_MESH=true`` is resolved in the ``Robot``
+    factory, which reads the affirmative spellings instead. A caller asking "may
+    I start a mesh?" wants this predicate; a caller asking "was I asked to start
+    one?" wants that one, and the two are not each other's negation -- an unset
+    variable answers False to both.
+
+    Resolved by :func:`strands_robots._mesh_switch.mesh_env_request`, which
+    holds both halves of the vocabulary. That is what makes an unrecognized
+    value reportable: this predicate alone cannot tell ``off`` (a typo) from
+    ``true`` (the other reader's business), because both are equally "not a
+    kill" to it.
+    """
+    return mesh_env_request() is False
+
+
 # init_mesh -- the only public constructor
 def init_mesh(
     robot: Any,
@@ -3501,8 +4092,7 @@ def init_mesh(
     # env var only ever forces mesh OFF here, never ON, so a caller that
     # explicitly opted out is honoured. The opt-in path (a bare ``Robot()``
     # turning mesh ON via STRANDS_MESH=true) is resolved in the Robot factory.
-    env = os.getenv("STRANDS_MESH", "").strip().lower()
-    if env in ("false", "0", "no"):
+    if mesh_disabled_by_env():
         mesh = False
     if not mesh:
         return None

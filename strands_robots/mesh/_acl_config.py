@@ -98,6 +98,13 @@ def _parse_json5(raw: str, path: Path) -> Any:
     malformed input. The ACL loader treats this as a fail-closed
     boundary: a malformed file does NOT silently degrade to the
     permissive default.
+
+    That includes a document the parser cannot descend. ``json5`` is a
+    recursive-descent parser, so a deeply nested file raises
+    :class:`RecursionError` rather than :class:`ValueError` -- a
+    :class:`RuntimeError`, outside both the class this boundary documents and
+    the ``(OSError, ValueError)`` tuple its two fail-closed callers narrow to.
+    It is converted here so the refusal reaches them.
     """
     # Use the project-standard
     # ``require_optional`` helper so the operator-facing import error
@@ -120,6 +127,31 @@ def _parse_json5(raw: str, path: Path) -> Any:
         ) from exc
     try:
         return _json5_mod.loads(raw)
+    except RecursionError as exc:
+        # ``json5`` is a recursive-descent parser, so nesting depth -- not file
+        # size -- is what it runs out of room for, and ``RecursionError`` is a
+        # ``RuntimeError``. It therefore missed both this boundary's documented
+        # ``ValueError`` and the ``(OSError, ValueError)`` tuple the two
+        # fail-closed callers narrow to (``snapshot_acl``, which reports an
+        # unloadable file as permissive so the start-time gate refuses the
+        # wire, and ``Mesh.start``'s ACL gate). The refusal escaped both, and
+        # with it the path, the reason and the remedy.
+        #
+        # ``ACL_FILE_MAX_BYTES`` does not bound this: 60 levels of nesting is
+        # 120 bytes, three orders of magnitude under that budget, while the
+        # shipped operator templates nest four levels. Every ``json5`` release
+        # the floor admits (0.9.0 through 0.15.0) raises it the same way, so
+        # this is the handler's to convert rather than a version to pin away.
+        #
+        # The message does not reuse the "not valid JSON5" wording below: a
+        # deeply nested document is valid JSON5 that this parser cannot read,
+        # and reporting it as malformed syntax would send the operator looking
+        # for a typo.
+        raise ValueError(
+            f"ACL file {path} is nested too deeply to parse: the JSON5 parser "
+            f"exhausted the interpreter stack. A role-separated ACL nests about "
+            f"four levels -- see examples/mesh/mesh_acl_example.json5."
+        ) from exc
     except ValueError as exc:
         # json5 raises ValueError (subclass) with a useful message that
         # includes line/column. Re-raise with the path attached so an
@@ -462,8 +494,8 @@ def default_acl(namespace: str) -> dict[str, Any]:
         #
         # Earlier versions of this default mixed default_permission='deny'
         # with two key_exprs=['**'] allow-rules; the effective behaviour was
-        # identical (allow-any) but the code-vs-doc surface was confusing
-        # and review-flagged 5x. Code now matches docs.
+        # identical (allow-any) but the code-vs-doc surface was confusing.
+        # Code now matches docs.
         "default_permission": "allow",
         "rules": [],
         "subjects": [],
@@ -494,12 +526,27 @@ def _file_identity(path: Path) -> tuple | None:
 
 
 def _load_acl_cached(path: Path) -> dict[str, Any]:
-    """Load + cache an ACL file, keyed on its identity tuple.
+    """Load an ACL file once per file identity, keyed on its identity tuple.
 
-    Two callers in the same ``Mesh.start`` flow (the gate check and the
-    config builder) get the same dict object instead of two independent
-    reads -- closing the prior TOCTOU surface. If the file changes a
-    later call computes a fresh identity tuple and re-loads.
+    Three callers read the file through here: :func:`snapshot_acl`,
+    :func:`resolve_acl` and :func:`is_default_acl_in_use`. Only
+    :func:`snapshot_acl` is reached from outside this module - by the
+    ``Mesh.start`` shape gate and by the wire-config builder - so it is the
+    one whose two reads per flow this cache collapses. The other two are the
+    single-read spellings of the superseded two-call pattern the comment above
+    describes, which no caller outside this module wires any more.
+
+    Callers share the file's *contents*, not one object: every return path
+    deep-copies, so a caller mutating what it got can poison neither the cache
+    nor another caller's dict. The identity is deliberately not shared - the
+    deep-copy comments below say why, and one of them records that returning
+    the parsed dict directly is what this replaced.
+
+    This is the identity-keyed tier, not the TOCTOU defence. A file rewritten
+    between two reads computes a fresh identity tuple and re-loads, which is
+    the by-design refresh window :func:`snapshot_acl` documents; what closes
+    the window inside one ``Mesh.start`` flow is that function's thread-local
+    snapshot, taken via :func:`_set_thread_snapshot`.
     """
     identity = _file_identity(path)
     if identity is None:

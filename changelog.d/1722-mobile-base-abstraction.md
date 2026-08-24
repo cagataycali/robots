@@ -31,10 +31,22 @@ refused at construction rather than on the track, and tools are built from what
 is actually wired, so an agent is never handed one that can only answer "not
 configured".
 
-Two behavioural changes, both closing gaps. `RosBridgedRobot` inherits the
-hardened contract above. It also gains a `stop_<node>` agent tool: it previously
-exposed `drive` with no `stop`, so an agent's only way to halt was to infer
-`drive(0, 0)`, which is not discoverable from the tool list it is given.
+`RosBridgedRobot` inherits the hardened contract above. The `stop_<node>` agent
+tool it was missing - an agent could start motion and had to infer `drive(0, 0)`
+to end it - is now emitted by the shared base for every transport, so the gap
+cannot reopen for one bridge while the others have it.
+
+The operator-approval gate is consolidated the same way. Commanding a robot over
+`use_ros` needs an operator decision, so the command tools are declared
+`@tool(context=True)` and the context is threaded from the tool through the base
+to the transport, which is the single place it is handed to `use_ros`. Whether a
+transport forwards it is derived from its own tool's signature rather than from a
+list: a gating tool that is not forwarded to turns the whole command surface into
+a per-call refusal, and a non-gating tool that is forwarded to raises. Both
+directions are now failing tests. The structural guard that pins the wiring reads
+the classes in the bridge's MRO instead of one file, so it follows the tools to
+wherever they are declared - a guard that scanned only the bridge would have
+stopped covering `drive` and `stop` the moment they moved to the base.
 
 Speed and duration limits stay unset by default on both ported classes - neither
 knows the limits of the third-party robot it drives, and inventing one would

@@ -38,6 +38,8 @@ from __future__ import annotations
 import re
 from typing import Any, cast
 
+from strands.types.tools import ToolContext
+
 from strands_robots.mesh._mobile_base import MobileBaseRobot
 from strands_robots.tools.use_rtps import use_rtps
 from strands_robots.utils import partial_construction_repr
@@ -65,11 +67,31 @@ class _UseRtpsTransport:
     Deliberately implements only ``publish`` and ``echo``: ``use_rtps`` has no
     service or action surface, and declaring ``service_call`` here would let a
     caller wire an ``init_services`` handshake that could never run.
+
+    ``use_rtps`` also exposes no operator-approval gate, so :meth:`publish`
+    accepts the ``tool_context`` the protocol carries and has nothing to forward
+    it to. Stated here rather than left to inference: a transport that silently
+    dropped an operator decision would be the same class of defect as one that
+    declared a capability it does not have.
     """
 
     twist_type = _TWIST_TYPE
 
-    def publish(self, *, topic: str, type: str, fields: dict[str, Any], count: int, rate: float) -> dict[str, Any]:
+    def publish(
+        self,
+        *,
+        topic: str,
+        type: str,
+        fields: dict[str, Any],
+        count: int,
+        rate: float,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        # Accepted to satisfy the Transport protocol and deliberately not
+        # forwarded: ``use_rtps`` exposes no operator-approval gate, so there is
+        # no parameter to hand it and passing one would raise. This is the single
+        # line that changes if it grows one - the base already carries the
+        # context this far for every transport.
         return use_rtps(action="publish", topic=topic, type=type, fields=fields, count=count, rate=rate)
 
     def echo(self, *, topic: str, type: str | None, count: int, timeout: float) -> dict[str, Any]:

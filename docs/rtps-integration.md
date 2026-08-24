@@ -60,6 +60,15 @@ becomes `rt/turtle1/cmd_vel`, and a type `geometry_msgs/msg/Twist` becomes
 `geometry_msgs::msg::dds_::Twist_` - the conventions that make a bare DDS
 participant interoperable with real ROS 2 nodes.
 
+Message interfaces only. ROS 2 has no single DDS type for a service or an
+action: `rosidl` generates one type per constituent message, so
+`example_interfaces/srv/AddTwoInts` becomes
+`example_interfaces::srv::dds_::AddTwoInts_Request_` and
+`..._Response_` on the `rq`/`rr` prefixes rather than `rt`. A `pkg/srv/Name` or
+`pkg/action/Name` type is therefore refused, with the types ROS 2 does generate
+quoted - an invented `pkg::srv::dds_::AddTwoInts_` would match no participant,
+and DDS reports a type mismatch as silence rather than as an error.
+
 ## Examples
 
 ```python
@@ -161,7 +170,11 @@ the following is true:
   `1` / `true` / `yes`) to explicitly accept an unsecured graph.
 
 A telemetry-only bridge (`ros2_commands=False`) is publish-only and is **not**
-gated. `dds_security_config` requires the following keys (each a path or a
+gated. Because this gate branches on the same flag, `enable_commands` /
+`ros2_commands` is checked rather than read by truthiness: a non-boolean is
+refused before any DDS state exists, so a `"false"` from a deployment config
+cannot be reported back as "an enabled command bridge" and answered with the
+insecure opt-out that would open it. `dds_security_config` requires the following keys (each a path or a
 `file:` / `data:` URI per the OMG DDS-Security spec); `permissions_ca` is
 optional:
 
@@ -195,11 +208,17 @@ keystore/env (`ROS_SECURITY_*` / `sros2`), not from a config dict.
 
 ### Joint position bounds
 
-`joint_limits={motor: (min, max)}` (threaded into either transport) range-checks
-every inbound command. If **any** commanded joint falls outside its declared
-range, the **entire** command is rejected - never partially applied - so one
-out-of-range joint can never drive part of the arm while the rest holds. Joints
-without a declared bound are unconstrained.
+`joint_limits={"<motor>.pos": (min, max)}` (threaded into either transport)
+range-checks every inbound command. If **any** commanded joint falls outside its
+declared range, the **entire** command is rejected - never partially applied - so
+one out-of-range joint can never drive part of the arm while the rest holds. Keys
+are matched against the joint names the command carries, which are the
+`<motor>.pos` names the bridge publishes in `joint_states`, so a controller can
+echo them straight back and a key that names no commanded joint constrains
+nothing. Joints without a declared bound are unconstrained; to leave a joint unbounded, omit it
+rather than declaring an infinite bound. Every bound must be a finite number - a
+non-finite one declares a range that admits nothing, and the bridge refuses it at
+construction rather than dropping every command for that joint mid-run.
 
 ```python
 arm = Robot(

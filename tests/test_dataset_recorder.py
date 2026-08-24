@@ -60,9 +60,11 @@ def test_clear_episode_buffer_prefers_native_clear():
 
     assert rec.clear_episode_buffer() is True
     assert ds.cleared == 1
-    # Next episode starts at frame 0; cumulative frame_count is untouched
-    # (those frames were only ever in the open buffer, not flushed to disk).
+    # Next episode starts at frame 0, and the cumulative total drops by the
+    # discarded frames: they were counted at buffer time but never flushed to
+    # disk, so counting them would report a total no parquet row backs.
     assert rec.episode_frame_count == 0
+    assert rec.frame_count == 0
 
 
 def test_clear_episode_buffer_falls_back_to_create_buffer():
@@ -73,6 +75,7 @@ def test_clear_episode_buffer_falls_back_to_create_buffer():
     assert ds.created == 1
     assert ds.episode_buffer == {}
     assert rec.episode_frame_count == 0
+    assert rec.frame_count == 0
 
 
 def test_clear_episode_buffer_warns_when_no_surface(caplog):
@@ -85,8 +88,12 @@ def test_clear_episode_buffer_warns_when_no_surface(caplog):
         result = rec.clear_episode_buffer()
 
     assert result is False
-    # Counter still resets so reporting does not carry over the discarded frames.
-    assert rec.episode_frame_count == 0
+    # Nothing was discarded here - the frames are still buffered, and the
+    # warning tells the caller to drain them with stop_recording()/
+    # save_episode(), which writes them to disk. So neither counter may be
+    # un-counted: that drain must report the frames it really wrote.
+    assert rec.episode_frame_count == 5
+    assert rec.frame_count == 5
     assert any("partial episode" in r.message for r in caplog.records)
 
 
@@ -107,7 +114,10 @@ def test_clear_episode_buffer_swallows_dataset_error(caplog):
         result = rec.clear_episode_buffer()
 
     assert result is False
-    assert rec.episode_frame_count == 0
+    # The discard failed, so the frames are still buffered and still pending a
+    # drain - neither counter may drop them.
+    assert rec.episode_frame_count == 5
+    assert rec.frame_count == 5
 
 
 def test_clear_episode_buffer_ascii_only_warnings(caplog):
@@ -1098,12 +1108,14 @@ def test_create_passes_vcodec_directly_when_supported(monkeypatch):
     assert recorder.dataset.repo_id == "user/data"
 
 
-def test_create_wraps_vcodec_in_camera_encoder_on_052(monkeypatch):
+def test_create_wraps_vcodec_in_camera_encoder_on_052(monkeypatch, tmp_path):
     """On 0.5.2+ (camera_encoder= kwarg), the vcodec is wrapped in a
     VideoEncoderConfig and the backend kwargs are forwarded."""
     constructed = _install_video_encoder_config(monkeypatch)
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetCameraEncoderCreate)
-    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav")
+    DatasetRecorder.create(
+        "user/data", root=str(tmp_path / "dataset"), joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav"
+    )
 
     sent = _FakeDatasetCameraEncoderCreate.last_create_kwargs
     assert sent["video_backend"] == "pyav"
@@ -1168,7 +1180,7 @@ class _VideoBackendProbeResume:
         return cls(repo_id, root=root)
 
 
-def test_create_omits_video_backend_by_default(monkeypatch):
+def test_create_omits_video_backend_by_default(monkeypatch, tmp_path):
     """Regression: video_backend defaults to None and must NOT be forwarded to
     LeRobot.create() unless explicitly set.
 
@@ -1183,7 +1195,7 @@ def test_create_omits_video_backend_by_default(monkeypatch):
     _install_video_encoder_config(monkeypatch)
     _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
 
-    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1")
+    DatasetRecorder.create("user/data", root=str(tmp_path / "dataset"), joint_names=["j1"], vcodec="libsvtav1")
 
     assert _VideoBackendProbeCreate.last_create_kwargs["video_backend"] == "__unset__"
 
@@ -1199,17 +1211,19 @@ def test_resume_omits_video_backend_by_default(monkeypatch):
     assert _VideoBackendProbeResume.last_resume_kwargs["video_backend"] == "__unset__"
 
 
-def test_create_forwards_video_backend_when_explicitly_set(monkeypatch):
+def test_create_forwards_video_backend_when_explicitly_set(monkeypatch, tmp_path):
     """When a caller explicitly passes a valid decode backend, it IS forwarded."""
     _install_video_encoder_config(monkeypatch)
     _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
 
-    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav")
+    DatasetRecorder.create(
+        "user/data", root=str(tmp_path / "dataset"), joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav"
+    )
 
     assert _VideoBackendProbeCreate.last_create_kwargs["video_backend"] == "pyav"
 
 
-def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog):
+def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog, tmp_path):
     """If create() wants camera_encoder= but VideoEncoderConfig can't be
     imported, the recorder warns and proceeds with camera_encoder unset rather
     than crashing the recording setup."""
@@ -1219,14 +1233,14 @@ def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog):
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetCameraEncoderCreate)
 
     with caplog.at_level("WARNING"):
-        DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1")
+        DatasetRecorder.create("user/data", root=str(tmp_path / "dataset"), joint_names=["j1"], vcodec="libsvtav1")
 
     sent = _FakeDatasetCameraEncoderCreate.last_create_kwargs
     assert sent["camera_encoder"] is None
     assert any("VideoEncoderConfig" in rec.message for rec in caplog.records)
 
 
-def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
+def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch, tmp_path):
     """A minimal create() lacking streaming_encoding / video_backend must not be
     handed those kwargs (version-tolerant forwarding, no TypeError)."""
 
@@ -1253,7 +1267,7 @@ def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
             return cls(repo_id, root=root)
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetMinimalCreate)
-    recorder = DatasetRecorder.create("user/data", joint_names=["j1"])
+    recorder = DatasetRecorder.create("user/data", root=str(tmp_path / "dataset"), joint_names=["j1"])
 
     sent = _FakeDatasetMinimalCreate.last_create_kwargs
     # The default codec "h264" is already an allowlist-valid codec name and is
@@ -1262,12 +1276,13 @@ def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
     assert recorder.dataset.repo_id == "user/data"
 
 
-def test_create_builds_features_from_joints_and_cameras(monkeypatch):
+def test_create_builds_features_from_joints_and_cameras(monkeypatch, tmp_path):
     """create() derives the LeRobot ``features`` schema from joint_names and
     camera_keys and hands it to the underlying dataset constructor."""
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetVcodecCreate)
     DatasetRecorder.create(
         "user/data",
+        root=str(tmp_path / "dataset"),
         joint_names=["shoulder", "elbow"],
         camera_keys=["top"],
         video_height=240,

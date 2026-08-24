@@ -17,7 +17,29 @@ The drive contract, its safety semantics, and the ``tools`` property live in
 :class:`~strands_robots.mesh._mobile_base.MobileBaseRobot`; this module supplies
 the ``use_ros`` transport and the ROS 2-specific Nav2 goal surface.
 
+Commanding a robot goes through ``use_ros``'s operator-approval gate, because
+``/turtle1/cmd_vel`` and a Nav2 ``/navigate_to_pose`` are safety-critical
+surfaces. The bridge therefore forwards an operator context to it: the
+``drive_<node>`` / ``stop_<node>`` / ``navigate_<node>`` agent tools are declared
+``@tool(context=True)`` and hand the context to :func:`use_ros`, so an agent
+driving this robot prompts the operator exactly as a direct ``use_ros`` call
+does. ``drive`` and ``stop`` are declared by the shared base and reach this
+module's transport, which is the single place the context is handed to
+``use_ros``; ``navigate`` is declared here because the Nav2 goal is ROS 2-only.
+The read paths (:meth:`get_pose`, :meth:`get_scan`) are never gated.
+
+A **programmatic** call carries no operator context, so it is refused unless the
+surface is pre-approved with ``STRANDS_ROS2_COMMAND_ALLOW`` (or the gate is
+bypassed with ``BYPASS_TOOL_CONSENT=true``). That includes :meth:`stop`: the gate
+is keyed on the *surface*, not on the payload, so a zero-velocity halt is gated
+like any other publish to ``cmd_vel``. A payload-shaped exemption would have to
+know that zero means "stationary" on a ``Twist`` while zero on ``/joint_command``
+commands motion to the zero pose - so the halt stays reachable through the same
+three approval paths rather than through a carve-out.
+
 Typical usage::
+
+    import os
 
     from strands import Agent
     from strands_robots.mesh import RosBridgedRobot
@@ -29,11 +51,14 @@ Typical usage::
         odom_type="turtlesim/msg/Pose",
     )
 
-    # Direct, programmatic control:
+    # Direct, programmatic control - no operator context to prompt, so the
+    # command surface has to be pre-approved:
+    os.environ["STRANDS_ROS2_COMMAND_ALLOW"] = "/turtle1/cmd_vel"
     turtle.drive(linear=1.0)
-    print(turtle.get_pose())
+    print(turtle.get_pose())  # reads are never gated
 
-    # Or hand the bridge to an agent as first-class tools:
+    # Or hand the bridge to an agent as first-class tools - the command tools
+    # carry the operator context, so the gate prompts instead of refusing:
     agent = Agent(tools=turtle.tools)
     agent("drive forward, then tell me the pose")
 """
@@ -45,7 +70,7 @@ import re
 from typing import Any, cast
 
 from strands import tool
-from strands.types.tools import AgentTool
+from strands.types.tools import AgentTool, ToolContext
 
 from strands_robots.mesh._mobile_base import ActionCapable, MobileBaseRobot
 from strands_robots.tools.use_ros import use_ros
@@ -82,23 +107,67 @@ class _UseRosTransport:
     monkeypatch ``strands_robots.mesh.ros_bridge.use_ros`` and have the bridge
     honor it. Implements the full optional surface: ROS 2 has services and
     actions.
+
+    Every command verb forwards ``tool_context`` to ``use_ros``, whose gate
+    refuses a safety-critical surface it cannot get an operator decision for.
+    This class is the one place that hand-off happens for the ROS 2 bridge - the
+    base carries the context down to the transport and no further, because the
+    gate is the tool's, not the base's. ``echo`` takes no context: a read is
+    never gated.
     """
 
     twist_type = _TWIST_TYPE
 
-    def publish(self, *, topic: str, type: str, fields: dict[str, Any], count: int, rate: float) -> dict[str, Any]:
-        return use_ros(action="publish", topic=topic, type=type, fields=fields, count=count, rate=rate)
+    def publish(
+        self,
+        *,
+        topic: str,
+        type: str,
+        fields: dict[str, Any],
+        count: int,
+        rate: float,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        return use_ros(
+            action="publish",
+            topic=topic,
+            type=type,
+            fields=fields,
+            count=count,
+            rate=rate,
+            tool_context=tool_context,
+        )
 
     def echo(self, *, topic: str, type: str | None, count: int, timeout: float) -> dict[str, Any]:
         return use_ros(action="echo", topic=topic, type=type, count=count, timeout=timeout)
 
-    def service_call(self, *, service: str, type: str, fields: dict[str, Any]) -> dict[str, Any]:
-        return use_ros(action="service_call", service=service, type=type, fields=fields)
+    def service_call(
+        self,
+        *,
+        service: str,
+        type: str,
+        fields: dict[str, Any],
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        return use_ros(action="service_call", service=service, type=type, fields=fields, tool_context=tool_context)
 
     def action_send_goal(
-        self, *, action_name: str, type: str, fields: dict[str, Any], timeout: float
+        self,
+        *,
+        action_name: str,
+        type: str,
+        fields: dict[str, Any],
+        timeout: float,
+        tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        return use_ros(action="action_send_goal", action_name=action_name, type=type, fields=fields, timeout=timeout)
+        return use_ros(
+            action="action_send_goal",
+            action_name=action_name,
+            type=type,
+            fields=fields,
+            timeout=timeout,
+            tool_context=tool_context,
+        )
 
 
 class RosBridgedRobot(MobileBaseRobot):
@@ -215,6 +284,7 @@ class RosBridgedRobot(MobileBaseRobot):
         yaw: float = 0.0,
         frame_id: str = "map",
         timeout: float = 120.0,
+        tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
         """Send a goal-level navigation request to the robot's ``nav_action``.
 
@@ -236,6 +306,9 @@ class RosBridgedRobot(MobileBaseRobot):
             timeout: End-to-end budget in seconds for the navigation goal.
                 Forwarded to ``use_ros``, which refuses a non-positive or
                 non-finite budget.
+            tool_context: Operator context forwarded to ``use_ros``, whose
+                command gate covers a Nav2-style ``/navigate_to_pose`` action
+                goal as well as a ``cmd_vel`` publish (see :meth:`drive`).
 
         Returns:
             The ``use_ros`` action result dict (goal status, result, feedback
@@ -278,6 +351,7 @@ class RosBridgedRobot(MobileBaseRobot):
             type=self.nav_action_type,
             fields=fields,
             timeout=timeout,
+            tool_context=tool_context,
         )
 
     def _extra_tools(self) -> list[AgentTool]:
@@ -292,8 +366,15 @@ class RosBridgedRobot(MobileBaseRobot):
                 f"Navigate the {self.node_name} robot to a map-frame (x, y, yaw) goal using its "
                 "navigation stack (planning and obstacle avoidance handled on-robot)."
             ),
+            context=True,
         )
-        def navigate(x: float, y: float, yaw: float = 0.0, timeout: float = 120.0) -> dict[str, Any]:
-            return self.navigate_to(x=x, y=y, yaw=yaw, timeout=timeout)
+        def navigate(
+            x: float,
+            y: float,
+            yaw: float = 0.0,
+            timeout: float = 120.0,
+            tool_context: ToolContext | None = None,
+        ) -> dict[str, Any]:
+            return self.navigate_to(x=x, y=y, yaw=yaw, timeout=timeout, tool_context=tool_context)
 
         return [navigate]

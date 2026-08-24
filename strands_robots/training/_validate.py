@@ -804,6 +804,75 @@ def temperature_learning_rate_problems(spec: TrainSpec, *, context: str) -> list
     return [error] if error is not None else []
 
 
+def initial_temperature_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return entropy-temperature starting-value problems for a :class:`TrainSpec`.
+
+    ``init_alpha`` is documented on :class:`~strands_robots.training.rl.RLTrainSpec`
+    as the "Initial entropy temperature (SAC)". FastSAC does not hold it directly:
+    it stores the temperature's *logarithm*, so the field reaches ``torch.log``
+    on both temperature branches::
+
+        self.log_alpha = torch.tensor(float(torch.log(torch.tensor(spec.init_alpha))), ...)
+
+    and ``alpha`` - which scales the entropy term in the critic's TD target and
+    in the actor loss - is ``log_alpha.exp()`` from there on. Only a positive
+    finite value has a finite logarithm, so this is the same domain as
+    :func:`temperature_learning_rate_problems` applies to the temperature's
+    learning rate. That gate's own reasoning already names this field: an
+    ``alpha_lr`` of ``0`` is refused because "the temperature stays at
+    ``init_alpha`` for the whole run", which is only a usable statement if
+    ``init_alpha`` is itself usable.
+
+    Each failure mode below was measured on a 40-timestep FastSAC run:
+
+    * ``0`` (and ``0.0``, and ``False``, which is ``0`` to ``torch.log``) makes
+      ``log(0) == -inf``, so ``alpha`` is exactly ``0`` and the entropy term is
+      gone from both losses - the run is no longer the maximum-entropy algorithm
+      that was asked for. Automatic tuning cannot recover it: ``log_alpha``
+      remained ``-inf`` after further gradient steps, because no finite update
+      moves an infinity. The run reported ``status="success"`` and saved a
+      checkpoint holding ``log_alpha == -inf``, so the unusable temperature
+      outlives the run that produced it.
+    * ``True`` is a silent temperature of exactly ``1.0`` - the default - rather
+      than a value the caller chose.
+    * A negative value and ``nan`` make the logarithm ``nan``, and ``inf`` makes
+      it ``inf``; either way the temperature poisons the actor loss, and the
+      first update raises ``ValueError`` from ``torch.distributions.Normal``
+      reporting a tensor of ``nan`` policy means. That message names the
+      distribution's ``loc`` parameter, not the field or the value that produced
+      it, and it arrives inside ``train`` - after the env and both networks are
+      built, past the point :meth:`Trainer.validate` documents itself as running
+      before.
+
+    Unlike :func:`temperature_learning_rate_problems` this is **not** scoped to
+    ``autotune_alpha``: that gate guards an optimizer only the tuning branch
+    constructs, whereas ``init_alpha`` is read on both branches. With tuning off
+    it is the temperature for the whole run and nothing can move it afterwards,
+    so a spec that tunes nothing needs the check more, not less.
+
+    There is no ``None`` sentinel to exempt: the field is annotated ``float``
+    with a concrete ``1.0`` default, so ``None`` is a value ``torch.log`` cannot
+    take rather than a request for a default.
+
+    Only the off-policy backend holds an entropy temperature, so this is scoped
+    like :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`:
+    a backend that does not read the field MUST NOT call this. A plain
+    :class:`TrainSpec` has no ``init_alpha`` at all and is likewise silent.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``init_alpha`` has no finite logarithm; empty
+        when it is usable.
+    """
+    error = positive_finite_number_error(getattr(spec, "init_alpha", 1.0), "init_alpha", context)
+    return [error] if error is not None else []
+
+
 def _clip_bound_error(value: Any, param: str, context: str) -> str | None:
     """Error text when *value* is not a clip bound its consumer honors.
 

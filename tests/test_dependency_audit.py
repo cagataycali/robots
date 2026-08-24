@@ -1015,3 +1015,233 @@ def test_the_floor_check_rejects_a_lock_below_a_declared_floor() -> None:
     assert _unsatisfied_floors(constraints, {"cbor2": [Version("5.9.0"), Version("5.8.0")]}) == ["cbor2"]
     # A package the lock does not resolve at all is not a violation.
     assert _unsatisfied_floors(constraints, {}) == []
+
+
+# ---------------------------------------------------------------------------
+# Cosmos 3 diffusers capability floor.
+#
+# The cosmos3-diffusers extra exists so Cosmos3Policy(backend="diffusers") can
+# build a diffusers.Cosmos3OmniPipeline. Measured against the released wheels,
+# that symbol (and CosmosActionCondition) first ships in diffusers 0.39.0 -
+# 0.36.0, 0.37.1 and 0.38.0 carry neither - so a floor below 0.39 resolves to a
+# diffusers the extra cannot use at all, and the backend's only remedy for that
+# state is an ImportError hint the caller reaches after installing. The floor
+# must therefore be the capability floor, not a nominal lower bound.
+#
+# The [tool.uv] override-dependencies diffusers pin cannot be left below that
+# floor: a uv *override* REPLACES a requirement rather than intersecting with it,
+# so it is the effective floor for the whole resolution. At >=0.38.0 it silently
+# discarded the extra's floor and uv locked diffusers 0.38.0 - a release carrying
+# no Cosmos3OmniPipeline at all.
+# ---------------------------------------------------------------------------
+
+_DIFFUSERS_WITHOUT_COSMOS3_OMNI = ("0.30.0", "0.36.0", "0.37.1", "0.38.0")
+_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI = "0.39.0"
+
+
+def test_cosmos3_diffusers_floor_ships_the_omni_pipeline() -> None:
+    """The extra's diffusers floor must exclude every release lacking the pipeline."""
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    extra = data["project"]["optional-dependencies"]["cosmos3-diffusers"]
+    reqs = [Requirement(r) for r in extra]
+    req = next((r for r in reqs if r.name == "diffusers"), None)
+    assert req is not None, f"cosmos3-diffusers must declare diffusers, got {[r.name for r in reqs]}"
+    for lacking in _DIFFUSERS_WITHOUT_COSMOS3_OMNI:
+        assert Version(lacking) not in req.specifier, (
+            f"diffusers {lacking} ships no Cosmos3OmniPipeline, so the cosmos3-diffusers "
+            f"floor must exclude it; got {req.specifier}"
+        )
+    assert Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI) in req.specifier, (
+        f"diffusers {_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI} is the first release shipping "
+        f"Cosmos3OmniPipeline and must stay installable; got {req.specifier}"
+    )
+
+
+def test_the_diffusers_uv_override_does_not_undercut_the_capability_floor() -> None:
+    """The uv override must dominate both the CVE floor and the capability floor.
+
+    A uv ``override-dependencies`` entry *replaces* every requirement for that
+    package instead of intersecting with it, so it is the effective floor for the
+    whole resolution: an override below the ``cosmos3-diffusers`` floor silently
+    discards it. Measured - with the override at ``>=0.38.0`` and the extra at
+    ``>=0.39``, ``uv lock`` pinned diffusers 0.38.0, which ships no
+    ``Cosmos3OmniPipeline``. The override must therefore stay at or above the
+    extra's floor while still excluding the releases the CVE fix predates.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    overrides = data.get("tool", {}).get("uv", {}).get("override-dependencies", [])
+    diffusers_overrides = [Requirement(o) for o in overrides if Requirement(o).name == "diffusers"]
+    assert diffusers_overrides, (
+        f"the diffusers override must stay declared in [tool.uv].override-dependencies, got {overrides}"
+    )
+    for req in diffusers_overrides:
+        assert Version("0.37.1") not in req.specifier, (
+            f"the diffusers override must still exclude the unpatched 0.37.1; got {req}"
+        )
+        for lacking in _DIFFUSERS_WITHOUT_COSMOS3_OMNI:
+            assert Version(lacking) not in req.specifier, (
+                f"a uv override replaces the extra's requirement, so it must not admit "
+                f"diffusers {lacking} (no Cosmos3OmniPipeline); got {req}"
+            )
+        assert Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI) in req.specifier, (
+            f"the override must keep diffusers {_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI} installable; got {req}"
+        )
+
+
+def test_the_lockfile_pins_a_diffusers_that_ships_the_omni_pipeline() -> None:
+    """The committed lock must not pin a diffusers the extra cannot use.
+
+    The floors above are declarations; this is the resolved fact a
+    ``uv sync``/``uv run`` user actually gets.
+    """
+    lock = tomllib.loads((_REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked = sorted({p["version"] for p in lock.get("package", []) if p["name"] == "diffusers" and p.get("version")})
+    assert locked, "uv.lock must resolve diffusers (the cosmos3-diffusers extra declares it)"
+    for version in locked:
+        assert Version(version) >= Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI), (
+            f"uv.lock pins diffusers {version}, which ships no Cosmos3OmniPipeline; "
+            f"run `uv lock` after raising the floor"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Naming an extra that exists is not the same as naming one that supplies the
+# module.
+#
+# The guard above pins that every `require_optional(extra=...)` names a declared
+# extra. `[ros2]` is declared, so `require_optional("rclpy", extra="ros2")`
+# passed it -- and still emitted a refusal whose every line was a dead end:
+#
+#     'rclpy' is required for the ROS 2 telemetry bridge (ros2_bridge=True)
+#     Install with:
+#       pip install 'strands-robots[ros2]'
+#       pip install rclpy
+#
+# `pip install 'strands-robots[ros2]'` exits 0 having installed only the
+# cyclonedds RMW binding, leaving rclpy exactly as missing -- verbatim the
+# failure mode the comment above describes, an install that reported success and
+# changed nothing. `pip install rclpy` fails outright ("No matching distribution
+# found for rclpy"). So the operator who asked for `ros2_bridge=True` was handed
+# two instructions and no way forward, while pyproject.toml, the `[ros2]` block
+# in docs/ros2-integration.md, the `ros_telemetry` module docstring and the
+# `use_ros` tool's own hint all already stated the remedy that works: source a
+# system ROS 2 distro.
+#
+# pyproject.toml names the libraries this applies to verbatim -- "rclpy /
+# rosidl_runtime_py ... are NOT distributed on PyPI ... and cannot be `pip
+# install`ed" -- so the inventory below records that statement rather than making
+# a new judgement. `sensor_msgs` is deliberately absent: its hint is the template
+# `ros-<distro>-sensor-msgs`, and `ros-jazzy-sensor-msgs` does resolve on PyPI,
+# so that hint is a hole for the reader to fill, not a dead end.
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROVIDED_MODULES = frozenset({"rclpy", "rosidl_runtime_py"})
+
+
+def _require_optional_call_sites() -> list[tuple[str, int, str, set[str]]]:
+    """Every ``require_optional``/``require_optionals`` call site in the package.
+
+    Returns:
+        One ``(relative path, line number, module name, keyword names)`` tuple
+        per requested module -- the aggregate helper takes a list, so a single
+        call can request several.
+    """
+    sites: list[tuple[str, int, str, set[str]]] = []
+    for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name not in {"require_optional", "require_optionals"} or not node.args:
+                continue
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                modules = [first.value]
+            elif isinstance(first, ast.List | ast.Tuple):
+                modules = [e.value for e in first.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            else:
+                continue
+            keywords = {kw.arg for kw in node.keywords if kw.arg}
+            rel = path.relative_to(_REPO_ROOT).as_posix()
+            sites.extend((rel, node.lineno, module, keywords) for module in modules)
+    return sites
+
+
+def test_require_optional_offers_no_pip_remedy_for_a_system_provided_module() -> None:
+    """A module pip cannot supply must be refused with ``system_install=``.
+
+    ``pip_install``/``extra`` both render a ``pip install`` line, and for these
+    libraries every such line is an instruction the caller can follow to no
+    effect. ``system_install`` replaces the block with the step that does supply
+    the module, so passing it is what makes the refusal actionable.
+    """
+    offenders: list[str] = []
+    checked = 0
+    for rel, lineno, module, keywords in _require_optional_call_sites():
+        if module.split(".")[0] not in _SYSTEM_PROVIDED_MODULES:
+            continue
+        checked += 1
+        pip_remedies = sorted(keywords & {"pip_install", "extra"})
+        if pip_remedies:
+            offenders.append(f"{rel}:{lineno} requests {module!r} but passes {', '.join(pip_remedies)}")
+        elif "system_install" not in keywords:
+            offenders.append(f"{rel}:{lineno} requests {module!r} with no system_install= remedy")
+    assert checked, (
+        f"no require_optional site requests any of {sorted(_SYSTEM_PROVIDED_MODULES)}; "
+        f"the sweep has stopped seeing them and would pass vacuously"
+    )
+    assert not offenders, (
+        "these sites refuse for want of a library that ships with a system ROS 2 install and is "
+        "not on PyPI, yet hand the caller a pip command: an extra that installs something else "
+        "and exits 0, or a distribution name that does not resolve. Pass "
+        "system_install=ROS2_SYSTEM_INSTALL_HINT instead.\n" + "\n".join(offenders)
+    )
+
+
+def test_the_rclpy_refusals_name_the_step_that_supplies_it() -> None:
+    """Both rclpy refusals must point at sourcing a distro, not at installing it.
+
+    Asserted on the messages the two production sites really raise, with the
+    import forced to fail so the check holds whether or not the interpreter
+    running the suite happens to have a ROS 2 distro sourced.
+    """
+    from strands_robots import utils
+
+    class _BlockRclpy:
+        """Meta-path finder that makes ``import rclpy`` fail."""
+
+        def find_spec(self, name: str, path: object = None, target: object = None) -> None:
+            """Refuse ``rclpy`` and defer every other name to the real finders."""
+            if name == "rclpy" or name.startswith("rclpy."):
+                raise ImportError("rclpy blocked for this test")
+            return None
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sys, "meta_path", [_BlockRclpy(), *sys.meta_path])
+        # A fresh cache, restored on exit: require_optional short-circuits on a
+        # module it has already resolved.
+        patch.setattr(utils, "_lazy_modules", {})
+
+        from strands_robots.hardware_robot import Robot
+        from strands_robots.ros_telemetry import RosTelemetryBridge
+
+        messages = {}
+        with pytest.raises(ImportError) as bridge_error:
+            RosTelemetryBridge(domain_id=0)
+        messages["RosTelemetryBridge()"] = str(bridge_error.value)
+        with pytest.raises(ImportError) as robot_error:
+            Robot._check_ros2_bridge_deps(ros2_transport="rclpy")
+        messages["Robot(ros2_bridge=True)"] = str(robot_error.value)
+
+    for label, message in messages.items():
+        assert "source /opt/ros/" in message, f"{label} names no way to obtain rclpy:\n{message}"
+        assert "pip install rclpy" not in message, (
+            f"{label} tells the caller to install a distribution that does not exist:\n{message}"
+        )
+        assert "Install with:\n  pip install 'strands-robots[ros2]'" not in message, (
+            f"{label} leads with an extra that installs the cyclonedds binding and leaves rclpy missing:\n{message}"
+        )

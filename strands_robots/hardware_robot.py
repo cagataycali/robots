@@ -26,7 +26,7 @@ import shutil
 import threading
 import time
 from collections.abc import AsyncGenerator, Mapping
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -36,8 +36,12 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
+from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
+from strands_robots.bus_access import read_observation, write_action
+from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
+    boolean_flag_error,
     dds_domain_id_error,
     positive_count_error,
     positive_finite_number_error,
@@ -52,6 +56,21 @@ if TYPE_CHECKING:
     from .policies import Policy
 
 logger = logging.getLogger(__name__)
+
+
+# Remedy for a missing ``rclpy`` when the caller asked for the rclpy transport.
+# The shared hint names the step that supplies rclpy; this adds the alternative
+# only a Robot can take, because ``ros2_transport`` is the caller's choice: the
+# pure-RTPS bridge publishes the same topics (both transports share the wire
+# contract in ``RosTelemetryBase``) over cyclonedds, which is a pip wheel, so it
+# is the one route here the ``[ros2]`` extra really does complete.
+_RCLPY_TRANSPORT_INSTALL_HINT = (
+    f"{ROS2_SYSTEM_INSTALL_HINT}\n"
+    "Or select the pure-RTPS transport, which publishes the same topics and "
+    "needs no sourced distro:\n"
+    "  pip install 'strands-robots[ros2]'\n"
+    "  Robot(..., ros2_bridge=True, ros2_transport='rtps')"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +417,12 @@ class RobotTaskState:
 
     status: TaskStatus = TaskStatus.IDLE
     instruction: str = ""
-    start_time: float = 0.0
+    #: ``time.monotonic()`` reading taken when the task began. Every reader
+    #: subtracts it from a later reading of the same clock to get an elapsed
+    #: duration, and none of them reports it as a point in time - so it is
+    #: monotonic rather than wall-clock, which a step cannot move. Named for
+    #: its clock so a future reader does not reach for ``time.time()``.
+    start_mono: float = 0.0
     duration: float = 0.0
     step_count: int = 0
     error_message: str = ""
@@ -463,15 +487,20 @@ class Robot(TeleopMixin, AgentTool):
                 ``/<robot>/joint_command`` and forwards inbound messages to
                 ``send_action`` so an external ROS 2 stack can drive the real
                 arm (full duplex). Set False for a read-only telemetry bridge.
-                Ignored unless ``ros2_bridge=True``.
+                Ignored unless ``ros2_bridge=True``. Only a boolean names a
+                posture: the value is checked, not read by truthiness, so
+                ``"false"`` cannot open the surface it asks to close.
             ros2_transport: Which ROS 2 backend the bridge uses:
                 ``"rclpy"`` (default) - full ``sensor_msgs`` fidelity, needs a
                 sourced ROS 2 distro; ``"rtps"`` - pure cyclonedds (a single
                 pip wheel, no rclpy / no sourced distro), type coverage bounded
                 by the local IDL bundle (joint_states + image_raw). Both emit
                 byte-identical topics. Ignored unless ``ros2_bridge=True``.
-            joint_limits: Optional ``{motor: (min, max)}`` clamp ranges threaded
-                into the ROS 2 bridge. When set, an inbound ``joint_command``
+            joint_limits: Optional ``{"<motor>.pos": (min, max)}`` clamp ranges
+                threaded into the ROS 2 bridge, keyed by the joint name as it
+                arrives on the wire (the same ``<motor>.pos`` names the bridge
+                publishes in ``joint_states``). When set, an inbound
+                ``joint_command``
                 whose ANY joint is outside its declared range is rejected whole
                 (no partial application). Requires ``ros2_bridge=True``.
             dds_security_config: Optional DDS Security credentials
@@ -530,7 +559,25 @@ class Robot(TeleopMixin, AgentTool):
 
         # Task execution state
         self._task_state = RobotTaskState()
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
+        # Stream-telemetry throttle (publish_step from the control loop).
+        # A ``time.monotonic()`` reading, like every other elapsed-time base
+        # here. ``-inf`` rather than ``0.0`` because monotonic readings are
+        # only meaningful relative to each other: the first tick is due
+        # regardless of where this platform's monotonic epoch happens to sit.
+        self._last_stream_pub: float = float("-inf")
+        # Imported here rather than at module top for the reason every other
+        # mesh import in this file is: ``strands_robots.mesh`` pulls the
+        # transport package, and a hardware Robot must construct without it.
+        from strands_robots.mesh.session import stream_min_period_from_env
+
+        # inf when the operator turned step telemetry off or named a rate no
+        # loop can honor. Never a bare division: this runs in __init__, so a
+        # ZeroDivisionError here fails the whole Robot(mode="real") bring-up.
+        self._stream_min_period: float = stream_min_period_from_env()
+        # Annotated with the base class rather than the concrete pool: the two
+        # uses below are ``submit`` and ``shutdown``, so a caller substituting a
+        # different Executor is honouring the contract, not evading it.
+        self._executor: Executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
         self._shutdown_event = threading.Event()
         # A stop request that arrived for the current task. An Event rather
         # than a task-state field because ``stop_task`` is called from the
@@ -563,9 +610,9 @@ class Robot(TeleopMixin, AgentTool):
         # Validate the ROS 2 bridge precondition (transport + its optional
         # dependency) BEFORE _initialize_robot imports lerobot. Otherwise, in an
         # environment without the [lerobot] extra, _initialize_robot raises a
-        # lerobot ImportError first and masks the documented
-        # "pip install 'strands-robots[ros2]'" hint that the operator who set
-        # ros2_bridge=True actually needs to see. require_optional caches the
+        # lerobot ImportError first and masks the transport-specific install
+        # hint that the operator who set ros2_bridge=True actually needs to see.
+        # require_optional caches the
         # module, so the real bridge construction in _init_ros_bridge pays nothing.
         if ros2_bridge:
             self._check_ros2_bridge_deps(ros2_transport=ros2_transport)
@@ -618,10 +665,12 @@ class Robot(TeleopMixin, AgentTool):
 
         Called from ``__init__`` BEFORE ``_initialize_robot`` (which imports
         lerobot) so that, when ``ros2_bridge=True``, an invalid transport or a
-        missing ``rclpy`` / ``cyclonedds`` surfaces its documented
-        ``pip install 'strands-robots[ros2]'`` error immediately - rather than
-        being masked by the lerobot ImportError ``_initialize_robot`` raises
-        first in an environment without the ``[lerobot]`` extra.
+        missing backend dependency surfaces its own remedy immediately - rather
+        than being masked by the lerobot ImportError ``_initialize_robot`` raises
+        first in an environment without the ``[lerobot]`` extra. The two
+        transports need different remedies: ``cyclonedds`` is a pip wheel the
+        ``[ros2]`` extra installs, while ``rclpy`` comes from a sourced ROS 2
+        distro, so only the RTPS branch can name an extra.
         ``require_optional`` caches the resolved module, so constructing the
         real bridge later in ``_init_ros_bridge`` costs nothing extra.
 
@@ -641,7 +690,11 @@ class Robot(TeleopMixin, AgentTool):
                 purpose="the pure-RTPS hardware bridge (Robot ros2_transport='rtps')",
             )
         else:
-            require_optional("rclpy", extra="ros2", purpose="the ROS 2 telemetry bridge (ros2_bridge=True)")
+            require_optional(
+                "rclpy",
+                system_install=_RCLPY_TRANSPORT_INSTALL_HINT,
+                purpose="the ROS 2 telemetry bridge (ros2_bridge=True)",
+            )
 
     def _init_ros_bridge(
         self,
@@ -678,23 +731,41 @@ class Robot(TeleopMixin, AgentTool):
                 Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
                 discovery ports from it, and 233 lands past the end of the port space.
             ros2_commands: When True (default), also subscribe to
-                ``joint_command`` and drive the arm; False for read-only.
+                ``joint_command`` and drive the arm; False for read-only. Only a
+                boolean names a posture: the value is checked, not read by
+                truthiness, so ``"false"`` cannot open the surface it asks to
+                close.
             ros2_transport: ``"rclpy"`` or ``"rtps"`` (see above).
-            joint_limits: Optional ``{motor: (min, max)}`` clamp ranges threaded
-                into whichever bridge is built (both enforce them on inbound
-                commands via the shared base).
+            joint_limits: Optional ``{"<motor>.pos": (min, max)}`` clamp ranges
+                threaded into whichever bridge is built (both enforce them on
+                inbound commands via the shared base), keyed by the joint name
+                as it arrives on the wire.
             dds_security_config: Optional DDS Security credentials, consumed
                 only by the ``"rtps"`` bridge. Passing it with the ``"rclpy"``
                 transport raises (rclpy DDS Security is configured at the RMW
                 layer, not by a config dict).
 
         Raises:
-            ValueError: If ``ros2_domain`` is outside ``[0, 232]``; if
+            ValueError: If ``ros2_bridge`` or ``ros2_commands`` is not a boolean;
+                if ``ros2_domain`` is outside ``[0, 232]``; if
                 ``ros2_transport`` is not ``"rclpy"`` or ``"rtps"``;
                 if ``joint_limits`` / ``dds_security_config`` are supplied with
                 ``ros2_bridge=False``; or if ``dds_security_config`` is supplied
                 with ``ros2_transport="rclpy"``.
         """
+        # Both flags decide whether this robot exposes an inbound, arm-driving
+        # command surface, so they are checked on the shared boolean domain
+        # rather than read by truthiness. ``"false"``, ``"no"``, ``"off"`` and
+        # ``"0"`` - the spellings a YAML/env deployment config yields - are every
+        # one of them truthy, so reading them would build a bridge for a caller
+        # who asked for none and subscribe to ``joint_command`` for a caller who
+        # asked for read-only. Answered before the first assignment below and
+        # before either bridge is constructed, so a refused flag leaves no
+        # bridge state, no ``ROS_DOMAIN_ID`` write and no DDS participant behind.
+        for flag_name, flag_value in (("ros2_bridge", ros2_bridge), ("ros2_commands", ros2_commands)):
+            if error := boolean_flag_error(flag_value, flag_name, type(self).__name__):
+                raise ValueError(error)
+
         self._ros2_bridge_enabled = bool(ros2_bridge)
         # A domain id outside the RTPS port map cannot be published on by either
         # transport, so refuse it here rather than letting it reach one of them.
@@ -818,7 +889,7 @@ class Robot(TeleopMixin, AgentTool):
                     }
                 ],
             }
-        observation = self.robot.get_observation()
+        observation = read_observation(self.robot)
         self._publish_ros_telemetry(observation, skip_images=skip_images)
         return {
             "status": "success",
@@ -953,6 +1024,18 @@ class Robot(TeleopMixin, AgentTool):
         rather than as a delayed connection failure with no kwarg in
         sight.
 
+        The mirror-image mistake -- a required field that no forwarded kwarg
+        supplied -- is refused here too, naming the parameter the caller
+        supplies rather than letting the dataclass report
+        ``SOFollowerRobotConfig.__init__() missing 1 required positional
+        argument: 'port'``. A missing port additionally names this host's
+        servo-bus candidates and their USB serial numbers, because a port path
+        is a position on the bus while the serial number is what survives a
+        replug -- see :func:`strands_robots._serial_discovery.scan_serial_devices`.
+        The scan answers a missing ``port`` only: naming serial devices for a
+        missing ``remote_ip`` would point a network robot's caller at the wrong
+        bus entirely.
+
         Each entry of ``cameras`` follows the same contract, resolved against
         the fields of lerobot's ``OpenCVCameraConfig`` -- see
         :func:`_build_camera_config`.
@@ -967,7 +1050,9 @@ class Robot(TeleopMixin, AgentTool):
             ValueError: If a kwarg is unknown to both the cross-robot allowlist
                 and the resolved dataclass, if a ``cameras`` entry is malformed,
                 if ``max_relative_target`` is not a limit the driver can honor,
-                or if the resolved config class refuses the assembled values.
+                if the resolved dataclass declares a required field that no
+                forwarded kwarg supplied, or if the resolved config class
+                refuses the assembled values.
             TypeError: If lerobot resolves ``robot_type`` to a non-dataclass
                 config class, which would make kwarg filtering unsafe.
         """
@@ -1009,6 +1094,17 @@ class Robot(TeleopMixin, AgentTool):
         try:
             ConfigClass = RobotConfig.get_choice_class(robot_type)
         except KeyError:
+            # A leader arm is a teleoperator, not a robot, and lerobot keeps the
+            # two in separate registries. Listing the robot types for a leader
+            # name is the retry that torque-enables the arm a human is holding,
+            # so name the kind it really is instead. ``Robot()``'s own registry
+            # guard does this for an unregistered ``*_leader`` name; a leader
+            # that IS registered -- as itself, which is the honest thing to
+            # register -- reaches this site instead.
+            from strands_robots.teleoperator import _other_lerobot_kind_refusal
+
+            if other := _other_lerobot_kind_refusal(robot_type, wanted="robot"):
+                raise ValueError(other) from None
             available = sorted(RobotConfig.get_known_choices().keys())
             # ``from None`` -- the KeyError is an internal detail of
             # lerobot's draccus registry; suppress the chained traceback
@@ -1126,6 +1222,46 @@ class Robot(TeleopMixin, AgentTool):
                 config_data["max_relative_target"], robot_type
             )
 
+        # A required field no forwarded kwarg satisfied is the commonest caller
+        # mistake on this path -- 8 of lerobot's serial robot types declare
+        # ``port`` with no default -- and letting the dataclass raise reports it
+        # as ``SOFollowerRobotConfig.__init__() missing 1 required positional
+        # argument: 'port'``: a lerobot internal, naming neither the parameter
+        # the caller supplies nor the devices this host has. The unknown-kwarg
+        # gate above already refuses the mirror-image mistake (a typo like
+        # ``prot=``) by naming the accepted fields, so the two halves of "the
+        # caller got a kwarg wrong" are reported the same way. Detected here
+        # rather than from the exception because the answer is on the bus, and
+        # by the time the dataclass raises nobody is looking at it: the same
+        # values would reach the same dataclass either way, so this changes
+        # which sentence a refused call gets, not which calls are refused.
+        missing_required = [
+            field.name
+            for field in dataclasses.fields(ConfigClass)
+            if field.default is dataclasses.MISSING
+            and field.default_factory is dataclasses.MISSING
+            and field.name not in config_data
+        ]
+        if missing_required:
+            remedy = ", ".join(f"{name}=..." for name in missing_required)
+            hint = (
+                f"missing required parameter(s) {missing_required}, which the caller supplies -- e.g. "
+                f"Robot({self.tool_name_str!r}, mode='real', {remedy})."
+            )
+            # Only a port-shaped parameter is answered by a serial scan. Naming
+            # this host's serial devices for a missing ``remote_ip`` would point
+            # a network robot's caller at the wrong bus entirely.
+            if any(name == "port" or name.endswith("_port") for name in missing_required):
+                hint += (
+                    f" {describe_serial_candidates(scan_serial_devices())}"
+                    " A port path is a position on the bus, not an identity: it can change when the device is"
+                    " replugged, while the usb id does not."
+                )
+            raise ValueError(
+                f"Failed to construct {ConfigClass.__name__} for robot type {robot_type!r}: "
+                f"{hint} Config: {config_data}"
+            )
+
         try:
             return ConfigClass(**config_data)
         except (TypeError, ValueError) as e:
@@ -1134,7 +1270,11 @@ class Robot(TeleopMixin, AgentTool):
             ) from e
 
     async def _get_policy(
-        self, policy_port: int | None = None, policy_host: str = "localhost", policy_provider: str = "groot"
+        self,
+        policy_port: int | None = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        **policy_kwargs: Any,
     ) -> Policy:
         """Create policy on-the-fly from invocation parameters.
 
@@ -1143,15 +1283,46 @@ class Robot(TeleopMixin, AgentTool):
         is the floor for a direct call to this private helper rather than the
         first place a caller's port is judged.
         """
+        from strands_robots.registry.policies import get_policy_provider
+
         from .policies import create_policy
 
-        if not policy_port:
-            raise ValueError("policy_port is required for robot operation")
+        # Per-provider port requirement: the registry's "requires"
+        # field is the source of truth - groot/lerobot_async dial a server
+        # and need a port, while mock/lerobot_local build in-process and
+        # need none. Hardcoding the port demand here made every port-less
+        # provider unrunnable on hardware through the mesh execute path.
+        requires: tuple[str, ...] = ()
+        try:
+            spec = get_policy_provider(policy_provider) or {}
+            requires = tuple(spec.get("requires", ()) or ()) if spec else ("port",)
+        except Exception:
+            # Unknown provider or registry unavailable - preserve the
+            # historical conservative behaviour (demand the port).
+            requires = ("port",)
 
-        policy_config = {"port": policy_port, "host": policy_host}
+        if "port" in requires and not policy_port:
+            raise ValueError(
+                f"policy_port is required for policy_provider={policy_provider!r} (it dials a policy server)"
+            )
+
+        policy_config: dict[str, Any] = {}
+        if policy_port:
+            policy_config["port"] = policy_port
+            policy_config["host"] = policy_host
 
         if self.data_config:
             policy_config["data_config"] = self.data_config
+
+        # Forward checkpoint/provider kwargs (model_path, policy_type,
+        # pretrained_name_or_path, server_address, ...) that the mesh
+        # dispatch collects from the wire command. Previously the hardware
+        # entry points had no way to receive them (TypeError -> generic
+        # "dispatch error"), making checkpoint providers (lerobot_local)
+        # unrunnable on hardware over the mesh while sim peers accepted the
+        # same command. Per-provider validity is create_policy's contract
+        # (unknown kwargs are the provider's own refusal to make).
+        policy_config.update({k: v for k, v in policy_kwargs.items() if v is not None})
 
         return create_policy(policy_provider, **policy_config)
 
@@ -1319,7 +1490,7 @@ class Robot(TeleopMixin, AgentTool):
         """Initialize policy with robot state keys."""
         try:
             # Get robot state keys from observation
-            test_obs = await asyncio.to_thread(self.robot.get_observation)
+            test_obs = await asyncio.to_thread(read_observation, self.robot)
 
             # Filter out camera keys to get robot state keys
             camera_keys = []
@@ -1367,6 +1538,7 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
+        **policy_kwargs: Any,
     ) -> None:
         """Execute robot task in background thread (internal method).
 
@@ -1396,7 +1568,7 @@ class Robot(TeleopMixin, AgentTool):
             self._stop_requested.clear()
             self._task_state.status = TaskStatus.CONNECTING
             self._task_state.instruction = instruction
-            self._task_state.start_time = time.time()
+            self._task_state.start_mono = time.monotonic()
             self._task_state.duration = 0.0
             self._task_state.step_count = 0
             self._task_state.error_message = ""
@@ -1420,7 +1592,7 @@ class Robot(TeleopMixin, AgentTool):
             if policy_object is not None:
                 policy_instance = policy_object
             else:
-                policy_instance = await self._get_policy(policy_port, policy_host, policy_provider)
+                policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
 
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
@@ -1472,17 +1644,24 @@ class Robot(TeleopMixin, AgentTool):
                 return
 
             self._task_state.status = TaskStatus.RUNNING
-            start_time = time.time()
+            # The rollout budget is a duration, so it is measured on a clock
+            # that only ever moves forward at one second per second. Read on
+            # ``time.time()`` an NTP correction, a ``date -s`` or a resume from
+            # suspend moved this comparison by the size of the step: forward it
+            # ended the rollout early and left the arm parked mid-task, and
+            # backward it kept commanding the servo bus past the budget
+            # ``_duration_error`` exists to bound. Neither was reported.
+            start_mono = time.monotonic()
 
             while (
-                time.time() - start_time < duration
+                time.monotonic() - start_mono < duration
                 and (n_steps is None or self._task_state.step_count < n_steps)
                 and self._task_state.status == TaskStatus.RUNNING
                 and not self._stop_requested.is_set()
                 and not self._shutdown_event.is_set()
             ):
                 # Get observation from robot
-                observation = await asyncio.to_thread(self.robot.get_observation)
+                observation = await asyncio.to_thread(read_observation, self.robot)
 
                 # Mirror the live observation on ROS 2 (no-op unless the bridge
                 # is enabled). Best-effort: never blocks or breaks the loop.
@@ -1515,14 +1694,32 @@ class Robot(TeleopMixin, AgentTool):
                         break
                     if n_steps is not None and self._task_state.step_count >= n_steps:
                         break
-                    await asyncio.to_thread(self.robot.send_action, action_dict)
+                    await asyncio.to_thread(write_action, self.robot, action_dict)
                     self._task_state.step_count += 1
+                    # Per-step mesh telemetry: publish_step had consumers
+                    # (robot_mesh watch, dashboards) but no producers. Rate-
+                    # limited; failures never touch the control loop.
+                    _mesh = getattr(self, "mesh", None)
+                    if _mesh is not None:
+                        _now_stream = time.monotonic()
+                        if _now_stream - self._last_stream_pub >= self._stream_min_period:
+                            self._last_stream_pub = _now_stream
+                            try:
+                                _mesh.publish_step(
+                                    self._task_state.step_count,
+                                    observation,
+                                    action_dict,
+                                    instruction=instruction,
+                                    policy=policy_provider,
+                                )
+                            except Exception:  # noqa: BLE001 - telemetry only
+                                pass
                     # Wait for action to complete before sending next action
                     # Default 50Hz (0.02s)
                     await asyncio.sleep(self.action_sleep_time)
 
             # Update final state
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_mono
             self._task_state.duration = elapsed
 
             if self._task_state.status == TaskStatus.RUNNING:
@@ -1558,8 +1755,8 @@ class Robot(TeleopMixin, AgentTool):
     def _duration_error(duration: Any, method: str) -> dict[str, Any] | None:
         """Reject a task ``duration`` the control loop cannot honor.
 
-        ``duration`` is the wall-clock budget the loop compares against
-        (``time.time() - start_time < duration``), and on hardware it bounds
+        ``duration`` is the elapsed-time budget the loop compares against
+        (``time.monotonic() - start_mono < duration``), and on hardware it bounds
         every rollout: unlike the simulation's ``run_policy`` - where an
         ``n_steps`` recomputes ``duration`` and supersedes it - the two
         conditions are ANDed here, so ``duration`` is the effective horizon
@@ -1639,7 +1836,7 @@ class Robot(TeleopMixin, AgentTool):
         return None
 
     @staticmethod
-    def _policy_port_error(policy_port: Any, method: str) -> dict[str, Any] | None:
+    def _policy_port_error(policy_port: Any, method: str, policy_provider: str | None = None) -> dict[str, Any] | None:
         """Reject a ``policy_port`` no policy can be built from.
 
         ``policy_port`` is the one caller-supplied value that decides whether a
@@ -1683,6 +1880,18 @@ class Robot(TeleopMixin, AgentTool):
             policy can be built from the value.
         """
         if policy_port is None:
+            # #13: port-less providers (mock, lerobot_local - registry
+            # "requires" without "port") legally build with no port; only
+            # server-dialing providers refuse None here.
+            if policy_provider:
+                try:
+                    from strands_robots.registry.policies import get_policy_provider
+
+                    spec = get_policy_provider(policy_provider)
+                    if spec is not None and "port" not in (spec.get("requires") or ()):
+                        return None
+                except Exception:  # noqa: BLE001 - registry read is best-effort
+                    pass
             return {
                 "status": "error",
                 "content": [
@@ -1811,6 +2020,7 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Execute task synchronously in thread - no new event loop.
 
@@ -1851,7 +2061,7 @@ class Robot(TeleopMixin, AgentTool):
         # ``policy_object``, because a pre-built policy makes the port inert -
         # ``_execute_task_async`` never reads it on that path - and refusing a
         # value the call ignores would be a false rejection.
-        if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task")):
+        if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task", policy_provider)):
             return err
         if err := self._claim_task(instruction):
             return err
@@ -1864,6 +2074,7 @@ class Robot(TeleopMixin, AgentTool):
             duration,
             policy_object=policy_object,
             n_steps=n_steps,
+            **policy_kwargs,
         )
 
     def _drive_claimed_task(
@@ -1875,6 +2086,7 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Run the control loop for an already-admitted task and report it.
 
@@ -1893,6 +2105,7 @@ class Robot(TeleopMixin, AgentTool):
                 policy_host,
                 policy_provider,
                 duration,
+                **policy_kwargs,
                 policy_object=policy_object,
                 n_steps=n_steps,
             )
@@ -1908,6 +2121,7 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Drive the rollout on its own event loop and report the outcome."""
         # Import here to avoid conflicts
@@ -1923,20 +2137,37 @@ class Robot(TeleopMixin, AgentTool):
                 duration,
                 policy_object=policy_object,
                 n_steps=n_steps,
+                **policy_kwargs,
             )
 
-        # Use asyncio.run only if no loop is running, otherwise run in existing loop
+        # Probe for a running loop separately from dispatching onto one. An
+        # ``except RuntimeError`` wrapped around both answers failures it cannot
+        # serve: ``stream(action="execute")`` reaches this from a running loop,
+        # so the nested branch below is that surface's live path, and a
+        # ``RuntimeError`` from it (a thread the pool cannot start, an executor
+        # already shut down) used to land in the handler - whose own
+        # ``asyncio.run`` is invalid by construction on exactly that branch. The
+        # caller was told "asyncio.run() cannot be called from a running event
+        # loop" instead of the cause, and the ``task_runner`` coroutine the
+        # handler built was left un-awaited. Only the probe's own
+        # ``RuntimeError`` means "no loop is running", so only it is caught.
         try:
-            # Try to get the current event loop
             asyncio.get_running_loop()
-            # If we're already in an event loop, we need to run in a thread
+        except RuntimeError:
+            on_a_running_loop = False
+        else:
+            on_a_running_loop = True
+
+        if on_a_running_loop:
+            # Already on a loop: ``asyncio.run`` would refuse, so the rollout
+            # gets its own loop on a worker thread. A failure here propagates
+            # with its own cause rather than being retried on this thread.
             import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor() as exec:
-                future = exec.submit(lambda: asyncio.run(task_runner()))
-                future.result()  # Wait for completion
-        except RuntimeError:
-            # No event loop running - safe to create one
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                pool.submit(lambda: asyncio.run(task_runner())).result()
+        else:
+            # No event loop running - safe to create one.
             asyncio.run(task_runner())
 
         # Return final status
@@ -1966,6 +2197,7 @@ class Robot(TeleopMixin, AgentTool):
         policy_host: str = "localhost",
         policy_provider: str = "groot",
         duration: float = 30.0,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Start robot task asynchronously and return immediately.
 
@@ -1984,6 +2216,13 @@ class Robot(TeleopMixin, AgentTool):
                 finite; it is validated before the task is submitted, so a
                 budget the loop cannot honor is reported here instead of as a
                 started task that commands nothing (or never ends).
+            **policy_kwargs: Checkpoint/provider keywords (``model_path``,
+                ``policy_type``, ``pretrained_name_or_path``,
+                ``server_address``, ...) forwarded to ``create_policy`` via
+                :meth:`_get_policy`. This is the vocabulary the mesh dispatch
+                collects from the wire command; per-provider validity is
+                ``create_policy``'s contract, so an unknown keyword is the
+                provider's own refusal to make.
 
         Returns:
             Tool-shaped result confirming the task started, or an error naming
@@ -2011,7 +2250,7 @@ class Robot(TeleopMixin, AgentTool):
         # policy can be built from. Pre-fix every unusable value returned
         # "Task started" and failed on the executor thread after the arm was
         # already connected.
-        if err := self._policy_port_error(policy_port, "start_task"):
+        if err := self._policy_port_error(policy_port, "start_task", policy_provider):
             return err
 
         # Claim the bus here, not on the executor thread: this method returns
@@ -2026,7 +2265,12 @@ class Robot(TeleopMixin, AgentTool):
         # fails (a shut-down executor) nothing would ever run to release it.
         try:
             self._task_state.task_future = self._executor.submit(
-                self._drive_claimed_task, instruction, policy_port, policy_host, policy_provider, duration
+                functools.partial(self._drive_claimed_task, **policy_kwargs),
+                instruction,
+                policy_port,
+                policy_host,
+                policy_provider,
+                duration,
             )
         except BaseException:
             self._release_task()
@@ -2153,7 +2397,7 @@ class Robot(TeleopMixin, AgentTool):
 
         # Update duration for running tasks
         if self._task_state.status == TaskStatus.RUNNING:
-            self._task_state.duration = time.time() - self._task_state.start_time
+            self._task_state.duration = time.monotonic() - self._task_state.start_mono
 
         status_text = f"Robot Status: {self._task_state.status.value.upper()}\n"
 
@@ -2477,17 +2721,64 @@ class Robot(TeleopMixin, AgentTool):
             pass  # Ignore errors in destructor
 
     async def get_status(self) -> dict[str, Any]:
-        """Get robot status including connection and task state."""
+        """Report the device's measured state plus this robot's task state.
+
+        Two fields answer different questions about cameras, and the pair is
+        what makes an unhealthy device attributable:
+
+        * ``cameras`` enumerates the camera names the device is *configured*
+          for - which image streams exist at all.
+        * ``cameras_connected`` maps each live camera to its own
+          ``is_connected`` reading - which of those streams are actually up.
+
+        ``is_connected`` on a lerobot arm is ``bus and all(cameras)``, so a
+        single dropped camera pulls it to ``False`` without naming which of the
+        N+1 facts fell. Reported beside the per-camera readings, a ``False``
+        becomes attributable: a camera reading ``False`` is the culprit, and
+        every camera reading ``True`` leaves the motor bus as the one by
+        elimination.
+
+        Best-effort per camera, mirroring the observation path: a camera whose
+        ``is_connected`` probe raises is omitted from ``cameras_connected``
+        rather than failing the whole probe, so a name present in ``cameras``
+        and absent from ``cameras_connected`` is one whose state could not be
+        read. A device exposing no live camera objects reports an empty map.
+
+        Returns:
+            Status dict of measured facts. An unexpected failure anywhere in
+            the probe degrades to ``{"robot_name", "error", "is_connected":
+            False, "task_status": "error"}`` rather than propagating, so a
+            supervising agent reads a verdict instead of taking an exception.
+        """
         try:
             # Get robot connection status
             is_connected = self.robot.is_connected if hasattr(self.robot, "is_connected") else False
             is_calibrated = self.robot.is_calibrated if hasattr(self.robot, "is_calibrated") else True
 
-            # Get camera status
+            # The configured enumeration: which image streams the device was
+            # asked for. Says nothing about whether any of them came up.
             camera_status = []
             if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
                 for name in self.robot.config.cameras.keys():
                     camera_status.append(name)
+
+            # The measured reading, one entry per live camera. The camera
+            # objects hang off the device beside the config, and each carries
+            # the ``is_connected`` that the device's own aggregate is built
+            # from - so reading them here is what turns an aggregate ``False``
+            # into a named culprit instead of a set to guess from.
+            cameras_connected: dict[str, bool] = {}
+            live_cameras = getattr(self.robot, "cameras", None)
+            if isinstance(live_cameras, dict):
+                for name, camera in live_cameras.items():
+                    try:
+                        cameras_connected[name] = bool(camera.is_connected)
+                    except Exception as e:  # noqa: BLE001 - a camera that cannot answer is omitted, not fatal
+                        # Breadth is the camera backend's, not ours: the default
+                        # OpenCV camera answers through ``cv2.VideoCapture``, and
+                        # ``cv2.error`` subclasses ``Exception`` directly, so any
+                        # narrower tuple would let the shipped camera through.
+                        logger.debug("camera %r on %s could not report is_connected: %s", name, self.tool_name_str, e)
 
             # Build status dict
             status_data = {
@@ -2498,6 +2789,7 @@ class Robot(TeleopMixin, AgentTool):
                 "is_connected": is_connected,
                 "is_calibrated": is_calibrated,
                 "cameras": camera_status,
+                "cameras_connected": cameras_connected,
                 "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
                 "ros2_transport": getattr(self, "_ros2_transport", "rclpy")
                 if getattr(self, "_ros_bridge", None) is not None
@@ -2532,7 +2824,9 @@ class Robot(TeleopMixin, AgentTool):
 
         Synchronous so it can be driven from the :class:`TeleopMixin` teleop
         loop thread. Ensures the underlying lerobot robot is connected, then
-        delegates to ``self.robot.send_action``. ``robot_name`` is accepted
+        delegates through :func:`strands_robots.bus_access.write_action`, so a
+        teleop or ROS 2 command shares the bus with the mesh's readers instead of
+        racing them. ``robot_name`` is accepted
         for parity with the multi-robot simulation host but ignored here - a
         hardware ``Robot`` wraps exactly one device.
 
@@ -2554,7 +2848,7 @@ class Robot(TeleopMixin, AgentTool):
                 except Exception:
                     self._close_open_devices()
                     raise
-            self.robot.send_action(action)
+            write_action(self.robot, action)
             return {"status": "success", "content": [{"text": "ok"}]}
         except Exception as e:  # noqa: BLE001 - surface as status, never kill the loop
             logger.error("%s send_action failed: %s", self.tool_name_str, e)
@@ -2681,76 +2975,6 @@ class Robot(TeleopMixin, AgentTool):
             ],
         }
 
-    def start_teleop_receive(
-        self,
-        source_peer_id: str,
-        device_name: str = "leader",
-        apply_fn: Any | None = None,
-    ) -> dict[str, Any]:
-        """Start receiving teleoperator actions from a remote peer and applying to hardware.
-
-        This makes the robot a *teleop follower*: it listens for input frames
-        published by the source peer and applies them to its own hardware via
-        ``self.robot.send_action(action)``.
-
-        Args:
-            source_peer_id: The peer ID of the publishing robot.
-            device_name: Name of the input stream to subscribe to.
-            apply_fn: Optional custom function ``(robot, action_dict) -> None``.
-                Defaults to calling ``robot.send_action(action)``.
-
-        Returns:
-            Status dict, or an error dict when the mesh is inactive or
-            ``source_peer_id`` / ``device_name`` is not a valid mesh
-            identifier.
-        """
-        if not self.mesh or not self.mesh.alive:
-            return {"status": "error", "content": [{"text": "Mesh not active. Cannot receive input."}]}
-
-        from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
-
-        # Both identifiers become segments of the subscribed key expression, so
-        # a Zenoh wildcard here would make this follower apply joint commands
-        # from every peer instead of the named leader. Validate before stopping
-        # any existing receiver for that key so a rejected call cannot tear
-        # down a live stream, and report through the tool envelope rather than
-        # raising past dispatch.
-        try:
-            validate_mesh_identifier(source_peer_id, "start_teleop_receive.source_peer_id")
-            validate_mesh_identifier(device_name, "start_teleop_receive.device_name")
-        except ValidationError as exc:
-            return {"status": "error", "content": [{"text": str(exc)}]}
-
-        from strands_robots.mesh import InputReceiver
-
-        if not hasattr(self, "_input_receivers"):
-            self._input_receivers: dict[str, InputReceiver] = {}
-
-        key = f"{source_peer_id}/{device_name}"
-        if key in self._input_receivers:
-            self._input_receivers[key].stop()
-
-        receiver = InputReceiver(
-            mesh=self.mesh,
-            robot=self.robot,
-            source_peer_id=source_peer_id,
-            device_name=device_name,
-            apply_fn=apply_fn,
-        )
-        receiver.start()
-        self._input_receivers[key] = receiver
-
-        return {
-            "status": "success",
-            "content": [
-                {
-                    "text": f"Input receiver started: listening to {source_peer_id}/{device_name}\n"
-                    f"Topic: {receiver.topic}\n"
-                    f"Actions will be applied to: {self.tool_name_str}"
-                }
-            ],
-        }
-
     def stop_teleop(self, device_name: str | None = None) -> dict[str, Any]:
         """Stop all or a specific teleop publisher/receiver.
 
@@ -2798,37 +3022,4 @@ class Robot(TeleopMixin, AgentTool):
         return {
             "status": "success",
             "content": [{"text": f"Teleop stopped:\n{stats_text}"}],
-        }
-
-    def get_teleop_status(self) -> dict[str, Any]:
-        """Get status of all active teleop sessions."""
-        publishers = {}
-        receivers = {}
-
-        if hasattr(self, "_input_publishers"):
-            for name, pub in self._input_publishers.items():
-                publishers[name] = pub.stats
-
-        if hasattr(self, "_input_receivers"):
-            for key, rcv in self._input_receivers.items():
-                receivers[key] = rcv.stats
-
-        return {
-            "status": "success",
-            "content": [
-                {
-                    "text": f"Teleop status:\n"
-                    f"  Publishers: {len(publishers)} active\n"
-                    f"  Receivers: {len(receivers)} active\n"
-                    + "".join(
-                        f"  [pub] {n}: {s.get('frames', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
-                        for n, s in publishers.items()
-                    )
-                    + "".join(
-                        f"  [rcv] {k}: {s.get('frames_received', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
-                        for k, s in receivers.items()
-                    )
-                },
-                {"json": {"publishers": publishers, "receivers": receivers}},
-            ],
         }

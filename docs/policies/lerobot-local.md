@@ -41,7 +41,7 @@ LerobotLocalPolicy(
     inference_action_mode="continuous",  # "continuous" | "discrete"
     camera_key_map=None,                 # {robot_cam_name: policy_image_key}
     obs_rename_override=None,            # {runtime_obs_key: "observation.images.*"} merged over embodiment.obs_rename (value None/"" DROPS that key)
-    strict_keys=False,                   # raise instead of positional camera fallback
+    strict_keys=False,                   # raise instead of a degraded camera OR joint-state binding
     cache_model=True,                    # reuse a process-cached model across instances
     revision=None,                       # pin a HF Hub revision (branch/tag/commit SHA)
 )
@@ -121,7 +121,9 @@ saving from the cache is observable instead of guessed:
 
 - `load_cache_hit` (`bool`): `True` when the heavy `from_pretrained` weight
   read was skipped because the process cache already held this checkpoint.
-- `load_time_s` (`float`): wall time the load took (near `0.0` on a cache hit).
+- `load_time_s` (`float`): seconds the load took (near `0.0` on a cache hit).
+  Measured on a monotonic clock, so a wall-clock correction landing during a
+  multi-minute weight read cannot report the load as negative or as hours.
 
 `Simulation.run_policy` and `Simulation.eval_policy` surface these in their
 `{"json": {...}}` result block as `policy_load_cache_hit` and
@@ -292,6 +294,14 @@ action_unnorm = (clip(action, -1, 1) + 1) * (q99 - q01) / 2 + q01
 When a stats file declares multiple embodiment tags, pass `norm_tag=` to select
 one; a single-tag file is auto-detected.
 
+A `norm_tag` the stats file does not declare is refused rather than absorbed. The
+tag is a free-form string, so a misspelling would otherwise skip normalization
+entirely - state reaching the policy un-normalized and actions reaching the robot
+un-unnormalized, with usable stats sitting unused in the payload. The load report
+names the tag that was asked for and the tags the checkpoint declares, instead of
+blaming a missing `policy_postprocessor.json` the checkpoint was never going to
+ship.
+
 ### Device-pinned checkpoints
 
 A checkpoint trained on GPU bakes `device_processor.device = "cuda"` into its
@@ -309,6 +319,45 @@ the policy in raw units and actions reach the motors in normalized space,
 producing off-policy / micro-motion trajectories. An explicit
 `processor_overrides={"device_processor": {"device": ...}}` is still honored
 as-is and takes precedence over the automatic reconciliation.
+
+### Overriding a processor step
+
+`processor_overrides` is keyed by step name -- a step's `registry_name`, or its
+class name when the step is not registry-backed. A checkpoint ships two
+pipelines whose step names are mostly disjoint, so each override is routed to
+the pipeline that declares it:
+
+| step | pipeline | what it controls |
+| --- | --- | --- |
+| `normalizer_processor` | preprocessor | `observation.state` normalization |
+| `unnormalizer_processor` | postprocessor | `action` un-normalization |
+| `device_processor` | both | tensor placement |
+
+A key no pipeline declares is refused, and the refusal lists both pipelines'
+step names.
+
+This is how you supply stats to a checkpoint whose declared normalization is
+inert -- a pretraining *base* checkpoint such as `lerobot/smolvla_base` ships
+stats keyed by its training dataset (`so100.buffer.action`) rather than the
+canonical `action` / `observation.state` keys, so LeRobot's normalizer finds no
+matching key and passes those tensors through untouched. Both halves live in
+different pipelines, so a remedy has to name both steps:
+
+```python
+policy = create_policy(
+    "lerobot_local",
+    pretrained_name_or_path="lerobot/smolvla_base",
+    policy_type="smolvla",
+    processor_overrides={
+        "normalizer_processor": {"stats": dataset_stats},    # observation.state
+        "unnormalizer_processor": {"stats": dataset_stats},  # action
+    },
+)
+```
+
+Naming only one leaves the other inert, and the diagnostic keeps reporting
+whichever half is still unnormalized. Fine-tuning the checkpoint writes stats
+under the canonical keys and needs no override at all.
 
 ## State routing
 
@@ -350,6 +399,36 @@ with no position companion is kept, because some embodiments legitimately declar
 velocity state (LeKiwi's body-frame base velocities `x.vel` / `y.vel` /
 `theta.vel`). Explicit `robot_state_keys` are never filtered - naming `elbow.vel`
 there states the model's input.
+
+### A declarative `embodiment=` reports the same two degradations
+
+A declarative `embodiment=` installs its own state step, and it reports both
+degradations with that same registry-checked remedy. A partly-bound vector names
+the absent keys, the keys the observation does carry, and the remedy; an
+all-bound-nothing configuration says so instead of handing the observation on in
+silence, since the downstream error it would otherwise produce knows nothing
+about embodiments and cannot name the one that binds this observation.
+
+The two conventions in the embodiment registry are what make an all-missing
+binding easy to reach in either direction:
+
+- **A sim embodiment driven from real hardware.** `embodiment="so101"` declares
+  the MuJoCo asset's `'1'..'6'`, and a real arm reports `'<motor>.pos'`. This
+  direction binds anyway: the step falls back to the observation's `'.pos'` keys
+  in motor order, packed raw because hardware already reports the model's
+  training units.
+- **A `*_real` embodiment driven from sim.** Several names are both a lerobot
+  driver spelling and a sim-loadable registry robot - `so100_follower`,
+  `so101_follower`, `koch_follower`, `bi_so_follower`, `lekiwi`, `openarm` - and
+  each resolves to a `*_real` configuration whose `'.pos'` keys no sim
+  observation emits. There is no fallback in this direction, so no
+  `observation.state` is packed; the report names the sim-side configuration to
+  use instead (`embodiment='so101'` for a MuJoCo so101).
+
+An unbound state is a configuration mistake rather than a degraded reading, so
+nothing is invented to stand in for it - no all-zero vector is emitted, and the
+observation is passed on unchanged for a state-less policy or the caller's own
+handling.
 
 ## Camera routing
 

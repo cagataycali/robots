@@ -125,6 +125,23 @@ def test_scene_preset_registries_are_consistent() -> None:
     assert gsplat_skybox_align_for("someone_uploaded.ply") == {}
 
 
+def test_ply_presets_are_fully_trained_checkpoints_with_provenance() -> None:
+    # The .ply presets point at the fully-trained 30k-iteration checkpoints
+    # (iteration_7000 is visibly undertrained), and every preset carries
+    # provenance: source, training iteration, and license.
+    from strands_robots.rendering.backgrounds import GSPLAT_SCENE_PROVENANCE
+
+    assert set(GSPLAT_SCENE_PROVENANCE) == set(GSPLAT_SCENES)
+    for name, url in GSPLAT_SCENES.items():
+        assert "iteration_7000" not in url, f"{name}: early-training checkpoint"
+        provenance = GSPLAT_SCENE_PROVENANCE[name]
+        assert set(provenance) == {"source", "iteration", "license"}
+        assert all(value.strip() for value in provenance.values())
+        if url.lower().endswith(".ply"):
+            assert "iteration_30000" in url, f"{name}: expected a 30k checkpoint"
+            assert provenance["iteration"] == "30000"
+
+
 def _write_solid_panorama(path, color, width: int = 256, height: int = 128) -> None:
     """Write a solid-color equirectangular image the loader can read."""
     from PIL import Image
@@ -244,6 +261,8 @@ def _build_spz(
     version: int,
     frac_bits: int = 12,
     sh_degree: int = 0,
+    sh: np.ndarray | None = None,
+    flags: int = 0,
 ):
     """Write a minimal gzip-compressed .spz file and return its path."""
     import gzip
@@ -252,7 +271,7 @@ def _build_spz(
     from strands_robots.rendering.backgrounds import _SPZ_MAGIC
 
     n = means.shape[0]
-    header = struct.pack("<iii", _SPZ_MAGIC, version, n) + struct.pack("<BBBB", sh_degree, frac_bits, 0, 0)
+    header = struct.pack("<iii", _SPZ_MAGIC, version, n) + struct.pack("<BBBB", sh_degree, frac_bits, flags, 0)
     body = (
         _pack_positions(means, frac_bits)
         + alpha.astype(np.uint8).tobytes()
@@ -260,6 +279,8 @@ def _build_spz(
         + scl.astype(np.uint8).reshape(n, 3).tobytes()
         + rot.astype(np.uint8).tobytes()
     )
+    if sh is not None:
+        body += sh.astype(np.uint8).tobytes()
     path = tmp_path / f"scene_v{version}.spz"
     path.write_bytes(gzip.compress(header + body))
     return path
@@ -311,7 +332,9 @@ class TestSpzGaussianSplatReader:
         path = _build_spz(tmp_path, means, alpha, col, scl, rot, version=3, frac_bits=12)
 
         splats = _load_spz_splats(path, device="cpu")
-        assert set(splats) == {"means", "scales", "quats", "opacities", "colors"}
+        assert set(splats) == {"means", "scales", "quats", "opacities", "colors", "antialiased"}
+        # flags defaults to 0 here -> trained without the AA compensation.
+        assert splats["antialiased"] is False
         m = splats["means"].numpy()
         assert m.shape == (2, 3) and m.dtype == np.float32
         # 24-bit fixed point at frac_bits=12 recovers the means to sub-mm.
@@ -346,6 +369,21 @@ class TestSpzGaussianSplatReader:
         assert splats["quats"].shape == (1, 4)  # w reconstructed -> 4 comps
         assert abs(float(splats["opacities"][0]) - 200.0 / 255.0) < 1e-4
 
+    def test_load_surfaces_the_antialiased_header_flag(self, tmp_path) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        means = np.array([[0.0, 0.0, 0.0]], np.float32)
+        alpha = np.array([200], np.uint8)
+        col = np.array([[10, 20, 30]], np.uint8)
+        scl = np.array([[128, 128, 128]], np.uint8)
+        rot = np.array([[128, 128, 128]], np.uint8)
+        # Header flags bit 0 marks an asset trained with mip-splatting AA
+        # (e.g. the curated tabletop.spz ships flags=1); the loader must
+        # surface it so the rasterizer applies the matching compensation.
+        path = _build_spz(tmp_path, means, alpha, col, scl, rot, version=2, flags=1)
+        assert _load_spz_splats(path, device="cpu")["antialiased"] is True
+
     def test_load_rejects_bad_magic(self, tmp_path) -> None:
         pytest.importorskip("torch")
         import gzip
@@ -370,14 +408,86 @@ class TestSpzGaussianSplatReader:
         with pytest.raises(ValueError, match="unsupported SPZ version"):
             _load_spz_splats(path, device="cpu")
 
+    def test_load_decodes_higher_order_sh_as_raw_coefficients(self, tmp_path) -> None:
+        # An asset with sh_degree > 0 must come back with ``colors`` as raw SH
+        # coefficients (N, K, 3), DC first, so the rasterizer can evaluate
+        # view-dependent color -- not with the trailing SH block dropped.
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _SPZ_COLOR_SCALE, _load_spz_splats
 
-def _build_ply(path, *, means, scales_log, quats, opacity_logit, f_dc):
+        means = np.zeros((2, 3), np.float32)
+        alpha = np.array([255, 255], np.uint8)
+        col = np.array([[128, 128, 128], [255, 0, 64]], np.uint8)
+        scl = np.full((2, 3), 128, np.uint8)
+        rot = np.array([_encode_spz_rotation_v3((1.0, 0.0, 0.0, 0.0))] * 2, np.uint8)
+        # degree 1 -> 3 rest coefficients per channel; coefficient-major with
+        # the channel fastest-varying (spz spec). byte -> (byte - 128) / 128.
+        sh = np.arange(2 * 3 * 3, dtype=np.uint8).reshape(2, 3, 3) + 100
+        path = _build_spz(tmp_path, means, alpha, col, scl, rot, version=3, sh_degree=1, sh=sh)
+
+        splats = _load_spz_splats(path, device="cpu")
+
+        colors = splats["colors"].numpy()
+        assert colors.shape == (2, 4, 3)
+        # Coefficient 0 is the raw (un-baked) DC term.
+        f_dc = (col.astype(np.float32) / 255.0 - 0.5) / _SPZ_COLOR_SCALE
+        assert np.allclose(colors[:, 0, :], f_dc, atol=1e-6)
+        # The rest dequantize as (byte - 128) / 128, in stored order.
+        assert np.allclose(colors[:, 1:, :], (sh.astype(np.float32) - 128.0) / 128.0, atol=1e-6)
+
+    def test_load_sh_degree_zero_keeps_baked_dc_colors(self, tmp_path) -> None:
+        # The documented fast path: no higher-order SH -> per-gaussian RGB
+        # (N, 3) in [0, 1], exactly as before.
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        means = np.zeros((1, 3), np.float32)
+        path = _build_spz(
+            tmp_path,
+            means,
+            np.array([255], np.uint8),
+            np.array([[128, 128, 128]], np.uint8),
+            np.full((1, 3), 128, np.uint8),
+            np.array([_encode_spz_rotation_v3((1.0, 0.0, 0.0, 0.0))], np.uint8),
+            version=3,
+            sh_degree=0,
+        )
+
+        colors = _load_spz_splats(path, device="cpu")["colors"].numpy()
+        assert colors.shape == (1, 3)
+        assert np.all((colors >= 0.0) & (colors <= 1.0))
+
+    def test_load_rejects_truncated_sh_block(self, tmp_path) -> None:
+        # A header that claims sh_degree > 0 over a body with no (or short) SH
+        # bytes is a corrupt file: refuse it by name rather than decode garbage.
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        means = np.zeros((1, 3), np.float32)
+        path = _build_spz(
+            tmp_path,
+            means,
+            np.array([255], np.uint8),
+            np.array([[128, 128, 128]], np.uint8),
+            np.full((1, 3), 128, np.uint8),
+            np.array([_encode_spz_rotation_v3((1.0, 0.0, 0.0, 0.0))], np.uint8),
+            version=3,
+            sh_degree=2,
+            sh=None,  # header claims degree 2 (24 bytes/point) but the body has none
+        )
+        with pytest.raises(ValueError, match="sh_degree=2"):
+            _load_spz_splats(path, device="cpu")
+
+
+def _build_ply(path, *, means, scales_log, quats, opacity_logit, f_dc, f_rest=None):
     """Write a minimal 3DGS ``.ply`` with the fields ``_load_ply_splats`` reads.
 
     The 3D Gaussian-Splatting PLY layout stores scales in log-space
     (``scale_0..2``), opacity as a logit (``opacity``), rotations as raw WXYZ
-    quaternions (``rot_0..3``), and DC color as SH coefficients (``f_dc_0..2``);
-    the loader converts each back to the render-ready representation.
+    quaternions (``rot_0..3``), DC color as SH coefficients (``f_dc_0..2``),
+    and -- when ``f_rest`` is given as an ``(N, M)`` array -- higher-order SH
+    as ``f_rest_0..M-1`` (channel-major, per the INRIA exporter); the loader
+    converts each back to the render-ready representation.
     """
     from plyfile import PlyData, PlyElement
 
@@ -398,6 +508,8 @@ def _build_ply(path, *, means, scales_log, quats, opacity_logit, f_dc):
         ("f_dc_1", f_dc[:, 1]),
         ("f_dc_2", f_dc[:, 2]),
     ]
+    if f_rest is not None:
+        fields += [(f"f_rest_{i}", f_rest[:, i]) for i in range(f_rest.shape[1])]
     dtype = [(name, "f4") for name, _ in fields]
     verts = np.empty(n, dtype=dtype)
     for name, col in fields:
@@ -482,6 +594,77 @@ class TestPlyGaussianSplatReader:
         assert np.allclose(colors[0], 1.0)
         assert np.allclose(colors[1], 0.0)
 
+    @staticmethod
+    def _ply_with_rest(tmp_path, f_dc, f_rest):
+        n = len(f_dc)
+        path = tmp_path / "sh.ply"
+        _build_ply(
+            path,
+            means=np.zeros((n, 3), np.float32),
+            scales_log=np.zeros((n, 3), np.float32),
+            quats=np.tile(np.array([1.0, 0.0, 0.0, 0.0], np.float32), (n, 1)),
+            opacity_logit=np.zeros(n, np.float32),
+            f_dc=f_dc,
+            f_rest=f_rest,
+        )
+        return path
+
+    def test_load_reads_higher_order_sh_as_raw_coefficients(self, tmp_path) -> None:
+        # An asset carrying f_rest_* must load ``colors`` as raw SH coefficients
+        # (N, K, 3) with the DC term first -- view-dependent appearance is
+        # evaluated at render time, not dropped at load time.
+        pytest.importorskip("torch")
+        pytest.importorskip("plyfile")
+        from strands_robots.rendering.backgrounds import _load_ply_splats
+
+        f_dc = np.array([[0.1, 0.2, 0.3], [-0.4, 0.5, -0.6]], np.float32)
+        # degree 1 -> 3 rest coefficients per channel, 9 f_rest_* fields. The
+        # INRIA exporter flattens (3 channels, K-1 coeffs) channel-major, so
+        # f_rest_{c * 3 + j} holds channel c, coefficient j.
+        f_rest = np.arange(2 * 9, dtype=np.float32).reshape(2, 9) / 10.0
+        path = self._ply_with_rest(tmp_path, f_dc, f_rest)
+
+        colors = _load_ply_splats(path, device="cpu")["colors"].numpy()
+
+        assert colors.shape == (2, 4, 3)
+        # Coefficient 0 is the raw (un-baked, un-clipped) DC term.
+        assert np.allclose(colors[:, 0, :], f_dc, atol=1e-6)
+        # Coefficient 1+j, channel c comes from field f_rest_{c*(K-1)+j}.
+        for j in range(3):
+            for c in range(3):
+                assert np.allclose(colors[:, 1 + j, c], f_rest[:, c * 3 + j], atol=1e-6)
+
+    def test_load_without_f_rest_keeps_the_baked_dc_fast_path(self, tmp_path) -> None:
+        # DC-only assets stay on the documented fast path: per-gaussian RGB
+        # (N, 3), never a degenerate (N, 1, 3) SH stack.
+        pytest.importorskip("torch")
+        pytest.importorskip("plyfile")
+        from strands_robots.rendering.backgrounds import _load_ply_splats
+
+        path = self._ply_with_rest(tmp_path, np.zeros((2, 3), np.float32), None)
+        colors = _load_ply_splats(path, device="cpu")["colors"].numpy()
+        assert colors.shape == (2, 3)
+
+    def test_load_rejects_f_rest_count_matching_no_sh_degree(self, tmp_path) -> None:
+        # 6 fields = 2 coefficients per channel, which is no integer degree
+        # ((deg+1)^2 - 1 is 3, 8, 15, ...): refuse rather than mis-evaluate.
+        pytest.importorskip("torch")
+        pytest.importorskip("plyfile")
+        from strands_robots.rendering.backgrounds import _load_ply_splats
+
+        path = self._ply_with_rest(tmp_path, np.zeros((2, 3), np.float32), np.zeros((2, 6), np.float32))
+        with pytest.raises(ValueError, match="does not(.|\n)*match any degree"):
+            _load_ply_splats(path, device="cpu")
+
+    def test_load_rejects_f_rest_count_not_divisible_by_channels(self, tmp_path) -> None:
+        pytest.importorskip("torch")
+        pytest.importorskip("plyfile")
+        from strands_robots.rendering.backgrounds import _load_ply_splats
+
+        path = self._ply_with_rest(tmp_path, np.zeros((2, 3), np.float32), np.zeros((2, 4), np.float32))
+        with pytest.raises(ValueError, match="not divisible by 3"):
+            _load_ply_splats(path, device="cpu")
+
 
 # --------------------------------------------------------------------------- #
 # GsplatBackground config normalization + splat clipping (no gsplat/CUDA)
@@ -494,13 +677,22 @@ class TestPlyGaussianSplatReader:
 # without needing the ``sim-gs`` extra.
 
 
+@pytest.fixture
+def scene_ply(tmp_path):
+    """An existing placeholder scene file: construction validates the path
+    eagerly (issue #2321), while the decode stays lazy in ``_load``."""
+    ply = tmp_path / "scene.ply"
+    ply.write_bytes(b"placeholder")
+    return ply
+
+
 class TestGsplatBackgroundConfig:
     """The GsplatBackground constructor normalizes its render-mode config."""
 
-    def test_defaults_to_no_alignment_black_fill_and_lazy_splats(self) -> None:
+    def test_defaults_to_no_alignment_black_fill_and_lazy_splats(self, scene_ply) -> None:
         from strands_robots.rendering.backgrounds import GsplatBackground
 
-        bg = GsplatBackground(ply_path="/nonexistent/scene.ply")
+        bg = GsplatBackground(ply_path=scene_ply)
 
         # No skybox/backdrop alignment unless explicitly asked for.
         assert bg._skybox is False
@@ -513,29 +705,29 @@ class TestGsplatBackgroundConfig:
         # dark scene background convention).
         assert bg._bg_fill.tolist() == [0.0, 0.0, 0.0]
 
-    def test_skybox_mode_defaults_to_neutral_grey_void_fill(self) -> None:
+    def test_skybox_mode_defaults_to_neutral_grey_void_fill(self, scene_ply) -> None:
         from strands_robots.rendering.backgrounds import GsplatBackground
 
-        bg = GsplatBackground(ply_path="scene.ply", skybox=True)
+        bg = GsplatBackground(ply_path=scene_ply, skybox=True)
 
         assert bg._skybox is True
         # Unobserved zenith/edges read as a light-grey ceiling/sky, not black.
         assert bg._bg_fill.tolist() == [188.0, 188.0, 192.0]
 
-    def test_explicit_bg_fill_overrides_the_mode_default(self) -> None:
+    def test_explicit_bg_fill_overrides_the_mode_default(self, scene_ply) -> None:
         from strands_robots.rendering.backgrounds import GsplatBackground
 
-        bg = GsplatBackground(ply_path="scene.ply", skybox=True, bg_fill=(10, 20, 30))
+        bg = GsplatBackground(ply_path=scene_ply, skybox=True, bg_fill=(10, 20, 30))
 
         assert bg._bg_fill.tolist() == [10.0, 20.0, 30.0]
 
-    def test_explicit_transform_disables_skybox_and_backdrop_fits(self) -> None:
+    def test_explicit_transform_disables_skybox_and_backdrop_fits(self, scene_ply) -> None:
         from strands_robots.rendering.backgrounds import GsplatBackground
 
         transform = np.eye(4)
         transform[0, 3] = 1.5
         bg = GsplatBackground(
-            ply_path="scene.ply",
+            ply_path=scene_ply,
             transform=transform,
             skybox=True,
             auto_backdrop=True,
@@ -547,11 +739,11 @@ class TestGsplatBackgroundConfig:
         assert bg._auto_backdrop is False
         assert np.allclose(bg._transform, transform)
 
-    def test_skybox_alignment_and_clip_parameters_are_captured(self) -> None:
+    def test_skybox_alignment_and_clip_parameters_are_captured(self, scene_ply) -> None:
         from strands_robots.rendering.backgrounds import GsplatBackground
 
         bg = GsplatBackground(
-            ply_path="scene.ply",
+            ply_path=scene_ply,
             skybox=True,
             up_sign=-1.0,
             yaw_deg=30,
@@ -579,11 +771,11 @@ class TestGsplatBackgroundConfig:
         # own_floor tells the compositor to hide the MuJoCo grid ground.
         assert bg.own_floor is True
 
-    def test_backdrop_center_and_radius_are_captured(self) -> None:
+    def test_backdrop_center_and_radius_are_captured(self, scene_ply) -> None:
         from strands_robots.rendering.backgrounds import GsplatBackground
 
         bg = GsplatBackground(
-            ply_path="scene.ply",
+            ply_path=scene_ply,
             auto_backdrop=True,
             backdrop_center=(1.0, 2.0, 3.0),
             backdrop_radius=5.0,
@@ -610,11 +802,11 @@ class TestGsplatBackgroundClipSplats:
             "quats": torch.zeros(n, 4),
         }
 
-    def test_clips_below_floor_and_low_opacity(self) -> None:
+    def test_clips_below_floor_and_low_opacity(self, scene_ply) -> None:
         pytest.importorskip("torch")
         from strands_robots.rendering.backgrounds import GsplatBackground
 
-        bg = GsplatBackground(ply_path="scene.ply")
+        bg = GsplatBackground(ply_path=scene_ply)
         bg._transform = np.eye(4)
         # z:   -1.0 (below floor), 0.5, 2.0, 3.0 ; opacity: 0.9, 0.1, 0.9, 0.9
         bg._splats = self._splats(
@@ -632,11 +824,11 @@ class TestGsplatBackgroundClipSplats:
         for key in ("means", "opacities", "colors", "scales", "quats"):
             assert bg._splats[key].shape[0] == 2
 
-    def test_zero_min_opacity_disables_the_opacity_filter(self) -> None:
+    def test_zero_min_opacity_disables_the_opacity_filter(self, scene_ply) -> None:
         pytest.importorskip("torch")
         from strands_robots.rendering.backgrounds import GsplatBackground
 
-        bg = GsplatBackground(ply_path="scene.ply")
+        bg = GsplatBackground(ply_path=scene_ply)
         bg._transform = np.eye(4)
         bg._splats = self._splats([[0, 0, -1.0], [0, 0, 1.0]], [0.01, 0.01])
 
@@ -646,11 +838,11 @@ class TestGsplatBackgroundClipSplats:
         assert (kept, total) == (1, 2)
         assert bg._splats["means"].tolist() == [[0.0, 0.0, 1.0]]
 
-    def test_clip_threshold_is_applied_in_world_frame_after_transform(self) -> None:
+    def test_clip_threshold_is_applied_in_world_frame_after_transform(self, scene_ply) -> None:
         pytest.importorskip("torch")
         from strands_robots.rendering.backgrounds import GsplatBackground
 
-        bg = GsplatBackground(ply_path="scene.ply")
+        bg = GsplatBackground(ply_path=scene_ply)
         # world_from_gs lifts every gaussian by +5 in z, so gaussians that sit
         # below the floor in their own frame clear it in world coordinates.
         transform = np.eye(4)
@@ -663,6 +855,89 @@ class TestGsplatBackgroundClipSplats:
         # gs-z -1 -> world 4.0 (kept); gs-z -4 -> world 1.0 (kept): the transform
         # is honored, so both clear the world-frame floor.
         assert (kept, total) == (2, 2)
+
+    def test_clip_filters_sh_coefficient_colors_per_gaussian(self, scene_ply) -> None:
+        # An SH-bearing asset stores colors as (N, K, 3); clipping must filter
+        # the gaussian axis and keep each survivor's full coefficient stack.
+        pytest.importorskip("torch")
+        import torch
+
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(ply_path=scene_ply)
+        bg._transform = np.eye(4)
+        splats = self._splats([[0, 0, -1.0], [0, 0, 1.0]], [0.9, 0.9])
+        splats["colors"] = torch.arange(2 * 4 * 3, dtype=torch.float32).reshape(2, 4, 3)
+        bg._splats = splats
+
+        kept, total = bg._clip_splats(clip_below=0.0, min_opacity=0.0)
+
+        assert (kept, total) == (1, 2)
+        assert bg._splats["colors"].shape == (1, 4, 3)
+        # The survivor keeps its own coefficients (row 1), untouched.
+        assert bg._splats["colors"].flatten().tolist() == list(range(12, 24))
+
+
+class TestGsplatRenderShDegree:
+    """render() forwards SH assets to gsplat for per-view evaluation.
+
+    The color contract at the rasterization boundary: baked-RGB assets
+    ((N, 3) colors) pass ``sh_degree=None``; SH assets ((N, K, 3) raw
+    coefficients) pass the degree the coefficient count encodes, so gsplat
+    evaluates view-dependent color instead of the loader having baked it. The
+    CUDA rasterizer is doubled -- this pins the call, not the kernels.
+    """
+
+    def _render_and_capture(self, monkeypatch, scene_ply, colors):
+        import sys
+        import types
+
+        import torch
+
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        captured: dict = {}
+
+        def fake_rasterization(**kwargs):
+            captured.update(kwargs)
+            h, w = kwargs["height"], kwargs["width"]
+            return torch.zeros(1, h, w, 4), torch.zeros(1, h, w, 1), {}
+
+        fake_gsplat = types.ModuleType("gsplat")
+        fake_gsplat.rasterization = fake_rasterization  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "gsplat", fake_gsplat)
+
+        n = colors.shape[0]
+        bg = GsplatBackground(ply_path=scene_ply, device="cpu")
+        bg._splats = {
+            "means": torch.zeros(n, 3),
+            "quats": torch.tensor([[1.0, 0.0, 0.0, 0.0]] * n),
+            "scales": torch.ones(n, 3),
+            "opacities": torch.ones(n),
+            "colors": colors,
+        }
+        rgb, depth = bg.render(_cam(16, 12))
+        return captured, rgb, depth
+
+    def test_baked_rgb_colors_pass_no_sh_degree(self, monkeypatch, scene_ply) -> None:
+        torch = pytest.importorskip("torch")
+
+        captured, rgb, depth = self._render_and_capture(monkeypatch, scene_ply, torch.rand(3, 3))
+
+        assert captured["sh_degree"] is None
+        assert captured["colors"].shape == (3, 3)
+        assert rgb.shape == (12, 16, 3)
+        assert depth.shape == (12, 16)
+
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    def test_sh_coefficients_pass_the_degree_their_count_encodes(self, monkeypatch, scene_ply, degree) -> None:
+        torch = pytest.importorskip("torch")
+
+        k = (degree + 1) ** 2
+        captured, _, _ = self._render_and_capture(monkeypatch, scene_ply, torch.rand(3, k, 3))
+
+        assert captured["sh_degree"] == degree
+        assert captured["colors"].shape == (3, k, 3)
 
 
 class TestBakeGsplatPanorama:
@@ -712,8 +987,10 @@ class TestBakeGsplatPanorama:
 
         # PNG keeps the reprojection lossless so exact direction->colour
         # assertions hold (production bakes a .jpg; the format is incidental).
+        ply = tmp_path / "scene.ply"
+        ply.write_bytes(b"placeholder")
         out = bg.bake_gsplat_panorama(
-            tmp_path / "scene.ply",
+            ply,
             out_path=tmp_path / "pano.png",
             face_size=32,
             equi_w=64,
@@ -750,6 +1027,100 @@ class TestBakeGsplatPanorama:
 
         assert result == out
         assert out.read_bytes() == b"cached-panorama"
+
+    # ----- the cache must answer only the request it was baked for ----- #
+    #
+    # Baking is six splat renders, so a warm output short-circuits the pass.
+    # The short-circuit is keyed on the output *path*, so the default path has
+    # to identify the panorama it holds: ``equi_w`` / ``equi_h`` / ``face_size``
+    # all change the pixels, and a path that ignores them makes the second
+    # caller's geometry a no-op.
+
+    def _stub_render_boundary(self, monkeypatch, tmp_path):
+        """Double the CUDA-bound splat boundary; return the per-face render log."""
+        torch = pytest.importorskip("torch")
+
+        from strands_robots.rendering import backgrounds as bg
+
+        rng = np.random.default_rng(0)
+        means = np.column_stack([rng.uniform(-4, 4, 512), rng.uniform(-2, 2, 512), rng.uniform(-0.1, 0.1, 512)]).astype(
+            np.float32
+        )
+        rendered: list[tuple[int, int]] = []
+
+        def fake_load(inner_self) -> None:
+            inner_self._splats = {"means": torch.from_numpy(means)}
+
+        def fake_render(inner_self, cam):
+            rendered.append((cam.width, cam.height))
+            return (
+                np.full((cam.height, cam.width, 3), 128, np.uint8),
+                np.zeros((cam.height, cam.width), np.float32),
+            )
+
+        monkeypatch.setattr(bg.GsplatBackground, "_load", fake_load)
+        monkeypatch.setattr(bg.GsplatBackground, "render", fake_render)
+        ply = tmp_path / "scene.ply"
+        ply.write_bytes(b"placeholder")
+        return bg, ply, rendered
+
+    @staticmethod
+    def _panorama_size(path) -> tuple[int, int]:
+        """Return the (width, height) of a baked panorama, closing the file."""
+        from PIL import Image
+
+        with Image.open(path) as img:
+            return img.size
+
+    def test_a_new_equirect_resolution_is_rendered_not_served_from_the_cache(self, tmp_path, monkeypatch) -> None:
+        # The headline defect: bake small, then ask for a bigger panorama. The
+        # second request used to return the first call's small image with zero
+        # renders, so the caller silently got a backdrop at a resolution it had
+        # not asked for (and then sampled that as if it were the big one).
+        bg, ply, rendered = self._stub_render_boundary(monkeypatch, tmp_path)
+
+        first = bg.bake_gsplat_panorama(ply, face_size=16, equi_w=64, equi_h=32, device="cpu")
+        first_size = self._panorama_size(first)
+        assert first_size == (64, 32)
+
+        rendered.clear()
+        second = bg.bake_gsplat_panorama(ply, face_size=16, equi_w=128, equi_h=64, device="cpu")
+        second_size = self._panorama_size(second)
+        first_size_after = self._panorama_size(first)
+
+        assert second_size == (128, 64), "the requested equirect size must be honored"
+        assert rendered, "a new resolution must re-render rather than reuse the cached panorama"
+        assert second != first, "distinct requests must not collide on one cache path"
+        # The first panorama is still intact for whoever asked for that size.
+        assert first_size_after == (64, 32)
+
+    def test_a_new_face_size_is_rendered_not_served_from_the_cache(self, tmp_path, monkeypatch) -> None:
+        # face_size changes the sharpness of the cube faces the panorama is
+        # reprojected from, not the output dimensions -- so a cache keyed on the
+        # output size alone would still wrongly serve the coarser bake.
+        bg, ply, rendered = self._stub_render_boundary(monkeypatch, tmp_path)
+
+        bg.bake_gsplat_panorama(ply, face_size=16, equi_w=64, equi_h=32, device="cpu")
+
+        rendered.clear()
+        bg.bake_gsplat_panorama(ply, face_size=64, equi_w=64, equi_h=32, device="cpu")
+
+        assert rendered, "a new face_size must re-render rather than reuse the cached panorama"
+        assert {size for size in rendered} == {(64, 64)}, "the requested face_size must be honored"
+
+    def test_repeating_one_request_reuses_the_cached_panorama(self, tmp_path, monkeypatch) -> None:
+        # Control: the cache still exists. Asking twice for the same geometry
+        # renders once, so the expensive path is not re-run per call.
+        bg, ply, rendered = self._stub_render_boundary(monkeypatch, tmp_path)
+
+        first = bg.bake_gsplat_panorama(ply, face_size=16, equi_w=64, equi_h=32, device="cpu")
+        assert rendered, "the first bake must render"
+
+        rendered.clear()
+        second = bg.bake_gsplat_panorama(ply, face_size=16, equi_w=64, equi_h=32, device="cpu")
+
+        assert second == first
+        assert not rendered, "an identical request must be served from the cache"
 
 
 # --------------------------------------------------------------------------- #
@@ -877,11 +1248,174 @@ class TestGsplatBackgroundLoad:
         assert b._splats is not None
         assert b._splats["means"].detach().cpu().numpy().shape[0] == means.shape[0]
 
-    def test_missing_scene_file_raises_filenotfound(self, tmp_path, monkeypatch) -> None:
+    def test_missing_scene_file_raises_filenotfound_at_construction(self, tmp_path) -> None:
+        from strands_robots.rendering import backgrounds as bg
+
+        # Path validation is eager (issue #2321): the misconfiguration
+        # surfaces where the caller supplied the path, not at first render
+        # inside an app's catch-all.
+        with pytest.raises(FileNotFoundError, match="Gaussian Splat not found"):
+            bg.GsplatBackground(ply_path=tmp_path / "does_not_exist.spz", device="cpu")
+
+    def test_scene_file_deleted_after_construction_still_raises_in_load(self, tmp_path, monkeypatch) -> None:
         pytest.importorskip("torch")
         from strands_robots.rendering import backgrounds as bg
 
         monkeypatch.setattr(bg, "require_optional", lambda *a, **k: None)
-        b = bg.GsplatBackground(ply_path=tmp_path / "does_not_exist.spz", device="cpu")
+        # Defense in depth: construction validated an existing file, but the
+        # file can vanish before the lazy first render -- _load still fails
+        # loud rather than reaching the decoder with a missing file.
+        path = tmp_path / "scene.spz"
+        path.write_bytes(b"placeholder")
+        b = bg.GsplatBackground(ply_path=path, device="cpu")
+        path.unlink()
         with pytest.raises(FileNotFoundError, match="Gaussian Splat not found"):
             b._load()
+
+
+# --------------------------------------------------------------------------- #
+# GsplatBackground.render -- rasterize-mode selection (no gsplat/CUDA)
+# --------------------------------------------------------------------------- #
+
+
+class TestGsplatRasterizeModeSelection:
+    """An ``.spz`` trained with the antialiased (mip-splatting) header flag
+    must be rasterized with gsplat's matching ``"antialiased"`` mode --
+    opacities trained WITH the AA compensation render wrong without it --
+    while everything else keeps the ``"classic"`` default (issue #2322).
+    Pinned by capturing the kwargs ``render()`` forwards to
+    ``gsplat.rasterization`` through a fake, so no CUDA is needed."""
+
+    @staticmethod
+    def _render_capturing_kwargs(tmp_path, monkeypatch, *, flags: int) -> dict:
+        import sys
+        import types
+
+        import torch
+
+        from strands_robots.rendering import backgrounds as bg_mod
+
+        means = np.array([[0.0, 0.0, -4.0]], np.float32)
+        alpha = np.array([255], np.uint8)
+        col = np.array([[128, 128, 128]], np.uint8)
+        scl = np.array([[128, 128, 128]], np.uint8)
+        rot = np.array([[128, 128, 128]], np.uint8)
+        path = _build_spz(tmp_path, means, alpha, col, scl, rot, version=2, flags=flags)
+
+        captured: dict = {}
+
+        def fake_rasterization(*args, **kwargs):
+            captured.update(kwargs)
+            h, w = kwargs["height"], kwargs["width"]
+            return torch.zeros(1, h, w, 4), torch.zeros(1, h, w, 1), {}
+
+        monkeypatch.setattr(bg_mod, "require_optional", lambda *a, **k: None)
+        monkeypatch.setitem(sys.modules, "gsplat", types.SimpleNamespace(rasterization=fake_rasterization))
+
+        bg = bg_mod.GsplatBackground(ply_path=path, device="cpu")
+        rgb, depth = bg.render(_cam(16, 12))
+        assert rgb.shape == (12, 16, 3)  # the fake round-trips through render()
+        assert np.all(depth == np.float32(100.0))  # zero alpha everywhere -> zfar
+        return captured
+
+    def test_aa_flagged_spz_selects_antialiased_mode(self, tmp_path, monkeypatch) -> None:
+        pytest.importorskip("torch")
+        captured = self._render_capturing_kwargs(tmp_path, monkeypatch, flags=1)
+        assert captured["rasterize_mode"] == "antialiased"
+
+    def test_unflagged_spz_keeps_the_classic_default(self, tmp_path, monkeypatch) -> None:
+        pytest.importorskip("torch")
+        captured = self._render_capturing_kwargs(tmp_path, monkeypatch, flags=0)
+        assert captured["rasterize_mode"] == "classic"
+
+
+# --------------------------------------------------------------------------- #
+# GsplatBackground.render -- partial-alpha compositing + depth (gsplat/CUDA)
+# --------------------------------------------------------------------------- #
+#
+# gsplat's RGB output is alpha-PREMULTIPLIED and its RGB+D depth output is
+# ACCUMULATED (alpha-weighted). render() must therefore composite with the
+# premultiplied over-operator (``rgb + (1 - alpha) * fill``, not
+# ``rgb * alpha + ...`` which weights splat color by alpha^2) and divide the
+# depth through by alpha to get metric depth (issue #2322: at half coverage
+# the old code darkened 2.0x and reported a 4 m splat at ~2 m, biasing the
+# compositor z-test toward the camera). Both are pinned on a single synthetic
+# gaussian -- opacity 0.5 dead-center gives accumulated alpha ~0.5, the
+# partial-coverage regime where both defects are at their measured worst --
+# with no asset download.
+
+
+def _require_cuda_rasterizer() -> None:
+    pytest.importorskip("gsplat")
+    from strands_robots.rendering.backgrounds import gsplat_rasterizer_available
+
+    ok, reason = gsplat_rasterizer_available()
+    if not ok:
+        pytest.skip(f"gsplat CUDA rasterizer unavailable: {reason}")
+
+
+class TestGsplatRenderPartialAlpha:
+    """Premultiplied-alpha compositing and alpha-normalized metric depth."""
+
+    @staticmethod
+    def _single_gaussian_background(scene_ply, color, bg_fill):
+        """A GsplatBackground with one injected gaussian 4 m straight ahead
+        (GS frame == world frame; camera at origin looking down -Z), at
+        opacity 0.5 so the dead-center pixel lands at alpha ~0.5."""
+        import torch
+
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(ply_path=scene_ply, device="cuda", bg_fill=bg_fill)
+        dev = "cuda"
+        bg._splats = {
+            "means": torch.tensor([[0.0, 0.0, -4.0]], device=dev),
+            "quats": torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=dev),
+            "scales": torch.full((1, 3), 0.5, device=dev),
+            "opacities": torch.tensor([0.5], device=dev),
+            "colors": torch.tensor([list(color)], device=dev),
+        }
+        return bg
+
+    def test_partial_alpha_color_is_composited_once_not_squared(self, scene_ply) -> None:
+        _require_cuda_rasterizer()
+        cam = _cam(64, 64)
+        bg = self._single_gaussian_background(scene_ply, color=(1.0, 0.0, 0.0), bg_fill=(0, 0, 0))
+
+        rgb, _ = bg.render(cam)
+
+        # A pure-red gaussian at alpha ~0.5 over a black fill must read
+        # ~0.5 * 255 at the center: gsplat's RGB is already premultiplied, so
+        # multiplying by alpha again (the pre-fix formula) yields alpha^2
+        # ~0.25 * 255 -- a 2.0x darkening of every partial-coverage pixel.
+        center_red = float(rgb[32, 32, 0]) / 255.0
+        assert 0.44 <= center_red <= 0.56
+
+    def test_partial_alpha_splat_over_matching_fill_is_invariant(self, scene_ply) -> None:
+        _require_cuda_rasterizer()
+        cam = _cam(64, 64)
+        bg = self._single_gaussian_background(scene_ply, color=(1.0, 1.0, 1.0), bg_fill=(255, 255, 255))
+
+        rgb, _ = bg.render(cam)
+
+        # Compositing a white splat over a white fill must be white at EVERY
+        # alpha -- the over-operator is affine in the fill. The alpha^2 bug
+        # broke this invariant: 255 * (a^2 + 1 - a) ~= 191 at a = 0.5,
+        # a grey halo wherever coverage is partial.
+        assert int(rgb[32, 32].min()) >= 250
+
+    def test_accumulated_depth_is_alpha_normalized_to_metric(self, scene_ply) -> None:
+        _require_cuda_rasterizer()
+        cam = _cam(64, 64)
+        bg = self._single_gaussian_background(scene_ply, color=(1.0, 0.0, 0.0), bg_fill=(0, 0, 0))
+
+        _, depth = bg.render(cam)
+
+        # The gaussian sits at 4.0 m. gsplat's RGB+D depth is accumulated
+        # (alpha-weighted), so the raw value at alpha ~0.5 is ~2.0 m; the
+        # compositor's z-test trusts this depth, so without the division a
+        # soft splat region wrongly occludes real foreground behind it.
+        assert abs(float(depth[32, 32]) - 4.0) <= 0.05
+        # Pixels the gaussian never touched report zfar, not a phantom
+        # near-camera depth from the eps-clamped division.
+        assert float(depth[0, 0]) == np.float32(cam.zfar)

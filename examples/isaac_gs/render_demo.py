@@ -6,9 +6,10 @@ example -- the digital-twin companion to ``examples/mujoco_gs``.
 
 Builds the default scene (real Franka + red cube + RTX camera),
 renders one or more depth-composited frames (Isaac RTX foreground
-z-composited over a captured-real 3DGS scene, or the procedural
-panorama by default), writes them to disk as PNG stills, and — for a
-multi-frame run — assembles them into a video clip (MP4/GIF).
+z-composited over a captured-real 3DGS scene by default; the
+procedural panorama only via ``--panorama`` or ``--allow-fallback``),
+writes them to disk as PNG stills, and — for a multi-frame run —
+assembles them into a video clip (MP4/GIF).
 
 This ships a **render-stills / short-clip** entry point rather than a
 live Gradio view (like ``mujoco_gs/app.py``): Isaac's RTX renderer
@@ -33,10 +34,15 @@ Usage
 -----
 ::
 
-    # Procedural panorama background (zero ML deps), default Franka:
+    # Default: the real captured 3DGS tabletop scene (auto-downloaded).
+    # Fails loud with an install hint if gsplat can't rasterize:
     python -m examples.isaac_gs.render_demo --frames 1 --out rollouts/isaac_gs
 
-    # Real captured 3DGS background (requires gsplat + a .ply):
+    # Zero-ML-deps run: demote to the procedural panorama when GS is
+    # unavailable (the pre-#2321 behavior, now opt-in):
+    python -m examples.isaac_gs.render_demo --frames 1 --allow-fallback
+
+    # Real captured 3DGS background from your own capture (requires gsplat + a .ply):
     python -m examples.isaac_gs.render_demo --gsplat-ply /path/to/kitchen.ply
 
     # Sweep a joint across frames -> PNG stills + an assembled MP4 clip:
@@ -48,8 +54,11 @@ Usage
 Requires
 --------
 ``pip install "strands-robots[sim-isaac]"`` + a working Isaac Sim
-install (RTX GPU). For the real-3DGS path: ``pip install gsplat`` +
-a ``.ply`` capture. The procedural panorama path needs neither.
+install (RTX GPU). The default (real-3DGS) path needs a **pre-built**
+``gsplat`` wheel that can CUDA-rasterize (see the README -- a plain
+``pip install gsplat`` imports fine but can't rasterize where nvcc is
+absent). The procedural panorama path (``--panorama`` /
+``--allow-fallback``) needs neither.
 
 Depends at runtime on PR #61 (add_camera) + PR #62 (render frame-path);
 see the package docstring.
@@ -102,6 +111,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Sweep the arm's first joint across frames so the composite "
         "shows the robot moving on the backdrop (needs --frames > 1).",
     )
+    p.add_argument(
+        "--allow-fallback",
+        action="store_true",
+        help="Demote to the procedural panorama when the 3DGS background can't "
+        "initialize (gsplat missing / CUDA rasterizer disabled / scene load "
+        "failure) instead of failing. Off by default so the photoreal path "
+        "never silently degrades (issue #2321).",
+    )
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
     p.add_argument(
@@ -131,6 +148,24 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_false",
         default=True,
         help="Skip writing the per-frame PNG stills (only emit the assembled clip).",
+    )
+    p.add_argument(
+        "--no-ibl",
+        dest="ibl",
+        action="store_false",
+        default=True,
+        help="Keep the legacy hardcoded key/dome lights instead of deriving "
+        "the lighting from the background scene (an environment map baked "
+        "from the 3DGS scene / the panorama image textures the dome light "
+        "and aims the key light).",
+    )
+    p.add_argument(
+        "--no-shadow-catcher",
+        dest="shadow_catcher",
+        action="store_false",
+        default=True,
+        help="Skip the matte shadow-catcher plane (the robot then casts no "
+        "contact shadow onto the backdrop).",
     )
     return p
 
@@ -185,8 +220,9 @@ def _date_out(out: "str | None") -> str:
 def _make_background(args: argparse.Namespace):
     """Construct the background renderer from CLI args.
 
-    Defaults to the real 3DGS ``tabletop`` scene (falls back to the
-    procedural panorama if gsplat isn't installed) -- see
+    Defaults to the real 3DGS ``tabletop`` scene and **fails loud** (with the
+    pre-built ``gsplat`` wheel install hint) when it can't initialize;
+    ``--allow-fallback`` opts into the procedural-panorama demotion -- see
     ``examples.isaac_gs.background.resolve_background``.
     """
     from examples.isaac_gs.background import resolve_background
@@ -195,6 +231,7 @@ def _make_background(args: argparse.Namespace):
         gsplat_ply=args.gsplat_ply,
         gsplat_scene=args.gsplat_scene,
         panorama=args.panorama,
+        allow_fallback=args.allow_fallback,
     )
 
 
@@ -234,16 +271,41 @@ def main() -> None:
     # rtx_realtime so render() takes the RTX frame path (not headless blanks).
     sim = create_simulation("isaac", headless=True, num_envs=1, render_mode="rtx_realtime")
     try:
+        # The background is resolved before the scene so its baked environment
+        # map can light the robot (issue #2323): the dome light is textured
+        # with the room the robot stands in, and the key light aims the way
+        # the room's dominant light falls.
+        background = _make_background(args)
+        env_map_path = None
+        if args.ibl:
+            from examples.isaac_gs.background import resolve_ibl_env_map
+
+            env_map_path = resolve_ibl_env_map(
+                background,
+                gsplat_ply=args.gsplat_ply,
+                gsplat_scene=args.gsplat_scene,
+                panorama=args.panorama,
+            )
+
         build = build_default_scene(
             sim,
             robot_usd=args.robot_usd,
             camera_name="front",
             camera_width=args.width,
             camera_height=args.height,
+            env_map_path=env_map_path,
+            shadow_catcher=args.shadow_catcher,
         )
         print(f"[scene] robot={build.robot_name} joints={build.robot_joint_count} objects={build.object_names}")
 
-        compositor = IsaacHybridCompositor(sim, background=_make_background(args))
+        compositor = IsaacHybridCompositor(
+            sim,
+            background=background,
+            # The scene reports the catcher plane's height; the compositor
+            # turns that plane's shading into a shadow on the backdrop
+            # (None when --no-shadow-catcher / the plane failed to add).
+            shadow_plane_z=build.shadow_plane_z,
+        )
 
         want_video = _want_video(args)
         rendered = []

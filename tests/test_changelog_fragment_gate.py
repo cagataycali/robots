@@ -646,3 +646,375 @@ def test_the_workflow_reads_the_script_from_the_base_and_names_the_head() -> Non
     )
     assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
     assert '--head "$HEAD_SHA"' in workflow, "the commit under test is named, not checked out"
+
+
+# --- the fragment the branch actually wrote -------------------------------------
+#
+# The half above asks whether an entry bypassed the fragment convention. It cannot
+# ask whether the fragment that *was* written is valid: a branch that records its
+# change correctly adds no heading to the log, so the added-entry set is empty and
+# the check is silent. Fragment validity was enforced only by
+# tests/test_changelog_fragments.py, inside the one required check, and on #2144 --
+# whose sole defect was a fragment first line reading `Fixed: ...` -- this job
+# reported SUCCESS in 10s while `call-test-lint / Test and Lint` reported FAILURE
+# 20.8 minutes later, worded as a test failure. See issue #2163.
+#
+# The two boundaries below are the ones worth guarding, because getting either
+# wrong costs more than the gap did: judging the whole directory would fail a
+# branch for a fragment already on the base (#1879), and reading the working tree
+# would break the property that lets CI judge the branch from a base checkout
+# (#1791).
+
+
+#: A fragment body in the shape the assembler accepts.
+_VALID_FRAGMENT = "### Fixed: a change recorded the normal way\n\nBody of the fragment.\n"
+
+#: The #2144 shape: the heading text is there, the `### ` that makes it a heading
+#: is not. This is what a first-time fragment author writes.
+_MALFORMED_FRAGMENT = "Fixed: a change recorded with no entry heading\n\nBody of the fragment.\n"
+
+
+def _load_assembler():  # type: ignore[no-untyped-def]
+    """Load ``assemble_changelog`` the way its own suite does."""
+    path = _REPO_ROOT / "scripts" / "assemble_changelog.py"
+    spec = importlib.util.spec_from_file_location("assemble_changelog", path)
+    assert spec and spec.loader, f"cannot load {path}"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["assemble_changelog"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_malformed_fragment_is_refused(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The #2144 shape, which reached the required suite and nothing faster."""
+    _branch(repo)
+    _write(repo, "strands_robots/utils.py", "# the behavioural change\n")
+    _write(repo, "changelog.d/2144-a-malformed-fragment.md", _MALFORMED_FRAGMENT)
+    _commit(repo, "fix something, and record it in a fragment with no heading")
+
+    assert _run(repo) == 1
+    output = capsys.readouterr().out
+    assert "changelog.d/2144-a-malformed-fragment.md" in output
+    assert "first line must be a level-3 entry heading" in output
+
+
+def test_adding_the_missing_heading_prefix_clears_the_check(repo: Path) -> None:
+    """Self-clearing, like the append half: the remedy asked for is the one that satisfies it."""
+    _branch(repo)
+    _write(repo, "changelog.d/2144-a-malformed-fragment.md", _MALFORMED_FRAGMENT)
+    _commit(repo, "record the change in a fragment with no heading")
+    assert _run(repo) == 1
+
+    _write(repo, "changelog.d/2144-a-malformed-fragment.md", f"### {_MALFORMED_FRAGMENT}")
+    _commit(repo, "make the first line an entry heading")
+
+    assert _run(repo) == 0
+
+
+def test_a_misnamed_fragment_is_refused(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The other half of the class, reached by a different path.
+
+    A bad *name* makes ``collect_fragments`` raise, so ``validate_fragments``
+    returns that one message and never inspects any body. ``changelog.d/README.md``
+    calls it out specifically: a stray or misnamed file is a hard error, so an entry
+    can never be silently dropped.
+    """
+    _branch(repo)
+    _write(repo, "changelog.d/Bad_Name.md", _VALID_FRAGMENT)
+    _commit(repo, "record the change in a badly named file")
+
+    assert _run(repo) == 1
+    assert "not a valid fragment name" in capsys.readouterr().out
+
+
+def test_renaming_the_fragment_clears_the_check(repo: Path) -> None:
+    """The name half is self-clearing too."""
+    _branch(repo)
+    _write(repo, "changelog.d/Bad_Name.md", _VALID_FRAGMENT)
+    _commit(repo, "record the change in a badly named file")
+    assert _run(repo) == 1
+
+    _git(repo, "mv", "changelog.d/Bad_Name.md", "changelog.d/2163-a-good-name.md")
+    _commit(repo, "give the fragment a valid name")
+
+    assert _run(repo) == 0
+
+
+def test_an_uppercase_slug_is_refused(repo: Path) -> None:
+    """The naming rule is the assembler's regex, not a substring check on the extension."""
+    _branch(repo)
+    _write(repo, "changelog.d/2163-Bad-Slug.md", _VALID_FRAGMENT)
+    _commit(repo, "record the change with an uppercase slug")
+
+    assert _run(repo) == 1
+
+
+# --- only the branch's own fragments --------------------------------------------
+
+
+def test_a_malformed_fragment_already_on_the_base_is_not_attributed_to_the_branch(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The #1879 boundary, and the reason ``validate_fragments()`` is not wired in whole.
+
+    That function walks the entire directory -- 315 pending fragments on ``main`` --
+    so a branch that touched nothing under ``changelog.d/`` would be failed for
+    somebody else's fragment, and the report would name a file absent from its diff.
+    Accusing a branch of a pre-existing defect is what #1879 spent a review round on.
+    """
+    _write(repo, "changelog.d/1699-already-broken.md", _MALFORMED_FRAGMENT)
+    _commit(repo, "a malformed fragment that is already on the base")
+
+    _branch(repo)
+    _write(repo, "strands_robots/utils.py", "# an unrelated behavioural change\n")
+    _write(repo, "changelog.d/2163-a-good-fragment.md", _VALID_FRAGMENT)
+    _commit(repo, "an unrelated change, recorded correctly")
+
+    assert _run(repo) == 0
+    assert "1699-already-broken.md" not in capsys.readouterr().out
+
+
+def test_a_branch_that_breaks_an_existing_fragment_is_answerable_for_it(repo: Path) -> None:
+    """``--diff-filter=AM``: modifying a fragment makes it the branch's, not only adding one."""
+    _branch(repo)
+    _write(repo, "changelog.d/1700-a-pending-change.md", _MALFORMED_FRAGMENT)
+    _commit(repo, "strip the heading off a fragment that was already valid")
+
+    assert _run(repo) == 1
+
+
+def test_deleting_a_malformed_fragment_is_not_refused(repo: Path) -> None:
+    """A deletion is not the branch adopting it, and the release path deletes fragments."""
+    _write(repo, "changelog.d/1699-already-broken.md", _MALFORMED_FRAGMENT)
+    _commit(repo, "a malformed fragment on the base")
+
+    _branch(repo, "release")
+    (repo / "changelog.d/1699-already-broken.md").unlink()
+    _commit(repo, "drop the malformed fragment")
+
+    assert _run(repo) == 0
+
+
+def test_the_readme_is_not_judged_as_a_fragment(repo: Path) -> None:
+    """Reserved names are documentation. The skip mirrors ``collect_fragments``."""
+    _branch(repo)
+    _write(repo, "changelog.d/README.md", "# changelog.d - news fragments\n\nRevised prose.\n")
+    _commit(repo, "revise the fragment directory's README")
+
+    assert _run(repo) == 0
+
+
+def test_a_dotfile_is_not_judged_as_a_fragment(repo: Path) -> None:
+    """``collect_fragments`` skips dotfiles, so a `.gitkeep` is not a malformed entry."""
+    _branch(repo)
+    _write(repo, "changelog.d/.gitkeep", "")
+    _commit(repo, "keep the directory")
+
+    assert _run(repo) == 0
+
+
+# --- every rule the assembler has, not only the first line ----------------------
+
+
+def test_the_gate_refuses_exactly_what_the_assembler_refuses(repo: Path, tmp_path: Path) -> None:
+    """One rule, one owner.
+
+    The gate imports ``FRAGMENT_NAME`` and ``validate_fragment`` instead of
+    restating either, because a second copy could refuse a fragment the assembler
+    accepts -- the contradiction #2139 had to remove for ``save_episode``. This
+    compares the two verdicts over every rule the assembler has, so a future
+    narrowing to "check the first line" fails here rather than shipping a gate that
+    silently stops asking three of its four questions.
+    """
+    assembler = _load_assembler()
+    cases = (
+        ("2200-a-valid-fragment.md", _VALID_FRAGMENT),
+        ("2200-no-entry-heading.md", _MALFORMED_FRAGMENT),
+        ("2200-an-empty-fragment.md", "\n\n"),
+        ("2200-two-entries.md", "### Fixed: one\n\nBody.\n\n### Added: two\n\nBody.\n"),
+        ("2200-a-forged-version.md", "### Fixed: one\n\n## [9.9.9] - 2026-01-01\n"),
+        ("Bad_Name.md", _VALID_FRAGMENT),
+        ("2200-Bad-Slug.md", _VALID_FRAGMENT),
+    )
+
+    for index, (name, body) in enumerate(cases):
+        directory = tmp_path / f"case{index}"
+        directory.mkdir()
+        (directory / name).write_text(body, encoding="utf-8")
+        assembler_refuses = bool(assembler.validate_fragments(directory))
+
+        branch = f"case{index}"
+        _git(repo, "checkout", "-q", "main")
+        _git(repo, "checkout", "-q", "-b", branch)
+        _write(repo, f"changelog.d/{name}", body)
+        _commit(repo, f"add {name}")
+        gate_refuses = _run(repo) == 1
+
+        assert gate_refuses == assembler_refuses, (
+            f"{name}: gate refuses={gate_refuses}, assembler refuses={assembler_refuses}"
+        )
+
+
+# --- what the reader is told ----------------------------------------------------
+
+
+def test_the_annotation_reproduces_the_assemblers_message(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The annotation is the assembler's wording byte for byte, so the local command matches.
+
+    ``python scripts/assemble_changelog.py --check`` is what a contributor runs to
+    reproduce this, and a paraphrase here would leave them searching its output for
+    a sentence it does not print. The report line drops only the leading file name,
+    which it prints itself.
+    """
+    assembler = _load_assembler()
+    _branch(repo)
+    _write(repo, "changelog.d/2144-a-malformed-fragment.md", _MALFORMED_FRAGMENT)
+    _commit(repo, "record the change in a fragment with no heading")
+
+    assert _run(repo) == 1
+    output = capsys.readouterr().out
+
+    directory = repo / "changelog.d"
+    expected = assembler.validate_fragments(directory)
+    assert len(expected) == 1, f"expected one assembler verdict, got {expected}"
+    assert f"::error file=changelog.d/2144-a-malformed-fragment.md,line=1::{expected[0]}" in output
+    assert "- `changelog.d/2144-a-malformed-fragment.md`: 2144-" not in output, (
+        "the report line must not print the fragment name twice"
+    )
+
+
+def test_the_report_names_the_command_that_reproduces_it(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _branch(repo)
+    _write(repo, "changelog.d/2144-a-malformed-fragment.md", _MALFORMED_FRAGMENT)
+    _commit(repo, "record the change in a fragment with no heading")
+
+    assert _run(repo) == 1
+    output = capsys.readouterr().out
+    assert "assemble_changelog.py --check" in output
+    assert "hard error rather than a skip" in output
+
+
+def test_both_halves_are_reported_in_one_run(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A branch can break the convention twice, and one run says so once.
+
+    The report used to return early when no entry had been added, which is exactly
+    the state the #2144 shape is in.
+    """
+    _branch(repo)
+    _append_to_unreleased(repo, _APPENDED)
+    _write(repo, "changelog.d/2144-a-malformed-fragment.md", _MALFORMED_FRAGMENT)
+    _commit(repo, "append to the log and add a malformed fragment")
+
+    assert _run(repo) == 1
+    output = capsys.readouterr().out
+    assert "that no fragment accounts for" in output
+    assert "the assembler would refuse" in output
+
+
+def test_a_valid_fragment_reports_nothing_about_fragments(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Quiet on the path every merged pull request takes."""
+    _branch(repo)
+    _write(repo, "changelog.d/2163-the-normal-path.md", _VALID_FRAGMENT)
+    _commit(repo, "record the change as a valid fragment")
+
+    assert _run(repo) == 0
+    output = capsys.readouterr().out
+    assert "the assembler would refuse" not in output
+    assert "No entry was added" in output
+
+
+# --- the tree the rules are read from -------------------------------------------
+
+
+def test_the_fragment_verdict_does_not_depend_on_the_checked_out_tree(repo: Path) -> None:
+    """Same property as the append half, and CI depends on it for the same reason.
+
+    The workflow checks out the *base* branch and names the head with ``--head``, so
+    the branch's fragment bodies must come from the object database. They do:
+    ``fragment_problems`` reads each one with ``git show <head>:<path>``.
+    """
+    _branch(repo)
+    _write(repo, "changelog.d/2144-a-malformed-fragment.md", _MALFORMED_FRAGMENT)
+    head = _commit(repo, "record the change in a fragment with no heading")
+
+    _git(repo, "checkout", "-q", "main")
+    assert not (repo / "changelog.d/2144-a-malformed-fragment.md").exists()
+
+    assert _run(repo, head) == 1
+
+
+def test_the_validator_survives_a_first_load_of_its_own(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gate must work when it is the thing that first imports the assembler.
+
+    ``@dataclass`` resolves its own module through ``sys.modules`` to decide whether
+    an annotation is a ``KW_ONLY`` sentinel, so a module executed by path but never
+    registered there dies on its first dataclass with ``AttributeError: 'NoneType'
+    object has no attribute '__dict__'`` -- naming neither the loader nor the
+    reason. Nothing else here would catch it: every other test in this file runs
+    after some importer has already put ``assemble_changelog`` in the table.
+    """
+    monkeypatch.delitem(sys.modules, "assemble_changelog", raising=False)
+
+    spec = importlib.util.spec_from_file_location("check_changelog_fragment_fresh", _SCRIPT_PATH)
+    assert spec and spec.loader
+    fresh = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "check_changelog_fragment_fresh", fresh)
+    spec.loader.exec_module(fresh)
+
+    _branch(repo)
+    _write(repo, "changelog.d/2144-a-malformed-fragment.md", _MALFORMED_FRAGMENT)
+    head = _commit(repo, "record the change in a fragment with no heading")
+
+    problems = fresh.fragment_problems(fresh.changed_fragments("main", head, repo=repo), head, repo=repo)
+    assert len(problems) == 1
+    assert problems[0][0] == "changelog.d/2144-a-malformed-fragment.md"
+
+
+# --- the readers, directly ------------------------------------------------------
+
+
+def test_changed_fragments_reports_adds_and_modifications_only(repo: Path) -> None:
+    _write(repo, "changelog.d/1699-to-be-deleted.md", _VALID_FRAGMENT)
+    base = _commit(repo, "a fragment on the base")
+
+    _branch(repo)
+    _write(repo, "changelog.d/2163-added.md", _VALID_FRAGMENT)
+    _write(repo, "changelog.d/1700-a-pending-change.md", _VALID_FRAGMENT.replace("Body", "Revised body"))
+    (repo / "changelog.d/1699-to-be-deleted.md").unlink()
+    head = _commit(repo, "add one, modify one, delete one")
+
+    assert check.changed_fragments(base, head, repo=repo) == (
+        "changelog.d/1700-a-pending-change.md",
+        "changelog.d/2163-added.md",
+    )
+
+
+def test_fragment_problems_is_empty_for_a_valid_fragment(repo: Path) -> None:
+    _branch(repo)
+    _write(repo, "changelog.d/2163-valid.md", _VALID_FRAGMENT)
+    head = _commit(repo, "add a valid fragment")
+
+    assert check.fragment_problems(("changelog.d/2163-valid.md",), head, repo=repo) == ()
+
+
+def test_fragment_problems_names_the_path_it_was_given(repo: Path) -> None:
+    """The path in the tuple is the one the annotation needs, not the basename."""
+    _branch(repo)
+    _write(repo, "changelog.d/2163-malformed.md", _MALFORMED_FRAGMENT)
+    head = _commit(repo, "add a malformed fragment")
+
+    problems = check.fragment_problems(("changelog.d/2163-malformed.md",), head, repo=repo)
+    assert [path for path, _ in problems] == ["changelog.d/2163-malformed.md"]
+
+
+def test_the_report_names_a_fragment_problem() -> None:
+    report = check.render_report(
+        base_ref="main",
+        merge_base_sha="0123456789abcdef",
+        added=(),
+        accounted=(),
+        unaccounted=(),
+        problems=(("changelog.d/2163-a-fragment.md", "2163-a-fragment.md: fragment is empty"),),
+    )
+    assert "`changelog.d/2163-a-fragment.md`: fragment is empty" in report
+    assert "the assembler would refuse" in report

@@ -267,7 +267,30 @@ class SessionManager:
         self.sessions_file = SESSION_DIR / "active_sessions.json"
 
     def _load_sessions(self) -> dict[str, Any]:
-        """Load active sessions from disk."""
+        """Load the session store, pruning records whose process is gone.
+
+        ``psutil.pid_exists`` answers whether the PID exists;
+        ``Process(pid).is_running()`` refines that (it also rules out PID reuse).
+        The two probes can disagree, and the two ways they disagree mean opposite
+        things, so they are handled separately:
+
+        * :class:`psutil.NoSuchProcess` - the process was reaped between the two
+          calls. The record names nothing, so it is pruned.
+        * :class:`psutil.AccessDenied` - the process exists (``pid_exists`` just
+          said so) but this user may not inspect it; a session started under
+          ``sudo`` for serial-port access and then listed as the invoking user
+          reads this way. That is not death, so the record is kept.
+
+        Keeping it matters because the prune below is *written back to disk* and
+        this store is the only place a detached session's PID is recorded: a
+        pruned record leaves the teleoperation process running with no supported
+        way to stop it. Presence here is not the running claim - ``list`` and
+        ``status`` each derive that from ``pid_exists`` - so a retained record is
+        reported running only while its PID really exists.
+
+        Returns:
+            The surviving session records, keyed by session name.
+        """
         if not self.sessions_file.exists():
             return {}
 
@@ -284,8 +307,20 @@ class SessionManager:
                         proc = psutil.Process(pid)
                         if proc.is_running():
                             active_sessions[name] = info
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    except psutil.NoSuchProcess:
+                        # Reaped between pid_exists and this probe: the record
+                        # names nothing, so pruning it loses no live session.
                         pass
+                    except psutil.AccessDenied:
+                        # Exists but not inspectable: keep the record (see above)
+                        # and say so, because the store is written back below and
+                        # silence here loses the PID for good.
+                        active_sessions[name] = info
+                        logger.warning(
+                            "Teleop session PID %s exists but cannot be inspected; "
+                            "keeping its record so the session stays stoppable",
+                            pid,
+                        )
 
             # Update sessions file with only active sessions
             if len(active_sessions) != len(sessions):
@@ -487,6 +522,12 @@ def build_lerobot_command(
             or boolean flag (see :data:`_MODE_FLAG_OPTIONS`) the requested mode
             emits cannot be honored. The refusal precedes the argv, so no
             subprocess is launched.
+        RuntimeError: If ``dagger`` is requested on an install whose lerobot has
+            no ``lerobot.scripts.lerobot_rollout`` - the DAgger rollout entry
+            point, which landed in lerobot 0.6.0. A missing module is an
+            environment problem rather than a bad argument, so it is not a
+            ``ValueError``; it likewise precedes the argv. Documented because a
+            caller handling only the class above does not catch it.
     """
     # Every numeric knob below is interpolated into a detached subprocess's
     # command line, which is not a channel this call can read a failure back
@@ -887,8 +928,10 @@ def lerobot_teleoperate(
             behalf, by writing two newlines into the process's stdin shortly
             after it starts. Withhold it (``False``) to answer the prompt
             yourself; nothing reports that stdin was written to, so an
-            unintended acceptance is not visible afterwards. Must be a boolean,
-            on the same reasoning as ``background``.
+            unintended acceptance is not visible afterwards. A write that
+            *fails* is reported at WARNING, since by then the start result
+            has already told the caller the session started. Must be a
+            boolean, on the same reasoning as ``background``.
 
         dagger_record_autonomous: Record the autonomous rollout episodes into the
             corrections dataset as well, rather than only the teleoperated
@@ -1016,8 +1059,22 @@ def lerobot_teleoperate(
                             proc.stdin.write("\n")  # Send another ENTER (for robot calibration)
                             proc.stdin.flush()
                             proc.stdin.close()  # Close stdin after sending responses
-                        except Exception:
-                            pass  # Ignore errors if process has already finished
+                        except Exception as exc:
+                            # Report it. The start result above has already told the
+                            # caller the session started, so this record is the only
+                            # signal that the prompt went unanswered. Every other
+                            # handler in this tool reports its failure - one even
+                            # surfaces a log-read failure into the caller's content -
+                            # and the write this guards is the whole job of
+                            # ``auto_accept_calibration``. WARNING rather than DEBUG
+                            # because the visible report is a success.
+                            logger.warning(
+                                "[teleop] session %r: auto-accept did not complete (%s); "
+                                "the calibration prompt may be unanswered - check "
+                                "action='status' and the session log",
+                                session_name,
+                                exc,
+                            )
 
                     threading.Thread(target=auto_respond, daemon=True).start()
                 else:

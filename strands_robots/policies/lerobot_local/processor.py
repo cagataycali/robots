@@ -15,6 +15,7 @@ Architecture:
 """
 
 import logging
+import pathlib
 from typing import Any
 
 from ...utils import partial_construction_repr, require_optional
@@ -31,7 +32,8 @@ def _load_checkpoint_state_dict(pretrained_name_or_path: str, revision: str | No
 
     Resolves a local directory first, then the HF Hub (cached). Returns ``None``
     when no single-file ``model.safetensors`` is present (e.g. a sharded VLA
-    checkpoint) or safetensors is unavailable -- the OLD-FORMAT checkpoints this
+    checkpoint), or when safetensors or ``huggingface_hub`` is unavailable -- an
+    installed-but-unimportable hub included. The OLD-FORMAT checkpoints this
     supports (ACT / diffusion / tdmpc / vqbet zoo) are all single-file, so this
     stays best-effort and never raises into the load path.
 
@@ -61,18 +63,93 @@ def _load_checkpoint_state_dict(pretrained_name_or_path: str, revision: str | No
             logger.debug("Could not read %s: %s", local, exc)
             return None
 
+    # The Hub error class is imported in its own try so it is bound before the
+    # handler that names it can be evaluated. Python evaluates an except clause's
+    # exception expression when the body raises, so binding it in the same try made
+    # every non-ImportError import failure raise UnboundLocalError instead - past
+    # the OSError/ValueError handler written for exactly that. An unimportable hub
+    # now degrades like an absent one, matching the guard in
+    # _load_in_model_normalization_fallback.
     try:
         from huggingface_hub import hf_hub_download
         from huggingface_hub.errors import HfHubHTTPError
+    except Exception as exc:  # noqa: BLE001 - a broken install must degrade, not raise
+        logger.debug("huggingface_hub unusable for %s: %s", pretrained_name_or_path, exc)
+        return None
 
+    try:
         path = hf_hub_download(pretrained_name_or_path, "model.safetensors", revision=revision)
         return load_file(path)
-    except ImportError:
-        return None
     except (HfHubHTTPError, OSError, ValueError, SafetensorError) as exc:
         # No single-file weights on the Hub (sharded), offline, corrupt, or unreadable.
         logger.debug("No single-file model.safetensors for %s: %s", pretrained_name_or_path, exc)
         return None
+
+
+def _pipeline_step_keys(
+    pretrained_name_or_path: str,
+    config_filename: str,
+    revision: str | None = None,
+) -> set[str] | None:
+    """Override keys one processor pipeline's saved config accepts.
+
+    LeRobot resolves an override key per step as its ``registry_name``, or the
+    final component of its ``class`` path when the step is not registry-backed
+    (``DataProcessorPipeline._validate_overrides_used``), and raises
+    ``KeyError`` for any key that matches no step in the pipeline being loaded.
+    A checkpoint's two pipelines therefore accept DISJOINT key sets - a
+    preprocessor carries ``normalizer_processor`` while its postprocessor
+    carries ``unnormalizer_processor`` - so the caller's overrides have to be
+    routed per pipeline rather than handed to both.
+
+    Best-effort by design: returns ``None`` when the config cannot be read
+    (offline, absent, unreadable, ``huggingface_hub`` unusable, or a shape this
+    rule does not describe), and the caller then passes the overrides through
+    unrouted, exactly as before. Never raises into the load path.
+
+    Args:
+        pretrained_name_or_path: HF model ID or local checkpoint path.
+        config_filename: Pipeline config filename (e.g. ``policy_preprocessor.json``).
+        revision: Optional Hub revision to pin the config to.
+
+    Returns:
+        The set of accepted override keys, or ``None`` when undetermined.
+    """
+    import json
+    import os
+
+    raw: str | None = None
+    local = os.path.join(pretrained_name_or_path, config_filename)
+    if os.path.isfile(local):
+        try:
+            raw = pathlib.Path(local).read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.debug("Could not read %s: %s", local, exc)
+            return None
+    else:
+        # Imported in its own try so the error class is bound before the handler
+        # naming it is evaluated - see the same guard in _load_checkpoint_state_dict.
+        try:
+            from huggingface_hub import hf_hub_download
+            from huggingface_hub.errors import HfHubHTTPError
+        except Exception as exc:  # noqa: BLE001 - a broken install must degrade, not raise
+            logger.debug("huggingface_hub unusable for %s: %s", pretrained_name_or_path, exc)
+            return None
+
+        try:
+            downloaded = hf_hub_download(pretrained_name_or_path, config_filename, revision=revision)
+            raw = pathlib.Path(downloaded).read_text(encoding="utf-8")
+        except (HfHubHTTPError, OSError, ValueError) as exc:
+            logger.debug("No %s for %s: %s", config_filename, pretrained_name_or_path, exc)
+            return None
+
+    try:
+        steps = json.loads(raw)["steps"]
+        keys = {step.get("registry_name") or str(step["class"]).rsplit(".", 1)[1] for step in steps}
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.debug("Could not read step keys from %s: %s", config_filename, exc)
+        return None
+    return keys or None
 
 
 def _try_import_processor() -> Any | None:
@@ -178,6 +255,7 @@ class ProcessorBridge:
         preprocessor: Any | None = None,
         postprocessor: Any | None = None,
         device: str | None = None,
+        inert_reason: str | None = None,
     ):
         """Initialize with optional pre/post processor pipelines.
 
@@ -185,10 +263,14 @@ class ProcessorBridge:
             preprocessor: LeRobot DataProcessorPipeline for observation preprocessing.
             postprocessor: LeRobot DataProcessorPipeline for action postprocessing.
             device: Target device for tensor operations (auto-detected if None).
+            inert_reason: Why this bridge carries no pipelines, when the cause is
+                a nameable caller error rather than a checkpoint that ships none.
+                ``None`` for every other bridge.
         """
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._device = device
+        self._inert_reason = inert_reason
         # The embodiment's obs_rename map ({runtime_key: model_feature}),
         # latched by apply_embodiment. Used to enrich the 'image_keys
         # missing' preprocessor failure with the expected camera source
@@ -274,11 +356,28 @@ class ProcessorBridge:
         # leaving model_inputs empty at inference time. See B10.
         _register_policy_processor_steps(policy_type)
 
+        # Route each override to the pipeline that declares its step. LeRobot
+        # raises KeyError for an override key matching no step in the pipeline
+        # being loaded, and the two pipelines carry DISJOINT step keys
+        # (``normalizer_processor`` pre, ``unnormalizer_processor`` post), so
+        # handing the same dict to both makes every pipeline-specific step
+        # unoverridable: the key is rejected by whichever pipeline lacks it.
+        # Only ``device_processor``, present in both, ever got through -- which
+        # is why supplying normalizer ``stats`` (the documented remedy for a
+        # base checkpoint whose stats are dataset-prefixed and therefore inert)
+        # could not be applied at all.
+        pre_overrides, post_overrides = cls._route_overrides(
+            overrides or {},
+            pretrained_name_or_path,
+            preprocessor_config,
+            postprocessor_config,
+            revision,
+        )
         preprocessor = cls._load_pipeline(
             DataProcessorPipeline,
             pretrained_name_or_path,
             preprocessor_config,
-            overrides or {},
+            pre_overrides,
             device,
             kind="preprocessor",
             revision=revision,
@@ -287,7 +386,7 @@ class ProcessorBridge:
             DataProcessorPipeline,
             pretrained_name_or_path,
             postprocessor_config,
-            overrides or {},
+            post_overrides,
             device,
             kind="postprocessor",
             revision=revision,
@@ -298,10 +397,22 @@ class ProcessorBridge:
         # both pipelines are None and the bridge silently passes data through
         # un-normalized -- the single biggest cause of off-policy arm motion on
         # such checkpoints. Build quantile/min-max/mean-std normalizers instead.
+        inert_reason: str | None = None
         if preprocessor is None and postprocessor is None:
-            preprocessor, postprocessor = cls._load_norm_stats_fallback(
-                pretrained_name_or_path, norm_tag=norm_tag, revision=revision
-            )
+            from .norm_stats import UnknownNormTagError
+
+            try:
+                preprocessor, postprocessor = cls._load_norm_stats_fallback(
+                    pretrained_name_or_path, norm_tag=norm_tag, revision=revision
+                )
+            except UnknownNormTagError as exc:
+                # The stats file IS present and usable; the caller named a tag it
+                # does not declare. Record the cause instead of propagating: the
+                # policy narrows on ValueError to treat an absent bridge as
+                # benign, so a raise here degrades to the same passthrough with
+                # its reason at debug, and the load report then blames a missing
+                # postprocessor the checkpoint was never going to ship.
+                inert_reason = str(exc)
 
         # Third fallback: an OLD-FORMAT checkpoint ships no processor configs and
         # no norm_stats.json, but carries in-model normalization buffers that
@@ -317,7 +428,66 @@ class ProcessorBridge:
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             device=device,
+            inert_reason=inert_reason,
         )
+
+    @classmethod
+    def _route_overrides(
+        cls,
+        overrides: dict[str, Any],
+        pretrained_name_or_path: str,
+        preprocessor_config: str,
+        postprocessor_config: str,
+        revision: str | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Split ``processor_overrides`` into the per-pipeline dicts each accepts.
+
+        A checkpoint's preprocessor and postprocessor declare disjoint step keys,
+        and LeRobot raises ``KeyError`` for an override key that matches no step
+        in the pipeline it is loading. Passing the caller's whole dict to both
+        therefore rejects every pipeline-specific step, so each key is routed to
+        the pipeline(s) that declare it.
+
+        A key declared by NEITHER pipeline is still a typo and is still refused -
+        LeRobot's protection is preserved, and the refusal names both pipelines'
+        keys rather than only the one that happened to be loaded first.
+
+        When a pipeline's step keys cannot be determined (offline, absent, or an
+        unrecognized config shape) that pipeline receives the overrides unrouted,
+        which is the behavior before routing existed.
+
+        Args:
+            overrides: Caller-provided step overrides (never mutated).
+            pretrained_name_or_path: HF model ID or local checkpoint path.
+            preprocessor_config: Preprocessor config filename.
+            postprocessor_config: Postprocessor config filename.
+            revision: Optional Hub revision to pin the configs to.
+
+        Returns:
+            ``(preprocessor_overrides, postprocessor_overrides)``.
+
+        Raises:
+            KeyError: If an override key is declared by neither pipeline.
+        """
+        if not overrides:
+            return {}, {}
+        pre_keys = _pipeline_step_keys(pretrained_name_or_path, preprocessor_config, revision)
+        post_keys = _pipeline_step_keys(pretrained_name_or_path, postprocessor_config, revision)
+        if pre_keys is None and post_keys is None:
+            return dict(overrides), dict(overrides)
+
+        known = (pre_keys or set()) | (post_keys or set())
+        unmatched = sorted(k for k in overrides if k not in known)
+        if unmatched:
+            raise KeyError(
+                f"Override keys {unmatched} do not match any step in "
+                f"{pretrained_name_or_path}. Preprocessor steps: {sorted(pre_keys or [])}. "
+                f"Postprocessor steps: {sorted(post_keys or [])}. Make sure override keys "
+                f"match exact step class names or registry names."
+            )
+        pre = dict(overrides) if pre_keys is None else {k: v for k, v in overrides.items() if k in pre_keys}
+        post = dict(overrides) if post_keys is None else {k: v for k, v in overrides.items() if k in post_keys}
+        return pre, post
 
     @staticmethod
     def _load_pipeline(
@@ -443,6 +613,11 @@ class ProcessorBridge:
 
         Returns:
             ``(preprocessor, postprocessor)`` pipelines or ``(None, None)``.
+
+        Raises:
+            UnknownNormTagError: If ``norm_tag`` names a tag the recognized stats
+                file does not declare - a caller error, not an absence, so it does
+                not share the ``(None, None)`` verdict.
         """
         from . import norm_stats as _norm_stats
 
@@ -687,6 +862,22 @@ class ProcessorBridge:
         """Whether any processing pipeline is active."""
         return self.has_preprocessor or self.has_postprocessor
 
+    @property
+    def inert_reason(self) -> str | None:
+        """Why this bridge carries no pipelines, when the cause is a caller error.
+
+        A bridge with neither pipeline is normally benign - the checkpoint ships
+        no processor configs and no recognized stats file, so there is genuinely
+        nothing to apply. When instead the pipelines were WITHIN REACH and a
+        caller-supplied argument put them out of reach, that reason is recorded
+        here so the load report can name the actual cause rather than the generic
+        "this checkpoint ships no postprocessor" one, whose remedy (supply the
+        checkpoint's postprocessor) does not address it.
+
+        ``None`` whenever the bridge is active, or inert for a benign reason.
+        """
+        return self._inert_reason
+
     def inert_normalization_features(self) -> list[str]:
         """Declared normalization features that will silently pass through.
 
@@ -906,6 +1097,7 @@ class ProcessorBridge:
             "has_preprocessor": self.has_preprocessor,
             "has_postprocessor": self.has_postprocessor,
             "is_active": self.is_active,
+            "inert_reason": self.inert_reason,
             "repr": repr(self),
         }
 

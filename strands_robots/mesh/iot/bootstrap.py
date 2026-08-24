@@ -73,6 +73,13 @@ PROVISIONING_HOOK_ROLE = "strands-mesh-provisioning-hook-role"
 _PROVISIONING_HOOK_VERSION = 1
 LOG_GROUP_NAME = "/aws/iot/strands-mesh"
 
+#: Ledger names for the two Lambda resource policy statements the bootstrap
+#: grants. A permission statement has no ARN of its own, so these are the
+#: only handle :class:`BootstrappedAccount` can record it under - and they are
+#: single-sourced here so the record and any reader agree on the spelling.
+ESTOP_INVOKE_PERMISSION = "lambda-permission:estop-invoke"
+PROVISIONING_HOOK_INVOKE_PERMISSION = "lambda-permission:provisioning-hook-invoke"
+
 
 # Lambda source for the E-stop fan-out
 
@@ -253,7 +260,19 @@ _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
 
 @dataclass
 class BootstrappedAccount:
-    """Identifiers + ARNs of every resource :func:`bootstrap_account` ensured."""
+    """Identifiers + ARNs of every resource :func:`bootstrap_account` ensured.
+
+    :attr:`created` and :attr:`skipped` together are the account's audit trail:
+    every resource the bootstrap ensures appears in exactly one of them -
+    :attr:`created` when this run brought it up, :attr:`skipped` when it was
+    already there. That is the whole record an operator has of what a
+    provisioning run touched (the closing log line counts these two lists), so a
+    resource ensured without an entry is one they cannot review or reverse.
+
+    A Lambda resource-policy statement has no ARN to return, so it is recorded
+    under its ledger name (:data:`ESTOP_INVOKE_PERMISSION`,
+    :data:`PROVISIONING_HOOK_INVOKE_PERMISSION`) rather than an ``*_arn`` field.
+    """
 
     region: str
     account_id: str
@@ -583,8 +602,9 @@ def _grant_iot_invoke_lambda(lam: Any, lambda_arn: str, account: BootstrappedAcc
             Principal="iot.amazonaws.com",
             SourceArn=rule_arn,
         )
+        account.created.append(ESTOP_INVOKE_PERMISSION)
     except lam.exceptions.ResourceConflictException:
-        pass  # already granted
+        account.skipped.append(ESTOP_INVOKE_PERMISSION)
 
 
 def _ensure_iot_action_role(iam: Any, account: BootstrappedAccount) -> str:
@@ -597,7 +617,9 @@ def _ensure_iot_action_role(iam: Any, account: BootstrappedAccount) -> str:
     """
     role_name = IOT_ACTION_ROLE
     try:
-        return iam.get_role(RoleName=role_name)["Role"]["Arn"]
+        role = iam.get_role(RoleName=role_name)
+        account.skipped.append(f"iam:{role_name}")
+        return str(role["Role"]["Arn"])
     except iam.exceptions.NoSuchEntityException:
         pass
 
@@ -808,9 +830,9 @@ def _grant_iot_invoke_provisioning_hook(lam: Any, hook_arn: str, account: Bootst
             Principal="iot.amazonaws.com",
             SourceArn=f"arn:aws:iot:{account.region}:{account.account_id}:provisioningtemplate/{PROVISIONING_TEMPLATE}",
         )
-        account.created.append("lambda-permission:provisioning-hook-invoke")
+        account.created.append(PROVISIONING_HOOK_INVOKE_PERMISSION)
     except lam.exceptions.ResourceConflictException:
-        account.skipped.append("lambda-permission:provisioning-hook-invoke")
+        account.skipped.append(PROVISIONING_HOOK_INVOKE_PERMISSION)
 
 
 def _ensure_provisioning_template(
@@ -905,7 +927,9 @@ def _ensure_provisioning_role(iam: Any, account: BootstrappedAccount) -> str:
     """
     name = PROVISIONING_ROLE
     try:
-        return iam.get_role(RoleName=name)["Role"]["Arn"]
+        role = iam.get_role(RoleName=name)
+        account.skipped.append(f"iam:{name}")
+        return str(role["Role"]["Arn"])
     except iam.exceptions.NoSuchEntityException:
         pass
 

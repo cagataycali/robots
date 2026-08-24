@@ -148,10 +148,11 @@ def no_lerobot(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestAnEntryForAnUndeclaredCameraIsRefused:
     """The quiet half: an unlooked-up entry, and the camera declared at the pair."""
 
-    def test_a_mistyped_camera_name_is_refused_and_named(self, no_lerobot: None) -> None:
+    def test_a_mistyped_camera_name_is_refused_and_named(self, no_lerobot: None, tmp_path: Path) -> None:
         with pytest.raises(ValueError) as excinfo:
             _create(
                 repo_id="local/probe",
+                root=str(tmp_path / "dataset"),
                 camera_keys=["image"],
                 camera_dims={"imagee": (240, 320)},
             )
@@ -161,11 +162,12 @@ class TestAnEntryForAnUndeclaredCameraIsRefused:
         assert "Did you mean 'image'?" in text, text
         assert "['image']" in text, text
 
-    def test_an_unrelated_key_is_refused_without_inventing_a_suggestion(self, no_lerobot: None) -> None:
+    def test_an_unrelated_key_is_refused_without_inventing_a_suggestion(self, no_lerobot: None, tmp_path: Path) -> None:
         """A near match is offered; an unrelated name only gets the declared list."""
         with pytest.raises(ValueError) as excinfo:
             _create(
                 repo_id="local/probe",
+                root=str(tmp_path / "dataset"),
                 camera_keys=["image", "wrist_image"],
                 camera_dims={"joint1": (240, 320)},
             )
@@ -173,18 +175,26 @@ class TestAnEntryForAnUndeclaredCameraIsRefused:
         assert "Did you mean" not in text, text
         assert "['image', 'wrist_image']" in text, text
 
-    def test_dims_for_a_camera_less_dataset_are_refused(self, no_lerobot: None) -> None:
+    def test_dims_for_a_camera_less_dataset_are_refused(self, no_lerobot: None, tmp_path: Path) -> None:
         """With no ``camera_keys`` no image feature is built, so every entry is ignored."""
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", joint_names=["j1"], camera_dims={"image": (240, 320)})
+            _create(
+                repo_id="local/probe",
+                root=str(tmp_path / "dataset"),
+                joint_names=["j1"],
+                camera_dims={"image": (240, 320)},
+            )
         text = str(excinfo.value)
         assert "no camera is declared" in text, text
         assert "camera_keys" in text, text
 
-    def test_the_declared_camera_keeps_its_own_shape(self, fake_lerobot: type[_FakeLeRobotDataset]) -> None:
+    def test_the_declared_camera_keeps_its_own_shape(
+        self, fake_lerobot: type[_FakeLeRobotDataset], tmp_path: Path
+    ) -> None:
         """The control: spelled correctly, the entry wins over the global pair."""
         _create(
             repo_id="local/probe",
+            root=str(tmp_path / "dataset"),
             camera_keys=["image"],
             camera_dims={"image": (240, 320)},
             video_width=640,
@@ -199,9 +209,11 @@ class TestUnusableFrameShapesAreRefused:
 
     @pytest.mark.parametrize("param", ["video_width", "video_height"])
     @pytest.mark.parametrize(("label", "value"), UNUSABLE_COUNTS, ids=[c[0] for c in UNUSABLE_COUNTS])
-    def test_global_pair_component_refused(self, no_lerobot: None, param: str, label: str, value: Any) -> None:
+    def test_global_pair_component_refused(
+        self, no_lerobot: None, param: str, label: str, value: Any, tmp_path: Path
+    ) -> None:
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", camera_keys=["image"], **{param: value})
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), camera_keys=["image"], **{param: value})
         text = str(excinfo.value)
         assert param in text, text
         assert "must be a positive integer" in text, text
@@ -209,27 +221,43 @@ class TestUnusableFrameShapesAreRefused:
 
     @pytest.mark.parametrize("axis", ["height", "width"])
     @pytest.mark.parametrize(("label", "value"), UNUSABLE_COUNTS, ids=[c[0] for c in UNUSABLE_COUNTS])
-    def test_per_camera_component_refused(self, no_lerobot: None, axis: str, label: str, value: Any) -> None:
+    def test_per_camera_component_refused(
+        self, no_lerobot: None, axis: str, label: str, value: Any, tmp_path: Path
+    ) -> None:
         dims = (value, 320) if axis == "height" else (240, value)
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", camera_keys=["image"], camera_dims={"image": dims})
+            _create(
+                repo_id="local/probe",
+                root=str(tmp_path / "dataset"),
+                camera_keys=["image"],
+                camera_dims={"image": dims},
+            )
         text = str(excinfo.value)
         assert f"camera_dims['image'] {axis}" in text, text
         assert "must be a positive integer" in text, text
 
     @pytest.mark.parametrize(("label", "value"), UNUSABLE_PAIRS, ids=[c[0] for c in UNUSABLE_PAIRS])
-    def test_a_value_that_is_not_a_height_width_pair_is_refused(self, no_lerobot: None, label: str, value: Any) -> None:
+    def test_a_value_that_is_not_a_height_width_pair_is_refused(
+        self, no_lerobot: None, label: str, value: Any, tmp_path: Path
+    ) -> None:
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", camera_keys=["image"], camera_dims={"image": value})
+            _create(
+                repo_id="local/probe",
+                root=str(tmp_path / "dataset"),
+                camera_keys=["image"],
+                camera_dims={"image": value},
+            )
         text = str(excinfo.value)
         assert "camera_dims['image']" in text, text
         assert "(height, width) pair" in text, text
 
     @pytest.mark.parametrize(("label", "value"), NON_MAPPINGS, ids=[c[0] for c in NON_MAPPINGS])
-    def test_a_non_mapping_camera_dims_is_refused(self, no_lerobot: None, label: str, value: Any) -> None:
+    def test_a_non_mapping_camera_dims_is_refused(
+        self, no_lerobot: None, label: str, value: Any, tmp_path: Path
+    ) -> None:
         """Its entries are looked up per camera, so a non-mapping cannot be read."""
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", camera_keys=["image"], camera_dims=value)
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), camera_keys=["image"], camera_dims=value)
         text = str(excinfo.value)
         assert "camera_dims must be a mapping" in text, text
         assert type(value).__name__ in text, text
@@ -250,13 +278,20 @@ class TestUsableFrameShapesStillReachTheDataset:
             ("dims_and_pair", {"camera_dims": {"image": (240, 320)}, "video_width": 640}),
         ],
     )
-    def test_accepted(self, fake_lerobot: type[_FakeLeRobotDataset], label: str, kwargs: dict[str, Any]) -> None:
-        _create(repo_id="local/probe", camera_keys=["image"], **kwargs)
+    def test_accepted(
+        self, fake_lerobot: type[_FakeLeRobotDataset], label: str, kwargs: dict[str, Any], tmp_path: Path
+    ) -> None:
+        _create(repo_id="local/probe", root=str(tmp_path / "dataset"), camera_keys=["image"], **kwargs)
         assert len(fake_lerobot.calls) == 1
 
-    def test_a_list_pair_is_honored_as_given(self, fake_lerobot: type[_FakeLeRobotDataset]) -> None:
+    def test_a_list_pair_is_honored_as_given(self, fake_lerobot: type[_FakeLeRobotDataset], tmp_path: Path) -> None:
         """A list is accepted because the consumer honors it - the annotation says tuple."""
-        _create(repo_id="local/probe", camera_keys=["image"], camera_dims={"image": [240, 320]})
+        _create(
+            repo_id="local/probe",
+            root=str(tmp_path / "dataset"),
+            camera_keys=["image"],
+            camera_dims={"image": [240, 320]},
+        )
         features = fake_lerobot.calls[0]["features"]
         assert features["observation.images.image"]["shape"] == (3, 240, 320)
 
@@ -388,22 +423,28 @@ class TestNeighbouringSurfacesStayOutOfScope:
     """
 
     @pytest.mark.parametrize("value", [2.7, math.nan, math.inf, True])
-    def test_an_unusable_fps_is_refused_without_naming_the_frame_shape(self, no_lerobot: None, value: Any) -> None:
+    def test_an_unusable_fps_is_refused_without_naming_the_frame_shape(
+        self, no_lerobot: None, value: Any, tmp_path: Path
+    ) -> None:
         """Refused on the rate domain - see tests/test_dataset_recorder_fps_domain.py."""
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", camera_keys=["image"], fps=value)
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), camera_keys=["image"], fps=value)
         text = str(excinfo.value)
         assert "fps must be a positive whole number" in text, text
         assert "camera_dims" not in text, text
         assert "video_width" not in text, text
 
-    def test_a_usable_fps_leaves_the_shape_refusals_intact(self, no_lerobot: None) -> None:
+    def test_a_usable_fps_leaves_the_shape_refusals_intact(self, no_lerobot: None, tmp_path: Path) -> None:
         """The control: a usable rate does not shadow the frame-shape refusal."""
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", camera_keys=["image"], video_width=0, fps=30)
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), camera_keys=["image"], video_width=0, fps=30)
         assert "video_width" in str(excinfo.value)
 
-    def test_a_camera_less_create_does_not_read_the_pair(self, fake_lerobot: type[_FakeLeRobotDataset]) -> None:
+    def test_a_camera_less_create_does_not_read_the_pair(
+        self, fake_lerobot: type[_FakeLeRobotDataset], tmp_path: Path
+    ) -> None:
         """With no camera declared the pair decides nothing, so it is left alone."""
-        _create(repo_id="local/probe", joint_names=["j1"], video_width=0, video_height=-8)
+        _create(
+            repo_id="local/probe", root=str(tmp_path / "dataset"), joint_names=["j1"], video_width=0, video_height=-8
+        )
         assert len(fake_lerobot.calls) == 1

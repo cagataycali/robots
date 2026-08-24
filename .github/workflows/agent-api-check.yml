@@ -28,6 +28,10 @@ on:
       - '.github/scripts/agent_api_snapshot.py'
       - '.github/workflows/agent-api-check.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read       # checkout
   pull-requests: write # post/update PR comment
@@ -36,6 +40,7 @@ jobs:
   check-agent-api:
     name: Detect AgentTool API Breaking Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout PR
@@ -51,9 +56,38 @@ jobs:
           cache: 'pip'
 
       - name: Install system dependencies (OpenGL for MuJoCo)
+        # Same class as test-lint.yml's apt step (#2442): unbounded, an apt-get
+        # facing a wedged mirror spends this job's whole 10-minute budget and
+        # then reports a rollup carrying no reason. 9 keeps the reap on the step
+        # - which names it - and clears the observed maximum of 474s (7m54s)
+        # over the last 30 runs, whose p50 is 15s.
+        timeout-minutes: 9
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libosmesa6-dev
+          # Bounded and retried for the reason test-lint.yml's step is: the
+          # mirrors here stall as well as fail, and `timeout` only converts the
+          # stall into exit 124 - something has to act on that exit, or a
+          # transient stall becomes a hard red. Observed on this very step: the
+          # azure.archive mirror was ignored after 3 tries, the fallback to
+          # archive.ubuntu.com then went silent for 142s mid-InRelease, and the
+          # bound ended it at 180s with nothing left to retry it.
+          #
+          # 150s x 3 attempts, tighter than test-lint.yml's 180 because this
+          # job's budget is 10 minutes rather than 45: 3x(150+5) plus the
+          # install is ~8 min, so the worst case still lands inside the step's
+          # own 9 and the reap keeps naming this step.
+          for attempt in 1 2 3; do
+            if sudo timeout 150 apt-get update; then
+              break
+            fi
+            echo "apt-get update failed or hung (attempt ${attempt}/3), retrying in 5s..."
+            sleep 5
+          done
+          # --no-install-recommends is a measured no-op for this argument
+          # list today - libosmesa6-dev is 17 packages / 8.33 MiB either way -
+          # and is here so that adding a package with heavy Recommends cannot
+          # silently restore the 29.9 MiB closure test-lint.yml stopped paying
+          # for. Pinned by tests/test_apt_install_declines_recommends.py.
+          sudo apt-get install -y --no-install-recommends libosmesa6-dev
 
       # Importing the sim backend needs the sim-mujoco extra. CPU-only backend,
       # headless osmesa rendering - no GPU required.

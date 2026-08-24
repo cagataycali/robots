@@ -21,6 +21,7 @@ live at the top level. Everything else is grouped by topic:
 - [`locomotion/`](locomotion/) - G1 locomotion and the VLA-on-G1 record→tune→deploy workflow
 - [`training/`](training/) - from-scratch RL trainers (PPO, FastSAC)
 - [`mesh/`](mesh/) - Zenoh mesh ACL config templates
+- [`fleet/`](fleet/) - fleet orchestration suite: work-order ingress onto capability manifests (epic #2179)
 - [`registry/`](registry/) - robot / hardware catalog discovery
 - [`lerobot/`](lerobot/) - LeRobot hub-to-hardware companion scripts
 - [`ros2/`](ros2/) - ROS 2 bridge demos
@@ -51,6 +52,8 @@ record→train→deploy loop) as Jupyter notebooks - all CPU-only, no hardware o
 | 14 | [`14_save_state_and_perturb.py`](14_save_state_and_perturb.py) | `save_state`/`load_state` + `apply_force` + `raycast` | No | No |
 | 15 | [`15_robot_catalog.py`](15_robot_catalog.py) | `list_robots` / `get_robot` registry discovery (no sim) | No | No |
 | 16 | [`16_harness_memory.py`](16_harness_memory.py) | `harness_memory` tool: save a solution trace, reuse it under spatial perturbation | No | No |
+| 17 | [`17_pour_task.py`](17_pour_task.py) | Articulated-container pouring: bundled task objects + particle-proxy pour predicates | No | No |
+| 17 | [`17_judge_recorded_episodes.py`](17_judge_recorded_episodes.py) | Episode-judge labeling: deterministic verdicts + judge annotations -> filtered re-training | No | No |
 | -- | [`locomotion/vla_g1_workflow.py`](locomotion/vla_g1_workflow.py) | VLA-on-G1: record -> GR00T fine-tune -> WBC deploy | No | Optional (tune) |
 | — | [`vera_mimicgen_panda/`](vera_mimicgen_panda/) | VERA MimicGen → Panda (eef-delta + IK bridge) | No | **Yes** (server) |
 | — | [`isaac_gs/`](isaac_gs/) | Isaac RTX robot z-composited over a 3DGS / panorama backdrop (digital-twin) | No | **Yes** (Isaac Sim / RTX) |
@@ -75,10 +78,10 @@ record→train→deploy loop) as Jupyter notebooks - all CPU-only, no hardware o
 | [`vla/cosmos3_sim_rollout.py`](vla/cosmos3_sim_rollout.py) | Cosmos 3 VLA in MuJoCo with WebSocket policy server |
 | [`wbc/wbc_g1_torque_deploy.py`](wbc/wbc_g1_torque_deploy.py) | GR00T-WBC (SONIC) locomotion on the Unitree G1 via the torque-control deploy loop |
 | [`lerobot/hub_to_hardware.py`](lerobot/hub_to_hardware.py) | Full agent-driven pipeline: record, train, deploy |
+| [`fleet/05_work_order_dispatch.py`](fleet/05_work_order_dispatch.py) | Structured work-order ingress (JSONL queue) mapped onto per-site capability manifests: deterministic feasibility filter + NACK, mesh dispatch behind HITL, order_id threaded through the signed audit log. **GPU: No** (`--dry-run` is dependency-free) |
 | [`so101_curobo/`](so101_curobo/) | SO-101 tabletop pick-and-place: cuRobo motion planning + LeRobot dataset capture. Backend-agnostic (`SimEngine`): MuJoCo today, Isaac when `strands-robots[sim-isaac]` is installed. **GPU: Optional** (cuRobo / Isaac) |
-| [`libero/run_mujoco.py`](libero/run_mujoco.py) | LIBERO benchmark eval on the default MuJoCo backend with whole-run MP4 recording. **GPU: Optional** (`--policy mock` is CPU-only; `--policy groot` needs Docker + NVIDIA GPU) |
+| [`libero/run.py`](libero/run.py) | LIBERO benchmark eval with backend subcommands (`run.py mujoco` / `run.py isaac`) and rollout-MP4 recording. **GPU: Optional** for `mujoco` (`--policy mock` is CPU-only; `--policy groot` needs Docker + NVIDIA GPU); **GPU: Yes** for `isaac` (Isaac Sim 6.0+) |
 | [`libero/run_mujoco_agent.py`](libero/run_mujoco_agent.py) | LIBERO-on-MuJoCo driven by a Strands `Agent` in natural language. **GPU: Optional** (needs LLM API) |
-| [`libero/run_isaac.py`](libero/run_isaac.py) | LIBERO benchmark eval on the Isaac Sim backend (`create_simulation("isaac")`) with rollout-MP4 recording. **GPU: Yes** (Isaac Sim 6.0+) |
 | [`libero/run_isaac_agent.py`](libero/run_isaac_agent.py) | LIBERO-on-Isaac driven by a Strands `Agent` in natural language. **GPU: Yes** (Isaac Sim 6.0+, needs LLM API) |
 | [`libero/libero_backend_matrix.py`](libero/libero_backend_matrix.py) | Run one LIBERO task across every installed backend, side-by-side `success_rate` / `wall_time` table |
 

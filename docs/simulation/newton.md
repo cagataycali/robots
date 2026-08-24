@@ -55,18 +55,24 @@ sim.destroy()
 
 ## Solvers
 
-Pass `solver=` to `create_simulation("newton", solver=...)`. The rigid-body
-solvers used by articulated robots are:
+Pass `solver=` to `create_simulation("newton", solver=...)`. The solvers that
+integrate a rigid articulated robot are:
 
 | Name | Newton class | Notes |
 |------|--------------|-------|
 | `mujoco` (default) | `SolverMuJoCo` | MuJoCo-Warp; requires `mujoco-warp` |
 | `featherstone` | `SolverFeatherstone` | Reduced-coordinate articulated-body |
-| `xpbd` | `SolverXPBD` | Position-based dynamics |
-| `semi_implicit` | `SolverSemiImplicit` | Explicit semi-implicit integrator |
+| `kamino` | `SolverKamino` | Rigid-body contact solver |
 
-`vbd`, `style3d`, `mpm`, and `kamino` are also resolvable for soft-body /
-particle scenes but are not exercised by rigid robot arms.
+Newton resolves five more names -- `vbd`, `style3d`, `mpm`, `xpbd` and
+`semi_implicit` -- that belong to other physics families and have nothing to
+integrate in a rigid robot scene. Naming one is refused when the engine is
+constructed, with the reason and the list above, because the alternatives are
+worse than a refusal: `vbd`, `style3d` and `mpm` raise from inside Newton
+naming a `ModelBuilder` the caller never touched, and `xpbd` and
+`semi_implicit` build and step without moving a joint, so `add_robot`,
+`send_action` and `step` all report success over a frozen world.
+`describe()["available_solvers"]` reports the accepted names only.
 
 `SolverMuJoCo` requires at least one joint in the model; an empty world (ground
 plane only) defers solver creation until a robot is added, and stepping is a
@@ -90,8 +96,12 @@ no-op until then.
   from `list_bodies`) mounts the camera ON that body so a wrist camera tracks
   the arm. `remove_camera(name)` / `list_cameras()` round out the API and
   `describe()["cameras"]` lists every registered camera.
-- `run_policy` / `eval_policy` / `replay_episode` are inherited from the
-  `SimEngine` ABC - no backend-specific re-implementation.
+- `run_policy` / `eval_policy` / `replay_episode` / `start_policy` are
+  inherited from the `SimEngine` ABC - no backend-specific re-implementation.
+  `start_policy` is the ABC's synchronous passthrough to `run_policy` here;
+  only the MuJoCo backend runs a policy on a background thread. All four are
+  advertised in `describe()["methods"]`, as is every other base-contract
+  method this backend delivers.
 - `describe()` reports the active solver, available solvers, device, and
   the current gravity vector and timestep.
 - Gravity configured via `create_world(gravity=[x, y, z])` or `set_gravity`
@@ -157,7 +167,10 @@ method names:
   the robots and primitive objects in the world.
 - `list_bodies(robot_name=None)` lists Newton body labels and, when scoped to
   a robot, resolves a best-guess `gripper_body` mount (a body whose trailing
-  path segment contains `gripper`, `hand`, `jaw`, `ee`, or `tool`).
+  path segment *names* `gripper`, `hand`, `jaw`, `ee`, or `tool` as one of its
+  words). Hints match on word boundaries, so a short hint cannot fire inside an
+  unrelated word - a `knee` link is not a gripper mount because `ee` occurs in
+  its name - and a robot with no gripper-like body reports `None`.
 - `move_object(name, position=None, orientation=None)` repositions an existing
   object and rebuilds the model, preserving live joint targets.
 - `get_features(robot_name=None)` reports the model's joint / body / DOF counts,
@@ -251,9 +264,17 @@ sim.start_recording(repo_id="local/newton_demo", task="pick the cube", fps=50)
 for _ in range(n_episodes):
     sim.run_policy(robot_name="so100", policy_provider="mock", n_steps=200)
     sim.save_episode()          # flush this rollout as one episode
+    sim.reset()                 # next rollout starts from the scene pose
 result = sim.stop_recording()   # finalize parquet + video
 sim.verify_dataset_episodes(n_episodes)   # parquet-truth check
 ```
+
+`save_episode` cuts the episode boundary; `reset()` re-initializes the world.
+Drop the `reset()` and the dataset still has `n_episodes` episodes - so
+`verify_dataset_episodes` still passes - but every episode after the first
+starts from the previous rollout's final pose instead of the scene's, giving a
+bimodal distribution of recorded start states. `run_policy(n_episodes=...)`
+performs both steps for you.
 
 `start_recording` declares the dataset schema from the live scene - joint names
 from every robot (namespaced `robot__joint` in multi-robot scenes) plus any
@@ -341,8 +362,9 @@ surfaces their signatures.
 
 ## Mesh objects
 
-`add_object` accepts triangle-mesh assets in addition to primitives, at parity
-with the MuJoCo backend:
+`add_object` accepts triangle-mesh assets in addition to primitives, as the
+MuJoCo backend does - but not under the same `size` contract, so a
+`shape="mesh"` call is not portable between the two (below):
 
 ```python
 sim.add_object(name="tool", shape="mesh", mesh_path="/abs/path/widget.obj",
@@ -355,3 +377,11 @@ sim.add_object(name="tool", shape="mesh", mesh_path="/abs/path/widget.obj",
 scale (default `[1, 1, 1]`, the mesh's own units). `move_object` and
 `remove_object` work on mesh objects, and `list_objects()` reports the mesh
 path. Mesh loading requires the `sim-newton` extra (which ships `trimesh`).
+
+`size` is where the two backends part. This backend consumes it as that scale;
+the MuJoCo backend discards it for a mesh and takes the extent from the asset
+alone. So `size=[2, 2, 2]` doubles the asset here and is dropped there, with
+both calls reporting success - the one portable mesh add is one that omits
+`size` and ships the asset already in metric units. Which meaning `size` should
+carry for a mesh is an open contract decision, tracked in
+[#2300](https://github.com/strands-labs/robots/issues/2300).

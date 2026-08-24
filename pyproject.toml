@@ -34,7 +34,19 @@ classifiers = [
 ]
 
 dependencies = [
-    "strands-agents>=1.0.0,<2.0.0",
+    # CAPABILITY floor, not a nominal lower bound. The package imports
+    # ``strands.types.tools.ToolContext`` (first shipped in strands-agents
+    # 1.5.0) and ``strands.types._events.ToolResultEvent`` (first shipped in
+    # 1.7.0), both at module import time. Measured against the released
+    # wheels, every release below 1.7.0 leaves
+    # ``strands_robots.simulation.mujoco.simulation`` and
+    # ``strands_robots.hardware_robot`` unimportable, so a resolve inside an
+    # older-but-declared range yields an install where ``import
+    # strands_robots`` succeeds (those are lazy exports) and
+    # ``strands_robots.Simulation`` simply does not exist. See
+    # tests/test_strands_agents_floor_ships_the_imported_api.py, which fails
+    # the moment a newer strands symbol is imported without raising this floor.
+    "strands-agents>=1.7.0,<2.0.0",
     "numpy>=1.21.0,<3.0.0",
     "opencv-python-headless>=4.5.0,<5.0.0",
     "Pillow>=8.0.0,<13.0.0",
@@ -55,7 +67,13 @@ cosmos3-service = [
     # extra numpy-version agnostic so it composes cleanly with `lerobot`
     # (numpy>=2) for dataset recording in the same env.
     "msgpack>=1.0.0,<2.0.0",
-    "websockets>=12.0",
+    # >=13.0 is the floor of the websockets API the package reaches for, not a
+    # preference: `websockets.sync.server.Server` (annotating
+    # PolicyServer._server) first ships in 13.0 - 12.0 spells that class
+    # `WebSocketServer`. One environment resolves one websockets, so this floor
+    # and [inference]'s are deliberately the same number. Owned and measured by
+    # tests/test_websockets_floor_ships_the_imported_api.py.
+    "websockets>=13.0",
 ]
 # In-process Cosmos 3 backend (Cosmos3Policy(backend="diffusers")). Loads the
 # Cosmos3OmniPipeline directly via native Hugging Face `diffusers` (no RoboLab
@@ -66,13 +84,15 @@ cosmos3-service = [
 # unaffected. diffusers composes with numpy>=2, so this extra is co-installable
 # with cosmos3-service and lerobot.
 #
-# Cosmos3OmniPipeline ships only in diffusers-from-source (>0.38); the version
-# floor here is a lower bound, but install the git pin alongside this extra to
-# get the Cosmos3OmniPipeline + CosmosActionCondition symbols:
-#   uv pip install strands-robots[cosmos3-diffusers] \
-#       'diffusers @ git+https://github.com/huggingface/diffusers'
+# The floor is the CAPABILITY floor, not a nominal lower bound: measured against
+# the released wheels, Cosmos3OmniPipeline + CosmosActionCondition first ship in
+# diffusers 0.39.0 (0.36.0/0.37.1/0.38.0 carry neither symbol), so any floor below
+# it resolves to a diffusers that cannot build the pipeline at all. A checkpoint
+# newer than the floor can still need a newer diffusers than it (Cosmos3-Edge is
+# built against 0.40.0.dev0); that is a per-checkpoint fact a version range cannot
+# express, so Cosmos3DiffusersBackend reports it at load time instead.
 cosmos3-diffusers = [
-    "diffusers>=0.30",
+    "diffusers>=0.39",
     "torch>=2.0",
     "transformers>=4.40",
     "accelerate>=0.26",
@@ -88,7 +108,7 @@ cosmos3-diffusers = [
 # cosmos3-service, sim-mujoco, and lerobot).
 cosmos3-sim = [
     "mink>=0.0.4",
-    "mujoco>=3.2.0,<4.0.0",
+    "mujoco>=3.5.0,<4.0.0",
     # qpsolvers QP backend for mink.solve_ik. quadprog is the dependency-light
     # default that is always available; the bridge auto-selects whatever
     # qpsolvers reports (preferring daqp when present).
@@ -170,6 +190,41 @@ motionbricks = [
     "pytorch-lightning>=2.0.0,<3.0.0",
     "scipy>=1.10.0",
 ]
+kimodo = [
+    # Kimodo text-conditioned motion diffusion for the Unitree G1. Drives a
+    # `diffusers` pipeline checkpoint (one carrying a `model_index.json`) with
+    # `trust_remote_code=True` (gated by STRANDS_TRUST_REMOTE_CODE at the
+    # factory layer). NVIDIA's own `nvidia/Kimodo-G1-RP-v1` publishes bare
+    # weights for its own runtime instead, so that checkpoint is driven through
+    # a `motion_agent=` sampler rather than by this extra alone. Weights are
+    # fetched on demand; nothing bundled.
+    # See strands_robots/policies/kimodo/ and docs/policies/kimodo.md.
+    "torch>=2.0.0",
+    "diffusers>=0.30.0",
+    "transformers>=4.40.0",
+    # Same >=1.5 floor and MAJOR-only cap as [wbc]: the documented bucket-sync
+    # guidance needs the `hf buckets`/`hf sync` CLI subcommands, which first
+    # ship in huggingface_hub 1.5.0. See the [wbc] comment for the full reason.
+    "huggingface_hub>=1.5,<2.0.0",
+    "accelerate>=0.30.0",
+    "scipy>=1.10.0",
+]
+protomotions = [
+    # ProtoMotions Generalist Tracking Policy (GTP) - the ONNX whole-body
+    # motion tracker that turns a kinematic reference clip (e.g. one Kimodo
+    # samples) into balanced joint targets for the Unitree G1. Same three
+    # support libraries as [wbc], for the same three reasons: onnxruntime runs
+    # the exported graph, pyyaml reads the `unified_pipeline.yaml` sidecar next
+    # to it, and huggingface_hub fetches the checkpoint from a model id. Weights
+    # are NOT bundled. See strands_robots/policies/protomotions/ and
+    # docs/policies/protomotions.md.
+    "onnxruntime>=1.17.0,<2.0.0",
+    "pyyaml>=5.1,<7.0.0",
+    # Same >=1.5 floor and MAJOR-only cap as [wbc]: the documented bucket-sync
+    # guidance needs the `hf buckets`/`hf sync` CLI subcommands, which first
+    # ship in huggingface_hub 1.5.0. See the [wbc] comment for the full reason.
+    "huggingface_hub>=1.5,<2.0.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
@@ -222,12 +277,48 @@ molmoact2 = [
     "strands-robots[lerobot]",
     "lerobot[molmoact2]>=0.6.1,<0.7.0",
 ]
+# SmolVLA transformers-native VLA (e.g. lerobot/smolvla_base). The SmolVLAPolicy
+# ships in lerobot >= 0.6 and is a first-class `lerobot_local` policy type
+# (`resolution.py` lists it; `policy.py` imports `transformers` for its
+# tokenizer). Like [molmoact2], defer to lerobot's own [smolvla] extra for the
+# aux-dep pins rather than hand-mirroring them here (which drifts when lerobot
+# bumps them). lerobot[smolvla] pulls lerobot[transformers-dep] (>=5.4.0,<5.6.0)
+# -- the SAME specifier [molmoact2] resolves, so there is one transformers pin
+# across [all] -- plus num2words (SmolVLA's SmolVLM backbone processor,
+# transformers/models/smolvlm/processing_smolvlm.py, imports it) and
+# lerobot[accelerate-dep]. None of these arrive through the base
+# strands-robots[lerobot] extra (lerobot[feetech,dataset]), so without this a
+# `strands-robots[lerobot]` install running SmolVLA fails at first use. The base
+# strands-robots[lerobot] pin (>=0.6.1,<0.7.0) already fixes the lerobot floor.
+smolvla = [
+    "strands-robots[lerobot]",
+    "lerobot[smolvla]>=0.6.1,<0.7.0",
+]
 sim = [
-    "robot_descriptions>=1.11.0,<2.0.0",
+    # 1.23.0 is the oldest release that ships a description module for every
+    # robot the built-in registry names, not merely the oldest that imports.
+    # registry/robots.json declares 57 ``asset.robot_descriptions_module``
+    # values and the package grows one module per new robot, so an older
+    # release is missing some of them outright: 1.11.0 lacks 27 (including
+    # so100 and so101), and every release below 1.23.0 lacks at least one
+    # (openarm's ``openarm_v1_mj_description`` arrives last). None of those
+    # robots declares an ``asset.source`` GitHub fallback, so
+    # assets.download.auto_download_robot has nothing to fall back to and
+    # ``Robot("so101", mode="sim")`` fails to resolve a model file.
+    # tests/test_robot_descriptions_floor_ships_the_registry_modules.py owns
+    # the number and derives it from the registry; keep the two in step.
+    "robot_descriptions>=1.23.0,<2.0.0",
 ]
 sim-mujoco = [
     "strands-robots[sim]",
-    "mujoco>=3.2.0,<4.0.0",
+    # 3.5.0 is the oldest release the backend can drive, not merely import:
+    # every scene is built through the MjSpec procedural API, and URDF loading
+    # through it first works in 3.5.0 (3.4.0 and earlier refuse add_robot with
+    # "Could not find decoder for resource '<path>.urdf'"), while MjSpec.delete
+    # - which world creation needs on its first call - first ships in 3.3.4.
+    # simulation.mujoco.backend._MUJOCO_API_FLOOR owns the number and refuses an
+    # older build at the import funnel; keep the two in step.
+    "mujoco>=3.5.0,<4.0.0",
     "imageio>=2.28.0,<3.0.0",
     "imageio-ffmpeg>=0.4.0,<1.0.0",
     # Differential-IK solver stack. `move_to`, the Cartesian transport
@@ -323,8 +414,18 @@ sim-gs = [
 benchmark-libero = [
     "libero>=0.1.0,<1.0.0",
 ]
+# Peer-to-peer robot mesh. The floor is set by the wire-level source
+# attribution the safety handlers depend on: `zenoh.SourceInfo` (publisher
+# side) and `Sample.source_info` (receiver side) both first ship in
+# eclipse-zenoh 1.6.1. Every release from 1.0.0 through 1.5.1 exposes
+# neither, so a resolve there silently drops the cross-session forgery
+# defence, and a receiver on such a release refuses an e-stop published by
+# a capable peer. See
+# tests/test_zenoh_floor_ships_wire_source_attribution.py, which owns the
+# measurement and fails if the mesh reaches for a newer zenoh name without
+# raising this floor.
 mesh = [
-    "eclipse-zenoh>=1.0.0,<2.0.0",
+    "eclipse-zenoh>=1.6.1,<2.0.0",
     "json5>=0.9.0,<1.0.0",
 ]
 # AWS IoT Core integration for the mesh - MQTT5/mTLS transport, Device
@@ -385,15 +486,29 @@ vera-sim = [
     # the package. If you genuinely need NVlabs MimicGen for data generation,
     # install it from source:
     #     pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
-    "mujoco>=3.5.0",
-    "imageio",
+    "mujoco>=3.5.0,<4.0.0",
+    # Clip encoder for this extra's MuJoCo rollouts (the VERA MimicGen example
+    # ships its rollout as a GIF). encode_clip (strands_robots.rendering.video)
+    # imports `imageio.v2` and passes the GIF writer a per-frame duration in
+    # MILLISECONDS, which is imageio's reading only from 2.28.0 on. Measured
+    # against the released wheels on Python 3.12: `imageio.v2` does not exist
+    # before 2.16.0, so encode_clip raises a bare ModuleNotFoundError one line
+    # after its require_optional probe has already reported imageio installed
+    # (require_optional takes no minimum version, so it cannot refuse); 2.16.0 -
+    # 2.19.0 raise out of mimsave; and 2.20.0 - 2.27.0 read that duration as
+    # seconds, silently encoding the clip 1000x too slow (fps=12 -> 83330 ms per
+    # frame instead of 83) while returning a valid GIF that encode_clip's
+    # "the encoder wrote no clip" check accepts. Same specifier as
+    # [sim-mujoco]/[sim-isaac]: one environment resolves one imageio, so a
+    # looser range here describes an install nobody gets.
+    "imageio>=2.28.0,<3.0.0",
 ]
 # Local-LLM agent path (no API key / no AWS -- the natural choice on an edge
 # device): strands.models.ollama.OllamaModel does a top-level `import ollama`.
 # Delegate to strands-agents' own [ollama] extra (bounded pin, ollama>=0.4.8,<1.0.0)
 # so the client version stays in sync with the code that imports it.
 ollama = [
-    "strands-agents[ollama]>=1.0.0,<2.0.0",
+    "strands-agents[ollama]>=1.7.0,<2.0.0",
 ]
 # Remote policy inference (client/server split): stream observations from a
 # CPU/edge robot host to a remote GPU PolicyServer and receive action chunks
@@ -401,7 +516,9 @@ ollama = [
 # (numpy-version agnostic, so it composes with lerobot's numpy>=2). See
 # strands_robots/inference/ and docs/inference/remote.md.
 inference = [
-    "websockets>=12.0",
+    # See [cosmos3-service]: >=13.0 is where `websockets.sync.server.Server`
+    # first ships, and both extras must declare the same floor.
+    "websockets>=13.0",
 ]
 # rosbridge WebSocket transport: drive ROS1 (or remote ROS 2) robots from a host
 # with no ROS install at all. Pure-pip `roslibpy` speaks the rosbridge JSON
@@ -409,6 +526,15 @@ inference = [
 # docs/rosbridge-integration.md.
 rosbridge = [
     "roslibpy>=1.7.0,<2.0.0",
+]
+# SageMaker trainer transport (strands_robots/training/sagemaker.py): submit a
+# TrainSpec as a managed AWS training job wrapping a containerized trainer
+# image. Needs only boto3 (CreateTrainingJob / DescribeTrainingJob) - the heavy
+# `sagemaker` Python SDK is deliberately NOT pulled in, because the provider is
+# transport-only and the low-level API is all it speaks. Same boto3 bounds as
+# [mesh-iot] (>=1.0 dep: cap the major).
+sagemaker = [
+    "boto3>=1.34.0,<2.0.0",
 ]
 all = [
     "strands-robots[groot-service]",
@@ -421,10 +547,14 @@ all = [
     "strands-robots[device-connect]",
     "strands-robots[wbc]",
     "strands-robots[motionbricks]",
+    "strands-robots[kimodo]",
+    "strands-robots[protomotions]",
     "strands-robots[molmoact2]",
+    "strands-robots[smolvla]",
     "strands-robots[ollama]",
     "strands-robots[inference]",
     "strands-robots[rosbridge]",
+    "strands-robots[sagemaker]",
 ]
 dev = [
     "pytest>=6.0,<10.0.0",
@@ -489,6 +619,7 @@ conflicts = [
     [{ extra = "vera-sim" }, { extra = "lerobot" }],
     [{ extra = "vera-sim" }, { extra = "lerobot-async" }],
     [{ extra = "vera-sim" }, { extra = "molmoact2" }],
+    [{ extra = "vera-sim" }, { extra = "smolvla" }],
     [{ extra = "vera-sim" }, { extra = "all" }],
     [{ extra = "vera-sim" }, { extra = "benchmark-libero" }],
 ]
@@ -517,12 +648,16 @@ constraint-dependencies = [
     "pyopenssl>=26.0.0",
 ]
 override-dependencies = [
-    # SECURITY: diffusers <0.36 is vulnerable to a GHSA trust_remote_code bypass
-    # + a TOCTOU RCE (fixed in 0.38.0). diffusers is only exercised by the
-    # cosmos3-diffusers extra (Cosmos3Policy backend="diffusers"); lerobot core
-    # does not import it at runtime, so forcing >=0.38 is safe and clears the
-    # Dependabot alerts.
-    "diffusers>=0.38.0",
+        # SECURITY + CAPABILITY: diffusers <0.36 is vulnerable to a GHSA
+    # trust_remote_code bypass + a TOCTOU RCE (fixed in 0.38.0). uv *overrides*
+    # replace a requirement rather than intersecting with it, so this pin is the
+    # effective floor for the whole resolution and must not fall below the
+    # cosmos3-diffusers extra's own floor - at 0.38.0 it silently discarded that
+    # floor and locked a diffusers carrying no Cosmos3OmniPipeline. 0.39 clears
+    # both bounds (the CVE fix landed in 0.38.0; the pipeline first ships in
+    # 0.39.0). diffusers is only exercised by the cosmos3-diffusers extra
+    # (Cosmos3Policy backend="diffusers"); lerobot core does not import it.
+    "diffusers>=0.39",
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA

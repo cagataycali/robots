@@ -33,6 +33,16 @@ and a single `--policy.type` flag can't express them:
 | `lerobot_local` | `lerobot.scripts.lerobot_train` | draccus `--dotted.flags` | `python` / `accelerate launch` | CPU for a toy run; 1 consumer GPU in practice |
 | `groot` | Isaac-GR00T `launch_finetune.py` | `FinetuneConfig` (tyro) + `tune_*` flags | `python` / `torchrun` | 1 modern GPU |
 | `cosmos3` | `cosmos_framework.scripts.train` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | `torchrun` (HSDP) | 8×H100 80GB |
+| `sagemaker` | none - the container image's own trainer | the same `TrainSpec`, as job hyperparameters | `CreateTrainingJob` (managed) | none locally; the job brings its own |
+
+Those three local backends import a training library and drive it in-process.
+`sagemaker` is the other shape: pure transport, importing no training library and
+submitting the spec to a managed runner whose image packages one of the local
+paths. The difference is visible in one place a caller has to handle - a local
+`train()` blocks and returns a terminal result, while a submitted run can outlive
+the call and come back as `running` with a `job_id` to poll via `status()`, and
+no checkpoint yet. Branch on all three `TrainResult.status` values, not on
+"not `error`".
 
 The `Trainer` ABC hides all of that behind one lifecycle:
 
@@ -91,12 +101,12 @@ supports and **ignores the rest** (the same tolerance rule as
 |-------|---------|-------|
 | `dataset_root` | LeRobotDataset v3 root | a data source; has `meta/info.json` (optional when `dataset_repo_id` is set) |
 | `dataset_repo_id` | Hub dataset id `org/name` | alternative data source; train from the Hub (lerobot) |
-| `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local) |
+| `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local); mutually exclusive with `val_episodes` |
 | `base_model` | HF id / local ckpt to tune from | required for GR00T & Cosmos |
 | `steps` / `global_batch_size` | the run size: optimizer steps x batch | each must be a positive integer; `validate()` refuses `0`, a fractional or non-finite value, and a `bool` (`True` would read as a silent one-step run) before anything is loaded |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |
 | `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
-| `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count. `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating) |
+| `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count, and that count must be readable from a local `meta/info.json` (see the Hub-source note below). `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating); mutually exclusive with `streaming` |
 | `num_gpus` / `num_nodes` | multi-GPU / multi-node | selects the launcher |
 | `seed` | reproducibility seed | must be a non-negative integer; `validate()` refuses a negative (`torch.manual_seed` would take it modulo `2**64`, so `-1` silently becomes `2**64 - 1`), a fractional or non-finite value, and a `bool`. `None` uses the backend's own default |
 | `extra["policy_type"]` | lerobot `--policy.type` | act/diffusion/smolvla/pi0/pi05/... |
@@ -122,6 +132,16 @@ agent("Record 50 cube-pick episodes, then post-tune lerobot ACT on the dataset "
 
 `train_policy` actions: `train`, `validate`, `status`, `export`, `list`.
 
+`train` reports the step that fits the run it got. A finished run names the
+checkpoint to load; a run that has not finished - the managed-job backend
+whose job outlives the submitting process, which returns `running` once its
+local poll budget expires - names the `status` poll for its `job_id` instead,
+and a run that wrote no discoverable checkpoint says so. The tool never offers
+`create_policy(<checkpoint_dir>)` for a result whose `checkpoint_dir` is
+`None`, because that renders as `create_policy('None')` and raises
+`Unknown policy provider: 'None'`. The run's own status always travels verbatim
+in the result's `{"json": ...}` block.
+
 ## Provider-specific knobs
 
 ### LeRobot (`lerobot_local`)
@@ -130,6 +150,63 @@ agent("Record 50 cube-pick episodes, then post-tune lerobot ACT on the dataset "
 TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 # -> lerobot_train --peft.method_type=LORA --peft.r=16 --policy.type=pi05
 ```
+
+#### Passing lerobot's own flags through `extra`
+
+Any key in `extra` that names a real field of lerobot's config tree is applied to
+it, dotted for a sub-config (`policy.*`, `dataset.*`, `wandb.*`). A key that
+matches no field is ignored with a warning, so a typo can never become an
+arbitrary flag.
+
+A value may be written either as the field's own Python type or as text. Text is
+read with lerobot's own draccus decoder - the same one behind `--key=value` - so
+one spec means one run whether the backend builds the config in-process or shells
+out:
+
+```python
+# these two are the same request
+extra={"policy.freeze_vision_encoder": False}
+extra={"policy.freeze_vision_encoder": "false"}
+```
+
+For a boolean field that decoder accepts `false`/`no`/`off` and
+`true`/`yes`/`on` in any case. `0` and `1` are integers to it, not booleans, and
+are refused - as they are on the command line. Text that does not decode to the
+field's declared type is refused naming the field and its type, rather than
+stored as-is: a stored string is truthy, so `"false"` would otherwise read as
+"true" and silently invert the flag.
+
+`None` clears an optional field, and the shelled-out command renders it as the
+YAML null literal so it decodes back to `None` rather than to the *text*
+`"None"`. That is how you ask a policy not to load a pretrained asset - ACT, for
+instance, defaults its resnet18 backbone to ImageNet weights, which is a
+download the from-scratch path does not need:
+
+```python
+extra={"policy_type": "act", "policy.pretrained_backbone_weights": None}
+```
+
+Some policies freeze most of themselves by default, which `method="full"` does
+not override - it selects strands' tuning strategy, not lerobot's per-policy
+defaults. SmolVLA, for instance, ships `freeze_vision_encoder=True` and
+`train_expert_only=True`, so full-model finetuning means asking for both:
+
+```python
+TrainSpec(
+    dataset_repo_id="org/tictactoe",
+    base_model="lerobot/smolvla_base",
+    output_dir="/tmp/ft_out",
+    steps=20000,
+    method="full",
+    extra={"policy_type": "smolvla",
+           "policy.freeze_vision_encoder": False,
+           "policy.train_expert_only": False},
+)
+```
+
+Check what a policy freezes by default before assuming `method="full"` trains
+all of it: `dataclasses.fields()` on its lerobot config class lists every knob
+and its default.
 
 #### RA-BC sample weighting (reward-aligned behavior cloning)
 
@@ -283,6 +360,38 @@ computes them by default), so they train `molmoact2` / `pi05` with no manual
 stats surgery. The check is conservative: a Hub dataset with no local cache is
 left unflagged (its quantiles are verified by lerobot when the shards load).
 
+#### Dataset format version (`codebase_version`)
+
+Every LeRobotDataset declares the format version it was written in as
+`codebase_version` in `meta/info.json`. lerobot compares it against its own
+`CODEBASE_VERSION` and refuses a dataset whose MAJOR is older - an older *minor*
+loads with a warning. Only a `v2.1` root gets a message naming the dataset and
+the converter; for any other older major lerobot raises
+`NotImplementedError: Contact the maintainer on [Discord](...)` from inside the
+exception constructor, naming neither the dataset nor the version.
+
+The version sits in the same `meta/info.json` the trainer already reads for the
+episode count, so `validate()` decides this offline and returns an actionable
+problem instead:
+
+```
+dataset_root '/data/old_dataset' declares codebase_version 'v2.1' in
+meta/info.json, which lerobot 0.6.2 cannot read (it loads 'v3.0' and refuses an
+older major). Convert it with lerobot's own converter: python -m
+lerobot.scripts.convert_dataset_v21_to_v30 --repo-id=<your-dataset-repo-id>
+```
+
+lerobot ships exactly one conversion (`v2.1` -> `v3.0`), so a root older than
+`v2.1` is told so plainly rather than handed a command that would fail. Datasets
+recorded by `Robot.start_recording()` / `DatasetRecorder` are written in the
+installed lerobot's own format, so they pass cleanly.
+
+Like the quantile-stats check, this one is conservative: it flags only a
+definite mismatch. A Hub dataset with no local cache is left unflagged -
+`validate()` does not reach the network, so Hub-side metadata (the format
+version, and the git tag lerobot resolves the revision from) is verified by
+lerobot when the dataset loads.
+
 #### Streaming a large Hub dataset (no full download)
 
 Real datasets (BitRobot / HIW-500, ~50-500 GB) do not fit on a single edge node.
@@ -303,9 +412,26 @@ TrainSpec(
 
 `dataset_root` is optional here - if given it is used as a local cache root.
 `streaming=True` also works with a local `dataset_root` (streams from disk with
-bounded RAM). Held-out `val_episodes` splitting needs a local `meta/info.json`
-to count episodes, so it is a no-op when streaming a Hub dataset with no local
-cache (the full Hub dataset is used).
+bounded RAM).
+
+Held-out `val_episodes` splitting needs a local `meta/info.json` to count
+episodes, because lerobot's split is a FRACTION and the count is what turns an
+episode number into one. `validate()` therefore refuses `val_episodes` whenever
+that count is unreadable - a Hub source with no `dataset_root`, or a
+`dataset_root` cache directory nothing has been downloaded into yet - rather
+than launch a run that trains on every episode and logs no validation loss. The
+refusal names the two ways to get the split: point `dataset_root` at a populated
+local copy of the dataset, or pass lerobot's own knobs directly with
+`extra={"dataset.eval_split": 0.1, "eval_steps": 1000}`.
+
+`streaming` and `val_episodes` cannot both be honored, so `validate()` refuses
+the pair. A non-zero `eval_split` routes lerobot into `make_train_eval_datasets`,
+which rebuilds BOTH splits as map-style `LeRobotDataset` objects without
+consulting `dataset.streaming` - the streaming dataset it opened first is
+discarded. The run therefore materializes the whole dataset, which is exactly
+what `streaming` exists to avoid, and nothing reports it: an annulled stream is
+indistinguishable from `streaming=False`. Set `streaming=False` to keep the
+validation split, or `val_episodes=None` to keep the stream.
 
 ### GR00T (`groot`)
 
@@ -332,18 +458,22 @@ TrainSpec(..., num_gpus=8,
 as GPU.** LeRobot's `train()` calls
 `require_package("accelerate", extra="training")` *before* it branches on
 device, so "no GPU" does not mean "no extra" - and nothing on this path pulls
-`accelerate` in: the `[lerobot]` extra is exactly `lerobot[feetech,dataset]`, and
-the only `strands-robots` extra that declares `accelerate` is
-`cosmos3-diffusers`, a different provider.
+`accelerate` in: the `[lerobot]` extra is exactly `lerobot[feetech,dataset]`. The
+`strands-robots` extras that declare `accelerate` belong to other providers
+(`kimodo`, `cosmos3-diffusers`), so an install only has it by accident - `[all]`
+does, because it pulls `[kimodo]`; `[lerobot]` alone does not.
 
 ```bash
 pip install "lerobot[training]"
 ```
 
-`train()` reports the missing package in its `TrainResult` rather than raising,
-so check `result.status` and surface `result.message` - it carries LeRobot's own
-install remedy. An unchecked call hands whatever consumes `checkpoint_dir` a
-`None` instead.
+`validate()` reports an absent `accelerate` - and an absent `peft` when
+`method="lora"` - as a preflight problem, so `train()` fails closed on it and
+leaves `output_dir` untouched rather than clearing it on the way to a run that
+cannot start. Either way the cause arrives in the `TrainResult` rather than as a
+raise, so check `result.status` and surface `result.message` - it names the
+package and the `lerobot[...]` extra that supplies it. An unchecked call hands
+whatever consumes `checkpoint_dir` a `None` instead.
 
 The base `strands-robots[lerobot]` extra covers **recording, streaming, and
 loading a trained checkpoint**, and with `lerobot[training]` it covers **ACT /
@@ -354,10 +484,10 @@ on an L40S GPU:
 | Provider / policy | Install | Notes |
 |---|---|---|
 | `lerobot_local` + ACT / diffusion | `pip install 'strands-robots[lerobot]' 'lerobot[training]'` | `[lerobot]` supplies torch + torchcodec + datasets; it does **not** supply `accelerate` |
-| `lerobot_local` + `smolvla` | `pip install 'strands-robots[lerobot]' 'lerobot[training]' 'lerobot[smolvla]'` | lerobot 0.6's `[smolvla]` extra layers `transformers>=5.4.0,<5.6.0` + num2words on top. Do **not** pin `transformers==5.3.0` - it conflicts with lerobot 0.6's transformers floor. |
+| `lerobot_local` + `smolvla` | `pip install 'strands-robots[smolvla]' 'lerobot[training]'` | `[smolvla]` layers lerobot's own `[smolvla]` extra (`transformers>=5.4.0,<5.6.0` + num2words) on top of `[lerobot]`. Do **not** pin `transformers==5.3.0` - it conflicts with lerobot 0.6's transformers floor. |
 | `lerobot_local` + `pi0` / `pi05` | `pip install 'strands-robots[lerobot]' 'lerobot[training]' 'lerobot[pi]'` | lerobot 0.6's `[pi]` extra (same `transformers>=5.4.0,<5.6.0` range + scipy) |
-| `groot` | Isaac-GR00T checkout + its own venv (`omegaconf`, `tyro`, …); point `extra["groot_root"]` / `GR00T_ROOT` at it | launched as a subprocess, so it uses GR00T's interpreter, not ours |
-| `cosmos3` | cosmos-framework checkout (`uv sync --group=cu130-train`); point `extra["cosmos_root"]` / `COSMOS_ROOT` at it | torchrun-driven; same subprocess-interpreter rule |
+| `groot` | Isaac-GR00T checkout, installed with `pip install -e` into the **same** environment as `strands_robots` (it pulls `omegaconf`, `tyro`, …); point `extra["groot_root"]` / `GR00T_ROOT` at the checkout | `gr00t` is imported in the calling interpreter, so it has to be importable there; `GR00T_ROOT` resolves relative configs, not the interpreter |
+| `cosmos3` | cosmos-framework checkout (`uv sync --group=cu130-train`), installed into the **same** environment as `strands_robots`; point `extra["cosmos_root"]` / `COSMOS_ROOT` at the checkout | `cosmos_framework` is imported in the calling interpreter; multi-GPU goes through torch's programmatic `elastic_launch`, not a `torchrun` binary |
 
 > **torchcodec / torch ABI:** the lerobot training dataloader decodes video via
 > `torchcodec`, whose compiled `.so` must match the **exact** installed torch
@@ -367,10 +497,15 @@ on an L40S GPU:
 > training fails with a generic non-zero exit. Pin `torch` + `torchcodec`
 > together (verified-good combo: `torch==2.10.0+cu128` + `torchcodec==0.10.0`).
 
-> **Subprocess interpreter:** `LerobotTrainer` / `Gr00tTrainer` / `Cosmos3Trainer`
-> accept a `python_executable=` argument (defaults to `sys.executable`). Set it
-> to a venv that has the provider's deps if your agent process runs in a
-> different environment — the training pipeline runs in that interpreter.
+> **One interpreter:** `LerobotTrainer` / `Gr00tTrainer` / `Cosmos3Trainer` call their
+> backend as a library in the **same** interpreter that imports `strands_robots`, so
+> there is no second interpreter to point them at. There is no `python_executable=`
+> argument either, and because each constructor absorbs unknown keywords, passing one
+> is silently a no-op rather than an error. Install the provider's deps into the
+> environment your agent process runs in; otherwise `train()` reports
+> `<package> is not importable from this interpreter` in `TrainResult.message`.
+> `GR00T_ROOT` / `COSMOS_ROOT` (and `extra["groot_root"]` / `extra["cosmos_root"]`)
+> resolve the checkout so relative configs load - they are not interpreter paths.
 
 ## See also
 

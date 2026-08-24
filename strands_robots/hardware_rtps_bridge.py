@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.ros_telemetry import RosTelemetryBase
 from strands_robots.utils import (
+    boolean_flag_error,
     dds_domain_id_error,
     partial_construction_repr,
     positive_finite_number_error,
@@ -55,6 +56,8 @@ if TYPE_CHECKING:
     import numpy as np
 
     from strands_robots.hardware_robot import Robot
+
+from strands_robots.mesh.pacing import Ticker
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +115,9 @@ class HardwareRtpsBridge(RosTelemetryBase):
             Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
             discovery ports from it, and 233 lands past the end of the port space.
         enable_commands: When True (default) and a ``robot`` is bound, subscribe
-            to ``/<robot>/joint_command`` and drive the arm.
+            to ``/<robot>/joint_command`` and drive the arm. Only a boolean names
+            a posture: the value is checked, not read by truthiness, so
+            ``"false"`` cannot select the surface it asks to close.
         command_robot_name: Topic namespace for the command topic; defaults to
             the bound robot's name (the namespace we publish ``joint_states``
             under).
@@ -123,7 +128,14 @@ class HardwareRtpsBridge(RosTelemetryBase):
             into a busy-spin with no bound - and ``inf`` raises
             ``OverflowError`` out of it, killing the loop while the bridge
             reports a successful construction.
-        joint_limits: Optional ``{motor: (min, max)}`` clamp ranges. When set,
+        joint_limits: Optional ``{"<motor>.pos": (min, max)}`` clamp ranges,
+            keyed by the joint name as it arrives in ``joint_command`` - the
+            same ``<motor>.pos`` names this bridge publishes in
+            ``joint_states``, so a controller can echo them straight back. A
+            key that names no commanded joint constrains nothing. Each bound
+            must be a finite number - a non-finite one declares a range that
+            admits nothing, so the bridge refuses it at construction rather than
+            dropping every inbound command for that joint mid-run. When set,
             an inbound ``joint_command`` whose ANY commanded joint falls outside
             its declared range is rejected whole (no partial application), so a
             single out-of-range joint can never drive part of the arm.
@@ -138,10 +150,11 @@ class HardwareRtpsBridge(RosTelemetryBase):
 
     Raises:
         ImportError: If ``cyclonedds`` (the ``[ros2]`` extra) is not installed.
-        ValueError: If ``domain_id`` is outside ``[0, 232]`` or ``poll_period``
-            is not a positive finite number (both checked before the
-            ``cyclonedds`` probe, so the same caller mistake reports
-            identically on an install without the extra), if ``joint_limits`` /
+        ValueError: If ``enable_commands`` is not a boolean, ``domain_id`` is
+            outside ``[0, 232]`` or ``poll_period`` is not a positive finite
+            number (all three checked before the ``cyclonedds`` probe, so the
+            same caller mistake reports identically on an install without the
+            extra), if ``joint_limits`` /
             ``dds_security_config`` is malformed, or if commands are enabled
             with neither a security config nor the explicit insecure opt-out.
     """
@@ -167,6 +180,18 @@ class HardwareRtpsBridge(RosTelemetryBase):
         # the only pacing ``_poll_loop`` has, and a value that cannot pace a
         # loop is not made usable by having a transport to poll.
         if error := positive_finite_number_error(poll_period, "poll_period", type(self).__name__):
+            raise ValueError(error)
+
+        # ``enable_commands`` selects whether this bridge exposes an inbound,
+        # arm-driving surface, so it is checked rather than read by truthiness.
+        # Every non-empty string is truthy, so ``"false"`` would open the very
+        # surface the caller asked to close - and, because the DDS Security gate
+        # below branches on the same flag, it would also refuse a read-only
+        # request with a message about "an enabled command bridge" and advise
+        # the insecure opt-out that opens it. Answered alongside the two guards
+        # above, so the refusal lands before any DDS state exists and reports
+        # identically with and without the [ros2] extra.
+        if error := boolean_flag_error(enable_commands, "enable_commands", type(self).__name__):
             raise ValueError(error)
 
         # cyclonedds is the only dependency - no rclpy, no sourced ROS 2 distro.
@@ -342,14 +367,24 @@ class HardwareRtpsBridge(RosTelemetryBase):
 
         cyclonedds has no rclpy-style executor; we ``take()`` available samples
         each tick. ``take`` (not ``read``) so each command is delivered once.
+
+        Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than
+        ``self._stop.wait(period)``. That wait is a delay, so the time spent
+        delivering a batch of commands was added to the poll period instead of
+        being subtracted from it -- at the 0.02s default an inbound actuation
+        request sat unread in the reader for longer than the 50Hz the period
+        asks for. Nothing here reported that: the loop keeps no rate counter,
+        and ``take`` returning a batch makes a late poll look like a busy one.
         """
-        while not self._stop.is_set():
-            try:
-                for sample in self._command_reader.take(N=10):
-                    self._on_command(sample)
-            except Exception:
-                logger.debug("HardwareRtpsBridge: command poll raised", exc_info=True)
-            self._stop.wait(self._poll_period)
+        with Ticker(self._poll_period, self._stop) as ticker:
+            while not self._stop.is_set():
+                try:
+                    for sample in self._command_reader.take(N=10):
+                        self._on_command(sample)
+                except Exception:
+                    logger.debug("HardwareRtpsBridge: command poll raised", exc_info=True)
+                if ticker.wait():
+                    break
 
     def _start_poll(self) -> None:
         if self._poll_thread is not None and self._poll_thread.is_alive():

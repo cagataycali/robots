@@ -19,6 +19,11 @@ from strands_robots.simulation.mujoco.backend import (
     capture_stderr_fd,
     mj_name_to_id,
 )
+from strands_robots.simulation.mujoco.scene_ops import (
+    actuator_target_body_ids,
+    robot_owned_actuator_ids,
+    tendon_joint_ids,
+)
 from strands_robots.simulation.safe_output import (
     atomic_write_bytes,
     env_flag,
@@ -38,6 +43,45 @@ logger = logging.getLogger(__name__)
 # strands_robots.simulation.safe_output; the render-specific sandbox + size cap
 # (STRANDS_ROBOTS_RENDER_* env vars) are bound here.
 _DEFAULT_MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def no_gl_context_message(*, depth: bool = False, platform: str | None = None) -> str:
+    """The one sentence every renderer consumer says when there is no GL context.
+
+    The advice was a Linux package install on every host. macOS has neither EGL
+    nor OSMesa - MuJoCo renders through CGL there - so on a Mac the reader was
+    sent to install a package that does not exist for their machine while the
+    real cause kept its cover: a CGL context needs a window-server session,
+    which a process started by launchd, cron or a bare ssh login does not have.
+    The Linux advice is kept, because on Linux it is exactly right.
+
+    Args:
+        depth: ``True`` when the caller is the depth renderer, so the sentence
+            names depth rendering rather than rendering.
+        platform: Platform to answer for, spelled as ``sys.platform`` spells it.
+            Defaults to the running platform; a caller passes it explicitly to
+            answer for a host it is not running on.
+
+    Returns:
+        One stripped sentence naming the failure and a fix that exists on
+        ``platform``.
+    """
+    import sys as _sys
+
+    system = platform or _sys.platform
+    head = (
+        "Depth rendering unavailable (no OpenGL context). " if depth else "Rendering unavailable (no OpenGL context). "
+    )
+    if system == "darwin":
+        return head + (
+            "macOS has no EGL or OSMesa - MuJoCo renders through CGL - so installing "
+            "Linux GL packages cannot help here. A CGL context needs a window-server "
+            "session, which a process started by launchd, cron or a bare ssh login does "
+            "not have; run it from a terminal on the logged-in desktop. If rendering "
+            "worked EARLIER in this same process, the context was lost rather than "
+            "missing, and a fresh process is the fix."
+        )
+    return head + ("Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev")
 
 
 def _is_pixel_count(value: Any) -> bool:
@@ -68,13 +112,20 @@ def _max_render_bytes() -> int:
     return val
 
 
+# Environment variable that re-permits absolute ``render(output_path=...)``
+# destinations outside the render sandbox. One owner for the spelling, so the
+# value read and the name quoted in a refusal cannot drift apart.
+_RENDER_ALLOW_ABS_ENV = "STRANDS_ROBOTS_RENDER_ALLOW_ABS"
+
+
 def _validate_render_output_path(output_path: str) -> Path:
     """Validate an LLM-supplied render path, confined to the render sandbox.
 
     Thin render-specific binding over
     :func:`strands_robots.simulation.safe_output.validate_output_path`: absolute
     paths outside the sandbox are rejected unless ``STRANDS_ROBOTS_RENDER_ALLOW_ABS``
-    opts in.
+    opts in. That variable's name is passed down as well as read, so a
+    confinement refusal quotes the spelling the caller must set.
 
     Raises:
         ValueError: If the path is unsafe (the caller maps this to a tool error).
@@ -82,7 +133,8 @@ def _validate_render_output_path(output_path: str) -> Path:
     return validate_output_path(
         output_path,
         sandbox_root=_render_sandbox_root(),
-        allow_abs=env_flag("STRANDS_ROBOTS_RENDER_ALLOW_ABS"),
+        allow_abs=env_flag(_RENDER_ALLOW_ABS_ENV),
+        allow_abs_env=_RENDER_ALLOW_ABS_ENV,
     )
 
 
@@ -335,16 +387,73 @@ class RenderingMixin:
             return None
         return state.get("viz_option")
 
+    def _ancestor_free_joint(self, model: Any, body: int) -> int:
+        """Free joint on ``body`` or on one of its ancestors, else ``-1``.
+
+        The shared half of the base walk: a floating base is a free joint at or
+        above the part being considered, so every seed a caller can offer is
+        resolved the same way.
+        """
+        mj = _ensure_mujoco()
+        while body > 0:
+            for j in range(model.njnt):
+                if int(model.jnt_bodyid[j]) == body and model.jnt_type[j] == mj.mjtJoint.mjJNT_FREE:
+                    return j
+            body = int(model.body_parentid[body])
+        return -1
+
+    def _body_is_namespaced(self, model: Any, body: int, pfx: str) -> bool:
+        """Whether ``body`` is part of the robot whose namespace is ``pfx``.
+
+        Membership is read from the compiled body's NAME, because a name is the
+        only part of a robot's identity that survives a recompile. Its resolved
+        ids do not: ``replace_scene_mjcf`` compiles caller-supplied MJCF without
+        rewriting the registry, so a stored joint or body index then addresses
+        whatever that index means in the new model -- possibly an entirely
+        different machine's part.
+        """
+        mj = _ensure_mujoco()
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(body)) or ""
+        return name.startswith(pfx)
+
     def _robot_base_free_joint(self, model: Any, robot: Any, pfx: str) -> int:
         """Return the id of the robot's floating-base free joint, or ``-1``.
 
         Fallback for a floating base that is NOT a named entry in
         ``robot.joint_names`` (e.g. a mobile base whose ``<freejoint>`` is
-        unnamed). Resolves the robot's first actuated joint, then walks up the
-        body tree and returns the free joint attached to an ancestor body. This
-        matches only the robot's OWN base: a sibling task object (a free-jointed
-        cube) is never on the ancestor chain of an actuated joint, and a
-        fixed-base arm has no ancestor free joint (returns ``-1``).
+        unnamed). Walks up the body tree from a seed part of the machine and
+        returns the free joint attached to it or an ancestor.
+
+        Two seeds are tried, because a robot need not have a joint to seed
+        from. First the robot's first resolvable declared joint, which covers a
+        mobile base or humanoid. Then the bodies the robot's own actuators act
+        on, via :func:`~strands_robots.simulation.mujoco.scene_ops.actuator_target_body_ids`.
+        The second seed is what an aerial robot needs: its rotors are forces
+        applied at sites on the airframe, so it declares no joint at all besides
+        the unnamed floating base, and a walk that can only start from a declared
+        joint has nothing to start from -- precisely the case this fallback
+        exists for. Its base then reads as absent, and every surface derived from
+        it goes quiet rather than wrong: ``get_observation`` returns no state at
+        all for a robot that is in the scene and moving, and ``start_recording``
+        declares a dataset with no ``observation.state`` column while still
+        recording the actions, so the episode trains nothing and reports success.
+
+        Both seeds keep the "only the robot's OWN base" guarantee, and for the
+        same reason: a sibling task object -- a free-jointed cube, including one
+        shipped inside the robot's own MJCF under its namespace, which is how
+        every Menagerie grasping scene is authored -- carries neither a declared
+        joint of the robot nor any actuator of it, so it is on no seed's ancestor
+        chain. Ownership of the actuators is resolved by
+        :func:`~strands_robots.simulation.mujoco.scene_ops.robot_owned_actuator_ids`
+        rather than re-derived here, and the body it lands on is then checked
+        against the robot's namespace by :meth:`_body_is_namespaced`. That second
+        check is not redundant: one of the two ownership rules matches an actuator
+        by the joint id it drives, and a stored id does not survive
+        ``replace_scene_mjcf`` -- after a replace it addresses whatever that index
+        means in the newly compiled model, so an unrelated machine's actuator can
+        be claimed and its base reported as this robot's. A name cannot be
+        borrowed that way. A fixed-base arm has no ancestor free joint from either
+        seed and returns ``-1``.
         """
         mj = _ensure_mujoco()
         for jnt_name in robot.joint_names:
@@ -354,13 +463,20 @@ class RenderingMixin:
                 jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id < 0:
                 continue
-            body = int(model.jnt_bodyid[jnt_id])
-            while body > 0:
-                for j in range(model.njnt):
-                    if int(model.jnt_bodyid[j]) == body and model.jnt_type[j] == mj.mjtJoint.mjJNT_FREE:
-                        return j
-                body = int(model.body_parentid[body])
+            found = self._ancestor_free_joint(model, int(model.jnt_bodyid[jnt_id]))
+            if found >= 0:
+                return found
             break
+
+        if not pfx:
+            return -1
+        for act_id in robot_owned_actuator_ids(model, robot, mj):
+            for body in sorted(actuator_target_body_ids(model, act_id, mj)):
+                if not self._body_is_namespaced(model, body, pfx):
+                    continue
+                found = self._ancestor_free_joint(model, body)
+                if found >= 0 and self._body_is_namespaced(model, int(model.jnt_bodyid[found]), pfx):
+                    return found
         return -1
 
     def _robot_free_base_joint_id(self, model: Any, robot: Any) -> int:
@@ -370,7 +486,9 @@ class RenderingMixin:
         recording: first scans ``robot.joint_names`` for a NAMED free joint (a
         humanoid's ``floating_base_joint``), then falls back to the
         kinematic-tree walk (:meth:`_robot_base_free_joint`) for an UNNAMED
-        ``<freejoint>`` (a mobile base like LeKiwi). A fixed-base arm has
+        ``<freejoint>`` -- seeded from a declared joint (a mobile base like
+        LeKiwi) or, for a robot that declares none, from the bodies its own
+        actuators act on (an aerial robot's rotor sites). A fixed-base arm has
         neither and returns ``-1``. Mirrors the free-joint detection inlined in
         :meth:`_get_sim_observation`.
         """
@@ -394,7 +512,13 @@ class RenderingMixin:
         (e.g. ``arm0/shoulder_pan`` in MuJoCo to allow multiple same-config
         robots), we look up the prefixed MuJoCo name but return the short
         name in the observation dict so the policy sees a stable, config-level
-        schema regardless of how many robots are in the scene.
+        schema regardless of how many robots are in the scene. That holds for
+        the robot's CAMERAS as well as its joints: ``add_robot`` registers them
+        under their short name (``wrist``) while the compiled model holds them
+        namespaced (``arm0/wrist``), and the registered ``SimCamera`` carries
+        the namespaced name the render lookup needs. A camera key that names
+        nothing in the compiled model is omitted rather than answered with the
+        free camera, per :meth:`SimEngine.get_observation`'s schema.
         """
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
@@ -477,8 +601,35 @@ class RenderingMixin:
         for cname in cameras_to_render:
             if not cname:
                 continue
-            cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
             cam_info = registry_entry(self._world.cameras, cname)
+            # Resolve the MODEL camera this observation key names. The key alone
+            # is not always that name: ``add_robot`` registers a robot's own
+            # MJCF cameras under their SHORT name - the stable, config-level
+            # schema this method documents for joints as well - while the
+            # compiled model holds them namespaced (``arm0/wrist``). The
+            # registered entry carries that namespaced name, so it answers for
+            # the keys the bare lookup cannot.
+            cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
+            if cam_id < 0:
+                cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, getattr(cam_info, "name", None))
+            if cam_id < 0:
+                # Nothing in the compiled model answers for this key, so there
+                # is no view to report under it. Rendering the FREE camera here
+                # instead published the scene overview under a key that names a
+                # specific camera: every consumer of this schema - a policy
+                # reading ``observation.images.<name>``, a recorded LeRobot
+                # dataset column, the agent-tool observation - was handed the
+                # wrong view under a success result, with no signal that the
+                # camera it asked for had not been rendered. An absent key is
+                # the honest answer and the one the other backends give (the
+                # Newton engine omits a camera whose render yields no frame),
+                # and it leaves the joint state intact for callers that only
+                # need proprioception.
+                logger.debug(
+                    "Camera %r names no camera in the compiled model; omitting it from the observation",
+                    cname,
+                )
+                continue
             h = cam_info.height if cam_info else self.default_height
             w = cam_info.width if cam_info else self.default_width
             try:
@@ -486,10 +637,7 @@ class RenderingMixin:
                 if renderer is None:
                     continue
                 viz_option = self._get_viz_option()
-                if cam_id >= 0:
-                    renderer.update_scene(data, camera=cam_id, scene_option=viz_option)
-                else:
-                    renderer.update_scene(data, scene_option=viz_option)
+                renderer.update_scene(data, camera=cam_id, scene_option=viz_option)
                 obs[cname] = renderer.render().copy()
             except (RuntimeError, ValueError) as e:
                 # Individual camera failure shouldn't stop joint state collection.
@@ -832,7 +980,9 @@ class RenderingMixin:
 
         Matches direct joint-transmission actuators first, then falls back to
         tendon-transmission actuators whose tendon wraps ``jnt_id`` (the
-        Panda/Franka gripper case from issue #318).
+        Panda/Franka gripper case from issue #318). The direct pass keeps
+        priority: a joint wired both ways is commanded through its own ctrl
+        rather than through a tendon it shares with its neighbours.
         """
         # 1. Direct joint transmission (JOINT / JOINTINPARENT).
         joint_trn = {int(mj.mjtTrn.mjTRN_JOINT)}
@@ -842,25 +992,17 @@ class RenderingMixin:
             if int(model.actuator_trntype[ai]) in joint_trn and model.actuator_trnid[ai, 0] == jnt_id:
                 return ai
 
-        # 2. Tendon transmission: find tendons whose JOINT wrap entries
-        #    include jnt_id, then the actuator driving that tendon.
+        # 2. Tendon transmission: a tendon that wraps jnt_id drives it, so the
+        #    actuator driving that tendon is the one to write. The wrap walk is
+        #    the shared rule in scene_ops, so this direction and the
+        #    "which joints does this actuator drive" direction cannot disagree
+        #    about what a tendon reaches.
         tendon_trn = int(mj.mjtTrn.mjTRN_TENDON)
-        wrap_joint = int(mj.mjtWrap.mjWRAP_JOINT)
-        tendons_with_joint: set[int] = set()
-        for t in range(int(model.ntendon)):
-            adr = int(model.tendon_adr[t])
-            num = int(model.tendon_num[t])
-            for w in range(adr, adr + num):
-                if int(model.wrap_type[w]) == wrap_joint and int(model.wrap_objid[w]) == jnt_id:
-                    tendons_with_joint.add(t)
-                    break
-        if tendons_with_joint:
-            for ai in range(model.nu):
-                if (
-                    int(model.actuator_trntype[ai]) == tendon_trn
-                    and int(model.actuator_trnid[ai, 0]) in tendons_with_joint
-                ):
-                    return ai
+        for ai in range(model.nu):
+            if int(model.actuator_trntype[ai]) != tendon_trn:
+                continue
+            if jnt_id in tendon_joint_ids(model, int(model.actuator_trnid[ai, 0]), mj):
+                return ai
         return -1
 
     @staticmethod
@@ -927,7 +1069,10 @@ class RenderingMixin:
         ``~/.strands_robots/renders``); paths with shell metacharacters,
         backslash separators, ``..`` escapes, or a symlinked target, and PNGs
         larger than ``STRANDS_ROBOTS_RENDER_MAX_BYTES`` (default 50 MB) are
-        rejected with ``status=error``. Set ``STRANDS_ROBOTS_RENDER_ALLOW_ABS=1``
+        rejected with ``status=error``. A bare filename (``"frame.png"``) is
+        written INTO the sandbox rather than resolved against the process CWD,
+        so it needs no directory to succeed. Set
+        ``STRANDS_ROBOTS_RENDER_ALLOW_ABS=1``
         to permit absolute paths outside the sandbox. The write is atomic
         (temp file + ``os.replace``), so a crash mid-write cannot corrupt an
         existing file at the destination.
@@ -965,15 +1110,7 @@ class RenderingMixin:
             if renderer is None:
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                "Rendering unavailable (no OpenGL context). "
-                                "Install EGL or OSMesa for offscreen rendering: "
-                                "apt-get install libosmesa6-dev"
-                            )
-                        }
-                    ],
+                    "content": [{"text": no_gl_context_message()}],
                 }
             # strict camera validation - no silent fallback to default.
             # Special 'default' / 'free' tokens route to the free camera; any
@@ -1117,35 +1254,48 @@ class RenderingMixin:
             if renderer is None:
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                "Depth rendering unavailable (no OpenGL context). "
-                                "Install EGL or OSMesa for offscreen rendering."
-                            )
-                        }
-                    ],
+                    "content": [{"text": no_gl_context_message(depth=True)}],
                 }
-            if cam_id >= 0:
-                renderer.update_scene(self._world._data, camera=cam_id, scene_option=self._get_viz_option())
-            else:
-                renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
-            # MuJoCo prints a one-time ARB_clip_control warning on macOS
-            # when depth precision is reduced. Capture stderr on the first
-            # depth render so we can surface the warning in the response
-            # text (the LLM otherwise never hears about it).
+            # Reading mjData (update_scene copies xpos/xquat/xmat/geom poses)
+            # races a concurrent mj_step from a policy worker or the step()
+            # loop, producing a torn depth map and risking a native crash -
+            # the same hazard render() and get_frame() serialize against, for
+            # the same reason: the blanket dispatch lock covers the tool
+            # surface only, so a caller reaching this method directly, or from
+            # its own thread, holds nothing. The .copy() inside the lock hands
+            # back an independent buffer so the sanitize + PNG encoding below
+            # run unlocked, and so a render on another thread cannot overwrite
+            # the renderer's buffer out from under them.
+            #
+            # MuJoCo prints a one-time ARB_clip_control warning on macOS when
+            # depth precision is reduced. Capture stderr on the first depth
+            # render so we can surface the warning in the response text (the
+            # LLM otherwise never hears about it). That capture wraps the
+            # render itself - the notice is a C-level write to fd 2, which
+            # Python's contextlib.redirect_stderr cannot see - so it stays
+            # inside the critical section with it.
+            first_depth_render = getattr(self, "_depth_warn_text", None) is None
+            captured = ""
+            with self._lock:
+                if cam_id >= 0:
+                    renderer.update_scene(self._world._data, camera=cam_id, scene_option=self._get_viz_option())
+                else:
+                    renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
+                if first_depth_render:
+                    with capture_stderr_fd() as _cap:
+                        renderer.enable_depth_rendering()
+                        depth = renderer.render().copy()
+                        renderer.disable_depth_rendering()
+                    captured = _cap[0]
+                else:
+                    renderer.enable_depth_rendering()
+                    depth = renderer.render().copy()
+                    renderer.disable_depth_rendering()
+
             clip_warn = getattr(self, "_depth_warn_text", None)
-            if clip_warn is None:
+            if first_depth_render:
                 import sys as _sys
 
-                # MuJoCo's ARB_clip_control notice is a C-level write to fd 2,
-                # so Python's contextlib.redirect_stderr (which only swaps the
-                # sys.stderr object) cannot see it. Capture the real fd.
-                with capture_stderr_fd() as _cap:
-                    renderer.enable_depth_rendering()
-                    depth = renderer.render()
-                    renderer.disable_depth_rendering()
-                captured = _cap[0]
                 # Forward captured stderr, but drop the ARB_clip_control line
                 # -- it's now surfaced in the response text below, so echoing
                 # it to the console too would be duplicate noise. Anything
@@ -1183,10 +1333,6 @@ class RenderingMixin:
                 else:
                     self._depth_warn_text = ""
                 clip_warn = self._depth_warn_text
-            else:
-                renderer.enable_depth_rendering()
-                depth = renderer.render()
-                renderer.disable_depth_rendering()
 
             # MuJoCo >= 3.0's ``Renderer.enable_depth_rendering()`` returns
             # METRIC depth in meters directly (distance from the camera to the
@@ -1299,10 +1445,7 @@ class RenderingMixin:
         with self._lock:
             renderer = self._get_renderer(w, h)
             if renderer is None:
-                raise RuntimeError(
-                    "Rendering unavailable (no OpenGL context). "
-                    "Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
-                )
+                raise RuntimeError(no_gl_context_message())
             if camera_name in FREE_CAMERA_TOKENS:
                 cam_id = -1
             else:
@@ -1344,11 +1487,11 @@ class RenderingMixin:
         so the pose maps across without correction. Intrinsics ``K``: a
         camera declared with an explicit physical sensor (MJCF
         ``sensorsize`` / ``focal`` / ``principal`` / ``resolution``) gets its
-        ``K`` from ``model.cam_intrinsic`` / ``cam_sensorsize`` /
-        ``cam_resolution`` - non-square pixels (``fx != fy``) and an
-        off-center principal point are honored, matching what MuJoCo actually
-        rasterizes (see :meth:`_explicit_intrinsics_K` for the calibrated
-        sign conventions). All other cameras fall back to the vertical FOV
+        ``K`` from the view frustum MuJoCo computes for that camera, so
+        non-square pixels (``fx != fy``) and an off-center principal point are
+        honored exactly as this MuJoCo build rasterizes them - including the
+        vertical principal-point convention, which MuJoCo 3.6.0 changed.
+        All other cameras fall back to the vertical FOV
         (``model.cam_fovy``, square pixels, principal point at the image
         center). Clip planes are
         ``model.vis.map.{znear,zfar} * model.stat.extent``.
@@ -1424,7 +1567,7 @@ class RenderingMixin:
             else:
                 R, t, fovy_deg = self._named_camera_pose(mj, model, self._world._data, camera_name)
                 cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
-                K_explicit = self._explicit_intrinsics_K(_np, model, cam_id, w, h)
+                K_explicit = self._explicit_intrinsics_K(mj, _np, model, self._world._data, cam_id, w, h)
 
         if K_explicit is not None:
             K = K_explicit
@@ -1438,7 +1581,9 @@ class RenderingMixin:
         return CameraParams(K=K, T_world_cam=T_world_cam, width=w, height=h, znear=znear, zfar=zfar)
 
     @staticmethod
-    def _explicit_intrinsics_K(np: Any, model: Any, cam_id: int, w: int, h: int) -> "np.ndarray | None":
+    def _explicit_intrinsics_K(
+        mj: Any, np: Any, model: Any, data: Any, cam_id: int, w: int, h: int
+    ) -> "np.ndarray | None":
         """``K`` for a camera declared with explicit MJCF intrinsics, else ``None``.
 
         MJCF cameras may declare a physical sensor (``sensorsize`` +
@@ -1446,62 +1591,78 @@ class RenderingMixin:
         ``resolution``). MuJoCo then rasterizes with that intrinsic model -
         ``fovy`` is ignored, pixels may be non-square (``fx != fy``), and the
         principal point moves off the image center - so deriving ``K`` from
-        ``fovy`` silently misplaces every unprojected point (~25 cm on the
-        review's repro camera). This helper builds ``K`` the way MuJoCo
-        actually draws.
+        ``fovy`` silently misplaces every unprojected point (~25 cm on a wide
+        off-centre camera).
 
-        Sign conventions were calibrated empirically against MuJoCo 3.8.1 by
-        least-squares fitting blob centroids of spheres at known camera-frame
-        positions over three sensor configurations (offset principal point,
-        non-square sensor, asymmetric focal): a positive MJCF ``principal``
-        offset shifts the principal point toward NEGATIVE ``u`` and ``v``::
+        ``K`` is read back from the view frustum MuJoCo computes for this
+        camera - ``mjv_updateCamera`` fills ``mjvScene.camera[0].frustum_*``,
+        the exact numbers ``mjr_render`` hands ``glFrustum`` - rather than
+        re-derived from ``cam_intrinsic``. The renderer maps that frustum onto
+        the full viewport, so at ``near = frustum_near`` and
+        ``halfwidth = frustum_width``::
 
-            fx = focal_x / (sensor_w / res_w)     fy = focal_y / (sensor_h / res_h)
-            cx = res_w/2 - principal_x / pixel_w  cy = res_h/2 - principal_y / pixel_h
+            fx = w * near / (2 * halfwidth)
+            fy = h * near / (frustum_top - frustum_bottom)
+            cx = w * (halfwidth - frustum_center) / (2 * halfwidth)
+            cy = h * frustum_top / (frustum_top - frustum_bottom)
 
-        (fitted (fx, fy, cx, cy) = (300, 300, 85, 80) for sensorsize
-        0.0064x0.0048, focal 0.006, principal (0.0015, 0.0008) at 320x240 -
-        exact to two decimals, and the residuals of the other two
-        configurations pin both signs.) The sensor fixes the view frustum;
-        rendering into a ``(w, h)`` viewport maps that same frustum onto the
-        full viewport, so ``K`` scales linearly per axis (verified: the blob
-        centroid at 640x480 lands at exactly 2x its 320x240 coordinates).
+        Reading the frustum is what keeps the principal point on the side of
+        the image center MuJoCo actually draws it: the vertical assignment
+        differs across the supported version range. MuJoCo 3.6.0 fixed swapped
+        vertical frustum bounds for a camera with a principal-point offset, so
+        a positive MJCF ``principal`` y-offset moves the principal point DOWN
+        the image on MuJoCo <= 3.5 and UP from 3.6 on. A closed form over
+        ``cam_intrinsic`` can only match one of the two, and on the other it
+        places ``cy`` exactly as far the wrong side of the image center - a
+        silent unprojection error of twice the offset (~26 cm of world-point
+        error at a 1 m stand-off for a 0.8 mm offset on a 4.8 mm sensor).
+
+        ``frustum_width`` is zero exactly when the camera declares no physical
+        sensor: MuJoCo then derives the horizontal extent from the viewport
+        aspect ratio, which is the ``fovy`` path.
 
         Args:
+            mj: the imported ``mujoco`` module.
             np: the imported numpy module (kept off this module's top level).
             model: compiled ``MjModel``.
+            data: the ``MjData`` whose camera pose the frustum is read at.
             cam_id: camera id in ``model``.
             w: requested image width in pixels.
             h: requested image height in pixels.
 
         Returns:
             ``(3, 3)`` float64 ``K`` at ``(w, h)``, or ``None`` when the
-            camera declares no physical sensor (``cam_sensorsize`` zero -
-            the ``fovy`` path applies).
+            camera declares no physical sensor (the ``fovy`` path applies).
+
+        Raises:
+            ValueError: the camera's frustum has a non-positive vertical
+                extent, so no pinhole ``K`` describes it.
         """
-        sensor_w = float(model.cam_sensorsize[cam_id][0])
-        sensor_h = float(model.cam_sensorsize[cam_id][1])
-        if sensor_w <= 0.0 or sensor_h <= 0.0:
+        cam = mj.MjvCamera()
+        cam.type = mj.mjtCamera.mjCAMERA_FIXED
+        cam.fixedcamid = cam_id
+        # mjv_updateCamera fills only the scene's GL cameras, so the scene needs
+        # no geometry buffers - a default (model-less) mjvScene is enough.
+        scene = mj.MjvScene()
+        mj.mjv_updateCamera(model, data, cam, scene)
+        gl_cam = scene.camera[0]
+        halfwidth = float(gl_cam.frustum_width)
+        if halfwidth <= 0.0:
             return None
-        res_w = float(model.cam_resolution[cam_id][0])
-        res_h = float(model.cam_resolution[cam_id][1])
-        if res_w <= 0.0 or res_h <= 0.0:
-            # sensorsize without resolution does not compile in MuJoCo; be
-            # defensive anyway rather than dividing by zero.
-            return None
-        focal_x, focal_y, pp_x, pp_y = (float(v) for v in model.cam_intrinsic[cam_id])
-        pixel_w = sensor_w / res_w
-        pixel_h = sensor_h / res_h
-        fx = focal_x / pixel_w
-        fy = focal_y / pixel_h
-        cx = res_w / 2.0 - pp_x / pixel_w
-        cy = res_h / 2.0 - pp_y / pixel_h
-        sx = float(w) / res_w
-        sy = float(h) / res_h
-        return np.array(
-            [[fx * sx, 0.0, cx * sx], [0.0, fy * sy, cy * sy], [0.0, 0.0, 1.0]],
-            dtype=np.float64,
-        )
+        top = float(gl_cam.frustum_top)
+        bottom = float(gl_cam.frustum_bottom)
+        near = float(gl_cam.frustum_near)
+        vertical = top - bottom
+        if vertical <= 0.0:
+            raise ValueError(
+                f"Camera id {cam_id} has a non-positive vertical frustum extent "
+                f"(top {top}, bottom {bottom}), which no pinhole K describes."
+            )
+        fx = float(w) * near / (2.0 * halfwidth)
+        fy = float(h) * near / vertical
+        cx = float(w) * (halfwidth - float(gl_cam.frustum_center)) / (2.0 * halfwidth)
+        cy = float(h) * top / vertical
+        return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
 
     def _named_camera_pose(
         self, mj: Any, model: Any, data: Any, camera_name: str | None
@@ -1943,9 +2104,15 @@ class RenderingMixin:
             if name is not None:
                 sanitize_name_component(name, label="name")
             if output_dir is not None:
-                _sb_root, _allow_abs = video_sandbox_args()
+                _sb_root, _allow_abs, _allow_abs_env = video_sandbox_args()
                 out_dir = str(
-                    validate_output_path(output_dir, sandbox_root=_sb_root, allow_abs=_allow_abs, label="output_dir")
+                    validate_output_path(
+                        output_dir,
+                        sandbox_root=_sb_root,
+                        allow_abs=_allow_abs,
+                        label="output_dir",
+                        allow_abs_env=_allow_abs_env,
+                    )
                 )
             else:
                 out_dir = _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings")
@@ -1973,7 +2140,10 @@ class RenderingMixin:
             "paths": paths,
             "errors": dict.fromkeys(names, 0),
             "output_dir": out_dir,
-            "started_at": _time.time(),
+            # A ``time.monotonic()`` reading: the only thing derived from
+            # this base is how long the recording has been running, so it
+            # is a duration base and carries its clock in its name.
+            "started_mono": _time.monotonic(),
             "thread": None,
             "max_frames": max_frames_per_camera,
             "ready": _threading.Event(),
@@ -2024,6 +2194,13 @@ class RenderingMixin:
             _max_warmup_attempts = 30
             _cold_std_threshold = 5.0
             _warm: dict[str, bool] = dict.fromkeys(names, False)
+            # A render can come back as a structured ERROR RESULT rather than a
+            # frame ("Rendering unavailable (no OpenGL context)"). That is not a
+            # cold context that will settle with more attempts, and because it is
+            # a returned dict and not a raised exception, the ``except`` branch
+            # below never sees it: without this capture the reason is lost at
+            # every log level and the operator is told the camera is merely cold.
+            _refusals: dict[str, str] = {}
             for _attempt in range(_max_warmup_attempts):
                 if all(_warm.values()):
                     break
@@ -2037,6 +2214,14 @@ class RenderingMixin:
                         logger.debug("recorder thread warmup render failed for %s: %s", cam, e)
                         continue
                     if arr is None:
+                        if isinstance(r, dict) and r.get("status") == "error":
+                            # The narrowest superset the read can raise: a
+                            # missing key, an empty content list, and a
+                            # non-subscriptable content or block.
+                            try:
+                                _refusals[cam] = str(r["content"][0]["text"])
+                            except (IndexError, KeyError, TypeError):
+                                _refusals[cam] = "render returned an error result with no text"
                         continue
                     # arr.std(axis=0) is per-column std-dev; .mean()
                     # collapses to a scalar. Cold gradients have
@@ -2052,13 +2237,31 @@ class RenderingMixin:
                         )
             if not all(_warm.values()):
                 cold = [c for c, w in _warm.items() if not w]
-                logger.warning(
-                    "recorder thread warmup: %d cameras still cold after %d attempts: %s. "
-                    "First captured frames may show gradient artifact.",
-                    len(cold),
-                    _max_warmup_attempts,
-                    cold,
-                )
+                refused = {c: _refusals[c] for c in cold if c in _refusals}
+                if refused:
+                    # Rendering REFUSED, so "cold" would be a lie: no number of
+                    # attempts fixes a missing GL context, every capture will be
+                    # empty, and stop_cameras_recording would otherwise report
+                    # success with 0 frames and an empty MP4 - the failure the
+                    # preflight guards exist to make impossible.
+                    state["refusals"] = refused
+                    logger.warning(
+                        "recorder thread warmup: rendering REFUSED for %d of %d cameras: %s. "
+                        "This is not a cold context that settles - every captured frame will be "
+                        "empty. First reason: %s",
+                        len(refused),
+                        len(names),
+                        list(refused),
+                        next(iter(refused.values())),
+                    )
+                if [c for c in cold if c not in refused]:
+                    logger.warning(
+                        "recorder thread warmup: %d cameras still cold after %d attempts: %s. "
+                        "First captured frames may show gradient artifact.",
+                        len([c for c in cold if c not in refused]),
+                        _max_warmup_attempts,
+                        [c for c in cold if c not in refused],
+                    )
 
             # Warmup done (or capped) - capture loop is about to run. Unblock
             # the caller waiting in start_cameras_recording so the success
@@ -2068,7 +2271,13 @@ class RenderingMixin:
 
             interval = 1.0 / fps
             while state["running"]:
-                t0 = _time.time()
+                # ``time.monotonic()``: the sleep below is computed from this
+                # base, so it decides the capture rate. On ``time.time()`` a
+                # wall-clock step landing between the two readings changed how
+                # much of the rollout this buffer sampled, and the frames carry
+                # no per-frame timestamp, so the result is indistinguishable
+                # afterwards from one paced correctly.
+                frame_start_mono = _time.monotonic()
                 for cam in names:
                     if not state["running"]:
                         break
@@ -2084,7 +2293,7 @@ class RenderingMixin:
                     except Exception as e:
                         state["errors"][cam] += 1
                         logger.debug("camera recorder (%s) error: %s", cam, e)
-                lag = _time.time() - t0
+                lag = _time.monotonic() - frame_start_mono
                 if lag < interval:
                     _time.sleep(interval - lag)
 
@@ -2162,7 +2371,7 @@ class RenderingMixin:
 
         from strands_robots.rendering.video import encode_clip
 
-        elapsed = _time.time() - state["started_at"]
+        elapsed = _time.monotonic() - state["started_mono"]
         lines = [
             f"Stopped '{state['name']}' after {elapsed:.1f}s",
             f"   output_dir: {state['output_dir']}",
@@ -2237,6 +2446,14 @@ class RenderingMixin:
                 artifact["frames_skipped_size_mismatch"] = frames_skipped
             if flush_error:
                 artifact["flush_error"] = flush_error
+            # A render refusal caught during warmup is WHY this camera has no
+            # frames. Without it the caller sees frames=0 next to status
+            # "success" and has to guess between an empty scene, a too-short
+            # window and a machine that cannot render at all.
+            refusal = (state.get("refusals") or {}).get(cam)
+            if refusal:
+                artifact["render_refused"] = refusal
+                lines.append(f"   {cam:20s} rendering refused: {refusal}")
             artifacts.append(artifact)
 
         return {
@@ -2392,9 +2609,15 @@ class RenderingMixin:
             if name is not None:
                 sanitize_name_component(name, label="name")
             if output_dir is not None:
-                _sb_root, _allow_abs = video_sandbox_args()
+                _sb_root, _allow_abs, _allow_abs_env = video_sandbox_args()
                 out_dir = str(
-                    validate_output_path(output_dir, sandbox_root=_sb_root, allow_abs=_allow_abs, label="output_dir")
+                    validate_output_path(
+                        output_dir,
+                        sandbox_root=_sb_root,
+                        allow_abs=_allow_abs,
+                        label="output_dir",
+                        allow_abs_env=_allow_abs_env,
+                    )
                 )
             else:
                 out_dir = _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings")
@@ -2417,7 +2640,10 @@ class RenderingMixin:
             "paths": paths,
             "errors": dict.fromkeys(names, 0),
             "output_dir": out_dir,
-            "started_at": _time.time(),
+            # A ``time.monotonic()`` reading: the only thing derived from
+            # this base is how long the recording has been running, so it
+            # is a duration base and carries its clock in its name.
+            "started_mono": _time.monotonic(),
             # No daemon thread in synchronous mode; left as None so
             # ``stop_cameras_recording`` can detect this and skip the
             # join.
@@ -2494,7 +2720,7 @@ class RenderingMixin:
         if not state or not state.get("running"):
             return {"status": "success", "content": [{"text": "[idle] No active camera recording."}]}
 
-        elapsed = _time.time() - state["started_at"]
+        elapsed = _time.monotonic() - state["started_mono"]
         lines = [f"[recording] '{state['name']}' for {elapsed:.1f}s  @ {state['fps']} FPS"]
         for cam in state["cameras"]:
             frames = len(state["buffers"][cam])

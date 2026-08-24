@@ -1,7 +1,9 @@
 # .github/workflows/changelog-fragment.yml
 #
-# Refuses a pull request that writes a new entry straight into `CHANGELOG.md`'s
-# `## [Unreleased]` section instead of recording it as a `changelog.d/` fragment.
+# Refuses a pull request that breaks the `changelog.d/` fragment convention in
+# either of the two ways it can be broken: writing a new entry straight into
+# `CHANGELOG.md`'s `## [Unreleased]` section instead of recording it as a fragment,
+# or adding a fragment the assembler would refuse.
 #
 # The rule is stated in `changelog.d/README.md` and in `AGENTS.md`, and its cost
 # is measured rather than stylistic: every branch appends at the same anchor, so
@@ -14,7 +16,23 @@
 # pass, because a fragment that was never written leaves nothing to inspect.
 # See issue #1784 and scripts/check_changelog_fragment.py for the full account.
 #
-# It is a base diff and not a test because `[Unreleased]` on `main` already
+# The second half was measured before it was added. Fragment validity was enforced
+# only by `tests/test_changelog_fragments.py`, inside `call-test-lint / Test and
+# Lint` -- so on #2144, whose only defect was a fragment first line reading
+# `Fixed: ...` instead of `### Fixed: ...`, this job reported SUCCESS in 10s while
+# the required suite reported FAILURE 20.8 minutes later, worded as a test failure
+# on a branch whose diff was 28 lines of `strands_robots/utils.py` and two test
+# files. The check named for the convention passed the one pull request whose only
+# defect was the convention. See issue #2163.
+#
+# Only the fragments the branch adds or modifies are read, never the whole
+# directory: `validate_fragments()` walks all 315 pending fragments, so wiring that
+# in would fail a branch for a malformed fragment already on the base. The rules
+# themselves are the assembler's `FRAGMENT_NAME` and `validate_fragment`, imported
+# rather than restated, so this job and `assemble_changelog.py --check` cannot
+# disagree about whether a fragment is valid.
+#
+# The first half is a base diff and not a test because `[Unreleased]` on `main` already
 # carries 168 entries from before the convention existed, so no static assertion
 # about the section's contents can hold. What is wrong is the act of adding to
 # it, and an act is only visible between two commits.
@@ -48,8 +66,9 @@ permissions:
 
 jobs:
   fragment:
-    name: Refuse a changelog entry written outside a fragment
+    name: Refuse a changelog entry that breaks the fragment convention
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       # The BASE branch, not the pull request head. This job reads two different
@@ -113,7 +132,7 @@ jobs:
       # commit is used, measured by
       # tests/test_changelog_fragment_gate.py::test_a_merge_commit_head_still_sees_the_branchs_append
       # - but naming the head keeps the report about the commit under review.
-      - name: Check for a changelog entry written outside a fragment
+      - name: Check the branch's entries and the fragments it adds
         env:
           BASE_REF: ${{ github.base_ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

@@ -14,7 +14,6 @@ import sys
 import unittest
 from dataclasses import dataclass
 from enum import Enum
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ── Mock heavy dependencies before importing ──────────────────────
@@ -502,19 +501,28 @@ class TestSimulationDriverLifecycleAndPublish(unittest.TestCase):
 
     def test_publish_state_emits_running_policy_and_joint_observations(self):
         """The 10Hz publisher emits a state update plus a per-robot joint
-        observation read from MuJoCo qpos for each running policy."""
-        import numpy as np
+        observation for each running policy.
 
+        The joint positions are the ones the simulation's own
+        ``get_observation`` surface reports, which is what owns qpos
+        addressing, the free-joint exclusion and the lock. Reading the state
+        arrays here instead would put a second answer to the same question in
+        the driver; the observation carries a non-scalar key so this also pins
+        that only per-joint scalars reach ``joints``.
+        """
         sim = _make_mock_sim()
         robot = sim._world.robots["so100"]
         robot.policy_running = True
         robot.policy_steps = 7
         robot.policy_instruction = "stack the cubes"
         robot.joint_names = ["shoulder", "elbow"]
-        robot.joint_ids = [0, 2]
         sim._world.sim_time = 1.5
         sim._world.step_count = 30
-        sim._world._data = SimpleNamespace(qpos=np.array([0.25, 0.0, -0.5, 0.0]))
+        sim.get_observation.return_value = {
+            "shoulder": 0.25,
+            "elbow": -0.5,
+            "base_pos": [0.0, 0.0, 0.4],
+        }
 
         driver = SimulationDeviceDriver(sim)
         driver.stateUpdate = AsyncMock()
@@ -534,15 +542,14 @@ class TestSimulationDriverLifecycleAndPublish(unittest.TestCase):
         )
 
     def test_publish_state_handles_missing_qpos_gracefully(self):
-        """A running policy whose joint read fails (no _data) still emits the
-        state update and a joint-less observation - the per-robot read is
-        guarded so one bad robot does not break the publish loop."""
+        """A running policy the observation surface reports no joints for still
+        emits the state update and a joint-less observation - the per-robot read
+        is guarded so one bad robot does not break the publish loop."""
         sim = _make_mock_sim()
         robot = sim._world.robots["so100"]
         robot.policy_running = True
         robot.joint_names = ["shoulder"]
-        robot.joint_ids = [0]
-        sim._world._data = None  # no MuJoCo data -> joints stay empty
+        sim.get_observation.return_value = {}  # nothing readable -> joints stay empty
 
         driver = SimulationDeviceDriver(sim)
         driver.stateUpdate = AsyncMock()
@@ -554,20 +561,14 @@ class TestSimulationDriverLifecycleAndPublish(unittest.TestCase):
         self.assertEqual(driver.observationUpdate.await_args.kwargs["joints"], {})
 
     def test_publish_state_swallows_per_robot_read_errors(self):
-        """A per-robot joint read that raises (e.g. a bad qpos index) is caught
-        and logged, not propagated - one faulty robot must not break the 10Hz
-        publish loop for the rest of the fleet."""
-
-        class _BoomQpos:
-            def __getitem__(self, idx):
-                raise IndexError("qpos out of range")
-
+        """A per-robot joint read that raises is caught and logged, not
+        propagated - one faulty robot must not break the 10Hz publish loop for
+        the rest of the fleet."""
         sim = _make_mock_sim()
         robot = sim._world.robots["so100"]
         robot.policy_running = True
         robot.joint_names = ["shoulder"]
-        robot.joint_ids = [99]
-        sim._world._data = SimpleNamespace(qpos=_BoomQpos())
+        sim.get_observation.side_effect = RuntimeError("world torn down mid-read")
 
         driver = SimulationDeviceDriver(sim)
         driver.stateUpdate = AsyncMock()
@@ -1135,7 +1136,7 @@ class TestRobotDriverStartTaskArgBinding(unittest.TestCase):
             policy_host="localhost",
             policy_provider="groot",
             duration=30.0,
-            **kw,
+            **policy_kwargs,
         ):
             self.captured = {
                 "instruction": instruction,

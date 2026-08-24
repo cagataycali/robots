@@ -27,11 +27,21 @@ commits and ``AGENTS.md`` > PR Workflow tells a reader to consult each context's
 own ``conclusion`` before believing the roll-up. What that entry describes is a
 *different producer* of the symptom -- pushes to ``main`` share one concurrency
 group because a push carries no pull request number, so each merge kills the
-previous merge's run. That producer is arguably wanted (a superseded ``main`` run
-is of no interest) and is not touched here.
+previous merge's run. That producer read as wanted when this module was written -- a
+superseded ``main`` run is of no interest -- and was left alone here.
 
-This one is on pull request head shas, and unlike the ``main`` case it discards
-work for no possible gain, so it is removable rather than merely readable-around.
+It is gone now, for a reason that only shows up once the commits are counted: #2304
+measured 24 settled rollups on ``main``, of which 11 read ``FAILURE`` and **9 had no
+failing check at all**, and a commit on ``main`` is immutable and already merged, so
+unlike a branch it gets no next push to clear the wrong answer. Worse, a burst of
+merges destroys the evidence for which commit in it broke ``main`` in the same act
+as creating the fault. The push side is now keyed on ``github.sha``, which leaves
+the pull-request operand this module is about untouched; it is pinned by rendering
+the group in ``tests/test_push_concurrency_group.py``.
+
+This one is on pull request head shas, and it discards work for no possible gain,
+which is why it was removable here first: cancelling on ``main`` at least superseded
+something, while an event that cannot change the head sha supersedes nothing.
 Measured twice, ten minutes apart, no new run in between::
 
     19:35Z   #1899 FAILURE   #1901 FAILURE   #1902 FAILURE
@@ -64,12 +74,33 @@ event that changes either. It is also the event that check's own remedy produces
 moving a closing keyword out of the title and into the body changes no sha, so
 without ``edited`` the report would ask for a fix it could never observe.
 
-The measured harm cannot follow from it either, and that is a premise rather than
-an assurance: cancellation is per concurrency group, ``pr-and-push.yml`` keys its
-group on its own ``github.workflow`` name and does not subscribe to ``edited``,
-so an edit starts no run in that group. Both halves are read back by
-``test_an_exempt_workflow_cannot_cancel_the_required_check``, so an exemption
-cannot outlive the reasoning that admitted it.
+The measured harm cannot reach the *required check* from it either, and that is a
+premise rather than an assurance: cancellation is per concurrency group,
+``pr-and-push.yml`` keys its group on its own ``github.workflow`` name and does
+not subscribe to ``edited``, so an edit starts no run in that group. Both halves
+are read back by ``test_an_exempt_workflow_cannot_cancel_the_required_check``, so
+an exemption cannot outlive the reasoning that admitted it.
+
+That premise is true and it was the wrong group to check. The run an exempt event
+cancels first is the exempt workflow's **own**, which shares both a workflow name
+and a pull request number with the run already in flight. Being exempt is exactly
+what makes this reachable -- an exempt workflow is the only kind that can be
+started twice on one head sha -- so unlike the ``main`` case above, whose cancelled
+context sat on an immutable commit nobody was reviewing, it lands on the *live*
+head. #2216 measured it on #1722 and #2205: each head
+carried ``Refuse a closing keyword that only appears in the title`` as ``SUCCESS``
+and ``CANCELLED`` together, with every other context ``SUCCESS``, and #2205's
+roll-up read ``SUCCESS``, then ``FAILURE``, then ``SUCCESS`` across three reads of
+one unchanged sha -- the same instability this module records for #1901 and #1902,
+reintroduced by the exemption it granted. Whether it happens is a race and the
+inter-arrival gap does not predict it: #2204's two runs are 40 s apart and both
+completed, #2205's are 71 s apart and one was cancelled.
+
+So an exemption needs a second premise, read back by
+``test_an_exempt_workflow_cannot_cancel_its_own_run``: an exempt workflow must not
+cancel in progress at all. It is the same conclusion this module already reaches
+for the required check -- remove the producer rather than read around it --
+applied to the workflow the exemption is granted to.
 
 ``test_no_workflow_gates_on_draft_status`` is the premise behind dropping
 ``ready_for_review`` specifically: nothing in the fleet skips a draft pull
@@ -269,10 +300,20 @@ def test_the_required_check_discards_its_in_flight_run() -> None:
     away the required check's progress, and the pin above would be a
     cost-control rule rather than a correctness one. Either way the reasoning
     above needs to be re-read, which is what this failing would say.
+
+    Only the pull-request operand is asserted. The fallback operand is the push
+    side, which #2304 changed from ``github.ref`` to ``github.sha``, and pinning
+    the whole expression here would put a second copy of that decision in a file
+    that does not reason about it -- so the push half is asserted by rendering the
+    group in ``tests/test_push_concurrency_group.py`` instead.
     """
     text = _REQUIRED_CHECK_WORKFLOW.read_text(encoding="utf-8")
     assert "cancel-in-progress: true" in text
-    assert "group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}" in text
+    assert "group: ${{ github.workflow }}-${{ github.event.pull_request.number ||" in text, (
+        "the concurrency group no longer keys on the pull request number, so two runs over one "
+        "pull request need not share a group and the cost this module is about disappears; "
+        "re-derive the pins above"
+    )
 
 
 def test_no_workflow_gates_on_draft_status() -> None:
@@ -289,4 +330,46 @@ def test_no_workflow_gates_on_draft_status() -> None:
     assert not gating, (
         f"these workflows mention 'draft': {gating}. If one now skips draft pull requests, "
         "re-derive whether ready_for_review must start it"
+    )
+
+
+def test_an_exempt_workflow_cannot_cancel_its_own_run() -> None:
+    """The second premise every entry in :data:`_INPUT_IS_NOT_THE_TREE` rests on.
+
+    ``test_an_exempt_workflow_cannot_cancel_the_required_check`` establishes that
+    an exempt event cannot reach ``pr-and-push.yml``'s concurrency group. That is
+    necessary and not sufficient: the run an exempt event cancels first is the
+    exempt workflow's own, which shares a workflow name and a pull request number
+    with the run already in flight, so a group keyed on either holds both.
+
+    Being exempt is what makes it reachable -- an exempt workflow is the only kind
+    that can be started twice on one head sha -- and the cancelled context then
+    sits on the live head rather than on a superseded one, where the roll-up reads
+    it. Measured on #1722 and #2205 (#2216), each carrying its check as
+    ``SUCCESS`` and ``CANCELLED`` at once with every other context ``SUCCESS``.
+
+    Asserted of the table rather than of the single file in it, so a future
+    exemption inherits the requirement instead of rediscovering it the same way.
+    """
+    assert _INPUT_IS_NOT_THE_TREE, "the exemption table is empty; this pin has nothing to check"
+
+    offenders: dict[str, list[str]] = {}
+    for name in _INPUT_IS_NOT_THE_TREE:
+        path = _WORKFLOW_DIR / name
+        assert path.exists(), f"{name} is exempt but does not exist"
+        cancelling = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("#") and line.strip().startswith("cancel-in-progress:")
+        ]
+        if cancelling:
+            offenders[name] = cancelling
+
+    assert not offenders, (
+        f"these workflows are exempted for a sha-invariant activity type and still cancel in "
+        f"progress: {offenders}. An exempt workflow can be started twice on one head sha, so its "
+        "own in-flight run is what it cancels, and the cancelled check run is permanent, sits on "
+        "the live head and drags statusCheckRollup.state to FAILURE from behind a same-named "
+        "SUCCESS. Drop the concurrency block: a superseded head is the only case cancelling helps "
+        "with, and a sha-invariant trigger does not produce one."
     )

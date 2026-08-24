@@ -42,8 +42,15 @@ Safety semantics, stated once because they are now implemented once:
 - A bare single-shot ``drive()`` latches until :meth:`stop`, matching a raw
   ``cmd_vel`` publish. This is disclosed in the agent-facing tool description
   rather than papered over.
-- :meth:`stop` is never gated on anything - not on the handshake, not on limits.
-  An emergency stop must not require a working service graph.
+- :meth:`stop` is never gated on the handshake and never on limits. An emergency
+  stop must not require a working service graph. It is *not* exempt from the
+  transport tool's own command gate, which is keyed on the surface rather than
+  the payload - see :meth:`MobileBaseRobot.stop`.
+- Every command carries an optional ``tool_context`` down to the transport,
+  which is what hands it to the underlying tool. The gate belongs to the tool,
+  so the base's job is only to not drop the operator's decision on the way - and
+  because the command tools are declared here, that holds for every transport at
+  once instead of once per bridge.
 """
 
 from __future__ import annotations
@@ -52,7 +59,7 @@ import re
 from typing import Any, Protocol, cast, runtime_checkable
 
 from strands import tool
-from strands.types.tools import AgentTool
+from strands.types.tools import AgentTool, ToolContext
 
 from strands_robots.utils import (
     finite_number_error,
@@ -78,8 +85,32 @@ class Transport(Protocol):
     #: ``geometry_msgs/msg/Twist`` (ROS 2) or ``geometry_msgs/Twist`` (ROS 1).
     twist_type: str
 
-    def publish(self, *, topic: str, type: str, fields: dict[str, Any], count: int, rate: float) -> dict[str, Any]:
-        """Send ``count`` messages of ``type`` to ``topic`` at ``rate`` Hz."""
+    def publish(
+        self,
+        *,
+        topic: str,
+        type: str,
+        fields: dict[str, Any],
+        count: int,
+        rate: float,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        """Send ``count`` messages of ``type`` to ``topic`` at ``rate`` Hz.
+
+        Args:
+            topic: Command topic to publish to.
+            type: Interface type of the published message.
+            fields: Message body.
+            count: Number of messages to send.
+            rate: Publish rate in Hz.
+            tool_context: Operator context for the underlying tool's
+                command-approval gate. The gate lives in the tool, so the base
+                can only carry the context this far and the transport is what
+                hands it over. A transport whose tool gates its command surface
+                forwards it; one whose tool exposes no gate has nothing to
+                forward and states that at its own implementation, so the
+                asymmetry is visible where it is real rather than hidden here.
+        """
         ...
 
     def echo(self, *, topic: str, type: str | None, count: int, timeout: float) -> dict[str, Any]:
@@ -97,8 +128,20 @@ class ServiceCapable(Protocol):
     protocol instead of reaching through ``Any``.
     """
 
-    def service_call(self, *, service: str, type: str, fields: dict[str, Any]) -> dict[str, Any]:
-        """Call ``service`` with ``fields`` and return its structured response."""
+    def service_call(
+        self,
+        *,
+        service: str,
+        type: str,
+        fields: dict[str, Any],
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        """Call ``service`` with ``fields`` and return its structured response.
+
+        A service can command a robot - an arming call is the whole point of
+        :attr:`MobileBaseRobot.init_services` - so it carries the operator
+        context on the same terms as :meth:`Transport.publish`.
+        """
         ...
 
 
@@ -107,9 +150,19 @@ class ActionCapable(Protocol):
     """Optional capability: the transport can send a long-running action goal."""
 
     def action_send_goal(
-        self, *, action_name: str, type: str, fields: dict[str, Any], timeout: float
+        self,
+        *,
+        action_name: str,
+        type: str,
+        fields: dict[str, Any],
+        timeout: float,
+        tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        """Send a goal to ``action_name`` and block until it settles or times out."""
+        """Send a goal to ``action_name`` and block until it settles or times out.
+
+        Carries the operator context on the same terms as
+        :meth:`Transport.publish`: a navigation goal moves the robot.
+        """
         ...
 
 
@@ -276,23 +329,32 @@ class MobileBaseRobot:
             fields["linear"]["y"] = float(lateral)
         return fields
 
-    def _publish_cmd(self, linear: float, angular: float, count: int) -> dict[str, Any]:
+    def _publish_cmd(
+        self, linear: float, angular: float, count: int, tool_context: ToolContext | None = None
+    ) -> dict[str, Any]:
         return self.transport.publish(
             topic=self.cmd_vel_topic,
             type=self.cmd_vel_type,
             fields=self._cmd_fields(linear, angular),
             count=count,
             rate=self.publish_rate,
+            tool_context=tool_context,
         )
 
     # -- enable handshake ---------------------------------------------------
 
-    def enable(self) -> dict[str, Any]:
+    def enable(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
         """Run the :attr:`init_services` handshake once; idempotent on success.
 
         Stops at the first failing call and returns its structured error
         **without latching**, so a later attempt retries the whole sequence -
         the right behavior for a service that is merely not up yet.
+
+        Args:
+            tool_context: Operator context forwarded to each service call. An
+                arming service commands the vehicle, so it reaches the same gate
+                a velocity publish does rather than being exempt for arriving
+                over a different verb.
         """
         if self._enabled:
             return {"status": "success", "content": [{"text": f"{self.node_name}: already enabled"}]}
@@ -305,6 +367,7 @@ class MobileBaseRobot:
                 service=item["service"],
                 type=item["type"],
                 fields=item.get("fields", {}),
+                tool_context=tool_context,
             )
             if result.get("status") != "success":
                 return result
@@ -322,6 +385,7 @@ class MobileBaseRobot:
         angular: float = 0.0,
         duration: float | None = None,
         count: int = 1,
+        tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
         """Command a body-frame velocity.
 
@@ -332,6 +396,11 @@ class MobileBaseRobot:
                 publishing ``round(duration * publish_rate)`` messages. Takes
                 precedence over ``count``.
             count: Number of messages to publish when ``duration`` is omitted.
+            tool_context: Operator context forwarded to the transport, whose
+                tool may gate this surface. Injected by the agent runtime for
+                the ``drive_<suffix>`` tool; a programmatic caller that passes
+                none is refused by a gating transport unless the surface is
+                pre-approved out of band.
 
         Returns:
             The transport's publish result, or a structured error when the
@@ -367,7 +436,7 @@ class MobileBaseRobot:
         # Only after the request is known good may we touch the robot: an
         # invalid drive must not be what puts a vehicle into manual mode.
         if not self._enabled and self.init_services:
-            enabled = self.enable()
+            enabled = self.enable(tool_context=tool_context)
             if enabled.get("status") != "success":
                 return enabled
         v = float(linear) if self.max_linear is None else max(-self.max_linear, min(self.max_linear, float(linear)))
@@ -378,16 +447,30 @@ class MobileBaseRobot:
         )
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
         try:
-            return self._publish_cmd(v, w, count=n)
+            return self._publish_cmd(v, w, count=n, tool_context=tool_context)
         finally:
             # A timed or repeated command owns its own stop. Skipped for a
-            # command that was already zero - there is nothing to undo.
+            # command that was already zero - there is nothing to undo. Carries
+            # the same context as the command it undoes: a trailing zero that
+            # could not reach the gate would leave the robot latched at speed.
             if (duration is not None or n > 1) and (v or w):
-                self._publish_cmd(0.0, 0.0, count=1)
+                self._publish_cmd(0.0, 0.0, count=1, tool_context=tool_context)
 
-    def stop(self) -> dict[str, Any]:
-        """Publish a single zero-velocity command. Never gated on anything."""
-        return self._publish_cmd(0.0, 0.0, count=1)
+    def stop(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
+        """Publish a single zero-velocity command.
+
+        Never gated on the :meth:`enable` handshake - an emergency stop must not
+        need a working service graph. It is not exempt from the transport tool's
+        own command gate, which is keyed on the surface rather than the payload:
+        zero means "stationary" on a ``Twist`` but commands motion to the zero
+        pose on a joint-command topic, so a payload-shaped carve-out could not
+        be written correctly. The halt stays reachable through the same approval
+        paths as any other command instead.
+
+        Args:
+            tool_context: Operator context forwarded to the transport.
+        """
+        return self._publish_cmd(0.0, 0.0, count=1, tool_context=tool_context)
 
     # -- sensing ------------------------------------------------------------
 
@@ -441,16 +524,32 @@ class MobileBaseRobot:
         ``odom_topic``, ``get_scan`` only with a ``scan_topic``. ``drive`` and
         ``stop`` are always present together - anything that can move must be
         stoppable through the same surface.
+
+        Every tool that carries a command is declared ``@tool(context=True)``
+        and forwards the injected context to the transport, so a transport whose
+        tool gates its command surface prompts the operator rather than failing
+        closed on every call. The read-only tools take no context because a
+        read is never gated. Declaring them here is what makes this true for
+        every transport at once, instead of once per bridge.
         """
         suffix = self.tool_suffix
 
-        @tool(name=f"drive_{suffix}", description=self._drive_description())
-        def drive(linear: float = 0.0, angular: float = 0.0, duration: float | None = None) -> dict[str, Any]:
-            return self.drive(linear=linear, angular=angular, duration=duration)
+        @tool(name=f"drive_{suffix}", description=self._drive_description(), context=True)
+        def drive(
+            linear: float = 0.0,
+            angular: float = 0.0,
+            duration: float | None = None,
+            tool_context: ToolContext | None = None,
+        ) -> dict[str, Any]:
+            return self.drive(linear=linear, angular=angular, duration=duration, tool_context=tool_context)
 
-        @tool(name=f"stop_{suffix}", description=f"Immediately stop the {self.node_name} robot (zero velocity).")
-        def stop() -> dict[str, Any]:
-            return self.stop()
+        @tool(
+            name=f"stop_{suffix}",
+            description=f"Immediately stop the {self.node_name} robot (zero velocity).",
+            context=True,
+        )
+        def stop(tool_context: ToolContext | None = None) -> dict[str, Any]:
+            return self.stop(tool_context=tool_context)
 
         @tool(name=f"get_pose_{suffix}", description=f"Read the current pose/odometry of the {self.node_name} robot.")
         def get_pose() -> dict[str, Any]:

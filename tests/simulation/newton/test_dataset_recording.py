@@ -180,11 +180,11 @@ def test_multi_robot_namespaced_schema(tmp_path):
     assert info["total_episodes"] == 2
 
 
-def test_start_recording_without_world_errors():
+def test_start_recording_without_world_errors(tmp_path):
     engine = NewtonSimEngine.__new__(NewtonSimEngine)
     engine._world = None
     engine._model = None
-    result = engine.start_recording(repo_id="local/nope")
+    result = engine.start_recording(repo_id="local/nope", root=str(tmp_path / "dataset"))
     assert result["status"] == "error"
     assert "No world" in result["content"][0]["text"]
 

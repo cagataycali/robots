@@ -39,6 +39,7 @@ import numpy as np
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import SimEngine, reject_setup_kwargs
+from strands_robots.simulation.ik import hint_matches_name
 from strands_robots.simulation.model_registry import (
     list_available_models,
     resolve_model,
@@ -54,13 +55,20 @@ from strands_robots.simulation.models import (
     registered,
     registry_entry,
 )
-from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
+from strands_robots.simulation.newton.backend import (
+    articulated_solver_error,
+    articulated_solvers,
+    ensure_newton,
+    resolve_solver_class,
+    solver_registry,
+)
 from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     camera_fov_error,
+    coerce_orientation_quaternion,
     coerce_pose_vector,
     coerce_rgba,
     coerce_size_vector,
@@ -86,6 +94,14 @@ logger = logging.getLogger(__name__)
 # hundred substeps; 60 Hz frames with 10 substeps each matches the Newton
 # example cadence and keeps position-servo arms tracking their targets.
 _DEFAULT_TIMESTEP = 1.0 / 600.0
+
+# Hint words for the best-guess gripper/EEF mount ``list_bodies`` advertises.
+# Newton adds "jaw" (its own MJCF vocabulary) to the MuJoCo backend's set.
+# Matched on word boundaries by
+# :func:`~strands_robots.simulation.ik.hint_matches_name` - the same rule
+# :func:`~strands_robots.simulation.ik.discover_ee_frame` applies - so the short
+# hint "ee" cannot fire inside "knee" or "wheel".
+_GRIPPER_BODY_HINTS = ("gripper", "hand", "jaw", "ee", "tool")
 
 # Valid ``add_robot(source=...)`` selectors. ``None``/``"registry"`` resolve
 # the curated registry + MJCF asset manager (the same path the MuJoCo backend
@@ -186,7 +202,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
         Args:
             solver: Friendly solver name. One of
-                :func:`~strands_robots.simulation.newton.backend.solver_registry`
+                :func:`~strands_robots.simulation.newton.backend.articulated_solvers`
                 (default ``"mujoco"``, i.e. MuJoCo-Warp).
             default_timestep: Physics integration timestep in seconds.
             substeps: Physics substeps per :meth:`step` call.
@@ -221,6 +237,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._nt, self._wp = ensure_newton()
         if solver.lower() not in solver_registry():
             raise ValueError(f"Unknown Newton solver {solver!r}. Available: {sorted(solver_registry())}")
+        # A solver Newton resolves is not automatically one that can drive a
+        # robot. Reported here, where the caller names it, so the refusal
+        # arrives before any world, model or solver is built rather than as a
+        # Newton-internal error or a frozen world behind a successful add_robot.
+        if solver_error := articulated_solver_error(solver):
+            raise ValueError(solver_error)
         self._solver_name = solver.lower()
         self.default_timestep = default_timestep
         self.substeps = substeps
@@ -594,7 +616,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("add_robot", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("add_robot", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         if name in self._world.robots:
@@ -718,7 +740,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         size: list[float] | None = None,
         color: list[float] | None = None,
         mass: float = 0.1,
-        is_static: bool = False,
+        is_static: bool | None = None,
         mesh_path: str | None = None,
         material: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -758,7 +780,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``"cylinder"``, or ``"mesh"``. ``"mesh"`` requires
                 ``mesh_path``.
             position: World position ``[x, y, z]`` (default origin).
-            orientation: wxyz quaternion (default identity).
+            orientation: wxyz quaternion (default identity). Any non-unit value is fine -- the magnitude is ignored -- but one whose norm rounds to zero describes no rotation and is refused rather than silently applied as identity (:func:`~strands_robots.utils.coerce_orientation_quaternion`).
             size: Half-extents (box) or ``[radius, ...]`` (others). For
                 ``shape="mesh"`` this is the per-axis scale applied to the
                 loaded geometry (default ``[1, 1, 1]`` -- the mesh's own units).
@@ -777,6 +799,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 negative, ``nan``, ``inf``, a ``bool`` or a non-number - is
                 refused rather than handed to the solver rebuild.
             is_static: When True the object is fixed in the world.
+                ``None`` (the default) means unspecified; Newton derives
+                nothing from ``shape``, so it resolves to dynamic.
             mesh_path: Path to a mesh asset (``.obj`` / ``.stl`` / ``.glb`` /
                 ``.usd`` -- anything ``trimesh.load`` accepts). Required and
                 only used when ``shape="mesh"``; the mesh is loaded via
@@ -801,6 +825,13 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if (name_err := entity_name_error("add_object", "name", name)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
 
+        # ``None`` means the caller did not specify, per
+        # :meth:`~strands_robots.simulation.base.SimEngine.add_object`. Newton
+        # has no shape-derived rule, so unspecified is dynamic. Resolved here so
+        # the registered :class:`SimObject` carries a real bool rather than the
+        # sentinel, which every later reader would have to re-interpret.
+        is_static = False if is_static is None else is_static
+
         # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
         # MuJoCo backend's ``add_object`` and this backend's own ``add_camera`` already
         # use, so a pose one backend refuses is refused by all of them - the
@@ -816,7 +847,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("add_object", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("add_object", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("add_object", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         # Same shared domain for the colour, whose accepted counts the 4-component
@@ -979,7 +1010,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("move_object", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("move_object", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         with self._lock:
@@ -1458,10 +1489,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
         Returns:
             Status dict confirming removal, or an error dict when no world
-            exists or the camera is unknown.
+            exists, ``name`` is a free-camera routing token, or the camera is
+            unknown.
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        # Same rule as ``add_camera``, at the other end of the name's life: a
+        # routing token cannot be un-addressed, and ``list_cameras`` names it
+        # unconditionally. It precedes the existence test because that test
+        # answers "not found. Registered: [...]" for a name ``list_cameras``
+        # advertises, which reads as a bookkeeping slip rather than the rule.
+        if (reserved_err := reserved_camera_name_error("remove_camera", "name", name)) is not None:
+            return {"status": "error", "content": [{"text": reserved_err}]}
         if not registered(self._world.cameras, name):
             return {
                 "status": "error",
@@ -2103,8 +2142,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         mount body without guessing. Newton labels bodies by their full MJCF
         path (``so_arm100/.../Moving_Jaw``); the ``json`` block returns the
         full labels and, when ``robot_name`` is given, a best-guess
-        ``gripper_body`` whose trailing path segment contains ``gripper``,
-        ``hand``, ``jaw``, ``ee``, or ``tool``.
+        ``gripper_body`` one of whose trailing segment's *name components* is
+        ``gripper``, ``hand``, ``jaw``, ``ee``, or ``tool``. Hints match
+        components rather than bare substrings, so a short hint cannot fire
+        inside an unrelated word: a ``knee`` or a drive ``wheel`` is not an
+        end-effector because ``ee`` occurs in its name.
 
         Args:
             robot_name: When set, return only that robot's bodies. When
@@ -2138,8 +2180,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if robot_name is not None:
             gripper_body: str | None = None
             for name in bodies:
-                short = _short_joint_name(name).lower()
-                if any(tok in short for tok in ("gripper", "hand", "jaw", "ee", "tool")):
+                short = _short_joint_name(name)
+                if any(hint_matches_name(hint, short) for hint in _GRIPPER_BODY_HINTS):
                     gripper_body = name
                     break
             json_payload["gripper_body"] = gripper_body
@@ -2277,16 +2319,26 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
     def describe(self) -> dict[str, Any]:
         """Return a discovery surface describing this backend's capabilities.
 
+        This surface is built from scratch rather than by extending
+        :meth:`~strands_robots.simulation.base.SimEngine.describe`, so every
+        method the base contract advertises and this backend delivers has to be
+        listed here explicitly -- including the facades inherited unchanged from
+        the ABC. Extending the base surface instead would also advertise
+        ``get_contacts`` and ``load_scene``, which this backend does not
+        implement.
+
         Returns:
-            Dict with the backend name, active solver, available solvers,
-            device, and current robot / object counts.
+            Dict with the backend name, active solver, the solvers that can
+            drive an articulated robot (the accepted domain of ``solver=``),
+            device, current robot / object counts, and the ``methods`` mapping a
+            caller enumerates to find a capability without guessing its name.
         """
         device = str(self._wp.get_device(self.device)) if self.device else str(self._wp.get_device())
         bodies = list(self._model.body_label) if self._model is not None else []
         return {
             "backend": "newton",
             "solver": self._solver_name,
-            "available_solvers": sorted(solver_registry()),
+            "available_solvers": sorted(articulated_solvers()),
             "device": device,
             "robots": self.list_robots(),
             "objects": list(self._world.objects) if self._world else [],
@@ -2304,8 +2356,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ),
                 "add_object": (
                     "(name: str, shape='box', position=None, orientation=None, size=None, "
-                    "color=None, mass=0.1, is_static=False, mesh_path=None) -> dict  "
+                    "color=None, mass=0.1, is_static=None, mesh_path=None) -> dict  "
                     "(add a manipulable object -- box/sphere/.../mesh -- to the scene)"
+                ),
+                "remove_robot": (
+                    "(name: str) -> dict  (remove a robot and rebuild the world; the inverse "
+                    "of add_robot, completing the add/remove pair alongside remove_object)"
                 ),
                 "remove_object": "(name: str) -> dict  (remove a previously added object)",
                 "get_robot_state": "(robot_name: str | None = None) -> dict (per-joint position + velocity)",
@@ -2319,11 +2375,31 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "  # n_substeps must be a positive whole number; use step() to advance without commanding"
                 ),
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, ...) -> dict",
+                "eval_policy": (
+                    "(robot_name: str | None = None, policy_provider='mock', n_episodes=1, "
+                    "max_steps=300, success_fn=None, seed=None, ...) -> dict  (multi-episode "
+                    "success-rate evaluation -- the scoring sibling of run_policy)"
+                ),
+                "start_policy": (
+                    "(robot_name: str | None = None, policy_provider='mock', duration=10.0, ...) -> dict  "
+                    "(the base contract's synchronous passthrough to run_policy on this backend; "
+                    "only MuJoCo runs a policy on a background thread)"
+                ),
+                "replay_episode": (
+                    "(repo_id: str, robot_name=None, episode=0, root=None, speed=1.0, "
+                    "action_key_map=None) -> dict  (replay a recorded LeRobotDataset episode "
+                    "through the sim)"
+                ),
                 "evaluate_benchmark": (
                     "(benchmark_name: str, robot_name=None, policy_provider='mock', "
                     "n_episodes=1, seed=None, video=None, ...) -> dict  (score a registered "
                     "success/failure/dense_reward benchmark over a rollout; max_steps comes "
                     "from the benchmark, not a parameter)"
+                ),
+                "register_builtin_benchmarks": (
+                    "() -> dict  (register the shipped built-in velocity-tracking locomotion "
+                    "benchmarks so they appear in list_benchmarks and can be run via "
+                    "evaluate_benchmark)"
                 ),
                 "list_benchmarks": (
                     "() -> dict  (enumerate registered benchmarks -- names, supported robots, "
@@ -2333,6 +2409,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "(benchmark_name: str, spec_path: str) -> dict  (author a declarative "
                     "success/failure/dense_reward benchmark spec as YAML/JSON at runtime and register it)"
                 ),
+                "list_robots": "() -> list[str]  (ordered robot names -- what describe() reports under 'robots')",
                 "list_robots_info": "() -> dict (pretty robot listing)",
                 "list_bodies": "(robot_name: str | None = None) -> dict (body labels + gripper_body)",
                 "list_objects": "() -> dict",
@@ -2341,7 +2418,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 "list_urdfs": "() -> dict (registry + robot_descriptions URDF long tail; json.robot_descriptions_urdf)",
                 "register_urdf": "(data_config: str, urdf_path: str) -> dict",
                 "set_gravity": "(gravity: list[float] | float) -> dict",
-                "set_timestep": "(dt: float) -> dict",
+                "set_timestep": "(timestep: float) -> dict (seconds; takes effect on the next step)",
                 "render": "(camera_name='default', width=None, height=None) -> dict (named camera or 'default')",
                 "add_camera": (
                     "(name: str, position=None, target=None, fov=60.0, width=640, height=480, "

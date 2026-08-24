@@ -127,6 +127,65 @@ hatch run format            # ruff check --fix, ruff format
     recognise cannot diverge between layers. Pinned by
     tests/test_repr_survives_partial_construction.py.
 
+15. **A recording test names its own dataset root** - `DatasetRecorder.create`
+    and every backend's `start_recording` resolve a `repo_id` with no `root` to
+    `$HF_LEROBOT_HOME/{repo_id}`, i.e. `~/.cache/huggingface/lerobot/{repo_id}`
+    by default, and `_prepare_create_target` *inspects* that directory before
+    any injected fake dataset class is reached. So a unit test that writes
+    nothing to the shared cache still reads it, and its verdict depends on what
+    the developer's cache already holds. Measured across 39 such call sites: one
+    unrelated dataset planted at `local/probe` turned 133 passed into 22 failed,
+    every failure a `FileExistsError` naming a path in `$HOME` rather than the
+    test's own resolution - which is what makes it hard to attribute. Pass
+    `root=str(tmp_path / "dataset")`, including at the sites refused before the
+    root is resolved: requiring it of those too keeps the rule one line with no
+    exemptions, where the alternative has to model which guard fires first. Note
+    a `repo_id` is as often positional as keyword (`create("user/data", ...)`) and
+    the two forms are the same exposure. Rebinding the dataset home suite-wide
+    would close the class in one line and would also break the one test that
+    legitimately asserts the documented default, which is why the rule lives at
+    the call site. `tests_integ/` records real datasets and is out of scope.
+    Pinned by tests/test_recording_root_is_not_the_shared_cache.py.
+
+16. **An example attests the records it shows, not the whole audit log** -
+    `verify_audit_integrity()` with no argument re-reads the entire log, and an
+    example's log is the developer's real `~/.strands_robots/mesh_audit.jsonl`,
+    because examples deliberately do not redirect `STRANDS_MESH_AUDIT_DIR`. So
+    an example that scopes its read to the run (`read_audit_log(since=...)`)
+    and then attests everything prints one document describing two record sets.
+    Measured on `e4fe2f9` with 4000 records of prior history in the log,
+    `examples/fleet/04_emergency_evacuation.py` rendered
+    `Audit integrity: ok=False (signed=5/4005)` above a five-row timeline. The
+    `ok` value is the worse half: history written before a PSK was configured is
+    unsigned, and an unsigned record is a forgery by definition once a PSK is
+    set at verification time, so a completely successful run reports tamper
+    evidence. Scoped to the records shown the same run reports
+    `ok=True (signed=5/5)`. Pass the records (`verify_audit_integrity(records)`),
+    or have the report pair them itself so the caller cannot get it wrong.
+    `tests/` is exempt mechanically rather than by trust - a test redirects the
+    audit dir to `tmp_path`, so there the whole log *is* the record set it
+    means. Pinned by tests/test_examples_attest_only_what_they_report.py.
+
+17. **A transport delegates to the raw backend path, never to the router that
+    resolves it** - `strands_robots.mesh.session` exposes every Zenoh operation
+    twice: a public, backend-aware entry point (`get_session`, `put`,
+    `release_session`, `session_alive`) that resolves whatever
+    `STRANDS_MESH_BACKEND` selects, and a private `_*_directly` helper that
+    always takes the raw Zenoh path. A `MeshTransport` implementation must use
+    the second kind for *every* delegation, because under
+    `STRANDS_MESH_BACKEND=bridge` the router resolves the `BridgeTransport` that
+    owns that very transport - so a backend-aware call routes straight back into
+    the caller. Both re-entries are silent, which is what makes the rule worth
+    stating rather than leaving to review: a re-entrant `put` raises
+    `RecursionError`, which is a `RuntimeError` subclass and so is absorbed by
+    the narrow `except (RuntimeError, ConnectionError, OSError)` that idempotent
+    transport paths are required to use, and a re-entrant `close` blocks on the
+    factory's non-reentrant lock from the thread already holding it. Neither
+    reports anything a caller can act on. Every fixture that injects a *fake*
+    leg into a composite transport hides this by construction, so the raw path
+    has to be pinned structurally. Pinned by
+    tests/mesh/test_zenoh_transport_bypasses_backend_routing.py.
+
 ## PR Workflow
 
 1. Create the feature branch **on your fork**. Branch creation in the base
@@ -232,16 +291,54 @@ hatch run format            # ruff check --fix, ruff format
    - Thread's last non-bot comment is **yours** -> do not reply. You have
      already said it. If there is code to push, push it; the push is the
      message.
-   - Thread is **`isResolved` or `isOutdated`** -> do not reply. Resolution is
-     terminal. Reopening it to restate a landed fix reads as noise, not
-     diligence.
+   - Thread is **`isResolved`** -> do not reply. Resolution is terminal, whoever
+     performed it. Reopening it to restate a landed fix reads as noise, not
+     diligence. `isOutdated` is **not** terminal, measured: it describes the diff
+     rather than the conversation, and a thread keeps accepting comments after it
+     flips - #2577's took two more after `d04a8969` moved its lines. It is also
+     `false` on threads that *are* answered, when the fix adds lines elsewhere
+     (#2480, still `false` after `e83cf51` fixed it). Decide an outdated thread on
+     authorship like any other, or a reviewer's new demand on a moved line is
+     filed as settled.
    - Last comment is **someone else's** and your existing replies do not answer
      it -> reply once, then resolve.
+   - Thread you have **answered** and nobody has resolved -> resolve it, and still
+     do not reply. The three bullets above decide whether to *speak*, and none of
+     them reaches the thread's other terminal state.
+     `required_review_thread_resolution` is a branch ruleset rule, so a thread you
+     have answered goes on gating the merge until it is resolved, and no reviewer
+     can clear that for you. #2682 measured the cost: a cycle read #2680 as waiting
+     on a reviewer and stopped, when the fix had landed in `0fd0f4e3`, the reply was
+     posted, CI was green, and the only thing outstanding was the resolve.
 
    The authorship check is the cheap one, and it would have prevented ten of
    those twelve comments on its own: no semantic comparison, just the author of
    the last comment. Both `isResolved` and the comment authors are already in
    the context payload - they were fetched and not read.
+
+   **Ask for the verdict rather than re-deriving it.** "Fetched and not read" is
+   the whole failure, and it recurred after this rule was written: #2511 took
+   four author replies to one question and #2577 took two, with every field
+   needed to refuse them present in the payload each time. Re-deriving one
+   boolean from a payload that also contains a reviewer's question addressed to
+   you is the part that does not survive a context rebuild, so ask a command:
+
+   ```
+   python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --pr <N>
+   python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
+   ```
+
+   `settled` is not work. `awaiting-the-author` is a reply, `answered` is the
+   resolve that answer still owes, and **both** exit 1 - so the sweep answers
+   "which of my open pull requests actually need me" in one read. It did not
+   always, and the gap was in the reassuring direction: #2682 measured
+   `nothing-owed` and exit 0 over #2680, at the same head where
+   `check_merge_blockers.py` read `unresolved-threads` owed by the author.
+
+   The report also names the commit each thread was written against beside the
+   pull request's head, which is what tells "already fixed at `<oid>`" apart from
+   "not yet fixed" without re-deriving the fix (#2520). It reports and does not
+   gate: what an author should do next is not something a branch can turn green.
 
    What makes this worth writing down is that the previous rule was *satisfied*
    by all twelve. "Address all review comments", and "reply when a thread asks
@@ -361,33 +458,107 @@ hatch run format            # ruff check --fix, ruff format
      minutes after the preceding close, because independent contributors read
      the same PR and reached opposite conclusions. Its extraction plan and
      terminal state live in #1723; do not flip #1667 again.
+
+     **Count the `nodes`, never `totalCount`.** An `itemTypes` argument narrows
+     `nodes` and nothing else: on a filtered connection `totalCount` is the count
+     of the *whole* timeline - commits, reviews, comments, project status changes
+     - so it answers a question nobody asked, and it answers it in the direction
+     that looks like caution. It invents a flip history where there is none. Four
+     pull requests, one query each:
+
+     | pull request | state | filtered `totalCount` | matching `nodes` |
+     |---|---|---|---|
+     | #2144 | open, **never closed once** | **2** | **0** |
+     | #2143 | merged | 13 | 1, and it is the squash |
+     | #1987 | merged, one deliberate flip | 25 | 3 |
+     | #1667 | the flip war above | 119 | **45** |
+
+     Asking for a type that cannot be there settles the mechanism, so no re-read
+     helps: `itemTypes: [CONVERT_TO_DRAFT_EVENT]` on #2143 returns `totalCount:
+     13` beside an **empty** `nodes`. The number is not stale, it is unrelated -
+     and it is not even stable. #1667 has been closed and retired since
+     2026-07-30, and two reads twenty minutes apart returned `119` then `120` with
+     its 45 close/reopen events unchanged: the new item is a `CrossReferencedEvent`
+     from #2146, the issue reporting this. Writing *about* a pull request raises
+     its apparent flip count, so a cached count drifts upward and the drift reads
+     as somebody flipping it again.
+
+     What the misread costs is the flip, which is not optional - the close/reopen
+     below is the *only* remedy for a head commit that spawned no check suite, and
+     re-running and re-pushing are both unavailable there. On such a pull request
+     `totalCount` reports a two-digit alternating run where the truth is zero, and
+     declining then looks exactly like following this rule, leaving it `BLOCKED`
+     forever and reported as reviewer bandwidth - the presentation #1905 and #1917
+     each record for their own cause. On a genuine flip war both readings say "do
+     not flip", so their agreement is never evidence the count is sound.
+
+     Read the tail, not the head. `nodes` is ordered oldest-first while what makes
+     a flip unsafe is what happened *last*, and on #1667 `first: 3` and `last: 3`
+     are disjoint windows five days apart - so use `last: N`. A merge also writes a
+     `ClosedEvent`, which is why #2143's single node is its own squash rather than
+     someone undoing you: a distinction the node list draws and a count cannot,
+     since it counts neither closes nor reopens. Pinned by
+     tests/test_timeline_filter_count_is_unfiltered.py.
    - *After.* A `mergePullRequest` mutation can report `Pull Request is not
      mergeable` on a merge that in fact landed - observed on #1756, where the
      mutation returned that error and the squash was already on `main`. Confirm
      with `state`/`merged`, or `git log origin/main`, before concluding a merge
      failed and redoing the work.
+
+     Read that error as uninformative rather than rare. #2249 and #2250 were
+     squashed thirty seconds apart, each by a single `mergePullRequest` call
+     carrying `expectedHeadOid` - so a stale oid is ruled out - against a pull
+     request reading `CLEAN` / `MERGEABLE` / `APPROVED` with every required
+     context `SUCCESS`. Both calls returned `Pull Request is not mergeable` beside
+     `mergePullRequest: null`, and both squashes were already on `main`:
+     `926beb9` at 19:24:50 and `07a759d` at 19:25:20. Three for three with
+     #1756's `4bf139c`, and the payload carries no field that separates a refusal
+     from a success, so only the read-back can tell you which one you got.
+
+     The read-back also names the likely cause, in the field the error is worded
+     about: after the merge #2249 reports `mergeStateStatus` and `mergeable` as
+     `UNKNOWN`, consistent with the mutation re-reading a pull request it has just
+     closed. That makes the retry the expensive reflex rather than the safe one -
+     a second call against #2249 after it had merged returned the identical error
+     beside the identical `null`, so retrying manufactures a second confirmation
+     of a failure that never happened. Pinned by
+     tests/test_merge_mutation_error_is_not_a_verdict.py.
    - *And on `main` afterwards.* A rollup of `FAILURE` on a merge commit is not
      evidence that the squash broke anything: a **cancelled** check aggregates
-     into `FAILURE`. `pr-and-push.yml` keys its concurrency group on
-     `github.event.pull_request.number || github.ref`, and on a push there is no
-     PR number, so every push to `refs/heads/main` shares one group under
-     `cancel-in-progress: true` - each merge kills the run of the merge before
-     it. Read each context's own `conclusion` before you believe the rollup.
-     Four PRs merged in the 22 minutes from 03:03:44 to 03:25:25 left three
-     consecutive commits - #1788, #1794, #1796 - each reporting rollup
-     `FAILURE` whose only non-`SUCCESS` context was
-     `call-test-lint / Test and Lint` = `CANCELLED`, killed at 1m07s, 15m00s
-     and 5m38s into their runs. Nothing had failed. See #1800.
+     into `FAILURE` and the rollup carries no reason, so read each context's own
+     `conclusion` before you believe it.
 
-     The same timings carry a cost that is not a misread: that suite had not
-     finished in 15m00s, so merging faster than it runs leaves **only the tip
-     verified** and no intermediate commit attributable. A batch is still
-     defensible - each of those four was individually green, passed
-     `Detect an untested overlap with the base branch`, and touched a file set
-     disjoint from the others - but price it knowingly: a red tip then costs a
-     manual bisect, and an intermediate commit's green is not available to lean
-     on. Do not read the intermediate `FAILURE`s as the culprit; they are the
-     batching, not a defect.
+     The producer this used to name is gone. `pr-and-push.yml` keyed its
+     concurrency group on `github.event.pull_request.number || github.ref`, and a
+     push carries no PR number, so every push to `refs/heads/main` shared one
+     group under `cancel-in-progress: true` and each merge killed the run of the
+     merge before it. Four PRs merged in the 22 minutes from 03:03:44 to 03:25:25
+     left three consecutive commits - #1788, #1794, #1796 - each reporting rollup
+     `FAILURE` whose only non-`SUCCESS` context was
+     `call-test-lint / Test and Lint` = `CANCELLED`, killed at 1m07s, 15m00s and
+     5m38s into their runs. Nothing had failed. See #1800.
+
+     Counting the whole branch is what turned that from a wrong colour into a
+     wrong answer: of the last 25 commits on `main`, 24 had a settled rollup, 11
+     of those read `FAILURE`, and **9 of the 11 had no failing check at all**
+     (#2304). A commit on `main` is immutable and already merged, so unlike a
+     branch it gets no next push to clear the answer - and a burst of merges
+     destroys the evidence for *which* commit in it broke `main` in the same act
+     as creating the fault, which is the read #2303 had to make. The group now
+     keys on `github.sha`, so each pushed commit gets its own group and runs its
+     own suite to completion. Pinned by tests/test_push_concurrency_group.py.
+
+     Two things survive that fix. A `main` commit can still carry a cancelled
+     context from `docs.yml`, which keys on the ref and holds a `build` (a
+     per-commit verdict, where cancelling has the same defect) in the same group
+     as a `deploy` (a shared resource, where superseding is wanted) - three of
+     #2304's eleven are that, and splitting the two is #2305. And a batch of N
+     merges now runs N suites rather than 1, which is what buys each commit its
+     own answer; what it no longer costs is a manual bisect after a red tip,
+     because an intermediate commit's own green is available to lean on. A batch
+     is still defensible on the same grounds as before - each PR individually
+     green, passing `Detect an untested overlap with the base branch`, and
+     touching a file set disjoint from the others.
    - *And when `main` itself is red, a re-run cannot clear the PRs it blocked.*
      `pr-and-push.yml` checks out the PR **head commit**, not
      `refs/pull/N/merge` - the job log reads `HEAD is now at <branch head>` - so
@@ -562,14 +733,42 @@ hatch run format            # ruff check --fix, ruff format
      direction - `REVIEW_REQUIRED` at least says a review is owed, whereas
      `null` reads as "no review requirement applies here" rather than "one
      resolve from merging". It is not a recompute lag: that approval was more
-     than twenty minutes old when the field was read as `null`. The two also
-     need opposite actions - the `REVIEW_REQUIRED` case above needs a second
-     account, this one needs no review at all. The distinguishing read is the
-     threads, not the decision:
+     than twenty minutes old when the field was read as `null`.
+
+     **`null` is at least two states, and the resolve clears only one of them.**
+     #2328 presented #1974's signature exactly - `MERGEABLE`, `BLOCKED`, `null`,
+     one unresolved `github-advanced-security` thread, the required check
+     `SUCCESS` - so the paragraph above prescribed resolving that thread, which
+     was the right action. It settled the decision the other way:
+
+     | pull request | approving review present | after `resolveReviewThread` |
+     |---|---|---|
+     | #1974 | one `APPROVED`, post-dating the head | `APPROVED` / `CLEAN` - merges |
+     | #2328 | none - every review `COMMENTED` | `REVIEW_REQUIRED` / still `BLOCKED` |
+
+     `null` is also what a pull request carrying **no approving review at all**
+     reads, because a `COMMENTED` review contributes no approval. So the resolve
+     was necessary on both and sufficient on one, and "this one needs no review
+     at all" is true of #1974 and false of #2328 while the field is identical on
+     the two.
+
+     Read the review set beside the threads, and read it **before** you resolve
+     anything. #2328's decision moved from `null` to `REVIEW_REQUIRED` on the
+     resolve, so the one value that says which case you are in is gone by the
+     time you re-read it:
 
      ```graphql
+     reviews(last: 20) { nodes { state author { login } submittedAt } }
      reviewThreads(first: 50) { nodes { id isResolved isOutdated } }
      ```
+
+     A `null` carrying no `APPROVED` node is `REVIEW_REQUIRED` wearing a
+     different value: the remedy is a first approving review, and no amount of
+     resolving supplies one. That leaves `REVIEW_REQUIRED` itself carrying two
+     remedies - a first approval, or a second account when the only approval
+     came from the pusher - which is the split
+     `scripts/check_last_push_approval.py --all-open` reports and which no
+     single field distinguishes either.
 
      `isOutdated: true` on an unresolved thread is the common form, and it is a
      prompt rather than reassurance: the diff moved on, so the request has
@@ -588,6 +787,154 @@ hatch run format            # ruff check --fix, ruff format
      `require_last_push_approval` then disqualifies the pushing account from
      re-supplying it, turning a one-approval merge into one that needs a second
      reviewer.
+   - *And that the head it names is the branch's tip.* A pull request has three
+     answers to "what is the head commit" and they can disagree for hours. Two
+     of them are the API's, and are the pair this bullet compares: `headRefOid`
+     is the value the pull request *records*; the tip of the branch in the head
+     repository is the value that exists. The third is the commit your clone is
+     actually on, which is the next bullet. GitHub normally reconciles
+     them within a second of a push, and when it does not, nothing on the pull
+     request says so - because every gate this step tells you to poll resolves
+     the head *through the pull request's own view of it*, so they all agree
+     with each other and all of them are answering about a commit that is no
+     longer the tip.
+
+     #2508 sat approved, green and unmergeable for over five hours that way:
+
+     | | commit | pushed | check suites |
+     |---|---|---|---|
+     | `headRefOid` as reported | `21ea097e` | 07:56:47 | 8, all green |
+     | actual tip of the head branch | `271ec912` | 13:58:16 | **0** |
+
+     What that costs is the diagnosis, because the refusal names a gate this
+     repository does not have:
+
+     ```
+     mergePullRequest       ->  Head branch is out of date. Review and try the merge again.
+     PUT /pulls/2508/merge  ->  409  Head branch is out of date. ...
+     ```
+
+     There is no staleness requirement here to satisfy. The `default` ruleset
+     sets `strict_required_status_checks_policy: false` and `main` has no
+     classic protection (`GET /branches/main/protection` -> `404 Branch not
+     protected`), and the branch was not in conflict either -
+     `git merge-tree --write-tree --messages main <head>` returned a tree and
+     zero conflict messages. So the message invites the one action that makes
+     things worse: pushing a refresh onto a contributor's branch consumes the
+     approval of whoever owns the pushing token under
+     `require_last_push_approval`, which is the state #1035 cannot leave. On
+     #2508 the branch needed nothing - the author had already merged the base
+     cleanly.
+
+     `mergeable` / `mergeStateStatus` pinned at `UNKNOWN` is the only anomaly,
+     and it is the weakest signal available, because this step already documents
+     `mergeable` as lazily computed - it "reads `unknown` first and the settled
+     value second". A single `UNKNOWN` is therefore both expected and benign,
+     and "read it once more" is indistinguishable from that benign case for as
+     long as you are willing to keep reading. Five consecutive reads on #2508
+     returned `UNKNOWN` across both the GraphQL and REST shapes; every other
+     signal - `reviewDecision: APPROVED`, `call-test-lint` `SUCCESS`, no
+     unresolved thread, and *both* `--all-open` sweeps below - read ready.
+
+     Ask the head repository, which is the one side not under suspicion:
+
+     ```graphql
+     repository(owner: $headOwner, name: $headName) {
+       ref(qualifiedName: "refs/heads/<headRefName>") { target { oid } }
+     }
+     ```
+
+     resolved from `pullRequest { headRepository { nameWithOwner } headRefName }`
+     and compared against `headRefOid`. Reading the tip through the pull request
+     cannot work by construction - that is the field being checked.
+
+     **Reopen it; do not push it.** A close/reopen reconciles the record without
+     touching the branch, and on #2508 it moved `headRefOid` to `271ec912` and
+     queued the nine check suites that commit had never had. Same remedy and
+     nearly the same reason as the no-check-suite case above (#1987):
+     `reopened` recomputes with no commit, therefore no push, therefore neither
+     `dismiss_stale_reviews_on_push` nor a new last pusher. Read the flip
+     history first and count `nodes`, per the *Before* bullet - #2508 had zero.
+
+     Expect `reviewDecision` to move to `REVIEW_REQUIRED` once the record
+     catches up, and read that as bookkeeping rather than lost review: the
+     approval was already attributed to a commit that was not the tip. Check
+     whether the new head moved the pull request's *own* diff before asking for
+     a re-review - `271ec912` was a clean base merge, `git show --cc` 0 lines,
+     old head an ancestor of the new one, diff against the merge base
+     byte-identical at `3 files, +438`, which is the #1821 shape.
+
+     The lag is not only a merge blocker. It is also a window in which
+     `APPROVED` names the wrong commit, so a record reconciled while the head
+     carries *new* content leaves an approval covering a tree nobody read.
+     Sweep it when reporting repository health, alongside the two `--all-open`
+     checks above:
+
+     ```
+     python3 scripts/check_pr_head_is_current.py --repo <owner/name> --all-open
+     ```
+
+     It agreed with `git ls-remote` on all 10 open pull requests, so it needs no
+     clone. Pinned by tests/test_pr_head_is_current.py. See #2538.
+   - *And that the tree you are deriving from is that tip.* The third answer is
+     `refs/pull/N/head`, and it is the one every checkout reaches for and the
+     only one with no signal at all. It is a mirror ref GitHub refreshes on its
+     own schedule, so it trails a push to the fork branch. Measured on #2678:
+
+     ```
+     git fetch origin pull/2678/head   ->  33f8bcf4   one commit behind
+     pullRequest { headRefOid }        ->  0b070a05   the tip
+     git merge-base --is-ancestor 33f8bcf4 0b070a05   ->  true, a pure lag
+     ```
+
+     What that costs is not a wasted fetch. The run believed it *had* checked out
+     the branch, grepped the symbol its review thread named, found it genuinely
+     unused on that tree, and derived a correct fix for source that no longer
+     existed. Only `git push` refusing as non-fast-forward surfaced the drift -
+     after the work. A fix touching a different file would have pushed cleanly.
+
+     And the answer was worse than a duplicate, which is why re-reading the
+     thread against the tip is not optional. The thread was a CodeQL "unused
+     global `_RATE_TAG`". Against the stale tree the fix is deletion and the
+     suite agrees - 18 passed, `ruff` clean. Against the tip the same finding
+     means the opposite: the constant was unused because the behavioural tests
+     spelled its value out at each call site, so nothing tied the joint under
+     measurement to the tag the parametrized sweep graded, and the fix is to
+     wire it up. Deletion would have passed CI while removing the invariant the
+     symbol carried. **An unused symbol in a test file is often a missing call
+     site rather than dead code, and the two fixes are indistinguishable by test
+     outcome.**
+
+     So resolve the head from the API and fetch the branch *by name*. Never
+     `refs/pull/N/head`, and re-fetching that ref can return the same stale
+     commit again:
+
+     ```
+     git fetch https://github.com/$HEAD_REPO.git $HEAD_REF
+     git rev-parse FETCH_HEAD      # must equal headRefOid from the API
+     ```
+
+     That assertion is the cheap part and catches the whole class: if
+     `FETCH_HEAD != headRefOid`, no fix derived on the local tree is
+     trustworthy. Or run the check, which resolves the head repository's ref
+     itself and exits 1 on a stale tree, so it can sit in front of the work:
+
+     ```
+     python3 scripts/check_checkout_is_pr_head.py --repo <owner/name> --pr <N>
+     ```
+
+     It compares by **ancestry, not equality**: a clone sitting at its own
+     unpushed commit contains the tip and reads `ahead`, which is the ordinary
+     state between a commit and its push and is not a finding. A tip missing
+     from the local object database is `stale-checkout` rather than
+     indeterminate - a clone that never fetched a commit cannot contain it.
+     Pinned by tests/test_checkout_is_pr_head.py. See #2520, which records four
+     instances: #2511 (one thread, four author replies), #2566 and #2577 (two
+     runs deriving one fix, the duplicate discarded only because a plain push
+     was refused) and #2678 above. That refusal is load-bearing by accident -
+     `git pull --rebase` then push lands an empty-diff commit on top, and
+     `--amend --force-with-lease` deletes the commit that already answered the
+     thread.
    And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
    the **required** contexts' own conclusions and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
@@ -700,6 +1047,63 @@ hatch run format            # ruff check --fix, ruff format
    still `APPROVED`, nine suites queued including the required one. #1988 has the
    full account.
 
+   **Two further causes need no second token, and one needs nothing at all.**
+   `mergeStateStatus` is one word for at least six situations and names none of
+   them, so the rule that is actually unsatisfied has to be read separately.
+   Measured 2026-08-21, both approved and green, both idle after approval because
+   a scheduled pass read `BLOCKED` and concluded the next move was a reviewer's:
+
+   | PR | approved | merged | idle | actually unsatisfied | who could clear it |
+   |---|---|---|---|---|---|
+   | #2566 | 16:39 | 17:10 | 31 min | one unresolved review thread | the author |
+   | #2574 | 16:25 | 17:10 | 45 min | nothing - a stale computation | anyone, by retrying |
+
+   #2566 sat on `required_review_thread_resolution`, which the ruleset carries:
+   one thread was open, its fix had already landed, and the reviewer had approved
+   *past* it. Resolving it flipped `blocked` to `clean` on the next read. #2574 had
+   zero threads and twelve green checks, and `blocked` was simply stale -
+   `mergePullRequest` refused with `Pull Request is not mergeable`, naming nothing,
+   and `PUT /repos/{owner}/{repo}/pulls/{n}/merge` then succeeded on the first
+   attempt with no state having changed in between.
+
+   Two consequences worth keeping. **A merge attempt is cheap and self-verifying**,
+   so `BLOCKED` on a pull request with no unsatisfied rule is not a reason to wait;
+   and **prefer REST for the attempt**, because its refusal names the requirement
+   that is unmet while the GraphQL mutation's does not.
+
+   Rather than infer which of these is operating, read it:
+
+   ```
+   python3 scripts/check_merge_blockers.py --repo strands-labs/robots --pr <N>
+   python3 scripts/check_merge_blockers.py --repo strands-labs/robots --all-open
+   ```
+
+   It reads the branch ruleset - so a rule that is changed in settings cannot
+   drift from this file - and names every rule the pull request leaves
+   unsatisfied together with the party who can clear it: a conflict or an
+   unresolved thread or a failing check (the author), a missing approval (any
+   reviewer), an approval only its own pusher supplied (a different reviewer,
+   per #1905), a required check absent because a fork run is held at
+   `action_required` (a maintainer), a check still running (nobody), a
+   mergeability GitHub has not finished computing (nobody, until a re-read), or
+   no unsatisfied rule at all, which is the #2574 case and the one worth saying
+   out loud. A conflict, a draft, or an uncomputed mergeability is reported as
+   *gating*: the rules behind it cannot be assessed, so an approval there is
+   necessary but not sufficient.
+
+   That last one is why the sweep is worth re-reading rather than trusting once.
+   `mergeable` is `bool | None`, and a merge into `main` invalidates the cached
+   value for **every** open pull request -- so a sweep run just after a merge is
+   exactly when the null appears, which is also when a health pass is most likely
+   to run. #1035 was measured reading `pusher-only-approval` (owed by a reviewer)
+   while it was in fact `CONFLICTING`/`DIRTY`, and an otherwise-satisfied pull
+   request in the same state read `no-unsatisfied-rule`, whose printed remedy is
+   to attempt the merge. Both are now `merge-state-unknown`. See #2585.
+
+   It composes `check_last_push_approval.py` rather than restating it, so what
+   counts as a current approval has one owner. Neither script gates a merge.
+   Pinned by tests/test_merge_blockers.py.
+
    This is worth the words because the failure mode is silent and expensive in the
    opposite direction from the usual one. Treating an advisory red as a merge
    blocker does not look like a mistake; it looks like diligence, and it costs a
@@ -798,6 +1202,92 @@ hatch run format            # ruff check --fix, ruff format
    code does not separate them. Qualify first, then read a `404` on the
    *qualified* form as the uncomparable one.
 
+   **Both readings above are per-branch, and neither can see the open set.**
+   `M..base` is empty by construction whenever `M` is the base the branch was
+   evaluated against, which is every run, so two pull requests that are both
+   still open are invisible to each other: the intersection contains neither, the
+   overlap check reports clean on both, and the first tree in which the two are
+   compiled together is `main`. That is the #1763/#1766 topology arriving from the
+   open set rather than from a merged base. It also does not clear itself over
+   time - stale *approvals* are dismissed on push, a stale *pass* has no
+   equivalent, and a pull request idle in review never re-runs - so the exposure
+   runs until that branch's next push rather than until the sibling merges.
+   `--all-open` is the caller for both, exactly as for the sweep in step 12:
+
+   ```
+   python3 scripts/check_merge_base_overlap.py --github-repo <owner/name> --all-open
+   ```
+
+   Run it when reporting repository health. It reads the open set from the API and
+   computes the same intersection twice per pull request - once against each
+   sibling's `M..head`, once against what has landed on the base since its own
+   `M` - so the two modes cannot disagree about what counts as an overlap or as
+   prose. Measured on the queue the day it was added: 10 open non-draft pull
+   requests, 45 pairs, one pair sharing a behaviour-bearing path (#1035 + #1722 on
+   `strands_robots/mesh/__init__.py`) and one stale base 62 commits deep (#1722 on
+   `strands_robots/mesh/ros_bridge.py`), neither of which any per-branch signal
+   was reporting - both read `mergeStateStatus: CLEAN`.
+
+   Three properties of that sweep are worth knowing before leaning on it. A
+   truncated path set is named as unevaluated rather than intersected: a capped
+   list is indistinguishable from a complete one in the payload, and this check's
+   failure mode is a *missed* overlap, so quietly intersecting a truncated set is
+   how one goes missing. The two sides differ in how far away that is - the head
+   side is read from the paginated `pulls/{n}/files` endpoint and stops at 3000
+   entries, while the base side has no paginated equivalent and keeps the compare
+   endpoint's 300 - and the head side is the input to the pairwise mode, so it is
+   the one that must not drop a large diff.
+   And the two path sets skip apart: the base-side set is the one that grows
+   without bound, so it is the one that hits its cap - #1035 was 265 commits
+   behind - and dropping the whole pull request for it would discard the pairwise
+   finding this mode exists to make.
+
+   Both sides collect `previous_filename` alongside `filename`, so a rename
+   intersects a sibling still editing the old name. Without it the two share no
+   path, while git - which does detect the rename - applies the sibling's edit to
+   the new name and merges with no conflict marker, which is the exact silence
+   this sweep exists to break. That is what keeps the two modes agreeing: the
+   single-branch one reaches the same set with `--no-renames` (#2246).
+
+   A file carrying a `strict=True` xfail is the highest-value overlap candidate
+   there is, because its whole purpose is to fail when a sibling change lands: it
+   breaks a composition that git merges without a single conflict marker. #2233
+   pinned a defect that way and #2235 fixed it; composed, the tree was red with
+   nothing to resolve, which is why `mergeStateStatus: CLEAN` is not merely
+   unhelpful here but actively reassuring.
+
+   **What the sweep cannot see, and why it is not worth a heuristic.** Every
+   relation it computes intersects changed *paths*, so a test resolving its
+   population from a filesystem walk is invisible to it: the grader is coupled to
+   files it never names, and its intersection with the sibling it grades is empty.
+   #2557 added `tests/test_log_strings_are_ascii.py`, a walk of the package, and
+   merged in a batch with #2559 and #2560 - both of which added exactly the
+   tool-result prose that grader scores - at a pairwise path intersection of `[]`
+   with each. The batch was safe, but only because it was checked by hand.
+
+   Do not widen the path set to the walked root. Measured on the open set of 9,
+   that relation selects **11 of 36 pairs, 9 of them new, and none a defect**:
+   125 of the 1136 test files resolve a population from a walk, and the ones that
+   reach furthest are rooted at `strands_robots` entire, so they intersect nearly
+   every open branch, while a narrowly-rooted grader (`strands_robots/mesh/`)
+   selects only the pair the path intersection already reports. That is the
+   `awaiting-first-review` failure mode from step 8 in a different field: a
+   finding on a third of the queue is boilerplate, and the batch where it
+   mattered is not distinguishable from the rest.
+
+   What does separate them is composing the two branches and running the grader,
+   which needs no model of what the grader reads. Run by hand over the open set
+   for #2562's whole-tree grader it cost ~10 s per composition, and it correctly
+   left alone three siblings whose new `except` tuples a path-or-keyword
+   heuristic would have flagged - `(KeyboardInterrupt, Exception)` among them,
+   which is correct code. Two branches were `CONFLICTING` and so honestly
+   `skipped`, not green. That relation cannot live in `--all-open`: the sweep
+   reads the open set from the API and **no checkout at all**, which is what lets
+   a health report run it without a clone, and every sweep test pins that by
+   running from a directory that is not a repository. So the sweep reports what
+   it measured - shared paths - and names the class it cannot describe (#2561).
+   A composition run stays a manual step, below.
+
    Read that run as a **delta, not an absolute**. The environment you verify in
    is almost never the one CI uses, and a partial one fails tests for reasons
    that have nothing to do with the merge. Composing #1786 and #1804 - both
@@ -817,9 +1307,24 @@ hatch run format            # ruff check --fix, ruff format
    Then confirm the tree you verified is the tree that landed -
    `git diff --name-only <local-composition> origin/main -- strands_robots/ tests/`
    should be empty. Squash rewrites the commits, so nothing but that equivalence
-   ties your local run to `main`; and on a batch, where only the tip's
-   `call-test-lint` survives the concurrency group above, it is the sole evidence
-   the intermediate commits were ever compiled together.
+   ties your local run to `main`.
+
+   **On a batch that equivalence is still the check to run, but no longer because
+   the intermediate commits go untested - they do not.** Since the push
+   concurrency group keys on `github.sha` (above), every commit in a batch runs
+   its own suite to completion, and a commit on `main` carries merges 1..N of the
+   batch, so its own green *is* a verdict on the partial composition it is.
+   Measured on the six merges that took `main` from `239f24ab` to `0d811084` in
+   about 53 seconds - #2320, #2327, #2329, #2333, #2334, #2335 - all six report
+   `call-test-lint / Test and Lint` `success`, where before #2304 only the tip's
+   would have survived. What the equivalence buys instead is the whole batch in
+   one read: the tree-sha comparison below is scoped to `behind_by == 0`, and in
+   a batch only the *first* pull request can satisfy that - every later one is
+   behind by the merges ahead of it, so its squash tree differs from its head
+   tree for entirely correct reasons and the comparison does not apply at all.
+   Diffing the composition against the final tip is the one form that answers for
+   all N at once, and dropping the path scoping costs nothing and catches more
+   (that batch's unscoped diff was empty too).
 
    **Comparing the two commits' tree shas is the same claim without the clone,
    and a stronger one.** That `git diff` needs the local composition to still
@@ -952,9 +1457,14 @@ hatch run format            # ruff check --fix, ruff format
    lands in the step summary and in a `Needs an approver who did not push the
    head` annotation, because a red X drags `statusCheckRollup.state` to
    `FAILURE`, where it cannot be told apart from the branch's own tests failing -
-   measured on #1722, whose rollup read `FAILURE` with every required context
-   `SUCCESS` and this check as the only non-`SUCCESS` context, and misread as a
-   broken diff four times. Red on that job now means the check itself could not
+   measured on #1722 at head `3a32a14`, whose rollup read `FAILURE` with every
+   required context `SUCCESS` and this check as the only non-`SUCCESS` context,
+   and misread as a broken diff four times. Cite that head, because the citation
+   no longer reproduces from the pull request: on `741f4057` this job reads
+   `SUCCESS` under its present name, and #1722's rollup is still `FAILURE` for an
+   unrelated producer - a cancelled duplicate of the closing-reference check
+   (#2216). The decision rests on the `3a32a14` measurement; re-deriving it from
+   #1722 today finds this job green and the reasoning apparently unfounded. Red on that job now means the check itself could not
    compute an answer. The check row is named `Report the last-push-approval
    state` for the same reason: green must not assert the absence of a finding. The point of automating it is not that the check is clever - it is
    that the state it reports is *invisible*: `REVIEW_REQUIRED` / `BLOCKED` is
@@ -1043,6 +1553,8 @@ Corrections from code review that apply to all future contributions:
 ### Thread Safety
 - **Lock ALL model/data mutations** - MuJoCo `model`/`data` are not thread-safe. Any method that writes `qpos`, `qvel`, `ctrl`, `qfrc_applied`, `body_mass`, `geom_friction`, or calls `mj_step`/`mj_forward`/`mj_resetData` MUST hold `self._lock`.
 - **Guard scene mutations during policy** - Use `_require_no_running_policy()` before any action that recompiles or replaces the model/data objects.
+- **Lock a read that copies model/data out too** - the rule above is stated for writes, but a read that copies mjData into another buffer races a concurrent `mj_step` exactly as a write does, and the corrupt half is the copy. `Renderer.update_scene` copies `xpos`/`xquat`/`xmat` and the geom poses, and `Renderer.render` dereferences `data.contact`, so every method that drives that pair must hold `self._lock` across it and `.copy()` the frame inside, leaving only the encoding unlocked. The blanket dispatch lock is not that guarantee: it covers the tool surface only, so a direct Python call, a recorder daemon, or a `PolicyRunner` worker holds nothing. `render` and `get_frame` serialised this read and `render_depth` did not - identical operations on the same buffers, and with a policy worker stepping on its own thread 3 of 60 depth reads landed inside a physics step while 0 of 60 RGB reads did. Where the read lives in a private helper, lock the public facade across the delegation instead (`get_observation` -> `_get_sim_observation`) and pin *that*, rather than exempting the helper. `Pinned by` `tests/simulation/mujoco/test_frame_readers_serialize_the_mjdata_read.py`, which derives the graded set from the module's AST so a reader added later is held to the rule, and `tests/simulation/mujoco/test_concurrency_lock_audit.py` for the read-only physics queries.
+- **A shared-device lock is only a guarantee where every caller takes it** - a lock on a device serialises the callers that go THROUGH it, and says nothing about one that reaches the device directly. `strands_robots/bus_access.py` puts one `RLock` on a lerobot robot so the serial motor bus is one conversation; the mesh modules were converted and `hardware_robot.py` was not, so it serialised the mesh's readers against each other and not against a policy rollout, while one process holds both. A second lock nearby is not the same guarantee: `hardware_robot`'s `_task_admission` admits one rollout at a time, which is admission control over *tasks*, and the two locks do not know about each other. The failure is asymmetric - the caller that loses is the one holding nothing - so the unconverted side is the side that breaks: a mesh reader kept reading while one refused read ended the rollout, blamed on the policy for a run that never commanded the arm. So when a lock is introduced for a shared resource, convert every caller in the same change, and pin it with a rule over the source rather than one test per call site. `Pinned by` `tests/test_hardware_bus_is_shared_with_the_mesh.py::TestNoCallerDrivesAHeldDeviceOutsideBusAccess`, which derives the guarded operations from what `bus_access` itself drives and grades every module that holds a device, so it needs no list of exempt files.
 - **Document the concurrency contract** - If a method is safe to call concurrently, say so. If not, say so.
 
 ### Error Handling Contracts
@@ -1051,8 +1563,9 @@ Corrections from code review that apply to all future contributions:
 - **Fail-fast with `strict=True`** - Silent frame dropping or catch-all `except Exception` with logging is forbidden unless gated behind a `strict=False` parameter.
 
 ### API Consistency
-- **Don't export private functions** - `_`-prefixed names must never appear in `__all__`.
+- **Don't export private functions** - `_`-prefixed names must never appear in `__all__`. A star-import skips underscore names *unless* `__all__` lists them, so an entry there is the sole reason `from <pkg> import *` binds one: `strands_robots/mesh/__init__.py` listed `_LOCAL_ROBOTS` (the in-process registry dict) and `_LOCAL_ROBOTS_LOCK` under the comment "exposed for test patching only", and that reason does not hold - `__all__` has no bearing on the attribute access both registry-touching test files actually use, one of which already reached `strands_robots.mesh.core` where the two are defined. What such an entry usually is load-bearing for is silencing `F401` on an import whose only purpose is to place the name on the package namespace, which is what ruff's own remedy text ("consider removing, adding to `__all__`, or using a redundant alias") describes - so drop the import along with the entry, and export a public accessor instead. Pinned by `tests/test_all_exports_are_statically_defined.py::TestNoExportIsPrivate`, which grades this over the same population as the definedness half.
 - **Match docstrings to semantics** - If the docstring says "single-shot" but the code is "latched", one of them must change. Always verify by reading the underlying library docs.
+- **A `Raises:` block names every refusal the function itself makes** - it is the only place a caller learns which `except` clause to write, so a refusal added later must be added to it. `build_lerobot_command` documented `ValueError` alone and 28 days later gained a preflight raising `RuntimeError` for a lerobot without the DAgger rollout entry point (#1614 against a block written in #732), so a caller who wrote exactly the handler the docstring licensed took an escaped exception. Only the forward direction is a rule: a documented class raised by a helper the function delegates to is legitimate and common (80 surfaces do it), and a class raised *and caught* in one function must not be documented at all. Pinned by `tests/test_raises_docstring_completeness.py`, which grades module-level functions as well as methods - the surface above is not a method, so the `Args:` guard's population would not have seen it.
 - **Forward all advertised kwargs** - If `tool_spec.json` exposes a parameter, the dispatch chain must forward it all the way through. Silent drops are bugs.
 - **Centralize import checks at init** - Prefer checking optional deps once in `__init__` over scattered `_ensure_X()` guards. Consumers catch issues at init time.
 
@@ -1066,9 +1579,10 @@ Corrections from code review that apply to all future contributions:
 - **Round-trip tests for recording** - Any recording feature needs: start -> write -> stop -> reopen -> assert non-empty. Schema-only tests miss silent data loss.
 - **Pin regression tests for reviewed fixes** - Every review fix gets a test that fails on pre-fix code. Otherwise the next refactor silently reintroduces the bug.
 - **No host paths in test files** - Never commit `/Users/<name>/` or `/home/<name>/` paths. CI test `test_no_host_paths.py` enforces this.
+- **Name a test for its behaviour, not for its provenance** - a test class or function must not carry the release (`TestHardwareConfigV040Followups`) or review round (`...Followups`) that produced it. The name is the first thing a maintainer reads, so it has to say what is verified; and a name tied to a shipped release reads as historical, which invites skipping it. A bundle named for a review round is usually a bundle of unrelated checks - split it into one behaviour per class rather than inventing a name that covers all of them. Provenance belongs in the docstring, where the `#NNN` reference stays useful. A version token of one or two digits is fine: it names a *data format* under test (`test_load_v3_parses_every_field`), not a release. `Pinned by` `tests/test_test_case_names_describe_behaviour.py`.
 
 ### Performance
-- **Don't create executors in hot loops** - Reuse a single `ThreadPoolExecutor` instance instead of creating one per call at 50Hz.
+- **Don't create executors in hot loops** - Reuse a single `ThreadPoolExecutor` instance instead of creating one per call at 50Hz. A `with ThreadPoolExecutor(...)` block joins its worker before returning, so the live thread *count* never grows and nothing watching thread counts can see the churn - count `Thread.start` instead. For resolving a coroutine in a sync context the reuse already exists: `strands_robots._async_utils` owns that rule and submits to one module-level worker, so a sync wrapper delegates to it rather than building a private executor. Pinned by tests/policies/test_base.py.
 - **Cache expensive JSON parsing** - If a `@property` re-parses a JSON file on every access, cache the result at module load or first access.
 
 
@@ -1083,11 +1597,301 @@ Corrections from code review that apply to all future contributions:
 
 ### Exception Clauses Must Be Narrow
 - **`except Exception` is forbidden** for non-recovery code paths. Use the smallest superset of expected exception types.
-- **`except (ImportError, Exception)` is a bug** - `Exception` is a superclass of `ImportError`, so the tuple collapses to `except Exception`. Lint/review will catch this; don't write it.
+- **`except (ImportError, Exception)` is a bug** - `Exception` is a superclass of `ImportError`, so the tuple collapses to `except Exception`. The same collapse happens for any member another member already covers: `except (FileNotFoundError, OSError)` is `except OSError`, and with it `PermissionError`, `TimeoutError` and the whole `ConnectionError` family. The covered name contributes no scope, only the impression of a smaller superset than the handler has - and where the prose on the handler enumerates the tuple, that impression becomes a claim the handler does not keep. No linter reports it: ruff's `B014` covers a *duplicate* member only, and the full
+  catalogue (`--select ALL`) reports neither `(FileNotFoundError, OSError)` nor
+  `(ImportError, Exception)`. Drop the covered member - that changes no behaviour. Narrowing the
+  handler's real surface is a separate behaviour change, one per site. Pinned by
+  tests/test_except_tuples_state_their_real_scope.py, over builtins, the standard library and
+  this package; a third-party tree is left alone because a dependency can re-parent its classes
+  between releases, so naming both it and a builtin superclass is a hedge.
+- **A `try` covers only the operation whose exception it classifies** - where a handler exists to read a *verdict* out of an exception class, anything else inside the same `try` that can raise that class is read as the verdict. `asyncio.get_running_loop()` reports "no running loop" by raising `RuntimeError`, so with the offload it guards inside the same `try`, a `RuntimeError` raised by the awaited coroutine was taken for that verdict and the caller was handed `asyncio.run() cannot be called from a running event loop` in place of what the coroutine said - the whole family (`NotImplementedError`, `RecursionError`) with it. Put the guarded call after the `except`, so the handler can only ever see the operation it is classifying. Pinned by tests/test_async_utils.py.
 - **USB / hardware probing** - use `except (ImportError, OSError)`. `PermissionError` is an `OSError`, `FileNotFoundError` is an `OSError`, etc.
+
+### Actuators: a joint pose goes only where `ctrl` IS a joint pose
+- **`data.ctrl` is not a pose channel, it is whatever the actuator's force law reads.**
+  A `<position kp>` reads it as the joint target, a `<velocity kv>` as a rate, a `<motor>`
+  as a torque, an `<intvelocity>` integrates it as a rate. Writing a joint coordinate into
+  any of the latter commands a different physical quantity that happens to be numerically
+  equal to an angle, and nothing raises: the joint simply moves somewhere the caller did
+  not ask for.
+- **Anything that writes a pose asks
+  `strands_robots.simulation.mujoco.scene_ops.joint_drive_map` first.** Resolving the
+  transmission is not enough - a `<velocity>` actuator's transmission IS the joint, and
+  every stock tendon gripper measured clears the bias-type and position-gain terms a naive
+  servo check would look at. The classification is per actuator, not per robot: `openarm`
+  ships 2 position servos beside 16 motors, and 19 of the loadable registry robots have at
+  least one joint-transmission actuator that is not a servo.
+- **A drive that cannot take the pose is left uncommanded and named, not written to.** The
+  motion primitives hold the joints they can hold and report the rest, because writing a
+  live joint angle into a rate drive is what *moves* the joint the call meant to hold - and
+  a wheel angle accumulates, so that "hold" grows with every turn the wheel has already
+  made. Where the drive being targeted is the one that cannot take a pose, the primitive
+  refuses instead: a servo loop on a rate drive meets its convergence test when the joint
+  sweeps *past* the number while still accelerating, so it reports the set-point as reached
+  and the joint keeps going after the call returns.
+- Pinned by `tests/simulation/mujoco/test_pose_write_reports_whether_the_servos_hold_it.py`
+  for `set_joint_positions(hold=True)` and by
+  `tests/simulation/mujoco/test_primitives_write_a_pose_only_into_a_pose_drive.py` for
+  `move_to` / `rotate_wrist` / `set_gripper`, which also pins the boundary: a usable
+  `ctrlrange` is authoritative and already in the drive's own units, so only the
+  *substitution* of a driven joint's limits needs the drive to be a servo.
+
+### MuJoCo enums are matched by value, never by operand order
+
+`mjModel` / `mjData` expose their type fields as numpy integer arrays, while the
+matching vocabulary is a pybind11 enum. Whether the two compare equal depends on
+which side the enum is on.
+
+- **Compare `int()` to `int()`.** `int(model.geom_type[i]) in (int(mjGEOM_PLANE),
+  int(mjGEOM_HFIELD))`, `int(model.actuator_trntype[a]) != int(mjTRN_TENDON)`.
+- **`x in (enum, ...)` is the trap, not a hand-written reversed `==`.** CPython
+  compares `element == needle`, so membership puts the ENUM on the left. That is
+  `True` on mujoco 3.9.0 / 3.10.0 / 3.11.0 and `False` on 3.12.0 - all inside the
+  declared `mujoco>=3.5.0,<4.0.0` range. A `set` of enum members degrades the
+  same way: the hashes still collide and the confirming equality is the failing
+  direction.
+- **The failure is silent.** The membership test simply answers `False` for every
+  element. Measured: a heightfield ground geom stopped being recognised as
+  ground, so a "lowest robot geom" scan returned the ground's own `z=0.0`; and an
+  example's home-pose helper matched 0 of 3 joints, writing no `qpos` and no
+  `ctrl` while logging that the pose had been set.
+- **The rule is uniform, with no exemption for a spec-side value.** `MjsGeom.type`
+  really is an enum, so `in` works there - but a reader cannot tell an `MjsGeom`
+  attribute from an `MjModel` array element at the call site, so both are written
+  by value.
+- Pinned by `tests/test_mujoco_enum_comparisons_are_value_based.py`, which grades
+  `strands_robots`, `tests`, `tests_integ` and `examples`.
+
+### Clocks: a duration is measured, a stamp is recorded
+- **A duration belongs on `time.monotonic()`.** Anything that decides *how long to keep
+  waiting* - a timeout, a deadline, a TTL, a retry window, a rate window, a frame pacer -
+  must be measured on a clock that only moves forward at one second per second.
+  `time.time()` is the current opinion about the date, and an NTP correction, a `date -s`,
+  or a VM resume moves it by an arbitrary amount mid-wait: forward, the wait ends early
+  with the work still in flight; backward, it runs past the caller's budget by the size of
+  the step. Neither is reported, because nothing raised.
+- **An absolute stamp stays on `time.time()`.** A record's `timestamp`, a session
+  `start_time` persisted to disk, the `t` field of a wire envelope whose freshness another
+  machine judges - those name a point in time that something off this process correlates,
+  and seconds of local process uptime is meaningless to that reader.
+- **The two can share a function and must not share a variable.** `serial_tool`'s monitor
+  bounds its window on `time.monotonic()` and stamps each returned record with
+  `time.time()`; the mesh keeps `_last_estop_mono` beside `_last_estop_ts` for the same
+  reason. If one value is used both to decide and to report, split it rather than picking
+  a compromise clock.
+- Pinned by `tests/tools/test_tool_wait_budgets_survive_a_clock_step.py` (a scan over the
+  agent-callable tools, no exemption list) and, for the safety subsystem, by
+  `tests/mesh/test_replay_cache_monotonic.py` and
+  `tests/mesh/test_corroboration_clock_domain.py`. The frame pacer named above is pinned
+  by `tests/simulation/test_rollout_durations_survive_a_clock_step.py`, which asserts the
+  *achieved* frame interval across a clock step rather than the value the pacer computed,
+  and the RTC inference-delay estimate by
+  `tests/policies/lerobot_local/test_rtc_latency_survives_a_clock_step.py` - a latency that
+  feeds a decision is a duration, however much it also reads as telemetry. The two
+  rendering pacers - the MJPEG stream generator and the multi-camera recorder thread - are
+  pinned on the same achieved-interval basis by
+  `tests/simulation/test_rendering_pacers_survive_a_clock_step.py`, along with the duration
+  each recording reports. The Isaac backend's own two - the idle gate that decides when
+  `run_pump_forever` refreshes the live preview, and the duration its camera recording
+  reports - are pinned by
+  `tests/simulation/isaac/test_isaac_durations_survive_a_clock_step.py`, which asserts the
+  achieved refresh timeline against the unstepped one rather than a tolerance. A duration
+  base also carries its clock in its name (`started_mono`, `last_idle_render_mono`), so a
+  later reader cannot mistake it for a stamp and subtract `time.time()` from it.
+
+### Posture flags are checked, never read by truthiness
+- **A flag that selects a posture is checked; a knob that scales a quantity is
+  validated.** Both live in the same signatures and both are caller input, but they fail
+  differently. `boolean_flag_error` is the domain for the first kind - a confirmation gate,
+  a security opt-out, a preview mode, a search region - and the numeric domains
+  (`positive_whole_number_error`, `positive_finite_number_error`) for the second. The two
+  are inverses: the numeric ones reject `bool` because it is an `int` subclass that would
+  pass as a silent `1`, and this one requires the boolean they turn away.
+- **Truthiness inverts exactly the spellings an operator reaches for.** Every non-empty
+  string is truthy, so `"false"`, `"no"`, `"off"` and `"0"` select the *other* posture from
+  the one they read as, and `None`, `0`, `""` and `[]` take a branch without ever being a
+  declared spelling of it. Nothing raises and nothing logs, so the wrong posture is
+  indistinguishable from the right one - `actuate_robot`'s `disable_self_collision="no"`
+  disabled every collision in the scene, `derive_key_light`'s
+  `upper_hemisphere="false"` searched the hemisphere the value asks to skip, and
+  `ros2_commands="false"` opened an inbound arm-driving `joint_command` subscription for a
+  caller who had asked for a read-only telemetry bridge.
+- **Do not parse a vocabulary as a fallback.** A flag arrives already typed, unlike an
+  environment variable whose only shape is a string, so the honest answer is to check it.
+  Parsing only moves which spellings invert: `"on"`, `"enabled"` and `"y"` are absent from
+  every such vocabulary here and would each resolve to the restrictive posture while
+  reading as an opt-in.
+- **A refusal that branches on the same flag inherits the inversion.** If an error message
+  chooses its wording or its remedy from the flag, a truthy non-boolean makes it describe
+  the branch the caller did not ask for - `derive_key_light` reported a region black
+  "above the horizon" to a caller who had asked for the full sphere, and advised passing
+  the value they believed they had passed. The RTPS bridge's DDS Security gate is the same
+  shape at higher stakes: it branches on `enable_commands`, so a truthy non-boolean made it
+  refuse a *read-only* request as "an enabled command bridge" and advise the insecure
+  opt-out - the one remedy that turns that refusal into a silent open of the surface the
+  caller asked to close. Checking the flag makes such a branch reachable only where its
+  advice is actionable.
+- **A facade that checks a flag does not check it for the method it forwards to.**
+  Where one contract is reachable through a convenience surface and a documented
+  direct API, both read the same caller input, so a guard on one leaves the other
+  disagreeing about which values are usable - which is what the shared *numeric*
+  domains in the same signatures exist to prevent. Every backend's
+  `start_recording` checked the `overwrite` it forwards to
+  `DatasetRecorder.create`, and `create` read it by truthiness and deleted the
+  caller's dataset. Guard the flag where it is *read*, on the same domain, and
+  ahead of the side effect it selects - for a confirmation gate in front of a
+  delete, that means before the target is touched, so a refusal cannot arrive
+  after the deletion it was refusing. Pinned by
+  `tests/test_dataset_recorder_posture_flag_domain.py`, which also records why
+  the neighbouring surfaces are out of scope.
+- **A flag whose misread only shows up in a rendered frame is checked at construction.**
+  Where the branch a flag selects is applied later - a fitted transform, a compositing
+  decision - the misread has no error to surface at, so it reads as a scene that looks
+  slightly wrong rather than as a bad argument. `GsplatBackground` already raises for a
+  nonexistent scene path for exactly that reason (its first `render` sits inside an app's
+  catch-all that demotes the photoreal backdrop to a procedural fallback), and its four
+  alignment flags - `auto_backdrop`, `skybox`, `metric`, `own_floor` - were read by
+  truthiness beside it. `metric` is the sharpest: it also decides whether `radius` is read
+  at all, so `metric="no"` kept a capture's raw scale and stood a real 500k-splat room up
+  at a 4.45 m radius for a caller who asked for 2.5 m. Check such a flag where the caller
+  supplied it, not where the branch is taken. Pinned by
+  `tests/rendering/test_gsplat_background_posture_flag_domain.py`, which measures the
+  branch each of the four selects.
+- Pinned by `tests/simulation/mujoco/test_actuate_robot_posture_flag_domain.py`,
+  `tests/simulation/test_recording_posture_flag_domain.py`,
+  `tests/tools/test_lerobot_teleoperate_flag_domain.py`,
+  `tests/mesh/test_iot_provisioning_flag_domain.py`,
+  `tests/rendering/test_key_light_posture_flag_domain.py` and
+  `tests/test_ros2_command_surface_flag_domain.py`, each of which parametrizes over
+  `boolean_flag_error` itself rather than a copied spelling list, so a spelling added to
+  the shared domain is covered without an edit.
+
+### A subset selector is read by membership, never by truthiness
+- **A parameter that names a SUBSET of a collection the call already owns is not a value
+  with a default; it is a selection.** `None` means "all of it" on these surfaces, so
+  reading the parameter by truthiness makes every other falsy value take that same branch
+  - and for a selector, that is not a wider default but the *opposite* answer. An empty
+  selection asks for nothing and was served everything: `teleoperate(names=[])`, which is
+  what a filter that matched nothing produces, connected and drove every attached leader,
+  and `detach_teleop("")` removed the whole attached set. Both reported success.
+- **Read it `is None`, and refuse the empty selection rather than widening it.** A scalar
+  default (a path, a device string, an empty `fields` dict) can be read by truthiness
+  because empty and absent genuinely coincide there - the value is derived either way. A
+  subset selector is the case where they diverge, so it needs the membership read plus its
+  own verdict on emptiness, which the shared name-list domain deliberately leaves to the
+  caller ("a surface where an absent value IS an error keeps that verdict its own").
+- **The other unhonorable spellings belong to `name_list_error`.** A single name as a bare
+  string is iterable per character, a repeated name makes the call do its unit of work
+  twice, and a one-shot iterator is consumed by whichever check reads it first, leaving the
+  real consumer nothing. Route the shape through the shared domain and keep only the
+  emptiness verdict local; refuse before the call touches hardware, a filesystem or a
+  thread, so a refused selection has no partial effect to undo.
+- **A selection widened to everything can also reach past the call.** `detach_teleop` stops
+  the local loop once nothing is left to drive, so a detach widened from one stream to all
+  of them ended a running session as a side effect of the misread.
+- **A surface that resolves the names by membership takes only the emptiness verdict.**
+  Where the selector is resolved into a dict rather than bound by position, a repeat
+  resolves to its first occurrence and a mapping and a one-shot iterator are each read
+  exactly once, so routing the shape through `name_list_error` would refuse calls that
+  are honored as written today - the same carve-out that keeps the WBC and MotionBricks
+  providers out of that domain. `download_robots(names=...)` is that case, and the
+  membership read is still owed: read by truthiness, `names=[]` downloaded 56 robots on
+  the shipped registry, and 13 - a whole category - when a `category` was also passed,
+  reporting either count as the caller's own request. Nothing had to write `[]` to get
+  there, which is what made it reachable rather than theoretical: the `download_assets`
+  tool builds the list from a comma-separated string through its own blank-field filter,
+  so the NON-empty `robots=","`, `" "` and `",,,"` each parse to zero names. Refuse the
+  empty selection ahead of the call that creates the asset cache directory, so a refused
+  selection leaves nothing behind - and refuse it again in the tool's own vocabulary, so
+  the remedy names the `robots=` that caller passed rather than the `names=` it never
+  did. Pinned by `tests/test_asset_download_selection_domain.py`, whose controls pin the
+  three tolerated spellings so the narrowing stays deliberate rather than incidental.
+- Pinned by `tests/test_teleop_device_selection_domain.py`, whose controls assert that the
+  documented spellings (`names=None`, a real subset, `detach_teleop(None)`) are unchanged,
+  and by the render path's `cameras` resolution, which has read the same kind of selector
+  `is None` all along - an empty camera selection there resolves to no camera rather than
+  to every one.
+### A model source is read by absence when absence selects another resolution path
+- **The selector rule above allows a scalar path to be read by truthiness "because empty
+  and absent genuinely coincide there - the value is derived either way". That holds where
+  absence derives the SAME kind of value.** `examples/wbc/motionbricks_g1_mujoco.py`
+  declares `--scene-xml` with a `""` default and derives the scene from `--result-dir`, so
+  `""` IS its sentinel there and truthiness is correct. It does not hold where absence
+  selects a DIFFERENT RESOLUTION PATH: then the two spellings do not pick the same value
+  by another route, they pick a different thing to blame when the call fails.
+- **`add_robot`'s model source is that case.** Absent means "resolve from `data_config`, or
+  from the instance label via the deprecated registry short form"; supplied means "load
+  this file". Read by truthiness, `urdf_path=""` took the absent branch, so the refusal
+  diagnosed the NAME - close-match suggestions for a name the caller never asked to
+  resolve, and "Or pass data_config=<registered model> or urdf_path=<file>" to a caller who
+  had just passed exactly that. It was byte-identical to what supplying no source returns.
+- **The tell is the REPORT, not the value.** Both spellings error either way, so nothing
+  loads a wrong model; what diverges is which parameter the caller is sent to fix. One
+  whitespace character away (`urdf_path=" "`) the diagnosis was already correct ("File not
+  found"), which is the shape to match - refuse the empty value, not the unusable one.
+- **Check the whole family, and note that most of it was already right.** Newton reads
+  `urdf_path is not None`, Isaac reads `usd_path is None`, and `register_urdf` refuses an
+  empty `urdf_path` by name in both backends that expose it; MuJoCo's `add_robot` was the
+  one site reading the source by truthiness. Refuse behind any existing precedence (the
+  name-collision report still wins) so no settled message moves.
+- Pinned by `tests/simulation/mujoco/test_add_robot_unknown_model_message.py`, whose
+  controls pin the boundary (whitespace stays a path), the untouched short forms (`name=""`
+  still derives a label, an omitted source still diagnoses the name) and the precedence.
+### A resolution knob is validated before the work it sizes
+- **Check the knob that sizes an expensive result before producing the result.** A
+  resolution is caller input like any other, and the numeric domains
+  (`positive_whole_number_error` for a pixel or frame count) are what it is checked
+  against. Checking it late is not merely a worse message: `render_environment_map`
+  paid six full background renders - GPU-bound for a `GsplatBackground` - before
+  returning a `(H, 0, 3)` map for `equi_w=0`, and `bake_environment_map` probed and
+  wrote its cache file before anything looked at the size it was baking.
+- **A zero-sized grid is a resolution mistake, and the consumer will misdiagnose it
+  as a property of the scene.** An empty map is not distinguishable from a dark one
+  by the code that reads it, so `derive_key_light` blamed the background - "the map
+  is black above the horizon" - and advised a search flag. Following that advice
+  fails identically, because a map with no texels has no hemisphere to search, so
+  the only remedy on offer was a dead end and the knob the caller actually got
+  wrong was named nowhere. Refuse at the entry point and the accurate diagnosis is
+  the first one the caller sees.
+- **Check the domain, not the quality.** A resolution the module cannot use is a
+  refusal; a resolution that merely buys a poor result is the caller's call, and
+  the two are worth keeping apart. `face_size` is the example: the equirect
+  reprojection scales by `face_size - 1`, so 1, 2 and 3 each resolve almost
+  nothing within a cube face, and the detail a map carries grows smoothly from
+  there with no boundary to pin a floor to. `0` cannot produce a map at all, so
+  that is refused; `1` can, so it is accepted.
+- **Normalize after checking.** The numeric domains deliberately accept an integral
+  float and a NumPy integer, so the value has to be put through `int()` before it
+  indexes anything - `HybridCompositor` does this for its own `default_width` /
+  `default_height`. Where the value is formatted into a cache key that is not
+  cosmetic: `2048` and `2048.0` spelled two different environment-map filenames for
+  one set of pixels, so a bake already on disk was missed and paid for again.
+- Pinned by `tests/rendering/test_environment_map_resolution_domain.py`, which
+  parametrizes over `positive_whole_number_error` itself rather than a copied value
+  list, so a value added to the shared domain is covered without an edit.
+
+### One writer per log file
+- **A file two writers share needs one file object, not one path.** Two file objects over
+  one path each track their own write offset, so a buffered writer flushes at its offset
+  and overwrites in place whatever the other appended there. The training backends' run
+  log tees stdout/stderr *and* root-logger records into a single file, so the logger
+  handler is pointed at the stream the tee already holds
+  (`logging.StreamHandler(stream)`) rather than opening the path a second time
+  (`logging.FileHandler(path)`).
+- **The failure is silent and shaped like data, not like an error.** Records vanish, and a
+  record straddling a flush boundary survives as a fragment that still reads like one - so
+  the loss surfaces as a wrong *value* somewhere downstream. The log a training backend
+  parses for its "RUNNING != learning" verdict reported a healthy 1200-step run as having
+  produced no metrics at all, with nothing raised and nothing logged.
+- Pinned by `tests/training/test_inproc.py::TestCaptureToFileIsTheOnlyWriter`, which
+  asserts the log holds exactly the lines that were written - so a dropped record and a
+  surviving fragment both fail - and hands records to the installed handler directly, so
+  the assertion does not depend on ambient logger levels or on pytest's capture plugin.
 
 ### Module-Level Side Effects
 - **If you must run code at import time, comment WHY it can't be lazy.** `MUJOCO_GL` is the canonical example: MuJoCo locks the GL backend at first `import mujoco`, so the env var must be set before any downstream import chain triggers it.
+- **An import-time env default must name a value that works where the code runs.** The same `MUJOCO_GL` example has a second half: because the backend is locked at first `import mujoco`, a *module-scope* default is what a headless host is left with when the operator exported nothing, while one inside a test function runs too late to select anything. MuJoCo's windowed backends (`cgl`, `glfw`) cannot render without a window server, and `glfw` fails worse than `cgl`: `cgl` is refused at import with a message naming the variable; `glfw` is accepted, and the render probe then warns that rendering is unavailable and names the missing `DISPLAY` but not the `MUJOCO_GL` value that asked for a window, after which camera observations are skipped and the caller's *failure* is whatever it was doing with those frames - a camera recording reports it as a dataset feature mismatch several frames away. Write `os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")` - a bare `"egl"` is not in MuJoCo's valid set on Darwin, so it trades one platform for the other.
+- Pinned by `tests/test_examples_mujoco_gl.py::test_no_module_scope_windowed_gl_default`, which is AST-scoped to module level so a backend name that is the value *under test* (a `monkeypatch.setenv`, or an assertion about what the resolver did) is out of scope by construction rather than by exemption.
 - **Cheap-guard optional imports** - `if importlib.util.find_spec("mujoco") is not None:` before doing `from strands_robots.simulation.mujoco.backend import _configure_gl_backend`. Users without the `[sim-mujoco]` extra shouldn't pay an import-attempt cost on every `import strands_robots`.
 
 ### Public API Hygiene
@@ -1098,7 +1902,9 @@ Corrections from code review that apply to all future contributions:
 
 ### Env Vars
 - **Warn on unrecognized values** - `STRANDS_ROBOT_MODE=foo` (typo) must `logger.warning(...)`, not silently fall through. Silent typo'd env vars surprise users hours later.
+- **The report belongs to the resolver that runs first** - a variable read by two resolvers is reported by whichever one an unknown value actually reaches. `STRANDS_MESH_BACKEND` had a report in `mesh.transport.factory._select_backend` and none in `mesh.session._backend_choice`, and the second is the gate the first sits behind: an unknown value resolves to `zenoh` there, so the factory is never consulted and its report cannot fire for the input class it names. A typo therefore produced a plain Zenoh session indistinguishable from an explicit `zenoh`, on a variable `mesh.iot.provision` writes into an operator's environment file. Give the vocabulary one owner and delegate to it, rather than a second inline copy that reports differently; and if that owner sits on a per-message path, key the report by the offending value so it is emitted once per distinct typo instead of once per published sample. **Two readers owning *disjoint halves* of one vocabulary is the same hazard with no copy to find, and neither reader can fix it alone.** `STRANDS_MESH`'s affirmative spellings were read by the `Robot` factory and its kill-switch spellings by `mesh.core.mesh_disabled_by_env`, and each correctly treats the other's words as not its business -- so neither had the standing to call a third value a mistake, and `STRANDS_MESH=off` silently constructed the mesh it was meant to kill, against an explicit `mesh=True`. A warning added at either site would have to re-list the other's vocabulary to avoid crying wolf on it, which rebuilds the split; the owner has to hold *both* halves and answer a tristate, because "said nothing" is a third outcome and collapsing it into either bool makes one reader wrong. Pinned by `tests/mesh/test_mesh_env_vocabulary_has_one_owner.py`, including an AST guard that neither reader reads the variable itself -- re-splitting it fails no behavioural test. Pinned by `tests/mesh/test_session_backend_select.py::TestAnUnknownBackendIsReported`.
 - **Document every env var in README.md** - if you introduce a new `STRANDS_*` variable, add it to the Configuration section in the same PR. The list is the single source of truth for users.
+- **A kill switch is honoured by every path that can start the thing it kills** - and by exactly one predicate. `STRANDS_MESH=false` is documented in README as overriding even an explicit `mesh=True`, but it was resolved by an inline `os.getenv` inside `init_mesh`, and `robot_mesh._gateway_mesh` builds its robot-less coordinator `Mesh` without going through `init_mesh`. So an operator who asked for no mesh still got a real Zenoh session, a `gateway-*` peer advertised to the fleet, and the nine threads `Mesh.start` spawns - cached until `atexit`, because the switch had no reach there. The second-order cost is test isolation: `tests/conftest.py` sets the same variable to keep the suite off Zenoh, so the escape put nine publishing threads inside unrelated tests and one of them failed on a `/health` payload it never provoked. When a flag means "do not start X", give it one predicate and call it at every construction site of X; a second inline spelling is how the first site gets forgotten. Pinned by `tests/mesh/test_gateway_mesh_kill_switch.py`.
 - **Currently tracked**: `STRANDS_ROBOT_MODE`, `STRANDS_TRUST_REMOTE_CODE`, `MUJOCO_GL`.
 
 ### Safety Defaults
@@ -1109,9 +1915,12 @@ Corrections from code review that apply to all future contributions:
 ### Naming & Module Organization
 - **`robot.py` is for the `Robot()` factory**, the user-facing entry point. Hardware-specific code lives in `hardware_robot.py`. Don't have two files both named "robot something" with different responsibilities.
 - **Reference module names, not filenames, in docstrings** - `strands_robots.hardware_robot` not `robot.py`. Filenames change; module paths are the public contract.
+- **Keep a cross-reference target on one line** - a `:class:`/`:func:`/`:meth:` path is only a dotted path while it is contiguous. Wrapping `:class:`~strands_robots.policies.protomotions.motion_utils.MotionPlayer`` over a line break leaves a token carrying a newline and the next line's indentation, which imports nowhere. Break the prose before the role and give the path its own line.
+- **A cross-reference in a test docstring is graded too** - the roles in `tests/` and `tests_integ/` are checked against the real API alongside the package's, because a test module's docstring is where a maintainer working on that subsystem starts reading. Name the seam a fixture actually patches (`strands_robots.mesh.core.get_session`), not a local import alias dressed up as a module path.
 
 ### Unicode & String Hygiene
 - **No emojis in user-facing strings** - this is a project rule. Tool result dicts (`{"content": [{"text": ...}]}`), log messages, error messages: plain ASCII only. Agents read these strings programmatically; emojis just add tokenizer noise.
+- **All three surfaces are graded, and the tool result needs a flow step.** A log line and a `raise` message hold their text inline, so a scan of the call site sees it. A handler's report is usually built up in a local and joined into the returned dict - `lines.append(...)` in a loop, then the joined list as the `text` value - so a scan of the `return` expression alone sees nothing - which is how ten glyphs (`U+2194` in `get_contact_forces`, `U+2192` in `set_geom_properties` / `set_body_properties`, `U+00D7` in `get_mass_matrix`, `U+00B7` in `apply_force`, `U+00B1` in `randomize`, `U+2022` in `list_benchmarks`) sat in text an agent reads back out of its own tool call, on the surface this rule names first. Prefer the spelling the package already uses for the same content: `simulation.mujoco.rendering` listed a contact pair `geom1 <-> geom2` while `simulation.mujoco.physics` listed it `geom1 U+2194 geom2`. ASCII renderings: `->`, `<->`, `+/-`, `x`, `N*m`, `  - ` for a bullet. Semantic Unicode in a *docstring* stays - the rule is about what a caller reads back, not about how the source documents itself. Pinned by `tests/test_log_strings_are_ascii.py::test_tool_result_strings_are_ascii`.
 - **Hunt orphan combining marks after any emoji sweep** - `⏱️` is `U+23F1` + `U+FE0F` (variation selector). Stripping `U+23F1` leaves a stray invisible `U+FE0F` in the output. Sweep with:
   ```bash
   grep -nP '[^\x00-\x7F]' path/to/file.py
@@ -1120,6 +1929,7 @@ Corrections from code review that apply to all future contributions:
 
 ### Testing Patterns
 - **Use `monkeypatch.setenv`, never `os.environ[...] = ...`** - direct mutation leaks if the test raises before `finally`, and `del os.environ[...]` can `KeyError` under parallel runs. The pytest fixture handles teardown atomically.
+- **Restore a `sys.modules` entry you remove** - a removal does not undo an import, it *orphans* every reference already bound to that module: the next `import X` re-executes the package and returns a *different* object, so a sibling test module's `monkeypatch.setattr(X, "attr", double)` installs the double where nothing will look and the real package is used instead. `monkeypatch.setitem(sys.modules, name, None)` makes `import name` raise `ImportError` *and* restores. A bare `sys.modules.pop("boto3", None)` in one camera-offload test left the IoT fan-out tests building a real client and attempting signed AWS requests, dormant only because they happened to sort ahead of the pop. Purging a module nothing patches, to force a re-import, stays legal - `tests/test_sys_modules_removal_leaves_no_orphan.py` grades the difference from the tree.
 - **Happy-path tests, not just error-paths** - if you have `test_factory_raises_on_bad_xml`, you also need `test_factory_returns_working_sim` gated behind `pytest.importorskip("mujoco")`. Steps physics, asserts state, destroys cleanly.
 - **Pin every reviewed fix with a regression test** - every behavioral fix in this PR (warning on bad env var, rejecting `cameras=` in sim, default `mode="sim"`, etc.) has a dedicated test. "Trust me, the diff fixes it" is not a review-pass condition.
 - **`importlib.reload` for module-state tests** - if a test modifies module-level state (env vars read at import time), reload the module inside the test and restore in teardown.
@@ -1139,14 +1949,24 @@ Corrections from code review that apply to all future contributions:
   into `subprocess.run`, `subprocess.Popen`, MJCF / XML interpolation, or filesystem
   path construction MUST be validated up front via regex allowlist, enum match, or
   range check. Argv-style subprocess does not exempt you - defense-in-depth.
-- **Centralise validation in one function** - pattern: a `validate_inputs(...)` helper
-  at the top of the tool module that takes every user-supplied param as a keyword arg
-  and raises `ValueError` with a clear message on any rejection. Single entry-point
-  is independently testable. PR #90's `gr00t_inference.validate_inputs()` is the
-  canonical example.
+- **Group the check by what consumes the value, and run it at the dispatch
+  boundary** - one `..._option_error(action, *, <params>) -> str | None` helper per
+  *kind* of value, called before any expensive work starts, returning the reason for
+  the dispatcher to fold into its error dict. Keying it on the action means a caller
+  is never refused for a value the requested action ignores.
+  `gr00t_inference._numeric_option_error` and its enum-valued sibling
+  `_enumerable_option_error` are the shipped pair: both cover options that are
+  interpolated into a `docker exec` command line run **detached**, where a value the
+  server's own flag parser rejects surfaces minutes later in the container log
+  instead of as the call's result. Note the shape returns rather than raises, so
+  **Return error dicts, never raise** above still holds at the tool surface.
 - **Allowlist enumerable values** - `data_config`, `embodiment_tag`, dtype strings,
   container names: all match `^[a-z][a-z0-9_]+$` or an explicit `{"fp16", "fp8", ...}`
-  set. Never accept arbitrary strings into enumerable surfaces.
+  set. Never accept arbitrary strings into enumerable surfaces. Derive the
+  "refuses nothing real" half from a shipped catalogue rather than a copied list -
+  `data_configs.json` names every valid `data_config`, so a config added there is
+  admitted by construction. Pinned by
+  `tests/tools/test_gr00t_enumerable_option_guards.py`.
 - **Reject shell metacharacters in paths** - `;`, `|`, `$`, backticks, `>`, `<`,
   `\n`, `\r`, `\x00`. Also reject `..` path traversal components. Apply even when
   using argv-style subprocess.
@@ -1196,18 +2016,26 @@ Corrections from code review that apply to all future contributions:
 - **One alert class clears under none of the three, and the question that settles
   it is which thread you marshal onto.** `py/catch-base-exception` never fires on
   cleanup-and-reraise: the query accepts a handler that re-raises *lexically*, and
-  six of the tree's seven `except BaseException` handlers do, so they have never
-  been flagged.
+  every `except BaseException` handler in this tree does so but one, which is why
+  none of them has ever been flagged. A count would rot here, so the census below
+  is stated as the property that matters and is derived from the tree by
+  `tests/test_codeql_query_filters.py` rather than copied into this file.
+
+  Every handler in `strands_robots/`, named by the function that owns it because a
+  line number is the part that goes stale:
 
   | handler | ends in | flagged |
   |---|---|---|
-  | `robot.py:368` | `sim.destroy()`, bare `raise` | no |
-  | `policies/persistent.py:193` | `handoff.abandon()`, bare `raise` | no |
-  | `simulation/safe_output.py:185` | `os.unlink(tmp)`, bare `raise` | no |
-  | `hardware_robot.py:1865` | `self._release_task()`, bare `raise` | no |
-  | `tests/policies/lerobot_local/test_list_policy_types.py:70` | `raise AssertionError(...) from exc` | no |
-  | `tests/policies/lerobot_local/test_vla_jepa.py:164` | `raise AssertionError(...) from exc` | no |
-  | `simulation/isaac/simulation.py:5125` | `box["exc"] = exc`, no lexical raise | **yes** |
+  | `strands_robots/episode_labels.py::_write_document` | `os.unlink(tmp_name)`, bare `raise` | no |
+  | `strands_robots/hardware_robot.py::start_task` | `self._release_task()`, bare `raise` | no |
+  | `strands_robots/policies/persistent.py::get_actions` | `handoff.abandon()`, bare `raise` | no |
+  | `strands_robots/robot.py::Robot` | `sim.destroy()`, bare `raise` | no |
+  | `strands_robots/simulation/safe_output.py::atomic_write_bytes` | `os.unlink(tmp)`, bare `raise` | no |
+  | `strands_robots/simulation/isaac/simulation.py::_job` | `box["exc"] = exc`, no lexical raise | **yes** |
+
+  The handlers under `tests/`, `examples/` and `scripts/` re-raise lexically too,
+  several as `raise AssertionError(...) from exc` rather than a bare `raise`: the
+  query accepts either, because what it reads is the lexical raise.
 
   The rule's entire alert surface here is therefore one construct: a
   **cross-thread exception-marshal box**, which parks the exception for *another*
@@ -1251,8 +2079,8 @@ Corrections from code review that apply to all future contributions:
   must keep failing the two-id set `tests/test_codeql_query_filters.py` pins.
 
   What makes the class worth naming is that both answers are live right now and
-  nothing else records why they differ. Alert #691 - `run_on_main`'s box at
-  `simulation/isaac/simulation.py:5125` - has been open on `refs/heads/main` since
+  nothing else records why they differ. Alert #691 - `run_on_main`'s box in
+  `strands_robots.simulation.isaac.simulation` - has been open on `refs/heads/main` since
   2026-07-07 at note severity, gating nothing, carrying only a
   `# noqa: BLE001` that CodeQL does not read. Alerts #853 and #854 are the same
   idiom raised on a branch, one of them in that same file, and each opened a
@@ -1289,6 +2117,12 @@ Corrections from code review that apply to all future contributions:
   returns a `frozenset` so the dual-pin grace period is expressible. Any future
   pinned fingerprint (other roots, signing keys) should follow the same
   multi-value shape so rotation never requires a flag-day deploy.
+- **A cited runbook is graded, not assumed.** The runbook heading above, the
+  four ordered steps, and the two env vars they distinguish are checked
+  against README.md, and every pin refusal is checked to name the runbook -
+  so a procedure that only exists in this file cannot pass for a published
+  one. The dual-pin state the runbook depends on stays pinned beside it.
+  Pinned by tests/mesh/test_iot_ca_pin_rotation.py.
 
 ## Review Learnings (PR-6 - mesh core safety hardening)
 
@@ -1301,6 +2135,16 @@ apply to all future work on `strands_robots/mesh/{core,audit,security}.py`.
   vars (`_resume_forward_skew_s`, `_resume_freshness_window_s`) into locals at
   handler entry, before taking the cache lock, so the lock holds for the minimum
   window and a hot path never re-parses the environment per call.
+- **This covers every replay-cache lock and every lazy resolver, not just the
+  two the rule was written for.** `Mesh` keeps three replay caches - estop,
+  resume and inbound-command dedup (`_exec_cmd`) - and the eviction bound they
+  share is a third resolver, `_resume_replay_cache_max`. A resolver is one
+  `os.getenv` plus a validating parse, and on an unusable operator value it logs
+  too, so the cost is not constant: at the cache sizes these actually sit at, the
+  parse is the majority of the critical section rather than a rounding error.
+  Resolve into a local before the `with`, then read the local inside it.
+  Pinned by `tests/mesh/test_safety_tunables_cached_at_handler_entry.py`, which
+  derives the lock set from the class so a fourth cache is graded on arrival.
 - **Lockout-engagement is decoupled from the per-issuer cache cap.** A bounded
   replay cache that is full (flood, or a tiny operator override) must still let a
   legitimate peer ENGAGE a lockout - the cap bounds memory, not safety. Pin both
@@ -1314,9 +2158,21 @@ apply to all future work on `strands_robots/mesh/{core,audit,security}.py`.
 ### Audit poison-record symmetry
 - **Every degraded audit path writes a poison record, never a silent drop.** The
   poison `sig` discriminators (`PSK_DEGRADED`, `SIGN_FAILED`, `SEQ_LOCK_DEGRADED`,
-  `NEXT_SEQ_DEGRADED`) let a `verify_audit_integrity` walker attribute a stream
-  gap to a specific failure class. When you add a new `_next_seq`/sign/persist
-  failure branch, add the matching poison `sig` instead of returning early.
+  `NEXT_SEQ_DEGRADED`, `SERIALISE_FAILED`) let a `verify_audit_integrity` walker
+  attribute a stream gap to a specific failure class. When you add a new
+  `_next_seq`/sign/serialise/persist failure branch, add the matching poison
+  `sig` instead of returning early.
+- **`_next_seq` runs before serialisation, so an early `return` is a deletion.**
+  The sequence number is consumed and persisted before the record is encoded, so
+  a branch that gives up after that point leaves the signature this module's
+  header documents as "records were deleted". A payload the JSON encoder cannot
+  represent keeps the envelope (`ts` / `event` / `peer_id` / `seq`) and swaps the
+  payload for a bounded diagnostic; the only remaining drop is an envelope that
+  is itself unrepresentable, where there is nothing left to poison with.
+- Pinned by `tests/mesh/test_audit_serialise_safety.py`, whose
+  `TestEveryDegradedPathWritesARecord` drives every degraded branch from one
+  table so a path added later is graded rather than quietly becoming the next
+  silent drop.
 
 ### Replay-cache eviction
 - **TTL purge runs unconditionally, not only when the cache is full.** On a
@@ -1335,6 +2191,25 @@ From the `robot_mesh` human-in-the-loop review trail (#227). Apply to the
   flat, fixed sentinel to the model. Echoing the operator's typed reply turns the
   human into a prompt-injection content side-channel (the agent could phrase the
   approval reason so the operator's answer leaks data into the context).
+- **The record half is owed by EVERY gate, not just the mesh tool.** Three tools
+  stop and ask a human - `robot_mesh` for the physical-actuation actions, `use_ros`
+  for a publish/service_call/action_send_goal aimed at a safety-critical graph
+  surface, and `lerobot_train` for the `extra_flags` that control output paths,
+  telemetry and code loading - and each of them returned the flat sentinel while
+  only the mesh tool wrote the row. A declined `/cmd_vel` publish and a declined
+  `output_dir` override left no audit row, no log record, and so no trace that a
+  gate had fired at all. Every gate accepts a canonical affirmative only, so a
+  reply carrying a reason is always a decline and that row is the ONLY place the
+  reason survives; record the approval too, because "did a human authorise this"
+  is the first question an incident asks. One owner writes the row
+  (`strands_robots.tools._hitl_audit.log_operator_response`) so its wording
+  cannot differ between two gates writing to the same log - a reader greps one
+  phrasing, and a gate that spelled the row itself could drift to another and
+  become invisible to that search.
+- Pinned by `tests/tools/test_hitl_operator_response_audit.py`, which derives the
+  graded set from the `interrupt()` call sites so a fourth gate is graded on
+  arrival, and whose controls assert the reply still never reaches the model and
+  that an unwritable audit log does not change a gate's verdict.
 
 ### Audit completeness
 - **Audit read-only/observation actions too, not just actuation.** `peers`,
@@ -1342,6 +2217,18 @@ From the `robot_mesh` human-in-the-loop review trail (#227). Apply to the
   so the audit log is a complete record of agent mesh access - operators get the
   "agent read N frames from sub X at time T" trail that raw telemetry access
   otherwise lacks.
+- **The row belongs to the action, not to the backend that served it.** `robot_mesh`
+  renders each action onto an agent-side Device Connect connection when one has
+  devices and onto the built-in mesh otherwise, and Device Connect is the one tried
+  FIRST - so auditing only the mesh rendering left the audited implementations as the
+  fallback. Widen an audit contract across every backend that answers the action, and
+  record the magnitude that was read (`devices=N`, `local=N remote=M`) rather than a
+  bare marker. `peers` is the read worth recording: it returns every device id plus
+  every function name the fleet exposes, which is the callable surface a later `rpc`
+  would use.
+- Pinned by `tests/mesh/test_robot_mesh_readonly_audit_parity.py`, which discovers the
+  actions Device Connect answers by calling the dispatcher rather than restating a
+  list, so an action added to that backend is graded without editing the test.
 
 ### Rate-limit safety semantics
 - **A declined HITL approval must NOT consume a rate-limit slot.** The slot is

@@ -43,7 +43,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.ros_telemetry import RosTelemetryBridge
-from strands_robots.utils import positive_finite_number_error
+from strands_robots.utils import boolean_flag_error, positive_finite_number_error
 
 if TYPE_CHECKING:
     from strands_robots.hardware_robot import Robot
@@ -76,7 +76,9 @@ class HardwareRosBridge(RosTelemetryBridge):
         qos_depth: Depth of the publishers'/subscription's KEEP_LAST history.
         enable_commands: When True (default) and a ``robot`` is bound, subscribe
             to ``/<robot>/joint_command`` and drive the arm. Set False for a
-            read-only (telemetry-only) bridge.
+            read-only (telemetry-only) bridge. Only a boolean names a posture:
+            the value is checked, not read by truthiness, so ``"false"`` cannot
+            select the surface it asks to close.
         command_robot_name: Topic namespace for the inbound command topic.
             Defaults to the bound robot's name (matching the namespace this
             bridge *publishes* ``joint_states`` under), so a controller can echo
@@ -88,15 +90,23 @@ class HardwareRosBridge(RosTelemetryBridge):
             thread into a busy-spin with no bound - and ``inf`` raises
             ``OverflowError`` out of it, killing the loop while the bridge
             reports a successful construction.
-        joint_limits: Optional ``{motor: (min, max)}`` clamp ranges. When set,
+        joint_limits: Optional ``{"<motor>.pos": (min, max)}`` clamp ranges,
+            keyed by the joint name as it arrives in ``joint_command`` - the
+            same ``<motor>.pos`` names this bridge publishes in
+            ``joint_states``, so a controller can echo them straight back. A
+            key that names no commanded joint constrains nothing. Each bound
+            must be a finite number - a non-finite one declares a range that
+            admits nothing, so the bridge refuses it at construction rather than
+            dropping every inbound command for that joint mid-run. When set,
             an inbound ``joint_command`` whose ANY commanded joint is outside
             its declared range is rejected whole (no partial application), so a
             single out-of-range joint can never drive part of the arm.
 
     Raises:
-        ValueError: If ``domain_id`` is outside ``[0, 232]``, if ``spin_period``
+        ValueError: If ``enable_commands`` is not a boolean, if ``domain_id`` is
+            outside ``[0, 232]``, if ``spin_period``
             is not a positive finite number, or if ``joint_limits`` is not a
-            ``{motor: (min, max)}`` mapping of numeric pairs with
+            ``{"<motor>.pos": (min, max)}`` mapping of finite numeric pairs with
             ``min <= max``.
     """
 
@@ -123,10 +133,22 @@ class HardwareRosBridge(RosTelemetryBridge):
         if error := positive_finite_number_error(spin_period, "spin_period", type(self).__name__):
             raise ValueError(error)
 
+        # ``enable_commands`` selects whether this bridge exposes an inbound,
+        # arm-driving surface, so it is checked rather than read by truthiness:
+        # every non-empty string is truthy, so ``"false"`` would subscribe to
+        # ``joint_command`` for a caller who asked for a read-only bridge. It is
+        # answered in the same place and for the same reasons as the period
+        # above - ahead of the base constructor, so the refusal reports
+        # identically with and without the [ros2] extra and leaves the
+        # process-wide ``ROS_DOMAIN_ID`` as it found it.
+        if error := boolean_flag_error(enable_commands, "enable_commands", type(self).__name__):
+            raise ValueError(error)
+
         super().__init__(domain_id=domain_id, node_name=node_name, qos_depth=qos_depth)
 
         self._robot = robot
-        # Optional {motor: (min, max)} clamp ranges enforced on inbound commands
+        # Optional {"<motor>.pos": (min, max)} clamp ranges enforced on inbound
+        # commands
         # by RosTelemetryBase._command_action (validated up front, fail fast).
         self._joint_limits = self._validate_joint_limits(joint_limits)
         # Commands require a robot to drive; a pure-publisher bridge (robot

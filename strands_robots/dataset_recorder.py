@@ -973,7 +973,11 @@ class DatasetRecorder:
                 these; add_frame reads the source keys, not the expanded names.
             task: Default task description
             root: Local directory for dataset storage
-            use_videos: Encode camera frames as video (True) or keep as images
+            use_videos: Encode camera frames as video (True) or keep as images.
+                Selects a posture rather than scaling a quantity, so it must be a
+                boolean (:func:`~strands_robots.utils.boolean_flag_error`) - the
+                choice is written into the dataset schema as each camera's
+                ``dtype`` and is fixed for the life of the dataset.
             vcodec: Video codec for the per-camera MP4 streams. Defaults to
                 "h264" (H.264), which is universally decodable - including
                 by OpenCV's VideoCapture / FFmpeg build, used by many
@@ -981,7 +985,9 @@ class DatasetRecorder:
                 smaller files in storage-constrained training pipelines;
                 LeRobot read-back (torchcodec/pyav) handles AV1, but OpenCV
                 wheels commonly cannot decode it and silently yield 0 frames.
-            streaming_encoding: Stream-encode video during capture
+            streaming_encoding: Stream-encode video during capture. Must be a
+                boolean, on the same domain as ``use_videos``; it is forwarded to
+                LeRobot's own boolean parameter.
             image_writer_threads: Threads for writing image frames
             video_backend: LeRobot video *decode* backend for read-back
                 ("torchcodec" or "pyav"). Left as None by default so LeRobot
@@ -1006,6 +1012,13 @@ class DatasetRecorder:
                 guard; a non-empty NON-dataset directory raises ``ValueError``
                 rather than clobbering unrelated files.
 
+                This flag is a confirmation gate in front of a delete, so it must
+                be a boolean (:func:`~strands_robots.utils.boolean_flag_error`),
+                on the same domain every backend's ``start_recording`` applies to
+                the ``overwrite`` it forwards here. It is checked before the
+                on-disk target is touched, so an unusable value cannot remove a
+                dataset on the way to being reported.
+
         Raises:
             ValueError: ``camera_keys``, ``joint_names`` or ``action_names`` is
                 not a list of distinct non-blank names (a bare string, a
@@ -1014,7 +1027,8 @@ class DatasetRecorder:
                 a name ``camera_keys`` does not declare, or holds anything but a
                 ``(height, width)`` pair of positive integers, or
                 ``video_width`` / ``video_height`` is not a positive integer;
-                or ``fps`` is not a positive whole number.
+                or ``fps`` is not a positive whole number; or ``use_videos``,
+                ``streaming_encoding`` or ``overwrite`` is not a boolean.
                 Refused before the on-disk target is touched, so an
                 ``overwrite=True`` call that is refused leaves an existing
                 dataset intact.
@@ -1084,6 +1098,38 @@ class DatasetRecorder:
         # 'int'`` naming neither the parameter nor the method.
         if text := positive_whole_number_error(fps, "fps", "DatasetRecorder.create"):
             raise ValueError(text)
+        # ``use_videos`` / ``streaming_encoding`` / ``overwrite`` are the posture
+        # half of the same guard block: each selects a branch rather than scaling
+        # a quantity, so each is checked on
+        # :func:`~strands_robots.utils.boolean_flag_error` - the inverse domain to
+        # the numeric ones above, which reject ``bool`` because it would pass as a
+        # silent ``1``. Checked here for the same two reasons and in the same
+        # place: before the lerobot extra is probed, and before the on-disk target
+        # is touched.
+        #
+        # Read by truthiness instead, each failed toward the branch the caller was
+        # opting *out* of, because every non-empty string is truthy. ``overwrite``
+        # is the destructive one: ``overwrite="false"`` (also ``"no"``, ``"off"``,
+        # ``"0"``) reached ``_prepare_create_target`` as True and ``shutil.rmtree``-d
+        # the caller's dataset. Measured end to end: a dataset holding one recorded
+        # episode came back with zero, and ``create`` returned a working recorder
+        # throughout. ``use_videos="false"`` declared the cameras as ``dtype="video"``
+        # where ``False`` declares ``"image"``, a schema decision written into
+        # ``meta/info.json`` and fixed for the life of the dataset; the same string
+        # then reached LeRobot's own boolean parameter unconverted, as
+        # ``streaming_encoding="false"`` did on both entry points.
+        #
+        # ``push_to_hub`` and ``sync_dataset_to_bucket`` in this module, and every
+        # backend's ``start_recording`` facade, already check their own posture
+        # flags; the documented direct creation API was the surface left reading
+        # them by truthiness, so the two disagreed about which values are usable.
+        for flag_value, flag_name in (
+            (use_videos, "use_videos"),
+            (streaming_encoding, "streaming_encoding"),
+            (overwrite, "overwrite"),
+        ):
+            if text := boolean_flag_error(flag_value, flag_name, "DatasetRecorder.create"):
+                raise ValueError(text)
 
         # Lazy import - this is where we actually need lerobot
         LeRobotDatasetCls = _get_lerobot_dataset_class()
@@ -1187,7 +1233,9 @@ class DatasetRecorder:
             vcodec: Video codec for the per-camera MP4 streams (default
                 "h264"; routed into the version-appropriate encoder
                 config). See create() for the H.264-vs-AV1 trade-off.
-            streaming_encoding: Stream-encode video during capture.
+            streaming_encoding: Stream-encode video during capture. Must be a
+                boolean, on the same domain :meth:`create` applies to the flag it
+                forwards here (:func:`~strands_robots.utils.boolean_flag_error`).
             image_writer_threads: Threads for writing image frames.
             video_backend: LeRobot video *decode* backend for read-back
                 ("torchcodec" or "pyav"); None uses LeRobot's platform default.
@@ -1197,8 +1245,23 @@ class DatasetRecorder:
 
         Returns:
             A DatasetRecorder wrapping the resumed dataset.
+
+        Raises:
+            ValueError: ``streaming_encoding`` is not a boolean. Refused before
+                the lerobot extra is probed, so the same caller mistake reports
+                identically on every install.
+            RuntimeError: The installed LeRobot has no ``LeRobotDataset.resume``
+                (append needs ``lerobot>=0.5.2``).
         """
         import inspect
+
+        # Same posture flag as :meth:`create` forwards, on the same domain and
+        # ahead of the same lerobot probe, so the two creation entry points cannot
+        # disagree about which values are usable. Read by truthiness,
+        # ``streaming_encoding="false"`` selected streaming and handed LeRobot's
+        # own boolean parameter the string unconverted.
+        if text := boolean_flag_error(streaming_encoding, "streaming_encoding", "DatasetRecorder.resume"):
+            raise ValueError(text)
 
         LeRobotDatasetCls = _get_lerobot_dataset_class()
 
@@ -1634,6 +1697,15 @@ class DatasetRecorder:
           * leave the buffer in place and warn (caller must ``stop_recording`` /
             ``save_episode`` to drain it before recording again).
 
+        Discarded frames are un-counted from both ``frame_count`` and
+        ``episode_frame_count``, because ``add_frame`` counts at buffer time
+        while frames only reach disk on ``save_episode``. Both counters
+        therefore describe frames that reached, or will reach, disk - never
+        frames that were thrown away. When no clear surface is available the
+        frames are still buffered and will be written by the
+        ``stop_recording``/``save_episode`` drain the warning recommends, so
+        neither counter changes in that case.
+
         Returns:
             True if the buffer was actively cleared; False if no clear surface
             was available (a warning is logged in that case).
@@ -1650,10 +1722,25 @@ class DatasetRecorder:
             logger.warning("clear_episode_buffer failed: %s", e)
             cleared = False
 
-        # Reset the per-episode frame counter regardless: the next episode
-        # reports frames from 0. frame_count (cumulative) is left untouched
-        # since those frames were really written to disk only on save_episode.
-        self.episode_frame_count = 0
+        if cleared:
+            # The buffered frames are gone. They were counted optimistically by
+            # add_frame (which counts at buffer time) but never reached disk,
+            # since frames are only written by save_episode - so un-count them
+            # from the cumulative total as well as the per-episode one. Both
+            # counters describe frames that reached, or will reach, disk:
+            # resume() seeds frame_count from dataset.meta.total_frames, and
+            # stop_recording refuses an empty dataset by asking frame_count
+            # whether anything was ever captured. Leaving the discarded frames
+            # counted makes the recorder report a total no parquet row backs,
+            # and blinds that refusal.
+            self.frame_count -= self.episode_frame_count
+            self.episode_frame_count = 0
+        # When the discard did NOT happen the frames are still buffered, and the
+        # warning below tells the caller to drain them with
+        # stop_recording()/save_episode() - which writes them to disk. Nothing
+        # was thrown away, so both counters are left as they are: the eventual
+        # flush then reports the frames it really wrote, and a later successful
+        # clear can still un-count them.
 
         if not cleared:
             logger.warning(

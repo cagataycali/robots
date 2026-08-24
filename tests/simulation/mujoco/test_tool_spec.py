@@ -628,7 +628,9 @@ _PYTHON_ONLY_ACTIONS = frozenset(
         # TeleopMixin - drives real hardware from a host input device.
         "attach_teleop",
         "detach_teleop",
+        "get_teleop_status",
         "get_teleoperate_status",
+        "start_teleop_receive",
         "list_teleops",
         "stop_teleoperate",
         "teleoperate",
@@ -739,3 +741,342 @@ class TestTheRouterDispatchesOnlyPublishedOrDeclaredActions:
 
         assert self._unaccounted(_EngineWithANewCapability) == {"teleport_everything"}
         assert not self._unaccounted(), "the real engine must stay accounted for"
+
+
+# The geom-property payload contract
+#
+# ``set_geom_properties`` is the one published action whose entire purpose is
+# writing geom payload vectors, and the flat property dict described it as if
+# ``add_object`` were the only consumer. Two consequences, both invisible to the
+# router: it validates a call against the *method signature*, so a payload the
+# schema never published still dispatches when a Python caller passes it, and a
+# schema-constrained decoder cannot emit it at all.
+#
+# ``friction`` was published nowhere, so the coefficients the method validates,
+# documents and applies were unreachable from the model-facing surface.
+#
+# ``size`` is worse than unreachable, because two actions consume that one wire
+# field under different conventions: ``add_object`` takes full extents, and
+# ``set_geom_properties`` takes the compiled geom's own ``geom_size``
+# components, which are half-extents for a box. The published description named
+# only ``add_object`` and stated the other convention was explicitly not what
+# the field meant, so a caller who follows it either doubles a box under
+# ``status="success"`` or is refused for a component the same text calls unused.
+
+
+def _geom_property_params() -> set[str]:
+    """The payload parameters ``set_geom_properties`` accepts."""
+    signature = inspect.signature(Simulation.set_geom_properties)
+    return {name for name in signature.parameters if name != "self"}
+
+
+def _compiled_geom_id(sim: Simulation, geom_name: str) -> int:
+    """The live model's id for ``geom_name``, so a write can be read back."""
+    import mujoco
+
+    geom_id = int(mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_GEOM, geom_name))
+    assert geom_id >= 0, f"no geom named {geom_name!r}"
+    return geom_id
+
+
+@pytest.fixture
+def world_sim(sim: Simulation) -> Simulation:
+    """A session with a world, ready for scene mutation."""
+    assert sim.create_world()["status"] == "success"
+    return sim
+
+
+class TestTheGeomPropertyPayloadIsPublished:
+    """Every payload ``set_geom_properties`` accepts is reachable from the schema."""
+
+    def test_every_geom_property_parameter_is_reachable_in_the_schema(self) -> None:
+        """A payload absent from the schema is unreachable for a model.
+
+        The router binds against the method signature rather than the schema, so
+        an unpublished payload is not refused - it is simply never emitted, and
+        the capability reads as missing rather than as undiscoverable. This is
+        the parameter-level form of the action-level accounting above, scoped to
+        the one action whose whole purpose is writing these vectors.
+        """
+        published = set(_tool_spec_properties())
+        aliases_by_param = {target: field for field, target in Simulation._FIELD_ALIASES.items()}
+
+        unreachable = sorted(
+            param for param in _geom_property_params() if not ({param, aliases_by_param.get(param, param)} & published)
+        )
+        assert not unreachable, (
+            "set_geom_properties accepts these payloads but tool_spec publishes no property for "
+            f"them, so a schema-constrained decoder cannot pass them: {unreachable}"
+        )
+
+    def test_the_published_friction_carries_the_arity_and_order_the_geom_defines(self) -> None:
+        """Three coefficients in a fixed order, so a count alone cannot pin it.
+
+        MuJoCo's friction triple is ordered (sliding, torsional, rolling) and the
+        three are not interchangeable: swapping them passes every arity check and
+        applies a different contact model under ``status="success"``. Published in
+        the same shape ``orientation`` uses for its component order, and for the
+        same reason.
+        """
+        friction = _tool_spec_properties()["friction"]
+        assert friction["type"] == "array"
+        assert friction.get("minItems") == 3 and friction.get("maxItems") == 3, (
+            "friction takes exactly three coefficients; publish the count rather than leaving a "
+            f"decoder to guess it. Got: {friction!r}"
+        )
+        description = friction.get("description", "")
+        for coefficient in ("sliding", "torsional", "rolling"):
+            assert coefficient in description, (
+                f"friction must publish its component order; {coefficient!r} is missing from {description!r}"
+            )
+
+    def test_a_friction_the_schema_publishes_is_applied(self, world_sim: Simulation) -> None:
+        """The published payload reaches the model, end to end through the router."""
+        assert (
+            world_sim(action="add_object", name="crate", shape="box", position=[0, 0, 0.1], size=[0.1, 0.1, 0.1])[
+                "status"
+            ]
+            == "success"
+        )
+
+        result = world_sim(action="set_geom_properties", geom_name="crate", friction=[0.6, 0.01, 0.001])
+
+        assert result["status"] == "success", result
+        geom_id = _compiled_geom_id(world_sim, "crate_geom")
+        applied = [float(component) for component in world_sim.mj_model.geom_friction[geom_id][:3]]
+        assert applied == [0.6, 0.01, 0.001], f"the published payload must reach the model, got {applied}"
+
+    def test_a_partial_friction_is_refused_with_the_count_it_wanted(self, world_sim: Simulation) -> None:
+        """The published bounds match the refusal, so the schema is honest.
+
+        Bounds a caller can satisfy and still be refused would be worse than no
+        bounds, so the arity the property advertises is the arity the action
+        enforces.
+        """
+        world_sim(action="add_object", name="crate", shape="box", position=[0, 0, 0.1], size=[0.1, 0.1, 0.1])
+
+        result = world_sim(action="set_geom_properties", geom_name="crate", friction=[0.6, 0.01])
+
+        assert result["status"] == "error"
+        assert "3 component" in result["content"][0]["text"]
+
+
+class TestTheSharedSizeFieldPublishesBothConventions:
+    """One wire field, two scales - so the schema names both."""
+
+    @staticmethod
+    def _geom_size(sim: Simulation, geom_name: str) -> list[float]:
+        """The compiled ``geom_size`` of ``geom_name``, read from the live model."""
+        geom_id = _compiled_geom_id(sim, geom_name)
+        return [float(component) for component in sim.mj_model.geom_size[geom_id][:3]]
+
+    def test_one_size_vector_scales_a_box_differently_through_the_two_actions(self, world_sim: Simulation) -> None:
+        """The divergence, measured, and the disclosure it requires.
+
+        ``size=[0.2, 0.2, 0.2]`` is a 20 cm box through ``add_object`` and a 40 cm
+        box through ``set_geom_properties``, because one takes full extents and the
+        other takes the geom's own half-extents. Nothing refuses the mismatch -
+        both calls report ``status="success"`` - so the only place a caller can
+        learn it is the property that carries the field.
+        """
+        world_sim(action="add_object", name="crate", shape="box", position=[0, 0, 0.5], size=[0.2, 0.2, 0.2])
+        built = self._geom_size(world_sim, "crate_geom")
+
+        assert world_sim(action="set_geom_properties", geom_name="crate", size=[0.2, 0.2, 0.2])["status"] == "success"
+        resized = self._geom_size(world_sim, "crate_geom")
+
+        assert built == [0.1, 0.1, 0.1], f"premise: add_object takes full extents, got {built}"
+        assert resized == [0.2, 0.2, 0.2], f"premise: set_geom_properties takes half-extents, got {resized}"
+
+        description = _tool_spec_properties()["size"]["description"]
+        assert "add_object" in description and "set_geom_properties" in description, (
+            "size means different things to two actions, so the property must name both rather "
+            f"than describing one of them. Got: {description!r}"
+        )
+        assert "half-extent" in description.lower(), (
+            "the resize convention is half-extents; a description that only states the full-extent "
+            f"convention doubles every box it is followed for. Got: {description!r}"
+        )
+
+    def test_the_capsule_layout_the_field_publishes_for_add_object_is_refused_by_the_resize(
+        self, world_sim: Simulation
+    ) -> None:
+        """A refusal that blames a value the other convention calls unused.
+
+        ``add_object`` spells a capsule ``[diameter, unused, height]``, and the
+        middle component is genuinely ignored there. The resize wants
+        ``[radius, half-length]``, so following the published layout is refused
+        for the zero in the slot the layout itself calls unused - a caller cannot
+        get from that message to the two-component form.
+        """
+        world_sim(action="add_object", name="rod", shape="capsule", position=[0, 0, 0.5], size=[0.1, 0.0, 0.4])
+
+        refused = world_sim(action="set_geom_properties", geom_name="rod", size=[0.1, 0.0, 0.4])
+        accepted = world_sim(action="set_geom_properties", geom_name="rod", size=[0.1, 0.4])
+
+        assert refused["status"] == "error", "premise: the add_object capsule layout is not accepted here"
+        assert accepted["status"] == "success", accepted
+
+        description = _tool_spec_properties()["size"]["description"]
+        assert "radius" in description, (
+            "the resize takes a capsule as [radius, half-length]; publish it so the add_object "
+            f"triple is not the only layout a caller can read. Got: {description!r}"
+        )
+
+    def test_a_shared_field_both_actions_scale_alike_needs_no_disclosure(self, world_sim: Simulation) -> None:
+        """``color`` is the control: one convention, so one description.
+
+        Shared by the same two actions and meaning the same thing in both, which
+        is why its description names neither. Without this the class above would
+        read as a rule about every shared field rather than about the one whose
+        meaning changes with the action.
+        """
+        world_sim(action="add_object", name="crate", shape="box", position=[0, 0, 0.1], size=[0.1, 0.1, 0.1])
+
+        assert world_sim(action="set_geom_properties", geom_name="crate", color=[0.8, 0.2, 0.2])["status"] == "success"
+
+        description = _tool_spec_properties()["color"]["description"]
+        assert "add_object" not in description and "set_geom_properties" not in description, (
+            "color means one thing to both actions, so it needs no per-action split; a mention "
+            f"here would say the conventions diverge when they do not. Got: {description!r}"
+        )
+
+
+# Shape-vocabulary contract
+#
+# ``shape`` publishes an enum and nothing else - it is one of the properties with
+# no description at all, so for a schema-constrained decoder the enum *is* the
+# whole specification of the parameter. ``ellipsoid`` compiles: ``_geom_type``
+# maps it to ``mjGEOM_ELLIPSOID``, ``_SIZE_LAYOUT`` gives it a layout,
+# ``add_object``'s docstring lists it among the valid shapes, and the ``size``
+# description in this very schema names its layout twice ("box/ellipsoid
+# [x,y,z]"). The enum omitted it, so the one surface a model forms its call from
+# was the one surface that never offered it.
+#
+# Both failures the action enum was pinned against, one level down at the value:
+# prose promising something the schema rejects, and a capability reachable from
+# Python that no agent could select. The router binds against the method
+# signature rather than the schema, so an unpublished value is not refused - it
+# is simply never emitted, and the shape reads as unsupported rather than as
+# undiscoverable.
+#
+# Keyed on the live shape tables rather than a literal copy of them, so a shape
+# added to the builder fails here until it is published.
+
+
+def _shapes_the_builder_compiles() -> set[str]:
+    """Shape names ``add_object`` can compile a geom for.
+
+    ``_GEOM_TYPE_CACHE`` is populated lazily on first use so importing the
+    builder does not require mujoco, so it is warmed through the public mapping
+    before being read.
+    """
+    from strands_robots.simulation.mujoco import spec_builder
+
+    spec_builder._geom_type("box")
+    assert spec_builder._GEOM_TYPE_CACHE is not None
+    return set(spec_builder._GEOM_TYPE_CACHE)
+
+
+def _published_shapes() -> list[str]:
+    return list(_tool_spec_properties()["shape"]["enum"])
+
+
+class TestTheSchemaPublishesEveryShapeAddObjectCompiles:
+    """The ``shape`` enum enumerates exactly the builder's shape vocabulary."""
+
+    def test_every_shape_the_builder_compiles_is_offered_in_the_enum(self) -> None:
+        """This is the direction that broke.
+
+        A shape absent from the enum is not rejected by the router, so nothing
+        fails and the capability is simply never selected. ``ellipsoid`` was
+        added to the builder, given a ``_SIZE_LAYOUT`` row, documented on
+        ``add_object`` and named in the ``size`` description, and stayed out of
+        the enum - reachable from Python and unreachable for an agent.
+        """
+        unpublished = sorted(_shapes_the_builder_compiles() - set(_published_shapes()))
+
+        assert not unpublished, (
+            "add_object compiles these shapes but the schema's 'shape' enum does not offer them, "
+            "so a schema-constrained caller can never select them (the enum is the whole "
+            f"specification - the property carries no description): {unpublished}"
+        )
+
+    def test_the_enum_offers_no_shape_the_builder_refuses(self) -> None:
+        """The converse, and the reason publishing is not simply widening.
+
+        An enum entry the builder cannot compile is the worse failure of the two:
+        the model is told to emit a value that is refused on arrival. Nothing is
+        wrong in this direction today, which is what makes it the control - it
+        pins that the fix published a value the builder honours rather than a
+        name.
+        """
+        unsupported = sorted(set(_published_shapes()) - _shapes_the_builder_compiles())
+
+        assert not unsupported, (
+            "the schema's 'shape' enum offers these values but add_object refuses them, so a "
+            f"model following the schema is rejected on arrival: {unsupported}"
+        )
+
+    def test_the_size_description_names_no_shape_the_enum_omits(self) -> None:
+        """The schema may not contradict itself about its own vocabulary.
+
+        Independent of the code: ``size`` publishes a per-shape layout table, and
+        a shape named there that ``shape`` does not offer sends a model to a
+        value the same schema rejects. This is the value-level form of the
+        action-level accounting above, and it failed for the same shape.
+        """
+        description = _tool_spec_properties()["size"]["description"]
+        named = {
+            shape for shape in _shapes_the_builder_compiles() if re.search(rf"\b{re.escape(shape)}\b", description)
+        }
+        assert named, "premise: the 'size' description publishes a per-shape layout table"
+
+        unpublished = sorted(named - set(_published_shapes()))
+        assert not unpublished, (
+            "the 'size' description gives a layout for these shapes but the 'shape' enum does not "
+            "offer them, so the schema promises a value it also rejects; publish them in the enum "
+            f"or drop them from the description: {unpublished}"
+        )
+
+    def test_every_published_shape_has_a_size_layout_to_quote(self) -> None:
+        """A published shape whose ``size`` count is unknown refuses silently wrong.
+
+        ``_validate_size`` reads ``_SIZE_LAYOUT.get(shape, (0, ""))``, so a shape
+        with no row consumes nothing as far as the check is concerned: every size
+        passes validation and the geom compiles from whatever the vector happened
+        to hold. Publishing a shape therefore also means declaring its layout.
+        """
+        from strands_robots.simulation.mujoco.spec_builder import _SIZE_LAYOUT
+
+        layoutless = sorted(shape for shape in _published_shapes() if shape not in _SIZE_LAYOUT)
+        assert not layoutless, (
+            "every published shape needs a _SIZE_LAYOUT row so the size count is validated and "
+            f"the refusal can quote a layout; missing: {layoutless}"
+        )
+
+    def test_a_published_shape_compiles_the_geom_type_it_names(self, world_sim: Simulation) -> None:
+        """End to end through the router, for the shape the enum gained.
+
+        The enum is a promise about what arrives in the model, not only about
+        what the router accepts. An ellipsoid takes full diameters per axis like
+        a box, so the compiled ``geom_size`` is the requested vector halved, and
+        the resize refusal names the type by name - which is what distinguishes a
+        real ellipsoid from a box that merely accepted the same three numbers.
+        """
+        import mujoco
+
+        assert "ellipsoid" in _published_shapes(), "premise: the shape is published"
+
+        added = world_sim(
+            action="add_object", name="egg", shape="ellipsoid", position=[0, 0, 0.4], size=[0.2, 0.1, 0.3]
+        )
+        assert added["status"] == "success", added
+
+        geom_id = _compiled_geom_id(world_sim, "egg_geom")
+        assert int(world_sim.mj_model.geom_type[geom_id]) == int(mujoco.mjtGeom.mjGEOM_ELLIPSOID)
+        assert [float(component) for component in world_sim.mj_model.geom_size[geom_id][:3]] == [0.1, 0.05, 0.15]
+
+        refused = world_sim(action="set_geom_properties", geom_name="egg", size=[0.1])
+        assert refused["status"] == "error"
+        assert "ellipsoid" in refused["content"][0]["text"], refused

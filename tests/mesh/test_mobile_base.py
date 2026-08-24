@@ -17,6 +17,9 @@ the abstract base.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
 from typing import Any
 
 import pytest
@@ -408,7 +411,10 @@ def test_cmd_fields_is_the_single_override_point_for_kinematics() -> None:
     robot.drive(linear=9.0, angular=0.25, duration=1.0)
     publishes = _fake(robot).publishes
     # Clamping, duration->count and the trailing zero all still apply, and the
-    # trailing zero is expressed in the subclass's own field vocabulary.
+    # trailing zero is expressed in the subclass's own field vocabulary. The
+    # operator context reaches the transport on every publish - None here
+    # because a programmatic drive carries no operator - so overriding the
+    # kinematics cannot drop it.
     assert publishes[0] == {
         "action": "publish",
         "topic": "/servo",
@@ -416,6 +422,7 @@ def test_cmd_fields_is_the_single_override_point_for_kinematics() -> None:
         "fields": {"throttle": 2.0, "angle": 0.25},
         "count": 10,
         "rate": 10.0,
+        "tool_context": None,
     }
     assert publishes[1]["fields"] == {"throttle": 0.0, "angle": 0.0}
 
@@ -528,6 +535,98 @@ def test_shipped_classes_keep_their_own_name_grammar() -> None:
     RosBridgedRobot("tb", "relative/cmd_vel", "/odom")  # accepted: rclpy resolves it
     with pytest.raises(ValueError, match="invalid cmd_vel_topic"):
         RtpsRobot("tb", "relative/cmd_vel")
+
+
+# -- the operator gate reaches every transport --------------------------------
+
+#: Every command verb a transport can carry. ``echo`` is absent on purpose: a
+#: read is never gated, so a read verb has no operator decision to carry.
+_TRANSPORT_COMMAND_VERBS = ("publish", "service_call", "action_send_goal")
+
+
+def _shipped_transports() -> list[tuple[type, Any]]:
+    """Each mobile-base transport paired with the tool it forwards to.
+
+    Imported here rather than listed as names so a transport that stops being
+    reachable from its module fails this file instead of quietly leaving the
+    matrix below.
+    """
+    from strands_robots.mesh.ros_bridge import _UseRosTransport
+    from strands_robots.mesh.rtps_robot import _UseRtpsTransport
+    from strands_robots.tools.use_ros import use_ros
+    from strands_robots.tools.use_rtps import use_rtps
+
+    return [(_UseRosTransport, use_ros), (_UseRtpsTransport, use_rtps)]
+
+
+def _tool_takes_a_context(agent_tool: Any) -> bool:
+    """Whether the underlying tool has an operator gate to hand a context to."""
+    func = getattr(agent_tool, "__wrapped__", agent_tool)
+    return "tool_context" in inspect.signature(func).parameters
+
+
+def _forwards_a_context(method: Any) -> bool:
+    source = textwrap.dedent(inspect.getsource(method))
+    return any(
+        keyword.arg == "tool_context"
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+    )
+
+
+@pytest.mark.parametrize("transport,agent_tool", _shipped_transports(), ids=lambda x: getattr(x, "__name__", ""))
+def test_every_transport_accepts_the_operator_context(transport: type, agent_tool: Any) -> None:
+    """The base hands the context to the transport, so every one must take it.
+
+    :meth:`MobileBaseRobot.drive` forwards ``tool_context`` on every publish. A
+    transport that did not accept the parameter would raise ``TypeError`` on
+    every command rather than merely losing the gate, so this is the conformance
+    half of the protocol and not a style rule.
+    """
+    del agent_tool
+    for verb in _TRANSPORT_COMMAND_VERBS:
+        method = getattr(transport, verb, None)
+        if method is None:
+            continue  # an optional capability this transport does not claim
+        assert "tool_context" in inspect.signature(method).parameters, (
+            f"{transport.__name__}.{verb} does not accept tool_context, so every command through it raises"
+        )
+
+
+@pytest.mark.parametrize("transport,agent_tool", _shipped_transports(), ids=lambda x: getattr(x, "__name__", ""))
+def test_a_transport_forwards_the_context_exactly_when_its_tool_gates(transport: type, agent_tool: Any) -> None:
+    """Forwarding is decided by the tool, not by a table maintained here.
+
+    Both directions are defects. A gating tool that is not forwarded to turns
+    the whole command surface into a per-call refusal - the failure
+    ``tests/mesh/test_ros_bridge_command_gate.py`` exists for. A non-gating tool
+    that is forwarded to raises ``TypeError``, because it has no such parameter.
+    Deriving the expectation from the tool's own signature means a new transport
+    has to be right rather than remembered.
+    """
+    gates = _tool_takes_a_context(agent_tool)
+    for verb in _TRANSPORT_COMMAND_VERBS:
+        method = getattr(transport, verb, None)
+        if method is None:
+            continue
+        assert _forwards_a_context(method) is gates, (
+            f"{transport.__name__}.{verb} "
+            f"{'drops' if gates else 'forwards'} the operator context but its tool "
+            f"{'gates' if gates else 'has no gate'}"
+        )
+
+
+def test_the_shipped_transports_cover_both_sides_of_the_gate_split() -> None:
+    """Non-vacuity for the rule above: it must be discriminating, not trivial.
+
+    If every shipped tool gated - or none did - the parametrized rule would pass
+    while only ever checking one branch. ``use_ros`` gates its command surface
+    and ``use_rtps`` does not, so both directions are exercised today.
+    """
+    gating = {t.__name__ for t, agent_tool in _shipped_transports() if _tool_takes_a_context(agent_tool)}
+    ungated = {t.__name__ for t, agent_tool in _shipped_transports() if not _tool_takes_a_context(agent_tool)}
+    assert gating and ungated, f"gating={sorted(gating)} ungated={sorted(ungated)}"
 
 
 def test_rtps_transport_declares_no_service_surface() -> None:

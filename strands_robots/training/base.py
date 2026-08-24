@@ -15,10 +15,18 @@ post-tuned* - and those pipelines genuinely differ per provider:
   **DCP checkpoint conversion** prepare step and a **DCP -> safetensors** export
   step. 8xH100 floor.
 
-All three run **in-process** (imported and called as libraries, no subprocess);
-multi-GPU goes through torch's programmatic ``elastic_launch``.
+Those three are **local** backends: they run in-process (imported and called as
+libraries, no subprocess) and multi-GPU goes through torch's programmatic
+``elastic_launch``. A provider may instead be pure **transport**:
 
-All three nonetheless converge on:
+* **SageMaker** - submit the same spec as one managed AWS training job whose
+  container image packages one of the local paths, so this provider imports no
+  training library and the run outlives the submitting process.
+
+Which shape a provider is decides its :meth:`Trainer.train` return contract - a
+local run always finishes inside the call, a submitted one need not.
+
+All of them nonetheless converge on:
 
 1. the same **dataset format** - LeRobotDataset v3 (what
    :class:`~strands_robots.dataset_recorder.DatasetRecorder` already writes), and
@@ -70,7 +78,12 @@ class TrainSpec:
             With :attr:`dataset_repo_id` this streams shards from the Hub with no
             full download (bounded disk); with a local ``dataset_root`` it
             streams from disk (bounded RAM). LeRobot-only; other backends ignore
-            it (tolerance rule).
+            it (tolerance rule). Mutually exclusive with :attr:`val_episodes` on
+            the lerobot backend: a held-out split sends lerobot down a map-style
+            path that rebuilds both splits as ``LeRobotDataset`` and drops the
+            stream, so asking for both materializes the whole dataset. The
+            backend refuses the pair in :meth:`Trainer.validate` rather than
+            deliver one of the two silently.
         base_model: HF model id or local checkpoint path to post-tune *from*.
         output_dir: Directory for checkpoints, logs, and the final artifact.
         embodiment: Embodiment tag / robot id. Required by GR00T
@@ -129,19 +142,39 @@ class TrainSpec:
             the lerobot backend maps it onto ``--dataset.eval_split`` plus a
             non-zero ``--eval_steps`` so an eval loss is logged periodically.
             Must be a positive integer below the dataset's episode count, or
-            ``None`` to train on every episode. Because the count is converted
+            ``None`` to train on every episode. That upper bound is also a SOURCE
+            requirement: the count comes from the dataset's local
+            ``meta/info.json``, so a backend that cannot read one (a Hub source
+            with no populated :attr:`dataset_root`) MUST refuse rather than emit
+            no split - an absent split is indistinguishable from ``None``, and
+            reporting no problem would launch exactly the validation-less run
+            this field exists to avoid. Because the count is converted
             into a real-valued split fraction whose ceiling lerobot takes, a
             backend MUST check it with
             :meth:`Trainer._validation_episodes_problems` rather than compare it
             itself: a non-positive value produces no split at all, and ``True``
-            / ``2.7`` / ``0.5`` reserve 1 / 3 / 0 episodes respectively.
+            / ``2.7`` / ``0.5`` reserve 1 / 3 / 0 episodes respectively. On the
+            lerobot backend this is mutually exclusive with :attr:`streaming`
+            (see that field).
         augmentation: Backend-specific data augmentation (GR00T
             ``color_jitter_params`` / ``random_rotation_angle``; Cosmos
             dataset filter dict).
         fps: Dataset control rate, when a backend needs it explicitly.
         extra: Raw passthrough. Keys become backend-native flags / overrides
             (lerobot ``--key=value``; Cosmos Hydra ``key.path=value``). The
-            escape hatch that keeps the ABC stable as backends evolve.
+            escape hatch that keeps the ABC stable as backends evolve. A value
+            may be given either as text or as the destination field's own Python
+            type; a backend that assigns into a typed config MUST decode text
+            with the same decoder its ``--key=value`` form uses, so one spec
+            means one run whichever path the backend takes. The lerobot backend
+            reads text through lerobot's own draccus decoder: ``false``/``no``/
+            ``off`` and ``true``/``yes``/``on`` (any case) are booleans, ``0``
+            and ``1`` are not, and text that does not decode to the field's type
+            is refused rather than stored. For example, unfreezing a SmolVLA
+            vision tower takes ``extra={"policy.freeze_vision_encoder": False,
+            "policy.train_expert_only": False}`` - or the same values as
+            ``"false"`` - because both default to ``True`` in that policy's own
+            config.
     """
 
     # --- universal ---
@@ -208,12 +241,26 @@ class Trainer(ABC):
     loadable artifact a run produced; :meth:`status` is an optional best-effort
     verdict for backends that can poll a still-running job.
 
-    Concrete trainers are thin adapters that **import the backend package and
-    call its own training function in-process** (LeRobot ``train(cfg)``, GR00T
-    ``experiment.run(config)``, Cosmos ``train.launch(config, args)``) - they do
-    NOT reimplement training and do NOT shell out to a subprocess. Multi-GPU is
-    driven via torch's programmatic ``elastic_launch`` (the engine behind
-    ``torchrun``), still in-process.
+    Concrete trainers come in two shapes, and neither reimplements training. A
+    **local** trainer is a thin adapter that **imports the backend package and
+    calls its own training function in-process** (LeRobot ``train(cfg)``, GR00T
+    ``experiment.run(config)``, Cosmos ``train.launch(config, args)``) - it does
+    NOT shell out to a subprocess, and multi-GPU is driven via torch's
+    programmatic ``elastic_launch`` (the engine behind ``torchrun``), still
+    in-process. A **transport** trainer imports no training library at all: it
+    submits the same :class:`TrainSpec` to a managed runner whose image packages
+    a local trainer (``sagemaker`` -> one SageMaker training job). Only the
+    local shape necessarily finishes inside the :meth:`train` call; see that
+    method for the return contract that follows from this.
+
+    The field-scoped shared domains below (:meth:`_seed_problems` and its
+    siblings) are each obliged of "a backend that reads the field", and a
+    backend reads a field by any means: naming it (``spec.seed``) or forwarding
+    it through a table (``getattr(spec, field)`` over a tuple of field names,
+    which is how a provider that passes a spec on serializes every field
+    without naming any). The second form is a read for this rule exactly as the
+    first is - what obliges the gate is that the value reaches the run, not the
+    syntax that fetched it.
     """
 
     @property
@@ -547,6 +594,52 @@ class Trainer(ABC):
 
         return temperature_learning_rate_problems(spec, context=self.provider_name)
 
+    def _initial_temperature_problems(self, spec: TrainSpec) -> list[str]:
+        """Entropy-temperature starting-value preflight, for backends that hold one.
+
+        Returns a problem when :attr:`RLTrainSpec.init_alpha` is not a positive
+        finite number. FastSAC stores the temperature's logarithm, so the field
+        reaches ``torch.log`` and only a positive finite value has a finite one.
+        A :meth:`validate` implementation that builds a temperature MUST call
+        this **in addition to** :meth:`_temperature_learning_rate_problems`: the
+        two fields are the temperature's starting value and the rate that moves
+        it, so guarding the rate leaves the value it starts from unchecked -
+        which that gate's own reasoning depends on, since it refuses
+        ``alpha_lr=0`` on the grounds that "the temperature stays at
+        ``init_alpha`` for the whole run".
+
+        ``init_alpha=0`` makes ``log(0) == -inf`` and the temperature exactly
+        zero, so the entropy term is absent from both losses and automatic
+        tuning cannot lift it back - no finite update moves an infinity - while
+        the run reports success and checkpoints the non-finite value. A negative
+        value, ``nan`` or ``inf`` poisons the actor loss instead and raises from
+        inside ``torch.distributions.Normal``, naming that distribution's
+        parameter rather than the field.
+
+        Unlike :meth:`_temperature_learning_rate_problems` this is not scoped to
+        ``autotune_alpha``: that gate guards an optimizer only the tuning branch
+        constructs, while ``init_alpha`` is read on both branches, and with
+        tuning off it is the temperature for the entire run.
+
+        Only a backend that holds an entropy temperature may call this: like
+        :meth:`_gae_lambda_problems`, and unlike :meth:`_learning_rate_problems`,
+        a backend that does not read the field MUST NOT report on it, because
+        per :class:`TrainSpec` a backend ignores the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``init_alpha`` has no finite logarithm;
+            empty when it is usable.
+        """
+        from strands_robots.training._validate import initial_temperature_problems
+
+        return initial_temperature_problems(spec, context=self.provider_name)
+
     def _gradient_clip_problems(self, spec: TrainSpec) -> list[str]:
         """Gradient-clip preflight for a backend that clips before it steps.
 
@@ -677,31 +770,41 @@ class Trainer(ABC):
 
     @abstractmethod
     def train(self, spec: TrainSpec) -> TrainResult:
-        """Run the backend's training in-process and return the final result.
+        """Run the backend's training and return the result of that run.
 
         Responsible for: building the backend's typed config from the
         :class:`TrainSpec`, wiring resume, selecting single- vs multi-GPU
         (``elastic_launch`` for ``num_gpus > 1``), invoking the backend's own
         training function, and surfacing the checkpoint dir + metrics verdict.
 
-        Training is **synchronous**: this call blocks until the run finishes (or
-        raises) and returns a terminal ``TrainResult`` (``success``/``error``)
-        with ``metrics`` already populated - there is no detached job to poll.
-        ``status()`` exists only for backends that CAN report on a separately
-        launched, still-running job; the default returns an informative error.
+        A **local** trainer runs the training in-process, so the call is
+        **synchronous**: it blocks until the run finishes (or raises) and
+        returns a terminal ``TrainResult`` (``success``/``error``) with
+        ``metrics`` already populated, and there is no detached job to poll. A
+        **transport** trainer submits a run that outlives this process, so its
+        result MAY be non-terminal: ``running`` with a ``job_id`` that
+        :meth:`status` polls, and no ``checkpoint_dir`` yet.
+
+        A caller therefore has to branch on all three
+        :attr:`TrainResult.status` values rather than read "not ``error``" as
+        finished: a completed-run report rendered for a ``running`` result names
+        an artifact that does not exist yet.
         Every implementation MUST call :meth:`validate` first and fail closed.
         """
 
     def status(self, job_id: str) -> TrainResult:
-        """Optional "RUNNING != learning" verdict for a separately launched job.
+        """Optional "RUNNING != learning" verdict for a job still in flight.
 
-        Because :meth:`train` is synchronous and already returns the full
-        ``metrics`` verdict, this is only meaningful for a job launched OUT of
-        band (e.g. a long cosmos run started under an external launcher) that a
-        caller wants to poll by id. Most backends do not track detached jobs, so
-        the default returns an informative ``error``. Backends that DO override
-        parse their training logs for ``latest_step`` / ``latest_loss`` / a
-        ``learning`` boolean.
+        Two kinds of job reach here: one launched OUT of band (e.g. a long
+        cosmos run started under an external launcher) that a caller wants to
+        poll by id, and one a **transport** :meth:`train` submitted and handed
+        back as ``running`` because it outlives the submitting process. A local
+        trainer produces neither - its ``train`` already returned the full
+        ``metrics`` verdict - so most backends track no job at all and inherit
+        this default, which returns an informative ``error``. Backends that DO
+        override either read the runner's own job API (``sagemaker`` ->
+        ``DescribeTrainingJob``) or parse their training logs for
+        ``latest_step`` / ``latest_loss`` / a ``learning`` boolean.
         """
         return TrainResult(
             status="error",
