@@ -36,8 +36,10 @@ from __future__ import annotations
 import ast
 import importlib.util
 import inspect
+import re
 import sys
 import textwrap
+import types
 from pathlib import Path
 
 import pytest
@@ -468,3 +470,353 @@ def test_the_zero_frame_verdict_is_applied_unconditionally() -> None:
     assert len(calls) == 1, "the shared loop applies the verdict exactly once"
     conditional = {id(n) for branch in ast.walk(tree) if isinstance(branch, ast.If) for n in ast.walk(branch)}
     assert id(calls[0]) not in conditional, "the zero-frame verdict must not be conditional"
+
+
+# ---------------------------------------------------------------------------
+# A refused setup step is reported where it refuses, on either subcommand
+# ---------------------------------------------------------------------------
+#
+# Every `Simulation` / `IsaacSimulation` setup call answers a tool envelope
+# rather than raising. `_setup_isaac` read the verdict of all five of its
+# (`create_world`, `add_robot`, `add_camera` x2, `start_cameras_recording`);
+# `_setup_mujoco` discarded all five of its. Measured by driving the real
+# `_setup_mujoco` with one refused step at a time (the rest succeeding):
+#
+#   refused step             | before                          | after
+#   -------------------------|---------------------------------|--------------
+#   create_world             | printed a success_rate= line    | refused at setup
+#   add_robot                | printed a success_rate= line    | refused at setup
+#   load_scene               | printed a success_rate= line    | refused at setup
+#   start_cameras_recording  | RuntimeError after the rollout  | refused pre-rollout
+#
+# Three of the four shipped a full result line, which `libero_backend_matrix.py`
+# parses as a completed cell; the fourth surfaced only after the whole rollout
+# as `rollout recorded 0 frames for camera 'image' (0 per-frame render errors)`
+# - a render diagnosis for a recorder that never started. Before: 4 of 4 ran the
+# rollout and 0 of 4 named the step. After: 0 of 4 and 4 of 4.
+
+_SETUP_REFUSALS = {
+    "create_world": "create_world: a world already exists (robots: robot; objects: none).",
+    "add_robot": "Failed to load: asset for 'panda' is not on disk.",
+    "load_scene": "Scene file not found: /var/cache/libero/spatial_task_0.xml",
+    "start_cameras_recording": "Camera(s) not found: ['image', 'wrist_image']. Available: ['default']",
+}
+
+
+class _RefusingSetupSim:
+    """A ``Simulation`` stand-in that refuses exactly one setup step.
+
+    Refusing one at a time is what isolates *where* that step's refusal
+    surfaces; in practice several cascade.
+    """
+
+    def __init__(self, refuse: str | None, *, has_robot: bool = True) -> None:
+        self.refuse = refuse
+        self.calls: list[str] = []
+        self.recording = False
+        self._has_robot = has_robot
+
+    def _env(self, name: str) -> dict:
+        self.calls.append(name)
+        if name == self.refuse:
+            return {"status": "error", "content": [{"text": _SETUP_REFUSALS[name]}]}
+        return {"status": "success", "content": [{"text": f"{name} ok"}]}
+
+    def create_world(self, **_kw: object) -> dict:
+        return self._env("create_world")
+
+    def add_robot(self, *_a: object, **_kw: object) -> dict:
+        return self._env("add_robot")
+
+    def load_scene(self, *_a: object, **_kw: object) -> dict:
+        return self._env("load_scene")
+
+    def list_robots(self) -> list[str]:
+        return ["robot"] if self._has_robot else []
+
+    def start_cameras_recording(self, **_kw: object) -> dict:
+        result = self._env("start_cameras_recording")
+        self.recording = result["status"] == "success"
+        return result
+
+    def stop_cameras_recording(self) -> dict:
+        self.calls.append("stop_cameras_recording")
+        if not self.recording:
+            # Measured verbatim on a real MuJoCo sim: success, and no json block.
+            return {"status": "success", "content": [{"text": "Was not recording cameras."}]}
+        return {
+            "status": "success",
+            "content": [
+                {"text": "Stopped 'r' after 1.9s"},
+                {
+                    "json": {
+                        "artifacts": [
+                            {
+                                "camera": "image",
+                                "path": "/tmp/r__image.mp4",
+                                "frames": 120,
+                                "errors": 0,
+                                "size_kb": 16.2,
+                            }
+                        ]
+                    }
+                },
+            ],
+        }
+
+    def evaluate_benchmark(self, **_kw: object) -> dict:
+        self.calls.append("evaluate_benchmark")
+        return {"status": "success", "content": [{"json": {"success_rate": 0.4}}]}
+
+    def destroy(self) -> dict:
+        self.calls.append("destroy")
+        return {"status": "success", "content": [{"text": "ok"}]}
+
+
+class _PrewarmSpec:
+    """A benchmark spec whose scene the ``groot`` path pre-warms."""
+
+    scene_path = "/var/cache/libero/spatial_task_0.xml"
+
+    def ensure_scene(self) -> None:
+        return None
+
+    def prewarm(self, _sim: object) -> None:
+        return None
+
+
+def _drive_mujoco_setup(run, monkeypatch, tmp_path, refuse, *, has_robot=True):
+    """Run the real ``_setup_mujoco`` (and the recording arm) against a fake sim.
+
+    Returns ``(sim, raised)`` - ``raised`` is the exception the caller saw, or
+    ``None`` if the whole path reported success.
+    """
+    sim = _RefusingSetupSim(refuse, has_robot=has_robot)
+    sim_module = types.ModuleType("strands_robots.simulation")
+    sim_module.Simulation = lambda **_kw: sim  # type: ignore[attr-defined]
+    bench_module = types.ModuleType("strands_robots.simulation.benchmark")
+    bench_module.get_benchmark = lambda _name: _PrewarmSpec()  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "strands_robots.simulation", sim_module)
+    monkeypatch.setitem(sys.modules, "strands_robots.simulation.benchmark", bench_module)
+    monkeypatch.setattr(run, "_resolve_task", lambda *_a, **_k: "libero_spatial_task_0")
+    monkeypatch.setattr(run, "_date_dir", lambda: str(tmp_path))
+
+    args = run.argparse.Namespace(
+        backend="mujoco", policy="groot", n_episodes=2, seed=7, task="libero_spatial_task_0", port=5555
+    )
+    try:
+        built_sim, plan = run._setup_mujoco(args, "libero_spatial")
+        run._evaluate_and_report(built_sim, args, plan)
+    except Exception as exc:  # noqa: BLE001 - the caller's own verdict is the subject
+        return sim, exc
+    return sim, None
+
+
+@pytest.mark.parametrize("refuse", sorted(_SETUP_REFUSALS))
+def test_a_refused_setup_step_is_reported_where_it_refuses(refuse, tmp_path, monkeypatch, capsys):
+    """A setup step the backend declined must not be discarded.
+
+    Fails pre-fix for all four: ``create_world`` / ``add_robot`` /
+    ``load_scene`` printed a full ``success_rate=`` line, and
+    ``start_cameras_recording`` raised only after the rollout with a render
+    diagnosis naming neither the step nor its camera list.
+    """
+    run = _load_example("run.py")
+    sim, raised = _drive_mujoco_setup(run, monkeypatch, tmp_path, refuse)
+
+    printed = capsys.readouterr().out
+    assert raised is not None, (
+        f"a refused {refuse} was discarded: the run reported success and printed {printed.strip()[:200]!r}"
+    )
+    assert "success_rate=" not in printed, f"a refused {refuse} still printed a result line: {printed[:200]!r}"
+    message = str(raised)
+    assert refuse in message, f"the refusal must name the step that declined; got: {message[:200]}"
+    assert _SETUP_REFUSALS[refuse] in message, f"the backend's own reason must survive; got: {message[:200]}"
+    assert "evaluate_benchmark" not in sim.calls, (
+        f"a refused {refuse} must not spend a whole rollout first (calls: {sim.calls})"
+    )
+
+
+def test_the_fallback_add_robot_is_checked_too(tmp_path, monkeypatch):
+    """The defensive ``add_robot`` behind the redundant-Panda check is a site too.
+
+    It only runs for a scene that ships no Panda, so a fake reporting an empty
+    ``list_robots()`` is what reaches it.
+    """
+    run = _load_example("run.py")
+    sim, raised = _drive_mujoco_setup(run, monkeypatch, tmp_path, "add_robot", has_robot=False)
+
+    assert raised is not None, "the fallback add_robot's refusal was discarded"
+    assert "add_robot" in str(raised)
+    assert sim.calls.count("add_robot") >= 1, f"premise: the fallback site ran (calls: {sim.calls})"
+
+
+# ---------------------------------------------------------------------------
+# Root cause: one owner for the rule, and no shim may drift off it
+# ---------------------------------------------------------------------------
+
+_SETUP_SHIMS = ("_setup_mujoco", "_setup_isaac")
+
+
+def _is_status_guard(test: ast.expr) -> bool:
+    """Is ``test`` the inline ``<envelope>.get("status") != "success"`` comparison?
+
+    Matched with the quotes stripped. ``ast.unparse`` normalises every string
+    literal to single quotes, so a double-quoted needle silently matches
+    nothing - and both rules below would then pass without grading anything.
+    """
+    rendered = ast.unparse(test).replace('"', "").replace("'", "")
+    return "get(status) !=" in rendered and "success" in rendered
+
+
+def _setup_shim_sim_calls(source: str) -> dict[str, dict[str, list[tuple[str, int]]]]:
+    """Per ``sim`` method, its call sites in either setup shim, split by check.
+
+    A site counts as checked when its envelope reaches a verdict: either it
+    flows into ``_require_ok`` (directly, or through a local that
+    ``_require_ok`` is later called on), or the local it was assigned to is
+    guarded by an explicit ``if <name>.get("status") != "success"``. Both forms
+    are recognised so the rule reads the same before and after the shared owner
+    exists.
+    """
+    tree = ast.parse(source)
+    shims = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in _SETUP_SHIMS]
+    assert len(shims) == len(_SETUP_SHIMS), f"expected both setup shims, found {[s.name for s in shims]}"
+
+    out: dict[str, dict[str, list[tuple[str, int]]]] = {}
+    for shim in shims:
+        checked_calls: set[int] = set()
+        checked_names: set[str] = set()
+        for node in ast.walk(shim):
+            # _require_ok(<call>, "what") / _require_ok(<name>, "what")
+            if isinstance(node, ast.Call) and ast.unparse(node.func) == "_require_ok" and node.args:
+                first = node.args[0]
+                if isinstance(first, ast.Call):
+                    checked_calls.add(id(first))
+                elif isinstance(first, ast.Name):
+                    checked_names.add(first.id)
+            # if <name>.get("status") != "success"
+            if isinstance(node, ast.If) and _is_status_guard(node.test):
+                for sub in ast.walk(node.test):
+                    if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name):
+                        checked_names.add(sub.value.id)
+        # a call assigned to a checked local is itself checked
+        for node in ast.walk(shim):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                if any(isinstance(t, ast.Name) and t.id in checked_names for t in node.targets):
+                    checked_calls.add(id(node.value))
+
+        for node in ast.walk(shim):
+            if not isinstance(node, ast.Call):
+                continue
+            func = ast.unparse(node.func)
+            if not func.startswith("sim."):
+                continue
+            method = func.split(".", 1)[1]
+            bucket = out.setdefault(method, {"checked": [], "unchecked": []})
+            key = "checked" if id(node) in checked_calls else "unchecked"
+            bucket[key].append((shim.name, node.lineno))
+    return out
+
+
+def test_every_setup_step_checked_in_one_shim_is_checked_in_the_other() -> None:
+    """A setup step whose verdict one shim reads must be read wherever it is called.
+
+    Derived, so it needs no list of method names: ``destroy`` and ``step`` are
+    unchecked at every site (cleanup, and a retry loop whose observable is the
+    frame count) and are therefore consistent; ``create_world``, ``add_robot``
+    and ``start_cameras_recording`` were read in ``_setup_isaac`` and discarded
+    in ``_setup_mujoco``, which is exactly the drift this reports.
+    """
+    calls = _setup_shim_sim_calls((_EXAMPLES_LIBERO / "run.py").read_text(encoding="utf-8"))
+    assert len(calls) >= 6, f"the scan reached too few sim methods to mean anything: {sorted(calls)}"
+
+    offenders = {
+        method: sites["unchecked"] for method, sites in calls.items() if sites["checked"] and sites["unchecked"]
+    }
+    assert not offenders, (
+        "a setup step's verdict is read at one call site and discarded at another, "
+        f"so the two backend shims disagree about it: {offenders}"
+    )
+
+
+def test_the_setup_shims_route_every_check_through_one_owner() -> None:
+    """Single owner: neither shim re-derives the status comparison inline.
+
+    Two copies of the rule is how the shims drifted into one reading the
+    verdict and the other discarding it, so the check has one home.
+    """
+    source = (_EXAMPLES_LIBERO / "run.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    inline: list[tuple[str, int]] = []
+    for shim in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in _SETUP_SHIMS]:
+        for node in ast.walk(shim):
+            if isinstance(node, ast.If) and _is_status_guard(node.test):
+                inline.append((shim.name, node.lineno))
+    assert not inline, f"a setup shim re-derives the status check instead of calling _require_ok: {inline}"
+
+
+def test_the_shared_owner_reports_the_step_and_keeps_the_backend_reason() -> None:
+    """The refusal names the step and carries the envelope the backend answered."""
+    run = _load_example("run.py")
+    refusal = {"status": "error", "content": [{"text": "Camera(s) not found: ['image']"}]}
+
+    with pytest.raises(RuntimeError) as excinfo:
+        run._require_ok(refusal, "start_cameras_recording")
+
+    message = str(excinfo.value)
+    assert message.startswith("start_cameras_recording failed:"), message
+    assert "Camera(s) not found" in message, message
+
+
+def test_the_shared_owner_returns_the_envelope_untouched_on_success() -> None:
+    """Control: the Isaac recorder chains its ``on_frame`` handle off the check."""
+    run = _load_example("run.py")
+    envelope = {"status": "success", "content": [{"json": {"on_frame": "handle"}}]}
+
+    returned = run._require_ok(envelope, "start_cameras_recording")
+
+    assert returned is envelope
+
+
+def test_the_refusal_wording_is_unchanged() -> None:
+    """Control: the operator-visible template still reads ``<step> failed: <envelope>``.
+
+    Written to match either spelling of it - the per-site raises the shims used
+    before the shared owner existed, and the owner's own - so it pins the
+    wording rather than which function produces it.
+    """
+    source = (_EXAMPLES_LIBERO / "run.py").read_text(encoding="utf-8")
+
+    assert re.search(r"failed: \{(?:result|rec|what)\}", source), (
+        "the refusal template moved away from '<step> failed: <envelope>'"
+    )
+
+
+def test_the_cleanup_and_retry_loop_calls_are_deliberately_unchecked() -> None:
+    """Boundary: not every ``sim`` call in a shim answers a verdict worth reading.
+
+    ``destroy`` runs while already unwinding, and ``step`` sits in the RTX
+    warmup retry loop whose observable is the accumulated frame count - so both
+    stay unchecked, in both shims. This fails if the fix is widened to every
+    call rather than the setup steps.
+    """
+    calls = _setup_shim_sim_calls((_EXAMPLES_LIBERO / "run.py").read_text(encoding="utf-8"))
+
+    for method in ("destroy", "step"):
+        assert method in calls, f"premise: the shims still call sim.{method}"
+        assert not calls[method]["checked"], (
+            f"sim.{method} is not a setup step; checking it would refuse a rollout for a "
+            f"cleanup/retry call: {calls[method]['checked']}"
+        )
+
+
+def test_a_setup_that_succeeds_still_returns_a_plan_and_reports(tmp_path, monkeypatch, capsys):
+    """Control: the happy path is untouched - it still builds a plan and prints."""
+    run = _load_example("run.py")
+    sim, raised = _drive_mujoco_setup(run, monkeypatch, tmp_path, None)
+
+    assert raised is None, f"a fully successful setup must not raise: {raised}"
+    printed = capsys.readouterr().out
+    assert "success_rate=0.40" in printed and "backend=mujoco" in printed, printed[:300]
+    assert "evaluate_benchmark" in sim.calls, f"premise: the rollout ran (calls: {sim.calls})"

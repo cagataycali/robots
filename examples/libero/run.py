@@ -513,6 +513,46 @@ class _EvalPlan:
     eval_kwargs: dict = field(default_factory=dict)
 
 
+def _require_ok(result: dict, what: str) -> dict:
+    """Refuse a setup step the backend declined, where it declined it.
+
+    Every ``Simulation`` / ``IsaacSimulation`` setup call answers a tool
+    envelope rather than raising, so a discarded return leaves a refusal
+    invisible. Both backend shims below assemble the same rollout out of the
+    same envelope-returning calls, and this is the single place either reads
+    the verdict - so they cannot drift back into two rules for it.
+
+    Measured on the ``mujoco`` shim before this existed, isolating one refused
+    step at a time: a refused ``create_world``, ``add_robot`` or ``load_scene``
+    printed a full ``success_rate=`` result line, which
+    ``libero_backend_matrix.py`` parses as a completed cell; and a refused
+    ``start_cameras_recording`` surfaced only after the whole rollout, as
+    ``rollout recorded 0 frames for camera 'image' (0 per-frame render
+    errors)`` - a render diagnosis for a recorder that never started, naming
+    neither the step nor the available-camera list the refusal carried.
+    ``stop_cameras_recording`` answers ``status="success"`` with
+    ``"Was not recording cameras."`` and no json block, so the ``finally``
+    arm gave no signal either.
+
+    Args:
+        result: The tool envelope the setup call answered.
+        what: The call's name, used verbatim in the refusal so the message
+            names the step that declined.
+
+    Returns:
+        ``result`` unchanged, so a caller needing the payload (the Isaac
+        recorder's ``on_frame`` handle) can chain off the check.
+
+    Raises:
+        RuntimeError: ``result`` does not report ``status="success"``. The
+            message carries the whole envelope, which is where the backend's
+            own remedy lives.
+    """
+    if result.get("status") != "success":
+        raise RuntimeError(f"{what} failed: {result}")
+    return result
+
+
 def _setup_mujoco(args: argparse.Namespace, suite: str):
     """MuJoCo setup shim: procedural Panda + LIBERO scene pre-warm.
 
@@ -523,7 +563,7 @@ def _setup_mujoco(args: argparse.Namespace, suite: str):
 
     sim = Simulation(tool_name="libero_sim", mesh=False)
     try:
-        sim.create_world()
+        _require_ok(sim.create_world(), "create_world")
         # Pre-add a Panda named ``robot`` so:
         #   1. evaluate_benchmark's pre-flight check (`No robots in sim`)
         #      passes BEFORE on_episode_start runs scene loading.
@@ -532,7 +572,7 @@ def _setup_mujoco(args: argparse.Namespace, suite: str):
         #      scenes ship a Franka Panda named `robot` (LIBERO/RoboSuite
         #      convention), so picking the same name client-side keeps
         #      the resolved robot stable across `on_episode_start`.
-        sim.add_robot("robot", data_config="panda")
+        _require_ok(sim.add_robot("robot", data_config="panda"), "add_robot")
 
         resolved_task = _resolve_task(suite, args.task)
 
@@ -560,7 +600,7 @@ def _setup_mujoco(args: argparse.Namespace, suite: str):
             if hasattr(spec, "ensure_scene"):
                 spec.ensure_scene()
             if spec.scene_path:
-                sim.load_scene(spec.scene_path)
+                _require_ok(sim.load_scene(spec.scene_path), "load_scene")
                 # Prewarm BEFORE the redundant-Panda check below, so
                 # prewarm's robot registration wraps the scene-supplied
                 # Panda first -> list_robots() returns ['robot'] -> the
@@ -573,12 +613,15 @@ def _setup_mujoco(args: argparse.Namespace, suite: str):
                 # don't expose `prewarm` and don't ship a Panda in
                 # the loaded scene MJCF.
                 if "robot" not in sim.list_robots():
-                    sim.add_robot("robot", data_config="panda")
+                    _require_ok(sim.add_robot("robot", data_config="panda"), "add_robot")
 
         def arm_recording(video_dir: str, rec_name: str) -> dict:
             # MuJoCo's recorder runs on a background thread; nothing to
             # thread into evaluate_benchmark.
-            sim.start_cameras_recording(cameras=recording_cameras, output_dir=video_dir, name=rec_name)
+            _require_ok(
+                sim.start_cameras_recording(cameras=recording_cameras, output_dir=video_dir, name=rec_name),
+                "start_cameras_recording",
+            )
             return {}
 
         plan = _EvalPlan(
@@ -773,9 +816,7 @@ def _setup_isaac(args: argparse.Namespace, suite: str):
     # STRANDS_ISAAC_RTX_PATHTRACING=1 upgrades to photoreal pathtracing.)
     sim = create_simulation("isaac", headless=True, num_envs=1, render_mode="rtx_realtime")
     try:
-        result = sim.create_world()
-        if result.get("status") != "success":
-            raise RuntimeError(f"create_world failed: {result}")
+        _require_ok(sim.create_world(), "create_world")
 
         # Load a *real* robot asset (default: Isaac's bundled Franka
         # Panda USD; override via --robot-usd / --robot-urdf). This
@@ -794,8 +835,7 @@ def _setup_isaac(args: argparse.Namespace, suite: str):
         else:
             print(f"[setup] loading robot from USD: {robot_usd}")
             result = sim.add_robot(name="robot", usd_path=robot_usd)
-        if result.get("status") != "success":
-            raise RuntimeError(f"add_robot failed: {result}")
+        _require_ok(result, "add_robot")
 
         # Isaac doesn't auto-attach viewport cameras the way MuJoCo's
         # mjData does. Add an explicit RTX camera at the same
@@ -810,8 +850,7 @@ def _setup_isaac(args: argparse.Namespace, suite: str):
             target=[0.0, 0.0, 0.5],
             fov=60.0,
         )
-        if result.get("status") != "success":
-            raise RuntimeError(f"add_camera failed: {result}")
+        _require_ok(result, "add_camera")
 
         # The libero_panda data-config ALSO requires a ``wrist_image`` video
         # key. Pre-add it here -- at the same static fallback vantage
@@ -832,8 +871,7 @@ def _setup_isaac(args: argparse.Namespace, suite: str):
             width=256,
             height=256,
         )
-        if result.get("status") != "success":
-            raise RuntimeError(f"add_camera failed: {result}")
+        _require_ok(result, "add_camera")
 
         # Warm up the RTX render product before recording. A camera added
         # after the last world step has an empty render product: its first
@@ -910,8 +948,7 @@ def _setup_isaac(args: argparse.Namespace, suite: str):
                 output_dir=video_dir,
                 name=rec_name,
             )
-            if rec.get("status") != "success":
-                raise RuntimeError(f"start_cameras_recording failed: {rec}")
+            _require_ok(rec, "start_cameras_recording")
             base_on_frame = next(c["json"]["on_frame"] for c in rec["content"] if "json" in c)
 
             def on_frame(step: int, observation: dict, action: dict) -> None:
