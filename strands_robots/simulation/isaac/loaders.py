@@ -976,6 +976,20 @@ def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str,
     neither need be the top file - the same splice
     :func:`_mjcf_model_toplevel` resolves for ``<compiler>`` and ``<asset>``.
 
+    A model may carry SEVERAL top-level ``<default>`` elements, and MuJoCo
+    merges them into the one root class in document order - the same treatment
+    it gives ``<compiler>``, ``<asset>`` and ``<worldbody>``. They are therefore
+    accumulated here, not read independently. The merge is per attribute, so a
+    later element overriding one attribute ``tag`` selects does not discard
+    another that an earlier one declared.
+
+    A nested class is flattened where it appears, which is what MuJoCo does: it
+    inherits the root class as accumulated *up to its own position*, so an
+    attribute declared by a top-level element AFTER the one enclosing it does
+    not reach it. Measured on mujoco 3.12.0 - a nested class in the first of two
+    top-level elements compiles with MuJoCo's own sphere default, not the
+    ``type="capsule"`` the second element declares.
+
     Returns a mapping from class name to that class's merged ``<tag>``
     attributes, with the root class under both of the spellings that reach it -
     ``""`` and ``"main"``. A class an element names but no ``<default>``
@@ -998,6 +1012,12 @@ def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str,
             _flatten(nested, merged)
         return merged
 
+    # The root class accumulates across the model's top-level ``<default>``
+    # elements rather than restarting at each one, because MuJoCo merges them.
+    # Starting from ``{}`` per element lets the last one REPLACE the others, so a
+    # ``type`` only the first declares is dropped and every geom resolving
+    # against the root reports the fallback box under a successful load.
+    root_attrs: dict[str, str] = {}
     for el in _mjcf_model_toplevel(root, base_dir):
         if el.tag == "default":
             # A top-level ``<default>`` is the root class under either of two
@@ -1016,7 +1036,7 @@ def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str,
             # because neither name is available to one: MuJoCo refuses a nested
             # ``class="main"`` ("repeated default class name") and a nested
             # unnamed ``<default>`` ("empty class name").
-            root_attrs = _flatten(el, {})
+            root_attrs = _flatten(el, root_attrs)
             classes[""] = root_attrs
             classes[_MJCF_ROOT_DEFAULT_CLASS] = root_attrs
     return classes

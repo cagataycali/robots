@@ -270,6 +270,58 @@ class TestAJointTakesItsDefaultClassAttributes:
         assert joint.joint_type == "prismatic"
         assert joint.axis == pytest.approx((1.0, 0.0, 0.0), abs=1e-9)
 
+    def test_a_joint_sees_every_top_level_default_element_merged(self, tmp_path):
+        # MuJoCo merges a model's several top-level ``<default>`` elements into
+        # the one root class, so a joint resolving against the root must see all
+        # of them - the first element's ``type``/``axis`` and the second's
+        # ``range``/``damping``/``armature`` together. Reading the root as
+        # whichever element came last drops the kind and the axis while keeping
+        # the travel, which reports a revolute joint that happens to be bounded
+        # like the sliding one it is.
+        path = _write(
+            tmp_path,
+            "merged_root.xml",
+            """<mujoco>
+  <compiler angle="radian"/>
+  <default>
+    <joint type="slide" axis="0 1 0"/>
+  </default>
+  <default>
+    <joint range="-0.04 0.04" damping="7.5" armature="0.011" limited="true"/>
+  </default>
+  <worldbody>
+    <body name="b">
+      <joint name="j"/>
+      <geom name="g" size="0.01"/>
+    </body>
+  </worldbody>
+</mujoco>
+""",
+        )
+        want = _mujoco_joints(path)["j"]
+        # Every expected value must differ from the loader's own fallback, or the
+        # assertions below would hold whether or not the merge was read at all.
+        assert want["joint_type"] != _FALLBACK_TYPE, "premise: the kind differs from the fallback"
+        assert want["axis"] != _FALLBACK_AXIS, "premise: the axis differs from the fallback"
+        assert want["limits"] != _FALLBACK_LIMIT, "premise: the range differs from the fallback"
+        assert want["damping"] != _FALLBACK_DAMPING, "premise: the damping differs from the fallback"
+        assert want["armature"] != _FALLBACK_ARMATURE, "premise: the armature differs from the fallback"
+
+        joint = _only_joint(path)
+        # From the FIRST top-level element.
+        assert joint.joint_type == want["joint_type"], (
+            f"the first top-level <default>'s type did not reach the joint: MuJoCo reads "
+            f"{want['joint_type']!r}, loader reported {joint.joint_type!r}"
+        )
+        assert joint.axis == pytest.approx(want["axis"], abs=1e-9), (
+            f"the first top-level <default>'s axis did not reach the joint: MuJoCo reads "
+            f"{want['axis']}, loader reported {joint.axis}"
+        )
+        # From the SECOND, which must not have replaced the first.
+        assert (joint.limit_lower, joint.limit_upper) == pytest.approx(want["limits"], abs=1e-9)
+        assert joint.damping == pytest.approx(want["damping"], abs=1e-9)
+        assert joint.armature == pytest.approx(want["armature"], abs=1e-9)
+
 
 class TestTheJointsOwnAttributesWin:
     """A joint that spells an attribute keeps it - the class is the fallback."""
