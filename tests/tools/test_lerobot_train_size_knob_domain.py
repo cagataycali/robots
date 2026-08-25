@@ -21,9 +21,13 @@ size as the one knob sizing the run with no domain at all.
 
 These tests pin the corrected contract on the shared positive-count domain, that
 the refusal reaches the caller as an error envelope before any process starts,
-the premises the domain rests on, and that the scope is no wider than the defect
-(``save_freq`` is deliberately untouched - lerobot documents a non-positive value
-there as "disables periodic saving").
+the premises the domain rests on, and that the scope is no wider than the defect:
+``save_freq``'s FLOOR stays out of it, because lerobot documents a non-positive
+value there as "disables periodic saving". Its type is held to the same ``int``
+requirement by ``_save_freq_error``, pinned in
+``test_lerobot_train_checkpoint_cadence_domain.py`` - so the tests below say only
+that a non-positive cadence is still accepted, not that the parameter is
+unchecked.
 """
 
 from __future__ import annotations
@@ -214,7 +218,11 @@ class TestThePremisesTheDomainRestsOn:
 
 
 class TestTheScopeIsNoWiderThanTheDefect:
-    """``save_freq`` is a mode selector for lerobot, not a run size."""
+    """``save_freq``'s floor is a mode selector for lerobot, not a run size.
+
+    Its type is a separate domain of its own; only the floor is out of scope
+    here.
+    """
 
     @pytest.mark.parametrize("save_freq", [0, -1])
     def test_a_non_positive_save_freq_is_still_accepted(self, save_freq: int) -> None:
