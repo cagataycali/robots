@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 import os
 from pathlib import Path
 
@@ -318,6 +319,46 @@ class TestADistinctSceneStillRecords:
             assert declared == {"arm__wrist", "overview"}, declared
         finally:
             sim.destroy()
+
+    def test_a_distinct_pair_survives_a_recording_round_trip(self, tmp_path):
+        # The columns being declared is only half the claim: each has to come back
+        # off disk with its own video. Reopening also proves the two cameras kept
+        # their own resolutions, which is the half that the colliding pair lost
+        # (their shared column took one camera's size and the other's frames).
+        sim = _sim(tmp_path, "overview", width=64, height=64)
+        root = tmp_path / "ds"
+        try:
+            started = sim.start_recording(
+                repo_id="local/round_trip",
+                root=str(root),
+                task="pan the arm",
+                overwrite=True,
+                cameras=["arm/wrist", "overview"],
+            )
+            assert started["status"] == "success", _text(started)
+            rollout = sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=6, control_frequency=30.0)
+            assert rollout["status"] == "success", _text(rollout)
+            stopped = sim.stop_recording()
+            assert stopped["status"] == "success", _text(stopped)
+        finally:
+            sim.destroy()
+
+        videos = {path.parent.parent.name[len("observation.images.") :] for path in root.rglob("*.mp4")}
+        assert videos == {"arm__wrist", "overview"}, sorted(videos)
+        for path in root.rglob("*.mp4"):
+            assert path.stat().st_size > 0, path
+
+        info = json.loads((root / "meta" / "info.json").read_text())
+        shapes = {
+            key[len("observation.images.") :]: tuple(spec["shape"])
+            for key, spec in info["features"].items()
+            if key.startswith("observation.images.")
+        }
+        assert set(shapes) == {"arm__wrist", "overview"}, shapes
+        # Each column kept the size of the camera it names, so neither took the
+        # other's - the failure the collapse produced when it named them alike.
+        assert shapes["overview"][-2:] == (64, 64), shapes
+        assert shapes["arm__wrist"] != shapes["overview"], shapes
 
     def test_an_unnamed_camera_is_not_a_collision(self):
         # A backend skips an unnamed camera when it declares the schema, so
