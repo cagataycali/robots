@@ -187,13 +187,26 @@ class TestEveryBackendConsultsTheGuard:
                 missing.append(backend)
         assert missing == [], missing
 
-    def test_the_guard_runs_before_the_dataset_target_is_prepared(self):
-        # _prepare_dataset_target wipes on overwrite, so a guard called after it
-        # refuses a call that has already cost the caller their dataset.
+    def test_the_guard_runs_before_any_session_state_or_dataset_target(self):
+        # _prepare_dataset_target wipes on overwrite and the state flag opens a
+        # session, so a guard called after either refuses a call that has already
+        # cost the caller their dataset or left a session half-open.
         for backend, source in self._recording_modules().items():
             guard = source.index("camera_schema_key_collision_error(")
-            wipe = source.index("_prepare_dataset_target(")
-            assert guard < wipe, backend
+            assert guard < source.index('"recording"] = True'), backend
+            assert guard < source.index("_prepare_dataset_target("), backend
+
+    def test_the_guard_runs_after_the_dataset_stack_probe(self):
+        # Reading the scene's cameras is an engine call, and the block that
+        # diagnoses a missing dataset stack is reachable on an install with no
+        # engine at all - see
+        # tests/simulation/test_recording_dataset_stack_unavailable_across_backends.py,
+        # which drives it over a hand-built world. A guard placed ahead of that
+        # block turns "the lerobot extra is missing" into an engine failure.
+        for backend, source in self._recording_modules().items():
+            probe = source.index("if unavailable is not None:")
+            guard = source.index("camera_schema_key_collision_error(")
+            assert probe < guard, backend
 
 
 class TestEveryWayOfRecordingACollidingSceneIsRefused:

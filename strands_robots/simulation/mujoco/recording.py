@@ -204,22 +204,6 @@ class RecordingMixin(DatasetRecordingMixin):
         if cameras and (text := name_list_error(cameras, "cameras", "start_recording")):
             return {"status": "error", "content": [{"text": text}]}
 
-        # A dataset column is named by camera_schema_key, which collapses a
-        # camera's "/" namespace separator to "__" because a LeRobot feature name
-        # cannot contain "/". That mapping is not injective, so two scene cameras
-        # can name one column - and the three ways of asking then disagree: every
-        # camera is refused downstream as a repeated camera_keys entry, both
-        # spellings requested silently drops one, and one spelling succeeds with
-        # the column named after whichever camera lost. The ambiguity belongs to
-        # the scene rather than to one way of recording it, so it is refused once
-        # here, before any dataset is created, resumed or wiped.
-        _mj = _ensure_mujoco()
-        if error := camera_schema_key_collision_error(
-            "start_recording",
-            [_mj.mj_id2name(self._world._model, _mj.mjtObj.mjOBJ_CAMERA, _i) for _i in range(self._world._model.ncam)],
-        ):
-            return error
-
         # Reject a rate a rollout already in flight is not capturing at. The
         # rollout entry points cover the record-then-rollout ordering; this is
         # the same disagreement with the calls the other way round, refused
@@ -258,6 +242,26 @@ class RecordingMixin(DatasetRecordingMixin):
                     }
                 ],
             }
+
+        # A dataset column is named by camera_schema_key, which collapses a
+        # camera's "/" namespace separator to "__" because a LeRobot feature name
+        # cannot contain "/". That mapping is not injective, so two scene cameras
+        # can name one column - and the three ways of asking then disagree: every
+        # camera is refused downstream as a repeated camera_keys entry, both
+        # spellings requested silently drops one, and one spelling succeeds with
+        # the column named after whichever camera lost. The ambiguity belongs to
+        # the scene rather than to one way of recording it, so it is refused once
+        # here. Reading the scene's cameras is an engine call, so this sits after
+        # the dataset-stack probe (whose block is reachable on an install with no
+        # engine at all, and diagnoses the missing extra without one) and ahead of
+        # any session state or dataset target - a refusal leaves nothing set and
+        # nothing on disk.
+        _mj = _ensure_mujoco()
+        if error := camera_schema_key_collision_error(
+            "start_recording",
+            [_mj.mj_id2name(self._world._model, _mj.mjtObj.mjOBJ_CAMERA, _i) for _i in range(self._world._model.ncam)],
+        ):
+            return error
 
         self._world._backend_state["recording"] = True
         self._world._backend_state["trajectory"] = []
