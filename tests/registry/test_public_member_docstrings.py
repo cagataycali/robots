@@ -63,6 +63,7 @@ _EXPECTED_FUNCTIONS = {
     "policies.py::list_policy_providers",
     "policies.py::resolve_policy",
     "robots.py::format_robot_table",
+    "robots.py::get_driver",
     "robots.py::get_hardware_type",
     "robots.py::get_robot",
     "robots.py::has_hardware",

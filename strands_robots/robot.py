@@ -47,6 +47,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from strands_robots._mesh_switch import mesh_env_request
 from strands_robots._serial_discovery import scan_serial_devices
+from strands_robots.drivers import (
+    driver_choice_error,
+    get_native_driver_class,
+    list_native_drivers,
+    resolve_driver,
+)
 from strands_robots.registry import (
     get_hardware_type,
     get_robot,
@@ -57,6 +63,7 @@ from strands_robots.registry import (
 )
 
 if TYPE_CHECKING:
+    from strands_robots.drivers import HardwareDriver
     from strands_robots.hardware_robot import Robot as HardwareRobot
     from strands_robots.simulation import Simulation
 
@@ -174,6 +181,50 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
         )
 
 
+def _build_native_driver(
+    canonical: str,
+    cameras: dict[str, dict[str, Any]] | None,
+    data_config: str | None,
+    kwargs: dict[str, Any],
+) -> HardwareDriver:
+    """Build the native driver registered for ``canonical``.
+
+    Args:
+        canonical: Canonical robot name, already known to be registered.
+        cameras: Camera configuration, forwarded verbatim.
+        data_config: Data-config name, forwarded verbatim.
+        kwargs: The caller's remaining keyword arguments, forwarded verbatim -
+            ``port=`` among them, which stays polymorphic (a serial path, an IP
+            address or a URL) because only the driver knows how to read it.
+
+    Returns:
+        The constructed driver.
+
+    Raises:
+        ValueError: If no native driver is registered for this robot. Named
+            rather than silently falling back to lerobot: a caller who asked for
+            a native driver and got the lerobot one would debug the wrong robot.
+    """
+    driver_cls = get_native_driver_class(canonical)
+    if driver_cls is None:
+        available = ", ".join(list_native_drivers()) or "none"
+        raise ValueError(
+            f"No native driver is registered for {canonical!r}, so driver='strands' cannot "
+            f"build it. Robots with a native driver: {available}. Either use driver='lerobot' "
+            "(today's default, which builds it through lerobot) or register one with "
+            "strands_robots.drivers.register_native_driver()."
+        )
+
+    # The constructor contract documented on strands_robots.drivers.base: the
+    # three keywords every driver takes, plus the caller's extras. ``robot=`` is
+    # deliberately NOT forwarded - it carries the lerobot type name, which means
+    # nothing to a driver that does not go through lerobot.
+    return cast(
+        "HardwareDriver",
+        driver_cls(tool_name=canonical, cameras=cameras, data_config=data_config, **kwargs),
+    )
+
+
 @overload
 def Robot(
     name: str,
@@ -186,6 +237,7 @@ def Robot(
     *,
     orientation: list[float] | None = ...,
     keyframe: str | int | None = ...,
+    driver: str = ...,
     **kwargs: Any,
 ) -> Simulation: ...
 
@@ -202,6 +254,24 @@ def Robot(
     *,
     orientation: list[float] | None = ...,
     keyframe: str | int | None = ...,
+    driver: Literal["strands"],
+    **kwargs: Any,
+) -> HardwareDriver: ...
+
+
+@overload
+def Robot(
+    name: str,
+    mode: Literal["real"],
+    backend: str = ...,
+    urdf_path: str | None = ...,
+    cameras: dict[str, dict[str, Any]] | None = ...,
+    position: list[float] | None = ...,
+    data_config: str | None = ...,
+    *,
+    orientation: list[float] | None = ...,
+    keyframe: str | int | None = ...,
+    driver: str = ...,
     **kwargs: Any,
 ) -> HardwareRobot: ...
 
@@ -218,6 +288,7 @@ def Robot(
     *,
     orientation: list[float] | None = ...,
     keyframe: str | int | None = ...,
+    driver: str = ...,
     **kwargs: Any,
 ) -> Simulation | HardwareRobot: ...
 
@@ -237,8 +308,9 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     *,
     orientation: list[float] | None = None,
     keyframe: str | int | None = None,
+    driver: str = "auto",
     **kwargs: Any,
-) -> Simulation | HardwareRobot:
+) -> Simulation | HardwareRobot | HardwareDriver:
     """Create a robot - returns a Simulation or HardwareRobot instance.
 
     This is a convenience factory, NOT a wrapper class.  You get the real
@@ -316,6 +388,17 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
               ``False`` to force it off; an explicit value always wins over the
               env default. ``STRANDS_MESH=false`` is a hard kill switch.
         peer_id: Optional mesh peer identifier. Auto-generated when omitted.
+        driver: Which implementation drives the robot in ``mode="real"``, one of
+            :data:`~strands_robots.drivers.base.DRIVER_CHOICES`. ``"auto"``
+            (default) states no preference: it honours the robot's registry
+            ``hardware.driver`` and otherwise builds the lerobot driver, so a
+            call that does not mention ``driver`` behaves exactly as before.
+            ``"lerobot"`` pins that path explicitly. ``"strands"`` builds the
+            native driver registered for this robot via
+            :func:`~strands_robots.drivers.register_native_driver`, and is
+            refused by name when none is - never quietly served the lerobot one.
+            The value is checked in every mode, but only ``mode="real"`` acts on
+            it; ``mode="sim"`` reports it as ignored at debug level.
         **kwargs: Forwarded to the underlying backend constructor.
 
     Returns:
@@ -323,7 +406,10 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         ``strands_robots.hardware_robot.Robot`` (real hardware).
 
     Raises:
-        ValueError: If ``mode`` is not 'sim'/'real'/'auto', if ``cameras=``
+        ValueError: If ``mode`` is not 'sim'/'real'/'auto', if ``driver`` is not
+                    one of :data:`~strands_robots.drivers.base.DRIVER_CHOICES`,
+                    if ``driver="strands"`` names a robot with no registered
+                    native driver, if ``cameras=``
                     is passed in sim mode, if the robot name is empty
                     or not in the registry (and no ``urdf_path=`` given), or if
                     ``backend`` is not a known backend (the message lists the
@@ -362,6 +448,14 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     if mode == "auto":
         mode = _auto_detect_mode(canonical)
 
+    # Checked for EVERY mode, not only the one that reads it. A sim robot has no
+    # driver to choose, but ``Robot("so100", driver="lerbot")`` is a typo either
+    # way, and a value only checked on the branch that uses it is a value the
+    # other branch accepts silently.
+    driver_reason = driver_choice_error(driver, "driver", "Robot")
+    if driver_reason is not None:
+        raise ValueError(driver_reason)
+
     # Resolve the mesh opt-in. Mesh is OFF by default so a bare
     # ``Robot("so100")`` is quiet and never spins up Zenoh/ACL/e-stop
     # machinery. ``mesh=None`` (the default) means "consult the
@@ -379,6 +473,14 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 "cameras= is only supported in mode='real'. "
                 "For sim cameras, add them via the simulation tool's "
                 "'add_camera' action after creation."
+            )
+
+        if driver != "auto":
+            logger.debug(
+                "driver=%r ignored in mode='sim' (a simulated robot is stepped by a physics "
+                "backend, not driven through a device); backend=%r selects the engine",
+                driver,
+                backend,
             )
 
         from strands_robots.simulation import create_simulation
@@ -513,46 +615,83 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 ", ".join(ignored_spawn_args),
             )
 
-        from strands_robots.hardware_robot import Robot as HardwareRobotCls
-
-        real_type = get_hardware_type(canonical) or canonical
-        hw = HardwareRobotCls(
-            tool_name=canonical,
-            robot=real_type,
-            cameras=cameras,
-            # Forwarded, not reported: unlike the spawn parameters above, the
-            # hardware class declares ``data_config`` and reads it - it is what
-            # ends up in the ``policy_config`` a policy is built with, so a
-            # multi-camera schema selected here has to arrive. Passed verbatim
-            # (``None`` is the hardware class's own default) rather than defaulted
-            # to the canonical name the way the sim path does, so a caller who
-            # names no config keeps today's behaviour.
-            data_config=data_config,
-            **kwargs,
-        )
-
-        # Attach a Zenoh mesh so the hardware Robot auto-discovers peers.
-        # Best-effort: a mesh failure must not kill a working hardware robot.
-        try:
-            from strands_robots.mesh import init_mesh
-
-            hw_mesh = init_mesh(
-                hw,
-                peer_id=peer_id,
-                peer_type="robot",
-                mesh=mesh,
+        resolved_driver = resolve_driver(canonical, driver)
+        hw: HardwareRobot | HardwareDriver
+        if resolved_driver == "strands":
+            hw = _build_native_driver(canonical, cameras, data_config, kwargs)
+        elif resolved_driver != "lerobot":
+            # Every branch is named, so a driver added to DRIVER_CHOICES without
+            # a route here is refused instead of quietly taking a neighbour's
+            # branch - the difference between "not implemented yet" and "built
+            # the wrong robot".
+            raise ValueError(
+                f"driver={resolved_driver!r} is a known driver name with no route in Robot(). "
+                "This is a gap in the factory, not in your call."
             )
-            if hw_mesh is not None:
-                hw.mesh = hw_mesh
-                hw.peer_id = hw_mesh.peer_id
-        except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
-            logger.warning("Failed to initialise mesh for %r: %s", canonical, exc)
+        else:
+            from strands_robots.hardware_robot import Robot as HardwareRobotCls
 
+            real_type = get_hardware_type(canonical) or canonical
+            hw = HardwareRobotCls(
+                tool_name=canonical,
+                robot=real_type,
+                cameras=cameras,
+                # Forwarded, not reported: unlike the spawn parameters above,
+                # the hardware class declares ``data_config`` and reads it - it
+                # is what ends up in the ``policy_config`` a policy is built
+                # with, so a multi-camera schema selected here has to arrive.
+                # Passed verbatim (``None`` is the hardware class's own default)
+                # rather than defaulted to the canonical name the way the sim
+                # path does, so a caller who names no config keeps today's
+                # behaviour.
+                data_config=data_config,
+                **kwargs,
+            )
+
+        # Both drivers are robots on the fleet, so both get the same two
+        # attachments. Reached after the branch rather than inside it: a driver
+        # that is built but never put on the mesh is a robot no peer can see.
+        _attach_mesh(hw, canonical, peer_id, mesh)
         _attach_device_connect(hw, canonical, mode, peer_id)
         return hw
 
     else:
         raise ValueError(f"Invalid mode {mode!r}. Choose 'sim', 'real', or 'auto' (case-insensitive).")
+
+
+def _attach_mesh(instance: Any, canonical: str, peer_id: str | None, mesh: bool) -> None:
+    """Attach a Zenoh mesh so a real robot auto-discovers its peers.
+
+    Takes ``Any`` for the same reason :func:`_attach_device_connect` does: it
+    decorates an instance with attributes the instance's own class need not
+    declare. ``mesh`` and ``peer_id`` are deliberately not part of
+    :class:`~strands_robots.drivers.base.HardwareDriver` - a driver does not
+    implement them, it receives them here.
+
+    Best-effort by design: a mesh that will not start must not take a working
+    robot down with it, so the failure is reported and the robot is returned.
+
+    Args:
+        instance: The robot to put on the mesh.
+        canonical: Canonical robot name, for the failure report.
+        peer_id: Requested peer identifier, or ``None`` to let the mesh choose.
+        mesh: The mesh opt-in, already resolved - the caller has folded the
+            ``STRANDS_MESH`` default into it, so ``None`` cannot arrive here.
+    """
+    try:
+        from strands_robots.mesh import init_mesh
+
+        hw_mesh = init_mesh(
+            instance,
+            peer_id=peer_id,
+            peer_type="robot",
+            mesh=mesh,
+        )
+        if hw_mesh is not None:
+            instance.mesh = hw_mesh
+            instance.peer_id = hw_mesh.peer_id
+    except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
+        logger.warning("Failed to initialise mesh for %r: %s", canonical, exc)
 
 
 def _attach_device_connect(instance: Any, canonical: str, mode: str, peer_id: str | None) -> None:
