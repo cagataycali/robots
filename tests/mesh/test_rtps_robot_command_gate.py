@@ -21,11 +21,19 @@ those decide forwarding by scanning the transport's source for a
 the parameter and the reported defect can be reintroduced by a one-token edit
 with nothing failing. The cases here assert an outcome, which makes the
 operator's answer an input to what the robot does.
+
+The doubles resolve the interface the robot declares and refuse the rest, the
+way :func:`strands_robots.rtps.idl.get_type` does. A resolver that answered every
+type string would hand back a velocity message whatever the robot asked for, so
+``cmd_vel_type`` would stop being an input to any assertion here and a robot that
+declared an interface with nowhere to put ``linear.x`` would still read as having
+driven.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -34,6 +42,14 @@ import pytest
 import strands_robots.rtps.idl as idl_mod
 import strands_robots.tools.use_rtps as rtps_mod
 from strands_robots.mesh import RtpsRobot
+
+_TWIST = "geometry_msgs/msg/Twist"
+# In the bundle, and the wrong shape for a velocity: a robot declaring it
+# resolves an interface and then has nowhere to put ``linear.x``.
+_POINT = "geometry_msgs/msg/Point"
+# Well-formed enough for the tool's ``pkg/msg/Name`` check, and not a type the
+# bundle carries - so the resolver is what has to refuse it.
+_OUTSIDE_THE_BUNDLE = "geometry_msgs/msg/Wrench"
 
 
 # Module-level fake IDL dataclasses so ``typing.get_type_hints`` can resolve the
@@ -51,12 +67,83 @@ class _Twist:
     angular: _Vec3 = dataclasses.field(default_factory=_Vec3)
 
 
+@dataclasses.dataclass
+class _Point:
+    """``geometry_msgs/msg/Point``: three floats, and no velocity field at all.
+
+    The same shape as :class:`_Vec3` under its own name, so a refusal reports the
+    interface the robot declared rather than one of its members.
+    """
+
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+
+# What the doubled resolver carries. Keyed by the same type strings the real
+# bundle uses, so a robot's ``cmd_vel_type`` decides which dataclass a sample is
+# built from - exactly as it does against ``strands_robots.rtps.idl.REGISTRY``.
+_BUNDLE: dict[str, type] = {_TWIST: _Twist, _POINT: _Point}
+
+
 class _FakeWriter:
+    """A DDS writer double that also records the surface it was opened for.
+
+    ``use_rtps`` resolves the declared interface and then asks the backend for a
+    writer on ``(topic, type)``, so recording that pair is what lets a case
+    assert the robot's declared ``cmd_vel_type`` reached the wire and not only
+    its topic.
+    """
+
     def __init__(self) -> None:
         self.written: list[Any] = []
+        self.requested: list[tuple[str, str]] = []
 
     def write(self, sample: Any) -> None:
         self.written.append(sample)
+
+    def open(self, ros_topic: str, ros_type: str) -> _FakeWriter:
+        """Stand in for ``_backend.writer``: record the surface, hand back self."""
+        self.requested.append((ros_topic, ros_type))
+        return self
+
+
+class _FakeBundle:
+    """The IDL bundle double: resolves :data:`_BUNDLE`, refuses everything else.
+
+    :func:`strands_robots.rtps.idl.get_type` raises ``KeyError`` for a type it
+    does not carry, and ``use_rtps`` turns that into a reported error. A double
+    that resolved every string would be strictly more permissive than the
+    resolver it stands in for.
+    """
+
+    def __init__(self) -> None:
+        self.resolved: list[str] = []
+
+    def get_type(self, ros_type: str) -> type:
+        self.resolved.append(ros_type)
+        if ros_type not in _BUNDLE:
+            raise KeyError(f"{ros_type!r} is not in the RTPS IDL bundle. Known types: {', '.join(sorted(_BUNDLE))}.")
+        return _BUNDLE[ros_type]
+
+
+def _install_doubles(monkeypatch: pytest.MonkeyPatch) -> tuple[_FakeWriter, _FakeBundle]:
+    """Stand the DDS backend and the IDL bundle down for one test.
+
+    Both gate env vars short-circuit the operator prompt, so an ambient
+    ``BYPASS_TOOL_CONSENT`` (common in agent/automation shells) would make these
+    assertions pass without the gate ever running. Cases that need them opt in
+    explicitly.
+    """
+    monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
+    monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
+    writer, bundle = _FakeWriter(), _FakeBundle()
+    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(rtps_mod._backend, "writer", writer.open)
+    # publish sleeps for the reader settle and for the inter-message period.
+    monkeypatch.setattr(rtps_mod.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(idl_mod, "get_type", bundle.get_type)
+    return writer, bundle
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -82,20 +169,11 @@ class TestRtpsCommandsReachTheGate:
     """The robot's agent tools must prompt the operator, not refuse outright."""
 
     writer: _FakeWriter
+    bundle: _FakeBundle
 
     @pytest.fixture(autouse=True)
     def _hermetic(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Both env vars short-circuit the gate, so an ambient BYPASS_TOOL_CONSENT
-        # (common in agent/automation shells) would make these assertions pass
-        # without the gate ever running. Cases that need them opt in explicitly.
-        monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
-        monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
-        self.writer = _FakeWriter()
-        monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
-        monkeypatch.setattr(rtps_mod._backend, "writer", lambda topic, type: self.writer)
-        # publish sleeps for the reader settle and for the inter-message period.
-        monkeypatch.setattr(rtps_mod.time, "sleep", lambda *_: None)
-        monkeypatch.setattr(idl_mod, "get_type", lambda ros_type: _Twist)
+        self.writer, self.bundle = _install_doubles(monkeypatch)
 
     def test_drive_tool_prompts_the_operator_and_publishes_on_approval(self) -> None:
         ctx = MagicMock()
@@ -105,7 +183,7 @@ class TestRtpsCommandsReachTheGate:
         assert ctx.interrupt.call_args[1]["reason"]["target"] == "/turtle1/cmd_vel"
         assert ctx.interrupt.call_args[1]["reason"]["action"] == "publish"
         assert result["status"] == "success"
-        assert "published 1 message(s) to /turtle1/cmd_vel" in _texts(result)
+        assert f"published 1 message(s) to /turtle1/cmd_vel ({_TWIST})" in _texts(result)
         assert len(self.writer.written) == 1
 
     def test_drive_tool_declined_publishes_nothing(self) -> None:
@@ -202,3 +280,90 @@ class TestRtpsCommandsReachTheGate:
         result = _turtle().advertise()
         assert result["status"] == "success"
         assert self.writer.written == []
+
+
+class TestTheDeclaredInterfaceReachesTheGatedPublish:
+    """A gated publish must carry the interface the robot itself declares.
+
+    The cases above stand the DDS backend and the IDL bundle down, so nothing
+    there distinguishes the robot's declared ``cmd_vel_type`` from whatever the
+    resolver hands back. ``use_rtps`` resolves the type, asks the backend for a
+    writer on ``(topic, type)`` and names the type in its own success report, so
+    all three are observable - and a declaration the bundle cannot carry has to
+    be reported rather than published.
+    """
+
+    writer: _FakeWriter
+    bundle: _FakeBundle
+
+    @pytest.fixture(autouse=True)
+    def _hermetic(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.writer, self.bundle = _install_doubles(monkeypatch)
+
+    def test_the_writer_is_opened_for_the_declared_type_on_the_robots_topic(self) -> None:
+        """The transport passes the declared interface through, not only the topic."""
+        ctx = MagicMock()
+        ctx.interrupt.return_value = "y"
+        result = _tool(_turtle(), "drive_turtlesim")(linear=1.0, tool_context=ctx)
+        assert result["status"] == "success"
+        assert self.bundle.resolved == [_TWIST]
+        assert self.writer.requested == [("/turtle1/cmd_vel", _TWIST)]
+
+    def test_an_interface_outside_the_bundle_writes_no_sample(self) -> None:
+        """A declared type the bundle cannot resolve is reported, not published.
+
+        The gate still runs first: the refusal belongs to the interface, so an
+        operator who approved a command that could never be built is told why
+        rather than being asked nothing and reading a success.
+        """
+        ctx = MagicMock()
+        ctx.interrupt.return_value = "y"
+        robot = RtpsRobot.from_rtps(
+            node_name="turtlesim", cmd_vel_topic="/turtle1/cmd_vel", cmd_vel_type=_OUTSIDE_THE_BUNDLE
+        )
+        result = _tool(robot, "drive_turtlesim")(linear=1.0, tool_context=ctx)
+        assert ctx.interrupt.called, "the operator gate must run before the interface is resolved"
+        assert result["status"] == "error"
+        assert _OUTSIDE_THE_BUNDLE in _texts(result)
+        # The robot's own declaration is what was offered to the resolver.
+        assert self.bundle.resolved == [_OUTSIDE_THE_BUNDLE]
+        assert self.writer.written == []
+
+    def test_a_registered_interface_of_the_wrong_shape_writes_no_sample(self) -> None:
+        """A type the bundle carries can still have nowhere to put a velocity.
+
+        ``geometry_msgs/msg/Point`` passes the tool's ``pkg/msg/Name`` check and
+        resolves, and has no ``linear``/``angular`` member - so the sample cannot
+        be built and the wire stays quiet. This is the declaration a resolver
+        that answered every type string would report as a completed drive.
+        """
+        ctx = MagicMock()
+        ctx.interrupt.return_value = "y"
+        robot = RtpsRobot.from_rtps(node_name="turtlesim", cmd_vel_topic="/turtle1/cmd_vel", cmd_vel_type=_POINT)
+        result = _tool(robot, "drive_turtlesim")(linear=1.0, tool_context=ctx)
+        assert result["status"] == "error"
+        assert "unknown field 'linear'" in _texts(result)
+        assert self.bundle.resolved == [_POINT]
+        # The sample cannot be built, so no writer ever joins the graph.
+        assert self.writer.requested == []
+        assert self.writer.written == []
+
+    def test_the_default_declared_interface_is_the_one_the_doubles_carry(self) -> None:
+        """Premise: the resolver double answers what an unconfigured robot declares."""
+        default = inspect.signature(RtpsRobot).parameters["cmd_vel_type"].default
+        assert default == _TWIST, f"the doubles carry {_TWIST!r} but a default robot declares {default!r}"
+
+    def test_the_doubled_bundle_carries_only_types_the_real_bundle_carries(self) -> None:
+        """Premise: the double stands in for real interfaces, not for a fiction.
+
+        A faithful refusal is worth nothing if the types it does resolve are ones
+        no real bundle has, or if the type used to provoke the refusal is one the
+        real bundle would have resolved.
+        """
+        if not idl_mod.REGISTRY:
+            pytest.skip("the RTPS IDL bundle needs cyclonedds (the [ros2] extra) to populate")
+        invented = sorted(set(_BUNDLE) - set(idl_mod.REGISTRY))
+        assert not invented, f"the doubled bundle carries types the real one does not: {invented}"
+        assert _OUTSIDE_THE_BUNDLE not in idl_mod.REGISTRY, (
+            f"{_OUTSIDE_THE_BUNDLE!r} is in the real bundle, so it cannot stand for a type outside it"
+        )

@@ -46,7 +46,12 @@ a per-call refusal, and a non-gating tool that is forwarded to raises. Both
 directions are now failing tests. The structural guard that pins the wiring reads
 the classes in the bridge's MRO instead of one file, so it follows the tools to
 wherever they are declared - a guard that scanned only the bridge would have
-stopped covering `drive` and `stop` the moment they moved to the base.
+stopped covering `drive` and `stop` the moment they moved to the base. The
+outcome cases keep the real gate and stand the DDS backend down beneath it,
+resolving only the interface the robot declares: a resolver that answered every
+type string would hand back a velocity message whatever `cmd_vel_type` said, so
+a robot declaring an interface with nowhere to put `linear.x` would still read as
+having driven.
 
 Speed and duration limits stay unset by default on both ported classes - neither
 knows the limits of the third-party robot it drives, and inventing one would
