@@ -28,6 +28,12 @@ mutate the registry itself reaches ``strands_robots.mesh.core``, where it is
 defined; this package re-exports the public surface only.
 """
 
+from strands_robots.mesh._mobile_base import (
+    ActionCapable,
+    MobileBaseRobot,
+    ServiceCapable,
+    Transport,
+)
 from strands_robots.mesh.ackermann_robot import AckermannRosRobot
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.core import Mesh, get_local_robots, init_mesh
@@ -53,6 +59,10 @@ __all__ = [
     "Mesh",
     "InputPublisher",
     "InputReceiver",
+    "MobileBaseRobot",
+    "Transport",
+    "ServiceCapable",
+    "ActionCapable",
     "RosBridgedRobot",
     "RosbridgeRobot",
     "RtpsRobot",

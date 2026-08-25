@@ -332,14 +332,29 @@ def _drive_owning_modules() -> list[tuple[Path, ast.Module, ast.ClassDef]]:
     return owners
 
 
-def test_the_drive_owning_bridges_are_the_known_ones() -> None:
-    """Non-vacuity: the scan finds every bridge, so the guards below apply.
+#: Bridges that inherit the drive contract instead of owning one. Their absence
+#: from the scan is the consolidation; a name reappearing here means a subclass
+#: has re-grown a hand-rolled ``drive`` that the guards below cannot vouch for.
+_INHERIT_THE_CONTRACT = {"RosBridgedRobot", "RtpsRobot"}
 
-    A fifth transport is picked up automatically - which is the point: it is
+
+def test_the_drive_owning_bridges_are_the_expected_ones() -> None:
+    """Non-vacuity: the scan finds every owner, so the guards below apply.
+
+    ``MobileBaseRobot`` owns the contract for the transports layered on it, so
+    a bridge is checked here either as that base or as its own owner. Asserting
+    that the layered bridges are *absent* pins the consolidation itself: the
+    shared domains reach them by inheritance, and a subclass that reintroduces
+    its own ``drive`` silently opts out of every guard below while still
+    answering the fleet-standard signature.
+
+    A further transport is picked up automatically - which is the point: it is
     checked the moment it lands rather than after it has drifted.
     """
     names = {cls.name for _path, _tree, cls in _drive_owning_modules()}
-    assert {"RosBridgedRobot", "RtpsRobot", "RosbridgeRobot", "AckermannRosRobot"} <= names, names
+    assert {"AckermannRosRobot", "MobileBaseRobot", "RosbridgeRobot"} <= names, names
+    redefined = _INHERIT_THE_CONTRACT & names
+    assert not redefined, f"{sorted(redefined)} must inherit drive from MobileBaseRobot, not redefine it"
 
 
 def test_every_drive_owning_bridge_calls_the_shared_numeric_domains() -> None:

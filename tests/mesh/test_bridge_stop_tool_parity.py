@@ -180,7 +180,9 @@ def test_the_rosbridge_stop_and_scan_tools_forward_to_the_instance(monkeypatch: 
 
 # Structural: a future transport cannot ship a drive without a halt ------------
 
-#: Bridge classes that own a mobile base's drive/stop pair today.
+#: Classes that own a mobile base's drive/stop pair today. ``MobileBaseRobot``
+#: owns the shared pair for the transports layered on it; ``RosbridgeRobot``
+#: still defines its own until it moves onto the base too.
 #:
 #: ``AckermannRosRobot`` is here but deliberately not in :data:`BRIDGES`: the
 #: cross-transport parity cases above assert a ``geometry_msgs/msg/Twist`` of
@@ -191,7 +193,13 @@ def test_the_rosbridge_stop_and_scan_tools_forward_to_the_instance(monkeypatch: 
 #: :func:`test_every_bridge_owning_a_drive_stop_pair_builds_a_stop_tool`, which
 #: reads the survey rather than a wire format, and its zero-servo halt is
 #: pinned in ``tests/mesh/test_ackermann_robot.py``.
-EXPECTED_DRIVE_STOP_CLASSES = {"AckermannRosRobot", "RosBridgedRobot", "RosbridgeRobot", "RtpsRobot"}
+EXPECTED_DRIVE_STOP_CLASSES = {"AckermannRosRobot", "MobileBaseRobot", "RosbridgeRobot"}
+
+#: Classes that inherit the pair instead of defining one. Their *absence* from
+#: the scan is the consolidation, so it is asserted rather than tolerated: a
+#: subclass that re-grows a hand-rolled drive would answer the fleet-standard
+#: signature while opting out of every structural check in this file.
+INHERIT_THE_DRIVE_STOP_PAIR = {"RosBridgedRobot", "RtpsRobot"}
 
 
 def _mesh_dir() -> pathlib.Path:
@@ -267,6 +275,8 @@ def test_the_survey_finds_the_bridges_it_is_meant_to_cover() -> None:
     """Non-vacuity: an empty or mis-rooted scan must not read as compliant."""
     owning, _ = _survey_mesh()
     assert owning == EXPECTED_DRIVE_STOP_CLASSES, sorted(owning)
+    redefined = INHERIT_THE_DRIVE_STOP_PAIR & owning
+    assert not redefined, f"{sorted(redefined)} must inherit drive/stop from MobileBaseRobot, not redefine them"
 
 
 def test_the_survey_flags_a_bridge_whose_tools_omit_the_stop() -> None:

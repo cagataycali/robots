@@ -122,14 +122,15 @@ All parameters are optional except `node_name`, `cmd_vel_topic`, and `odom_topic
 ### Drive contract
 
 `drive()` takes the fleet-standard `(linear, angular, duration, count)` shape,
-and two of its guarantees are fleet-standard too: every value is checked against
-the same numeric domains the [ROS 2](ros2-integration.md) and
-[RTPS](rtps-integration.md) bridges use, and a bare single-shot command latches.
-The velocity clamps and the `max_duration` ceiling are shared with the Ackermann
-car bridge (`AckermannRosRobot`, which declares a `max_speed` and a
-`max_duration` of its own) but not with those two, and the trailing zero Twist is
-this bridge's alone - the ROS 2 and RTPS bridges accept no ceilings and publish
-no trailing zero, so a timed drive there leaves the last velocity latched.
+and three of its guarantees are fleet-standard too: every value is checked
+against the same numeric domains the [ROS 2](ros2-integration.md) and
+[RTPS](rtps-integration.md) bridges use, a bare single-shot command latches, and
+a timed command is followed by a trailing zero Twist. The velocity clamps and the
+`max_duration` ceiling are shared with the Ackermann car bridge
+(`AckermannRosRobot`, which declares a `max_speed` and a `max_duration` of its
+own) but not with those two, which accept no ceilings because neither knows the
+limits of the robot it drives and put the requested value on the wire
+unclamped.
 
 ```python
 # Direct, programmatic control:
@@ -157,12 +158,12 @@ scan = robot.get_scan()  # read one laser scan (error if no scan_topic)
   against a `max_duration` of its own, which is lower, so a hold this bridge
   accepts can be refused on that car. The ROS 2 and RTPS bridges accept any
   positive finite hold.
-- **Timed-command trailing zero** (this bridge only): every drive with a
-  `duration` argument and a non-zero command (or multi-message publish)
-  automatically publishes a single zero Twist afterwards - even if the main
-  publish failed - so a timed drive cannot leave the robot with a live velocity.
-  The other two bridges stop publishing without a trailing zero, so do not carry
-  a timed drive on them expecting it to self-stop.
+- **Timed-command trailing zero**: every drive with a `duration` argument and a
+  non-zero command (or multi-message publish) automatically publishes a single
+  zero Twist afterwards - even if the main publish failed - so a timed drive
+  cannot leave the robot with a live velocity. This was previously this bridge's
+  alone; the ROS 2 and RTPS bridges inherit it from the shared mobile base now,
+  so a timed drive self-stops on all three.
 - **stop() never gated** (this bridge only): the stop method always publishes a
   zero Twist, regardless of prior state or publish failures. On the ROS 2 bridge
   the halt goes through the same operator gate as `drive()`.

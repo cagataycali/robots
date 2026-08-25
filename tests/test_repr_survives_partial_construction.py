@@ -72,11 +72,11 @@ EXPECTED_REPR_CLASSES = frozenset(
     {
         "dataset_recorder::DatasetRecorder",
         "hardware_rtps_bridge::HardwareRtpsBridge",
+        "mesh/_mobile_base::MobileBaseRobot",
         "mesh/ackermann_robot::AckermannRosRobot",
         "mesh/core::Mesh",
         "mesh/input::InputPublisher",
         "mesh/input::InputReceiver",
-        "mesh/ros_bridge::RosBridgedRobot",
         "mesh/rosbridge_robot::RosbridgeRobot",
         "mesh/rtps_robot::RtpsRobot",
         "mesh/session::PeerInfo",

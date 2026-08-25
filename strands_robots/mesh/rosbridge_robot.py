@@ -185,24 +185,27 @@ class RosbridgeRobot:
         """Publish a velocity command over rosbridge.
 
         Fleet-standard across all three mobile-base bridges: inputs are
-        validated against the shared numeric domains before any side effect,
-        and a bare single-shot command latches until :meth:`stop`, like any
-        raw cmd_vel publish.
+        validated against the shared numeric domains before any side effect, a
+        bare single-shot command latches until :meth:`stop`, like any raw
+        cmd_vel publish, and every timed or multi-message non-zero command is
+        followed by a single zero Twist - even if the main publish failed - so a
+        timed drive cannot leave the robot with a live velocity. The trailing
+        zero was this bridge's alone until the shared mobile base took over the
+        drive contract; the other two inherit it now, so a timed drive
+        self-stops wherever it is issued.
 
         Not carried by every mobile base: velocities are clamped to
-        ``max_linear`` and ``max_angular``, a hold beyond ``max_duration`` is
-        refused, and every timed or multi-message non-zero command is followed
-        by a single zero Twist - even if the main publish failed - so a timed
-        drive cannot leave the robot with a live velocity.
+        ``max_linear`` and ``max_angular``, and a hold beyond ``max_duration``
+        is refused.
         :class:`~strands_robots.mesh.ackermann_robot.AckermannRosRobot`
-        declares the first two as well, as ``max_speed`` and a ``max_duration``
-        of its own, because it too wraps a platform whose limits are known - so
-        a hold this bridge accepts can be refused on that car, and the reverse.
-        :meth:`RosBridgedRobot.drive` and :meth:`RtpsRobot.drive` carry none of
-        the three: they accept no velocity or duration ceiling, publish the
-        requested burst unclamped, and stop publishing without a trailing zero,
-        so a timed drive there leaves the last velocity latched in the robot's
-        controller.
+        declares both as well, as ``max_speed`` and a ``max_duration`` of its
+        own, because it too wraps a platform whose limits are known - so a hold
+        this bridge accepts can be refused on that car, and the reverse.
+        :meth:`RosBridgedRobot.drive` and :meth:`RtpsRobot.drive` carry
+        neither: neither knows the ceilings of the third-party robot it drives,
+        so they declare no velocity or duration limit and publish the requested
+        burst unclamped. An unset limit there means "this platform declares no
+        limit", never zero.
 
         Args:
             linear: Forward linear velocity (m/s), mapped to ``linear.x``. Must

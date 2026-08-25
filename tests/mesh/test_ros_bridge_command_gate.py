@@ -16,6 +16,7 @@ a real DDS graph.
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -27,7 +28,29 @@ from strands_robots.mesh import RosBridgedRobot
 
 _COMMAND_METHODS = frozenset({"drive", "stop", "navigate_to"})
 _COMMAND_ACTIONS = frozenset({"publish", "service_call", "action_send_goal"})
-_BRIDGE_SOURCE = Path(ros_mod.__file__).parent.parent / "mesh" / "ros_bridge.py"
+_MESH_DIR = Path(ros_mod.__file__).parent.parent / "mesh"
+
+
+def _bridge_sources() -> list[Path]:
+    """The source files the bridge's tool surface is actually built from.
+
+    Derived from the MRO rather than named, because the tool surface is split
+    across it: ``MobileBaseRobot.tools`` declares ``drive`` / ``stop`` / the read
+    tools for every transport, and ``RosBridgedRobot._extra_tools`` adds the
+    ROS 2-only ``navigate``. Scanning a single file would silently stop covering
+    whichever half moved, which is exactly how a command tool could lose
+    ``context=True`` without a test noticing.
+    """
+    sources: list[Path] = []
+    for cls in RosBridgedRobot.__mro__:
+        # ``object`` is a built-in and has no source file, so filter by module
+        # before asking - getsourcefile raises TypeError on it.
+        if not getattr(cls, "__module__", "").startswith("strands_robots."):
+            continue
+        source = inspect.getsourcefile(cls)
+        if source and Path(source).parent == _MESH_DIR and Path(source) not in sources:
+            sources.append(Path(source))
+    return sources
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -55,9 +78,18 @@ def _tool(robot: RosBridgedRobot, name: str) -> Any:
 
 
 @pytest.fixture(scope="module")
-def bridge_ast() -> ast.Module:
-    """Parse the bridge source once for the structural guards below."""
-    return ast.parse(_BRIDGE_SOURCE.read_text(encoding="utf-8"))
+def bridge_asts() -> list[tuple[Path, ast.Module]]:
+    """Parse every module in the bridge's MRO once for the structural guards.
+
+    The membership assertion is the non-vacuity check: a broken MRO walk would
+    return fewer files and let the guards below pass by scanning nothing.
+    """
+    sources = _bridge_sources()
+    names = {path.name for path in sources}
+    assert {"_mobile_base.py", "ros_bridge.py"} <= names, (
+        f"the scan must reach both the shared base and the ROS 2 bridge, found {sorted(names)}"
+    )
+    return [(path, ast.parse(path.read_text(encoding="utf-8"))) for path in sources]
 
 
 class TestBridgeCommandsReachTheGate:
@@ -195,8 +227,12 @@ class TestCommandToolsDeclareTheOperatorContext:
             for node in ast.walk(func)
         )
 
-    def test_every_command_tool_is_context_enabled_and_forwards_it(self, bridge_ast: ast.Module) -> None:
-        command_tools = [f for f in self._decorated_tools(bridge_ast) if self._forwards_a_command_method(f)]
+    def test_every_command_tool_is_context_enabled_and_forwards_it(
+        self, bridge_asts: list[tuple[Path, ast.Module]]
+    ) -> None:
+        command_tools = [
+            f for _path, tree in bridge_asts for f in self._decorated_tools(tree) if self._forwards_a_command_method(f)
+        ]
         assert {f.name for f in command_tools} == {"drive", "stop", "navigate"}
         for func in command_tools:
             decorator = next(d for d in func.decorator_list if isinstance(d, ast.Call))
@@ -216,33 +252,47 @@ class TestCommandToolsDeclareTheOperatorContext:
             ]
             assert forwarded, f"{func.name!r} receives the operator context but does not forward it"
 
-    def test_read_only_tools_stay_contextless(self, bridge_ast: ast.Module) -> None:
+    def test_read_only_tools_stay_contextless(self, bridge_asts: list[tuple[Path, ast.Module]]) -> None:
         """``echo`` is never gated, so a read tool must not ask for an operator."""
-        read_tools = [f for f in self._decorated_tools(bridge_ast) if not self._forwards_a_command_method(f)]
+        read_tools = [
+            f
+            for _path, tree in bridge_asts
+            for f in self._decorated_tools(tree)
+            if not self._forwards_a_command_method(f)
+        ]
         assert {f.name for f in read_tools} == {"get_pose", "get_scan"}
         for func in read_tools:
             params = [a.arg for a in func.args.args]
             assert "tool_context" not in params, f"read-only tool {func.name!r} should not require an operator context"
 
-    def test_every_bridge_command_call_forwards_the_context_to_use_ros(self, bridge_ast: ast.Module) -> None:
-        """A bridge method that carries a command must not drop the context.
+    def test_every_bridge_command_call_forwards_the_context_to_use_ros(
+        self, bridge_asts: list[tuple[Path, ast.Module]]
+    ) -> None:
+        """A bridge call site that carries a command must not drop the context.
 
         This is the failure this suite exists for: the gate lives inside
         ``use_ros``, so a call site that omits ``tool_context`` silently becomes
         a fail-closed refusal for its whole method.
+
+        All three live on the transport, which is the only thing in the MRO that
+        talks to ``use_ros`` - the base carries the context down to it and no
+        further, because the gate is the tool's rather than the base's.
         """
-        checked = 0
-        for node in ast.walk(bridge_ast):
-            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "use_ros"):
-                continue
-            action = next((kw.value for kw in node.keywords if kw.arg == "action"), None)
-            if not (isinstance(action, ast.Constant) and action.value in _COMMAND_ACTIONS):
-                continue
-            checked += 1
-            assert any(kw.arg == "tool_context" for kw in node.keywords), (
-                f"use_ros(action={action.value!r}) at ros_bridge.py:{node.lineno} does not forward tool_context"
-            )
-        assert checked == 2, f"expected the publish and action_send_goal command call sites, found {checked}"
+        found: list[str] = []
+        for path, tree in bridge_asts:
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "use_ros"):
+                    continue
+                action = next((kw.value for kw in node.keywords if kw.arg == "action"), None)
+                if not (isinstance(action, ast.Constant) and action.value in _COMMAND_ACTIONS):
+                    continue
+                found.append(str(action.value))
+                assert any(kw.arg == "tool_context" for kw in node.keywords), (
+                    f"use_ros(action={action.value!r}) at {path.name}:{node.lineno} does not forward tool_context"
+                )
+        assert sorted(found) == ["action_send_goal", "publish", "service_call"], (
+            f"expected one command call site per gated use_ros verb, found {sorted(found)}"
+        )
 
     def test_command_tools_do_not_expose_the_context_in_their_input_schema(self) -> None:
         """The operator context is injected, never a parameter the model fills."""

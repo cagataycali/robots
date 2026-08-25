@@ -2,24 +2,28 @@
 
 Four mesh classes expose the same ``drive(linear, angular, duration, count)``
 call over three transports and two message layouts, and an operator or agent
-that learns the contract from one drives the others with it. Two of the
+that learns the contract from one drives the others with it. Three of the
 guarantees really are kept by every class they are measured on - the numeric
-domains every value is checked against, and the single-shot latch - while the
-velocity clamp and the ``max_duration`` ceiling are kept by ``RosbridgeRobot``
-and ``AckermannRosRobot``, and the trailing zero Twist by ``RosbridgeRobot``
-alone.
+domains every value is checked against, the single-shot latch, and the trailing
+zero Twist - while the velocity clamp and the ``max_duration`` ceiling are kept
+by ``RosbridgeRobot`` and ``AckermannRosRobot`` only.
 
-That split matters most for the trailing zero, because it is the guarantee that
-a *timed* drive cannot leave a live velocity behind. Presenting it as fleet-wide
-tells a reader that ``RtpsRobot("rover", "/cmd_vel").drive(linear=1.0,
-duration=5.0)`` self-stops; it publishes fifty Twists at 1.0 m/s and then stops
-publishing, leaving the last one latched in the robot's controller.
+The trailing zero is the guarantee this file was written for, because it is the
+one that decides whether a *timed* drive can leave a live velocity behind. It
+was ``RosbridgeRobot``'s alone: ``RtpsRobot("rover", "/cmd_vel").drive(
+linear=1.0, duration=5.0)`` published fifty Twists at 1.0 m/s and then stopped
+publishing, leaving the last one latched in the robot's controller, while the
+prose read as though it self-stopped. Consolidating the drive contract onto the
+shared mobile base made the prose true instead of correcting it downwards, and
+the assertions below moved with the measurement - which is the direction this
+file is meant to push.
 
 Every check here therefore *measures* each guarantee on all three bridges and
 grades the prose against the measurement, rather than pinning either half to a
 hardcoded expectation. A bridge that later gains the trailing stop makes the
 scope assertion fail, which is the intended signal: the guarantee has become
-fleet-wide and the two places that scope it have to say so.
+fleet-wide and the two places that scope it have to say so. That is not
+hypothetical - it is what happened to the trailing zero.
 
 The classes each guarantee is measured over are *derived*, not listed, because a
 scope claim can only be graded against the whole fleet: a class that owns
@@ -313,9 +317,16 @@ def test_the_drive_guarantees_split_into_fleet_wide_shared_and_bridge_specific(
     )
     bridge_only = sorted(name for name, holders in measured.items() if holders == ["RosbridgeRobot"])
 
-    assert fleet_wide == ["single-shot latch", "validated inputs"], measured
+    assert fleet_wide == ["single-shot latch", "trailing zero Twist", "validated inputs"], measured
     assert several == ["duration ceiling", "velocity clamp"], measured
-    assert bridge_only == ["trailing zero Twist"], measured
+    # Empty since the shared mobile base took over the drive contract: the
+    # trailing zero was the last entry here and every Twist bridge inherits it
+    # now. This is the signal the module docstring predicts, so the tier is kept
+    # rather than deleted - a sixth platform that trails a zero its siblings do
+    # not lands here and the prose has to say so. The three-way split stays
+    # graded because the middle tier is occupied; it is the *middle* tier a
+    # two-way split cannot express, and that is the one still populated.
+    assert bridge_only == [], measured
     assert sorted(fleet_wide + several + bridge_only) == sorted(_GUARANTEES), (
         f"every guarantee must be fleet-wide, shared by some, or this bridge's alone, got {measured}"
     )
@@ -337,17 +348,25 @@ def test_the_clamp_and_the_ceiling_are_carried_by_the_two_bridges_that_know_a_pl
         assert measured[guarantee] == ["RosbridgeRobot", "AckermannRosRobot"], measured
 
 
-def test_a_timed_drive_self_stops_on_one_bridge_and_latches_on_the_other_two(
+def test_a_timed_drive_self_stops_on_every_twist_bridge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The consequence the trailing-zero scope is about, read off the wire."""
+    """The consequence the trailing-zero scope is about, read off the wire.
+
+    ``RosBridgedRobot`` and ``RtpsRobot`` used to leave 1.0 m/s latched in the
+    robot's controller here while only ``RosbridgeRobot`` trailed a zero. Both
+    inherit the trailing zero from the shared mobile base now, so the last thing
+    on the wire is a stop on all three - which is why the guarantee moved into
+    the fleet-wide tier above. Measured rather than asserted from the class
+    layout, so a transport that stops trailing the zero fails here first.
+    """
     final_velocity: dict[str, float] = {}
     for bridge in _BRIDGES:
         _, calls = _drive(monkeypatch, bridge, linear=1.0, duration=5.0)
         assert [c["count"] for c in calls][0] == 50, "round(5.0 * 10.0) messages"
         final_velocity[bridge[0]] = calls[-1]["fields"]["linear"]["x"]
 
-    assert final_velocity == {"RosBridgedRobot": 1.0, "RtpsRobot": 1.0, "RosbridgeRobot": 0.0}
+    assert final_velocity == {"RosBridgedRobot": 0.0, "RtpsRobot": 0.0, "RosbridgeRobot": 0.0}
 
 
 #: Any wording that asserts this bridge's contract is the fleet's. Matched
@@ -436,7 +455,11 @@ def test_the_docstring_names_what_every_other_drive_owner_does_instead() -> None
         if label == "RosbridgeRobot":
             continue
         assert label in specific, f"the scoped paragraph should say where {label} stands"
-    assert "latched" in specific, "it should say a timed drive on the other two leaves the velocity latched"
+    # What the other two do instead is "declare no ceiling", not "leave it
+    # latched": they inherit the trailing zero now, so the only guarantees still
+    # scoped are the clamp and the ceiling, and an unset limit there is the thing
+    # a reader has to be told is not a zero one.
+    assert "unclamped" in specific, "it should say the other two publish the requested burst unclamped"
 
 
 # The docs page carries the same claim, so it is graded the same way ----------

@@ -503,6 +503,62 @@ unattended deployment that must always be able to halt should pre-approve its
 | `get_scan()` | echo `scan_topic` | error when no `scan_topic` configured; never gated |
 | `.tools` | - | per-instance named agent tools; the command tools are `@tool(context=True)` so the gate can prompt |
 
+### The shared mobile-base contract
+
+`RosBridgedRobot` is a thin subclass of `MobileBaseRobot`, which owns the drive
+contract, the safety semantics and the `tools` property for **every** mobile
+robot in `strands_robots.mesh`. A robot class supplies only what actually
+varies: a `Transport` (how bytes move) and, when the platform is not
+differential-drive, a `_cmd_fields` override (what the command message looks
+like).
+
+Everything below therefore holds identically for any transport:
+
+- Non-finite `linear` / `angular` / `duration` are refused. `nan` passes
+  silently through a `min`/`max` clamp, so it has to be caught before clamping.
+  The accepted domain is the shared one used by every other numeric knob in the
+  package, so a velocity and a control-loop frequency agree on what a usable
+  number is - a NumPy scalar from a policy action is accepted, a `bool` is not.
+- `count` is the publish horizon when no `duration` is given, and must be a
+  positive whole number. `count=0` would otherwise publish nothing and report
+  success - a drive the caller believes happened. A `count` a call never reads
+  (because `duration` supersedes it) is not refused.
+- `duration` must be positive and finite, and within `max_duration` when the
+  platform sets one. An over-long hold is refused, never silently truncated -
+  and refused *before* any side effect, so an invalid request cannot be what
+  arms a vehicle.
+- Velocities are clamped to `max_linear` / `max_angular` when set. Left unset
+  they mean "this platform declares no limit", not zero.
+- Every timed or multi-message non-zero command is followed by a single zero
+  command, through `try`/`finally`, **even when the publish raised**. A timed
+  drive cannot leave a robot with a live velocity.
+- A bare single-shot `drive()` latches until `stop()`, exactly like a raw
+  `cmd_vel` publish. This is stated in the agent-facing tool description rather
+  than hidden.
+- `stop()` reaches the transport tool's command gate exactly as `drive()` does.
+  The gate is keyed on the *surface*, and zero means "stationary" on a `Twist`
+  but commands motion to the zero pose on a joint-command topic, so a
+  payload-shaped carve-out could not be written correctly. What the halt does not
+  depend on is the enable handshake or the speed limits: an emergency stop must
+  not require a working service graph.
+- Command tools are declared `@tool(context=True)` by the base and forward the
+  injected operator context to the transport, which hands it to its own tool. A
+  transport whose tool gates its command surface therefore prompts rather than
+  failing closed. All three graph tools gate their command surface today, so no
+  shipped transport is exempt - the rule is keyed on the tool rather than on a
+  list so that a future ungated one is handled, not because an exemption exists.
+  Because the tools are declared once, this holds for every transport rather
+  than being wired per bridge.
+- `init_services` declares an ordered enable/arm handshake that runs once before
+  the first command. It does not latch on failure, so a retry re-runs it. It
+  requires a transport that can call services, and is refused at construction on
+  one that cannot.
+
+Capabilities are reported, not assumed: `get_pose` appears only with an
+`odom_topic`, `get_scan` only with a `scan_topic`, `navigate` only with a
+`nav_action`, so an agent is never handed a tool that can only answer "not
+configured". `robot.supports("service_call")` asks the transport directly.
+
 See `examples/ros2/turtlebot_demo.py` for an end-to-end agent driving a turtle
 in `turtlesim` through the mesh bridge.
 
