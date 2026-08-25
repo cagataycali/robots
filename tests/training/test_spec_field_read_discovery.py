@@ -42,6 +42,7 @@ FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
     "_validation_episodes_problems": ("val_episodes",),
     "_lora_hyperparameter_problems": ("lora_r", "lora_alpha"),
     "_launch_topology_problems": ("num_gpus", "num_nodes"),
+    "_checkpoint_cadence_problems": ("save_freq",),
 }
 
 
@@ -85,6 +86,7 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
     def test_the_scan_finds_the_field_scoped_guards(self) -> None:
         """Non-vacuity: a scan that matched nothing would grade nothing."""
         assert set(_guard_modules()) == {
+            "test_checkpoint_cadence_domain.py",
             "test_launch_topology_domain.py",
             "test_lora_hyperparameter_domain.py",
             "test_seed_domain.py",
