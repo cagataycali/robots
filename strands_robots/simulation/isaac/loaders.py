@@ -1572,6 +1572,70 @@ def _parse_mjcf_mesh_assets(root: ET.Element, mjcf_dir: str) -> dict[str, tuple[
     return registry
 
 
+# How strongly a mesh geom's own declaration reads as its body's visual asset,
+# best first. Used only to order candidates within one body subtree.
+_MESH_VISUAL_RANK_NON_COLLIDING = 0
+_MESH_VISUAL_RANK_NON_DEFAULT_GROUP = 1
+_MESH_VISUAL_RANK_UNMARKED = 2
+
+
+def _geom_cannot_collide(attrs: dict[str, str]) -> bool:
+    """Whether a geom's own declaration makes it unable to collide with anything.
+
+    MuJoCo lets two geoms touch only when ``contype1 & conaffinity2`` or
+    ``contype2 & conaffinity1`` is non-zero, so a geom declaring *both* as
+    ``0`` can never collide with any other geom whatever the other declares.
+    MuJoCo defaults both to ``1``, so an omitted attribute reads as colliding.
+
+    A value that is not an integer also reads as colliding: MuJoCo refuses such
+    a model outright, so there is no intent to infer from it.
+
+    Args:
+        attrs: The geom's effective attributes from :func:`_class_attrs`, so a
+            geom inheriting the pair from a ``<default class="visual">`` is
+            judged as MuJoCo reads it rather than by what it spells itself.
+
+    Returns:
+        ``True`` when the geom is contact-free, and therefore decorative.
+    """
+    for key in ("contype", "conaffinity"):
+        try:
+            if int(attrs.get(key, "1")) != 0:
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+def _mesh_geom_visual_rank(attrs: dict[str, str]) -> int:
+    """How strongly a mesh geom reads as its body's visual asset (lower is stronger).
+
+    A geom MuJoCo cannot collide with (see :func:`_geom_cannot_collide`) exists
+    only to be looked at, which is the format's own statement of intent, so it
+    ranks first.
+
+    ``group`` carries no meaning in MuJoCo itself - it is a visualiser toggle -
+    and the conventions built on it disagree: robosuite emits visual geoms as
+    ``group="1"`` while MuJoCo Menagerie spells *collision* as ``group="3"``.
+    A non-default group is therefore only a weak hint. It is taken when the
+    contact declaration says nothing, and never over a contact-free geom.
+    Anything else ranks last.
+
+    Args:
+        attrs: The geom's effective attributes from :func:`_class_attrs`.
+
+    Returns:
+        One of :data:`_MESH_VISUAL_RANK_NON_COLLIDING`,
+        :data:`_MESH_VISUAL_RANK_NON_DEFAULT_GROUP` or
+        :data:`_MESH_VISUAL_RANK_UNMARKED`.
+    """
+    if _geom_cannot_collide(attrs):
+        return _MESH_VISUAL_RANK_NON_COLLIDING
+    if (attrs.get("group") or "0") != "0":
+        return _MESH_VISUAL_RANK_NON_DEFAULT_GROUP
+    return _MESH_VISUAL_RANK_UNMARKED
+
+
 def _find_body_mesh(
     body_el: ET.Element,
     defaults: dict[str, dict[str, str]],
@@ -1580,25 +1644,34 @@ def _find_body_mesh(
     *,
     angle_scale: float = math.pi / 180.0,
     eulerseq: str = "xyz",
-) -> tuple[str, tuple[float, float, float], tuple[float, float, float, float], bool] | None:
-    """First mesh geom in a body subtree: ``(mesh name, body-frame pos, quat, is_visual)``.
+) -> tuple[str, tuple[float, float, float], tuple[float, float, float, float], int] | None:
+    """Best visual mesh geom in a body subtree: ``(mesh name, body-frame pos, quat, rank)``.
 
-    Prefers a *visual* mesh geom (MuJoCo ``group`` other than the collision
-    group ``"0"``; robosuite emits visual geoms as ``group="1"``) over a
-    collision mesh, because the visual asset is the one a pixel-conditioned
-    policy was trained on. Recurses into nested bodies, folding their
-    ``pos`` offsets into the returned body-frame position the same way
-    :func:`_recursive_collision_aabb` accumulates AABBs (nested body
-    rotations are not composed - LIBERO's compiled object bodies do not
-    rotate their nested visual bodies). Returns ``None`` when the subtree
-    declares no mesh geom.
+    Prefers the geom whose declaration reads most strongly as the body's visual
+    asset - :func:`_mesh_geom_visual_rank`, strongest first - because the visual
+    asset is the one a pixel-conditioned policy was trained on. Document order
+    breaks a tie between geoms of equal rank, so a subtree whose geoms carry no
+    visual marking at all still yields its first mesh.
 
-    ``mesh``, ``pos``, ``quat`` and the ``group`` that decides visual-vs-
-    collision are read through :func:`_class_attrs`, so a geom that inherits its
-    group from a ``<default class="visual">`` is preferred as MuJoCo reads it
-    rather than being taken for a collision geom.
+    Ranking rather than returning the first non-default ``group`` matters for the
+    dominant convention: MuJoCo Menagerie marks visual geoms with
+    ``contype="0" conaffinity="0"`` and *collision* geoms with ``group="3"``, and
+    a collision geom is routinely declared first. Taking a non-default group as
+    the visual signal therefore handed back the convex collision hull.
+
+    Recurses into nested bodies, folding their ``pos`` offsets into the returned
+    body-frame position the same way :func:`_recursive_collision_aabb`
+    accumulates AABBs (nested body rotations are not composed - LIBERO's
+    compiled object bodies do not rotate their nested visual bodies). A stronger
+    candidate in a nested body wins over a weaker one on the body itself.
+    Returns ``None`` when the subtree declares no mesh geom.
+
+    ``mesh``, ``pos``, ``quat`` and the ``contype``/``conaffinity``/``group``
+    that decide the rank are read through :func:`_class_attrs`, so a geom that
+    inherits them from a ``<default class="visual">`` is ranked as MuJoCo reads
+    it rather than being taken for a collision geom.
     """
-    first_any: tuple[str, tuple[float, float, float], tuple[float, float, float, float], bool] | None = None
+    best: tuple[str, tuple[float, float, float], tuple[float, float, float, float], int] | None = None
     childclass = body_el.get("childclass") or childclass
     for geom in body_el.findall("geom"):
         attrs = _class_attrs(geom, defaults, childclass)
@@ -1608,21 +1681,21 @@ def _find_body_mesh(
         gpos = _parse_xyz(attrs.get("pos"))
         pos = (offset[0] + gpos[0], offset[1] + gpos[1], offset[2] + gpos[2])
         quat = _parse_orientation(attrs, own=geom.attrib, angle_scale=angle_scale, eulerseq=eulerseq)
-        is_visual = (attrs.get("group") or "0") != "0"
-        if is_visual:
-            return (mesh_name, pos, quat, True)
-        if first_any is None:
-            first_any = (mesh_name, pos, quat, False)
+        rank = _mesh_geom_visual_rank(attrs)
+        if rank == _MESH_VISUAL_RANK_NON_COLLIDING:
+            return (mesh_name, pos, quat, rank)
+        if best is None or rank < best[3]:
+            best = (mesh_name, pos, quat, rank)
     for child in body_el.findall("body"):
         child_off = _parse_xyz(child.get("pos"))
         new_off = (offset[0] + child_off[0], offset[1] + child_off[1], offset[2] + child_off[2])
         found = _find_body_mesh(child, defaults, childclass, new_off, angle_scale=angle_scale, eulerseq=eulerseq)
         if found is not None:
-            if found[3]:
+            if found[3] == _MESH_VISUAL_RANK_NON_COLLIDING:
                 return found
-            if first_any is None:
-                first_any = found
-    return first_any
+            if found[3] < (best[3] if best is not None else _MESH_VISUAL_RANK_UNMARKED + 1):
+                best = found
+    return best
 
 
 def _parse_fromto(
@@ -1938,7 +2011,7 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
         cc = body_childclass.get(id(body_el), "")
         mesh_ref = _find_body_mesh(body_el, geom_defaults, cc, angle_scale=angle_scale, eulerseq=eulerseq)
         if mesh_ref is not None:
-            mesh_name, mesh_pos, mesh_quat, _is_visual = mesh_ref
+            mesh_name, mesh_pos, mesh_quat, _visual_rank = mesh_ref
             asset = mesh_registry.get(mesh_name)
             if asset is not None:
                 candidate_path, mesh_scale = asset
