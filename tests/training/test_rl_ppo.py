@@ -106,9 +106,9 @@ def test_validate_rejects_bad_specs() -> None:
     ("overrides", "expected"),
     [
         ({"output_dir": ""}, "output_dir is required"),
-        ({"total_timesteps": 0}, "total_timesteps must be > 0"),
-        ({"total_timesteps": -1}, "total_timesteps must be > 0"),
-        ({"rollout_steps": 0}, "rollout_steps must be > 0"),
+        ({"total_timesteps": 0}, "total_timesteps must be a positive integer"),
+        ({"total_timesteps": -1}, "total_timesteps must be a positive integer"),
+        ({"rollout_steps": 0}, "rollout_steps must be a positive integer"),
         ({"num_envs": 0}, "num_envs must be >= 1"),
         ({"rollout_steps": 10, "num_mini_batches": 3}, "divisible"),
         ({"num_mini_batches": 0}, "divisible"),

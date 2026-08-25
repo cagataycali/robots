@@ -345,6 +345,40 @@ class Trainer(ABC):
 
         return run_size_problems(spec, context=self.provider_name)
 
+    def _rl_run_size_problems(self, spec: TrainSpec) -> list[str]:
+        """Run-size preflight shared by every RL backend, the peer of the above.
+
+        Returns problems for :attr:`RLTrainSpec.total_timesteps` /
+        :attr:`RLTrainSpec.rollout_steps` - the two caller-supplied factors of
+        the training-loop bound every RL backend derives,
+        ``max(1, total_timesteps // (rollout_steps * num_envs))`` iterated as
+        ``range(...)`` - against the same shared positive-count domain
+        :meth:`_run_size_problems` uses for the supervised pair.
+
+        This exists as a second gate rather than as part of that one because the
+        two field sets are disjoint: per :class:`TrainSpec` a backend ignores the
+        fields it does not support, so an RL trainer must not be refused for a
+        ``steps`` it never reads, and a supervised backend must not be refused
+        for a ``total_timesteps`` it never reads. The *domain* is shared; only the
+        fields differ.
+
+        A :meth:`validate` implementation that sizes its loop from either field
+        MUST call this instead of comparing the value itself. The local ``<= 0``
+        test is weaker here than for the supervised pair, because the bound is
+        derived: the ``max(1, ...)`` clamp reads ``True``, a fraction below one
+        iteration, ``nan`` and ``inf`` as a **single iteration** and the run then
+        reports success and writes a checkpoint, so the run the caller asked for
+        is simply not the one that happened. See
+        :func:`~strands_robots.training._validate.rl_run_size_problems` for the
+        measured table.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import rl_run_size_problems
+
+        return rl_run_size_problems(spec, context=self.provider_name)
+
     def _learning_rate_problems(self, spec: TrainSpec) -> list[str]:
         """Learning-rate preflight shared by EVERY backend.
 

@@ -112,8 +112,8 @@ def test_validate_rejects_bad_specs() -> None:
     ("overrides", "expected"),
     [
         ({"output_dir": ""}, "output_dir is required"),
-        ({"total_timesteps": 0}, "total_timesteps must be > 0"),
-        ({"rollout_steps": 0}, "rollout_steps must be > 0"),
+        ({"total_timesteps": 0}, "total_timesteps must be a positive integer"),
+        ({"rollout_steps": 0}, "rollout_steps must be a positive integer"),
         ({"buffer_size": 0}, "buffer_size must be > 0"),
         ({"batch_size": 0}, "batch_size must be > 0"),
         ({"gradient_steps": 0}, "gradient_steps must be > 0"),
