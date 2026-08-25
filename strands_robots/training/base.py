@@ -105,7 +105,20 @@ class TrainSpec:
             without updating a weight and ``inf`` writes a checkpoint of
             ``NaN``, neither of which any backend can report, so both are
             refused by :meth:`Trainer.validate` before a run starts.
-        save_freq: Checkpoint cadence in steps.
+        save_freq: Checkpoint cadence in optimizer steps. A whole number; a
+            non-positive value is LeRobot's documented spelling of "disable
+            periodic saving" (only the final checkpoint is written) and is
+            first-class here, so the floor is deliberately not part of the
+            domain. A fractional, non-finite, boolean or non-numeric cadence
+            cannot be honored by any of the three ways it is consumed - a
+            ``> 0`` selector that derives the validation cadence from it, an
+            ``--save_freq=`` / ``--save_steps=`` / ``checkpoint.save_iter=``
+            token decoded into an ``int`` field, and a direct assignment into a
+            typed config - so a backend that reads it MUST check it through
+            :meth:`Trainer._checkpoint_cadence_problems` rather than pass it on.
+            ``nan`` is the sharpest case: it compares false against everything,
+            so the selector reads it as *disabled* and the run evaluates once at
+            the end instead of at the cadence asked for.
         num_gpus: GPUs on this node. ``>1`` runs the backend under torch's
             in-process ``elastic_launch`` (the engine behind ``torchrun``).
             A positive integer; a non-positive, fractional, non-finite or
@@ -758,6 +771,51 @@ class Trainer(ABC):
         from strands_robots.training._validate import clip_range_problems
 
         return clip_range_problems(spec, context=self.provider_name)
+
+    def _checkpoint_cadence_problems(self, spec: TrainSpec) -> list[str]:
+        """Checkpoint-cadence preflight shared by every backend that reads it.
+
+        Returns a problem when :attr:`TrainSpec.save_freq` is not a whole number
+        of steps. A :meth:`validate` implementation that reads the field MUST
+        call this rather than interpolate the value: the cadence is consumed
+        three ways and each one fails silently or late. LeRobot derives the
+        validation cadence from it as ``save_freq if save_freq > 0 else steps``,
+        and because ``nan`` compares false against everything that selector
+        reads a ``nan`` cadence as *disabled* and evaluates once at the end
+        under a successful result; every backend also interpolates the value
+        verbatim into an argv or Hydra token whose ``int`` decoder refuses
+        ``2.7``, ``5000.0``, ``True``, ``nan`` and ``inf`` alike, but only once
+        the launched run has loaded its dataset and model; and a string or
+        ``None`` raises ``TypeError`` out of the comparison itself - from inside
+        a :meth:`validate` documented to *return* problems.
+
+        The floor is deliberately outside the domain: a non-positive cadence is
+        LeRobot's documented "disable periodic saving", implemented by its
+        ``should_save_checkpoint``, and the ``eval_steps`` fallback exists for
+        exactly that case. Only the type is graded, and with the same strictness
+        :meth:`_run_size_problems` applies to ``steps`` - the step count in the
+        same argv - so the same number cannot be refused for one and accepted
+        for the other.
+
+        A backend that does not read the field MUST NOT call this: per
+        :class:`TrainSpec` a backend ignores the fields it does not support, so
+        reporting on one it never reads would be a false rejection. That is why
+        this is scoped like :meth:`_run_size_problems` rather than like
+        :meth:`_learning_rate_problems`, which every backend does call.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``save_freq`` cannot be honored; empty
+            otherwise.
+        """
+        from strands_robots.training._validate import checkpoint_cadence_problems
+
+        return checkpoint_cadence_problems(spec, context=self.provider_name)
 
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.

@@ -124,7 +124,8 @@ class Gr00tTrainer(Trainer):
         Runs the shared input-safety gate, then checks a LeRobotDataset v3
         ``dataset_root``, a ``base_model``, an ``output_dir``, a required
         ``embodiment`` tag, a supported ``method``, a usable run size (``steps``
-        / ``global_batch_size``), single-node only (``num_nodes == 1``), a
+        / ``global_batch_size``), a whole-number checkpoint cadence (``save_freq``), single-node only
+        (``num_nodes == 1``), a
         resolvable Isaac-GR00T
         checkout (GR00T_ROOT / ``groot_root`` / ``extra['groot_root']``),
         and an optional ``extra['modality_config_path']`` that exists.
@@ -154,6 +155,7 @@ class Gr00tTrainer(Trainer):
                 f"use tune={{...}} for fine-grained control"
             )
         problems.extend(self._run_size_problems(spec))
+        problems.extend(self._checkpoint_cadence_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
         # Captured rather than extended blind: the multi-node refusal below
         # compares num_nodes, which is only a meaningful comparison once this

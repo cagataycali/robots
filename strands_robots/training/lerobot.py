@@ -784,7 +784,8 @@ class LerobotTrainer(Trainer):
         Runs the shared input-safety gate, then checks a data source -
         exactly one of a local LeRobotDataset v3 ``dataset_root`` or a Hub
         ``dataset_repo_id`` (for streaming) - an ``output_dir``, a usable run
-        size (``steps`` / ``global_batch_size``), a ``device`` torch can parse,
+        size (``steps`` / ``global_batch_size``), a whole-number checkpoint cadence (``save_freq``), a
+        ``device`` torch can parse,
         single-node only
         (``num_nodes == 1``), a ``val_episodes``
         split below the dataset total and not asked for alongside ``streaming``
@@ -836,6 +837,7 @@ class LerobotTrainer(Trainer):
             problems.extend(self._validate_policy(spec))
 
         problems.extend(self._run_size_problems(spec))
+        problems.extend(self._checkpoint_cadence_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
         problems.extend(self._seed_problems(spec))
         problems.extend(self._device_problems())

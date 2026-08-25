@@ -120,6 +120,15 @@ because the two bounds have one domain for one reason - a clip bound is a
 positive width, and positive infinity is each field's only spelling of "do not
 clip". It is scoped like :func:`gae_lambda_problems`: ``spec.clip_param`` is read
 in ``rl/ppo.py`` and nowhere else.
+
+:func:`checkpoint_cadence_problems` is the fifteenth, on the *checkpointing*
+axis: ``save_freq``, the interval in optimizer steps at which a run writes a
+checkpoint. It is scoped like :func:`run_size_problems` - the three supervised
+backends and the SageMaker transport read it, the RL trainers never do - and it
+is the step count in the same argv as ``steps``, so it holds to the same
+``int`` requirement that gate applies. What it deliberately does not decide is
+the floor: a non-positive cadence is lerobot's documented spelling of "disable
+periodic saving", so only the type is graded.
 """
 
 from __future__ import annotations
@@ -1162,3 +1171,75 @@ def clip_range_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """
     error = _clip_bound_error(getattr(spec, "clip_param", 0.2), "clip_param", context)
     return [error] if error is not None else []
+
+
+def checkpoint_cadence_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return checkpoint-cadence problems for a :class:`TrainSpec`.
+
+    ``save_freq`` is the interval, in optimizer steps, at which a run writes a
+    checkpoint. The backends that read it consume it in the same three shapes
+    :func:`launch_topology_problems` documents for a process count, and each one
+    fails silently or late:
+
+    * **A comparison selector.** The LeRobot backend derives the validation
+      cadence from it in two places - the ``--eval_steps=`` token on the argv
+      path and ``cfg.eval_steps`` on the in-process one - as ``spec.save_freq if
+      spec.save_freq > 0 else spec.steps``, because a non-positive cadence
+      disables periodic saving. ``nan`` compares false against everything, so it
+      takes that *disabled* branch: a spec asking to checkpoint every ``nan``
+      steps evaluates once at the very end instead, under a successful result.
+      ``True`` and ``inf`` are both greater than zero, so they pass through as
+      the cadence itself and reach an ``int`` field as a ``bool`` and a float.
+    * **An argv or override token.** ``--save_freq=`` (LeRobot),
+      ``--save_steps=`` (GR00T) and ``checkpoint.save_iter=`` (Cosmos) each
+      interpolate the value verbatim, so every spelling renders and fails, if at
+      all, inside the launched run once the dataset and model are already
+      loaded. LeRobot declares the field as a plain ``int``, so its own draccus
+      decoder refuses ``2.7`` and ``5000.0`` alike and ``True`` / ``nan`` /
+      ``inf`` as written.
+    * **An assignment into a typed config.** ``cfg.save_freq`` on LeRobot's
+      in-process path, ``save_steps`` in GR00T's ``FinetuneConfig`` kwargs and a
+      forwarded SageMaker hyperparameter - none of which coerces.
+
+    A string or ``None`` is worse than any of those: it raises ``TypeError`` out
+    of the comparison itself, from inside a :meth:`Trainer.validate` that is
+    documented to *return* problems.
+
+    Only a true ``int`` can be honored by all three shapes, so what is graded
+    here is the type, with the same strictness :func:`run_size_problems` applies
+    to ``steps``: an integral float is refused rather than coerced, because
+    ``save_freq`` is interpolated into the *same argv* as ``steps`` and read by
+    the same ``int`` decoder, and the same number cannot be refused for one step
+    count and accepted for the next. ``bool`` is rejected explicitly - it is an
+    ``int`` subclass, so a bare type test would admit ``True``, which renders as
+    the token ``True`` and is not decodable either.
+
+    **The floor is deliberately not part of this domain.** LeRobot documents a
+    non-positive ``save_freq`` as disabling periodic saving - its
+    ``should_save_checkpoint`` implements exactly that (``save_freq > 0 and step
+    % save_freq == 0``), avoiding a ``ZeroDivisionError`` from ``step % 0`` - and
+    the ``eval_steps`` fallback above is written for that case. So ``0`` and a
+    negative are a capability rather than an unusable value, and a *ceiling*
+    (a cadence above ``steps``, which writes only the final checkpoint) is a
+    legitimate configuration too. Neither endpoint is decided here.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``save_freq`` cannot be honored; empty
+        otherwise.
+    """
+    value = spec.save_freq
+    if isinstance(value, bool) or not isinstance(value, int):
+        return [
+            f"{context}: save_freq must be a whole number of steps, got {value!r}. "
+            "The cadence is decoded into an int field and compared against zero, "
+            "so a fractional, non-finite, boolean or non-numeric value cannot be "
+            "honored; pass a whole number of steps, or a non-positive one to "
+            "disable periodic saving."
+        ]
+    return []
