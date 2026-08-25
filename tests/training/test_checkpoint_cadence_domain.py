@@ -386,6 +386,63 @@ class TestOneOwnerForTheCheckpointCadenceDomain:
         assert not _calls_the_gate(planted)
 
 
+class TestTheToolAndTheTrainerShareOneOwner:
+    """The two surfaces that reach the same lerobot field agree by construction.
+
+    ``lerobot_train`` builds the ``--save_freq=`` argv itself and the trainer
+    backends assign the same field in-process, so a cadence the tool refuses and
+    the trainer accepts (or the reverse) would mean the wrapper and the wrapped
+    pipeline disagree about the same number. They cannot: both consult
+    :func:`~strands_robots.utils.step_cadence_error`, and these tests hold them
+    to that rather than to two copies of one rule that could drift apart.
+    """
+
+    @staticmethod
+    def _tool_guard() -> Any:
+        from strands_robots.tools.lerobot_train import _save_freq_error
+
+        return _save_freq_error
+
+    @pytest.mark.parametrize("value", UNUSABLE)
+    def test_both_surfaces_refuse_the_same_values(self, spec: TrainSpec, value: Any) -> None:
+        spec.save_freq = value
+        assert self._tool_guard()(value) is not None
+        assert checkpoint_cadence_problems(spec, context="lerobot") != []
+
+    @pytest.mark.parametrize("value", USABLE)
+    def test_both_surfaces_accept_the_same_values(self, spec: TrainSpec, value: int) -> None:
+        spec.save_freq = value
+        assert self._tool_guard()(value) is None
+        assert checkpoint_cadence_problems(spec, context="lerobot") == []
+
+    def test_they_differ_only_in_the_surface_they_name(self, spec: TrainSpec) -> None:
+        """One rule, one wording - the prefix is the only thing that may differ."""
+        spec.save_freq = A_FRACTIONAL_CADENCE
+        from_the_tool = self._tool_guard()(A_FRACTIONAL_CADENCE)
+        from_the_trainer = checkpoint_cadence_problems(spec, context="lerobot_train")[0]
+        assert from_the_tool == from_the_trainer
+
+    def test_the_tool_delegates_rather_than_carrying_a_copy(self) -> None:
+        """The structural half: a second implementation could drift silently.
+
+        Behaviourally identical today is not the property worth pinning - two
+        copies that agree now are exactly what diverges later, and the tests
+        above would keep passing right up to the edit that separates them.
+        """
+        from strands_robots.tools import lerobot_train as tool_module
+
+        guard = next(
+            node
+            for node in ast.parse(pathlib.Path(inspect.getfile(tool_module)).read_text()).body
+            if isinstance(node, ast.FunctionDef) and node.name == "_save_freq_error"
+        )
+        statements = [n for n in guard.body if not isinstance(n, ast.Expr)]
+        assert len(statements) == 1, "the tool's guard should be a single delegation"
+        assert isinstance(statements[0], ast.Return)
+        call = statements[0].value
+        assert isinstance(call, ast.Call) and getattr(call.func, "id", None) == "step_cadence_error"
+
+
 class TestTheGateIsUsableOnItsOwn:
     """The shared gate's own contract, independent of any backend."""
 
@@ -393,7 +450,7 @@ class TestTheGateIsUsableOnItsOwn:
         spec.save_freq = A_FRACTIONAL_CADENCE
         problems = checkpoint_cadence_problems(spec, context="acme")
         assert len(problems) == 1
-        assert problems[0].startswith("acme: save_freq must be a whole number of steps, got 2.7.")
+        assert problems[0].startswith("acme: save_freq must be an integer number of steps, got 2.7.")
 
     @pytest.mark.parametrize("value", USABLE)
     def test_a_usable_cadence_reports_nothing(self, spec: TrainSpec, value: int) -> None:

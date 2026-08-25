@@ -1237,9 +1237,9 @@ def step_cadence_error(value: Any, param: str, context: str) -> str | None:
     """
     if isinstance(value, bool) or not isinstance(value, int):
         return (
-            f"{context}: {param} must be a whole number of steps, got {_refusal_repr(value)}. "
-            "A fractional, non-finite, boolean or non-numeric cadence cannot be honored "
-            "(it is used as the modulus of a step % cadence test); pass an integer, or a "
+            f"{context}: {param} must be an integer number of steps, got {_refusal_repr(value)}. "
+            "A fractional, non-finite, boolean or non-numeric cadence cannot be honored - it is "
+            "used as the modulus of a step % cadence test; pass a whole number of steps, or a "
             "non-positive one to disable periodic saving."
         )
     return None
