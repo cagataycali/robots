@@ -228,7 +228,16 @@ open a window.
   parser can read: a URDF joint that omits the optional `<axis>` acts about
   **+X**, an MJCF `<joint>` that omits `axis` about **+Z**. Both are valid
   axes, so a joint read under the other format's default would be reported
-  acting in the perpendicular plane with the load still reporting success.
+  acting in the perpendicular plane with the load still reporting success. Both
+  of MJCF's spellings of a free joint are read - the dedicated `<freejoint>`
+  element and `<joint type="free">`, which MuJoCo compiles to the same joint -
+  so a floating base is reported rather than absent. `<freejoint>` is how every
+  shipped quadruped and humanoid states its base, and it resolves no default
+  class, because MJCF has no `<default><freejoint>` block: a `<default><joint>`
+  class reaches the `type="free"` spelling only, exactly as MuJoCo applies it.
+  Either spelling is reported with `joint_type="fixed"`, since `JointDef` has no
+  6-DOF spelling, so a floating base is visible in `joints` without being
+  counted as an actuated DOF by `num_joints`.
 
 Because the joint-name and observation contract matches the MuJoCo backend,
 policies and observation mappings transfer unchanged between backends.
