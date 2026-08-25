@@ -244,6 +244,15 @@ class TestEveryWayOfRecordingACollidingSceneIsRefused:
         finally:
             sim.destroy()
 
+
+class TestNoPartialStateEitherWay:
+    """Holds before and after the fix, so it pins the property not the change.
+
+    The pre-fix refusal came from ``DatasetRecorder.create`` and already
+    unwound the session, so this is not evidence for the guard - it is the
+    invariant the guard must not break by refusing earlier.
+    """
+
     def test_no_recorder_is_left_registered(self, tmp_path):
         sim = _sim(tmp_path, "arm__wrist")
         try:
