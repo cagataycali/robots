@@ -114,9 +114,45 @@ def _documented_intake_argv(issue: int) -> list[str]:
     return [part.replace("<N>", str(issue)) for part in intake[0].split()]
 
 
+def _check_invocations_in(text: str) -> list[tuple[str, str]]:
+    """Return ``(script, remaining argv)`` for every check invocation in *text*.
+
+    An invocation is a mention that names at least one option, with or without a
+    ``python3`` prefix. The prefix is typography rather than a property of the
+    command: a reader copies what is inside the backticks, so an inline mention
+    that names a mode is as runnable as a fenced one. Requiring it hid 2 of the
+    13 invocations this file grades, and both of the two were the defect the
+    grading exists to catch - step 1's overlap sweep among them, which run from a
+    scheduled agent reported a clean open set for a repository holding none of
+    the pull requests in question, and exited 0.
+
+    A mention naming *no* option is a cross-reference and not graded: there is no
+    command to copy, so requiring a flag of it would be the same false rejection
+    :data:`_NAMES_REPOSITORY`'s scope note exists to avoid.
+    """
+    mentions = re.findall(r"scripts/(check_[a-z_]+\.py)([^\n`]*)", text)
+    return [(script, rest) for script, rest in mentions if "--" in rest]
+
+
 def _documented_check_invocations() -> list[tuple[str, str]]:
     """Return ``(script, remaining argv)`` for every check AGENTS.md invokes."""
-    return re.findall(r"python3 scripts/(check_[a-z_]+\.py)([^\n`]*)", _AGENTS.read_text(encoding="utf-8"))
+    return _check_invocations_in(_AGENTS.read_text(encoding="utf-8"))
+
+
+def _leaving_the_repository_inferred(invocations: list[tuple[str, str]]) -> list[str]:
+    """Those of *invocations* that can infer a repository and do not name one.
+
+    The one rule, so the sweep over ``AGENTS.md`` and the constructed exemplars in
+    :class:`TestNoDocumentedInvocationLeavesTheRepositoryInferred` cannot disagree
+    about what counts as a finding.
+    """
+    return [
+        f"{script}{rest}"
+        for script, rest in invocations
+        if script in _NAMES_REPOSITORY
+        for flag, marker in (_NAMES_REPOSITORY[script],)
+        if (marker is None or marker in rest) and flag not in rest
+    ]
 
 
 def _pair_ids() -> list[str]:
@@ -689,10 +725,42 @@ class TestNoDocumentedInvocationLeavesTheRepositoryInferred:
         assert len(invocations) >= 3, invocations
         inferring = [(script, rest) for script, rest in invocations if script in _NAMES_REPOSITORY]
         assert inferring, invocations
-        missing = [
-            f"{script}{rest}"
-            for script, rest in inferring
-            for flag, marker in (_NAMES_REPOSITORY[script],)
-            if (marker is None or marker in rest) and flag not in rest
-        ]
+        missing = _leaving_the_repository_inferred(invocations)
         assert not missing, missing
+
+    @pytest.mark.parametrize("prefix", ["python3 ", ""])
+    def test_an_invocation_is_graded_whichever_way_it_is_spelled(self, prefix: str) -> None:
+        """The ``python3`` prefix is typography, so it cannot decide what is graded.
+
+        Both of the two invocations it hid on the real document left the repository
+        inferred, and one of them is step 1's overlap sweep.
+        """
+        spelled = f"`{prefix}scripts/check_merge_base_overlap.py --github-repo o/n --all-open`"
+        assert _check_invocations_in(spelled) == [("check_merge_base_overlap.py", " --github-repo o/n --all-open")]
+
+    def test_an_inline_invocation_that_infers_the_repository_is_a_finding(self) -> None:
+        """The spelling this widening caught, and the report it produced."""
+        inline = "`scripts/check_merge_base_overlap.py --all-open` owns it"
+        assert _leaving_the_repository_inferred(_check_invocations_in(inline)) == [
+            "check_merge_base_overlap.py --all-open"
+        ]
+
+    def test_a_mention_naming_no_option_is_a_cross_reference(self) -> None:
+        """Not a command, so requiring a flag of it would be a false rejection."""
+        assert _check_invocations_in("see `scripts/check_duplicate_claim.py` for the account") == []
+
+    def test_the_single_branch_mode_is_not_required_to_name_the_api_repository(self) -> None:
+        """The mode marker is load-bearing: that mode reads a checkout and infers nothing.
+
+        Requiring the flag of it would be the false rejection
+        :data:`_NAMES_REPOSITORY`'s scope note names, so the marker is what keeps
+        this widening from reaching a mode that owes no repository.
+        """
+        single = "`scripts/check_merge_base_overlap.py --repo . --base-ref main --head HEAD`"
+        assert _check_invocations_in(single), "the single-branch spelling is still an invocation"
+        assert _leaving_the_repository_inferred(_check_invocations_in(single)) == []
+
+    def test_the_selector_separates_a_command_from_a_cross_reference(self) -> None:
+        """Non-vacuity: a selector answering one way would pass one case above."""
+        both = "`scripts/check_duplicate_claim.py` and `scripts/check_duplicate_claim.py --repo o/n --pr 1`"
+        assert [rest.strip() for _, rest in _check_invocations_in(both)] == ["--repo o/n --pr 1"]

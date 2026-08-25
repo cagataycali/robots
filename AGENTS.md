@@ -284,8 +284,8 @@ hatch run format            # ruff check --fix, ruff format
    that were open at the same instant selected 2 - and both were duplicates. Two
    branches *editing* one file is a different question with a different remedy
    (a merge order, possibly one composition run), and
-   `scripts/check_merge_base_overlap.py --all-open` owns it; that relation selects
-   117 of the same 1802. The two keys are complementary rather than nested: neither
+   `scripts/check_merge_base_overlap.py --github-repo <owner/name> --all-open`
+   owns it; that relation selects 117 of the same 1802. The two keys are complementary rather than nested: neither
    issue-keyed pair shares an added path, and neither claim-free pair claims an
    issue.
 
@@ -816,8 +816,8 @@ hatch run format            # ruff check --fix, ruff format
      resolving supplies one. That leaves `REVIEW_REQUIRED` itself carrying two
      remedies - a first approval, or a second account when the only approval
      came from the pusher - which is the split
-     `scripts/check_last_push_approval.py --all-open` reports and which no
-     single field distinguishes either.
+     `scripts/check_last_push_approval.py --repo <owner/name> --all-open`
+     reports and which no single field distinguishes either.
 
      `isOutdated: true` on an unresolved thread is the common form, and it is a
      prompt rather than reassurance: the diff moved on, so the request has
