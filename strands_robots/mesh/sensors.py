@@ -10,6 +10,7 @@ Topics published:
 - strands/{peer_id}/odom - Dead-reckoning odometry
 - strands/{peer_id}/lidar/summary - Point cloud stats
 - strands/{peer_id}/lidar/state - Sensor state
+- strands/{peer_id}/lidar/cloud - Downsampled XYZI point cloud
 - strands/{peer_id}/hand/{name}/state - End-effector joints/force
 - strands/{peer_id}/map/info - Map metadata
 - strands/{peer_id}/safety/event - On-demand safety events
@@ -17,6 +18,7 @@ Topics published:
 
 from __future__ import annotations
 
+import base64
 import logging
 import math
 import os
@@ -35,6 +37,8 @@ from strands_robots.mesh.session import (
     HAND_HZ,
     HEALTH_HZ,
     IMU_HZ,
+    LIDAR_CLOUD_HZ,
+    LIDAR_CLOUD_MAX_POINTS,
     LIDAR_STATE_HZ,
     LIDAR_SUMMARY_HZ,
     MAP_INFO_HZ,
@@ -490,6 +494,116 @@ class SensorLoopsMixin:
         except Exception:  # noqa: BLE001
             pass
         return None
+
+    def _lidar_cloud_loop(self) -> None:
+        """Publish the downsampled point cloud on ``lidar/cloud``.
+
+        Its own loop rather than another branch of :meth:`_lidar_loop`, because
+        the two topics differ by three orders of magnitude in size: a summary is
+        a handful of scalars and a budgeted cloud is tens of kilobytes. Sharing
+        the summary's tick would either hold the cheap topic down to the
+        expensive one's rate or publish the expensive one at the cheap one's.
+
+        A robot that exposes no ``_lidar_cloud`` publishes nothing here, so the
+        loop costs one attribute read per tick on a platform without a lidar.
+        """
+        hz = _resolve_hz("STRANDS_MESH_LIDAR_CLOUD_HZ", LIDAR_CLOUD_HZ)
+        if hz <= 0:
+            return
+        for _ in self._paced(1.0 / hz):
+            try:
+                cloud = self._read_lidar_cloud()
+                if cloud:
+                    self.publish(f"strands/{self.peer_id}/lidar/cloud", cloud)
+            except NotImplementedError:
+                # MRO contract violation: surface immediately rather than
+                # silently dropping every sensor tick (issue #258).
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[mesh] %s: lidar cloud tick error: %s", self.peer_id, exc)
+
+    def _read_lidar_cloud(self) -> dict[str, Any] | None:
+        """Read ``robot._lidar_cloud`` and encode it for the wire.
+
+        The provider hands over an ``(N, 3)`` or ``(N, 4)`` array of XYZ or XYZI
+        rows -- a numpy array, a torch tensor or a list of sequences. Three
+        things happen to it here, and each is a decision the rest of the
+        pipeline cannot make later:
+
+        - **Rows that are not measurements are dropped.** A lidar reports a
+          non-return as a non-finite coordinate, and such a row is not a point
+          the viewer can place. Carrying it would also poison every reduction
+          taken over the buffer downstream, because a single NaN makes a min or
+          a max NaN.
+        - **The cloud is downsampled by STRIDE to**
+          :data:`~strands_robots.mesh.session.LIDAR_CLOUD_MAX_POINTS`. Not by
+          truncation: a sweep arrives in scan order, so keeping the first
+          ``max_points`` keeps one wedge of it. Measured on a modelled 24k-point
+          sweep, truncation covered 6 of 36 azimuth sectors (a 60-degree slice)
+          where a stride covered all 36.
+        - **It is encoded as little-endian float32 bytes, base64 in a JSON
+          envelope**, the shape the camera topic already uses for pixels
+          (:meth:`~strands_robots.mesh.core.Mesh._encode_and_publish_frames`).
+          Not one JSON number per component: measured on a 4000-point cloud,
+          the per-point spelling is 140,301 bytes against 85,410, and the
+          browser has to rebuild a typed array from it either way.
+
+        Returns:
+            The payload to publish, or ``None`` when the robot exposes no cloud,
+            when it exposes something that is not an ``(N, 3+)`` block of
+            numbers, or when no row in it is finite.
+        """
+        r = self.robot
+        try:
+            data = getattr(r, "_lidar_cloud", None)
+            if data is None:
+                return None
+
+            import numpy as np
+
+            points = np.asarray(data, dtype=np.float32)
+            if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 3:
+                logger.debug(
+                    "[mesh] %s: _lidar_cloud is not an (N, 3+) block: shape %s",
+                    self.peer_id,
+                    getattr(points, "shape", None),
+                )
+                return None
+
+            # XYZ plus intensity. A provider that reports position only gets a
+            # zero intensity column rather than a fabricated one, so a ramp
+            # drawn from it renders one flat colour instead of invented detail.
+            xyzi = points[:, :4] if points.shape[1] >= 4 else None
+            if xyzi is None:
+                xyzi = np.hstack([points[:, :3], np.zeros((points.shape[0], 1), dtype=np.float32)])
+
+            xyzi = xyzi[np.isfinite(xyzi).all(axis=1)]
+            if xyzi.shape[0] == 0:
+                logger.debug("[mesh] %s: _lidar_cloud carried no finite row", self.peer_id)
+                return None
+
+            raw_count = int(points.shape[0])
+            stride = max(1, -(-xyzi.shape[0] // LIDAR_CLOUD_MAX_POINTS))
+            xyzi = np.ascontiguousarray(xyzi[::stride][:LIDAR_CLOUD_MAX_POINTS], dtype="<f4")
+
+            return {
+                "peer_id": self.peer_id,
+                "t": time.time(),
+                # `n` is what the payload carries; `raw_count` is what the
+                # sensor produced, so a viewer can say "4000 of 24000" rather
+                # than presenting a downsample as the whole sweep.
+                "n": int(xyzi.shape[0]),
+                "raw_count": raw_count,
+                "stride": stride,
+                "encoding": "xyzi_f32le",
+                "data": base64.b64encode(xyzi.tobytes()).decode("ascii"),
+            }
+        except (ImportError, TypeError, ValueError) as exc:
+            # numpy absent, or a provider handed over something ragged or
+            # non-numeric. Reported rather than raised: one bad tick must not
+            # end the loop that would carry the next good one.
+            logger.debug("[mesh] %s: lidar cloud read failed: %s", self.peer_id, exc)
+            return None
 
     # Hand / End-Effector
 

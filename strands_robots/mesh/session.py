@@ -221,6 +221,23 @@ LIDAR_SUMMARY_HZ: float = 5.0
 #: LiDAR state publishing frequency (Hz).
 LIDAR_STATE_HZ: float = 1.0
 
+#: LiDAR point-cloud publishing frequency (Hz). Lower than the summary rate on
+#: purpose: a summary is a handful of scalars, while one budgeted cloud is tens
+#: of kilobytes, so the two cannot share a rate without the cloud setting the
+#: cost of the cheap topic.
+LIDAR_CLOUD_HZ: float = 5.0
+
+#: Points carried by one published cloud, at most.
+#:
+#: A MID-360 sweep is ~24k points and a full one is not a rate the mesh should
+#: carry to every viewer: at 16 bytes per XYZI point the raw sweep is ~384 kB,
+#: and this cap holds one message to ~64 kB of payload. The reader downsamples
+#: by STRIDE rather than by truncation to reach it -- measured on a modelled
+#: sweep, keeping the first 4000 of 24000 scan-ordered points leaves a
+#: 60-degree wedge (6 of 36 azimuth sectors), so a truncating budget would
+#: render one sixth of the robot's surroundings and label it the whole scene.
+LIDAR_CLOUD_MAX_POINTS: int = 4000
+
 #: Hand/end-effector state publishing frequency (Hz).
 HAND_HZ: float = 50.0
 

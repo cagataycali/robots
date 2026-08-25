@@ -26,6 +26,7 @@ from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge, silent_arms, stop_outcome
 from strands_robots.dashboard import lan_hint
 from strands_robots.dashboard.refusals import RefusalTally
+from strands_robots.mesh.session import LIDAR_CLOUD_HZ
 from strands_robots.dashboard.churn_guard import (
     ChurnGuard,
     effective_cap,
@@ -1879,6 +1880,103 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     verdict=verdict + cap_note(cap) + churn_note, suppressed=suppressed,
                 )
                 (logger.info if frames_sent else logger.warning)(line)
+
+    @app.websocket("/ws/lidar/{peer_id}")
+    async def ws_lidar(ws: WebSocket, peer_id: str) -> None:
+        """Push the latest point cloud for one peer as raw XYZI float32 bytes.
+
+        The camera socket's shape, for the camera socket's reasons: a cloud is
+        tens of kilobytes, so it is sent only when a NEWER one exists, the rate
+        is capped, and a viewer that reopens the socket repeatedly is throttled
+        by the same churn guard rather than by a second policy invented here.
+
+        What differs is the ceiling. A cloud is published at
+        :data:`~strands_robots.mesh.session.LIDAR_CLOUD_HZ` (5 Hz) and is ~16x a
+        JPEG tile, so pacing it at the camera's 15 fps would let one viewer ask
+        for three times the traffic the sensor can even produce. The default cap
+        here is the publish rate, and ``?max_fps=`` may only lower it.
+
+        Bytes and not JSON: the browser rebuilds a ``Float32Array`` over the
+        buffer with no per-point parse, and the counts that describe it already
+        arrived on ``/ws/mesh`` as the ``lidar_cloud`` frame.
+        """
+        await ws.accept()
+        bridge: MeshBridge = app.state.bridge
+        last_t: Any = None
+        clouds_sent = 0
+        bytes_sent = 0
+        started_at = time.monotonic()
+        churn = getattr(ws.app.state, "camera_churn", _CAMERA_CHURN).note_open(
+            viewer_identity(
+                subject=(
+                    hashlib.sha256(ws.query_params.get("token", "").encode()).hexdigest()[:12]
+                    if ws.query_params.get("token")
+                    else None
+                ),
+                host=ws.client.host if ws.client else None,
+                peer_id=peer_id,
+                # The identity is keyed per stream, and this viewer's lidar tile
+                # is not its camera tile: sharing the camera's slot would let
+                # one 3D tile spend the budget that throttles the other.
+                cam="lidar",
+            )
+        )
+        requested = fps_cap(ws.query_params.get("max_fps"))
+        cap = effective_cap(
+            LIDAR_CLOUD_HZ if requested is None else min(requested, LIDAR_CLOUD_HZ),
+            churn.cap_fps,
+        )
+        min_interval = None if cap is None else 1.0 / cap
+        if churn.reason:
+            # Say it on the tile rather than only in the log, for the reason the
+            # camera socket does: a silent throttle is indistinguishable from a
+            # sensor that stopped.
+            with contextlib.suppress(Exception):
+                await ws.send_text(json.dumps({
+                    "type": "lidar_error", "peer_id": peer_id,
+                    "error": churn.reason, "throttled": True,
+                }))
+        last_sent_at: float | None = None
+        idle = 1.0 / LIDAR_CLOUD_HZ
+        gone = asyncio.create_task(_client_gone(ws))
+        try:
+            while not gone.done():
+                if min_interval is not None and last_sent_at is not None:
+                    waited = time.monotonic() - last_sent_at
+                    if waited < min_interval:
+                        # Wait WITHOUT consuming the cloud: the newest one at the
+                        # end of the wait is what the viewer wants, not this one.
+                        await asyncio.sleep(min(min_interval - waited, idle))
+                        continue
+                cloud = bridge.latest_cloud(peer_id)
+                if cloud is not None and cloud.get("t") != last_t:
+                    last_t = cloud.get("t")
+                    payload = cloud.get("xyzi")
+                    if payload:
+                        await ws.send_bytes(payload)
+                        clouds_sent += 1
+                        bytes_sent += len(payload)
+                        last_sent_at = time.monotonic()
+                await asyncio.sleep(idle)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            gone.cancel()
+            log_now, suppressed = getattr(
+                ws.app.state, "camera_close_log", _CAMERA_CLOSE_LOG
+            ).should_log(f"{peer_id}/lidar")
+            if log_now:
+                verdict = close_verdict(
+                    frames_sent=clouds_sent,
+                    lifetime_s=time.monotonic() - started_at,
+                    publishing=bridge.latest_cloud(peer_id) is not None,
+                    bytes_sent=bytes_sent,
+                )
+                line = close_line(
+                    peer_id=peer_id, cam="lidar",
+                    verdict=verdict + cap_note(cap), suppressed=suppressed,
+                )
+                (logger.info if clouds_sent else logger.warning)(line)
 
     @app.websocket("/ws/chat")
     async def ws_chat(ws: WebSocket) -> None:
