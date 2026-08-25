@@ -30,8 +30,8 @@ from pathlib import Path
 
 import pytest
 
+import strands_robots.tools.use_rosbridge as ur
 from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
-from strands_robots.tools import use_rosbridge as ur
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.utils import tcp_port_error
 
