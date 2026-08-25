@@ -31,7 +31,12 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import dds_domain_id_error, finite_number_error, require_optional
+from strands_robots.utils import (
+    dds_domain_id_error,
+    finite_number_error,
+    positive_count_error,
+    require_optional,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -56,6 +61,72 @@ ROS2_SYSTEM_INSTALL_HINT = (
     "The [ros2] extra installs only the cyclonedds RMW binding; it does not "
     "provision ROS 2 by itself."
 )
+
+
+#: Largest KEEP_LAST history depth the rclpy transport can be built with. The
+#: depth reaches the middleware as the ``depth`` field of ``rmw_qos_profile_t``,
+#: whose pybind11 binding takes a signed 32-bit integer, so this is the last
+#: value that converts: one more raises ``TypeError: __init__(): incompatible
+#: constructor arguments`` out of ``create_publisher`` - a message naming
+#: neither the parameter nor the bridge. Measured against rclpy on ROS 2 Jazzy:
+#: ``2**31 - 1`` builds a publisher, ``2**31`` does not.
+MAX_QOS_HISTORY_DEPTH = 2**31 - 1
+
+
+def _qos_history_depth_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable KEEP_LAST history depth.
+
+    The depth is handed to ``create_publisher`` / ``create_subscription`` as the
+    ``qos_or_depth`` argument, which rclpy turns into
+    ``QoSProfile(depth=value, history=KEEP_LAST)``. It is the one bridge
+    parameter whose consumer is not reached from the constructor: the publishers
+    are built lazily, on the first ``publish_joint_states`` / ``publish_image``
+    for a robot, so an unusable depth is a construction that reports success and
+    a telemetry stream that fails - or silently is not the one asked for - later,
+    on the first frame.
+
+    Two failure modes, both measured against rclpy on ROS 2 Jazzy:
+
+    * ``0`` is **accepted**. rclpy warns "A zero depth with KEEP_LAST doesn't
+      make sense; no data could be stored. This will be interpreted as
+      SYSTEM_DEFAULT" and builds the publisher with the middleware default, so
+      the caller's declared depth is silently not the depth in force - and
+      ``warnings.warn`` shows once per location, so a second bridge in the same
+      process says nothing at all. ``False`` is that same value arriving by
+      another route, and ``True`` is a silent depth of 1 - one frame of history
+      on a stream the caller asked to buffer.
+    * every other spelling raises from *inside* rclpy, naming no parameter:
+      ``-1`` gives ``ValueError: history depth must be greater than or equal to
+      zero``, a float / ``str`` / ``None`` / ``nan`` / ``inf`` gives
+      ``TypeError: Expected QoSProfile or int``, and so does ``np.int64(10)``,
+      which names a perfectly good depth. Above
+      :data:`MAX_QOS_HISTORY_DEPTH` the pybind11 conversion fails instead.
+
+    So the floor, the ``bool`` refusal and the strict-``int`` requirement all
+    come from :func:`~strands_robots.utils.positive_count_error`, the shared
+    domain for a discrete count consumed directly by a C API rather than
+    coerced, and only the transport's ceiling is added here - beside the
+    transport that has it, in the manner of ``_transport_port_error`` in
+    :mod:`strands_robots.tools.use_rosbridge`.
+
+    Args:
+        value: The caller-supplied depth.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it - the
+            class name, for a constructor parameter.
+
+    Returns:
+        An error message, or ``None`` when the transport can carry the depth.
+    """
+    if error := positive_count_error(value, param, context):
+        return error
+    if value > MAX_QOS_HISTORY_DEPTH:
+        return (
+            f"{context}: {param} {value!r} is a positive integer that the rclpy transport "
+            f"cannot build a publisher with (it carries 1-{MAX_QOS_HISTORY_DEPTH}; the "
+            "middleware QoS profile stores the depth as a signed 32-bit integer)"
+        )
+    return None
 
 
 #: Env var an operator sets to explicitly run an INBOUND ``joint_command``
@@ -380,12 +451,18 @@ class RosTelemetryBridge(RosTelemetryBase):
             Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
             discovery ports from it, and 233 lands past the end of the port space.
         node_name: Name of the internal rclpy node.
-        qos_depth: Depth of the publishers' KEEP_LAST history.
+        qos_depth: Depth of the publishers' KEEP_LAST history. Only a
+            positive ``int`` up to ``MAX_QOS_HISTORY_DEPTH`` names a depth
+            the transport can build a publisher with; the publishers are
+            built on the first publish, so the value is checked here rather
+            than surfacing mid-run from inside rclpy.
 
     Raises:
-        ValueError: If ``domain_id`` is outside ``[0, 232]``. Checked before the
-            process-wide ``ROS_DOMAIN_ID`` write, so a refused domain leaves the
-            environment as it found it.
+        ValueError: If ``domain_id`` is outside ``[0, 232]``, or if
+            ``qos_depth`` is not a positive ``int`` no greater than
+            :data:`MAX_QOS_HISTORY_DEPTH`. Both are checked before the
+            process-wide ``ROS_DOMAIN_ID`` write, so a refused bridge leaves
+            the environment as it found it.
         ImportError: When ``rclpy`` / the ROS 2 message packages are not
             importable, with an install hint (system ROS 2 or the docker image).
     """
@@ -399,6 +476,18 @@ class RosTelemetryBridge(RosTelemetryBase):
         # unusable value would otherwise outlive this call and steer every later
         # participant - a value the transport is never given the chance to reject.
         if error := dds_domain_id_error(domain_id, "domain_id", type(self).__name__):
+            raise ValueError(error)
+
+        # Refuse a history depth no publisher can be built with, in the same
+        # place and for the same reasons as the domain above: it lands ahead of
+        # both the process-wide write and the rclpy probe, so the refusal leaves
+        # the environment as it found it and reports identically on an install
+        # with the [ros2] extra and one without it. Unlike every other parameter
+        # here, this one's consumer is not reached from the constructor - the
+        # publishers are built on the first publish - so leaving it to the
+        # transport means a bridge that reports success and then fails, or
+        # quietly buffers a depth the caller did not ask for, on the first frame.
+        if error := _qos_history_depth_error(qos_depth, "qos_depth", type(self).__name__):
             raise ValueError(error)
 
         # Pin the domain before rclpy reads it. Set it unconditionally so the

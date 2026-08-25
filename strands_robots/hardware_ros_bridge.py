@@ -73,7 +73,13 @@ class HardwareRosBridge(RosTelemetryBridge):
             Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
             discovery ports from it, and 233 lands past the end of the port space.
         node_name: Internal rclpy node name (defaults to ``strands_hardware``).
-        qos_depth: Depth of the publishers'/subscription's KEEP_LAST history.
+        qos_depth: Depth of the publishers'/subscription's KEEP_LAST
+            history. Only a positive ``int`` up to
+            :data:`~strands_robots.ros_telemetry.MAX_QOS_HISTORY_DEPTH`
+            names a depth the transport can build an endpoint with. A
+            publisher is built on the first publish rather than here, so an
+            unusable depth would otherwise be reported mid-run, from inside
+            rclpy and naming no parameter.
         enable_commands: When True (default) and a ``robot`` is bound, subscribe
             to ``/<robot>/joint_command`` and drive the arm. Set False for a
             read-only (telemetry-only) bridge. Only a boolean names a posture:
@@ -104,7 +110,8 @@ class HardwareRosBridge(RosTelemetryBridge):
 
     Raises:
         ValueError: If ``enable_commands`` is not a boolean, if ``domain_id`` is
-            outside ``[0, 232]``, if ``spin_period``
+            outside ``[0, 232]``, if ``qos_depth`` is not a positive ``int`` the
+            transport can carry, if ``spin_period``
             is not a positive finite number, or if ``joint_limits`` is not a
             ``{"<motor>.pos": (min, max)}`` mapping of finite numeric pairs with
             ``min <= max``.
