@@ -253,6 +253,15 @@ wider pose gaps (opposing poses eased over more frames), lower it toward 1 to
 keep segment boundaries crisp. It is bounded below at 1, matching the domain the
 sampler enforces on its own transition length.
 
+Every channel absorbs its share of the offset the same way, so easing changes
+where a segment starts and not how it moves. Root position and joint angles take
+one offset scaled by the frame's weight. The root's orientation takes the
+rotational form of exactly that: the offset is the rotation carrying the
+segment's own start orientation onto the pose last commanded, and each eased
+frame is its own orientation turned by the weighted share of it. A motion that
+turns therefore keeps its turn rate through the transition, and a seam whose
+orientations already agree leaves the root alone.
+
 Note the difference in kind from the sampler's native multi-prompt path: Kimodo
 conditions the *diffusion* of the next segment on the previous segment's last
 frames, so the generated motion itself leads into the transition. The agent

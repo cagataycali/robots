@@ -106,6 +106,41 @@ class KimodoMotionAgent(Protocol):
         ...
 
 
+#: Identity rotation, wxyz. The start of the arc a decaying orientation offset
+#: walks: at weight 0 the offset contributes nothing and a frame is emitted as
+#: the sampler produced it.
+_IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+
+def _quat_conjugate(q: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Conjugate of a wxyz quaternion, which inverts a unit rotation."""
+    return np.array([q[0], -q[1], -q[2], -q[3]], dtype=np.float32)
+
+
+def _quat_mul(a: NDArray[np.float32], b: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Hamilton product ``a * b`` of two wxyz quaternions.
+
+    Local for the same reason the MJCF loader and the Newton backend keep their
+    own copies: the two other wxyz products in the tree are private to
+    :mod:`strands_robots.simulation.isaac.loaders` and the LIBERO adapter, and
+    reaching across a package for a private symbol is worse than a four-line
+    product. The public one in
+    :mod:`strands_robots.policies.protomotions.state_utils` is xyzw, so using it
+    would mean reordering at both ends of every call.
+    """
+    aw, ax, ay, az = (float(a[0]), float(a[1]), float(a[2]), float(a[3]))
+    bw, bx, by, bz = (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+    return np.array(
+        [
+            aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+        ],
+        dtype=np.float32,
+    )
+
+
 def _slerp_quat(
     q0: NDArray[np.float32],
     q1: NDArray[np.float32],
@@ -166,6 +201,14 @@ def _ease_onto_previous_pose(
     ``previous_pose``: that would command zero motion for one frame, trading a
     position step for a velocity stall.
 
+    Every channel absorbs its offset the same way, which is what makes "the
+    motion keeps its own shape" true of the root's orientation as well as its
+    position: the correction a frame receives is decided by the weight alone.
+    Interpolating each frame's orientation toward ``previous_pose`` instead
+    would make the correction depend on the frame's own orientation, so a
+    motion that turns would have its turn rate reshaped by the ease -- and a
+    seam with no orientation offset to absorb would still be reshaped.
+
     Args:
         qpos: The freshly sampled ``(n, 7 + njoints)`` motion, native rate.
         previous_pose: The last commanded ``(7 + njoints,)`` qpos frame.
@@ -180,18 +223,26 @@ def _ease_onto_previous_pose(
     if count <= 0:
         return qpos
     out = qpos.copy()
-    # Root orientation interpolates on the quaternion arc; root position and
-    # joint angles are ordinary linear channels.
+    # Root position and joint angles are ordinary linear channels: a single
+    # offset, scaled by the weight, is added to each frame.
     linear = list(range(3)) + list(range(_NUM_ROOT_QPOS, qpos.shape[1]))
     offset = previous_pose[linear] - qpos[0, linear]
     q_prev = previous_pose[3:7]
     q_prev = q_prev / max(float(np.linalg.norm(q_prev)), 1e-8)
+    q_start = qpos[0, 3:7]
+    q_start = q_start / max(float(np.linalg.norm(q_start)), 1e-8)
+    # Root orientation is the rotational analogue: the offset is the world-frame
+    # rotation carrying the motion's own start orientation onto the pose last
+    # commanded, and it decays by pre-multiplication. Decaying THIS rather than
+    # dragging each frame toward ``q_prev`` is what keeps the correction a
+    # function of the weight alone, exactly as the additive offset above is.
+    q_offset = _quat_mul(q_prev, _quat_conjugate(q_start))
     for i in range(count):
         weight = 1.0 - (i + 1) / (count + 1)
         out[i, linear] = qpos[i, linear] + weight * offset
         q_i = qpos[i, 3:7]
         q_i = q_i / max(float(np.linalg.norm(q_i)), 1e-8)
-        out[i, 3:7] = _slerp_quat(q_i, q_prev, weight)
+        out[i, 3:7] = _quat_mul(_slerp_quat(_IDENTITY_QUAT, q_offset, weight), q_i)
     return out
 
 
