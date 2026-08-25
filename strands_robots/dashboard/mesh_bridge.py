@@ -273,6 +273,10 @@ COALESCE_HZ: dict[str, float] = {
     "imu": float(os.getenv("STRANDS_DASHBOARD_IMU_HZ", "1.0")),
     "odom": float(os.getenv("STRANDS_DASHBOARD_ODOM_HZ", "1.0")),
     "lidar": float(os.getenv("STRANDS_DASHBOARD_LIDAR_HZ", "1.0")),
+    # The cloud's own notification carries no points, only how many arrived, so
+    # it is rated like the summary rather than like a camera frame: a stationary
+    # robot re-sending an identical count says nothing new.
+    "lidar_cloud": float(os.getenv("STRANDS_DASHBOARD_LIDAR_CLOUD_HZ", "1.0")),
     # Health already publishes at 0.5 Hz upstream; the floor matches it rather
     # than inventing a slower one.
     "health": float(os.getenv("STRANDS_DASHBOARD_HEALTH_HZ", "0.5")),
@@ -361,6 +365,13 @@ class MeshBridge:
         # Latest camera frames: (peer_id, cam) -> {"t": float, "jpeg": bytes, "shape": [...]}
         self.frames: dict[tuple[str, str], dict[str, Any]] = {}
         self._frames_lock = threading.Lock()
+
+        # Latest point cloud per peer: peer_id -> {"t", "n", "raw_count", "xyzi": bytes}.
+        # Kept out of `peers` for the reason the frames are: an operator's peer
+        # snapshot is serialised to JSON for every /ws/mesh viewer, and tens of
+        # kilobytes of geometry per peer would be re-encoded on every snapshot.
+        self.clouds: dict[str, dict[str, Any]] = {}
+        self._clouds_lock = threading.Lock()
 
         # Async fan-out. Subscribers get JSON-able event dicts.
         self._queues: set[asyncio.Queue] = set()
@@ -543,6 +554,8 @@ class MeshBridge:
             self.peers.clear()
         with self._frames_lock:
             self.frames.clear()
+        with self._clouds_lock:
+            self.clouds.clear()
         ok = self.start(loop)
         self.record_activity("mesh", "restart", detail=self._endpoints, ok=ok)
         self._emit({"type": "mesh_reconfigured", "ok": ok, "mesh": self.mesh_info()})
@@ -749,27 +762,101 @@ class MeshBridge:
             return
         self._emit({"type": "odom", "peer_id": peer_id, "data": data})
 
-    def _on_lidar(self, sample: Any) -> None:
-        """One type, two documents: ``lidar/summary`` and ``lidar/state``.
+    #: Leaf of ``strands/*/lidar/**`` -> the ``lidar`` document it is filed as.
+    #:
+    #: A TABLE and not a default, because the default used to be ``summary``:
+    #: every leaf that was not ``state`` was filed as the summary, so the first
+    #: sub-topic added to this namespace overwrote the operator's scalar chip
+    #: with its own payload and reported the result under the summary's name.
+    #: Measured before this table existed, one ``lidar/cloud`` publish left
+    #: ``lidar["summary"]["count"]`` and ``["bbox"]`` reading ``None``.
+    _LIDAR_DOCUMENTS = ("summary", "state")
 
-        They are kept apart under ``lidar`` rather than filed on one key,
-        because a summary landing on top of a state (or the reverse) would show
-        an operator a field the other document never carried.
+    def _on_lidar(self, sample: Any) -> None:
+        """Route one ``lidar/**`` sample to the reader that understands it.
+
+        Three leaves live under this one subscription. ``summary`` and ``state``
+        are scalar documents kept apart under ``lidar`` -- because a summary
+        landing on top of a state (or the reverse) would show an operator a
+        field the other document never carried -- and ``cloud`` is geometry,
+        which goes to :meth:`_ingest_cloud` and never into the peer snapshot.
+
+        A leaf this dashboard does not know is DROPPED with a log line. Filing
+        it under a document name it does not belong to is the one outcome that
+        cannot be noticed: it does not look like missing data, it looks like
+        wrong data attributed to a topic that was working.
         """
+        key = str(getattr(sample, "key_expr", ""))
+        leaf = key.rsplit("/", 1)[-1]
+        if leaf == "cloud":
+            self._ingest_cloud(sample)
+            return
+        if leaf not in self._LIDAR_DOCUMENTS:
+            logger.debug(
+                "MeshBridge: no reader for lidar leaf %r (%s); known: %s",
+                leaf, key, ", ".join(self._LIDAR_DOCUMENTS),
+            )
+            return
         data = self._decode(sample)
         if not data:
             return
         peer_id = data.get("peer_id")
         if not isinstance(peer_id, str):
             return
-        key = str(getattr(sample, "key_expr", ""))
-        kind = "state" if key.endswith("/state") else "summary"
         entry = self._touch_peer(peer_id)
         with self._peers_lock:
             lidar = dict(entry.get("lidar") or {})
-            lidar[kind] = data
+            lidar[leaf] = data
             entry["lidar"] = lidar
-        self._emit({"type": "lidar", "kind": kind, "peer_id": peer_id, "data": data})
+        self._emit({"type": "lidar", "kind": leaf, "peer_id": peer_id, "data": data})
+
+    def _ingest_cloud(self, sample: Any) -> None:
+        """Keep the latest point cloud for one peer and announce its arrival.
+
+        Mirrors :meth:`_on_camera` deliberately: the bytes are decoded once and
+        held in :attr:`clouds`, and what goes out on ``/ws/mesh`` is a
+        notification carrying the counts and NOT the points. The geometry is
+        served per-viewer on ``/ws/lidar/{peer_id}`` instead, so a fleet page
+        with no 3D tile open pays nothing for a peer that is publishing one.
+        """
+        data = self._decode(sample)
+        if not data:
+            return
+        peer_id = data.get("peer_id")
+        encoded = data.get("data")
+        if not (isinstance(peer_id, str) and isinstance(encoded, str)):
+            return
+        import base64
+
+        try:
+            # validate=True, so a payload with characters outside the alphabet is refused rather
+            # than silently stripped of them: lenient decoding of a corrupted 24-character
+            # encoding still yields 16 bytes, which the whole-points check below cannot see.
+            raw = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            logger.debug("MeshBridge: %s sent a lidar cloud that is not base64", peer_id)
+            return
+        # Four float32 per point. A payload that is not a whole number of points
+        # is refused rather than rounded down: a truncated buffer would render
+        # as points at coordinates assembled from two different rows.
+        if len(raw) % 16 != 0:
+            logger.debug(
+                "MeshBridge: %s sent %d cloud bytes, not a multiple of 16 (xyzi float32)",
+                peer_id, len(raw),
+            )
+            return
+        meta: dict[str, Any] = {
+            "t": data.get("t"),
+            "n": len(raw) // 16,
+            "raw_count": data.get("raw_count"),
+            "stride": data.get("stride"),
+            "encoding": data.get("encoding"),
+            "bytes": len(raw),
+        }
+        with self._clouds_lock:
+            self.clouds[peer_id] = {"xyzi": raw, **meta}
+        self._touch_peer(peer_id)
+        self._emit({"type": "lidar_cloud", "peer_id": peer_id, "data": meta})
 
     def _on_safety(self, sample: Any) -> None:
         data = self._decode(sample)
@@ -1055,3 +1142,8 @@ class MeshBridge:
     def latest_frame(self, peer_id: str, cam: str) -> dict[str, Any] | None:
         with self._frames_lock:
             return self.frames.get((peer_id, cam))
+
+    def latest_cloud(self, peer_id: str) -> dict[str, Any] | None:
+        """The most recent point cloud from *peer_id*, or ``None``."""
+        with self._clouds_lock:
+            return self.clouds.get(peer_id)

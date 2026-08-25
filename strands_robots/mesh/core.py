@@ -894,6 +894,7 @@ class Mesh(SensorLoopsMixin):
                 ("imu", self._imu_loop),
                 ("odom", self._odom_loop),
                 ("lidar", self._lidar_loop),
+                ("lidar-cloud", self._lidar_cloud_loop),
                 ("hand", self._hand_loop),
                 ("map-info", self._map_info_loop),
             ]
@@ -1075,8 +1076,18 @@ class Mesh(SensorLoopsMixin):
                 available_topics.append("imu")
             if getattr(r, "_odom", None) is not None:
                 available_topics.append("odom")
-            if getattr(r, "_lidar_summary", None) is not None or getattr(r, "_lidar_state", None) is not None:
+            has_lidar_cloud = getattr(r, "_lidar_cloud", None) is not None
+            if (
+                getattr(r, "_lidar_summary", None) is not None
+                or getattr(r, "_lidar_state", None) is not None
+                or has_lidar_cloud
+            ):
                 available_topics.append("lidar")
+            if has_lidar_cloud:
+                # Named apart from "lidar" because it answers a different
+                # question: "lidar" says a scalar chip can be drawn, this says
+                # the geometry itself is on the wire.
+                available_topics.append("lidar_cloud")
             if getattr(r, "_battery", None) is not None:
                 available_topics.append("health")
             if getattr(r, "_hands", None) is not None:
