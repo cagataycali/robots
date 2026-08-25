@@ -114,9 +114,12 @@ An explicit `-e VERA_…` always overrides the auto-wiring.
   proven mimicgen IDM (`37oa162u`) and the omni default (`x21o0cwe`) resolve
   locally; an unknown run id transparently falls back to wandb. A
   `provenance.json` the scan cannot read as a run record - it does not parse,
-  does not hold a JSON object, or carries a non-string `wandb_run` - is skipped
-  and named in a warning, so one malformed record among the mounted checkpoints
-  never costs the healthy ones.
+  does not hold a JSON object, or carries a non-string `wandb_run` - is skipped,
+  so one malformed record among the mounted checkpoints never costs the healthy
+  ones. A record that carried something unusable is named in a warning with the
+  offending type; one that carries no run to index (`wandb_run` absent, null,
+  empty or otherwise falsy) is skipped silently, since that is the ordinary case
+  for every artifact not loaded by run id.
 - The container only **serves** actions; the host runs the sim. The heavy
   `eval` extra (robosuite/mimicgen) is therefore **not** installed by default
   (build with `--build-arg VERA_WITH_EVAL=1` to bundle it).
