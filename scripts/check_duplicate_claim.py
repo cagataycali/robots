@@ -426,7 +426,9 @@ class AdditionVerdict:
                 f"No two of the {self.scanned} open pull requests create the same file "
                 f"({self.compared} pair(s) compared)."
             )
-        parts = "; ".join(f"{_pulls((left, right))} both create {_paths(paths)}" for left, right, paths in self.collisions)
+        parts = "; ".join(
+            f"{_pulls((left, right))} both create {_paths(paths)}" for left, right, paths in self.collisions
+        )
         return (
             f"{parts}. Two branches creating one file are two answers to one question rather "
             "than a composition to verify, and whichever is closed spends a review approval on a "
@@ -598,9 +600,7 @@ def added_paths(pull: Mapping[str, object]) -> tuple[str, ...]:
     nodes = files.get("nodes") or []
     total = files.get("totalCount")
     if isinstance(total, int) and total > len(nodes):
-        raise ClaimSetUnreadable(
-            f"#{pull.get('number')}'s file list is truncated ({total} files, {len(nodes)} read)."
-        )
+        raise ClaimSetUnreadable(f"#{pull.get('number')}'s file list is truncated ({total} files, {len(nodes)} read).")
     return tuple(
         sorted(
             {

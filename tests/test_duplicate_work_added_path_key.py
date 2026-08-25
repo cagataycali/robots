@@ -60,12 +60,18 @@ def _load() -> Any:
 check = _load()
 
 
+#: One fixture row: ``(label, {number: added paths}, the path both create)``.
+_ClaimFreePair = tuple[str, dict[int, tuple[str, ...]], str]
+
+#: One row of the other key: ``(left, right, the issue both claim, added paths)``.
+_IssueKeyedPair = tuple[int, int, int, dict[int, tuple[str, ...]]]
+
 #: The two duplicate pairs in #2345..#2708 that claimed no issue, as
 #: ``(label, {number: added paths}, the path both create)``. Every path is the
 #: real one the pull request added; the changelog fragment is carried too,
 #: because it is the one added path that never collides -- its name embeds the
 #: pull request number -- and a fixture without it would not show that.
-_CLAIM_FREE_PAIRS = [
+_CLAIM_FREE_PAIRS: list[_ClaimFreePair] = [
     (
         "#2388/#2389 - un-count frames a discarded episode never wrote",
         {
@@ -96,7 +102,7 @@ _CLAIM_FREE_PAIRS = [
 #: The two duplicate pairs in the same window that *were* reachable from a claim,
 #: as ``(left, right, the issue both claim, each side's added paths)``. Their
 #: added-path sets are disjoint, which is what makes the two keys complementary.
-_ISSUE_KEYED_PAIRS = [
+_ISSUE_KEYED_PAIRS: list[_IssueKeyedPair] = [
     (
         2570,
         2571,
@@ -147,9 +153,7 @@ class TestTheMeasuredClaimFreePairsAreReported:
         assert check.classify_additions(additions).collisions == ((left, right, (shared,)),)
 
     @pytest.mark.parametrize(("label", "additions", "shared"), _CLAIM_FREE_PAIRS, ids=lambda value: str(value)[:40])
-    def test_both_pull_requests_are_named(
-        self, label: str, additions: dict[int, tuple[str, ...]], shared: str
-    ) -> None:
+    def test_both_pull_requests_are_named(self, label: str, additions: dict[int, tuple[str, ...]], shared: str) -> None:
         summary = check.classify_additions(additions).summary
         for number in additions:
             assert f"#{number}" in summary
@@ -260,9 +264,7 @@ class TestEveryPairIsComparedAndTheReportIsStable:
             99: ("tests/test_b.py", "tests/test_a.py"),
             11: ("tests/test_b.py", "tests/test_a.py"),
         }
-        assert check.find_addition_collisions(additions) == (
-            (11, 99, ("tests/test_a.py", "tests/test_b.py")),
-        )
+        assert check.find_addition_collisions(additions) == ((11, 99, ("tests/test_a.py", "tests/test_b.py")),)
 
     def test_three_branches_creating_one_file_report_all_three_pairs(self) -> None:
         additions = {n: ("tests/test_a.py",) for n in (11, 12, 13)}
@@ -315,9 +317,7 @@ class TestAnIncompleteAnswerIsNotAFinding:
     def test_a_page_without_a_cursor_is_unreadable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payload = {
             "data": {
-                "repository": {
-                    "pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": None}, "nodes": []}
-                }
+                "repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": None}, "nodes": []}}
             }
         }
         monkeypatch.setattr(check, "_post", lambda *a, **k: payload)
@@ -327,9 +327,7 @@ class TestAnIncompleteAnswerIsNotAFinding:
     def test_a_list_longer_than_the_page_bound_is_unreadable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payload = {
             "data": {
-                "repository": {
-                    "pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "next"}, "nodes": []}
-                }
+                "repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "next"}, "nodes": []}}
             }
         }
         monkeypatch.setattr(check, "_post", lambda *a, **k: payload)
