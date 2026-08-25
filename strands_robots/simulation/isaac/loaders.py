@@ -446,6 +446,19 @@ _MJCF_JOINT_TYPE_MAP = {
     "free": "fixed",
 }
 
+# MJCF spells a free joint two ways, and MuJoCo compiles both to the same
+# ``mjJNT_FREE``: ``<joint type="free">`` and the dedicated ``<freejoint>``
+# element. A reader that consults only the first reports no joint at all for a
+# floating base, which is how every quadruped and humanoid in the shipped asset
+# corpus declares its root. Both tags are read here so the two spellings of one
+# model produce one report.
+_MJCF_JOINT_TAGS = ("joint", "freejoint")
+
+# The tag whose type MJCF fixes rather than declaring: ``<freejoint>`` accepts
+# only ``name``, ``group`` and ``align`` - MuJoCo refuses ``type`` on it - and
+# MJCF has no ``<default><freejoint>`` block, so it resolves no default class.
+_MJCF_FREEJOINT_TAG = "freejoint"
+
 
 def load_mjcf(path: str) -> ProceduralRobot:
     """Load an MJCF file and return a :class:`ProceduralRobot`.
@@ -453,9 +466,10 @@ def load_mjcf(path: str) -> ProceduralRobot:
     Parses MuJoCo's MJCF format with stdlib
     :mod:`xml.etree.ElementTree`. Walks ``<worldbody>`` / nested ``<body>``
     elements depth-first to assign body indices in tree order, then emits a
-    :class:`JointDef` for each ``<joint>`` connecting that body to its
-    parent. Useful for LIBERO scenes (the matrix's main consumer ships
-    MJCF).
+    :class:`JointDef` for each joint connecting that body to its parent -
+    ``<joint>`` and the dedicated ``<freejoint>``, MJCF's two spellings of a
+    free joint, which MuJoCo compiles to the same joint. Useful for LIBERO
+    scenes (the matrix's main consumer ships MJCF).
 
     Each body's pose is reported in its parent's frame, as MJCF declares it:
     ``position`` from ``pos``, and ``orientation`` from whichever of MJCF's five
@@ -557,16 +571,28 @@ def load_mjcf(path: str) -> ProceduralRobot:
         )
         body_idx = len(bodies) - 1
 
-        # Each <joint> child connects this body to its parent.
-        for joint_el in body_el.findall("joint"):
-            # A joint's own attributes, with its default class's underneath: a
-            # class may declare ``type``, ``axis``, ``range``, ``damping`` and
-            # ``armature``, so a joint that spells none of them still has all
-            # five. ``name`` stays an attribute of the element - a class names a
-            # kind of joint, never an instance of one.
-            jattrs = _class_attrs(joint_el, joint_defaults, childclass)
+        # Each joint-bearing child connects this body to its parent, in
+        # document order. MuJoCo refuses a free joint beside any other joint on
+        # one body ("more than 6 dofs in body"), so a body carrying a
+        # <freejoint> carries nothing else and the order is never ambiguous.
+        for joint_el in (child for child in body_el if child.tag in _MJCF_JOINT_TAGS):
+            if joint_el.tag == _MJCF_FREEJOINT_TAG:
+                # <freejoint> declares no type, axis, range, damping or
+                # armature, and MJCF has no <default><freejoint> block, so it
+                # resolves no class: MuJoCo gives such a joint the built-in
+                # values even where a <default><joint> class is in force. Its
+                # own attributes are therefore all it has.
+                jattrs: dict[str, str] = {}
+                mjcf_type = "free"
+            else:
+                # A joint's own attributes, with its default class's underneath:
+                # a class may declare ``type``, ``axis``, ``range``, ``damping``
+                # and ``armature``, so a joint that spells none of them still
+                # has all five. ``name`` stays an attribute of the element - a
+                # class names a kind of joint, never an instance of one.
+                jattrs = _class_attrs(joint_el, joint_defaults, childclass)
+                mjcf_type = jattrs.get("type", "hinge")
             jname = joint_el.get("name") or f"{body_name}_joint_{len(joints)}"
-            mjcf_type = jattrs.get("type", "hinge")
             jtype = _MJCF_JOINT_TYPE_MAP.get(mjcf_type)
             if jtype is None:
                 raise ValueError(

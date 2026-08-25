@@ -836,6 +836,7 @@ class LerobotTrainer(Trainer):
             problems.extend(self._validate_policy(spec))
 
         problems.extend(self._run_size_problems(spec))
+        problems.extend(self._checkpoint_cadence_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
         problems.extend(self._seed_problems(spec))
         problems.extend(self._device_problems())

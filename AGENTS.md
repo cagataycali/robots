@@ -268,6 +268,33 @@ hatch run format            # ruff check --fix, ruff format
    is why it belongs at step 1 and not at review. If a competing implementation is
    wanted on purpose, exactly one should claim the close and the other should
    cross-reference (`per #N`, `towards #N`) instead.
+
+   **The claim is not the only key.** 249 of the last 300 pull requests (#2345
+   through #2708) link no issue at all, so for most of the traffic the query above
+   has nothing to collide on - and two of the four duplicate pairs in that window
+   were claim-free: #2388/#2389 and #2707/#2708, each pair independently creating
+   one new test file. Once your branch is pushed and the pull request is open, ask
+   the second question:
+
+   ```
+   python3 scripts/check_duplicate_claim.py --repo strands-labs/robots --all-open
+   ```
+
+   It reports only pairs that **create the same path**, which over the 1802 pairs
+   that were open at the same instant selected 2 - and both were duplicates. Two
+   branches *editing* one file is a different question with a different remedy
+   (a merge order, possibly one composition run), and
+   `scripts/check_merge_base_overlap.py --all-open` owns it; that relation selects
+   117 of the same 1802. The two keys are complementary rather than nested: neither
+   issue-keyed pair shares an added path, and neither claim-free pair claims an
+   issue.
+
+   This one cannot be asked before you start, and not for want of trying: a path
+   set is a property of a pushed branch, so there is nothing to read at intake. It
+   caps the review cost of a collision rather than preventing the work, which is
+   why it belongs here and `--issue` belongs above. It still arrives early enough
+   to matter - both claim-free pairs opened inside the same ~35-minute window every
+   other observed collision shares, 14m 41s and 29m 26s apart.
 2. Make changes, run `hatch run format && hatch run lint && hatch run test`
 3. Record the change as a news fragment: `changelog.d/<pr-number>-<slug>.md`
    (see [`changelog.d/README.md`](changelog.d/README.md)). **Never append to

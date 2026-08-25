@@ -154,6 +154,7 @@ class Gr00tTrainer(Trainer):
                 f"use tune={{...}} for fine-grained control"
             )
         problems.extend(self._run_size_problems(spec))
+        problems.extend(self._checkpoint_cadence_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
         # Captured rather than extended blind: the multi-node refusal below
         # compares num_nodes, which is only a meaningful comparison once this

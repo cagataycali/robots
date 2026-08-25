@@ -105,7 +105,20 @@ class TrainSpec:
             without updating a weight and ``inf`` writes a checkpoint of
             ``NaN``, neither of which any backend can report, so both are
             refused by :meth:`Trainer.validate` before a run starts.
-        save_freq: Checkpoint cadence in steps.
+        save_freq: Checkpoint cadence in steps (lerobot ``--save_freq`` /
+            ``cfg.save_freq``, GR00T ``--save_steps``, Cosmos
+            ``checkpoint.save_iter``). A whole number: it is consumed as the
+            modulus of a ``step % save_freq`` test, so ``True`` is a cadence of
+            one that checkpoints every step, a fractional or non-finite value
+            never satisfies the test and silently disables periodic saving, and
+            a string raises out of the comparison inside the training loop -
+            none of which any backend reports, which is why a backend that
+            reads it MUST check it through
+            :meth:`Trainer._checkpoint_cadence_problems` rather than forward it.
+            A non-positive value is a capability rather than an unusable one: it
+            disables periodic saving so only the final checkpoint is written
+            (lerobot's ``should_save_checkpoint``), and the backends' own
+            ``eval_steps`` fallback is written for that case.
         num_gpus: GPUs on this node. ``>1`` runs the backend under torch's
             in-process ``elastic_launch`` (the engine behind ``torchrun``).
             A positive integer; a non-positive, fractional, non-finite or
@@ -409,6 +422,36 @@ class Trainer(ABC):
         from strands_robots.training._validate import seed_problems
 
         return seed_problems(spec, context=self.provider_name)
+
+    def _checkpoint_cadence_problems(self, spec: TrainSpec) -> list[str]:
+        """Checkpoint-cadence preflight shared by every backend that reads it.
+
+        Returns a problem when :attr:`TrainSpec.save_freq` is not a whole number
+        of steps, against the one shared step-cadence domain the
+        ``lerobot_train`` tool holds the same field to. A :meth:`validate`
+        implementation that reads the field MUST call this rather than forward
+        the value: every destination requires a genuine ``int`` and none of them
+        says so. LeRobot in-process hands it straight to lerobot's
+        ``should_save_checkpoint`` (``save_freq > 0 and step % save_freq == 0``),
+        where ``True`` is a modulus of one and checkpoints every step while a
+        fractional or non-finite cadence silently becomes the *disabled* mode
+        and a string raises ``TypeError`` from inside the training loop; the
+        argv, Hydra and hyperparameter routes each fail differently, or not at
+        all, after the run has started. Only the type is graded - a non-positive
+        cadence is the documented "disable periodic saving" mode.
+
+        A backend that does not read the field MUST NOT call this: per
+        :class:`TrainSpec`, a backend ignores the fields it does not support, so
+        reporting on one it never reads would be a false rejection. That is why
+        this is a separate gate from :meth:`_learning_rate_problems`, which
+        every backend does call.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import checkpoint_cadence_problems
+
+        return checkpoint_cadence_problems(spec, context=self.provider_name)
 
     def _validation_episodes_problems(self, spec: TrainSpec) -> list[str]:
         """Held-out-validation preflight shared by every backend that reads it.

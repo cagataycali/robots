@@ -100,10 +100,18 @@ _NAMES_REPOSITORY: dict[str, tuple[str, str | None]] = {
 
 
 def _documented_intake_argv(issue: int) -> list[str]:
-    """Return the intake command step 1 prints, as an ``argv`` list."""
+    """Return the intake command step 1 prints, as an ``argv`` list.
+
+    Selected by ``--issue`` rather than by being the only invocation. Step 1
+    documents two commands since the added-path key landed, and the one this
+    helper's caller is about is the claim-keyed intake question; asserting
+    uniqueness would fail on the sibling command instead of on a shortened intake
+    one, which is the failure it exists to produce.
+    """
     found = re.findall(r"python3 scripts/check_duplicate_claim\.py([^\n`]*)", _AGENTS.read_text(encoding="utf-8"))
-    assert len(found) == 1, found
-    return [part.replace("<N>", str(issue)) for part in found[0].split()]
+    intake = [argv for argv in found if "--issue" in argv]
+    assert len(intake) == 1, found
+    return [part.replace("<N>", str(issue)) for part in intake[0].split()]
 
 
 def _documented_check_invocations() -> list[tuple[str, str]]:

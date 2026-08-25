@@ -31,6 +31,7 @@ from strands.types.tools import ToolContext
 from strands_robots.tools._hitl_audit import log_operator_response
 from strands_robots.utils import (
     positive_count_error,
+    step_cadence_error,
     validation_split_error,
     validation_split_fraction,
 )
@@ -431,20 +432,19 @@ def _save_freq_error(value: Any) -> str | None:
 
     lerobot declares the field as a plain ``int``, so its parser decodes the
     token with ``int(...)`` and refuses every other spelling of the number -
-    ``2.7`` and ``5000.0`` alike, and ``True``/``inf``/``nan`` as written. The
-    admitted domain is therefore a true ``int``, matching
-    :func:`~strands_robots.utils.positive_count_error`, which the two run-size
-    knobs in the same argv already hold to a genuine ``int`` for the same
-    decoding reason. ``bool`` is refused explicitly: it is an ``int`` subclass,
-    so a type test alone would admit ``True`` - which renders as the token
-    ``True`` and is not decodable either.
+    ``2.7`` and ``5000.0`` alike, and ``True``/``inf``/``nan`` as written. That
+    is the same requirement :class:`~strands_robots.training.base.TrainSpec`'s
+    ``save_freq`` carries into the trainer backends, which reach the identical
+    lerobot field in-process, so the domain itself belongs to neither surface:
+    this delegates to :func:`~strands_robots.utils.step_cadence_error`, the one
+    owner both consult, rather than carrying a second copy of the rule. What
+    stays here is the reason the check happens *at this point in this tool* -
+    the detached argv above.
 
-    **The floor is deliberately not part of this domain.** lerobot documents a
-    non-positive ``save_freq`` as "disables periodic saving" and
-    ``should_save_checkpoint`` implements it (``save_freq > 0 and step %
-    save_freq == 0``), so ``0`` and a negative are a capability rather than an
-    unusable value, and the ``--eval_steps=`` fallback beside this guard is
-    written for exactly that case. Only the *type* is graded here.
+    Only the *type* is graded, and the shared owner says why: lerobot documents a
+    non-positive ``save_freq`` as "disables periodic saving", so ``0`` and a
+    negative are a capability, and the ``--eval_steps=`` fallback beside this
+    guard is written for exactly that case.
 
     Args:
         value: The caller-supplied checkpoint cadence. ``None`` never reaches
@@ -454,14 +454,7 @@ def _save_freq_error(value: Any) -> str | None:
         An error message naming the tool and the parameter, or ``None`` when the
         value is a cadence lerobot can decode.
     """
-    if isinstance(value, bool) or not isinstance(value, int):
-        return (
-            f"lerobot_train: save_freq must be an integer number of steps, got {value!r}. "
-            "lerobot decodes the flag into an int field, so a fractional, non-finite, "
-            "boolean or non-numeric cadence cannot be honored; pass a whole number of "
-            "steps, or a non-positive one to disable periodic saving."
-        )
-    return None
+    return step_cadence_error(value, "save_freq", "lerobot_train")
 
 
 def build_train_command(
