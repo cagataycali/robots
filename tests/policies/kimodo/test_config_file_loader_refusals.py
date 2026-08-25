@@ -62,6 +62,14 @@ _NON_OBJECT_PAYLOADS = (
     ("null", "null", "NoneType"),
 )
 
+# A misspelled knob, held as a mapping so the two cases below can unpack it.
+# Spelling it as a literal keyword argument is itself a static type error
+# ("Unexpected keyword argument ... did you mean"), so a type checker rejects
+# the call before it runs and the runtime refusal these two grade never gets
+# measured. Unpacking keeps the call a runtime construct, which is the layer
+# the documented ``TypeError`` belongs to.
+_MISSPELLED_KNOB: dict[str, Any] = {"diffusion_stpes": 25}
+
 
 def _config_modules() -> list[Any]:
     """Import every ``strands_robots/policies/*/config.py`` module."""
@@ -334,13 +342,13 @@ class TestEachConstructionFormHandlesAMisspelledKnobAsDocumented:
         from strands_robots.policies.kimodo import KimodoPolicy
 
         with pytest.raises(TypeError, match="diffusion_stpes"):
-            KimodoPolicy(diffusion_stpes=25)
+            KimodoPolicy(**_MISSPELLED_KNOB)
 
     def test_a_misspelled_keyword_on_the_config_is_refused(self) -> None:
         from strands_robots.policies.kimodo import KimodoConfig
 
         with pytest.raises(TypeError, match="diffusion_stpes"):
-            KimodoConfig(diffusion_stpes=25)
+            KimodoConfig(**_MISSPELLED_KNOB)
 
     def test_a_misspelled_key_in_a_config_dict_is_dropped_for_the_default(self) -> None:
         from strands_robots.policies.kimodo import KimodoPolicy
