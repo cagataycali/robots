@@ -38,6 +38,7 @@ from tests.training._spec_field_reads import reads_spec_field
 # backend may skip it, so its guard scans Trainer subclasses rather than field
 # reads and needs no notion of "reads the field" at all.
 FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
+    "_checkpoint_cadence_problems": ("save_freq",),
     "_seed_problems": ("seed",),
     "_validation_episodes_problems": ("val_episodes",),
     "_lora_hyperparameter_problems": ("lora_r", "lora_alpha"),
@@ -85,6 +86,7 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
     def test_the_scan_finds_the_field_scoped_guards(self) -> None:
         """Non-vacuity: a scan that matched nothing would grade nothing."""
         assert set(_guard_modules()) == {
+            "test_checkpoint_cadence_domain.py",
             "test_launch_topology_domain.py",
             "test_lora_hyperparameter_domain.py",
             "test_seed_domain.py",

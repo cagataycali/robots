@@ -1190,6 +1190,61 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
     return None
 
 
+def step_cadence_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable cadence in training steps.
+
+    Shared domain for a periodic-action interval a training run is paced by -
+    :attr:`~strands_robots.training.base.TrainSpec.save_freq`, the checkpoint
+    cadence every post-tuning backend forwards to its own trainer. A cadence is
+    consumed as the modulus of a ``step % cadence`` test, so only a true ``int``
+    can be honored, and its callers sit in different layers (the
+    ``lerobot_train`` tool builds an argv token from one; the
+    :class:`~strands_robots.training.base.Trainer` backends assign one into a
+    typed config, a Hydra override, or a serialized hyperparameter), which is
+    why the domain lives here rather than beside one of them: the same cadence
+    cannot be refused by the tool and accepted by the trainer that wraps the
+    identical pipeline.
+
+    **A non-positive cadence is a capability, not an unusable value, so this
+    domain has no floor.** LeRobot documents it and implements it -
+    ``should_save_checkpoint`` is ``(save_freq > 0 and step % save_freq == 0) or
+    step == total_steps``, whose docstring reads "a non-positive ``save_freq``
+    disables periodic saving (only the final checkpoint is written)". ``0`` and a
+    negative therefore select a mode, exactly as they do for
+    :func:`non_negative_count_error`'s ``min_frames``, and only the *type* is
+    graded here. That also makes this a distinct domain from
+    :func:`positive_count_error` and :func:`non_negative_count_error`, which
+    share this type rule but each impose a floor the mode would trip.
+
+    Every other spelling of the number is unusable, and in a way no consumer
+    reports: a ``float`` passes the ``> 0`` test and then never satisfies
+    ``step % cadence == 0`` for an integral step, so a fractional cadence
+    silently becomes the disabled mode; a non-finite one does the same; a ``str``
+    raises ``TypeError`` out of the comparison itself, inside the training loop;
+    and ``bool`` is refused explicitly because as an ``int`` subclass it passes a
+    bare type test while ``True`` is a modulus of one - a full checkpoint every
+    single step.
+
+    Args:
+        value: The caller-supplied cadence.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it - the
+            public method name, the tool name, or a backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`.
+
+    Returns:
+        An error message, or ``None`` when the value is a usable cadence.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return (
+            f"{context}: {param} must be a whole number of steps, got {_refusal_repr(value)}. "
+            "A fractional, non-finite, boolean or non-numeric cadence cannot be honored "
+            "(it is used as the modulus of a step % cadence test); pass an integer, or a "
+            "non-positive one to disable periodic saving."
+        )
+    return None
+
+
 #: Highest DDS domain id whose RTPS discovery ports fit the 16-bit port space.
 #:
 #: RTPS derives every discovery port from the domain id (RTPS 2.2 sec. 9.6.1.1):
