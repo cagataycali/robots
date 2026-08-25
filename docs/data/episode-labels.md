@@ -128,6 +128,10 @@ works, no cloud dependency required):
   measured as 84 px of travel in one camera and 22 px in the other, with
   the verdict lost on the weaker view alone - PR #2486 review), so
   sampling one canonical camera would drop verdicts the interleave keeps.
+  The state is always reported as a vector, however narrow: LeRobot stores a
+  one-component state as a scalar column rather than a one-element list, and
+  both are read as the vector `meta/info.json` declares, so a single-DOF
+  recording (a gripper, a linear stage, a pan unit) samples like any other.
 - `read_predicate_verdict` - the authoritative deterministic verdict.
 - `write_label` - the annotation; structurally unable to touch the verdict.
 

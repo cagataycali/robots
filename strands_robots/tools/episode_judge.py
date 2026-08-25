@@ -30,6 +30,7 @@ import json
 import logging
 import math
 import statistics
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -94,11 +95,38 @@ def _read_info(root: Path) -> dict[str, Any]:
         return {}
 
 
+def _state_vector(value: Any) -> list[float] | None:
+    """One frame's ``observation.state`` column value as a vector of floats.
+
+    LeRobot stores a feature of shape ``[1]`` unwrapped: the parquet column
+    holds a scalar float where a wider state holds a list. Both spell the
+    vector ``meta/info.json`` declares - a single-DOF recording declares
+    ``shape [1]`` and one joint name - so a scalar is read as the one-element
+    vector it is. Iterating it instead is a ``TypeError``, which is not in the
+    envelope this module promises for a dataset it cannot read; and the
+    recording is a healthy one, so there is nothing to report either.
+
+    Args:
+        value: One frame's raw column value, or ``None`` when the dataset
+            carries no ``observation.state`` column.
+
+    Returns:
+        The frame's state as a list of floats, or ``None`` when ``value`` is.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Iterable) and not isinstance(value, str | bytes):
+        return [float(component) for component in value]
+    return [float(value)]
+
+
 def _episode_frame_rows(root: Path, episode: int) -> list[dict[str, Any]]:
     """Read one episode's frame rows from ``data/**/*.parquet`` (pure pyarrow).
 
     Returns rows sorted by ``frame_index``, each with ``frame_index``,
-    ``timestamp`` and ``state`` (the flattened ``observation.state`` vector).
+    ``timestamp`` and ``state`` (the flattened ``observation.state`` vector,
+    read through :func:`_state_vector` so a single-DOF recording's scalar
+    column is the one-element vector its metadata declares).
     Raises ValueError when the dataset has no data parquet or the episode has
     no frames.
     """
@@ -135,7 +163,7 @@ def _episode_frame_rows(root: Path, episode: int) -> list[dict[str, Any]]:
                 {
                     "frame_index": int(data.get("frame_index", [i])[i]),
                     "timestamp": float(data["timestamp"][i]) if "timestamp" in data else None,
-                    "state": [float(v) for v in state] if state is not None else None,
+                    "state": _state_vector(state),
                 }
             )
     if not rows:
