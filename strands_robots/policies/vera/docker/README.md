@@ -112,7 +112,11 @@ An explicit `-e VERA_…` always overrides the auto-wiring.
   checkpoint's `provenance.json` (`wandb_offline_resolve.py`) and sets
   `WANDB_MODE=offline`, so **no wandb network / API key is needed**. Both the
   proven mimicgen IDM (`37oa162u`) and the omni default (`x21o0cwe`) resolve
-  locally; an unknown run id transparently falls back to wandb.
+  locally; an unknown run id transparently falls back to wandb. A
+  `provenance.json` the scan cannot read as a run record - it does not parse,
+  does not hold a JSON object, or carries a non-string `wandb_run` - is skipped
+  and named in a warning, so one malformed record among the mounted checkpoints
+  never costs the healthy ones.
 - The container only **serves** actions; the host runs the sim. The heavy
   `eval` extra (robosuite/mimicgen) is therefore **not** installed by default
   (build with `--build-arg VERA_WITH_EVAL=1` to bundle it).

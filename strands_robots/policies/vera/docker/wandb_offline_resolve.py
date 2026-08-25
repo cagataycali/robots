@@ -22,7 +22,10 @@ already imported into ``vera.policy.motion_policy_loading``) with a version that
 1. Scans ``$VERA_CKPT_ROOT`` for ``*/provenance.json`` whose ``wandb_run`` matches
    the requested ``run_path`` (full ``entity/project/run_id`` OR just the trailing
    ``run_id`` - tolerant of the entity/project drift between code defaults and the
-   released artifacts).
+   released artifacts). A file that cannot be read as such a record - it does not
+   parse, does not hold a JSON object, or carries a non-string ``wandb_run`` - is
+   skipped, so one malformed record among the mounted checkpoints never decides
+   whether the healthy ones resolve.
 2. If found, returns that dir's ``model.ckpt`` (+ the ``config.yaml`` sidecar as
    the run config when ``return_config=True``), exactly like the real function.
 3. If NOT found, falls back to the original wandb-backed implementation (so online
@@ -49,15 +52,41 @@ log = logging.getLogger("vera.offline_resolve")
 
 
 def _index_local_ckpts(ckpt_root: str) -> dict[str, Path]:
-    """Map every known wandb_run string (full + trailing run_id) -> ckpt dir."""
+    """Map every usable wandb_run string (full + trailing run_id) -> ckpt dir.
+
+    A ``provenance.json`` this cannot read as a run record is skipped, exactly
+    like one that omits ``wandb_run`` entirely: it does not parse, it does not
+    hold a JSON object, or its ``wandb_run`` is not a string. The index is built
+    while the container is still starting, and the resolver's only fallback is
+    the network this container exists to do without, so one malformed record
+    among the mounted checkpoints must not decide whether the healthy ones
+    resolve. :func:`strands_robots.transforms.provenance.load_provenance` reads
+    a provenance payload by the same rule - check the type before using the
+    value - and refuses instead, because a caller asking which episodes are
+    synthetic has no fallback to be handed.
+
+    Args:
+        ckpt_root: Directory scanned recursively for ``*/provenance.json``.
+
+    Returns:
+        Every usable run string mapped to the checkpoint directory that holds
+        it, keyed both by the full ``entity/project/run_id`` and by the trailing
+        ``run_id`` alone.
+    """
     index: dict[str, Path] = {}
     for prov in glob.glob(os.path.join(ckpt_root, "**", "provenance.json"), recursive=True):
         try:
             data = json.loads(Path(prov).read_text())
         except Exception:
             continue
+        if not isinstance(data, dict):
+            log.warning("[offline-resolve] ignoring %s: expected a JSON object, got %s", prov, type(data).__name__)
+            continue
         run = data.get("wandb_run")
         if not run:
+            continue
+        if not isinstance(run, str):
+            log.warning("[offline-resolve] ignoring %s: wandb_run must be a string, got %s", prov, type(run).__name__)
             continue
         ckpt_dir = Path(prov).parent
         if not (ckpt_dir / "model.ckpt").exists():
