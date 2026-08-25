@@ -431,10 +431,13 @@ def test_the_blocklist_is_documented_where_operators_look() -> None:
     assert "STRANDS_ROS2_COMMAND_ALLOW" in text
 
 
-# Files an operator reads to decide what to pre-approve before a headless run.
-# The README Configuration table is the single source of truth for env vars, so a
-# wrong contract there is the one that gets scaffolded from.
-_OPERATOR_FACING_DOCS: tuple[str, ...] = (
+# Files that document the pre-approval variable itself, and so have to describe
+# its reach correctly. The README Configuration table is the single source of
+# truth for env vars, so a wrong contract there is the one that gets scaffolded
+# from. Every entry is required to name the variable by
+# ``test_the_sweep_reaches_every_operator_facing_surface``, which is what keeps
+# this list from going stale into a vacuous sweep.
+_ALLOWLIST_DOCS: tuple[str, ...] = (
     "README.md",
     "docs/ros2-integration.md",
     "docs/security.md",
@@ -499,7 +502,7 @@ def _surfaces_documenting_the_allowlist() -> list[tuple[str, str]]:
         ``(surface_label, text)`` pairs, text lowercased for phrase matching.
     """
     surfaces: list[tuple[str, str]] = []
-    for name in _OPERATOR_FACING_DOCS:
+    for name in _ALLOWLIST_DOCS:
         lines = [
             line
             for line in (_repo_root() / name).read_text(encoding="utf-8").splitlines()
@@ -542,10 +545,35 @@ def _measured_allowlist_reach() -> tuple[str, list[str]]:
     return ("base" if extra else "exact"), extra
 
 
+def _command_surface_docs() -> list[str]:
+    """Every prose page that makes claims about a surface the gate blocks.
+
+    Derived rather than listed, because the set an exemption can be written into
+    is not the set that documents the pre-approval variable. A per-transport
+    integration page shows an operator how to drive ``cmd_vel`` and describes
+    what that costs, without ever naming ``STRANDS_ROS2_COMMAND_ALLOW`` - so it
+    can claim the halt is ungated while sitting outside :data:`_ALLOWLIST_DOCS`,
+    and that is where the claim this scan exists to refuse was actually written.
+
+    A page qualifies when it names one of the blocklisted surfaces by its final
+    path segment, which is the same rule the gate matches on (see
+    :func:`~strands_robots.tools._command_gate.match_blocklist`): a page that
+    talks about a surface the gate blocks is a page whose gating claims an
+    operator will act on.
+
+    Returns:
+        Repository-relative paths, sorted, with ``README.md`` first.
+    """
+    root = _repo_root()
+    bare = {entry.rsplit("/", 1)[-1] for entry in gate_mod.COMMAND_BLOCKLIST}
+    pages = ["README.md"] + sorted(str(path.relative_to(root)) for path in (root / "docs").rglob("*.md"))
+    return [name for name in pages if any(surface in (root / name).read_text(encoding="utf-8") for surface in bare)]
+
+
 def _documented_halt_exemptions() -> list[tuple[str, int, str]]:
     """Every operator-facing clause asserting the halt is exempt from the gate."""
     found: list[tuple[str, int, str]] = []
-    for name in _OPERATOR_FACING_DOCS:
+    for name in _command_surface_docs():
         text = (_repo_root() / name).read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), 1):
             for clause in re.split(r"(?<=[.;])\s+|\s*\|\s*", line):
@@ -568,6 +596,13 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
     The documented claims are graded against the running gate rather than banned
     outright, so a gate that one day does exempt a payload makes the claim
     permissible instead of failing here.
+
+    The pages scanned are derived (:func:`_command_surface_docs`) rather than
+    listed. A hardcoded list of three pages was what let the hazard through: the
+    per-transport integration page for the rosbridge bridge documented its halt
+    as "never gated" in three places - a bullet and two comments in a runnable
+    example - and was outside every page the scan looked at, because it never
+    names the pre-approval variable that list is keyed on.
     """
 
     calls: dict[str, list[tuple[Any, ...]]]
@@ -644,6 +679,34 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
             f"the gate treats a zero-velocity halt to a blocklisted surface as {measured}, "
             f"but the operator-facing documentation describes it as {documented}.\n"
             f"clauses claiming an exemption:\n{detail}"
+        )
+
+    def test_the_scan_reaches_every_page_that_documents_a_blocked_surface(self) -> None:
+        """Non-vacuity: the derived set must be wider than the allowlist pages.
+
+        The scan is only worth running over the pages an exemption can be
+        written into. Two properties make that true and are asserted rather than
+        assumed: every page that documents the pre-approval variable is in the
+        set (it necessarily names a surface too), and the per-transport
+        integration pages - which document driving a blocked surface without
+        naming the variable - are in it as well. Those are exactly the pages a
+        variable-keyed list cannot reach.
+        """
+        scanned = set(_command_surface_docs())
+        assert set(_ALLOWLIST_DOCS) <= scanned, (
+            f"pages documenting {gate_mod.COMMAND_ALLOW_ENV} are missing from the scan: "
+            f"{sorted(set(_ALLOWLIST_DOCS) - scanned)}"
+        )
+        transport_pages = {
+            "docs/ros2-integration.md",
+            "docs/rosbridge-integration.md",
+            "docs/rtps-integration.md",
+        }
+        assert transport_pages <= scanned, (
+            f"transport integration pages outside the scan: {sorted(transport_pages - scanned)}"
+        )
+        assert scanned - set(_ALLOWLIST_DOCS), (
+            "the derived set is no wider than the allowlist pages, so deriving it buys nothing"
         )
 
     def test_the_documented_read_exemption_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -756,7 +819,7 @@ class TestTheDocumentedAllowlistReachIsTheRealReach:
     def test_the_sweep_reaches_every_operator_facing_surface(self) -> None:
         """Non-vacuity: a doc reflow that hides the variable must fail loudly."""
         labels = [label for label, _ in _surfaces_documenting_the_allowlist()]
-        assert set(_OPERATOR_FACING_DOCS) <= set(labels), (
+        assert set(_ALLOWLIST_DOCS) <= set(labels), (
             f"only {labels} document {gate_mod.COMMAND_ALLOW_ENV}; a clean sweep would prove nothing"
         )
         assert "gate_command docstring" in labels, "the gate helper stopped naming the variable it reads"

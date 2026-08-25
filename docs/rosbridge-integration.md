@@ -135,8 +135,8 @@ unclamped.
 ```python
 # Direct, programmatic control:
 robot.drive(linear=1.0, angular=0.0, duration=2.0)  # hold for 2 seconds
-robot.drive(linear=1.0)  # latch until stop() - single-shot, ungated
-robot.stop()  # always publishes zero Twist, never gated
+robot.drive(linear=1.0)  # latch until stop() - single-shot
+robot.stop()  # publishes zero Twist; gated like any cmd_vel publish
 pose = robot.get_pose()  # read one odometry sample
 scan = robot.get_scan()  # read one laser scan (error if no scan_topic)
 ```
@@ -164,14 +164,18 @@ scan = robot.get_scan()  # read one laser scan (error if no scan_topic)
   cannot leave the robot with a live velocity. This was previously this bridge's
   alone; the ROS 2 and RTPS bridges inherit it from the shared mobile base now,
   so a timed drive self-stops on all three.
-- **stop() never gated** (this bridge only): the stop method always publishes a
-  zero Twist, regardless of prior state or publish failures. On the ROS 2 bridge
-  the halt goes through the same operator gate as `drive()`.
+- **stop() needs no prior state**: the stop method publishes a zero Twist
+  regardless of whether an earlier command succeeded, and there is no enable
+  handshake to satisfy first. It is *not* exempt from the operator gate: that
+  gate is keyed on the command surface rather than on the payload, so a halt to
+  a blocklisted `cmd_vel` is approved exactly like a full-speed drive on every
+  mobile base, this one included. Pre-approve the topic with
+  `STRANDS_ROS2_COMMAND_ALLOW` if the halt must go out unattended.
 
 | Method | ROS action | Notes |
 |--------|------------|-------|
 | `drive(linear, angular, duration=, count=)` | publish `Twist` to `cmd_vel_topic` | `duration` holds the command at `publish_rate` Hz; no `duration` latches until stop |
-| `stop()` | publish zero `Twist` | never gated on anything |
+| `stop()` | publish zero `Twist` | needs no prior state; gated on the surface like `drive()` |
 | `get_pose()` | echo `odom_topic` | returns up to 1 sample |
 | `get_scan()` | echo `scan_topic` | error when no `scan_topic` configured |
 | `.tools` | - | per-instance named agent tools |

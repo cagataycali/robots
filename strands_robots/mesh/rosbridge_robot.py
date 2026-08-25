@@ -32,7 +32,7 @@ from __future__ import annotations
 from typing import Any
 
 from strands import tool
-from strands.types.tools import AgentTool
+from strands.types.tools import AgentTool, ToolContext
 
 from strands_robots.mesh.ros_bridge import _check_topic
 from strands_robots.tools.use_rosbridge import _HOST_RE, _transport_port_error, use_rosbridge
@@ -163,7 +163,29 @@ class RosbridgeRobot:
     def _error(text: str) -> dict[str, Any]:
         return {"status": "error", "content": [{"text": text}]}
 
-    def _publish_twist(self, linear: float, angular: float, count: int) -> dict[str, Any]:
+    def _publish_twist(
+        self,
+        linear: float,
+        angular: float,
+        count: int,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        """Publish ``count`` Twist messages, carrying the operator context.
+
+        ``use_rosbridge`` gates a publish aimed at a safety-critical command
+        surface, and ``cmd_vel`` is one, so the context has to reach it: without
+        one the gate has nothing to ask an operator with and fails closed on
+        every command this robot sends.
+
+        Args:
+            linear: Linear velocity for ``linear.x``.
+            angular: Angular velocity for ``angular.z``.
+            count: Number of messages to publish.
+            tool_context: Operator context forwarded to the transport.
+
+        Returns:
+            The ``use_rosbridge`` publish result dict.
+        """
         return use_rosbridge(
             action="publish",
             host=self.host,
@@ -173,6 +195,7 @@ class RosbridgeRobot:
             fields={"linear": {"x": float(linear)}, "angular": {"z": float(angular)}},
             count=count,
             rate=self.publish_rate,
+            tool_context=tool_context,
         )
 
     def drive(
@@ -181,6 +204,7 @@ class RosbridgeRobot:
         angular: float = 0.0,
         duration: float | None = None,
         count: int = 1,
+        tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
         """Publish a velocity command over rosbridge.
 
@@ -224,6 +248,11 @@ class RosbridgeRobot:
                 Must be a positive whole number; ``0`` or a negative count
                 publishes nothing, so reporting a successful drive for it hides
                 a command that never left the process.
+            tool_context: Operator context forwarded to ``use_rosbridge``, whose
+                gate prompts before a publish to a safety-critical command
+                surface. Without it the gate fails closed, so a command this
+                bridge could otherwise have carried is refused with no operator
+                ever asked.
 
         Returns:
             The ``use_rosbridge`` publish result dict, or an
@@ -265,14 +294,33 @@ class RosbridgeRobot:
         # publish period still means "send the command once".
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
         try:
-            return self._publish_twist(v, w, count=n)
+            return self._publish_twist(v, w, count=n, tool_context=tool_context)
         finally:
+            # The trailing zero carries the same context as the command it
+            # undoes: one that could not reach the gate would be refused on its
+            # own and leave the robot latched at the speed of an approved hold.
             if (duration is not None or n > 1) and (v or w):
-                self._publish_twist(0.0, 0.0, count=1)
+                self._publish_twist(0.0, 0.0, count=1, tool_context=tool_context)
 
-    def stop(self) -> dict[str, Any]:
-        """Publish a single zero Twist. Never gated on anything."""
-        return self._publish_twist(0.0, 0.0, count=1)
+    def stop(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
+        """Publish a single zero Twist.
+
+        Never gated on this bridge's own state: a halt does not depend on a
+        prior command having succeeded, and there is no enable handshake to
+        satisfy. It is not exempt from the transport tool's command gate, which
+        is keyed on the surface rather than the payload - zero means
+        "stationary" on a ``Twist`` but commands motion to the zero pose on a
+        joint-command topic, so a payload-shaped carve-out could not be written
+        correctly. The halt stays reachable through the same approval path as
+        any other command instead, which is why it forwards the context.
+
+        Args:
+            tool_context: Operator context forwarded to ``use_rosbridge``.
+
+        Returns:
+            The ``use_rosbridge`` publish result dict.
+        """
+        return self._publish_twist(0.0, 0.0, count=1, tool_context=tool_context)
 
     def get_pose(self, timeout: float = 5.0) -> dict[str, Any]:
         """Read one odometry/pose sample from ``odom_topic``."""
@@ -302,7 +350,14 @@ class RosbridgeRobot:
 
     @property
     def tools(self) -> list[AgentTool]:
-        """This robot's capabilities as named strands agent tools."""
+        """This robot's capabilities as named strands agent tools.
+
+        The two tools that carry a command are declared ``@tool(context=True)``
+        and forward the injected context to :meth:`drive` and :meth:`stop`, so a
+        publish to a gated ``cmd_vel`` prompts the operator instead of failing
+        closed on every call. The read-only tools take no context because a read
+        is never gated.
+        """
         suffix = self.node_name.strip("/").replace("/", "_")
 
         @tool(
@@ -313,13 +368,23 @@ class RosbridgeRobot:
                 "duration s). A command with duration stops automatically afterwards; "
                 "without duration the last command latches until stop."
             ),
+            context=True,
         )
-        def drive(linear: float = 0.0, angular: float = 0.0, duration: float | None = None) -> dict[str, Any]:
-            return self.drive(linear=linear, angular=angular, duration=duration)
+        def drive(
+            linear: float = 0.0,
+            angular: float = 0.0,
+            duration: float | None = None,
+            tool_context: ToolContext | None = None,
+        ) -> dict[str, Any]:
+            return self.drive(linear=linear, angular=angular, duration=duration, tool_context=tool_context)
 
-        @tool(name=f"stop_{suffix}", description=f"Immediately stop the {self.node_name} robot.")
-        def stop() -> dict[str, Any]:
-            return self.stop()
+        @tool(
+            name=f"stop_{suffix}",
+            description=f"Immediately stop the {self.node_name} robot.",
+            context=True,
+        )
+        def stop(tool_context: ToolContext | None = None) -> dict[str, Any]:
+            return self.stop(tool_context=tool_context)
 
         @tool(name=f"get_pose_{suffix}", description=f"Read the current odometry/pose of the {self.node_name} robot.")
         def get_pose() -> dict[str, Any]:
