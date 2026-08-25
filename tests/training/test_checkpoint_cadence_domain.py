@@ -428,12 +428,22 @@ class TestTheToolAndTheTrainerShareOneOwner:
         Behaviourally identical today is not the property worth pinning - two
         copies that agree now are exactly what diverges later, and the tests
         above would keep passing right up to the edit that separates them.
+
+        The file is derived from the guard the tests above call, for the same
+        reason :func:`_trainer_modules` derives its exclusion from the gate: the
+        alternative resolves a *name*, and ``strands_robots.tools`` binds this
+        one twice. Its lazy ``__getattr__`` maps ``lerobot_train`` to the
+        ``@tool`` object inside the module of the same name and caches it on the
+        package, so ``from strands_robots.tools import lerobot_train`` yields the
+        module or the ``DecoratedFunctionTool`` depending only on which import
+        ran first anywhere in the session - and a tool object has no source file.
+        A function does, so this asks the guard itself.
         """
-        from strands_robots.tools import lerobot_train as tool_module
+        source = pathlib.Path(inspect.getfile(self._tool_guard())).read_text()
 
         guard = next(
             node
-            for node in ast.parse(pathlib.Path(inspect.getfile(tool_module)).read_text()).body
+            for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef) and node.name == "_save_freq_error"
         )
         statements = [n for n in guard.body if not isinstance(n, ast.Expr)]
