@@ -69,17 +69,80 @@ through ``search``. Search is eventually consistent, so a pull request opened
 seconds ago may not be indexed -- and the missing row would be a false clean in
 exactly the ~35-minute window where every observed collision happened.
 
-Two questions, one comparison
------------------------------
+Three questions, two keys
+-------------------------
 ``--issue N``
-    Intake. *Before* authoring: does an open pull request already close #N?
-    Nothing is excluded from the comparison, because no pull request for it exists
-    yet.
+    Intake, keyed on the claim. *Before* authoring: does an open pull request
+    already close #N? Nothing is excluded from the comparison, because no pull
+    request for it exists yet.
 
 ``--pr N``
-    Review. Do this pull request's own claims collide with another open one's?
-    #N is excluded from its own comparison -- a pull request always shares its own
-    claim.
+    Review, keyed on the claim. Do this pull request's own claims collide with
+    another open one's? #N is excluded from its own comparison -- a pull request
+    always shares its own claim.
+
+``--all-open``
+    Review, keyed on the added path. Do two open pull requests create the same
+    file? Needs no issue number, which is the point: see below.
+
+The key a claim-free pair collides on
+-------------------------------------
+Both claim-keyed questions read ``closingIssuesReferences``, and **249 of the
+last 300 pull requests (#2345 through #2708) link no issue at all**. For that 83%
+of the traffic there is no key to collide on, so both modes report a unique claim
+while looking straight at a duplicate pair. Issue #2709 is the third recorded
+instance.
+
+That residual was listed here as out of scope on the strength of one
+measurement: 18 of the last 30 merges would fail a rule *requiring* a claim. The
+measurement stands and the conclusion drawn from it was wider than it supports.
+It rules out demanding a claim. It says nothing about colliding on a different
+key -- and a changed-path set exists for every branch whether it claims anything
+or not.
+
+The part of that set which answers this question is the paths a branch **adds**.
+Two branches editing one file is a composition to verify, which is the sibling
+sweep's question in ``scripts/check_merge_base_overlap.py``; its remedy is a
+merge order plus possibly one test run. Two branches *creating* one file is not a
+composition at all. It is two answers to one question, and one of them is going
+to be closed.
+
+Measured over those same 300 pull requests, on the 1802 pairs that were open at
+the same instant::
+
+    relation              pairs   duplicates among them
+    both edit a path        117   a composition question, not this one
+    both add a path           2   2
+
+Both of the two are duplicates, and neither was reachable from a claim::
+
+    shared added path                                       pair           closed
+    tests/test_recorder_counters_track_on_disk_frames.py    #2388, #2389   #2389
+    tests/training/test_checkpoint_cadence_domain.py        #2707, #2708   #2707
+
+The two keys are complementary rather than nested, which is why this is a second
+key and not a replacement for the first. The same window holds two *issue-keyed*
+pairs -- #2570/#2571 on #2569, and #2480/#2508 on #2466 -- and neither of them
+shares an added path, while neither claim-free pair claims an issue. Four
+duplicate pairs, two reachable from each key, none from both.
+
+The 2-of-1802 rate is the whole claim. The relation the sibling file rejected --
+widening a path intersection to a test's walked root -- selected 11 of 36 pairs
+and named no defect, and a finding attached to a third of the queue reads as
+boilerplate.
+
+Why this question cannot be asked at intake
+-------------------------------------------
+``--issue`` is asked before authoring, so it prevents the work. ``--all-open``
+cannot be, and not for want of trying: a path set is a property of a *pushed
+branch*, and at intake there is no branch to read one from. So this mode caps the
+review cost of a collision rather than preventing the authoring -- the same thing
+``--pr`` does for a claim, and the reason both live at review while ``--issue``
+lives at step 1.
+
+It still arrives early. Both measured pairs opened inside the ~35-minute window
+every other observed collision shares -- 14m 41s and 29m 26s apart -- so a sweep
+run when the second one opens sees it while the first is still in review.
 
 What this reports, and what it deliberately does not
 ----------------------------------------------------
@@ -97,13 +160,27 @@ What this reports, and what it deliberately does not
     A link set, or the open-pull-request list, could not be read completely. Not a
     finding -- an unreadable field is not evidence of a duplicate.
 
+``--all-open`` reports the same three shapes over the other key:
+
+``unique-additions``
+    No two open pull requests create the same file. The convention working.
+
+``duplicate-addition``
+    The finding.
+
+``unknown-additions``
+    A file list, or the open-pull-request list, could not be read completely.
+    Not a finding, for the same reason.
+
 Out of scope, deliberately:
 
-- **A pull request that claims nothing anywhere.** Two competing branches that
-  both omit the keyword collide invisibly here. That is the same residual the
-  sibling gate names and the one #1961 is about, and 18 of the last 30 merges
-  would fail a rule requiring a claim, so this needs no answer to that question
-  and cannot be dismissed by one.
+- **A pull request that claims nothing, in the claim-keyed modes.** Two competing
+  branches that both omit the keyword collide invisibly there, and still do:
+  requiring a claim is what 18 of the last 30 merges would fail, so neither
+  claim-keyed mode demands one. What changed is that the pair is no longer
+  unreachable -- ``--all-open`` collides it on an added path instead, and the
+  measurement above is the argument that this is narrow enough to be worth
+  reporting. See #2709 and #1961.
 - **Whether the issue exists, or is already closed.** A stale number is a
   different defect, and refusing it would report a finding against correct work
   whose issue someone else closed first.
@@ -120,20 +197,30 @@ work from being done twice, and it is complete as shipped.
 
 Usage
 -----
-``--repo``    ``owner/name``. Required in intake mode; in ``--pr`` mode it
+``--repo``    ``owner/name``. Required in intake mode; in the two review modes it
               defaults to ``$GITHUB_REPOSITORY``. See
-              :func:`inferred_repository_refusal` for why the two modes differ.
-``--issue``   an issue number, asked at intake. Mutually exclusive with ``--pr``.
+              :func:`inferred_repository_refusal` for why intake differs.
+``--issue``   an issue number, asked at intake. Exactly one of the three subject
+              flags is required.
 ``--pr``      a pull request number (default: ``$PR_NUMBER``).
+``--all-open``
+              sweep the open set for two pull requests creating one file. Takes no
+              number, and keeps the inferred repository default for the reason
+              ``--pr`` does: its caller is a workflow running where the pull
+              requests live. Unlike an issue number, a sweep of the wrong
+              repository is visible in its own report, which lists the pull
+              requests and paths it read.
 ``--token``   API token (default: ``$GITHUB_TOKEN``). Needs ``pull-requests: read``.
 
-Exit status is ``1`` for ``duplicate-claim``, else ``0``. A usage error, including an
-intake question whose repository was left to be inferred, exits ``2``.
+Exit status is ``1`` for ``duplicate-claim`` or ``duplicate-addition``, else ``0``. A
+usage error, including an intake question whose repository was left to be inferred,
+exits ``2``.
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import sys
@@ -157,10 +244,29 @@ OPEN_PAGE_SIZE = 100
 #: evidence of no collision.
 MAX_OPEN_PAGES = 20
 
+#: How many changed files to ask for per pull request. A longer list is refused
+#: rather than read short, for the reason :data:`LINK_PAGE_SIZE` gives: a file
+#: list cut off here could omit the very path that collides and report clean.
+FILE_PAGE_SIZE = 100
+
 NO_CLAIM = "no-claim"
 UNIQUE_CLAIM = "unique-claim"
 DUPLICATE_CLAIM = "duplicate-claim"
 UNKNOWN_CLAIMS = "unknown-claims"
+
+#: Outcomes of the added-path key. Named apart from the claim-keyed four rather
+#: than shared with them, because a report reader has to be able to tell which
+#: relation produced a finding: the two have different remedies.
+UNIQUE_ADDITIONS = "unique-additions"
+DUPLICATE_ADDITION = "duplicate-addition"
+UNKNOWN_ADDITIONS = "unknown-additions"
+
+#: The one ``changeType`` this key reads. GitHub's enum also carries
+#: ``MODIFIED``, ``REMOVED``, ``RENAMED``, ``COPIED`` and ``CHANGED``, and every
+#: one of those describes a file that already exists on the base -- which is the
+#: sibling sweep's composition question rather than this one. Reading them here
+#: is what turns a 2-of-1802 relation into a 117-of-1802 one.
+ADDED_CHANGE_TYPE = "ADDED"
 
 #: ``closingIssuesReferences`` is GraphQL-only -- no REST field carries it.
 _SELF_QUERY = """
@@ -187,6 +293,33 @@ query($owner: String!, $name: String!, $links: Int!, $open: Int!, $after: String
         closingIssuesReferences(first: $links) {
           totalCount
           nodes { number }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+#: Read through ``repository.pullRequests(states: OPEN)`` for the reason the
+#: claim query is: ``search`` is eventually consistent, and a pull request opened
+#: seconds ago is exactly the row this sweep exists to find. Drafts are included,
+#: matching this file's claim-keyed policy rather than the sibling sweep's -- a
+#: draft's new file is authored work whatever its merge state, so excluding one
+#: would hide a collision for as long as either side stayed a draft.
+#:
+#: ``changeType`` is GraphQL-only: the REST file list spells the same thing
+#: ``status``, in lower case.
+_ADDITIONS_QUERY = """
+query($owner: String!, $name: String!, $files: Int!, $open: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: $open, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number
+        files(first: $files) {
+          totalCount
+          nodes { path changeType }
         }
       }
     }
@@ -254,6 +387,53 @@ class Verdict:
         )
 
 
+@dataclass(frozen=True)
+class AdditionVerdict:
+    """The outcome of the added-path sweep and the pairs it was computed from."""
+
+    outcome: str
+    #: ``(left, right, the paths both branches create)``. Ascending in all three
+    #: axes, so a diff of two reports shows changed verdicts rather than
+    #: reordered rows.
+    collisions: tuple[tuple[int, int, tuple[str, ...]], ...] = ()
+    #: How many open pull requests were read.
+    scanned: int = 0
+    detail: str = ""
+
+    @property
+    def is_finding(self) -> bool:
+        return self.outcome == DUPLICATE_ADDITION
+
+    @property
+    def compared(self) -> int:
+        """How many pairs the sweep computed, which is what it looked at."""
+        return self.scanned * (self.scanned - 1) // 2
+
+    @property
+    def implicated(self) -> tuple[int, ...]:
+        """Every pull request in a collision, sorted and deduplicated."""
+        return tuple(sorted({number for left, right, _ in self.collisions for number in (left, right)}))
+
+    @property
+    def summary(self) -> str:
+        if self.outcome == UNKNOWN_ADDITIONS:
+            return (
+                f"Could not read every file list: {self.detail} Not treated as a finding, because "
+                "an unreadable file list is not evidence that two branches create one file."
+            )
+        if self.outcome == UNIQUE_ADDITIONS:
+            return (
+                f"No two of the {self.scanned} open pull requests create the same file "
+                f"({self.compared} pair(s) compared)."
+            )
+        parts = "; ".join(f"{_pulls((left, right))} both create {_paths(paths)}" for left, right, paths in self.collisions)
+        return (
+            f"{parts}. Two branches creating one file are two answers to one question rather "
+            "than a composition to verify, and whichever is closed spends a review approval on a "
+            "change that will not ship."
+        )
+
+
 def _join(parts: Sequence[str]) -> str:
     """Render a clause list as ``a`` / ``a and b`` / ``a, b and c``."""
     if not parts:
@@ -273,6 +453,11 @@ def _pulls(numbers: Sequence[int]) -> str:
     return _join([f"#{n}" for n in numbers]) or "no pull request"
 
 
+def _paths(paths: Sequence[str]) -> str:
+    """Render a path list the same way, backquoted so a report reads them as code."""
+    return _join([f"`{path}`" for path in paths]) or "no file"
+
+
 def find_collisions(
     claimed: Sequence[int], others: Mapping[int, Sequence[int]]
 ) -> tuple[tuple[int, tuple[int, ...]], ...]:
@@ -287,6 +472,44 @@ def find_collisions(
         if rivals:
             collisions.append((issue, rivals))
     return tuple(collisions)
+
+
+def find_addition_collisions(
+    additions: Mapping[int, Sequence[str]],
+) -> tuple[tuple[int, int, tuple[str, ...]], ...]:
+    """Return every pair of open pull requests that creates the same file.
+
+    Every pair is compared rather than only adjacent ones: two runs a few minutes
+    apart usually get consecutive numbers, but nothing guarantees it, and a
+    relation that holds for a pair is not a property of their distance.
+
+    Deterministic in all three axes -- the pairs by lower then higher number, and
+    each shared path list sorted -- for the reason :func:`find_collisions` gives.
+    """
+    ordered = sorted(additions)
+    found: list[tuple[int, int, tuple[str, ...]]] = []
+    for left, right in itertools.combinations(ordered, 2):
+        shared = tuple(sorted(set(additions[left]) & set(additions[right])))
+        if shared:
+            found.append((left, right, shared))
+    return tuple(found)
+
+
+def classify_additions(additions: Mapping[int, Sequence[str]] | None, detail: str = "") -> AdditionVerdict:
+    """Decide which of the three added-path states the open set is in.
+
+    ``None`` means the set could not be read, which is its own outcome for the
+    reason :func:`classify` gives: a silent API or permission change must not be
+    able to turn this sweep into a no-op that always agrees.
+    """
+    if additions is None:
+        return AdditionVerdict(UNKNOWN_ADDITIONS, (), 0, detail)
+    collisions = find_addition_collisions(additions)
+    return AdditionVerdict(
+        DUPLICATE_ADDITION if collisions else UNIQUE_ADDITIONS,
+        collisions,
+        len(additions),
+    )
 
 
 def classify(
@@ -358,6 +581,37 @@ def link_numbers(pull: Mapping[str, object]) -> tuple[int, ...]:
     return tuple(sorted({int(node["number"]) for node in nodes if isinstance(node, dict) and "number" in node}))
 
 
+def added_paths(pull: Mapping[str, object]) -> tuple[str, ...]:
+    """Return the paths one pull-request node creates, refusing a truncated list.
+
+    Only ``ADDED`` entries, which is the whole narrowness of this relation: a
+    ``MODIFIED`` path is a file that exists on the base, and two branches
+    touching one of those is the sibling sweep's question.
+
+    A list cut off at :data:`FILE_PAGE_SIZE` is refused rather than read short,
+    exactly as :func:`link_numbers` refuses a truncated link set -- the one thing
+    this sweep must never do is report clean because it did not look far enough.
+    """
+    files = pull.get("files") or {}
+    if not isinstance(files, dict):
+        raise ClaimSetUnreadable(f"#{pull.get('number')} carried no file list.")
+    nodes = files.get("nodes") or []
+    total = files.get("totalCount")
+    if isinstance(total, int) and total > len(nodes):
+        raise ClaimSetUnreadable(
+            f"#{pull.get('number')}'s file list is truncated ({total} files, {len(nodes)} read)."
+        )
+    return tuple(
+        sorted(
+            {
+                str(node["path"])
+                for node in nodes
+                if isinstance(node, dict) and node.get("changeType") == ADDED_CHANGE_TYPE and node.get("path")
+            }
+        )
+    )
+
+
 def resolve_claim(repo: str, pr: int, token: str) -> tuple[int, ...]:
     """Return the issues the pull request under test links.
 
@@ -422,6 +676,103 @@ def resolve_open_claims(repo: str, token: str, pr: int | None = None) -> dict[in
         if not isinstance(cursor, str):
             raise ClaimSetUnreadable("the open pull request list is paged but carried no cursor.")
     raise ClaimSetUnreadable(f"more than {MAX_OPEN_PAGES * OPEN_PAGE_SIZE} open pull requests; the list was truncated.")
+
+
+def resolve_open_additions(repo: str, token: str) -> dict[int, tuple[str, ...]]:
+    """Return ``{open pull request number: the paths it creates}``.
+
+    Nothing is excluded: unlike the claim-keyed review question there is no pull
+    request "under test" here, so there is no self-comparison to leave out. The
+    subject is the set.
+
+    Paginated for the reason :func:`resolve_open_claims` is -- a repository with
+    more open pull requests than :data:`OPEN_PAGE_SIZE` would otherwise get a
+    clean answer computed from a prefix of the set.
+    """
+    owner, _, name = repo.partition("/")
+    if not owner or not name:
+        raise ClaimSetUnreadable(f"repository {repo!r} is not in owner/name form.")
+    additions: dict[int, tuple[str, ...]] = {}
+    cursor: str | None = None
+    for _ in range(MAX_OPEN_PAGES):
+        repository = _repository(
+            _post(
+                _ADDITIONS_QUERY,
+                {
+                    "owner": owner,
+                    "name": name,
+                    "files": FILE_PAGE_SIZE,
+                    "open": OPEN_PAGE_SIZE,
+                    "after": cursor,
+                },
+                token,
+            )
+        )
+        page = repository.get("pullRequests")
+        if not isinstance(page, dict):
+            raise ClaimSetUnreadable("the response carried no open pull requests.")
+        for node in page.get("nodes") or []:
+            if not isinstance(node, dict) or "number" not in node:
+                continue
+            additions[int(node["number"])] = added_paths(node)
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            return additions
+        cursor = info.get("endCursor")
+        if not isinstance(cursor, str):
+            raise ClaimSetUnreadable("the open pull request list is paged but carried no cursor.")
+    raise ClaimSetUnreadable(f"more than {MAX_OPEN_PAGES * OPEN_PAGE_SIZE} open pull requests; the list was truncated.")
+
+
+def render_additions(verdict: AdditionVerdict, repo: str) -> str:
+    """Render the added-path sweep's report.
+
+    Each multi-line paragraph is a named local joined with explicit ``+``, the
+    convention the sibling sweep's renderer states: implicit concatenation inside
+    a list of report lines is indistinguishable from a forgotten comma.
+    """
+    lines = [
+        "## Duplicate work - two branches creating one file",
+        "",
+        f"Outcome: **{verdict.outcome}**",
+        "",
+        verdict.summary,
+        "",
+        "| field | value |",
+        "|---|---|",
+        f"| repository | {repo} |",
+        f"| open pull requests read | {verdict.scanned} |",
+        f"| pairs compared | {verdict.compared} |",
+    ]
+    if not verdict.is_finding:
+        return "\n".join(lines)
+    lines += [
+        f"| pull requests implicated | {_pulls(verdict.implicated)} |",
+        "",
+        "| pull requests | file(s) both create |",
+        "|---|---|",
+    ]
+    for left, right, paths in verdict.collisions:
+        lines.append(f"| #{left} + #{right} | {_paths(paths)} |")
+    why = (
+        "Neither branch's file exists on the base, so this is not a merge order to decide: "
+        + "the two are answering the same question, and the second one to be read is work that "
+        + "was already done. Read the other pull request before continuing with either."
+    )
+    clears = (
+        "Close whichever of the two is redundant, or -- if both are wanted -- change one so it "
+        + "no longer creates the same path, which is the case where the shared name was the "
+        + "accident rather than the work. This is a report rather than a branch-clearable gate: "
+        + "the remedy is a decision between two authors, and no push by one of them settles it."
+    )
+    blind = (
+        "Neither pull request need have claimed an issue for this to be reported, which is the "
+        + "point of the second key: measured over the last 300 pull requests, two duplicate pairs "
+        + "were reachable from a claim and two only from an added path, with no pair reachable "
+        + "from both."
+    )
+    lines += ["", "### What this means", "", why, "", "### What clears this", "", clears, "", blind]
+    return "\n".join(lines)
 
 
 def render(verdict: Verdict, repo: str, pr: int | None = None, issue: int | None = None) -> str:
@@ -514,6 +865,33 @@ def inferred_repository_refusal(inferred: str) -> str:
     )
 
 
+def _emit(report: str) -> None:
+    """Print the report and append it to the CI job summary when there is one."""
+    print(report)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write(report + "\n")
+
+
+def _run_addition_sweep(repo: str, token: str) -> int:
+    """Sweep the open set for two pull requests creating one file."""
+    additions: dict[int, tuple[str, ...]] | None
+    detail = ""
+    try:
+        additions = resolve_open_additions(repo, token)
+    except (ClaimSetUnreadable, urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError) as exc:
+        additions, detail = None, str(exc)
+        print(f"check_duplicate_claim: {detail}", file=sys.stderr)
+
+    verdict = classify_additions(additions, detail)
+    _emit(render_additions(verdict, repo))
+    if verdict.is_finding:
+        print(f"::error title=Two open pull requests create the same file::{verdict.summary}")
+        return 1
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     # ``None`` rather than the environment value, so "was it supplied?" stays
@@ -522,6 +900,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo", default=None)
     parser.add_argument("--pr", default=os.environ.get("PR_NUMBER", ""))
     parser.add_argument("--issue", default="")
+    parser.add_argument("--all-open", action="store_true")
     parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN", ""))
     args = parser.parse_args(argv)
 
@@ -530,12 +909,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not repo:
         parser.error("--repo is required (or set GITHUB_REPOSITORY)")
-    if bool(args.pr) == bool(args.issue):
-        parser.error("pass exactly one of --pr (review a pull request) and --issue (intake)")
+    if [bool(args.pr), bool(args.issue), args.all_open].count(True) != 1:
+        parser.error(
+            "pass exactly one of --pr (review a pull request's claims), --issue (intake) "
+            "and --all-open (sweep the open set for two branches creating one file)"
+        )
     if args.repo is None and args.issue:
         parser.error(inferred_repository_refusal(repo))
     if not args.token:
         parser.error("--token is required (or set GITHUB_TOKEN)")
+
+    if args.all_open:
+        return _run_addition_sweep(repo, args.token)
 
     pr = int(args.pr) if args.pr else None
     issue = int(args.issue) if args.issue else None
@@ -552,13 +937,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"check_duplicate_claim: {detail}", file=sys.stderr)
 
     verdict = classify(claimed, others, detail)
-    report = render(verdict, repo, pr, issue)
-    print(report)
-
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path:
-        with open(summary_path, "a", encoding="utf-8") as handle:
-            handle.write(report + "\n")
+    _emit(render(verdict, repo, pr, issue))
 
     if verdict.is_finding:
         print(f"::error title=Two open pull requests claim one issue::{verdict.summary}")
