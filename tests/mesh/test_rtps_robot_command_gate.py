@@ -35,8 +35,6 @@ import strands_robots.rtps.idl as idl_mod
 import strands_robots.tools.use_rtps as rtps_mod
 from strands_robots.mesh import RtpsRobot
 
-_TWIST = "geometry_msgs/msg/Twist"
-
 
 # Module-level fake IDL dataclasses so ``typing.get_type_hints`` can resolve the
 # nested field types against module globals, mirroring the real bundle.
