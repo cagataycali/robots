@@ -512,16 +512,26 @@ class ProtoMotionsPolicy(Policy):
         """Pack per-joint values from the obs dict in canonical joint order.
 
         Tries three obs conventions in order:
-        1. ``observation.state`` as a flat array + a matching ``state_keys``.
+        1. ``observation.state`` plus a matching ``state_keys`` list on ``obs``.
         2. Per-joint keys ``<name><suffix>`` directly on ``obs``.
         3. A single ``observation.state`` array whose ordering matches
            ``self._robot_state_keys`` (set via :meth:`set_robot_state_keys`).
+
+        ``observation.state`` is flattened before either convention indexes it,
+        so a batched ``(1, D)`` state reads identically to a flat ``(D,)`` one.
         """
+        # ``observation.state`` is read by conventions 1 and 3 below, and both
+        # index it positionally, so it is normalized once here rather than in
+        # each branch. A runtime that batches the state feeds ``(1, D)`` -
+        # LeRobot's own ``AddBatchDimensionObservationStep`` does exactly that -
+        # and flattening in only one branch made the two conventions disagree
+        # about the same observation.
+        raw_state = obs.get("observation.state")
+        state_arr = None if raw_state is None else np.asarray(raw_state, dtype=np.float32).reshape(-1)
+
         # 1. observation.state + explicit joint-key list on obs.
-        state_arr = obs.get("observation.state")
         keys_list = obs.get("state_keys")
         if state_arr is not None and keys_list is not None:
-            state_arr = np.asarray(state_arr, dtype=np.float32)
             out = np.zeros(self._config.num_dofs, dtype=np.float32)
             for i, name in enumerate(self._config.joint_names):
                 key = name + suffix
@@ -552,7 +562,6 @@ class ProtoMotionsPolicy(Policy):
 
         # 3. observation.state matches self._robot_state_keys order.
         if state_arr is not None and self._robot_state_keys:
-            state_arr = np.asarray(state_arr, dtype=np.float32).reshape(-1)
             out = np.zeros(self._config.num_dofs, dtype=np.float32)
             for i, name in enumerate(self._config.joint_names):
                 key = name + suffix
