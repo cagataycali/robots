@@ -394,6 +394,46 @@ def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
     return failed
 
 
+def _sensor_present(robot: Any, *attrs: str) -> bool:
+    """Report whether *robot* answers any of *attrs* with a value.
+
+    Each attribute is read under its own guard, and that granularity is the
+    point. These names are providers rather than plain fields: on hardware a
+    ``_pose`` or ``_battery`` property reads a live sensor bus and can raise
+    when that bus faults, and a non-``AttributeError`` propagates straight
+    through ``getattr(robot, name, None)``. Surveying every provider under one
+    shared ``try`` therefore abandoned the survey at the first fault, so a
+    robot whose head pose was unavailable advertised none of the IMU, lidar,
+    hand or map topics it was still serving -- silently, and the capability
+    list is the only place those topics are announced.
+
+    Per-attribute tolerance is the granularity
+    :mod:`strands_robots.mesh.sensors` already reads these same providers at:
+    each of its readers guards one attribute, so a faulting ``_battery`` costs
+    the health payload its battery fields and leaves the rest of that payload
+    intact. Probing the same way keeps the advertisement honest about exactly
+    the set those readers can still serve.
+
+    Args:
+        robot: The robot to survey. Any object, including one exposing none of
+            these attributes.
+        attrs: One or more provider attribute names backing a single topic. A
+            topic served by several providers (``pose`` has three) is
+            available when any one of them answers.
+
+    Returns:
+        ``True`` when at least one attribute yields a value other than
+        ``None``; ``False`` when every one is absent, ``None`` or unreadable.
+    """
+    for attr in attrs:
+        try:
+            if getattr(robot, attr, None) is not None:
+                return True
+        except Exception:  # noqa: BLE001
+            logger.debug("[mesh] capability probe %r is unreadable", attr, exc_info=True)
+    return False
+
+
 class Mesh(SensorLoopsMixin):
     """Peer-to-peer mesh component embedded in a single Robot or Simulation.
 
@@ -1020,29 +1060,24 @@ class Mesh(SensorLoopsMixin):
         except Exception:
             pass
 
-        # Advertise available extended topics
+        # Advertise available extended topics. Every provider is probed under its
+        # own guard (see ``_sensor_present``) so one faulting sensor cannot erase
+        # the capabilities surveyed after it.
         available_topics: list[str] = []
-        try:
-            if (
-                getattr(r, "_pose", None) is not None
-                or getattr(r, "_slam_pose", None) is not None
-                or getattr(r, "_odom_pose", None) is not None
-            ):
-                available_topics.append("pose")
-            if getattr(r, "_imu", None) is not None:
-                available_topics.append("imu")
-            if getattr(r, "_odom", None) is not None:
-                available_topics.append("odom")
-            if getattr(r, "_lidar_summary", None) is not None or getattr(r, "_lidar_state", None) is not None:
-                available_topics.append("lidar")
-            if getattr(r, "_battery", None) is not None:
-                available_topics.append("health")
-            if getattr(r, "_hands", None) is not None:
-                available_topics.append("hand")
-            if getattr(r, "_map_info", None) is not None:
-                available_topics.append("map")
-        except Exception:
-            pass
+        if _sensor_present(r, "_pose", "_slam_pose", "_odom_pose"):
+            available_topics.append("pose")
+        if _sensor_present(r, "_imu"):
+            available_topics.append("imu")
+        if _sensor_present(r, "_odom"):
+            available_topics.append("odom")
+        if _sensor_present(r, "_lidar_summary", "_lidar_state"):
+            available_topics.append("lidar")
+        if _sensor_present(r, "_battery"):
+            available_topics.append("health")
+        if _sensor_present(r, "_hands"):
+            available_topics.append("hand")
+        if _sensor_present(r, "_map_info"):
+            available_topics.append("map")
         if "health" not in available_topics:
             available_topics.append("health")
         if available_topics:
