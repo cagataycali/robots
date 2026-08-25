@@ -185,7 +185,7 @@ from strands import Agent, tool
 from strands_robots.benchmarks.libero import load_libero_suite
 from strands_robots.simulation import create_simulation
 from strands_robots.simulation.isaac import IsaacSimulation
-from strands_robots.tools import gr00t_inference
+from strands_robots.tools.gr00t_inference import gr00t_inference
 
 # Module-level handle for the @tool-wrapped function below.
 # The wrapper has to access ``_sim`` from outer scope because

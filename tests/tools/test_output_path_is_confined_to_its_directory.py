@@ -307,10 +307,10 @@ class TestThePoseToolRefusesAnEscapingRobotId:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Not as an exception: every other refusal in this tool is an error dict."""
-        from strands_robots.tools import pose_tool as pose_mod
+        from strands_robots.tools.pose_tool import pose_tool
 
         monkeypatch.chdir(tmp_path)
-        result = pose_mod.pose_tool(action="list_poses", robot_id="../escaped")
+        result = pose_tool(action="list_poses", robot_id="../escaped")
 
         assert result["status"] == "error", result
         assert "outside the directory it must be written into" in _text(result)

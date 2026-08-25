@@ -13,7 +13,7 @@ the same tool is selected by natural language ("which policies can I use?").
     python examples/08_discover_lerobot.py
 """
 
-from strands_robots.tools import use_lerobot
+from strands_robots.tools.use_lerobot import use_lerobot
 
 # use_lerobot is a Strands @tool. ``__wrapped__`` is the original undecorated
 # function (preserved by functools.wraps), which we call directly so the example
