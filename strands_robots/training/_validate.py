@@ -231,6 +231,86 @@ def run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
     return problems
 
 
+def rl_run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return run-size problems for a reinforcement-learning :class:`TrainSpec`.
+
+    The RL peer of :func:`run_size_problems`. The supervised backends size a run
+    from ``steps`` / ``global_batch_size``; the RL trainers size theirs from
+    ``total_timesteps`` / ``rollout_steps``, the two caller-supplied factors of
+    the one loop bound both of them derive::
+
+        steps_per_iter = rollout_steps * num_envs
+        num_iters = max(1, total_timesteps // steps_per_iter)
+        for it in range(num_iters):  # collect, update
+
+    Because that bound is *derived* rather than read straight off the spec, a
+    bare ``value <= 0`` test on either factor is weaker here than the same test
+    would be on a field consumed directly: the ``max(1, ...)`` clamp turns every
+    value that survives the comparison but cannot divide into a **silent single
+    iteration** instead of an error. Measured on both trainers over a 16-step
+    run with ``rollout_steps=4``, before this gate existed:
+
+    =========================  =========  ===========  ====================
+    ``total_timesteps``        verdict    iterations   reported
+    =========================  =========  ===========  ====================
+    ``16`` (control)           success    4            ``latest_step=16``
+    ``True``                   success    **1**        ``latest_step=4``
+    ``0.5``                    success    **1**        ``latest_step=4``
+    ``nan``                    success    **1**        ``latest_step=4``
+    ``inf``                    success    **1**        ``latest_step=4``
+    ``100.5``                  TypeError  --           from ``range()``
+    ``"16"`` / ``None``        TypeError  --           from ``validate``
+    =========================  =========  ===========  ====================
+
+    ``inf`` lands in the silent column rather than the raising one because
+    ``inf // 4`` is ``nan`` and ``max(1, nan)`` is ``1`` - ``nan`` compares false
+    against everything. So four of the five values that pass a ``<= 0`` test
+    report ``status="success"``, write a checkpoint, and announce
+    ``"1 iterations x 4 steps complete"`` for a run the caller asked to be tens
+    of thousands of steps long. The one value that does raise
+    (``100.5 // 4 == 25.0``, a float ``range()`` bound) raises only after
+    ``setup`` has built the environment, the networks, the optimizers and - for
+    FastSAC - the replay buffer, which is the cost a read-only preflight exists
+    to precede. A string or ``None`` raises out of the comparison itself, from a
+    :meth:`Trainer.validate` documented to *return* problems.
+
+    ``rollout_steps`` fails the same three ways through the other factor, and its
+    silent case is worse than a short run because it changes the *shape* of the
+    run rather than its length: ``True`` makes ``steps_per_iter`` one, so FastSAC
+    ran 16 single-step iterations instead of 4 of 4 (reported as success), and
+    PPO normalized advantages over a length-one batch - the standard deviation of
+    one sample is ``nan`` - and failed inside torch's ``Normal`` constraint with
+    a message naming neither the field nor the run.
+
+    Only a positive integer can be honored, so both factors are checked against
+    the one shared :func:`~strands_robots.utils.positive_count_error` domain: the
+    same domain :func:`run_size_problems` uses for the supervised pair, and the
+    domain whose own contract is that its values are consumed directly as
+    ``range()`` bounds.
+
+    ``num_envs``, the third factor of ``steps_per_iter``, is deliberately not
+    here. Its accepted set differs between the backends - PPO parallelizes and
+    accepts any count ``>= 1``, while the MuJoCo-backed FastSAC is single-env and
+    requires exactly ``1`` - so it is not one shared domain, and each backend
+    keeps the rule only it can state.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per unusable factor; empty when both are usable counts.
+    """
+    problems: list[str] = []
+    for param in ("total_timesteps", "rollout_steps"):
+        error = positive_count_error(getattr(spec, param, 1), param, context)
+        if error is not None:
+            problems.append(error)
+    return problems
+
+
 def launch_topology_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """Return launch-topology problems for a :class:`TrainSpec`.
 

@@ -150,10 +150,15 @@ class FastSacTrainer(BaseRLAlgo):
         # torch.log on both branches, so only a positive finite value has a
         # usable logarithm - the same domain, on the value rather than the rate.
         problems.extend(self._initial_temperature_problems(spec))
-        if spec.total_timesteps <= 0:
-            problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
-        if spec.rollout_steps <= 0:
-            problems.append(f"rollout_steps must be > 0, got {spec.rollout_steps}")
+        # total_timesteps and rollout_steps are the two caller-supplied factors of
+        # this loop's own bound, max(1, total_timesteps // (rollout_steps *
+        # num_envs)). The max() clamp means a local <= 0 test cannot bound them:
+        # it reads True, a fraction below one iteration, nan and inf as a single
+        # iteration under a successful run.
+        problems.extend(self._rl_run_size_problems(spec))
+        # num_envs is the third factor and is NOT part of that shared domain: this
+        # backend is single-env, so only 1 is usable here while PPO parallelizes
+        # and accepts any count >= 1. Only this backend can state it.
         if spec.num_envs != 1:
             problems.append(f"the MuJoCo backend is single-env (num_envs must be 1), got {spec.num_envs}")
         if spec.buffer_size <= 0:

@@ -1342,7 +1342,8 @@ class Mesh(SensorLoopsMixin):
         hardware, sim, both or neither. A section is present when its probe
         answered and has something to report: ``joints`` (per-joint positions,
         from the motor bus or from the sim world), ``task`` (the running
-        rollout's status), ``sim_time`` and ``robots``.
+        rollout's status), ``sim_time`` and ``robots`` (the sim world's robots,
+        each with the ``active`` flag :meth:`_running_policy_robots` measures).
 
         A section that is ABSENT is therefore ambiguous on its own -- a robot
         with no joints and a robot whose joint probe just raised look identical
@@ -1412,7 +1413,8 @@ class Mesh(SensorLoopsMixin):
                     snapshot["sim_time"] = float(world_data.time)
                 world_robots = getattr(world, "robots", None)
                 if isinstance(world_robots, dict):
-                    snapshot["robots"] = {name: {"active": True} for name in world_robots}
+                    running = self._running_policy_robots()
+                    snapshot["robots"] = {name: {"active": name in running} for name in world_robots}
                 # Per-robot joint extraction for SimRobot children on the mesh.
                 # SimRobot has joint_names + namespace; read qpos/qvel from world.
                 joint_names = getattr(r, "joint_names", None)
@@ -1450,6 +1452,32 @@ class Mesh(SensorLoopsMixin):
             snapshot["degraded"] = degraded
 
         return snapshot if len(snapshot) > 2 else None
+
+    def _running_policy_robots(self) -> frozenset[str]:
+        """Names of this world's robots currently executing a policy.
+
+        The running-policy registry is the same source the ``status`` command
+        reads in :meth:`_dispatch`, so the state topic and an on-demand status
+        answer agree about which rollout is live. A ``SimRobot`` child peer
+        keeps no registry of its own and consults the parent ``Simulation``
+        through the ``_sim_parent`` backref that peer wiring installs.
+
+        A registry that raises is left to reach :meth:`_read_state`'s section
+        handler, which names ``sim_world`` in ``degraded``. That is the
+        opposite disposition to ``status``, which swallows because a command
+        must answer; the state topic reports a failing probe instead, and
+        substituting a flag here is what would make the fault unreportable.
+
+        Returns:
+            The names, empty when no peer in this chain keeps such a registry.
+            Nothing then runs a policy on those robots through the simulation
+            API, so none of them is executing one.
+        """
+        for holder in (self.robot, getattr(self.robot, "_sim_parent", None)):
+            probe = getattr(holder, "_active_policy_robots", None)
+            if callable(probe):
+                return frozenset(probe())
+        return frozenset()
 
     # Cameras - outgoing (opt-in)
     def _resolve_camera_hz(self) -> float:

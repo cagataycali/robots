@@ -47,6 +47,91 @@ from strands_robots.mesh.session import (
 logger = logging.getLogger(__name__)
 
 
+# A sensor payload is a plain record on the wire, so the values in it have to be
+# ones ``json.dumps`` accepts. ``_JSONABLE_MAX_DEPTH`` bounds how far down this
+# module will go looking for them.
+#
+# Past the bound the value is handed to the encoder unchanged. That is
+# deliberate: a sensor record is shallow (a mapping of names to scalars and short
+# vectors), so a structure deeper than this is not a reading but a pathological
+# payload - a cycle, or a nested object graph. Those are exactly the payloads
+# :func:`strands_robots.mesh.session._report_unencodable_payload` exists to
+# report at ERROR, and recursing into them here would turn a reported failure
+# into one absorbed by the reader's own handler.
+_JSONABLE_MAX_DEPTH = 8
+
+
+def _jsonable(value: Any, _depth: int = 0) -> Any:
+    """Coerce *value* into something ``json.dumps`` accepts, or leave it alone.
+
+    Every sensor topic is published as JSON
+    (:func:`strands_robots.mesh.session._put_zenoh_directly` encodes the payload
+    before it reaches the wire), and a payload the encoder refuses is not a
+    transient failure: it fails identically on every tick, so the topic never
+    publishes at all. A sensor pipeline reports its readings as numpy - a lidar
+    summary's bounding box is whatever ``ndarray.min(axis=0)`` returned, an IMU's
+    orientation is a ``float32`` - and none of those are JSON values.
+
+    So this coerces the two things that are readings expressed in a foreign
+    numeric type, and nothing else:
+
+    - anything exposing ``tolist()`` (a numpy array or scalar, a torch tensor)
+      becomes the equivalent Python list or number;
+    - lists, tuples and sets are rebuilt with their contents coerced, and
+      mappings with their keys coerced too, because a ``float32`` is no more
+      encodable as a key than as a value.
+
+    Anything else is returned unchanged rather than coerced to a string or
+    dropped. A payload carrying an object that is genuinely not a reading cannot
+    be repaired by guessing, and silently substituting something for it would
+    publish a record that misreports what the sensor said. Handing it to the
+    encoder untouched is what lets the transport report it by name.
+
+    Args:
+        value: A payload, or any value inside one.
+        _depth: Recursion depth, bounded by :data:`_JSONABLE_MAX_DEPTH`.
+
+    Returns:
+        The coerced value; the original object when there is nothing to coerce.
+    """
+    if _depth >= _JSONABLE_MAX_DEPTH:
+        return value
+    if isinstance(value, dict):
+        return {_jsonable(k, _depth + 1): _jsonable(v, _depth + 1) for k, v in value.items()}
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        return tolist()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        # Named as concrete types rather than as ``Sequence``, because a ``str``
+        # is a sequence and rebuilding one would take a name apart into
+        # characters. A tuple has no JSON spelling of its own - ``json.dumps``
+        # already renders one as an array - so rebuilding every sequence as a
+        # list keeps the encoded form identical while coercing the contents.
+        return [_jsonable(item, _depth + 1) for item in value]
+    return value
+
+
+def _coerce_record(payload: dict[str, Any]) -> None:
+    """Coerce every entry of *payload* in place, so its declared type is kept.
+
+    The readers build a payload and return it under a ``dict[str, Any] | None``
+    signature. Rebuilding it through :func:`_jsonable` would return that
+    function's ``Any``, so the coercion is applied entry by entry here instead
+    and each reader keeps returning the object it built.
+
+    Only the top level is rewritten: :func:`_jsonable` never mutates, it returns
+    a new container, so a nested value the robot still owns - ``_read_health``
+    stores the provider's ``_temps`` mapping by reference - is replaced in the
+    payload rather than edited underneath the robot.
+
+    Args:
+        payload: The outgoing record, modified in place.
+    """
+    for key in list(payload):
+        value = _jsonable(payload.pop(key))
+        payload[_jsonable(key)] = value
+
+
 def _quat_wxyz_from_rotmat(mat: Any) -> list[float]:
     """Rotation matrix -> unit quaternion, scalar-first ``[w, x, y, z]``.
 
@@ -225,6 +310,7 @@ class SensorLoopsMixin:
                     pose.update(pose_data)
                     pose.setdefault("source", "provider")
                     pose.setdefault("frame", "map")
+                    _coerce_record(pose)
                     return pose
                 elif hasattr(pose_data, "shape") and getattr(pose_data, "shape", None) == (4, 4):
                     import numpy as np
@@ -237,6 +323,7 @@ class SensorLoopsMixin:
                     pose["quat"] = _quat_wxyz_from_rotmat(mat)
                     pose["source"] = "provider"
                     pose["frame"] = "map"
+                    _coerce_record(pose)
                     return pose
         except Exception:  # noqa: BLE001
             pass
@@ -248,6 +335,7 @@ class SensorLoopsMixin:
                 pose.update(slam_pose)
                 pose.setdefault("source", "slam")
                 pose.setdefault("frame", "map")
+                _coerce_record(pose)
                 return pose
         except Exception:  # noqa: BLE001
             pass
@@ -259,6 +347,7 @@ class SensorLoopsMixin:
                 pose.update(odom_pose)
                 pose.setdefault("source", "odom")
                 pose.setdefault("frame", "odom")
+                _coerce_record(pose)
                 return pose
         except Exception:  # noqa: BLE001
             pass
@@ -347,6 +436,7 @@ class SensorLoopsMixin:
         except (OSError, ValueError):
             pass
 
+        _coerce_record(health)
         return health if has_data else None
 
     # IMU
@@ -376,6 +466,7 @@ class SensorLoopsMixin:
             imu_data = getattr(r, "_imu", None)
             if imu_data is not None and isinstance(imu_data, dict):
                 imu.update(imu_data)
+                _coerce_record(imu)
                 return imu
         except Exception:  # noqa: BLE001
             pass
@@ -396,6 +487,7 @@ class SensorLoopsMixin:
                         elif key == "accelerometer":
                             imu["accel"] = val[:3] if len(val) >= 3 else val
                 if "rpy" in imu or "gyro" in imu or "accel" in imu:
+                    _coerce_record(imu)
                     return imu
         except Exception:  # noqa: BLE001
             pass
@@ -429,6 +521,7 @@ class SensorLoopsMixin:
                 odom: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 odom.update(odom_data)
                 odom.setdefault("frame", "odom")
+                _coerce_record(odom)
                 return odom
         except Exception:  # noqa: BLE001
             pass
@@ -474,6 +567,7 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 summary: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 summary.update(data)
+                _coerce_record(summary)
                 return summary
         except Exception:  # noqa: BLE001
             pass
@@ -486,6 +580,7 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 state: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 state.update(data)
+                _coerce_record(state)
                 return state
         except Exception:  # noqa: BLE001
             pass
@@ -522,6 +617,7 @@ class SensorLoopsMixin:
                         state = {"peer_id": self.peer_id, "hand": name, "t": time.time()}
                         state.update(data)
                         result[name] = state
+                _coerce_record(result)
                 return result if result else None
         except Exception:  # noqa: BLE001
             pass
@@ -553,6 +649,7 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 info: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 info.update(data)
+                _coerce_record(info)
                 return info
         except Exception:  # noqa: BLE001
             pass

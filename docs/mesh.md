@@ -116,7 +116,7 @@ a loop. Every attempt, granted or refused, is written to the safety audit log.
 | Topic | Rate | Content |
 |-------|------|---------|
 | `strands/{peer_id}/presence` | 2 Hz | heartbeat / peer discovery |
-| `strands/{peer_id}/state` | 10 Hz | joints, sim time, task status, degraded probes |
+| `strands/{peer_id}/state` | 10 Hz | joints, sim time, task status, which robots are running a policy, degraded probes |
 | `strands/{peer_id}/cmd` | on demand | incoming RPC commands |
 | `strands/{peer_id}/response/{id}` | on demand | RPC replies (turn_id correlated) |
 | `strands/{peer_id}/stream` | on demand | VLA execution steps |
@@ -171,6 +171,28 @@ diagnosis is something to report, so the peer publishes it.
 
 The categories are `hw_joints` (the motor bus), `task_state` (the running
 rollout), `sim_world` and `sim_joints`.
+
+### Which robot is running
+
+A sim peer's snapshot carries a `robots` section naming every robot in its world,
+each with an `active` flag:
+
+```json
+{"robots": {"arm_a": {"active": true}, "arm_b": {"active": false}}}
+```
+
+`active` means *this robot is executing a policy right now*. It is read from the
+same running-policy registry the `status` command answers `robots_running` from,
+so polling the topic and asking a peer directly never disagree. The scene's idle
+arms read `false`, which is what makes the one arm running a rollout
+identifiable, and the flag clears when that policy is stopped or its duration
+expires. Which robots *exist* is a separate question, answered by `sim_robots` on
+the presence topic.
+
+A peer that keeps no such registry reports every robot `false` - nothing runs a
+policy on them through the simulation API. A registry that cannot be read is a
+failing probe, so it is named under `sim_world` in `degraded` rather than
+answered with a flag nobody measured.
 
 ### Pose orientation
 
