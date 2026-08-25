@@ -22,7 +22,7 @@ import selectors
 import socket
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -439,3 +439,144 @@ class TestTheDoorbellIsSomethingEverySelectorAccepts:
         ticker.close()
         ticker.wake()  # after close: a no-op on a shutdown path, never an exception
         ticker.close()  # idempotent
+
+
+class TestShutdownKeepsItsPromisesWhenADescriptorDiesUnderIt:
+    """``wake``, ``_drain`` and ``close`` promise never to raise. Nothing graded it.
+
+    Those three promises are load-bearing rather than decorative. Every mesh
+    publish loop paces on a ``Ticker``, and :meth:`Ticker.wait` sits *outside*
+    the ``try`` in each of those loops -- the same placement the module docstring
+    explains for the Windows doorbell. So a shutdown path that raises does not
+    surface as a handled error: it kills the publish thread while the mesh itself
+    still looks up, which is the module's own description of the hardest shape of
+    this failure to attribute -- "a robot that joins the fleet and streams
+    nothing".
+
+    The happy paths are covered elsewhere in this file. What was untested is the
+    reason each handler exists: the descriptor dying *under* the ticker, which is
+    what a concurrent close or a reaped fd looks like from in here. Each test
+    below therefore asserts a post-condition rather than only that nothing was
+    raised -- a bare ``pytest.raises``-free call would also pass against a
+    handler that swallowed the error and abandoned the rest of the shutdown.
+
+    Two of the five drive a stand-in rather than a real descriptor, and for the
+    reason :class:`TestTheDoorbellIsSomethingEverySelectorAccepts` already states
+    for the Windows selector: a POSIX ``epoll`` releases its fd idempotently and
+    ``socket.close()`` never raises on a double close, so those two handlers
+    cannot be reached with the real objects on this host. They guard a platform
+    that does raise, so the stand-in pins the contract instead of the platform.
+    """
+
+    def test_a_drain_whose_read_end_is_gone_stays_silent(self) -> None:
+        """A concurrent close reaps the doorbell mid-``wait``; the tick goes on."""
+        stop = threading.Event()
+        with Ticker(0.01, stop) as ticker:
+            ticker.wake()
+            ticker._wake_r.close()
+
+            ticker._drain()  # the OSError branch: the socket is simply gone
+
+            # The post-condition: the ticker still answers the stop event, so a
+            # dead doorbell degrades pacing rather than the loop's shutdown.
+            stop.set()
+            assert ticker.wait() is True
+
+    @pytest.mark.parametrize("cause", ["write-end-closed", "doorbell-already-full"])
+    def test_a_wake_the_doorbell_cannot_take_stays_silent(self, cause: str) -> None:
+        """Both causes mean "a wake is already as rung as the waiter can see"."""
+        stop = threading.Event()
+        with Ticker(0.01, stop) as ticker:
+            if cause == "write-end-closed":
+                ticker._wake_w.close()
+            else:
+                # Fill the send buffer so the next send() would block. A
+                # BlockingIOError is an OSError, so it lands in the same handler.
+                with pytest.raises(BlockingIOError):
+                    while True:
+                        ticker._wake_w.send(b"\x01" * 4096)
+
+            ticker.wake()  # never raises, however the doorbell is broken
+
+            # A failed wake must not cost the caller the stop itself: that is
+            # the whole reason wake() is documented as best-effort.
+            stop.set()
+            assert ticker.wait() is True
+
+    def test_a_close_whose_doorbell_is_no_longer_watched_still_completes(self) -> None:
+        """The selector already dropped the registration; close finishes anyway."""
+        ticker = Ticker(0.01, threading.Event())
+        ticker._selector.unregister(ticker._wake_r)  # KeyError on the way out
+
+        ticker.close()
+
+        # Completed, not abandoned at the first raise: the closed flag is set, so
+        # wait() reports the ticker as done and close() is still idempotent.
+        with pytest.raises(RuntimeError, match="after close"):
+            ticker.wait()
+        ticker.close()
+
+    def test_a_close_whose_selector_raises_still_completes(self) -> None:
+        """A platform whose selector raises on release must not break shutdown."""
+        ticker = Ticker(0.01, threading.Event())
+        real_selector = ticker._selector
+        selector = _SelectorRaisingOnClose()
+        ticker._selector = cast(selectors.DefaultSelector, selector)
+
+        ticker.close()
+
+        assert selector.close_attempts == 1, "close() never tried to release the selector"
+        with pytest.raises(RuntimeError, match="after close"):
+            ticker.wait()
+        real_selector.close()
+
+    def test_a_close_whose_sockets_raise_releases_both_of_them(self) -> None:
+        """The second descriptor must still be released after the first raises.
+
+        This is the assertion the handler is really for: a shutdown that gave up
+        on the first failing ``close()`` would leak the other half of the
+        doorbell on every ticker, which is a descriptor leak per paced loop.
+        """
+        ticker = Ticker(0.01, threading.Event())
+        ticker._wake_r.close()
+        ticker._wake_w.close()
+        read_end, write_end = _RaisesOnClose(), _RaisesOnClose()
+        ticker._wake_r = cast(socket.socket, read_end)
+        ticker._wake_w = cast(socket.socket, write_end)
+
+        ticker.close()
+
+        assert (read_end.close_calls, write_end.close_calls) == (1, 1), (
+            "close() stopped at the first descriptor that raised, leaking the other"
+        )
+        with pytest.raises(RuntimeError, match="after close"):
+            ticker.wait()
+
+
+class _RaisesOnClose:
+    """A descriptor whose ``close()`` raises, as a non-POSIX platform's may.
+
+    Counts the attempts so a test can tell "the handler caught it" from "the
+    call was never made".
+    """
+
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        raise OSError("this platform raises on a double close")
+
+
+class _SelectorRaisingOnClose:
+    """A selector that releases its registration but raises on ``close()``."""
+
+    def __init__(self) -> None:
+        self.close_attempts = 0
+
+    def unregister(self, _fileobj: object) -> None:
+        return None
+
+    def close(self) -> None:
+        self.close_attempts += 1
+        raise OSError("the epoll/kqueue fd was released under us")
