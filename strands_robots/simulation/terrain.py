@@ -37,7 +37,11 @@ from __future__ import annotations
 
 import random
 
-from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
+from strands_robots.utils import (
+    non_negative_whole_number_error,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 # Supported terrain kinds. ``"rough"`` is smoothed value-noise bumps; ``"stairs"``
 # is a flight of discrete parallel step plateaus rising along +x; ``"pyramid"`` is
@@ -266,6 +270,36 @@ def generate_heightfield(
     The ``>= 2`` floor below is unchanged and stays a separate check: the shared
     domain answers whether the value is a usable count at all, and a 1x1 field
     (which MuJoCo does compile) is this module's own refusal.
+
+    ``seed`` names the value-noise stream the ``"rough"`` field is drawn from, so
+    it is measured against
+    :func:`~strands_robots.utils.non_negative_whole_number_error` - the same
+    shared domain :func:`~strands_robots.transforms.base.derive_variant_seed`
+    applies to the other seed in this package that is spread into a stream key.
+    Unchecked, the documented triple ``(kind, resolution, seed)`` was neither
+    injective nor total, because :class:`random.Random` does not seed from the
+    value it is handed: it seeds an int from ``abs(value)`` and anything else
+    from ``hash(value)``.
+
+    * Three distinct seeds named **one** field. ``-1`` shares a stream with ``1``
+      because the sign is discarded, and ``True`` shares it too (``bool`` is an
+      ``int`` subclass, so it is ``1`` here exactly as it is ``1`` to NumPy in
+      ``derive_variant_seed``). A curriculum stepping the seed across resets to
+      draw a fresh field therefore re-drew one it had already evaluated on, and
+      nothing reported that the two resets shared ground.
+    * ``nan`` made the field **irreproducible**. Since Python 3.10 ``hash(nan)``
+      is derived from the object's identity, so two ``float("nan")`` seeds draw
+      two different fields *within one process* - the single input for which this
+      module's headline promise, that a benchmark "regenerates the identical
+      field on every reset", is simply false.
+    * ``2.5`` and ``"1"`` were accepted outright and silently named some stream,
+      the same fractional and string axes the ``resolution`` domain closes above.
+
+    No upper bound is imposed: ``random.Random`` consumes an arbitrarily large
+    int directly, so the narrower seed domain the backends apply
+    (:func:`~strands_robots.simulation.base.randomization_seed_error`, capped to
+    NumPy's 32-bit stream range) would refuse a value usable here - and it lives
+    in a module this one deliberately does not import.
     """
     validate_terrain(kind)
     if kind is None:
@@ -276,6 +310,10 @@ def generate_heightfield(
     if n < 2:
         raise ValueError(f"terrain resolution must be >= 2, got {resolution}.")
     if kind == "rough":
+        # Only this branch draws from an rng, so only this branch measures the
+        # seed: the other kinds must not be refused for a value they never read.
+        if (text := non_negative_whole_number_error(seed, "seed", "generate_heightfield")) is not None:
+            raise ValueError(text)
         return _rough(n, seed)
     if kind == "stairs":
         return _stairs(n)
