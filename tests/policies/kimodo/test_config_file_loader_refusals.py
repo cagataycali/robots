@@ -70,6 +70,15 @@ _NON_OBJECT_PAYLOADS = (
 # the documented ``TypeError`` belongs to.
 _MISSPELLED_KNOB: dict[str, Any] = {"diffusion_stpes": 25}
 
+# Unpacking is what makes the call a runtime construct, and the cost is that
+# no static check reads the keyword any more. So the two cases below match
+# Python's own phrasing rather than the bare key - a constructor that grew a
+# ``**kwargs`` raising its own ``TypeError`` naming the key would satisfy
+# ``match="diffusion_stpes"`` while the documented mechanism had changed - and
+# ``TestNeitherConstructorAcceptsVarKeyword`` grades the signature promise
+# that makes Python's phrasing the right one to expect.
+_UNEXPECTED_KEYWORD = "unexpected keyword argument 'diffusion_stpes'"
+
 
 def _config_modules() -> list[Any]:
     """Import every ``strands_robots/policies/*/config.py`` module."""
@@ -119,6 +128,17 @@ def _dict_loaders() -> list[tuple[type, str]]:
 
 def _ids(loaders: list[tuple[type, str]]) -> list[str]:
     return [f"{cls.__name__}.{name}" for cls, name in loaders]
+
+
+def _misspellable_constructors() -> list[type]:
+    """The two keyword forms the config reference offers for setting a field."""
+    from strands_robots.policies.kimodo import KimodoConfig, KimodoPolicy
+
+    return [KimodoPolicy, KimodoConfig]
+
+
+def _constructor_ids() -> list[str]:
+    return [cls.__name__ for cls in _misspellable_constructors()]
 
 
 def _write_non_object(directory: Path) -> Path:
@@ -341,13 +361,13 @@ class TestEachConstructionFormHandlesAMisspelledKnobAsDocumented:
     def test_a_misspelled_keyword_on_the_policy_is_refused(self) -> None:
         from strands_robots.policies.kimodo import KimodoPolicy
 
-        with pytest.raises(TypeError, match="diffusion_stpes"):
+        with pytest.raises(TypeError, match=_UNEXPECTED_KEYWORD):
             KimodoPolicy(**_MISSPELLED_KNOB)
 
     def test_a_misspelled_keyword_on_the_config_is_refused(self) -> None:
         from strands_robots.policies.kimodo import KimodoConfig
 
-        with pytest.raises(TypeError, match="diffusion_stpes"):
+        with pytest.raises(TypeError, match=_UNEXPECTED_KEYWORD):
             KimodoConfig(**_MISSPELLED_KNOB)
 
     def test_a_misspelled_key_in_a_config_dict_is_dropped_for_the_default(self) -> None:
@@ -378,4 +398,53 @@ class TestEachConstructionFormHandlesAMisspelledKnobAsDocumented:
 
         assert "KimodoConfig.from_dict" in page.read_text(encoding="utf-8"), (
             f"{page.name} does not name the reader that drops an unrecognised key"
+        )
+
+
+class TestNeitherConstructorAcceptsVarKeyword:
+    """The refusal above is Python's, and both constructors promise it stays so.
+
+    ``KimodoPolicy.__init__`` states in its own docstring that there is
+    "deliberately no ``**kwargs``: an unknown knob raises ``TypeError`` at
+    construction rather than being swallowed by a parameter nothing reads". That
+    promise is what makes the two refusals above Python's signature enforcement
+    rather than a hand-rolled check, and it was graded only as a side effect of
+    how those calls were spelled: a literal ``diffusion_stpes=25`` is a call a
+    static checker resolves against the signature. The keyword is unpacked now,
+    so no checker reads it, and the promise is graded here directly instead.
+
+    A constructor that grew a ``**kwargs`` swallowing the key would leave both
+    refusals above failing outright. One that grew a ``**kwargs`` raising its own
+    ``TypeError`` naming the key would leave them passing while the documented
+    mechanism had silently changed, which is why they match Python's phrasing and
+    why this class exists beside them.
+    """
+
+    @pytest.mark.parametrize("cls", _misspellable_constructors(), ids=_constructor_ids())
+    def test_the_constructor_declares_no_var_keyword(self, cls: type) -> None:
+        variadic = [
+            parameter.name
+            for parameter in inspect.signature(cls).parameters.values()
+            if parameter.kind is inspect.Parameter.VAR_KEYWORD
+        ]
+
+        assert variadic == [], (
+            f"{cls.__name__} accepts **{variadic[0] if variadic else ''}, so an unknown knob is "
+            "swallowed by a parameter nothing reads instead of raising at construction"
+        )
+
+    @pytest.mark.parametrize("cls", _misspellable_constructors(), ids=_constructor_ids())
+    def test_the_misspelled_knob_is_a_near_miss_of_a_real_parameter(self, cls: type) -> None:
+        """Non-vacuity: any unknown keyword raises, so the name must be a typo.
+
+        Were ``diffusion_steps`` renamed, the refusals above would still pass on
+        the misspelling while no longer grading a near miss of a field a caller
+        would plausibly reach for.
+        """
+        misspelled = next(iter(_MISSPELLED_KNOB))
+        parameters = inspect.signature(cls).parameters
+
+        assert misspelled not in parameters, f"{misspelled!r} is a real parameter of {cls.__name__}"
+        assert "diffusion_steps" in parameters, (
+            f"{cls.__name__} has no 'diffusion_steps' parameter, so {misspelled!r} is not a typo of one"
         )
