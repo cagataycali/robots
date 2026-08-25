@@ -19,7 +19,7 @@ import socket
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots._mesh_switch import mesh_env_request
@@ -356,16 +356,47 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
         return None
 
 
+def _reports_failure_to_stop(result: Mapping[str, Any]) -> bool:
+    """Whether a stop result AFFIRMATIVELY reports that nothing was stopped.
+
+    The single owner of that rule. Two callers read it and they must not drift:
+    :func:`_peers_that_did_not_stop` grades the envelopes an
+    :meth:`Mesh.emergency_stop` broadcast collected, and the fleet-wide sim
+    branch of :meth:`Mesh._dispatch` grades each per-robot ``stop_policy``
+    answer before deciding its own ``ok``. A second copy of the rule is how the
+    branch came to report ``ok=True`` over a refusal it had in hand.
+
+    Two spellings mean the same thing here, because the stop verbs disagree
+    about their envelope: ``stop_task`` and the dispatch's own branches answer
+    ``{"ok": ...}``, while ``Simulation.stop_policy`` answers the agent-tool
+    ``{"status": "success"|"error"}``.
+
+    Args:
+        result: A stop result, either a ``_dispatch`` return value or the
+            ``result`` member of a response envelope.
+
+    Returns:
+        ``True`` only when the result explicitly says a stop did not happen.
+        A shape carrying neither key is not a failure report -- see
+        :func:`_peers_that_did_not_stop` on why that stays conservative.
+    """
+    return result.get("ok") is False or result.get("status") == "error"
+
+
 def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
     """Identify responders that explicitly reported they did NOT stop.
 
-    An emergency stop is only as trustworthy as its accounting. Three shapes
+    An emergency stop is only as trustworthy as its accounting. Four shapes
     from ``Mesh._dispatch`` report a stop that did not happen: a peer whose
     registered robot exposes no ``stop_task`` answers ``{"ok": False, ...}``, a
     hardware stop that failed answers ``{"ok": False, "error": "stop_task
-    failed: ..."}``, and a sim peer whose ``stop_policy`` refused answers
-    ``{"status": "error", ...}``. Counting any of them as an acknowledgement
-    tells the operator the fleet halted while a robot is still executing.
+    failed: ..."}``, a sim peer asked to stop one named robot whose
+    ``stop_policy`` refused answers ``{"status": "error", ...}``, and a sim peer
+    asked to stop every active rollout -- which is what the
+    :meth:`Mesh.emergency_stop` fanout asks, since it carries no ``robot_name``
+    -- answers ``{"ok": False, "not_stopped": [...], ...}`` when any one of them
+    refused. Counting any of them as an acknowledgement tells the operator the
+    fleet halted while a robot is still executing.
 
     Deliberately conservative: only responses that AFFIRMATIVELY report failure
     are flagged. A response shape this function does not recognise is left out
@@ -388,7 +419,7 @@ def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
         result = response.get("result", response)
         if not isinstance(result, dict):
             continue
-        did_not_stop = result.get("ok") is False or result.get("status") == "error"
+        did_not_stop = _reports_failure_to_stop(result)
         if did_not_stop:
             failed.add(str(response.get("responder_id") or f"<unidentified-responder-{index}>"))
     return failed
@@ -2074,7 +2105,34 @@ class Mesh(SensorLoopsMixin):
                     if not active:
                         return {"ok": True, "stopped": [], "note": "no policies running"}
                     results = {name: dict(r.stop_policy(name)) for name in active}
-                    return {"ok": True, "stopped": list(results), "results": results}
+                    # ``ok`` is derived from the per-robot answers, never
+                    # assumed. Reporting ok=True here counted a refused
+                    # stop as a halt: the refusal sat in ``results``, which
+                    # ``_peers_that_did_not_stop`` does not read, so the
+                    # peer was scored as stopped and the operator was told
+                    # the fleet had halted. This is the ONLY stop path that
+                    # aggregates -- both sibling branches return the stop
+                    # verb's own answer, so a refusal reaches the
+                    # accounting through them unchanged.
+                    refused = sorted(n for n, res in results.items() if _reports_failure_to_stop(res))
+                    stopped = [n for n in results if n not in set(refused)]
+                    if refused:
+                        logger.error(
+                            "[safety] %s: stop_policy refused for %d of %d active rollout(s): %s; "
+                            "those policies may still be executing",
+                            self.peer_id,
+                            len(refused),
+                            len(results),
+                            refused,
+                        )
+                        return {
+                            "ok": False,
+                            "stopped": stopped,
+                            "not_stopped": refused,
+                            "results": results,
+                            "error": f"stop_policy refused for: {', '.join(refused)}",
+                        }
+                    return {"ok": True, "stopped": stopped, "results": results}
                 except Exception as exc:  # noqa: BLE001 - stop must answer, not raise
                     return {"ok": False, "error": f"stop_policy failed: {exc}"}
             # Child SimRobot peer: delegate stop to the parent sim
