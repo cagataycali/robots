@@ -156,8 +156,29 @@ KimodoPolicy(config={"diffusion_steps": 25})           # a plain dict
 
 Precedence is per-field override > `config` field > the default in the table. A
 merged value is re-validated by `KimodoConfig`, so `diffusion_steps=0` is
-refused whichever way it arrives. There is no `**kwargs`: a misspelled knob
-raises `TypeError` at construction instead of being silently ignored.
+refused whichever way it arrives.
+
+A misspelled knob is refused by the two keyword forms and dropped by the dict
+form. Neither `KimodoPolicy` nor `KimodoConfig` takes `**kwargs`, so
+`KimodoPolicy(diffusion_stpes=25)` raises `TypeError` at construction. A
+`config` dict is read by `KimodoConfig.from_dict`, which drops keys that are not
+fields for forward compatibility - the policy the MotionBricks and WBC configs
+state for their own `from_dict` - so `KimodoPolicy(config={"diffusion_stpes":
+25})` builds with the default 100 and emits no warning. Pass the knob as a
+keyword, or build a `KimodoConfig` first, if a typo should be refused.
+
+### Loading a config from a file
+
+```python
+KimodoPolicy(config=KimodoConfig.from_json("~/kimodo.json"))
+```
+
+`from_json` expands `~` and names the file in every refusal: a path that is not
+a file raises `FileNotFoundError`, and a file that is not valid JSON or that
+holds a JSON value other than an object raises `ValueError` naming the file and
+what it found instead. Keys inside the object follow the drop policy above, and
+values keep the domains in the table. The extension is not checked, so a JSON
+object stored under any name loads.
 
 ## When the sampler runs again
 
