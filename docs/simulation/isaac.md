@@ -223,7 +223,12 @@ open a window.
   that reaches the link, since URDF places a link on that joint rather than on
   the `<link>` element: `xyz` into `position` and `rpy` - fixed-axis
   roll-pitch-yaw, always radians - into `orientation`. A root link, reached by no
-  joint, keeps the identity pose.
+  joint, keeps the identity pose. A joint's axis comes from `<axis xyz>`, and
+  each format's own default applies when the element states no vector the
+  parser can read: a URDF joint that omits the optional `<axis>` acts about
+  **+X**, an MJCF `<joint>` that omits `axis` about **+Z**. Both are valid
+  axes, so a joint read under the other format's default would be reported
+  acting in the perpendicular plane with the load still reporting success.
 
 Because the joint-name and observation contract matches the MuJoCo backend,
 policies and observation mappings transfer unchanged between backends.

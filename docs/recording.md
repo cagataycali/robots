@@ -370,20 +370,45 @@ strands-robots verify-dataset /path/to/dataset --no-check-videos  # skip the per
 ```
 
 `verify-dataset` reuses the same pure-pyarrow `read_dataset_episode_indices`
-helper (no `lerobot` import) and flags four failure modes: the mega-episode
+helper (no `lerobot` import) and flags five failure modes: the mega-episode
 (fewer distinct episodes than `--expected`), `meta/info.json` `total_episodes` /
 `total_frames` drifting from the parquet ground truth (caught even without
-`--expected`), any episode below `--min-frames` (default 1), and - unless
+`--expected`), any episode below `--min-frames` (default 1), - unless
 `--no-check-videos` is passed - any per-episode video file that is missing or
-empty on disk. The last check is the video-modality sibling of the
+empty on disk, and - unless `--no-check-stats` is passed - a dead control
+column. The video check is the video-modality sibling of the
 mega-episode class: a dataset can carry the right episode count yet have no
 pixels because the recorder's video encoder failed or the MP4 streams were
 never written. It resolves each camera's MP4 from `meta/info.json`'s
 `video_path` template and the episode parquet's `videos/<key>/chunk_index` /
 `file_index` columns, and reports the count it checked in
 `video_files_checked`. The programmatic form is
-`strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True)`,
+`strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True, check_stats=True)`,
 which returns the same report dict.
+
+The dead-control-column check is the proprioceptive sibling: correct counts and
+pixels, but the `action` (or `observation.state`) column was written as all
+zeros because the writer's keys never resolved to the declared columns. It reads
+the per-episode `min`/`max` stats LeRobot v3 writes inline, so it needs no video
+decode and no `data/` scan.
+
+A multi-robot recording is graded one level finer, per robot. `start_recording`
+gives every robot its own state/action columns and namespaces each declared name
+with the robot's instance name (`alice__shoulder_pan`), so a resolution failure
+that affects one robot alone leaves that robot's whole block of columns zero
+while the other robot's columns carry real measurements. The vector as a whole
+therefore still varies, and a whole-vector test reports `[PASS]`. The check
+splits the vector into the per-robot blocks `meta/info.json` declares and flags
+any block that is wholly zero, naming the robot:
+
+```
+feature 'observation.state' is identically zero for every 'bob' column across
+episode 0 (20 frame(s)) - dead control column block
+```
+
+A zero *subset* of one robot's block is left alone - a gripper parked at zero for
+a whole episode is a measurement, not a writer fault - and a dataset that
+declares no column names is graded by the whole-vector rule exactly as before.
 
 `--expected` and `--min-frames` are both non-negative integers, and each has a
 meaningful `0`: `--expected 0` asks that a dataset be empty, and `--min-frames 0`

@@ -23,6 +23,7 @@ import math
 import pytest
 
 from strands_robots.simulation.isaac.loaders import (
+    _URDF_DEFAULT_JOINT_AXIS,
     SceneObject,
     load_mjcf,
     load_mjcf_scene_objects,
@@ -341,11 +342,17 @@ class TestParseFallbacks:
     parsers behind every loader. Bad input (wrong arity, non-numeric tokens)
     must fall back to the documented default rather than raise mid-parse, so a
     slightly-off description file still yields a usable kinematic structure.
+
+    The default is the *reading format's* own, not the parser's: a URDF joint
+    axis defaults to +X where an MJCF one defaults to +Z. Which default each
+    loader lands on is graded against MuJoCo in
+    ``test_joint_axis_format_default.py``; this class only pins that malformed
+    input degrades rather than raising.
     """
 
-    def test_axis_wrong_arity_and_non_numeric_fall_back_to_z(self, tmp_path):
+    def test_axis_wrong_arity_and_non_numeric_fall_back_to_the_urdf_default(self, tmp_path):
         # A 2-component axis (wrong arity) and a non-numeric axis both fall
-        # back to the +Z default rather than raising.
+        # back to URDF's own default axis rather than raising.
         urdf = (
             '<robot name="r">'
             '<link name="a"/><link name="b"/><link name="c"/>'
@@ -357,8 +364,8 @@ class TestParseFallbacks:
         )
         robot = load_urdf(_write(tmp_path, "axis.urdf", urdf))
         axes = {j.name: j.axis for j in robot.joints}
-        assert axes["short"] == pytest.approx((0.0, 0.0, 1.0))
-        assert axes["bad"] == pytest.approx((0.0, 0.0, 1.0))
+        assert axes["short"] == pytest.approx(_URDF_DEFAULT_JOINT_AXIS)
+        assert axes["bad"] == pytest.approx(_URDF_DEFAULT_JOINT_AXIS)
 
     def test_position_wrong_arity_and_non_numeric_fall_back_to_origin(self, tmp_path):
         # MJCF body pos with too few components / non-numeric tokens both
