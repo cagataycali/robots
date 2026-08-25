@@ -41,7 +41,11 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import boolean_flag_error, positive_whole_number_error
+from strands_robots.utils import (
+    boolean_flag_error,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 from .camera import CameraParams
 from .color import relative_luminance, srgb_to_linear
@@ -135,6 +139,67 @@ def _resolution_error(
     return None
 
 
+def _clip_plane_error(context: str, *, znear: Any, zfar: Any) -> str | None:
+    """Error text when the clip planes cannot frame anything, else None.
+
+    ``znear`` and ``zfar`` are handed to ``background.render`` inside a
+    :class:`~strands_robots.rendering.camera.CameraParams`, so they are the view
+    frustum every cube face is rendered through. Grouped here beside
+    :func:`_resolution_error` for the same reason: the pair is checked in one
+    place, before any face is rendered, so a call that cannot produce a map is
+    refused rather than paid for.
+
+    Two rules, and only the second is about the pair:
+
+    * Each plane is a distance in meters, held to
+      :func:`~strands_robots.utils.positive_finite_number_error` -- the shared
+      domain for a continuous positive quantity, so what this refuses cannot
+      diverge from the rest of the tree. A fractional distance is perfectly
+      usable (the ``0.01`` m default is), so only the sign and the finiteness
+      are constrained.
+    * ``znear`` must be strictly less than ``zfar``. Equal or inverted planes
+      are an empty frustum: there is no depth interval left for a splat to fall
+      in, so a background that honors the clip planes returns nothing.
+
+    Neither rule can be left to the background, because this function accepts
+    *any* :class:`~strands_robots.rendering.backgrounds.BackgroundRenderer` and
+    they do not agree about what an unusable pair means. Measured on one scene
+    with the same arguments: ``PanoramaBackground`` ignores the planes entirely
+    and returns its usual map, while a ``GsplatBackground`` forwards them to
+    ``gsplat.rasterization`` as ``near_plane`` / ``far_plane`` and culls every
+    gaussian, returning an all-black one. That rasterizer is not even
+    self-consistent about it -- ``znear=inf`` culls everything, ``znear=nan`` is
+    silently ignored -- so there is no tolerance to defer to, and the value a
+    caller passed decided the lighting by way of which background was plugged in.
+
+    Only the domain is checked here, not the *quality* a frustum buys, matching
+    :func:`_resolution_error`. A very tight or a very wide ordered pair is still
+    a frustum, and where "too tight" begins is a judgement about the scene, so
+    it is left to the caller.
+
+    Args:
+        context: Calling function name, quoted in the message.
+        znear: Near clip distance in meters.
+        zfar: Far clip distance in meters.
+
+    Returns:
+        The refusal text, or ``None`` when the pair can frame a scene.
+    """
+    for value, param in ((znear, "znear"), (zfar, "zfar")):
+        if text := positive_finite_number_error(value, param, context):
+            return text
+    # Both are positive and finite here, so float() cannot raise and the
+    # comparison cannot be poisoned by a nan.
+    near, far = float(znear), float(zfar)
+    if near >= far:
+        return (
+            f"{context}: znear must be < zfar, got znear={near:g} and zfar={far:g}. "
+            "Equal or inverted clip planes leave no depth interval to render, so a "
+            "background that honors them produces an empty map rather than a dark scene."
+        )
+    return None
+
+
 def _equirect_directions(equi_w: int, equi_h: int, half_texel: bool = False) -> np.ndarray:
     """Per-texel world-frame unit ray directions of an equirect grid.
 
@@ -184,19 +249,27 @@ def render_environment_map(
         face_size: cube-face resolution in pixels.
         equi_w: output equirect width in pixels.
         equi_h: output equirect height in pixels.
-        znear: near clip distance handed to the background, meters.
-        zfar: far clip distance handed to the background, meters.
+        znear: near clip distance handed to the background, meters. A positive
+            finite distance, strictly less than ``zfar``.
+        zfar: far clip distance handed to the background, meters. A positive
+            finite distance, strictly greater than ``znear``.
 
     Returns:
         ``(equi_h, equi_w, 3) uint8`` equirectangular environment map.
 
     Raises:
-        ValueError: if any resolution knob is not a positive whole number.
-            Checked before the six background renders,
+        ValueError: if any resolution knob is not a positive whole number, or if
+            either clip plane is not a positive finite distance with
+            ``znear < zfar``. Both are checked before the six background renders,
             which are GPU-bound for a
             :class:`~strands_robots.rendering.backgrounds.GsplatBackground`.
     """
     if text := _resolution_error("render_environment_map", face_size=face_size, equi_w=equi_w, equi_h=equi_h):
+        raise ValueError(text)
+    # Checked after the resolutions so a call with both wrong keeps naming the
+    # resolution, and before the renders because an unusable frustum renders six
+    # faces of nothing.
+    if text := _clip_plane_error("render_environment_map", znear=znear, zfar=zfar):
         raise ValueError(text)
     # Normalize to plain ints: the shared domain accepts an integral float and a
     # NumPy integer, and both index the grid below.
