@@ -32,6 +32,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -42,6 +43,22 @@ pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 
 os.environ.setdefault("MUJOCO_GL", "egl")
+
+
+def _source_file(obj: Any) -> Path:
+    """The file ``obj`` was defined in.
+
+    ``inspect.getsourcefile`` returns ``None`` for anything not backed by one - a
+    namespace package, a C extension - and every rule below reads the package off
+    the returned path. A ``None`` reaching ``Path`` is a broken import shape
+    rather than a rule that has been satisfied, so it is refused here: the
+    alternatives are a rule that raises far from its cause, or one that walks an
+    empty inventory and passes vacuously.
+    """
+    source = inspect.getsourcefile(obj)
+    assert source is not None, obj
+    return Path(source)
+
 
 #: A robot whose MJCF declares its own camera, so the compiled scene namespaces
 #: it as ``<robot>/wrist`` and its dataset column is ``<robot>__wrist``.
@@ -160,7 +177,7 @@ class TestEveryBackendConsultsTheGuard:
     def _recording_modules() -> dict[str, str]:
         import strands_robots.simulation as simulation
 
-        root = Path(inspect.getsourcefile(simulation)).parent
+        root = _source_file(simulation).parent
         found = {}
         for path in sorted(root.glob("*/recording.py")):
             source = path.read_text()
@@ -378,8 +395,8 @@ class TestTheCollapseHasOneOwner:
         # holds a camera goes through the owner instead of respelling the rule.
         import strands_robots
 
-        package = Path(inspect.getsourcefile(strands_robots)).parent
-        owner = Path(inspect.getsourcefile(camera_schema_key)).resolve()
+        package = _source_file(strands_robots).parent
+        owner = _source_file(camera_schema_key).resolve()
         respellings = []
         for path in sorted(package.rglob("*.py")):
             if path.resolve() == owner:
