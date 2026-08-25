@@ -34,7 +34,12 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import boolean_flag_error, is_boolean, positive_whole_number_error
+from strands_robots.utils import (
+    boolean_flag_error,
+    camera_schema_key,
+    is_boolean,
+    positive_whole_number_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +126,77 @@ def dataset_recording_posture_error(method: str, param: str, value: Any) -> dict
     if text := boolean_flag_error(value, param, method):
         return {"status": "error", "content": [{"text": text}]}
     return None
+
+
+def camera_schema_key_collision_error(method: str, camera_names: Iterable[str]) -> dict[str, Any] | None:
+    """Error envelope when two scene cameras share one dataset feature name.
+
+    A dataset column is named by :func:`~strands_robots.utils.camera_schema_key`,
+    which collapses a camera's ``/`` namespace separator to ``__``. That mapping
+    is not injective, so ``arm0/wrist`` and ``arm0__wrist`` are two cameras in
+    the scene and one column in the dataset. Nothing downstream can tell which
+    of them a column was declared for, and the three ways of asking each fail
+    differently:
+
+    * recording every camera declares the key twice, which
+      :meth:`~strands_robots.dataset_recorder.DatasetRecorder.create` refuses as
+      a repeated ``camera_keys`` entry - a true refusal, but it reads as the
+      caller having named one camera twice rather than as two cameras sharing a
+      name;
+    * ``cameras=`` naming both drops one without saying so (the requested names
+      are distinct, so they pass :func:`~strands_robots.utils.name_list_error`,
+      and only their keys collide) and the surviving column carries the other
+      camera's frames. When the two render at different sizes the mismatch
+      surfaces as the FIRST ``add_frame`` being rejected, after
+      ``overwrite=True`` has already wiped the dataset being replaced;
+    * ``cameras=`` naming one of them succeeds, but which camera lands under the
+      key depends on the spelling used - the same
+      ``observation.images.arm0__wrist`` column is the robot's wrist view when
+      asked for as ``arm0/wrist`` and the other camera when asked for as
+      ``arm0__wrist``.
+
+    So the ambiguity belongs to the scene, not to one way of recording it, and
+    it is refused once here - before any dataset is created, resumed or wiped -
+    rather than in each of the three. This is the same rule
+    :func:`~strands_robots.utils.name_list_error` applies to a literally
+    repeated name, read through the collapse: two entries naming one column
+    declare fewer columns than were asked for.
+
+    Args:
+        method: The public method name, used to prefix the message.
+        camera_names: The scene's camera names, in the backend's own order.
+            Blank names are ignored - a backend skips an unnamed camera when it
+            declares the schema, so they are not columns and cannot collide.
+
+    Returns:
+        A tool-style error envelope, or ``None`` when every name has a distinct
+        key.
+    """
+    groups: dict[str, list[str]] = {}
+    for name in camera_names:
+        if not name:
+            continue
+        groups.setdefault(camera_schema_key(name), []).append(name)
+    collisions = {key: members for key, members in sorted(groups.items()) if len(members) > 1}
+    if not collisions:
+        return None
+    described = "; ".join(f"{key!r} <- {sorted(members)}" for key, members in collisions.items())
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{method}: these scene cameras do not have distinct dataset feature names: "
+                    f"{described}. A LeRobot feature name cannot contain '/' (it addresses nested "
+                    "features), so a camera's namespace separator is recorded as '__' - which makes "
+                    "these names one column. Whichever camera won it, the column would be named "
+                    "after the other one, and if they render at different sizes the first frame is "
+                    "rejected and the episode is lost. Rename one of them (add_camera(name=...)) so "
+                    "the names still differ once '/' becomes '__', then record again."
+                )
+            }
+        ],
+    }
 
 
 def recorder_dataset_fps(recorder: Any) -> int | None:

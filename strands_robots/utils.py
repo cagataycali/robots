@@ -1567,6 +1567,40 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     return None
 
 
+def camera_schema_key(name: str) -> str:
+    """The LeRobot dataset feature name a scene camera is recorded under.
+
+    A simulation namespaces a robot's own cameras with ``/`` (``arm0/wrist``),
+    but a LeRobot feature name cannot contain ``/`` - it is reserved for
+    nested-feature addressing - so the separator collapses to ``__`` for the
+    dataset schema (``arm0__wrist``).
+
+    That collapse is the only reason a recorded column name can differ from the
+    camera name that produced it, so the rule lives here rather than beside any
+    one of the surfaces that need it: every backend's ``start_recording``
+    declaring the schema, the guard that refuses a scene whose cameras do not
+    have distinct keys
+    (:func:`~strands_robots.simulation.recording.camera_schema_key_collision_error`),
+    and :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`
+    renaming an observed frame onto its declared column. All three have to agree
+    on one mapping for a frame to reach the column declared for it, and a second
+    spelling of the rule is a second thing to keep in step.
+
+    The mapping is NOT injective: two distinct camera names can share one key
+    (``arm0/wrist`` and ``arm0__wrist`` both give ``arm0__wrist``), which is
+    what the collision guard exists to refuse. It IS idempotent, so applying it
+    to a key returns that key - which is why a caller may name a camera in
+    either form.
+
+    Args:
+        name: A scene camera name, raw (``arm0/wrist``) or already schema-safe.
+
+    Returns:
+        The dataset feature name, without the ``observation.images.`` prefix.
+    """
+    return name.replace("/", "__")
+
+
 #: Why a boolean is refused as a vector component. Worded for what a vector
 #: actually carries - a coordinate, a geom extent, a friction coefficient, a
 #: colour channel - rather than the radians / rad/s / newtons of the joint

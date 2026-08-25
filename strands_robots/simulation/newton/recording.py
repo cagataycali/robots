@@ -29,11 +29,12 @@ from typing import TYPE_CHECKING, Any
 from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
+    camera_schema_key_collision_error,
     dataset_recording_option_error,
     dataset_recording_posture_error,
     undriven_robot_state,
 )
-from strands_robots.utils import name_list_error
+from strands_robots.utils import camera_schema_key, name_list_error
 
 if TYPE_CHECKING:
     from strands_robots.simulation.models import SimWorld
@@ -151,7 +152,11 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 ``run_policy(dataset_cameras=...)`` behaves identically on both
                 engines. Names may be given in either the raw camera name or the
                 schema-safe form (``/`` collapsed to ``__``); an unknown name
-                fails loudly, listing the available cameras.
+                fails loudly, listing the available cameras. Two scene cameras whose
+                names collapse onto one dataset column (``arm0/wrist`` and
+                ``arm0__wrist``) are refused before any dataset is created,
+                because the column would be named after whichever of them lost
+                it.
 
         Returns:
             Standard status dict. ``status="error"`` when no world exists, the
@@ -187,6 +192,18 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         # fewer camera columns than the caller asked for.
         if cameras and (text := name_list_error(cameras, "cameras", "start_recording")):
             return {"status": "error", "content": [{"text": text}]}
+
+        # A dataset column is named by camera_schema_key, which collapses a
+        # camera's "/" namespace separator to "__" because a LeRobot feature name
+        # cannot contain "/". That mapping is not injective, so two scene cameras
+        # can name one column - and the three ways of asking then disagree: every
+        # camera is refused downstream as a repeated camera_keys entry, both
+        # spellings requested silently drops one, and one spelling succeeds with
+        # the column named after whichever camera lost. The ambiguity belongs to
+        # the scene rather than to one way of recording it, so it is refused once
+        # here, before any dataset is created, resumed or wiped.
+        if error := camera_schema_key_collision_error("start_recording", list(self._world.cameras)):
+            return error
 
         # Reject a rate a rollout already in flight is not capturing at. The
         # rollout entry points cover the record-then-rollout ordering; this is
@@ -438,7 +455,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         camera_dims: dict[str, tuple[int, int]] = {}
         recording_cameras: list[tuple[str, str, int, int]] = []
         for cam_name, cam in world.cameras.items():
-            safe_name = cam_name.replace("/", "__")
+            safe_name = camera_schema_key(cam_name)
             width = int(getattr(cam, "width", self.default_width))
             height = int(getattr(cam, "height", self.default_height))
             camera_keys.append(safe_name)

@@ -137,6 +137,16 @@ which swaps the compiled scene but leaves the camera registry untouched) is
 absent from the observation rather than filled in with the
 overview, so a column is never quietly populated from the wrong camera.
 
+That guarantee needs the scene's cameras to have distinct column names, and the
+`/` -> `__` collapse is not injective: `arm0/wrist` and `arm0__wrist` are two
+cameras and one column. `start_recording` refuses such a scene up front, naming
+both cameras and the key they share, before any dataset is created, resumed or
+wiped - rename one of them (`add_camera(name=...)`) so the names still differ
+once `/` becomes `__`. Scoping with `cameras=` is not a way around it: whichever
+of the pair won the column, the column would be named after the other one, and
+if the two render at different sizes the first frame is rejected and the episode
+is lost.
+
 `cameras=` is a list of **distinct** camera names, and every surface that accepts
 one - `start_recording`, `render_all`, and the plain-MP4
 `start_cameras_recording` / `start_cameras_recording_synchronous` - enforces that
