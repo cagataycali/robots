@@ -23,6 +23,7 @@ from strands_robots.drivers import (
 from strands_robots.drivers.g1 import G1Driver
 from strands_robots.tools.g1 import (
     HANDSHAKE_FSMS,
+    WALK_FSMS,
     _dds_engine,
     decode_code,
     ensure_dds,
@@ -262,15 +263,28 @@ def test_send_action_refuses_without_fsm_id() -> None:
 
 @pytest.mark.parametrize("fsm", [0, 1, 3, 4])  # zero-torque, damp, sit, standup
 def test_send_action_refuses_outside_handshake_fsm(fsm: int) -> None:
-    """FSM outside :data:`HANDSHAKE_FSMS` is refused with the set named."""
+    """FSM outside :data:`HANDSHAKE_FSMS` is refused with the set named.
+
+    The refusal names the *arm* set specifically (``send_action`` writes to
+    ``rt/armsdk``), not the union with :data:`WALK_FSMS` - a message that
+    over-claims coverage would mislead a caller reading a log.
+    """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = fsm
     result = driver.send_action({"any": 0.0})
     assert result["status"] == "error"
-    assert f"FSM {fsm}" in result["content"][0]["text"]
+    text = result["content"][0]["text"]
+    assert f"FSM {fsm}" in text
+    assert "arm writes" in text
     for handshake_fsm in HANDSHAKE_FSMS:
-        assert str(handshake_fsm) in result["content"][0]["text"]
+        assert str(handshake_fsm) in text
+    # And the message must *not* name a set the arm gate does not test:
+    # a locomotion-only FSM in the message would suggest a gate this call
+    # cannot enforce. The two sets overlap on {501, 801}, so the check is
+    # that any FSM in WALK_FSMS \ HANDSHAKE_FSMS is absent - which is the
+    # empty set today, so the constructive check is on the wording.
+    assert "loco" not in text  # message no longer over-claims scope
 
 
 def test_send_action_refuses_below_battery_floor() -> None:
@@ -306,16 +320,23 @@ def test_send_action_reports_motion_not_wired_when_gates_pass() -> None:
 # =========================================================================
 
 
-def test_task_and_policy_paths_report_not_wired() -> None:
+def test_task_and_policy_paths_report_not_wired_when_gates_pass() -> None:
     """Every task/policy verb reports the "issue #358" reason honestly.
 
     Shipping the stubs with the right envelope shape means the day motion
     lands nothing on the caller side has to change. ``start_task`` and
-    ``run_policy`` return the error envelope - they cannot produce work.
-    ``get_task_status`` and ``stop_task`` succeed because "no task running"
-    and "nothing to stop" are honest answers, not failures.
+    ``run_policy`` consult the same FSM + battery gates :meth:`send_action`
+    does (motion-scoped: the union of :data:`HANDSHAKE_FSMS` and
+    :data:`WALK_FSMS`), then return the error envelope - they cannot
+    produce work. ``get_task_status`` and ``stop_task`` succeed because "no
+    task running" and "nothing to stop" are honest answers, not failures
+    and not motion writes.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = 501  # in both HANDSHAKE_FSMS and WALK_FSMS
+    driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+
     start = driver.start_task("do X", policy_port=8000)
     assert start["status"] == "error"
     assert "issue #358" in start["content"][0]["text"]
@@ -331,6 +352,147 @@ def test_task_and_policy_paths_report_not_wired() -> None:
     # confirm it does not touch it before refusing.
     envelope = driver.run_policy(policy_object=None, instruction="", duration=1.0)  # type: ignore[arg-type]
     assert envelope["status"] == "error"
+    assert "issue #358" in envelope["content"][0]["text"]
+
+
+# -------------------------------------------------------------------------
+# Gates on the task/policy verbs. The bot review of PR #2739 found that the
+# gates the PR advertised "on every motion-path stub" only fired on
+# send_action. These tests pin the gate coverage so the day the writes land
+# a bypass would be caught here rather than on hardware.
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("verb", ["start_task", "run_policy"])
+def test_task_paths_refuse_when_not_connected(verb: str) -> None:
+    """An unconnected driver refuses every motion verb with the same reason.
+
+    The refusal comes from the gate, not from the "not wired" stub, so the
+    contract is: bring me up before you ask me to move. A stub that skipped
+    the gate would silently accept a request the day the writes land.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    if verb == "start_task":
+        result = driver.start_task("do X")
+    else:
+        result = driver.run_policy(policy_object=None, instruction="")  # type: ignore[arg-type]
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "not connected" in text
+    # The gate ran first, so the "not wired" reason must not be what we see.
+    assert "issue #358" not in text
+
+
+@pytest.mark.parametrize("verb", ["start_task", "run_policy"])
+def test_task_paths_refuse_below_battery_floor(verb: str) -> None:
+    """A battery under the floor refuses even when the FSM would admit motion."""
+    driver = G1Driver(tool_name="g1", port="1.2.3.4", battery_floor_pct=15.0)
+    driver._connected = True
+    driver._fsm_id = 501  # walkable
+    driver._battery = {"pct": 4.0, "charging": False, "current": 0.0, "cycle": 0, "t": 0.0}
+    if verb == "start_task":
+        result = driver.start_task("walk 1m")
+    else:
+        result = driver.run_policy(policy_object=None, instruction="")  # type: ignore[arg-type]
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "battery" in text
+    assert "4.0%" in text
+    assert "issue #358" not in text
+
+
+@pytest.mark.parametrize("verb", ["start_task", "run_policy"])
+def test_task_paths_refuse_outside_motion_fsm(verb: str) -> None:
+    """An FSM outside the motion union refuses; the refusal names the union.
+
+    ``start_task`` and ``run_policy`` use the ``"motion"`` scope, which is
+    the union of :data:`HANDSHAKE_FSMS` and :data:`WALK_FSMS`. An FSM at 0
+    (zero-torque) is in neither, so both verbs refuse and the message names
+    the union so a caller reading a log can see what would satisfy it.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = 0
+    driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+    if verb == "start_task":
+        result = driver.start_task("do X")
+    else:
+        result = driver.run_policy(policy_object=None, instruction="")  # type: ignore[arg-type]
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "FSM 0" in text
+    assert "motion writes" in text
+    # Every FSM in the motion union must appear so the caller can see what
+    # would admit them; this pins that the message names both sets.
+    for member in HANDSHAKE_FSMS | WALK_FSMS:
+        assert str(member) in text
+
+
+# -------------------------------------------------------------------------
+# The two ungraded mutations the reviewer flagged, pinned. Both are
+# safety-adjacent: a suite that survives them ships a documented set
+# distinction with no enforcement.
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fsm", sorted(HANDSHAKE_FSMS))
+def test_send_action_admits_every_handshake_fsm(fsm: int) -> None:
+    """Every FSM in :data:`HANDSHAKE_FSMS` passes the arm gate.
+
+    Narrowing the set (dropping 500, say, because sitting-arm-gestures is
+    considered too permissive) must fire this test, or a maintainer editing
+    the set gets no signal. The refusal is what a caller with every gate
+    satisfied sees: the "not wired" reason, *not* the FSM-refusal reason.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = fsm
+    driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+    result = driver.send_action({"any": 0.0})
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    # Every handshake FSM passes the gate - the refusal is "not wired".
+    assert "issue #358" in text
+    # The FSM was accepted, so its number is *not* mentioned as a refusal.
+    assert f"FSM {fsm} refuses" not in text
+
+
+def test_walk_fsms_has_a_consumer_and_a_documented_boundary() -> None:
+    """The :data:`WALK_FSMS` constant is not dead: a locomotion write at 500
+    refuses even though 500 is in :data:`HANDSHAKE_FSMS`.
+
+    500 is sitting - the G1 accepts arm gestures there but not walking. A
+    ``run_policy`` at FSM 500 is a motion write (union-scoped), so it
+    passes; a hypothetical loco-scoped write at 500 would refuse. This
+    test pins the boundary WALK_FSMS exists to record: the day the write
+    lines land, the loco-scoped path can call ``_check_motion_gates("loco")``
+    and the sitting refusal is already correct.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = 500  # sitting: in HANDSHAKE_FSMS, not in WALK_FSMS
+    driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+
+    # Arm-scoped write at 500 passes the gate (500 is in HANDSHAKE_FSMS).
+    arm_result = driver.send_action({"any": 0.0})
+    assert arm_result["status"] == "error"
+    assert "issue #358" in arm_result["content"][0]["text"]  # not gated
+
+    # Loco-scoped gate at 500 refuses. Calling the helper directly is the
+    # narrow way to pin the boundary before any write verb classifies its
+    # scope; the write verbs land in issue #358.
+    loco_refusal = driver._check_motion_gates("loco")
+    assert loco_refusal is not None
+    text = loco_refusal["content"][0]["text"]
+    assert "FSM 500" in text
+    assert "locomotion writes" in text
+    # The message names the WALK set, not the union - so a caller sees
+    # exactly what would satisfy a loco write.
+    for member in WALK_FSMS:
+        assert str(member) in text
+    # 500 is *not* in WALK_FSMS, so it must not appear as an admitted FSM.
+    admitted_set_part = text.split("needs one of ")[-1]
+    assert "500" not in admitted_set_part
 
 
 # =========================================================================

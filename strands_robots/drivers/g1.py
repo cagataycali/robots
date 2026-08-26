@@ -36,7 +36,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.tools.g1 import HANDSHAKE_FSMS, decode_code
+from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
 
 if TYPE_CHECKING:
@@ -334,6 +334,44 @@ class G1Driver:
     # Command path.                                                      #
     # ------------------------------------------------------------------ #
 
+    def _check_motion_gates(self, scope: str) -> dict[str, Any] | None:
+        """Return a refusal envelope if a motion write is not safe, else ``None``.
+
+        Two FSM sets are enforced separately because the G1 documents them
+        separately: :data:`HANDSHAKE_FSMS` covers arm-SDK writes (``rt/armsdk``)
+        and :data:`WALK_FSMS` is narrower - sitting (500) accepts arm gestures
+        but not walking. ``scope`` is the caller's declared kind of write:
+
+        * ``"arm"`` - test :data:`HANDSHAKE_FSMS` and phrase the refusal as
+          "refuses arm writes".
+        * ``"loco"`` - test :data:`WALK_FSMS` and phrase the refusal as
+          "refuses locomotion writes".
+        * ``"motion"`` - test the union (either arm or loco is enough) and
+          phrase the refusal generically. Used by verbs like
+          :meth:`start_task` that route to either kind at runtime.
+
+        Battery-floor is checked after the FSM because a battery-under-floor
+        refusal is the same no matter which write kind was requested, and the
+        caller has already been told the FSM if the FSM is the reason.
+        """
+        if not self._connected:
+            return _refuse("not connected - call connect_eagerly() first")
+        if self._fsm_id is None:
+            return _refuse("FSM id unknown - lowstate has not delivered yet")
+        if scope == "arm":
+            allowed, kind = HANDSHAKE_FSMS, "arm writes"
+        elif scope == "loco":
+            allowed, kind = WALK_FSMS, "locomotion writes"
+        else:  # "motion" - accept an FSM that would satisfy either scope
+            allowed = HANDSHAKE_FSMS | WALK_FSMS
+            kind = "motion writes"
+        if self._fsm_id not in allowed:
+            return _refuse(f"FSM {self._fsm_id} refuses {kind}; needs one of {sorted(allowed)}")
+        battery_pct = (self._battery or {}).get("pct")
+        if battery_pct is not None and battery_pct < self._battery_floor_pct:
+            return _refuse(f"battery {battery_pct:.1f}% is under floor {self._battery_floor_pct:.1f}%")
+        return None
+
     def send_action(
         self,
         action: dict[str, Any],
@@ -346,17 +384,16 @@ class G1Driver:
         cheap to install now, and installing them here means the day the
         write lines land the gates already have coverage. The envelope
         matches what a rejected motion call will return.
+
+        Scope is ``"arm"`` because ``send_action`` in the lerobot driver
+        writes joint targets to the arm SDK; base velocity is not a
+        ``send_action`` verb. When the write lines land they will consult
+        the same :meth:`_check_motion_gates` call and pass the same scope.
         """
         del action, robot_name  # gates run before we would use them
-        if not self._connected:
-            return _refuse("not connected - call connect_eagerly() first")
-        if self._fsm_id is None:
-            return _refuse("FSM id unknown - lowstate has not delivered yet")
-        if self._fsm_id not in HANDSHAKE_FSMS:
-            return _refuse(f"FSM {self._fsm_id} refuses arm/loco writes; needs one of {sorted(HANDSHAKE_FSMS)}")
-        battery_pct = (self._battery or {}).get("pct")
-        if battery_pct is not None and battery_pct < self._battery_floor_pct:
-            return _refuse(f"battery {battery_pct:.1f}% is under floor {self._battery_floor_pct:.1f}%")
+        refusal = self._check_motion_gates("arm")
+        if refusal is not None:
+            return refusal
         return _refuse("motion path not wired yet (issue #358)")
 
     # ------------------------------------------------------------------ #
@@ -372,16 +409,26 @@ class G1Driver:
         duration: float = 30.0,
         **policy_kwargs: Any,
     ) -> dict[str, Any]:
-        """Report that policy tasks are not wired yet.
+        """Refuse a task today; the FSM and battery gates are already live.
 
         The lerobot driver runs its ``start_task`` through the same policy
         provider registry the sim uses; wiring it here needs the g1_tools
         motion verbs (issue #358) so the loop has something to command. The
         stub returns the shape that lerobot returns, so a caller polls the
         same fields either way.
+
+        Scope is ``"motion"`` because a task may issue either an arm or a
+        locomotion write and the caller does not classify itself; the union
+        gate matches what the tasks are able to reach. The day motion lands
+        the loop will call :meth:`_check_motion_gates` per step with the
+        correct narrower scope, so an unsafe FSM refuses the *step*, not the
+        whole task.
         """
         del instruction, policy_port, policy_host, policy_provider
         del duration, policy_kwargs
+        refusal = self._check_motion_gates("motion")
+        if refusal is not None:
+            return refusal
         return _refuse("start_task not wired yet (issue #358)")
 
     def run_policy(
@@ -391,8 +438,16 @@ class G1Driver:
         duration: float = 30.0,
         n_steps: int | None = None,
     ) -> dict[str, Any]:
-        """Report that policy rollouts are not wired yet - see :meth:`start_task`."""
+        """Refuse a rollout today; the FSM and battery gates are already live.
+
+        A policy rollout is a task by another name (see :meth:`start_task`),
+        so it shares the same motion-scoped gate. The narrower per-step
+        classification lands with the write lines in issue #358.
+        """
         del policy_object, instruction, duration, n_steps
+        refusal = self._check_motion_gates("motion")
+        if refusal is not None:
+            return refusal
         return _refuse("run_policy not wired yet (issue #358)")
 
     def get_task_status(self) -> dict[str, Any]:

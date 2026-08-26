@@ -25,11 +25,19 @@ the transport, not the render.
 Writes are gated but not wired: `send_action`, `start_task` and `run_policy`
 return a named "not wired yet" envelope in the same shape a rejected motion
 call will one day return, and the two gates that will guard it - the FSM
-must be in `{500, 501, 801}` and the battery must be above 15% - already
-consult the caches the DDS callbacks fill. Shipping the gates now means the
-day the motion path lands the gates already have coverage, and a caller who
-polls `send_action` today gets the honest reason for the refusal rather than
-a stub that would look like a successful write.
+must be in a scope-appropriate subset and the battery must be above 15% -
+already consult the caches the DDS callbacks fill. The FSM gate carries two
+sets rather than one, because the G1 documents them separately:
+`HANDSHAKE_FSMS = {500, 501, 801}` covers arm-SDK writes (sitting accepts an
+arm gesture) and `WALK_FSMS = {501, 801}` covers locomotion (sitting refuses
+a walk). `send_action` is arm-scoped and names "arm writes" in its refusal;
+`start_task` and `run_policy` are motion-scoped (their loops may issue
+either kind, and the caller does not classify itself) and name the union;
+the day the write lines land, the per-step call can pass `"loco"` and the
+sitting refusal is already correct. Shipping the gates now means the day
+the motion path lands the gates already have coverage, and a caller who
+polls `send_action` today gets the honest reason for the refusal rather
+than a stub that would look like a successful write.
 
 `unitree_sdk2py` is lazy-imported: `from strands_robots.drivers.g1 import
 G1Driver` never touches the SDK, so a headless CI machine can build the
