@@ -850,9 +850,14 @@ def test_connect_eagerly_reports_reason_without_sdk() -> None:
 
 _HAS_SDK: bool
 try:  # pragma: no cover - environmental
-    import unitree_sdk2py.idl.default as _sdk_default  # noqa: F401
+    import unitree_sdk2py.idl.default as _sdk_default
 
-    _HAS_SDK = True
+    # Read the bound module rather than assigning a bare ``True``: the import
+    # is the probe, so naming its result keeps the import used on the line
+    # that decides the answer.  A bare ``True`` leaves the binding write-only,
+    # which reads as dead to a static analyser and needs an ``F401`` waiver to
+    # stay.
+    _HAS_SDK = _sdk_default is not None
 except ImportError:  # pragma: no cover - environmental
     _HAS_SDK = False
 
