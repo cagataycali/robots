@@ -28,6 +28,7 @@ from strands_robots.tools.g1 import (
     ensure_dds,
     reset_dds_state,
 )
+from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 
 # =========================================================================
@@ -365,7 +366,7 @@ def test_stream_sensors_action_returns_the_cached_snapshots() -> None:
 
     async def _collect() -> list[Any]:
         events: list[Any] = []
-        async for event in driver.stream({"toolUseId": "u1", "input": {"action": "sensors"}}, {}):
+        async for event in driver.stream({"toolUseId": "u1", "name": "g1", "input": {"action": "sensors"}}, {}):
             events.append(event)
         return events
 
@@ -387,7 +388,7 @@ def test_stream_stop_action_calls_stop() -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
 
     async def _run() -> Any:
-        async for event in driver.stream({"toolUseId": "u1", "input": {"action": "stop"}}, {}):
+        async for event in driver.stream({"toolUseId": "u1", "name": "g1", "input": {"action": "stop"}}, {}):
             return event
         return None  # pragma: no cover
 
@@ -470,7 +471,8 @@ def test_connect_eagerly_is_a_no_op_on_a_connected_driver(monkeypatch: pytest.Mo
     why the method's idempotence needs pinning rather than assuming.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
-    already = object()
+    # Constructing one touches no DDS - __init__ only records the interface.
+    already = DDSSubscriberSet("eth0")
     driver._connected = True
     driver._subs = already
 

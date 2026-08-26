@@ -522,12 +522,10 @@ class G1Driver:
         the DDS thread writes into. Small dicts; cheap.
         """
         with self._cache_lock:
-            value = getattr(self, attr, None)
+            value: dict[str, Any] | None = getattr(self, attr, None)
             if value is None:
                 return None
-            if isinstance(value, dict):
-                return dict(value)
-            return value  # type: ignore[unreachable]
+            return dict(value)
 
 
 def _refuse(reason: str) -> dict[str, Any]:
