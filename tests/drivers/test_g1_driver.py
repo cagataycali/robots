@@ -1370,6 +1370,54 @@ def test_send_action_echoes_cached_mode_machine_not_fsm_id() -> None:
 # =========================================================================
 
 
+def _sdk_modules_pulled_in_by_executing_the_driver() -> set[str]:
+    """Execute the driver module's source afresh and report the SDK it imports.
+
+    The module is already imported by the time any test runs, so observing its
+    load-time imports needs a genuine re-execution; a plain
+    ``import strands_robots.drivers.g1`` is answered from ``sys.modules`` and
+    observes nothing.
+
+    The re-execution goes into a throwaway module object rather than through
+    ``importlib.reload``. ``reload`` re-executes the source *into the live
+    module*, rebinding every attribute it defines - so
+    ``strands_robots.drivers.g1.G1Driver`` becomes a different class object from
+    the one :mod:`strands_robots.drivers` registered from ``_SHIPPED_DRIVERS`` at
+    first import, and nothing puts the original back. The registry then holds a
+    class no importer can reach for the rest of the session, which is the orphan
+    AGENTS.md > Testing Patterns forbids: any later cell that reads the
+    registration through the module attribute compares two identically named
+    classes and fails on import order rather than on behaviour.
+
+    Executing a fresh module object observes exactly the same module-scope
+    imports and leaves both the live module and the registration untouched. It is
+    safe to do so because the driver module imports only absolute paths and does
+    not register itself - the registration loop lives in the package ``__init__``
+    - so a second execution has no side effect to undo.
+
+    Returns:
+        The ``unitree_sdk2py`` submodules that executing the driver imported,
+        which is empty on a tree that keeps the SDK import lazy.
+    """
+    import importlib
+    import importlib.util
+    import sys
+
+    module = importlib.import_module("strands_robots.drivers.g1")
+    source = getattr(module, "__file__", None)
+    assert source is not None, "the driver module has no source file to execute"
+    spec = importlib.util.spec_from_file_location("_g1_load_probe", source)
+    assert spec is not None and spec.loader is not None, f"no import machinery for {source}"
+    probe = importlib.util.module_from_spec(spec)
+
+    # Snapshot the SDK modules already loaded (may or may not be present on
+    # this box), then execute the driver and report only what is *new*.
+    before = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
+    spec.loader.exec_module(probe)
+    after = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
+    return after - before
+
+
 def test_g1_driver_module_does_not_import_unitree_sdk2py_at_load_time() -> None:
     """Importing :mod:`strands_robots.drivers.g1` does not import the SDK.
 
@@ -1378,15 +1426,36 @@ def test_g1_driver_module_does_not_import_unitree_sdk2py_at_load_time() -> None:
     module-level ``import unitree_sdk2py.idl.default`` fails here.  Thor
     and CI both need the driver module importable without the SDK.
     """
-    import importlib
-    import sys
+    pulled_in = _sdk_modules_pulled_in_by_executing_the_driver()
+    assert pulled_in == set(), (
+        f"importing strands_robots.drivers.g1 pulled in unitree_sdk2py modules: {sorted(pulled_in)}"
+    )
 
-    # Snapshot the SDK modules already loaded (may or may not be present on
-    # this box).  Then reimport the driver module and confirm no *new*
-    # unitree_sdk2py submodule crept in - just importing the driver.
-    before = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
-    importlib.reload(importlib.import_module("strands_robots.drivers.g1"))
-    after = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
-    assert after == before, (
-        f"importing strands_robots.drivers.g1 pulled in unitree_sdk2py modules: {sorted(after - before)}"
+
+def test_the_load_time_probe_leaves_the_g1_registration_reachable() -> None:
+    """Probing the driver's load-time imports does not orphan its registration.
+
+    The probe above is the only thing in the tree that re-executes a shipped
+    driver module, and it used to do so with ``importlib.reload``. That left
+    :func:`~strands_robots.drivers.get_native_driver_class` answering with the
+    pre-reload class while ``strands_robots.drivers.g1.G1Driver`` named the
+    post-reload one, for every test that ran afterwards - a session-wide orphan
+    from a cell that only meant to read an import list.
+
+    Graded here rather than in the file that first tripped over it, because the
+    defect belongs to the probe: a test that reads the registration by identity
+    is entitled to assume the two names agree, and any of them would do as the
+    witness. Asserting it next to the probe keeps the cost visible to whoever
+    edits the probe.
+    """
+    import strands_robots.drivers.g1 as g1_mod
+    from strands_robots.drivers import get_native_driver_class
+
+    assert get_native_driver_class("unitree_g1") is g1_mod.G1Driver, (
+        "premise: the registry holds the class object the driver module exports"
+    )
+    _sdk_modules_pulled_in_by_executing_the_driver()
+    assert get_native_driver_class("unitree_g1") is g1_mod.G1Driver, (
+        "the load-time probe rebound strands_robots.drivers.g1.G1Driver and left "
+        "the registry holding a class object nothing can import"
     )
