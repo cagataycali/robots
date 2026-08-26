@@ -182,7 +182,15 @@ async def init_device_connect(
             "network; configure a broker / secure transport for production."
         )
 
-    runtime = DeviceRuntime(
+    # ``DeviceRuntime`` is looked up through the package namespace rather than
+    # the module-local import above so that
+    # ``mock.patch("strands_robots.device_connect.DeviceRuntime", ...)`` -- the
+    # patch target every existing test uses -- reaches the constructor this
+    # function invokes. Bind at call time; the module-local ``DeviceRuntime``
+    # kept only for typing / docstrings.
+    import strands_robots.device_connect as _pkg  # noqa: PLC0415 - lazy on purpose
+
+    runtime = _pkg.DeviceRuntime(
         driver=driver,
         device_id=device_id,
         messaging_urls=urls,
@@ -234,8 +242,14 @@ def init_device_connect_sync(
     error_holder = [None]
 
     async def _start():
+        # ``init_device_connect`` is looked up through the package so
+        # ``monkeypatch.setattr(strands_robots.device_connect,
+        # "init_device_connect", bring_up)`` -- the substitution every
+        # sync-wrapper outcome test uses -- reaches this call.
+        import strands_robots.device_connect as _pkg  # noqa: PLC0415 - lazy on purpose
+
         try:
-            rt = await init_device_connect(
+            rt = await _pkg.init_device_connect(
                 robot,
                 peer_id=peer_id,
                 peer_type=peer_type,
@@ -257,7 +271,16 @@ def init_device_connect_sync(
 
     thread = threading.Thread(target=_run, daemon=True, name="device-connect-runtime")
     thread.start()
-    started = ready.wait(timeout=_INIT_TIMEOUT_S)
+    # ``_INIT_TIMEOUT_S`` is read through the package rather than the module-local
+    # binding so that ``monkeypatch.setattr(strands_robots.device_connect,
+    # "_INIT_TIMEOUT_S", budget)`` -- the shape every wrapper-budget test uses
+    # -- reaches this read. The module-local literal above is still the source
+    # of truth on first access; the lookup here just honours a caller that
+    # overrode it through the package.
+    import strands_robots.device_connect as _pkg  # noqa: PLC0415 - lazy on purpose
+
+    _timeout = _pkg._INIT_TIMEOUT_S
+    started = ready.wait(timeout=_timeout)
 
     # The recorded failure first: ``_start``'s ``finally`` sets the event on both
     # paths, so a bring-up that failed inside the budget arrives with ``started``
@@ -267,7 +290,7 @@ def init_device_connect_sync(
     if not started:
         raise TimeoutError(
             f"init_device_connect_sync: the Device Connect runtime did not come up "
-            f"within {_INIT_TIMEOUT_S:g}s. The bring-up is still running on its "
+            f"within {_timeout:g}s. The bring-up is still running on its "
             f"background thread; check that the messaging URL / broker is reachable."
         )
 

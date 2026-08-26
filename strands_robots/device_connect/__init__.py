@@ -73,9 +73,14 @@ __all__ = [
 ]
 
 
-# Map each exported name to the module it lives in. Grouped by whether the
-# module itself needs ``device_connect_edge`` so a reader can see at a glance
-# which names cost the extra and which are pure Python.
+# Map each name callers reach through the package to the module it lives in.
+# The public :data:`__all__` names are the documented API; the additional
+# ``_PATCH_TARGETS`` names below are module-level symbols the ``_impl`` submodule
+# re-exports (via ``from device_connect_edge import ...``) that existing tests
+# and callers patch through this package. Serving them here keeps
+# ``mock.patch("strands_robots.device_connect.DeviceRuntime", ...)`` working
+# without eagerly importing ``device_connect_edge`` on package load -- the
+# import is deferred until first access, same as every other lazy name.
 #
 # All three driver modules import ``device_connect_edge`` at module load, and
 # the two ``init_device_connect*`` entry points construct a ``DeviceRuntime``
@@ -88,6 +93,30 @@ _ATTR_TO_MODULE: dict[str, str] = {
     "RobotDeviceDriver": "strands_robots.device_connect.robot_driver",
     "SimulationDeviceDriver": "strands_robots.device_connect.sim_driver",
     "ReachyMiniDriver": "strands_robots.device_connect.reachy_mini_driver",
+    # Names re-exported by ``_impl`` from ``device_connect_edge``. Not in
+    # ``__all__`` (not part of the public API), but reachable through the
+    # package because existing tests patch them here -- and because dropping
+    # a name that used to live on the package silently is a worse contract
+    # break than any lazy-import scheme is meant to prevent.
+    "DeviceRuntime": "strands_robots.device_connect._impl",
+    # Private helper the heartbeat regression suite imports through the
+    # package (``from strands_robots.device_connect import _build_heartbeat``).
+    # Leading underscore is a "not public API" signal, not a "not reachable"
+    # signal; it lived here before this PR and existing suites depend on it.
+    "_build_heartbeat": "strands_robots.device_connect._impl",
+    # Module-level budget the sync wrapper reads through the package (see the
+    # comment inside ``init_device_connect_sync``). Reachable here so
+    # ``module._INIT_TIMEOUT_S`` and ``monkeypatch.setattr(module,
+    # "_INIT_TIMEOUT_S", ...)`` -- the shape every wrapper-budget test uses --
+    # find the value on first access without eagerly importing ``_impl``.
+    "_INIT_TIMEOUT_S": "strands_robots.device_connect._impl",
+    # The opt-in vocabulary the insecure-setting refusal quotes. Read through
+    # the package by the ``TestParsingTheArgumentWasRejectedForAMeasuredReason``
+    # suite, which pins the refusal's contract by comparing its message against
+    # this tuple's values (an ``on``/``enabled``/``y`` spelling outside the
+    # vocabulary should read as secure, and the vocabulary itself is what the
+    # refusal quotes).
+    "_INSECURE_TRUE": "strands_robots.device_connect._impl",
 }
 
 
