@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots._mesh_switch import mesh_env_request
-from strands_robots.bus_access import read_joints, read_observation
+from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.pacing import Ticker
@@ -1393,8 +1393,12 @@ class Mesh(SensorLoopsMixin):
         snapshot: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
 
         try:
-            inner = getattr(r, "robot", None)
-            if inner is not None and hasattr(inner, "get_observation") and getattr(inner, "is_connected", False):
+            # A lerobot robot wraps the device that owns the bus; a native
+            # driver owns it directly. Resolving only the wrapper shape left a
+            # contract-complete native driver publishing every sensor it had
+            # and not one joint (#2749).
+            inner = joint_read_source(r)
+            if inner is not None and getattr(inner, "is_connected", False):
                 # Through the device's bus lock: this probe shares one serial
                 # conversation with the camera publisher, the sensors probe and
                 # teleop, and two readers at once make the SDK refuse the whole

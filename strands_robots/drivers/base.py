@@ -12,11 +12,19 @@ learn which members are load-bearing.
 *measured* contract rather than an aspirational one, which makes it smaller than
 a reader might expect:
 
-* ``get_observation`` is **not** a member. The mesh reads observations from the
-  driver's *inner* device (``getattr(robot, "robot", None)`` in
-  :mod:`strands_robots.mesh.sensors`), and
+* ``get_observation`` is **not** a member. A lerobot robot is a wrapper: it
+  holds the device that owns the bus under ``robot``, and
   :func:`strands_robots.bus_access.read_observation` takes that inner device -
   so the top-level driver is not the thing asked for a frame.
+
+  A native driver has no inner device, and for joint telemetry that is now
+  resolved rather than assumed:
+  :func:`strands_robots.bus_access.joint_read_source` prefers ``robot.robot``
+  and falls back to the driver itself, so a driver that owns its bus publishes
+  ``joints`` on the state topic by exposing either a ``bus`` with ``sync_read``
+  or a ``get_observation``, plus ``is_connected`` to say it is live. Neither is
+  required, which is why neither is a member: a driver with no motors to report
+  is otherwise complete.
 * The sensor attributes a mesh publishes (``_pose``, ``_imu``, ``_battery`` and
   their siblings) are **not** members either. Every one is read with a
   ``getattr(robot, name, None)`` default, so a driver with no IMU publishes no
