@@ -311,6 +311,80 @@ def rl_run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
     return problems
 
 
+def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return replay-loop problems for a FastSAC :class:`RLTrainSpec`.
+
+    The three caller-supplied counts of an off-policy SAC run's replay loop:
+
+    * ``buffer_size`` - the replay buffer's capacity, a tensor dimension built
+      in :meth:`~strands_robots.training.rl.fast_sac.FastSacTrainer.setup`.
+    * ``batch_size`` - the transitions sampled per gradient step, passed to
+      ``ReplayBuffer.sample``.
+    * ``gradient_steps`` - the SAC updates run per iteration, a ``range()`` bound.
+
+    Each is consumed directly as a count - a capacity, a sample size, a
+    ``range()`` bound - so the same strict-``int``
+    :func:`~strands_robots.utils.positive_count_error` domain applies that
+    :func:`run_size_problems` uses, and for the same reason: a value that is not
+    a positive ``int`` cannot be a tensor dimension or a ``range()`` argument and
+    raises ``TypeError`` there rather than being coerced.
+
+    A local ``value <= 0`` test is weaker than that domain, and both of its
+    failure modes were measured on the MuJoCo reach env before this gate existed
+    (an otherwise-valid run, one field mutated):
+
+    =====================  ==========  =========================================
+    value                  verdict     what happened
+    =====================  ==========  =========================================
+    ``buffer_size=True``   success     a one-slot buffer that never reaches
+                                       ``learning_starts``, so **zero** gradient
+                                       updates ran, yet the run reported success
+                                       and "10 iterations x 4 steps complete"
+    ``buffer_size=0.5``    IndexError  ``int(0.5) == 0``: a zero-capacity buffer,
+                                       raised from ``ReplayBuffer.add`` after setup
+    ``batch_size=0.5``     TypeError   raised from ``torch.randint`` in
+                                       ``ReplayBuffer.sample`` after setup
+    ``batch_size=True``    TypeError   the same, from a batch of ``True``
+    ``gradient_steps=0.5`` TypeError   raised from ``range()`` in the update loop
+    ``"256"`` / ``None``   TypeError   raised from the ``<= 0`` comparison itself,
+                                       out of a ``validate`` documented to return
+    =====================  ==========  =========================================
+
+    So a ``bool`` reads as a silent degenerate size - the ``buffer_size`` case
+    runs a whole training loop that learns nothing and reports success - a
+    fraction or a non-finite value passes the comparison and raises deep inside
+    the update loop after the environment, the networks, the optimizers and the
+    replay buffer have been built (the cost a read-only preflight exists to
+    precede), and a string or ``None`` raises out of the comparison itself, from
+    a :meth:`~strands_robots.training.base.Trainer.validate` documented to
+    *return* its problems.
+
+    Only FastSAC reads these three fields; PPO sizes its minibatches from
+    ``num_mini_batches`` and never reads them, so a backend that ignores them
+    must not report on them - which is why this is a gate scoped to the field
+    rather than part of :func:`validate_train_inputs`.
+
+    ``learning_starts`` and ``tau`` stay in the backend's own ``validate``: the
+    first is one side of a relation (``>= batch_size``) rather than a bare count,
+    the second a coefficient in ``(0, 1]`` rather than a count, so neither shares
+    this domain.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`.
+
+    Returns:
+        One problem per unusable count; empty when all three are usable counts.
+    """
+    problems: list[str] = []
+    for param in ("buffer_size", "batch_size", "gradient_steps"):
+        error = positive_count_error(getattr(spec, param, 1), param, context)
+        if error is not None:
+            problems.append(error)
+    return problems
+
+
 def launch_topology_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """Return launch-topology problems for a :class:`TrainSpec`.
 
