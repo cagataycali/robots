@@ -421,10 +421,13 @@ def test_task_paths_refuse_outside_motion_fsm(verb: str) -> None:
     assert result["status"] == "error"
     text = result["content"][0]["text"]
     assert "FSM 0" in text
-    assert "motion writes" in text
     # Every FSM in the motion union must appear so the caller can see what
-    # would admit them; this pins that the message names both sets.
-    for member in HANDSHAKE_FSMS | WALK_FSMS:
+    # would admit them. Values stated literally (not derived from the
+    # constants under test) so a maintainer tightening the ``motion`` scope
+    # to the intersection sees a failure named for the acceptance side of
+    # the motion union, not merely a suite that passes with fewer cases.
+    assert "motion writes" in text
+    for member in (500, 501, 801):
         assert str(member) in text
 
 
@@ -435,14 +438,15 @@ def test_task_paths_refuse_outside_motion_fsm(verb: str) -> None:
 # -------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fsm", sorted(HANDSHAKE_FSMS))
+@pytest.mark.parametrize("fsm", [500, 501, 801])
 def test_send_action_admits_every_handshake_fsm(fsm: int) -> None:
     """Every FSM in :data:`HANDSHAKE_FSMS` passes the arm gate.
 
-    Narrowing the set (dropping 500, say, because sitting-arm-gestures is
-    considered too permissive) must fire this test, or a maintainer editing
-    the set gets no signal. The refusal is what a caller with every gate
-    satisfied sees: the "not wired" reason, *not* the FSM-refusal reason.
+    Values stated literally so narrowing :data:`HANDSHAKE_FSMS` (dropping
+    500, say) fires the ``[500]`` case rather than deselecting it. A
+    parametrize list derived from the set under test cannot detect a
+    narrowing of that set: the case disappears and the suite reads green
+    with one fewer test.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
@@ -487,12 +491,82 @@ def test_walk_fsms_has_a_consumer_and_a_documented_boundary() -> None:
     assert "FSM 500" in text
     assert "locomotion writes" in text
     # The message names the WALK set, not the union - so a caller sees
-    # exactly what would satisfy a loco write.
-    for member in WALK_FSMS:
+    # exactly what would satisfy a loco write. Stated literally so an
+    # emptied WALK_FSMS (a maintainer error that would refuse every
+    # locomotion write the day the writes land) fires this test rather
+    # than passing over a vacuous ``for`` loop.
+    for member in (501, 801):
         assert str(member) in text
     # 500 is *not* in WALK_FSMS, so it must not appear as an admitted FSM.
     admitted_set_part = text.split("needs one of ")[-1]
     assert "500" not in admitted_set_part
+
+
+# -------------------------------------------------------------------------
+# Complementary pins for the set choices themselves. Each states an
+# expectation as literal values so a mutation of the constants shows up as
+# a graded failure, not as a suite that runs one fewer case or reads green
+# over an empty ``for`` loop.
+# -------------------------------------------------------------------------
+
+
+def test_walk_fsms_is_a_proper_subset_of_handshake_fsms() -> None:
+    """Both sets are populated and the distinction is a real one.
+
+    ``test_walk_fsms_has_a_consumer_and_a_documented_boundary`` asserts the
+    contents of :data:`WALK_FSMS` with ``for member in WALK_FSMS``, which
+    is vacuous when the set is empty. This test states the shape directly
+    so an emptied :data:`WALK_FSMS` -- or a widening that erases the
+    distinction the ``loco`` scope depends on -- fails a test named for
+    the shape, not a test named for something else.
+    """
+    assert WALK_FSMS, "WALK_FSMS must not be empty"
+    assert WALK_FSMS < HANDSHAKE_FSMS, "WALK_FSMS must be strictly narrower"
+    # 500 is the boundary the scope split exists to record: sitting admits
+    # arm gestures but not walks. Naming it literally makes the intent
+    # readable from the assertion alone.
+    assert 500 in HANDSHAKE_FSMS - WALK_FSMS
+
+
+@pytest.mark.parametrize("fsm", [501, 801])
+def test_the_loco_gate_admits_every_walking_fsm(fsm: int) -> None:
+    """Acceptance side of the loco gate, at literal FSM values.
+
+    ``test_walk_fsms_has_a_consumer_and_a_documented_boundary`` only grades
+    the refusal at 500; nothing asserts that a walkable FSM is admitted,
+    so emptying :data:`WALK_FSMS` fires no test in the shipped suite. This
+    test closes that gap by driving the helper directly at each FSM the
+    ``loco`` scope must accept.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = fsm
+    driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+    assert driver._check_motion_gates("loco") is None
+
+
+@pytest.mark.parametrize("verb", ["start_task", "run_policy"])
+@pytest.mark.parametrize("fsm", [501, 801])
+def test_motion_verbs_admit_a_literally_walkable_fsm(verb: str, fsm: int) -> None:
+    """A motion verb at an FSM both scopes accept passes the gate.
+
+    Uses literal FSM values rather than a derivation from the composition
+    under test, so this survives a maintainer's later decision to tighten
+    the ``motion`` pre-flight to the intersection. The refusal a caller
+    sees is the ``"not wired"`` reason, not the FSM-refusal reason.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = fsm
+    driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+    if verb == "start_task":
+        result = driver.start_task("do X")
+    else:
+        result = driver.run_policy(policy_object=None, instruction="")  # type: ignore[arg-type]
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "issue #358" in text
+    assert f"FSM {fsm} refuses" not in text
 
 
 # =========================================================================
