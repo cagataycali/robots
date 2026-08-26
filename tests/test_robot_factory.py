@@ -1096,9 +1096,7 @@ class TestRealModeConfigDiscovery:
         # was empty whatever the code did. Select on the text the record
         # actually carries.
         offenders = [
-            r.message
-            for r in caplog.records
-            if "Cleanup error" in r.message and "no attribute 'mesh'" in r.message
+            r.message for r in caplog.records if "Cleanup error" in r.message and "no attribute 'mesh'" in r.message
         ]
         assert not offenders, (
             f"cleanup() logged AttributeError for missing 'mesh': {offenders}. "
