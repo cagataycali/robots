@@ -80,8 +80,15 @@ class _StubLink:
         self.commands: list[dict[str, Any]] = []
 
     async def start(self, on_joints: Any, on_imu: Any) -> None:
-        """Accept the driver's callbacks."""
-        del on_joints, on_imu
+        """Accept the driver's callbacks.
+
+        The two callbacks are unused on this stub - the harness only
+        checks the *shape* of the invocation - and they are dropped by
+        assigning to ``_`` rather than ``del``d (CodeQL's
+        ``py/unnecessary-delete`` fires for a bare delete on a local
+        that is about to leave scope).
+        """
+        _ = (on_joints, on_imu)
 
     async def stop(self) -> None:
         """Accept teardown."""
