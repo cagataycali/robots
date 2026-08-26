@@ -32,6 +32,7 @@ everything it reads. It passed while printing this defect on its own output line
 from __future__ import annotations
 
 import ast
+import gc
 import inspect
 import textwrap
 from types import SimpleNamespace
@@ -66,6 +67,28 @@ def _bare_robot(tool_name: str = "probe") -> Any:
     robot = HwRobot.__new__(HwRobot)
     robot.tool_name_str = tool_name
     return robot
+
+
+def _failed_bring_up() -> None:
+    """Drive a bring-up that raises, then let the finalizer run.
+
+    ``__init__`` raising leaves the half-built instance referenced by the
+    exception's traceback, so ``__del__`` -- the path that reaches ``cleanup()``
+    here -- does not run while that traceback is alive. Catching inside this
+    function drops the frame chain when it returns, and ``gc.collect()`` then
+    forces the finalizer, so a caller can assert on what teardown reported
+    instead of on a log that has not been written yet.
+
+    Raises:
+        AssertionError: If the patched bring-up did not raise.
+    """
+    with patch.object(HwRobot, _BRINGUP_CALL, side_effect=RuntimeError("boom")):
+        try:
+            HwRobot(tool_name="probe", robot="so101_follower")
+        except RuntimeError:
+            gc.collect()
+            return
+    raise AssertionError("the patched bring-up did not raise")
 
 
 def _cleanup_errors(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -164,62 +187,98 @@ def _teardown_closure() -> set[str]:
     return seen
 
 
-def _closure_established() -> set[str]:
-    """Attributes the teardown closure itself establishes or probes for absence.
+def _method_tree(name: str) -> ast.Module:
+    """Parse one method's source.
 
-    Two spellings make a read safe without ``__init__`` having run:
-
-    * a *lazy initializer* -- ``TeleopMixin._ensure_teleop_state`` assigns its
-      whole family behind ``if not hasattr(self, "_teleops")``, so those
-      attributes exist by the time anything in the closure reads them;
-    * an explicit absence probe -- ``getattr(self, name, default)`` or
-      ``hasattr(self, name)``, which is how ``_shutdown_ros_bridge`` and
-      ``cleanup()``'s teleop branch read state that may not be there.
+    Args:
+        name: Method name on the class.
 
     Returns:
-        Every attribute name the closure assigns or probes.
+        The parsed module for that method's dedented source.
     """
-    safe: set[str] = set()
-    for name in sorted(_teardown_closure()):
-        tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(HwRobot, name))))
-        for node in ast.walk(tree):
-            targets: list[ast.expr] = []
-            if isinstance(node, ast.Assign):
-                targets = list(node.targets)
-            elif isinstance(node, ast.AnnAssign):
-                targets = [node.target]
-            for target in targets:
-                if (
-                    isinstance(target, ast.Attribute)
-                    and isinstance(target.value, ast.Name)
-                    and target.value.id == "self"
-                ):
-                    safe.add(target.attr)
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id in ("getattr", "hasattr")
-                and len(node.args) > 1
-                and isinstance(node.args[0], ast.Name)
-                and node.args[0].id == "self"
-                and isinstance(node.args[1], ast.Constant)
-            ):
-                safe.add(node.args[1].value)
-    return safe
+    return ast.parse(textwrap.dedent(inspect.getsource(getattr(HwRobot, name))))
+
+
+def _self_assignments(name: str) -> set[str]:
+    """Instance attributes ``name`` assigns.
+
+    An assignment establishes state for every later reader, wherever it happens
+    -- which is how ``TeleopMixin._ensure_teleop_state`` makes its whole family
+    safe for the callers above it.
+
+    Args:
+        name: Method name on the class.
+
+    Returns:
+        Attribute names assigned as ``self.<attr> = ...``.
+    """
+    out: set[str] = set()
+    for node in ast.walk(_method_tree(name)):
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+                out.add(target.attr)
+    return out
+
+
+def _self_probes(name: str) -> set[str]:
+    """Instance attributes ``name`` reads through an absence-tolerant probe.
+
+    Unlike an assignment this is *local*: ``getattr(self, "robot", None)`` in one
+    method says nothing about a bare ``self.robot`` in another, because the
+    tolerant read binds a local. Counting it method-wide is what would let one
+    reader's guard excuse a sibling's unguarded dereference.
+
+    Args:
+        name: Method name on the class.
+
+    Returns:
+        Attribute names probed with ``getattr(self, ...)`` or ``hasattr(self, ...)``.
+    """
+    out: set[str] = set()
+    for node in ast.walk(_method_tree(name)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("getattr", "hasattr")
+            and len(node.args) > 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "self"
+            and isinstance(node.args[1], ast.Constant)
+        ):
+            out.add(node.args[1].value)
+    return out
 
 
 def _unprotected_state_reads() -> dict[str, str]:
-    """Teardown reads of instance state nothing in the closure establishes.
+    """Teardown reads of instance state nothing establishes before the read.
+
+    A read in method ``M`` is protected when ``M`` probes for the attribute's
+    absence, or when ``M`` or anything it calls assigns it.
 
     Returns:
-        Attribute name -> the method that reads it.
+        Attribute name -> the method that reads it unprotected.
     """
     methods = _class_methods()
-    safe = _closure_established()
+    closure = _teardown_closure()
+    # Assignments are credited across the whole closure: ``self.<attr> = ...``
+    # creates instance state that outlives the method doing it, which is how a
+    # lazy initializer protects the siblings its caller invokes afterwards.
+    # Probes are credited only to the method that makes them, because
+    # ``getattr(self, name, default)`` binds a *local* -- crediting it
+    # closure-wide would let one reader's guard excuse a sibling's bare
+    # ``self.<attr>``, which is the exact defect this file exists for.
+    assigned: set[str] = set()
+    for name in closure:
+        assigned |= _self_assignments(name)
     out: dict[str, str] = {}
-    for name in sorted(_teardown_closure()):
-        tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(HwRobot, name))))
-        for node in ast.walk(tree):
+    for name in sorted(closure):
+        safe = assigned | _self_probes(name)
+        for node in ast.walk(_method_tree(name)):
             if (
                 isinstance(node, ast.Attribute)
                 and isinstance(node.value, ast.Name)
@@ -250,10 +309,25 @@ class TestTheFailedBringUpIsTheStateUnderTest:
 
     def test_a_failed_bring_up_leaves_no_device_handle(self):
         """The attribute is genuinely absent, not merely ``None``."""
-        with patch.object(HwRobot, _BRINGUP_CALL, side_effect=RuntimeError("boom")):
-            with pytest.raises(RuntimeError, match="boom"):
-                HwRobot(tool_name="probe", robot="so101_follower")
+        _failed_bring_up()
         assert not hasattr(_bare_robot(), "robot")
+
+    def test_the_finalizer_runs_only_once_the_traceback_is_released(self, caplog):
+        """Why an assertion taken straight after the raise observes nothing.
+
+        The traceback keeps the half-built instance alive, so ``__del__`` -- and
+        with it ``cleanup()`` -- has not run when the ``pytest.raises`` block
+        exits. Any guard on this path that does not force the collection is
+        asserting on a log that is still empty, whatever it filters for.
+        """
+        with caplog.at_level("ERROR", logger=_LOGGER):
+            with patch.object(HwRobot, _BRINGUP_CALL, side_effect=RuntimeError("boom")):
+                with pytest.raises(RuntimeError, match="boom"):
+                    HwRobot(tool_name="probe", robot="so101_follower")
+            assert _cleanup_errors(caplog) == [], (
+                "teardown reported before the traceback was released; the "
+                "finalizer timing this file relies on has changed"
+            )
 
     def test_the_sibling_teardown_reader_guards_on_self(self):
         """``_shutdown_ros_bridge`` is the in-file precedent for the spelling."""
@@ -272,17 +346,13 @@ class TestTeardownAfterAFailedBringUpReportsNothing:
     def test_cleanup_logs_no_error_when_the_bring_up_failed(self, caplog):
         """The whole symptom: an ERROR record beside the operator's real error."""
         with caplog.at_level("ERROR", logger=_LOGGER):
-            with patch.object(HwRobot, _BRINGUP_CALL, side_effect=RuntimeError("boom")):
-                with pytest.raises(RuntimeError, match="boom"):
-                    HwRobot(tool_name="probe", robot="so101_follower")
+            _failed_bring_up()
         assert _cleanup_errors(caplog) == []
 
     def test_the_error_named_the_missing_attribute_rather_than_the_cause(self, caplog):
         """No record may name the internal handle the operator did not ask about."""
         with caplog.at_level("ERROR", logger=_LOGGER):
-            with patch.object(HwRobot, _BRINGUP_CALL, side_effect=RuntimeError("boom")):
-                with pytest.raises(RuntimeError, match="boom"):
-                    HwRobot(tool_name="probe", robot="so101_follower")
+            _failed_bring_up()
         offenders = [m for m in _cleanup_errors(caplog) if "no attribute" in m]
         assert offenders == [], f"teardown reported a missing attribute: {offenders}"
 
@@ -394,6 +464,5 @@ class TestNoTeardownReadOutlivesItsAssignment:
         family stops being exempt, which is the correct outcome rather than a
         silently widening allowance.
         """
-        established = _closure_established()
-        assert {"_teleops", "_teleop_running"} <= established
+        assert {"_teleops", "_teleop_running"} <= _self_assignments("_ensure_teleop_state")
         assert "_teleops" not in _unprotected_state_reads()
