@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from collections.abc import Generator
 from typing import Any
 
 import pytest
@@ -63,7 +64,7 @@ class _BlockDeviceConnectEdge:
 
 
 @pytest.fixture
-def without_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+def without_the_extra(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Install a meta-path block on ``device_connect_edge`` for one test.
 
     The block is installed **first** so it wins the resolver race against any
