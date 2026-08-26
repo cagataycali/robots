@@ -315,6 +315,31 @@ def test_mode_machine_and_fsm_id_have_disjoint_value_ranges() -> None:
     assert 0 <= mode_machine <= 255
 
 
+def test_named_joint_count_matches_the_sdk_reference() -> None:
+    """The Enable-byte loop bound derives from :data:`_G1_JOINT_INDEX`, not the array width.
+
+    ``LowCmd_.motor_cmd`` is a 35-array; the G1 commands 29 joints and
+    slots 29..34 are a reserved tail.  The SDK's own G1 reference loops
+    ``for i in range(G1_NUM_MOTOR)`` where ``G1_NUM_MOTOR = 29`` when
+    setting the Enable byte, and bounding by the array width instead would
+    make a wire-frame decision on those reserved slots that this driver
+    does not have the information to make.
+
+    Pinned SDK-free so ``call-test-lint`` grades the invariant even in an
+    environment without ``unitree_sdk2py``: the count must equal 29, and it
+    must equal ``max(_G1_JOINT_INDEX.values()) + 1`` (so a joint added to
+    the table later moves both builders together without a separate edit).
+    """
+    from strands_robots.drivers.g1 import _G1_JOINT_INDEX, _G1_NAMED_JOINTS
+
+    assert _G1_NAMED_JOINTS == 29
+    assert _G1_NAMED_JOINTS == max(_G1_JOINT_INDEX.values()) + 1
+    assert len(_G1_JOINT_INDEX) == _G1_NAMED_JOINTS
+    # Every named index is in [0, _G1_NAMED_JOINTS); the reserved tail is
+    # unnamed by construction.
+    assert set(_G1_JOINT_INDEX.values()) == set(range(_G1_NAMED_JOINTS))
+
+
 def test_send_action_refuses_without_fsm_id_source_wired() -> None:
     """Connected + lowstate delivered, but no FSM source - refuse honestly.
 
@@ -1268,25 +1293,42 @@ def test_build_lowcmd_enables_the_touched_slot_and_leaves_the_rest_disabled() ->
 
 
 @pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
-def test_build_zero_torque_stamps_crc_and_enables_every_slot() -> None:
-    """The soft-hold frame carries a valid CRC and Enable on every slot.
+def test_build_zero_torque_stamps_crc_and_enables_every_named_slot() -> None:
+    """The soft-hold frame carries a valid CRC and Enable on every named slot.
 
     ``stop`` (and the follow-up 500 Hz loop's shutdown path) publish this
     frame; if it lands as a wire-side no-op the arm falls freely.  Enable
-    with zero gains is the softest state the SDK protocol expresses; a
-    Disable slot with zero gains is a no-op.
+    with zero gains is the softest state the SDK protocol expresses on the
+    joints this driver names; a Disable slot with zero gains is a no-op.
+
+    The Enable byte is bounded by ``_G1_NAMED_JOINTS`` (29) rather than by
+    ``len(motor_cmd)`` (35): slots 29..34 are a reserved tail that no name
+    in ``_G1_JOINT_INDEX`` maps to, and the SDK's own G1 reference loops
+    ``for i in range(G1_NUM_MOTOR)`` where ``G1_NUM_MOTOR = 29``.  Enabling
+    a reserved slot at zero gains would be a decision this driver does not
+    have the information to make; leaving them at SDK defaults keeps the
+    stop frame byte-identical to the reference on those slots.
     """
     from unitree_sdk2py.utils.crc import CRC
 
-    from strands_robots.drivers.g1 import _build_zero_torque_lowcmd
+    from strands_robots.drivers.g1 import (
+        _G1_NAMED_JOINTS,
+        _build_zero_torque_lowcmd,
+    )
 
     cmd, err = _build_zero_torque_lowcmd(mode_machine=7)
     assert err is None and cmd is not None
     assert cmd.mode_machine == 7
     assert cmd.mode_pr == 0
     assert cmd.crc == CRC().Crc(cmd)
-    for m in cmd.motor_cmd:
-        assert m.mode == 1
+    # Every named slot (0..28) carries Enable; the reserved tail stays at 0.
+    for i in range(_G1_NAMED_JOINTS):
+        assert cmd.motor_cmd[i].mode == 1, f"named slot {i} is not Enable on the stop frame"
+    for i in range(_G1_NAMED_JOINTS, len(cmd.motor_cmd)):
+        assert cmd.motor_cmd[i].mode == 0, (
+            f"reserved slot {i} was enabled; the SDK reference bounds "
+            f"Enable by G1_NUM_MOTOR (29), not by the array width"
+        )
 
 
 @pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")

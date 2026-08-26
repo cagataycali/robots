@@ -122,6 +122,15 @@ _G1_JOINT_INDEX: dict[str, int] = {
     "right_wrist_yaw": 28,
 }
 
+# The named-joint count, derived from :data:`_G1_JOINT_INDEX` so a joint added
+# later moves both builders together.  ``LowCmd_.motor_cmd`` is a 35-array; the
+# G1 commands 29 joints and slots 29..34 are a reserved tail that neither
+# builder names.  Bound the Enable-byte loop by this count rather than by
+# ``len(cmd.motor_cmd)`` so the stop frame stays byte-identical to the SDK's
+# own G1 reference (``example/g1/low_level/g1_low_level_example.py:135`` loops
+# ``for i in range(G1_NUM_MOTOR)``, where ``G1_NUM_MOTOR = 29``).
+_G1_NAMED_JOINTS: int = max(_G1_JOINT_INDEX.values()) + 1
+
 # PD gain defaults used when a caller does not supply per-joint gains.  These
 # are the gains the neon reference stack uses for a rested-arm hold; they are
 # deliberately conservative and match what the FSM 501 (sitting) hold expects.
@@ -909,12 +918,32 @@ def _build_zero_torque_lowcmd(
       cached :attr:`G1Driver._mode_machine`, uint8).  Firmware drops a stop
       frame whose ``mode_machine`` does not match, and a dropped stop is a
       fall.
-    * ``motor_cmd[i].mode = 1`` (Enable) on every slot.  A Disable slot
-      with zero gains lets the joint fall freely - the arm-SDK protocol
-      treats Disable as "not controlled at all" regardless of gain.
-      Enable + zero gains is the softest *controlled* state the protocol
-      expresses; that is what a stop wants.
+    * ``motor_cmd[i].mode = 1`` (Enable) on every **named** slot (0..28).
+      Slots 29..34 are a reserved tail: no name in :data:`_G1_JOINT_INDEX`
+      maps to them, and the SDK's own G1 reference bounds its Enable loop by
+      ``G1_NUM_MOTOR = 29`` rather than by the array width.  Enabling a
+      reserved slot at zero gains would be a decision this driver does not
+      have the information to make.  A Disable slot with zero gains lets a
+      *named* joint fall freely - the arm-SDK protocol treats Disable as "not
+      controlled at all" regardless of gain.  Enable + zero gains is the
+      softest *controlled* state the protocol expresses on the joints this
+      driver names; that is what a stop wants.
     * ``crc`` is stamped last so a later populate cannot invalidate it.
+
+    ``mode_machine`` is accepted as an ``int | None`` for signature parity
+    with :func:`_build_lowcmd_from_action`, and the caller is expected to
+    pass the driver's cached uint8 (``[0, 255]``) rather than an FSM id.
+    Values outside that range raise ``struct.error`` inside the SDK CRC
+    packer as a property of the SDK's own ``<2B2x`` pack format, not of this
+    helper; no production path in this driver can reach the raise because
+    ``G1Driver._on_lowstate`` binds ``_mode_machine`` from a uint8 IDL field.
+
+    This helper is defined but not yet wired: ``G1Driver.stop`` and
+    ``stop_task`` currently return refusal envelopes rather than publishing
+    a frame, and no other call site exists.  The 500 Hz control-loop PR
+    (harness#361 PR-C) is where the wiring lands; the helper is defined
+    here so the loop's shutdown path composes on a tested, CRC-correct
+    frame rather than one hand-rolled next to it.
     """
     try:
         from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as _default_lowcmd
@@ -922,17 +951,30 @@ def _build_zero_torque_lowcmd(
     except ImportError as exc:  # pragma: no cover - exercised on hardware
         return None, f"unitree_sdk2py is not installed: {exc}"
     cmd = _default_lowcmd()
-    # Wire-frame contract: PR mode, echo mode_machine, Enable every slot.
+    # Wire-frame contract: PR mode, echo mode_machine, Enable every named slot.
     cmd.mode_pr = 0
     if mode_machine is not None:
         cmd.mode_machine = int(mode_machine)
-    for motor in cmd.motor_cmd:
-        motor.mode = 1  # Enable - a Disable slot lets the joint fall freely.
+    # ``motor_cmd`` is a 35-array; the G1 commands 29 joints, and slots
+    # 29..34 are a reserved tail that no name in ``_G1_JOINT_INDEX`` maps to.
+    # Assert the width so a future SDK change to a shorter array fails here
+    # rather than by silent slice - this is the length check CodeQL 980
+    # asked for, now that ``_G1_NAMED_JOINTS`` documents the distinction.
+    assert len(cmd.motor_cmd) >= _G1_NAMED_JOINTS, (
+        f"LowCmd_.motor_cmd is {len(cmd.motor_cmd)} slots; the driver names "
+        f"{_G1_NAMED_JOINTS} joints and cannot address them all"
+    )
+    for i in range(_G1_NAMED_JOINTS):
+        motor = cmd.motor_cmd[i]
+        motor.mode = 1  # Enable - a Disable slot lets the named joint fall freely.
         motor.q = 0.0
         motor.dq = 0.0
         motor.tau = 0.0
         motor.kp = 0.0
         motor.kd = 0.0
+    # Slots [_G1_NAMED_JOINTS, len(cmd.motor_cmd)) stay at SDK defaults
+    # (mode=0, q=0, dq=0, tau=0, kp=0, kd=0) - byte-identical to the SDK
+    # reference's zero-posture frame on those slots.
     # CRC last - firmware drops a non-matching frame silently.
     cmd.crc = _CRC().Crc(cmd)
     return cmd, None
