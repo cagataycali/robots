@@ -975,17 +975,21 @@ def test_send_action_fills_the_named_slot_and_leaves_the_rest_alone() -> None:
 
 @pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
 def test_send_action_applies_default_gains_for_scalar_targets() -> None:
-    """A scalar target lands with :data:`_DEFAULT_KP`/``_DEFAULT_KD``.
+    """A scalar target lands that slot's reference gains on the wire.
 
     The scalar form is the common case (a caller who just wants a hold).
-    The wire capture pins the exact defaults so a change to them is a
-    test-visible event, not a silent regression.
+    ``right_elbow`` is an arm joint, so the vendor's ``rt/lowcmd`` reference
+    gives it ``kp=40, kd=1``.
+
+    The expected numbers are written as literals rather than imported from
+    :data:`~strands_robots.drivers.g1._SDK_KP` / ``_SDK_KD``: an assertion that
+    reads the constant it grades follows any edit to that constant, so it stays
+    green for every value including a wrong one.  Spelled out, this cell is an
+    independent check on the value that reaches the topic.
+    ``tests/drivers/test_g1_per_joint_gains.py`` grades the whole table the same
+    way, slot by slot.
     """
-    from strands_robots.drivers.g1 import (
-        _DEFAULT_KD,
-        _DEFAULT_KP,
-        _G1_JOINT_INDEX,
-    )
+    from strands_robots.drivers.g1 import _G1_JOINT_INDEX
 
     driver, pub = _gated_driver()
     driver.send_action({"right_elbow": -0.2})
@@ -994,8 +998,8 @@ def test_send_action_applies_default_gains_for_scalar_targets() -> None:
     slot = _G1_JOINT_INDEX["right_elbow"]
     m = message.motor_cmd[slot]
     assert m.q == pytest.approx(-0.2)
-    assert m.kp == pytest.approx(_DEFAULT_KP)
-    assert m.kd == pytest.approx(_DEFAULT_KD)
+    assert m.kp == pytest.approx(40.0)
+    assert m.kd == pytest.approx(1.0)
     assert m.dq == pytest.approx(0.0)
     assert m.tau == pytest.approx(0.0)
 

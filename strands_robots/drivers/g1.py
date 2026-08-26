@@ -131,12 +131,39 @@ _G1_JOINT_INDEX: dict[str, int] = {
 # ``for i in range(G1_NUM_MOTOR)``, where ``G1_NUM_MOTOR = 29``).
 _G1_NAMED_JOINTS: int = max(_G1_JOINT_INDEX.values()) + 1
 
-# PD gain defaults used when a caller does not supply per-joint gains.  These
-# are the gains the neon reference stack uses for a rested-arm hold; they are
-# deliberately conservative and match what the FSM 501 (sitting) hold expects.
-# A caller who cares supplies ``kp``/``kd`` in the action dict.
-_DEFAULT_KP: float = 25.0
-_DEFAULT_KD: float = 0.5
+# Per-joint PD gains applied when a caller does not supply ``kp``/``kd``,
+# indexed by the same slot as :data:`_G1_JOINT_INDEX`.  Transcribed from the
+# vendor's own ``rt/lowcmd`` reference for this robot -- the module-scope
+# ``Kp``/``Kd`` lists in
+# ``unitree_sdk2_python/example/g1/low_level/g1_low_level_example.py`` -- which
+# is the gain set the firmware's low-level position mode is tuned against.
+#
+# These cannot collapse to a single scalar: ``Kp`` takes three distinct values
+# and ``Kd`` two, because the joints do not carry comparable loads.  Both knees
+# (slots 3 and 9) are the stiffest entries at ``kp=100, kd=2`` and they are the
+# joints that hold a standing biped up, so a scalar chosen anywhere in the
+# table's range understiffens something: an arm-sized ``kp=40`` leaves each knee
+# at 40% of its reference stiffness.  The firmware treats gains as advisory --
+# it validates ``crc``, ``mode_machine`` and the Enable byte, not ``kp``/``kd``
+# -- so a mis-gained frame is accepted and reported successful, and the only
+# symptom is that the robot tracks the target badly or sags under its own
+# weight.
+#
+# A caller who wants different gains supplies ``kp``/``kd`` per joint in the
+# action dict; a supplied value always wins over the table.
+# The vendor groups its lists as two legs, a waist and two arms; naming the
+# groups keeps that structure legible (the two legs are identical, as are the two
+# arms) and makes the 29-entry width fall out of 6 + 6 + 3 + 7 + 7 rather than
+# being asserted separately.
+_LEG_KP: tuple[float, ...] = (60.0, 60.0, 60.0, 100.0, 40.0, 40.0)  # hip p/r/y, knee, ankle p/r
+_WAIST_KP: tuple[float, ...] = (60.0, 40.0, 40.0)  # yaw, roll, pitch
+_ARM_KP: tuple[float, ...] = (40.0,) * 7  # shoulder p/r/y, elbow, wrist r/p/y
+_SDK_KP: tuple[float, ...] = _LEG_KP + _LEG_KP + _WAIST_KP + _ARM_KP + _ARM_KP
+
+_LEG_KD: tuple[float, ...] = (1.0, 1.0, 1.0, 2.0, 1.0, 1.0)
+_WAIST_KD: tuple[float, ...] = (1.0, 1.0, 1.0)
+_ARM_KD: tuple[float, ...] = (1.0,) * 7
+_SDK_KD: tuple[float, ...] = _LEG_KD + _LEG_KD + _WAIST_KD + _ARM_KD + _ARM_KD
 
 
 class G1Driver:
@@ -494,8 +521,8 @@ class G1Driver:
         for the exact set).  A caller supplies either
 
         * ``{joint_name: target_position_radians}`` for the common case where
-          every joint uses the driver's default :data:`_DEFAULT_KP` /
-          :data:`_DEFAULT_KD` gains, or
+          the joint takes its reference gains from :data:`_SDK_KP` /
+          :data:`_SDK_KD`, or
         * ``{joint_name: {"q": ..., "kp": ..., "kd": ..., "dq": ..., "tau": ...}}``
           when a caller wants per-joint control.  Any missing key inside the
           inner dict falls back to the default gain (``kp``, ``kd``) or zero
@@ -813,7 +840,7 @@ def _build_lowcmd_from_action(
       silently drop a joint the caller thought was commanded, which is the
       single worst failure mode on a robot.
     * A scalar value is interpreted as the position target ``q``, with
-      :data:`_DEFAULT_KP` / :data:`_DEFAULT_KD` gains and zero ``dq``/``tau``.
+      the slot's :data:`_SDK_KP` / :data:`_SDK_KD` gains and zero ``dq``/``tau``.
     * A dict value must contain ``"q"``; ``"kp"``, ``"kd"``, ``"dq"``, ``"tau"``
       are optional.  An unknown key inside the inner dict is refused for the
       same reason as an unknown joint name: silent drop is worse than a
@@ -871,12 +898,12 @@ def _build_lowcmd_from_action(
             if "q" not in value:
                 return None, f"per-joint dict for {name!r} is missing required key 'q'"
             q = value["q"]
-            kp = value.get("kp", _DEFAULT_KP)
-            kd = value.get("kd", _DEFAULT_KD)
+            kp = value.get("kp", _SDK_KP[slot])
+            kd = value.get("kd", _SDK_KD[slot])
             dq = value.get("dq", 0.0)
             tau = value.get("tau", 0.0)
         else:
-            q, kp, kd, dq, tau = value, _DEFAULT_KP, _DEFAULT_KD, 0.0, 0.0
+            q, kp, kd, dq, tau = value, _SDK_KP[slot], _SDK_KD[slot], 0.0, 0.0
         try:
             q_f = float(q)
             kp_f = float(kp)
