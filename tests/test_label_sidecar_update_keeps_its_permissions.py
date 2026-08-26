@@ -46,17 +46,27 @@ import pytest
 
 import strands_robots.episode_labels as labels
 
+# Permission bits, named rather than spelled as octal masks. The cells assert
+# on these same ``stat`` bits, so composing the fixtures from them says which bit
+# each case turns on instead of leaving a reader to decode an octal literal.
+_OWNER_RW = stat.S_IRUSR | stat.S_IWUSR
+_GROUP_OTHER_READ = stat.S_IRGRP | stat.S_IROTH
+_ANY_WRITE = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+
 # Modes a dataset's own files carry in the wild: the default umask, a
 # group-writable shared mount, a group-readable team dataset, and a read-only
 # archive extraction. Every one is wider than ``mkstemp``'s ``0o600`` in at
 # least one bit, so each would have been narrowed.
-_SHARED_MODES = (0o644, 0o664, 0o640, 0o444)
+#
+# The grid is built from the named modes rather than the names being indexes
+# into the grid, so the modes individual cells stage and the modes the
+# parametrized cells sweep are the same objects and cannot drift apart.
+_GROUP_READABLE = _OWNER_RW | _GROUP_OTHER_READ  # 0o644 default umask
+_GROUP_WRITABLE = _GROUP_READABLE | stat.S_IWGRP  # 0o664 shared mount
+_TEAM_READABLE = _OWNER_RW | stat.S_IRGRP  # 0o640 team dataset
+_READ_ONLY = stat.S_IRUSR | _GROUP_OTHER_READ  # 0o444 archive extraction
 
-# The two members individual cells name. Taken from the grid rather than
-# respelled, so the modes these cells stage and the modes the parametrized cells
-# sweep cannot drift apart.
-_GROUP_READABLE = _SHARED_MODES[0]
-_READ_ONLY = _SHARED_MODES[3]
+_SHARED_MODES = (_GROUP_READABLE, _GROUP_WRITABLE, _TEAM_READABLE, _READ_ONLY)
 
 # The private mode the temp file arrives with. Named here rather than read from
 # the module so a cell that grades the module's behaviour is not comparing the
@@ -140,11 +150,12 @@ class TestAnUpdateKeepsTheSidecarReadableToTheSameCallers:
         )
 
     @pytest.mark.parametrize("writer", sorted(_WRITERS), ids=sorted(_WRITERS))
-    def test_a_group_readable_sidecar_stays_group_readable(self, writer: str) -> None:
+    @pytest.mark.parametrize("start", _SHARED_MODES, ids=[oct(m) for m in _SHARED_MODES])
+    def test_a_group_readable_sidecar_stays_group_readable(self, writer: str, start: int) -> None:
         """The bit that decides whether another account can read the labels."""
         root = _seeded_dataset()
         sidecar = labels.labels_path(root)
-        os.chmod(sidecar, _GROUP_READABLE)
+        os.chmod(sidecar, start)
 
         _WRITERS[writer](root)
 
@@ -246,10 +257,11 @@ class TestTheModeIsAppliedBeforeTheRename:
 class TestWhatIsUnchanged:
     """The atomicity contract the construct exists for, and the content."""
 
-    def test_a_failed_write_leaves_no_temp_file_and_the_sidecar_intact(self) -> None:
+    @pytest.mark.parametrize("start", _SHARED_MODES, ids=[oct(m) for m in _SHARED_MODES])
+    def test_a_failed_write_leaves_no_temp_file_and_the_sidecar_intact(self, start: int) -> None:
         root = _seeded_dataset()
         sidecar = labels.labels_path(root)
-        os.chmod(sidecar, _GROUP_READABLE)
+        os.chmod(sidecar, start)
         before = sidecar.read_bytes()
 
         with pytest.raises(TypeError):
@@ -258,7 +270,7 @@ class TestWhatIsUnchanged:
 
         assert [p.name for p in root.iterdir() if p.name.endswith(".tmp")] == []
         assert sidecar.read_bytes() == before
-        assert _mode(sidecar) == _GROUP_READABLE
+        assert _mode(sidecar) == start
 
     def test_a_successful_update_writes_the_content(self) -> None:
         root = _seeded_dataset()
@@ -287,6 +299,34 @@ class TestWhatIsUnchanged:
         labels.annotate_episode(root, 0, quality="high")
 
         assert _mode(sidecar) == _MKSTEMP_MODE
+
+
+class TestTheModeFixturesAreTheModesTheyName:
+    """The composed bits denote the octal modes the comments claim.
+
+    Composing the fixtures from ``stat`` bits puts them in the same vocabulary
+    the assertions use, which is only an improvement while the names still mean
+    what they say.
+    """
+
+    def test_each_named_mode_is_the_octal_mode_its_comment_claims(self) -> None:
+        named = (_GROUP_READABLE, _GROUP_WRITABLE, _TEAM_READABLE, _READ_ONLY)
+        assert named == (0o644, 0o664, 0o640, 0o444), (
+            f"the composed bits denote {tuple(oct(m) for m in named)}, so the cells no longer "
+            "drive the modes their comments describe"
+        )
+
+    def test_every_shared_mode_is_wider_than_the_temp_file_s(self) -> None:
+        """Non-vacuity: a mode no wider than ``mkstemp``'s could not be narrowed."""
+        for mode in _SHARED_MODES:
+            assert mode & ~_MKSTEMP_MODE, (
+                f"{oct(mode)} grants nothing {oct(_MKSTEMP_MODE)} withholds, so carrying it "
+                "across proves nothing about the narrowing"
+            )
+
+    def test_the_read_only_mode_really_carries_no_write_bit(self) -> None:
+        """The read-only cell's claim is about ``os.replace``, not a writable file."""
+        assert not _READ_ONLY & _ANY_WRITE, f"{oct(_READ_ONLY)} is writable"
 
 
 class TestThePremise:
