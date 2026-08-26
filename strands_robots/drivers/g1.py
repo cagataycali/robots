@@ -819,7 +819,7 @@ def _build_lowcmd_from_action(
       same reason as an unknown joint name: silent drop is worse than a
       caller-facing error.
 
-    Wire-frame contract (issue #361 review, [MUST FIX] from yinsong1986):
+    Wire-frame contract:
 
     * ``mode_pr = 0`` - PR mode, which is what the joint-name table this
       helper interprets is calibrated for.  AB mode (``mode_pr = 1``) would
