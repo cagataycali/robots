@@ -454,11 +454,11 @@ def test_task_and_policy_paths_report_not_wired_when_gates_pass() -> None:
     stop = driver.stop_task()
     assert stop["status"] == "success"
 
-    # run_policy takes a Policy object we do not have here; feed None and
-    # confirm it does not touch it before refusing.
+    # ``run_policy(None)`` refuses at the transport primitive rather than
+    # touching the loop - the loop needs a policy to roll out.
     envelope = driver.run_policy(policy_object=None, instruction="", duration=1.0)  # type: ignore[arg-type]
     assert envelope["status"] == "error"
-    assert "issue #358" in envelope["content"][0]["text"]
+    assert "policy_object is required" in envelope["content"][0]["text"]
 
 
 # -------------------------------------------------------------------------
@@ -669,8 +669,11 @@ def test_motion_verbs_admit_a_literally_walkable_fsm(verb: str, fsm: int) -> Non
 
     Uses literal FSM values rather than a derivation from the composition
     under test, so this survives a maintainer's later decision to tighten
-    the ``motion`` pre-flight to the intersection. The refusal a caller
-    sees is the ``"not wired"`` reason, not the FSM-refusal reason.
+    the ``motion`` pre-flight to the intersection.  The refusal a caller
+    sees is the verb-specific reason (issue #358 for ``start_task``, the
+    ``policy_object is required`` message for ``run_policy`` fed
+    ``None``), never the FSM-refusal reason - the gate ran first and
+    passed.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
@@ -679,11 +682,13 @@ def test_motion_verbs_admit_a_literally_walkable_fsm(verb: str, fsm: int) -> Non
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     if verb == "start_task":
         result = driver.start_task("do X")
+        expected_marker = "issue #358"
     else:
         result = driver.run_policy(policy_object=None, instruction="")  # type: ignore[arg-type]
+        expected_marker = "policy_object is required"
     assert result["status"] == "error"
     text = result["content"][0]["text"]
-    assert "issue #358" in text
+    assert expected_marker in text
     assert f"FSM {fsm} refuses" not in text
 
 
