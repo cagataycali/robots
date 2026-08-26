@@ -75,6 +75,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -259,12 +260,38 @@ def _write_document(path: Path, document: dict[str, Any]) -> None:
     ``os.replace`` is atomic on POSIX and Windows for same-filesystem paths,
     so a reader never observes a truncated sidecar and a crashed writer
     leaves the previous version intact.
+
+    Replacing the content does not change the destination's permissions. The
+    temp file ``mkstemp`` creates is owner-only, so renaming it over an
+    existing sidecar would otherwise narrow one that arrived group- or
+    world-readable - and travelling with the dataset directory is what this
+    sidecar is for, so it commonly did (a copy, a ``tar -x``, a Hub download
+    and a clone all land it at the reader's umask). A caller that could read
+    the labels before an annotation can still read them after. The mode is
+    applied to the temp file rather than to ``path`` afterwards, so the
+    sidecar is never momentarily readable to fewer callers than it was.
+
+    This is the one way the construct departs from
+    :func:`strands_robots.simulation.safe_output.atomic_write_bytes`, which
+    holds its own output to ``0o600`` deliberately because the sim output
+    roots are private to the running user. A label sidecar is a dataset
+    artifact, and this function is not the place that decides who may read
+    the dataset. A sidecar it creates keeps ``mkstemp``'s owner-only mode.
     """
+    # Read the destination's mode before writing anything, so a failed write
+    # cannot leave the decision half-made. Absent is the create case, and the
+    # suppression covers it (FileNotFoundError is an OSError).
+    existing_mode: int | None = None
+    with contextlib.suppress(OSError):
+        existing_mode = stat.S_IMODE(path.stat().st_mode)
+
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(document, f, indent=2, sort_keys=True)
             f.write("\n")
+        if existing_mode is not None:
+            os.chmod(tmp_name, existing_mode)
         os.replace(tmp_name, path)
     except BaseException:
         # Cleanup-and-reraise: never leave the temp file behind on failure.
