@@ -663,9 +663,40 @@ class SensorLoopsMixin:
         severity: str = "warning",
         payload: dict[str, Any] | None = None,
     ) -> None:
-        """Publish a safety event to the mesh AND write to audit log."""
+        """Publish a safety event to the mesh AND write to the audit log.
+
+        The payload is coerced once through :func:`_coerce_record` and the same
+        coerced mapping is handed to both halves, which is what makes the two
+        halves report one event instead of two different ones.
+        :func:`strands_robots.mesh.session._report_unencodable_payload` records
+        why that matters: on a payload the JSON encoder refuses, the audit half
+        writes a ``sig="SERIALISE_FAILED"`` poison record and logs at ERROR,
+        while the wire half publishes nothing at all - and the failure is not
+        transient, so no later tick recovers it. A reading expressed in a
+        foreign numeric type is exactly what a safety payload carries (the joint
+        value that tripped a limit, the distance that closed), and every other
+        record this mixin sends to the wire is coerced before it goes.
+
+        Coerced into a copy rather than in place, so the caller keeps the mapping
+        they passed unedited - the same reason :func:`_coerce_record` replaces a
+        nested container instead of editing the provider's own.
+
+        A value that is genuinely not a reading is still passed through
+        untouched rather than stringified, so the transport still reports it by
+        name: repairing an unrepresentable object by guessing would publish a
+        record that misstates what happened.
+
+        Args:
+            event_type: Short, lowercase event identifier (e.g. ``"estop"``).
+            severity: The real severity. It reaches the audit record only - the
+                wire copy is uniformly ``"info"`` (issue #272).
+            payload: Event-specific fields, or ``None`` for an event with none.
+        """
         if not self._running:
             return
+
+        record: dict[str, Any] = dict(payload) if payload is not None else {}
+        _coerce_record(record)
 
         event: dict[str, Any] = {
             "peer_id": self.peer_id,
@@ -675,7 +706,7 @@ class SensorLoopsMixin:
             # content-channel oracle for the rejection reason. The real
             # severity is preserved only in the local audit record below.
             "severity": "info",
-            "payload": payload or {},
+            "payload": record,
             "t": time.time(),
         }
 
@@ -685,7 +716,7 @@ class SensorLoopsMixin:
             log_safety_event(
                 event_type=event_type,
                 peer_id=self.peer_id,
-                payload={"severity": severity, **(payload or {})},
+                payload={"severity": severity, **record},
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("[mesh] %s: audit log write failed: %s", self.peer_id, exc)
