@@ -22,3 +22,17 @@
   to a model name is per-model hardware metadata, gradable only against a live
   servo, so it lands with the bus rather than as a table this codec's tests
   could check for shape but never for truth.
+- **drivers/dynamixel**: the codec escapes the reserved `FF FF FD` byte run.
+  Protocol 2.0 forbids that run inside a payload because a servo reads it as
+  the start of the next packet; the protocol escapes it with an extra `0xFD`,
+  counts the inserted byte in `LEN`, and takes the CRC over the stuffed frame.
+  All three codec entry points now do this and `parse_status_packet` reverses
+  it, so the "byte-for-byte against `dynamixel_sdk`" property this module
+  claims holds for every payload rather than only for payloads that happen not
+  to contain the run. The gap was reachable: `GOAL_POSITION` is a signed
+  32-bit little-endian value and -131073 -- exactly -32.0 turns at 4096 counts
+  per revolution, an ordinary multi-turn target -- encodes to `FF FF FD FF`.
+  It is the only value in the legal extended-position range
+  (-1048575..1048575) that does, which is what makes an unescaped write a
+  once-in-two-million data-dependent fault rather than something a first
+  bring-up would catch.

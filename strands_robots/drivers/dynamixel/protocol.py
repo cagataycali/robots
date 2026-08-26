@@ -22,6 +22,14 @@ Protocol 2.0 packet shape (from the Robotis e-manual, `Protocol 2.0`_):
 - The CRC is CRC-16/BUYPASS (polynomial ``0x8005``, no reflection, init
   ``0x0000``, xor-out ``0x0000``) computed over the full frame from
   ``HEADER1`` through the last parameter byte.
+- A payload may not contain the byte run ``FF FF FD``: a servo reading the bus
+  would take it for the start of the next packet. Protocol 2.0 therefore
+  *stuffs* an extra ``0xFD`` after any such run, and the ``LEN`` field counts
+  the stuffed bytes. Stuffing happens BEFORE the CRC is taken, so the CRC
+  covers the stuffed frame -- the order matters and is the one Robotis'
+  ``txPacket`` uses. :func:`_stuff` and :func:`_unstuff` are the two halves;
+  every builder here goes through them, and :func:`parse_status_packet`
+  reverses them.
 
 .. _Protocol 2.0: https://emanual.robotis.com/docs/en/dxl/protocol2/
 
@@ -137,6 +145,95 @@ def checksum(frame: bytes) -> int:
     return crc
 
 
+#: Index of the ``INST`` byte in a framed packet: ``HEADER`` (4) + ``ID`` (1) +
+#: ``LEN_L`` + ``LEN_H``. Stuffing scans from here to the last parameter, and
+#: the two-byte look-back at this position deliberately reads the ``LEN`` bytes
+#: -- that is what Robotis' ``addStuffing`` does, so a servo expects it.
+_INST_INDEX: Final[int] = 7
+
+#: The run a payload may not contain: a servo would read it as the next header.
+RESERVED_RUN: Final[bytes] = b"\xff\xff\xfd"
+
+
+def _stuff(frame: bytes) -> bytes:
+    """Insert the Protocol 2.0 escape byte after every reserved run.
+
+    Protocol 2.0 forbids ``FF FF FD`` inside a payload, because a servo
+    watching the bus would take it for the start of the next packet. The
+    escape is an extra ``0xFD`` immediately after the run; the ``LEN`` field
+    then counts the inserted bytes, so it is rewritten here.
+
+    Only the run itself is escaped, so a payload of ``FF FF FD FD`` becomes
+    ``FF FF FD FD FD`` -- three ``0xFD`` bytes, which reads as one too many
+    until they are counted. The second ``0xFD`` is not itself preceded by
+    ``FF FF``, so it needs no escape of its own.
+
+    The look-back below reads the original frame rather than the bytes emitted
+    so far, mirroring how Robotis' ``addStuffing`` is written. The two
+    formulations are equivalent -- an escape is always ``0xFD``, so after
+    escaping at some position the preceding pair is ``FD FF`` in the original
+    and ``FD FD`` in the output, and neither is ``FF FF`` -- so this is a
+    readability choice, not a correctness one. It is spelled the SDK's way
+    because that is the implementation a reader is most likely to compare
+    against.
+
+    Args:
+        frame: An unstuffed frame -- ``HEADER`` through the last parameter,
+            with no CRC appended yet. Its ``LEN`` field must already hold the
+            unstuffed count.
+
+    Returns:
+        The stuffed frame with ``LEN`` rewritten. Returned unchanged (a new
+        object either way) when the payload contains no reserved run, which
+        is the overwhelmingly common case.
+    """
+    out = bytearray(frame[:_INST_INDEX])
+    inserted = 0
+    for position in range(_INST_INDEX, len(frame)):
+        out.append(frame[position])
+        if frame[position] == 0xFD and frame[position - 1] == 0xFF and frame[position - 2] == 0xFF:
+            out.append(0xFD)
+            inserted += 1
+    if inserted:
+        length = (frame[5] | (frame[6] << 8)) + inserted
+        if length > 0xFFFF:
+            raise ValueError(
+                f"_stuff: escaping {inserted} reserved run(s) overflows the 16-bit length field",
+            )
+        out[5] = length & 0xFF
+        out[6] = (length >> 8) & 0xFF
+    return bytes(out)
+
+
+def _unstuff(payload: bytes) -> bytes:
+    """Remove Protocol 2.0 escape bytes from a received payload.
+
+    The inverse of :func:`_stuff`, and the mirror of Robotis'
+    ``removeStuffing``: a ``0xFD`` that follows a ``FF FF FD`` run is an
+    escape the servo inserted and is not part of the data.
+
+    Args:
+        payload: The bytes from ``INST`` through the last parameter of a
+            received frame, with the CRC already stripped.
+
+    Returns:
+        The payload with escapes removed. A payload that carries none is
+        returned byte-for-byte.
+    """
+    out = bytearray()
+    skip_next = False
+    for position, byte in enumerate(payload):
+        if skip_next:
+            skip_next = False
+            continue
+        out.append(byte)
+        # An escape follows the run, so look at what we have just emitted.
+        if byte == 0xFD and len(out) >= 3 and out[-3] == 0xFF and out[-2] == 0xFF:
+            if position + 1 < len(payload) and payload[position + 1] == 0xFD:
+                skip_next = True
+    return bytes(out)
+
+
 def build_packet(servo_id: int, instruction: Instruction, params: bytes = b"") -> bytes:
     """Return a Protocol 2.0 packet for a unicast instruction.
 
@@ -179,6 +276,9 @@ def build_packet(servo_id: int, instruction: Instruction, params: bytes = b"") -
         + params
     )
     frame = HEADER + body
+    # Escape any reserved run BEFORE the CRC: the CRC covers the stuffed frame,
+    # and _stuff rewrites LEN to count the inserted bytes.
+    frame = _stuff(frame)
     crc = checksum(frame)
     return frame + bytes([crc & 0xFF, (crc >> 8) & 0xFF])
 
@@ -243,6 +343,9 @@ def sync_write_packet(register_address: int, data_length: int, entries: list[tup
         ]
     ) + bytes(params)
     frame = HEADER + body
+    # Escape any reserved run BEFORE the CRC: the CRC covers the stuffed frame,
+    # and _stuff rewrites LEN to count the inserted bytes.
+    frame = _stuff(frame)
     crc = checksum(frame)
     return frame + bytes([crc & 0xFF, (crc >> 8) & 0xFF])
 
@@ -282,7 +385,7 @@ def parse_status_packet(frame: bytes) -> dict[str, object]:
         raise ValueError(f"parse_status_packet: header mismatch, got {frame[:4].hex()}")
     servo_id = frame[4]
     length = frame[5] | (frame[6] << 8)
-    # length counts INST + ERR + params + CRC.
+    # length counts INST + ERR + params + CRC, all as stuffed on the wire.
     if len(frame) != 7 + length:
         raise ValueError(
             f"parse_status_packet: frame length {len(frame)} does not match length field {length} (expected {7 + length})",
@@ -290,10 +393,15 @@ def parse_status_packet(frame: bytes) -> dict[str, object]:
     inst = frame[7]
     if inst != 0x55:
         raise ValueError(f"parse_status_packet: expected 0x55 status marker, got {inst:#04x}")
-    err = frame[8]
-    params = bytes(frame[9 : 9 + length - 4])
     expected_crc = checksum(frame[:-2])
     actual_crc = frame[-2] | (frame[-1] << 8)
+    # The bytes arrived stuffed and the servo's CRC covers them as received, so
+    # the CRC is taken first and the payload unescaped afterwards. ``length``
+    # counts the stuffed bytes, which is why the slice uses it before
+    # unstuffing rather than after.
+    payload = _unstuff(bytes(frame[_INST_INDEX : _INST_INDEX + length - 2]))
+    err = payload[1]
+    params = payload[2:]
     return {
         "servo_id": servo_id,
         "err": err,

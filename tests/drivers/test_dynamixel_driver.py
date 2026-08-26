@@ -20,6 +20,7 @@ import asyncio
 from typing import Any
 
 import pytest
+from strands.types.tools import ToolUse
 
 from strands_robots.drivers import (
     DRIVER_SURFACE,
@@ -389,8 +390,13 @@ class TestDriver:
         assert driver.stop_task()["status"] == "success"
 
     def test_cleanup_is_a_no_op(self) -> None:
+        """``cleanup`` is declared ``-> None``, so asserting on its result is a
+        type error rather than a check. Calling it twice is the property worth
+        holding: a teardown that has nothing to release must stay safe to
+        repeat."""
         driver = DynamixelDriver(tool_name="koch", port="/dev/a")
-        assert driver.cleanup() is None
+        driver.cleanup()
+        driver.cleanup()
 
     # ------------------------------ connect ---------------------------------
 
@@ -412,7 +418,11 @@ class TestDriver:
         """Run ``stream`` and return the single event it yields."""
 
         async def _collect() -> dict[str, Any]:
-            tool_use = {"toolUseId": "abc", "input": {"action": action}}
+            tool_use: ToolUse = {
+                "toolUseId": "abc",
+                "name": driver.tool_name,
+                "input": {"action": action},
+            }
             events: list[dict[str, Any]] = []
             async for event in driver.stream(tool_use, invocation_state={}):
                 events.append(event)
@@ -477,3 +487,182 @@ class TestRegistration:
             assert cls is not DynamixelDriver, (
                 f"DynamixelDriver must not serve {canonical!r} (that is Feetech, issue #360)"
             )
+
+
+# ============================================================================
+# Byte stuffing.
+# ============================================================================
+
+
+class TestByteStuffing:
+    """Protocol 2.0 forbids the run ``FF FF FD`` inside a payload.
+
+    A servo watching the bus reads those three bytes as the start of the next
+    packet, so the protocol escapes the run with an extra ``0xFD`` and counts
+    the inserted byte in ``LEN``. The escape is applied BEFORE the CRC, so the
+    CRC covers the stuffed frame -- get that order wrong and every frame
+    carrying a run is rejected even though the bytes look plausible.
+
+    Every expected value in this class was produced by Robotis'
+    ``dynamixel_sdk`` 4.0.5 -- specifically ``Protocol2PacketHandler``'s
+    ``addStuffing`` followed by ``updateCRC``, which is the exact pair its
+    ``txPacket`` uses to put bytes on the wire. No serial port is involved:
+    the SDK's framing is pure, so it can be used as an oracle on any host.
+    The codec here is expected to be byte-identical to it, which is what the
+    module docstring claims and what these cases hold it to.
+
+    ``dynamixel_sdk`` is deliberately NOT a test dependency -- it is not
+    declared in ``pyproject.toml`` and the point of owning the codec is that
+    the wire format is gradeable without it. The vectors are therefore frozen
+    here rather than recomputed, matching how :class:`TestProtocol` already
+    records its own expected frames.
+    """
+
+    def test_the_reserved_run_is_the_packet_header(self) -> None:
+        """Why the run must be escaped at all.
+
+        ``FF FF FD`` is not an arbitrary forbidden sequence: it is the first
+        three bytes of :data:`HEADER`. This is the premise the whole class
+        rests on, so it is asserted rather than assumed.
+        """
+        from strands_robots.drivers.dynamixel.protocol import RESERVED_RUN
+
+        assert RESERVED_RUN == HEADER[:3]
+        assert RESERVED_RUN == b"\xff\xff\xfd"
+
+    def test_build_packet_escapes_a_single_run(self) -> None:
+        """A ``WRITE`` whose parameters are exactly the reserved run.
+
+        Expected (dynamixel_sdk): ``fffffd0001070003fffffdfd7cd1`` -- note the
+        payload reads ``fffffdfd`` (the escape) and ``LEN`` is 7, not the 6 an
+        unescaped three-byte parameter block would give.
+        """
+        packet = build_packet(1, Instruction.WRITE, b"\xff\xff\xfd")
+        assert packet.hex() == "fffffd0001070003fffffdfd7cd1"
+        assert packet[5] | (packet[6] << 8) == 7
+
+    def test_build_packet_escapes_only_the_run_not_every_fd(self) -> None:
+        """``FF FF FD FD`` gains one escape, not two.
+
+        Only the run gets an escape. The second ``0xFD`` is not itself
+        preceded by ``FF FF``, so it is left alone and the payload becomes
+        ``FF FF FD FD FD``: three ``0xFD`` bytes, which looks like one too
+        many until they are counted.
+
+        Expected (dynamixel_sdk): ``fffffd0001080003fffffdfdfdc90c``
+        """
+        packet = build_packet(1, Instruction.WRITE, b"\xff\xff\xfd\xfd")
+        assert packet.hex() == "fffffd0001080003fffffdfdfdc90c"
+
+    def test_build_packet_escapes_every_run_in_the_payload(self) -> None:
+        """Two runs cost two escape bytes and ``LEN`` counts both.
+
+        Expected (dynamixel_sdk): ``fffffd00010b0003fffffdfdfffffdfd3121``
+        """
+        packet = build_packet(1, Instruction.WRITE, b"\xff\xff\xfd\xff\xff\xfd")
+        assert packet.hex() == "fffffd00010b0003fffffdfdfffffdfd3121"
+        assert packet[5] | (packet[6] << 8) == 11
+
+    def test_a_goal_position_that_needs_escaping_is_a_reachable_command(self) -> None:
+        """The one legal goal position whose encoding contains the run.
+
+        ``GOAL_POSITION`` is a signed 32-bit little-endian value. In
+        extended-position (multi-turn) mode the legal range is
+        -1048575..1048575, and exactly one value in it encodes to bytes
+        containing ``FF FF FD``: -131073, which is -32.0 turns at 4096 counts
+        per revolution. That is an ordinary place to drive a multi-turn joint,
+        which is what makes an unescaped write here worth a test rather than a
+        note -- it is data-dependent and would appear once in two million
+        commands.
+        """
+        import struct
+
+        assert struct.pack("<i", -131073) == b"\xff\xff\xfd\xff"
+        needing_escape = [value for value in range(-1048575, 1048576) if b"\xff\xff\xfd" in struct.pack("<i", value)]
+        assert needing_escape == [-131073]
+        assert -131073 / 4096 == pytest.approx(-32.0, abs=0.001)
+
+    def test_unicast_write_of_that_goal_position_is_escaped(self) -> None:
+        """Expected (dynamixel_sdk): ``fffffd00010a00037400fffffdfdff23e5``"""
+        import struct
+
+        address, width, _ = CONTROL_TABLE["GOAL_POSITION"]
+        params = bytes([address & 0xFF, (address >> 8) & 0xFF]) + struct.pack("<i", -131073)
+        packet = build_packet(1, Instruction.WRITE, params)
+        assert packet.hex() == "fffffd00010a00037400fffffdfdff23e5"
+
+    def test_sync_write_of_that_goal_position_is_escaped(self) -> None:
+        """The same value through the broadcast path the driver will use.
+
+        Expected (dynamixel_sdk): ``fffffd00fe0d00837400040001fffffdfdff6084``
+        """
+        import struct
+
+        address, width, _ = CONTROL_TABLE["GOAL_POSITION"]
+        packet = sync_write_packet(address, width, [(1, struct.pack("<i", -131073))])
+        assert packet.hex() == "fffffd00fe0d00837400040001fffffdfdff6084"
+        assert packet[5] | (packet[6] << 8) == 13
+
+    def test_parse_status_unescapes_the_payload(self) -> None:
+        """A servo escapes its reply too, so the parser must reverse it.
+
+        The frame below is what ``dynamixel_sdk`` produces for a status packet
+        from id 7 with ``err=0`` and parameters ``FF FF FD 2A``:
+        ``fffffd000709005500fffffdfd2a5adc``. The parameters read back must be
+        the four bytes the servo measured, not the five that travelled.
+        """
+        frame = bytes.fromhex("fffffd000709005500fffffdfd2a5adc")
+        parsed = parse_status_packet(frame)
+        assert parsed["servo_id"] == 7
+        assert parsed["err"] == 0
+        assert parsed["params"] == b"\xff\xff\xfd\x2a"
+        assert parsed["crc_ok"] is True
+
+    def test_stuffing_round_trips_every_adversarial_payload(self) -> None:
+        """Build then parse recovers the payload, for payloads built from the
+        bytes that make runs likely.
+
+        The corpus is enumerated rather than random so a failure names a
+        reproducible payload. It covers every 4-byte string over
+        ``{00, 2A, FD, FE, FF}``, which includes every arrangement of the run
+        and of the ``FD FD`` sequence that the look-back treats specially.
+        """
+        import itertools
+
+        alphabet = (0x00, 0x2A, 0xFD, 0xFE, 0xFF)
+        checked = 0
+        carried_an_escape = 0
+        for combo in itertools.product(alphabet, repeat=4):
+            params = bytes(combo)
+            frame = build_packet(3, Instruction.WRITE, params)
+            # Re-frame it as the status packet a servo would send back, so the
+            # parse path sees the same escaping the build path produced.
+            status = build_packet(3, Instruction.WRITE, b"\x00" + params)
+            status = status[:7] + b"\x55" + status[8:]
+            rebuilt = status[:-2]
+            crc = checksum(rebuilt)
+            parsed = parse_status_packet(rebuilt + bytes([crc & 0xFF, (crc >> 8) & 0xFF]))
+            assert parsed["params"] == params, f"payload {params.hex()} did not round-trip"
+            if len(frame) != 10 + len(params):
+                carried_an_escape += 1
+            checked += 1
+        assert checked == len(alphabet) ** 4
+        assert carried_an_escape > 0, "corpus never exercised an escape - it grades nothing"
+
+    def test_a_payload_without_the_run_is_untouched(self) -> None:
+        """Over-reach control.
+
+        The overwhelmingly common case must be byte-identical to what the
+        codec produced before stuffing existed, and ``LEN`` must not move.
+        This is the same vector :class:`TestProtocol` already pins, repeated
+        here so a stuffing change that corrupts ordinary traffic fails in the
+        class that caused it.
+        """
+        packet = build_packet(1, Instruction.WRITE, bytes([0x41, 0x00, 0x01]))
+        assert packet.hex() == "fffffd0001060003410001cce6"
+        assert packet[5] | (packet[6] << 8) == 6
+
+    def test_an_ordinary_sync_write_is_untouched(self) -> None:
+        """Over-reach control for the broadcast path."""
+        packet = sync_write_packet(116, 4, [(1, bytes(4)), (2, bytes([0xFF, 0x03, 0x00, 0x00]))])
+        assert packet.hex() == "fffffd00fe11008374000400010000000002ff030000ef40"
