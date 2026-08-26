@@ -31,6 +31,7 @@ from strands_robots.drivers.g1 import (
     G1Driver,
 )
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, reset_dds_state
+from strands_robots.tools.g1._dds_engine import DDSPublisher
 
 # =========================================================================
 # Fixtures - a fake LowCmd_ IDL and a fake publisher the driver reaches.  #
@@ -40,10 +41,19 @@ from strands_robots.tools.g1 import HANDSHAKE_FSMS, reset_dds_state
 class _FakeMotorCmd:
     """Records every field a caller set. One instance per motor slot.
 
-    Attributes are set via ``setattr`` from
-    :meth:`G1Driver._build_lowcmd`, so this class does not pre-declare them
-    - a test reads whatever was set.
+    The fields are set via ``setattr`` from :meth:`G1Driver._build_lowcmd`, so
+    they are *annotated* here but deliberately left unassigned. A bare
+    annotation tells the type checker which fields the real IDL slot carries
+    without creating them at runtime, which is what keeps the
+    ``not hasattr(entry, "kp")`` assertions below honest: a field the driver
+    never wrote is genuinely absent, exactly as an untouched IDL slot is.
     """
+
+    q: float
+    dq: float
+    tau: float
+    kp: float
+    kd: float
 
 
 class _FakeLowCmd:
@@ -60,15 +70,23 @@ class _FakeLowCmd:
         self.motor_cmd = [_FakeMotorCmd() for _ in range(self._MOTOR_CMD_LEN)]
 
 
-class _RecordingPublisher:
+class _RecordingPublisher(DDSPublisher):
     """Records every ``publish`` call the driver makes.
 
     Replaces :class:`~strands_robots.tools.g1._dds_engine.DDSPublisher` on
     the driver after ``connect_eagerly``, so the test does not need to
     mock the full DDS init lane.
+
+    Subclasses the real engine rather than duck-typing it so that a future
+    signature change to ``start``/``publish``/``close`` fails this suite at
+    type-check time instead of letting the fake drift away from the object the
+    driver actually calls.
     """
 
     def __init__(self) -> None:
+        # The real __init__ only records the interface and builds a lock - no
+        # DDS work happens until start(), which this class overrides away.
+        super().__init__("lo")
         self.calls: list[tuple[str, type, Any]] = []
         self.next_error: str | None = None
         self.closed = False
@@ -120,6 +138,20 @@ def connected_driver() -> Any:
     reset_dds_state()
 
 
+def _recorder(driver: G1Driver) -> _RecordingPublisher:
+    """The fake publisher :func:`connected_driver` installed, precisely typed.
+
+    ``G1Driver._publisher`` is declared ``DDSPublisher | None``, so reading the
+    recording-only surface (``calls``, ``next_error``) straight off it is not
+    type-safe. Narrowing in one place keeps every assertion below free of casts
+    and turns the fixture's contract - that the driver is holding the fake and
+    not a real publisher - into an assertion rather than an assumption.
+    """
+    publisher = driver._publisher
+    assert isinstance(publisher, _RecordingPublisher)
+    return publisher
+
+
 # =========================================================================
 # The class-level invariant that #361 buys: no SDK at import time.        #
 # =========================================================================
@@ -162,7 +194,7 @@ def test_send_action_refuses_when_fsm_is_wrong(connected_driver: G1Driver) -> No
     assert result["status"] == "error"
     assert "arm writes" in result["content"][0]["text"]
     # And no publish happened.
-    assert connected_driver._publisher.calls == []
+    assert _recorder(connected_driver).calls == []
 
 
 def test_send_action_refuses_under_battery_floor(connected_driver: G1Driver) -> None:
@@ -171,7 +203,7 @@ def test_send_action_refuses_under_battery_floor(connected_driver: G1Driver) -> 
     result = connected_driver.send_action({"joints": [0], "q": [0.0]})
     assert result["status"] == "error"
     assert "battery" in result["content"][0]["text"]
-    assert connected_driver._publisher.calls == []
+    assert _recorder(connected_driver).calls == []
 
 
 # =========================================================================
@@ -187,7 +219,7 @@ def test_send_action_refuses_a_bad_joints_type(
     result = connected_driver.send_action({"joints": ["nope"]})
     assert result["status"] == "error"
     assert "joints" in result["content"][0]["text"]
-    assert connected_driver._publisher.calls == []
+    assert _recorder(connected_driver).calls == []
 
 
 def test_send_action_refuses_a_length_mismatch(
@@ -199,7 +231,7 @@ def test_send_action_refuses_a_length_mismatch(
     assert result["status"] == "error"
     text = result["content"][0]["text"]
     assert "'q'" in text and "joints" in text
-    assert connected_driver._publisher.calls == []
+    assert _recorder(connected_driver).calls == []
 
 
 def test_send_action_refuses_an_out_of_range_joint(
@@ -211,7 +243,7 @@ def test_send_action_refuses_an_out_of_range_joint(
     result = connected_driver.send_action({"joints": [beyond], "q": [0.0]})
     assert result["status"] == "error"
     assert "out of range" in result["content"][0]["text"]
-    assert connected_driver._publisher.calls == []
+    assert _recorder(connected_driver).calls == []
 
 
 # =========================================================================
@@ -239,7 +271,7 @@ def test_send_action_writes_lowcmd_on_the_right_topic(
     text = result["content"][0]["text"]
     assert "rt/lowcmd" in text
     assert "3 joint" in text
-    calls = connected_driver._publisher.calls
+    calls = _recorder(connected_driver).calls
     assert len(calls) == 1
     topic, cls, message = calls[0]
     assert topic == _TOPIC_LOWCMD
@@ -265,7 +297,7 @@ def test_send_action_partial_fields_leave_others_at_default(
     """
     result = connected_driver.send_action({"joints": [3], "q": [0.7]})
     assert result["status"] == "success"
-    _, _, message = connected_driver._publisher.calls[0]
+    _, _, message = _recorder(connected_driver).calls[0]
     entry = message.motor_cmd[3]
     assert entry.q == 0.7
     assert not hasattr(entry, "kp")  # never set - IDL default preserved
@@ -286,8 +318,8 @@ def test_send_action_empty_action_is_a_valid_stop(
     result = connected_driver.send_action({})
     assert result["status"] == "success"
     assert "0 joint" in result["content"][0]["text"]
-    assert len(connected_driver._publisher.calls) == 1
-    _, _, message = connected_driver._publisher.calls[0]
+    assert len(_recorder(connected_driver).calls) == 1
+    _, _, message = _recorder(connected_driver).calls[0]
     # No fields set on any motor slot.
     for entry in message.motor_cmd:
         assert not hasattr(entry, "q")
@@ -298,7 +330,7 @@ def test_send_action_surfaces_a_publisher_error(
     fake_lowcmd_module: type,
 ) -> None:
     """When the DDS publish itself fails, ``send_action`` refuses with the reason."""
-    connected_driver._publisher.next_error = "publish to 'rt/lowcmd' failed: DDS dead"
+    _recorder(connected_driver).next_error = "publish to 'rt/lowcmd' failed: DDS dead"
     result = connected_driver.send_action({"joints": [0], "q": [0.0]})
     assert result["status"] == "error"
     assert "DDS dead" in result["content"][0]["text"]
