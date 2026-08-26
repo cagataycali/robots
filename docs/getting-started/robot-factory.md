@@ -80,8 +80,9 @@ the clamp disabled.
 ## Choosing a driver
 
 `mode="real"` builds a driver. By default that is the lerobot one - it constructs a lerobot
-`RobotConfig` and wraps a lerobot driver, which is what every robot in the shipped registry
-uses.
+`RobotConfig` and wraps a lerobot driver, which is what most robots in the shipped registry
+use. A robot that lerobot cannot model declares a native driver instead; `list_native_drivers()`
+reports which robots those are.
 
 `driver=` selects a different one:
 
@@ -113,16 +114,22 @@ Asking for a driver that is not there is refused, never quietly substituted:
 ```python
 >>> Robot("so101", mode="real", driver="strands")
 ValueError: No native driver is registered for 'so101', so driver='strands' cannot build
-it. Robots with a native driver: none. Either use driver='lerobot' (today's default, which
-builds it through lerobot) or register one with
+it. Robots with a native driver: reachy_mini, unitree_g1. Either use driver='lerobot'
+(today's default, which builds it through lerobot) or register one with
 strands_robots.drivers.register_native_driver().
 ```
 
 A robot may also declare its driver in the registry, so a caller needs no `driver=` at all:
 
 ```json
-"unitree_g1": {"hardware": {"lerobot_type": "unitree_g1", "driver": "strands"}}
+"unitree_g1":  {"hardware": {"lerobot_type": "unitree_g1", "driver": "strands"}}
+"reachy_mini": {"hardware": {"driver": "strands"}}
 ```
+
+`lerobot_type` is independent of `driver`. The G1 declares one because lerobot also
+has a class for it, so `driver="lerobot"` remains a usable fallback. The Reachy Mini
+declares none: lerobot has no robot type for it, so the native driver is the only way
+to reach it and `driver="lerobot"` is refused by name.
 
 `hardware.driver` is optional and validated when the registry loads: a value that is not a
 driver name is refused there, naming the robot, rather than being read as "no preference".

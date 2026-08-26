@@ -462,7 +462,10 @@
         "reachy",
         "reachy-mini",
         "reachymini"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "ability_hand": {
       "description": "PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)",
