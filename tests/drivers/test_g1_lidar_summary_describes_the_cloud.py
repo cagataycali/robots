@@ -182,12 +182,15 @@ class TestTheRestOfTheDriverIsUnchanged:
         driver._on_lowstate(
             types.SimpleNamespace(
                 imu_state=types.SimpleNamespace(rpy=[0.01, -0.02, 0.5]),
-                mode_machine=501,
+                mode_machine=9,
             )
         )
         assert driver._imu is not None
         assert driver._imu["rpy"] == pytest.approx([0.01, -0.02, 0.5])
-        assert driver._fsm_id == 501
+        # ``_mode_machine`` is the uint8 layout id from lowstate; ``_fsm_id``
+        # is a different quantity (motion-switcher API, not lowstate).
+        assert driver._mode_machine == 9
+        assert driver._fsm_id is None
 
     def test_the_battery_decoder_still_populates(self) -> None:
         driver = G1Driver(tool_name="g1", port="1.2.3.4")

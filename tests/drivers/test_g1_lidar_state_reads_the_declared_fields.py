@@ -238,10 +238,13 @@ class TestTheSiblingDecodersAreUnaffected:
             accelerometer=[0.0, 0.0, 9.8],
             quaternion=[1.0, 0.0, 0.0, 0.0],
         )
-        driver._on_lowstate(types.SimpleNamespace(imu_state=imu, mode_machine=501, tick=1))
+        driver._on_lowstate(types.SimpleNamespace(imu_state=imu, mode_machine=9, tick=1))
         assert driver._imu is not None
         assert driver._imu["rpy"] == [0.01, -0.02, 0.5]
-        assert driver._fsm_id == 501
+        # ``_mode_machine`` is the uint8 layout id from lowstate; ``_fsm_id``
+        # is a different quantity (motion-switcher API, not lowstate).
+        assert driver._mode_machine == 9
+        assert driver._fsm_id is None
 
     def test_bmsstate_still_decodes_charge(self) -> None:
         """``BmsState_`` declares ``soc``, ``current`` and ``cycle``."""

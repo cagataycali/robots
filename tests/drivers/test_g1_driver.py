@@ -158,17 +158,20 @@ def _fake_lowstate(fsm: int = 501, imu: Any | None = None) -> Any:
     )
 
 
-def test_lowstate_populates_imu_and_fsm() -> None:
-    """A ``rt/lowstate`` callback fills ``_imu`` and ``_fsm_id``.
+def test_lowstate_populates_imu_and_mode_machine() -> None:
+    """A ``rt/lowstate`` callback fills ``_imu`` and ``_mode_machine``.
 
-    The mesh reads ``_imu`` with a ``getattr`` default (see
-    :mod:`strands_robots.mesh.sensors`) so a driver that has not received
-    lowstate yet publishes nothing rather than a stale value. Once one
-    message arrives the cache is populated and the FSM gate can consult it.
+    ``LowState_.mode_machine`` is a uint8 (packed ``<2B`` alongside
+    ``mode_pr`` inside ``_CRC__packFmtHGLowCmd``) - it is the hardware layout
+    id the firmware wants echoed on every ``LowCmd_``, not the high-level
+    FSM state the arm-SDK gate tests against.  The driver keeps the two
+    fields separate: ``_mode_machine`` comes from lowstate, ``_fsm_id``
+    arrives from the motion-switcher API on a different topic.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
-    driver._on_lowstate(_fake_lowstate(fsm=501))
-    assert driver._fsm_id == 501
+    driver._on_lowstate(_fake_lowstate(fsm=9))  # a real u8 value from LowState
+    assert driver._mode_machine == 9
+    assert driver._fsm_id is None  # lowstate does not feed the FSM gate
     assert driver._imu is not None
     assert driver._imu["rpy"] == [0.1, 0.2, 0.3]
     assert driver._imu["quaternion"] == [1.0, 0.0, 0.0, 0.0]
@@ -244,6 +247,7 @@ def test_decoders_swallow_bad_messages() -> None:
     driver._on_lidar_cloud(object())
     # Lowstate with imu_state=None and no mode_machine: cache stays empty.
     assert driver._imu is None
+    assert driver._mode_machine is None
     assert driver._fsm_id is None
 
 
@@ -261,13 +265,70 @@ def test_send_action_refuses_before_connect() -> None:
     assert "not connected" in result["content"][0]["text"]
 
 
-def test_send_action_refuses_without_fsm_id() -> None:
-    """Connected but no lowstate yet - the FSM is unknown, refuse."""
+def test_send_action_refuses_without_mode_machine() -> None:
+    """Connected but no lowstate yet - ``mode_machine`` is unknown, refuse.
+
+    ``LowState_.mode_machine`` is the uint8 the firmware wants echoed on
+    every ``LowCmd_``, and it arrives on lowstate.  Without one delivered
+    the driver has nothing to echo, so ``send_action`` refuses before it
+    ever consults the FSM gate.
+    """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True  # simulate connect_eagerly success
     result = driver.send_action({"any": 0.0})
     assert result["status"] == "error"
-    assert "FSM id unknown" in result["content"][0]["text"]
+    assert "mode_machine unknown" in result["content"][0]["text"]
+
+
+def test_mode_machine_and_fsm_id_have_disjoint_value_ranges() -> None:
+    """The two caches ``_on_lowstate`` and the FSM gate feed are distinct.
+
+    This is the SDK-free contract test for the u8-vs-FSM separation
+    (harness#361 review, #2765).  ``LowState_.mode_machine`` is packed
+    ``<2B`` in ``_CRC__packFmtHGLowCmd`` (uint8, 0..255), while the arm-SDK
+    gate accepts only :data:`HANDSHAKE_FSMS` = {500, 501, 801}.  The
+    intersection is empty, so writing lowstate's ``mode_machine`` into the
+    field the gate checks would refuse every real frame.  Two attributes
+    keep the values separate.
+
+    A single-attribute regression - if a future edit collapsed
+    :attr:`_mode_machine` back into :attr:`_fsm_id`, or vice versa - would
+    fail this assertion without needing ``unitree_sdk2py`` on the box.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    # Both start unset.
+    assert driver._mode_machine is None
+    assert driver._fsm_id is None
+    # A lowstate delivery fills only ``_mode_machine`` (uint8 layout id).
+    driver._on_lowstate(_fake_lowstate(fsm=9))
+    assert driver._mode_machine == 9
+    assert driver._fsm_id is None  # the FSM gate's input is a different source
+    # Ranges: uint8 vs the SDK's error-table constants.
+    from strands_robots.tools.g1 import HANDSHAKE_FSMS
+
+    assert all(v > 255 for v in HANDSHAKE_FSMS)
+    assert 0 <= driver._mode_machine <= 255
+
+
+def test_send_action_refuses_without_fsm_id_source_wired() -> None:
+    """Connected + lowstate delivered, but no FSM source - refuse honestly.
+
+    ``LowState_.mode_machine`` is uint8 (0..255) and cannot host any of
+    :data:`HANDSHAKE_FSMS` = {500, 501, 801}, so pointing the gate at the
+    lowstate field would leave the intersection empty and reject every real
+    frame silently.  The driver's ``_fsm_id`` comes from the motion-switcher
+    API instead, and until that source is wired the gate refuses with a
+    message that names the missing piece rather than the general FSM.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._mode_machine = 9  # lowstate has landed
+    driver._fsm_id = None  # motion-switcher source not wired yet
+    result = driver.send_action({"any": 0.0})
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "FSM id unknown" in text
+    assert "motion-switcher" in text  # names the missing source, not \"lowstate\"
 
 
 @pytest.mark.parametrize("fsm", [0, 1, 3, 4])  # zero-torque, damp, sit, standup
@@ -281,6 +342,7 @@ def test_send_action_refuses_outside_handshake_fsm(fsm: int) -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = fsm
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     result = driver.send_action({"any": 0.0})
     assert result["status"] == "error"
     text = result["content"][0]["text"]
@@ -301,6 +363,7 @@ def test_send_action_refuses_below_battery_floor() -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4", battery_floor_pct=15.0)
     driver._connected = True
     driver._fsm_id = 501
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 12.0, "charging": False, "current": 0.0, "cycle": 0, "t": 0.0}
     result = driver.send_action({"any": 0.0})
     assert result["status"] == "error"
@@ -320,6 +383,7 @@ def test_send_action_reports_motion_not_wired_when_gates_pass() -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 501
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     result = driver.send_action({"left_shoulder_pitch": 0.1})
     assert result["status"] == "error"
@@ -346,6 +410,7 @@ def test_task_and_policy_paths_report_not_wired_when_gates_pass() -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 501  # in both HANDSHAKE_FSMS and WALK_FSMS
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
 
     start = driver.start_task("do X", policy_port=8000)
@@ -400,6 +465,7 @@ def test_task_paths_refuse_below_battery_floor(verb: str) -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4", battery_floor_pct=15.0)
     driver._connected = True
     driver._fsm_id = 501  # walkable
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 4.0, "charging": False, "current": 0.0, "cycle": 0, "t": 0.0}
     if verb == "start_task":
         result = driver.start_task("walk 1m")
@@ -424,6 +490,7 @@ def test_task_paths_refuse_outside_motion_fsm(verb: str) -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 0
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     if verb == "start_task":
         result = driver.start_task("do X")
@@ -462,6 +529,7 @@ def test_send_action_admits_every_handshake_fsm(fsm: int) -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = fsm
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     result = driver.send_action({"any": 0.0})
     assert result["status"] == "error"
@@ -489,6 +557,7 @@ def test_walk_fsms_has_a_consumer_and_a_documented_boundary() -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 500  # sitting: in HANDSHAKE_FSMS, not in WALK_FSMS
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
 
     # Arm-scoped write at 500 passes the gate (500 is in HANDSHAKE_FSMS).
@@ -558,6 +627,7 @@ def test_the_loco_gate_admits_every_walking_fsm(fsm: int) -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = fsm
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     assert driver._check_motion_gates("loco") is None
 
@@ -575,6 +645,7 @@ def test_motion_verbs_admit_a_literally_walkable_fsm(verb: str, fsm: int) -> Non
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = fsm
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     if verb == "start_task":
         result = driver.start_task("do X")
@@ -807,14 +878,16 @@ class _RecordingPublisher:
 def _gated_driver() -> tuple[G1Driver, _RecordingPublisher]:
     """Return a driver ready to publish, and the recorder attached to it.
 
-    ``_connected`` is forced True, ``_fsm_id`` is a handshake FSM, the
-    battery is above the floor, and the publisher is a recorder.  Every
-    write-path test starts here so the tests read as "given a gate-passing
-    driver".
+    ``_connected`` is forced True, ``_fsm_id`` is a handshake FSM (the value
+    the arm-SDK gate wants), ``_mode_machine`` is a plausible uint8 layout id
+    (the value the firmware wants echoed), the battery is above the floor,
+    and the publisher is a recorder.  Every write-path test starts here so
+    the tests read as "given a gate-passing driver".
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 501  # in HANDSHAKE_FSMS
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     pub = _RecordingPublisher()
     driver._pubs = pub  # type: ignore[assignment]
@@ -1010,6 +1083,7 @@ def test_send_action_refuses_when_pubs_is_missing() -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 501
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     # _pubs left at its __init__ default (None).
     result = driver.send_action({"left_elbow": 0.1})
@@ -1045,6 +1119,7 @@ def test_send_action_still_refuses_before_fsm_gate_regardless_of_wire() -> None:
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 0  # not in HANDSHAKE_FSMS
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     result = driver.send_action({"elbow_typo": 0.0})
     assert result["status"] == "error"
     assert "FSM 0" in result["content"][0]["text"]
@@ -1205,24 +1280,33 @@ def test_build_zero_torque_stamps_crc_and_enables_every_slot() -> None:
 
 
 @pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
-def test_send_action_passes_cached_fsm_id_as_mode_machine() -> None:
-    """``send_action`` echoes the driver's cached ``_fsm_id`` onto the wire.
+def test_send_action_echoes_cached_mode_machine_not_fsm_id() -> None:
+    """``send_action`` echoes ``_mode_machine`` (uint8) onto the wire, not ``_fsm_id``.
 
-    ``_on_lowstate`` sets ``_fsm_id`` from each incoming ``LowState``'s
-    ``mode_machine``.  The frame we emit must mirror that same value or
-    the firmware rejects it silently.  This is the end-to-end
-    reachability check: the value in the driver's cache reaches the
-    ``motor_cmd`` frame the recorder captures.
+    The firmware validates ``LowCmd_.mode_machine`` against the layout id it
+    published on the last ``LowState_.mode_machine`` (uint8, packed ``<2B``
+    with ``mode_pr``).  ``_fsm_id`` is a different quantity - a high-level
+    FSM state from the motion-switcher API whose values (500, 501, 801)
+    would overflow the ``B`` pack format and raise ``struct.error`` on CRC.
+    The gate consults ``_fsm_id`` for admission; the frame carries
+    ``_mode_machine`` for the echo.  This test pins that separation on the
+    end-to-end wire path.
     """
     driver, rec = _gated_driver()
     driver._fsm_id = 501  # a handshake FSM; the gate accepts.
+    driver._mode_machine = 9  # uint8 layout id echoed from lowstate
     result = driver.send_action(robot_name="g1", action={"waist_yaw": 0.4})
     assert result["status"] == "success"
     assert len(rec.writes) == 1
     _, _, cmd = rec.writes[0]
-    assert cmd.mode_machine == 501
+    assert cmd.mode_machine == 9  # uint8 echoed, not the high-level 501
     assert cmd.mode_pr == 0
     assert cmd.crc != 0
+    # The success envelope surfaces both fields so a caller can distinguish
+    # gate value from echo value in a log without opening the frame.
+    body = result["content"][0]["json"]
+    assert body["fsm_id"] == 501
+    assert body["mode_machine"] == 9
 
 
 # =========================================================================

@@ -31,7 +31,15 @@ sets them all before publish:
   field is populated - a stale CRC is the single failure mode that looks
   like success from the DDS side and does nothing on the robot.
 * ``mode_machine`` echoed from the live ``LowState`` (cached at
-  ``G1Driver._fsm_id``). A mismatched value is rejected by the firmware.
+  ``G1Driver._mode_machine``, uint8).  A mismatched value is rejected by
+  the firmware.  This is **not** the same value as ``G1Driver._fsm_id``,
+  which comes from the motion-switcher API and is the high-level state
+  the arm-SDK gate tests against - the two fields have disjoint value
+  ranges (``[0, 255]`` uint8 vs ``{500, 501, 801}`` SDK constants) and
+  conflating them either raises ``struct.error`` on CRC pack or silently
+  refuses every real frame.  Until the motion-switcher source is wired
+  (harness#361 PR-C, #2765), the gate refuses honestly rather than
+  silently rejecting.
 * ``mode_pr = 0`` - PR (pitch/roll) mode, which is what the joint-name
   table is calibrated for. AB mode would silently remap four ankle
   indices.

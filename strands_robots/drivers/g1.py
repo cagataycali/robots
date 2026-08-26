@@ -14,9 +14,14 @@ What the driver actually does:
   callback drops into an in-memory cache the mesh reads at its own cadence
   (:mod:`strands_robots.mesh.sensors` publishes ``_imu``, ``_battery``,
   ``_lidar_state`` and ``_lidar_summary`` from those caches).
-* Gates writes on the FSM: :meth:`send_action` refuses when the low-state
-  ``mode_machine`` is outside :data:`~strands_robots.tools.g1.HANDSHAKE_FSMS`
-  or the battery is under the floor.
+* Gates writes on the FSM: :meth:`send_action` refuses when the FSM state
+  is outside :data:`~strands_robots.tools.g1.HANDSHAKE_FSMS` or the battery
+  is under the floor.  The gate consults :attr:`_fsm_id` (the high-level
+  FSM state from the motion-switcher API) rather than :attr:`_mode_machine`
+  (the uint8 hardware-layout id from ``LowState``); those two fields have
+  disjoint value ranges and must not be conflated.  Until the
+  motion-switcher source is wired (harness#361 PR-C, #2765), the gate
+  refuses honestly rather than silently rejecting every real frame.
 * Task and policy paths (``start_task``, ``run_policy``, ``stop_task``,
   ``get_task_status``) return a named "not wired yet" envelope. Locomotion
   and arm actions land here in issue #358; the driver's job in issue #354
@@ -188,6 +193,18 @@ class G1Driver:
         self._battery: dict[str, Any] | None = None
         self._lidar_state: dict[str, Any] | None = None
         self._lidar_summary: dict[str, Any] | None = None
+        # ``_mode_machine`` is the uint8 hardware layout id echoed on every
+        # ``LowCmd_`` (``LowState_.mode_machine``, packed ``<2B`` alongside
+        # ``mode_pr`` so the value is bounded to ``[0, 255]``).  ``_fsm_id`` is
+        # the high-level FSM state the arm-SDK / locomotion gates test against
+        # (:data:`HANDSHAKE_FSMS` = {500, 501, 801}, :data:`WALK_FSMS`).  These
+        # are two different fields with two different value ranges - conflating
+        # them was the source of the ``struct.error`` on ``mode_machine=500``
+        # from PR #2767 review.  ``_fsm_id`` arrives from the motion-switcher
+        # API rather than ``rt/lowstate``; until that source is wired the gate
+        # refuses with a precise message rather than silently rejecting every
+        # real frame.
+        self._mode_machine: int | None = None
         self._fsm_id: int | None = None
 
         # Populated by :meth:`connect_eagerly`. ``None`` on a machine that
@@ -378,6 +395,7 @@ class G1Driver:
                         "port": self._port,
                         "network_interface": self._network_interface,
                         "fsm_id": self._fsm_id,
+                        "mode_machine": self._mode_machine,
                         "battery_pct": (self._battery or {}).get("pct"),
                     }
                 }
@@ -430,8 +448,18 @@ class G1Driver:
         """
         if not self._connected:
             return _refuse("not connected - call connect_eagerly() first")
+        if self._mode_machine is None:
+            return _refuse("mode_machine unknown - lowstate has not delivered yet")
         if self._fsm_id is None:
-            return _refuse("FSM id unknown - lowstate has not delivered yet")
+            # ``_fsm_id`` arrives from the motion-switcher API rather than
+            # ``rt/lowstate``; ``LowState_.mode_machine`` is uint8 and cannot
+            # host {500, 501, 801}.  Refuse honestly rather than let a real
+            # frame silently reach a gate whose intersection with the echo's
+            # value range is empty.
+            return _refuse(
+                "FSM id unknown - motion-switcher source has not been wired "
+                "(harness#361 PR-C); see #2765 for the wire-side decision"
+            )
         if scope == "arm":
             allowed, kind = HANDSHAKE_FSMS, "arm writes"
         elif scope == "loco":
@@ -485,7 +513,7 @@ class G1Driver:
             return refusal
         if self._pubs is None:
             return _refuse("publisher not initialised - call connect_eagerly() first")
-        cmd, err = _build_lowcmd_from_action(action, mode_machine=self._fsm_id)
+        cmd, err = _build_lowcmd_from_action(action, mode_machine=self._mode_machine)
         if err is not None:
             return _refuse(err)
         # Lazy import.  A missing SDK on the write path is the same failure
@@ -505,6 +533,7 @@ class G1Driver:
                         "topic": _TOPIC_LOWCMD,
                         "joints": sorted(action.keys()),
                         "fsm_id": self._fsm_id,
+                        "mode_machine": self._mode_machine,
                     }
                 }
             ],
@@ -612,7 +641,15 @@ class G1Driver:
         ]
 
     def _on_lowstate(self, msg: Any) -> None:
-        """Decode ``rt/lowstate`` into :attr:`_imu` and :attr:`_fsm_id`."""
+        """Decode ``rt/lowstate`` into :attr:`_imu` and :attr:`_mode_machine`.
+
+        ``LowState_.mode_machine`` is the uint8 hardware-layout id the firmware
+        wants echoed on every ``LowCmd_``.  It is **not** the high-level FSM
+        state the arm-SDK gates test against - that value lives behind the
+        motion-switcher API and arrives on a different topic.  Writing this
+        field to :attr:`_mode_machine` (rather than :attr:`_fsm_id`) keeps the
+        two ranges separate: ``[0, 255]`` for the echo, arbitrary for the gate.
+        """
         try:
             imu = getattr(msg, "imu_state", None)
             if imu is not None:
@@ -625,7 +662,7 @@ class G1Driver:
                 }
             mode_machine = getattr(msg, "mode_machine", None)
             if mode_machine is not None:
-                self._fsm_id = int(mode_machine)
+                self._mode_machine = int(mode_machine)
         except Exception as exc:  # noqa: BLE001 - IDL message can be anything
             logger.debug("%s: lowstate decode failed: %s", self._tool_name, exc)
 
@@ -779,8 +816,11 @@ def _build_lowcmd_from_action(
       helper interprets is calibrated for.  AB mode (``mode_pr = 1``) would
       silently remap four ankle indices.
     * ``mode_machine`` is echoed from the live ``LowState`` (the driver
-      caches it at :attr:`G1Driver._fsm_id`).  Firmware drops a frame whose
-      ``mode_machine`` does not match.
+      caches it at :attr:`G1Driver._mode_machine`, a uint8 in ``[0, 255]``
+      as packed by ``_CRC__packFmtHGLowCmd``).  Firmware drops a frame
+      whose ``mode_machine`` does not match.  This is **not** the same
+      value as :attr:`G1Driver._fsm_id`, which comes from the
+      motion-switcher API and is the arm-SDK gate's admission value.
     * ``motor_cmd[i].mode = 1`` on every commanded slot - the enable byte.
       Unset (``0`` = Disable), a frame with a valid CRC still commands
       nothing.  Slots the caller did not touch stay at ``0``.
@@ -866,8 +906,9 @@ def _build_zero_torque_lowcmd(
     * ``mode_pr = 0`` - PR mode.  Firmware validates the same field on the
       stop frame as on any other; keep the value consistent.
     * ``mode_machine`` is echoed from the caller (typically the driver's
-      cached ``_fsm_id``).  Firmware drops a stop frame whose
-      ``mode_machine`` does not match, and a dropped stop is a fall.
+      cached :attr:`G1Driver._mode_machine`, uint8).  Firmware drops a stop
+      frame whose ``mode_machine`` does not match, and a dropped stop is a
+      fall.
     * ``motor_cmd[i].mode = 1`` (Enable) on every slot.  A Disable slot
       with zero gains lets the joint fall freely - the arm-SDK protocol
       treats Disable as "not controlled at all" regardless of gain.
