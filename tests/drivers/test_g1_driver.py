@@ -301,19 +301,21 @@ def test_send_action_refuses_below_battery_floor() -> None:
 
 
 def test_send_action_reports_motion_not_wired_when_gates_pass() -> None:
-    """Every gate passes - the refusal is the honest "issue #358" reason.
+    """Every gate passes but no publisher is attached - refuse with a named reason.
 
-    The motion path lands with the g1_tools bundle. Until then, a caller who
-    survives every gate gets the named reason instead of a stub that would
-    look like a successful write.
+    Before :meth:`connect_eagerly` builds the publisher, ``_pubs`` is ``None``
+    and a caller who forces ``_connected = True`` (as the older stub tests
+    did) cannot reach the wire.  The refusal names the publisher, not
+    ``issue #358``, because the write path is wired now - the missing piece
+    is the DDS init the caller has not run yet.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 501
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
-    result = driver.send_action({"any": 0.0})
+    result = driver.send_action({"left_shoulder_pitch": 0.1})
     assert result["status"] == "error"
-    assert "issue #358" in result["content"][0]["text"]
+    assert "publisher not initialised" in result["content"][0]["text"]
 
 
 # =========================================================================
@@ -736,5 +738,382 @@ def test_connect_eagerly_reports_reason_without_sdk() -> None:
     assert err is not None
     # Same acceptance as ensure_dds: SDK-missing on Thor/CI, bind-fail in office.
     assert "unitree_sdk2py" in err or "ChannelFactoryInitialize" in err or "cannot import" in err
+
+
+# =========================================================================
+# send_action wire path (PR-B: issue #361, decoupled from #358).         #
+# =========================================================================
+# Every test builds a driver that has already passed the gates and installs
+# a recording publisher in ``_pubs``.  The point is the wire capture: which
+# ``motor_cmd`` slots the driver filled, and with which values.  A missing
+# SDK short-circuits the whole class (the driver refuses with the SDK's own
+# reason before it would build a LowCmd_) so a skip-marker keeps the suite
+# green on machines without the SDK.
+
+
+_HAS_SDK: bool
+try:  # pragma: no cover - environmental
+    import unitree_sdk2py.idl.default as _sdk_default  # noqa: F401
+
+    _HAS_SDK = True
+except ImportError:  # pragma: no cover - environmental
+    _HAS_SDK = False
+
+
+class _RecordingPublisher:
+    """Records ``publish`` calls without touching a DDS bus.
+
+    Same acceptance contract as :class:`DDSPublisher`: ``publish`` returns
+    ``None`` on success and a reason string on failure.  Every call is
+    stashed in :attr:`writes` so a test can walk the wire capture.
+    """
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, type, Any]] = []
+        self.publish_should_return: str | None = None
+        self.close_calls = 0
+
+    def publish(self, topic: str, message_class: type, message: Any) -> str | None:
+        if self.publish_should_return is not None:
+            return self.publish_should_return
+        self.writes.append((topic, message_class, message))
+        return None
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+def _gated_driver() -> tuple[G1Driver, _RecordingPublisher]:
+    """Return a driver ready to publish, and the recorder attached to it.
+
+    ``_connected`` is forced True, ``_fsm_id`` is a handshake FSM, the
+    battery is above the floor, and the publisher is a recorder.  Every
+    write-path test starts here so the tests read as "given a gate-passing
+    driver".
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = 501  # in HANDSHAKE_FSMS
+    driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+    pub = _RecordingPublisher()
+    driver._pubs = pub  # type: ignore[assignment]
+    return driver, pub
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_writes_to_lowcmd_topic_when_gates_pass() -> None:
+    """A gated action publishes exactly one frame to ``rt/lowcmd``.
+
+    The frame's IDL class is ``LowCmd_`` and no other topic was touched;
+    the driver's write path is a single-topic path by design.
+    """
+    from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
+
+    driver, pub = _gated_driver()
+    result = driver.send_action({"left_shoulder_pitch": 0.5})
+
+    assert result["status"] == "success"
+    assert len(pub.writes) == 1
+    topic, message_class, message = pub.writes[0]
+    assert topic == "rt/lowcmd"
+    assert message_class is LowCmd_
+    assert isinstance(message, LowCmd_)
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_fills_the_named_slot_and_leaves_the_rest_alone() -> None:
+    """A caller who names one joint sets exactly one slot's ``q``.
+
+    The other 34 slots have the SDK's default values (all zeros for numeric
+    fields on a fresh ``LowCmd_``); a driver that spread the target across
+    the wholebody would move joints the caller never asked about.
+    """
+    from strands_robots.drivers.g1 import _G1_JOINT_INDEX
+
+    driver, pub = _gated_driver()
+    result = driver.send_action({"left_shoulder_pitch": 0.5})
+    assert result["status"] == "success"
+
+    _, _, message = pub.writes[0]
+    slot = _G1_JOINT_INDEX["left_shoulder_pitch"]
+    assert message.motor_cmd[slot].q == pytest.approx(0.5)
+    # Every other slot's q stays at the SDK default (0.0).
+    for i, motor in enumerate(message.motor_cmd):
+        if i == slot:
+            continue
+        assert motor.q == pytest.approx(0.0)
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_applies_default_gains_for_scalar_targets() -> None:
+    """A scalar target lands with :data:`_DEFAULT_KP`/``_DEFAULT_KD``.
+
+    The scalar form is the common case (a caller who just wants a hold).
+    The wire capture pins the exact defaults so a change to them is a
+    test-visible event, not a silent regression.
+    """
+    from strands_robots.drivers.g1 import (
+        _DEFAULT_KD,
+        _DEFAULT_KP,
+        _G1_JOINT_INDEX,
+    )
+
+    driver, pub = _gated_driver()
+    driver.send_action({"right_elbow": -0.2})
+
+    _, _, message = pub.writes[0]
+    slot = _G1_JOINT_INDEX["right_elbow"]
+    m = message.motor_cmd[slot]
+    assert m.q == pytest.approx(-0.2)
+    assert m.kp == pytest.approx(_DEFAULT_KP)
+    assert m.kd == pytest.approx(_DEFAULT_KD)
+    assert m.dq == pytest.approx(0.0)
+    assert m.tau == pytest.approx(0.0)
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_accepts_per_joint_gains_and_feedforward() -> None:
+    """A dict target lands every field the caller supplied.
+
+    Missing keys inside the dict fall back to the driver default (gains) or
+    zero (dq/tau); the presence of one key does not overwrite another with
+    an implicit value.
+    """
+    from strands_robots.drivers.g1 import _G1_JOINT_INDEX
+
+    driver, pub = _gated_driver()
+    driver.send_action(
+        {
+            "left_elbow": {"q": 0.3, "kp": 50.0, "kd": 1.5, "dq": 0.1, "tau": 0.05},
+        }
+    )
+    slot = _G1_JOINT_INDEX["left_elbow"]
+    _, _, message = pub.writes[0]
+    m = message.motor_cmd[slot]
+    assert m.q == pytest.approx(0.3)
+    assert m.kp == pytest.approx(50.0)
+    assert m.kd == pytest.approx(1.5)
+    assert m.dq == pytest.approx(0.1)
+    assert m.tau == pytest.approx(0.05)
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_refuses_unknown_joint_name() -> None:
+    """An unknown joint name refuses the whole action - no partial writes.
+
+    A silent drop would move only the recognised joints, leaving the
+    caller with a robot that did most of what it wanted.  Loud is the
+    only right answer.
+    """
+    driver, pub = _gated_driver()
+    result = driver.send_action({"left_shoulder_pitch": 0.1, "elbow_typo": 0.2})
+    assert result["status"] == "error"
+    assert "unknown joint name" in result["content"][0]["text"]
+    assert "elbow_typo" in result["content"][0]["text"]
+    assert pub.writes == []  # no partial writes
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_refuses_per_joint_dict_missing_q() -> None:
+    """A per-joint dict without ``q`` is refused; no default target is invented.
+
+    Zeroing an unnamed target would be worse than refusing: on a robot
+    holding a pose, ``q=0`` is a full swing to the joint's zero.
+    """
+    driver, pub = _gated_driver()
+    result = driver.send_action({"left_elbow": {"kp": 10.0}})
+    assert result["status"] == "error"
+    assert "missing required key 'q'" in result["content"][0]["text"]
+    assert pub.writes == []
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_refuses_unknown_per_joint_key() -> None:
+    """An unknown inner key refuses the action - same reason as an unknown joint name.
+
+    A typo like ``"K_p"`` for ``"kp"`` would land with the default gain and
+    silently ignore the caller's intent.  Refuse.
+    """
+    driver, pub = _gated_driver()
+    result = driver.send_action({"left_elbow": {"q": 0.1, "K_p": 50.0}})
+    assert result["status"] == "error"
+    assert "unknown per-joint keys" in result["content"][0]["text"]
+    assert "K_p" in result["content"][0]["text"]
+    assert pub.writes == []
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_refuses_non_numeric_target() -> None:
+    """A non-numeric target is refused with the joint name in the reason."""
+    driver, pub = _gated_driver()
+    result = driver.send_action({"left_elbow": "hold"})
+    assert result["status"] == "error"
+    assert "left_elbow" in result["content"][0]["text"]
+    assert "non-numeric" in result["content"][0]["text"]
+    assert pub.writes == []
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_refuses_empty_action() -> None:
+    """An empty action dict is refused - "nothing to command" is not a write."""
+    driver, pub = _gated_driver()
+    result = driver.send_action({})
+    assert result["status"] == "error"
+    assert "empty" in result["content"][0]["text"]
+    assert pub.writes == []
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_surfaces_publisher_error() -> None:
+    """A publisher that returns a reason surfaces that reason in the envelope.
+
+    The envelope's ``text`` field carries the publisher's exact string so a
+    log downstream still shows what the DDS layer complained about; the
+    driver adds no extra wrapping.
+    """
+    driver, pub = _gated_driver()
+    pub.publish_should_return = "publish to 'rt/lowcmd' failed: bus is down"
+    result = driver.send_action({"left_elbow": 0.1})
+    assert result["status"] == "error"
+    assert "bus is down" in result["content"][0]["text"]
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_refuses_when_pubs_is_missing() -> None:
+    """A gated driver whose ``_pubs`` was never set refuses with a named reason.
+
+    This is the "forced ``_connected = True`` in a test" path.  Real bring-up
+    sets ``_pubs`` in :meth:`connect_eagerly` alongside ``_connected``; the
+    refusal points a reader at that method rather than at the SDK.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = 501
+    driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+    # _pubs left at its __init__ default (None).
+    result = driver.send_action({"left_elbow": 0.1})
+    assert result["status"] == "error"
+    assert "publisher not initialised" in result["content"][0]["text"]
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_returns_success_envelope_with_joints_and_topic() -> None:
+    """The success envelope carries the topic and every joint it commanded.
+
+    A caller that logs the envelope should see exactly what went on the wire
+    - not "success" without a body.  This is what makes a downstream monitor
+    (dashboard, telemetry) attributable at the driver seam.
+    """
+    driver, _pub = _gated_driver()
+    result = driver.send_action({"left_elbow": 0.1, "right_elbow": -0.1})
+    assert result["status"] == "success"
+    body = result["content"][0]["json"]
+    assert body["topic"] == "rt/lowcmd"
+    assert body["joints"] == ["left_elbow", "right_elbow"]  # sorted
+    assert body["fsm_id"] == 501
+
+
+def test_send_action_still_refuses_before_fsm_gate_regardless_of_wire() -> None:
+    """The FSM gate runs before the wire path - a stub-shaped call still refuses.
+
+    This pins the wire path is *after* the gates: a caller who supplies an
+    unknown joint on a gate-failing driver still gets the FSM refusal, not
+    a joint-name refusal, because the gate does not care what the write
+    was going to say.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    driver._connected = True
+    driver._fsm_id = 0  # not in HANDSHAKE_FSMS
+    result = driver.send_action({"elbow_typo": 0.0})
+    assert result["status"] == "error"
+    assert "FSM 0" in result["content"][0]["text"]
+    # And crucially, the gate ran before the joint-name check.
+    assert "unknown joint" not in result["content"][0]["text"]
+
+
+# =========================================================================
+# _build_lowcmd_from_action - the pure helper, tested off the driver.    #
+# =========================================================================
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_build_lowcmd_scalar_and_dict_land_on_the_same_slot() -> None:
+    """Scalar and dict forms land ``q`` on the same slot for the same joint.
+
+    The form is a convenience; the wire result is the same target value on
+    the same slot.  A caller that reads the driver's contract picks whichever
+    shape suits, knowing it is not a semantic switch.
+    """
+    from strands_robots.drivers.g1 import (
+        _G1_JOINT_INDEX,
+        _build_lowcmd_from_action,
+    )
+
+    cmd_scalar, err_s = _build_lowcmd_from_action({"waist_yaw": 0.4})
+    cmd_dict, err_d = _build_lowcmd_from_action({"waist_yaw": {"q": 0.4}})
+    assert err_s is None and err_d is None
+    slot = _G1_JOINT_INDEX["waist_yaw"]
+    assert cmd_scalar.motor_cmd[slot].q == pytest.approx(cmd_dict.motor_cmd[slot].q)
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_build_lowcmd_from_action_rejects_non_dict_input() -> None:
+    """A non-dict action is refused with the type it actually was."""
+    from strands_robots.drivers.g1 import _build_lowcmd_from_action
+
+    cmd, err = _build_lowcmd_from_action([("left_elbow", 0.1)])  # type: ignore[arg-type]
+    assert cmd is None
+    assert err is not None
+    assert "must be a dict" in err
+    assert "list" in err
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_build_zero_torque_lowcmd_zeroes_every_motor_field() -> None:
+    """Every motor in the zero-torque envelope has kp=kd=tau=q=dq=0.
+
+    The control loop (issue #361 follow-up) uses this on stop; the shape
+    is what "soft" looks like on the wire.  Pinning it here means a change
+    to the mapping fails a test rather than reaches a robot.
+    """
+    from strands_robots.drivers.g1 import _build_zero_torque_lowcmd
+
+    cmd, err = _build_zero_torque_lowcmd()
+    assert err is None
+    assert cmd is not None
+    for m in cmd.motor_cmd:
+        assert m.q == 0.0
+        assert m.dq == 0.0
+        assert m.tau == 0.0
+        assert m.kp == 0.0
+        assert m.kd == 0.0
+
+
+# =========================================================================
+# Module-load hygiene: the write path adds no SDK import at load time.   #
+# =========================================================================
+
+
+def test_g1_driver_module_does_not_import_unitree_sdk2py_at_load_time() -> None:
+    """Importing :mod:`strands_robots.drivers.g1` does not import the SDK.
+
+    The DDSPublisher tests pin this for :mod:`_dds_engine`; this test pins
+    it for the driver module itself so a future edit that reaches for a
+    module-level ``import unitree_sdk2py.idl.default`` fails here.  Thor
+    and CI both need the driver module importable without the SDK.
+    """
+    import importlib
+    import sys
+
+    # Snapshot the SDK modules already loaded (may or may not be present on
+    # this box).  Then reimport the driver module and confirm no *new*
+    # unitree_sdk2py submodule crept in - just importing the driver.
+    before = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
+    importlib.reload(importlib.import_module("strands_robots.drivers.g1"))
+    after = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
+    assert after == before, (
+        "importing strands_robots.drivers.g1 pulled in unitree_sdk2py modules: "
+        f"{sorted(after - before)}"
+    )
     assert driver._connected is False
     assert driver._connect_error == err

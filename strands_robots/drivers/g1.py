@@ -37,7 +37,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
-from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
+from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
 
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
@@ -58,6 +58,69 @@ _TOPIC_LOWSTATE = "rt/lowstate"
 _TOPIC_BMS = "rt/lf/bmsstate"
 _TOPIC_LIDAR_STATE = "rt/utlidar/lidar_state"
 _TOPIC_LIDAR_CLOUD = "rt/utlidar/cloud_livox_mid360"
+
+# The topic the driver writes.  ``rt/lowcmd`` carries a full ``LowCmd_`` shaped
+# for the G1 wholebody actuator set - motion cannot go anywhere else without
+# also crossing the FSM handshake, so the write path is a single-topic path.
+_TOPIC_LOWCMD = "rt/lowcmd"
+
+# The G1 wholebody motor slot count.  ``LowCmd_.motor_cmd`` is a fixed-length
+# array of ``MotorCmd_`` (see :mod:`unitree_sdk2py.idl.unitree_hg.msg.dds_`);
+# 35 is the wholebody layout the current firmware ships with, and slot 29
+# (``kNotUsedJoint``) is the arm-SDK enable byte the ``LowCmd_`` protocol
+# reserves - the driver leaves the enable byte at whatever the caller set.
+_G1_MOTOR_SLOTS: int = 35
+
+# The joint-name -> slot index mapping the driver accepts in
+# :meth:`G1Driver.send_action`.  Kept as a module-level constant so a caller
+# reading the driver's contract can grep the exact names it takes, and so a
+# subclass that adds a joint does not have to rewrite the map.  Names match
+# ``G1JointIndex`` in ``unitree_sdk2_python`` verbatim, but the driver does
+# not import the SDK's class - a name-typo in a caller's action dict must
+# surface here, not from an SDK-load failure on a machine that has no SDK.
+_G1_JOINT_INDEX: dict[str, int] = {
+    # Left leg
+    "left_hip_pitch": 0,
+    "left_hip_roll": 1,
+    "left_hip_yaw": 2,
+    "left_knee": 3,
+    "left_ankle_pitch": 4,
+    "left_ankle_roll": 5,
+    # Right leg
+    "right_hip_pitch": 6,
+    "right_hip_roll": 7,
+    "right_hip_yaw": 8,
+    "right_knee": 9,
+    "right_ankle_pitch": 10,
+    "right_ankle_roll": 11,
+    # Waist
+    "waist_yaw": 12,
+    "waist_roll": 13,
+    "waist_pitch": 14,
+    # Left arm
+    "left_shoulder_pitch": 15,
+    "left_shoulder_roll": 16,
+    "left_shoulder_yaw": 17,
+    "left_elbow": 18,
+    "left_wrist_roll": 19,
+    "left_wrist_pitch": 20,
+    "left_wrist_yaw": 21,
+    # Right arm
+    "right_shoulder_pitch": 22,
+    "right_shoulder_roll": 23,
+    "right_shoulder_yaw": 24,
+    "right_elbow": 25,
+    "right_wrist_roll": 26,
+    "right_wrist_pitch": 27,
+    "right_wrist_yaw": 28,
+}
+
+# PD gain defaults used when a caller does not supply per-joint gains.  These
+# are the gains the neon reference stack uses for a rested-arm hold; they are
+# deliberately conservative and match what the FSM 501 (sitting) hold expects.
+# A caller who cares supplies ``kp``/``kd`` in the action dict.
+_DEFAULT_KP: float = 25.0
+_DEFAULT_KD: float = 0.5
 
 
 class G1Driver:
@@ -128,6 +191,7 @@ class G1Driver:
         # Populated by :meth:`connect_eagerly`. ``None`` on a machine that
         # never connected - a valid state for tests and imports.
         self._subs: DDSSubscriberSet | None = None
+        self._pubs: DDSPublisher | None = None
         self._connected: bool = False
         self._connect_error: str | None = None
 
@@ -273,6 +337,21 @@ class G1Driver:
             if err is not None:
                 self._connect_error = err
                 return err
+        # Start the publisher on the same interface.  The subscriber set has
+        # already run ``ensure_dds`` once, so :meth:`DDSPublisher.start`
+        # returns ``None`` without a second SDK init - the shared lock keeps
+        # both halves on the same construction lane.
+        pubs = DDSPublisher(self._network_interface)
+        err = pubs.start()
+        if err is not None:
+            # The subscriber set is up; publisher failed.  Roll back so the
+            # driver reports a single connect failure instead of a half-open
+            # state, and so :meth:`cleanup` on the caller's error path drops
+            # the subscribers cleanly.
+            subs.close()
+            self._connect_error = err
+            return err
+        self._pubs = pubs
         self._subs = subs
         self._connected = True
         self._connect_error = None
@@ -314,10 +393,13 @@ class G1Driver:
         logger.debug("%s.stop() no-op (no motion path wired yet)", self._tool_name)
 
     def cleanup(self) -> None:
-        """Release every DDS subscriber. Idempotent."""
+        """Release every DDS subscriber and publisher. Idempotent."""
         if self._subs is not None:
             self._subs.close()
             self._subs = None
+        if self._pubs is not None:
+            self._pubs.close()
+            self._pubs = None
         self._connected = False
 
     # ------------------------------------------------------------------ #
@@ -367,24 +449,64 @@ class G1Driver:
         action: dict[str, Any],
         robot_name: str | None = None,
     ) -> dict[str, Any]:
-        """Refuse writes today; the FSM and battery gates are already live.
+        """Publish one :class:`LowCmd_` on ``rt/lowcmd`` for the given joints.
 
-        The motion writes to ``rt/armsdk`` and ``rt/lowcmd`` land in issue
-        #358 - but the gates that a real ``send_action`` will consult are
-        cheap to install now, and installing them here means the day the
-        write lines land the gates already have coverage. The envelope
-        matches what a rejected motion call will return.
+        The action dict is keyed by joint name (see :data:`_G1_JOINT_INDEX`
+        for the exact set).  A caller supplies either
 
-        Scope is ``"arm"`` because ``send_action`` in the lerobot driver
-        writes joint targets to the arm SDK; base velocity is not a
-        ``send_action`` verb. When the write lines land they will consult
-        the same :meth:`_check_motion_gates` call and pass the same scope.
+        * ``{joint_name: target_position_radians}`` for the common case where
+          every joint uses the driver's default :data:`_DEFAULT_KP` /
+          :data:`_DEFAULT_KD` gains, or
+        * ``{joint_name: {"q": ..., "kp": ..., "kd": ..., "dq": ..., "tau": ...}}``
+          when a caller wants per-joint control.  Any missing key inside the
+          inner dict falls back to the default gain (``kp``, ``kd``) or zero
+          (``dq``, ``tau``); a missing ``q`` refuses the whole action so a
+          silently-zeroed target cannot make it onto the wire.
+
+        Two things this method is deliberately *not*:
+
+        1. A control loop.  A caller who wants 500 Hz calls this on their own
+           timer; the driver's job here is one wire frame, not a schedule.
+           The loop lands in the follow-up PR that closes issue #361 in full.
+        2. A safety filter.  The FSM and battery gates are the safety
+           envelope; command-magnitude limits are the arm-SDK client's job.
+
+        Scope is ``"arm"`` because ``send_action`` writes to ``rt/lowcmd`` for
+        arm-SDK-shaped targets; base velocity is not a ``send_action`` verb.
+        The scope classification and gate call are unchanged from the previous
+        stub - so the tests that already pinned FSM and battery refusals stay
+        valid.
         """
-        del action, robot_name  # gates run before we would use them
+        del robot_name  # driver fronts one G1
         refusal = self._check_motion_gates("arm")
         if refusal is not None:
             return refusal
-        return _refuse("motion path not wired yet (issue #358)")
+        if self._pubs is None:
+            return _refuse("publisher not initialised - call connect_eagerly() first")
+        cmd, err = _build_lowcmd_from_action(action)
+        if err is not None:
+            return _refuse(err)
+        # Lazy import.  A missing SDK on the write path is the same failure
+        # mode the subscriber set already covers; publisher returns a string.
+        try:
+            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
+        except ImportError as exc:  # pragma: no cover - exercised on hardware
+            return _refuse(f"unitree_sdk2py is not installed: {exc}")
+        pub_err = self._pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
+        if pub_err is not None:
+            return _refuse(pub_err)
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "json": {
+                        "topic": _TOPIC_LOWCMD,
+                        "joints": sorted(action.keys()),
+                        "fsm_id": self._fsm_id,
+                    }
+                }
+            ],
+        }
 
     # ------------------------------------------------------------------ #
     # Task and policy paths (stubs until #358).                          #
@@ -610,3 +732,103 @@ def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
     if not hasattr(module, class_name):
         return f"{module_path} has no {class_name}"
     return getattr(module, class_name)
+
+
+def _build_lowcmd_from_action(
+    action: dict[str, Any],
+) -> tuple[Any, str | None]:
+    """Build a ``LowCmd_`` populated from a caller's ``send_action`` dict.
+
+    Returns ``(cmd, None)`` on success and ``(None, reason)`` when the action
+    dict is unusable.  Kept as a free function so a test can walk the mapping
+    without a driver instance, and so :meth:`G1Driver.send_action` reads as
+    "gate, build, publish" - three verbs in three lines.
+
+    The mapping is:
+
+    * Every joint name in ``action`` must be a key of :data:`_G1_JOINT_INDEX`.
+      An unknown name refuses the whole action - the alternative would be to
+      silently drop a joint the caller thought was commanded, which is the
+      single worst failure mode on a robot.
+    * A scalar value is interpreted as the position target ``q``, with
+      :data:`_DEFAULT_KP` / :data:`_DEFAULT_KD` gains and zero ``dq``/``tau``.
+    * A dict value must contain ``"q"``; ``"kp"``, ``"kd"``, ``"dq"``, ``"tau"``
+      are optional.  An unknown key inside the inner dict is refused for the
+      same reason as an unknown joint name: silent drop is worse than a
+      caller-facing error.
+
+    The SDK import is lazy so this helper is safe to call in a test without
+    the SDK on the box; a missing SDK returns a reason string, matching the
+    driver's other error paths.
+    """
+    if not isinstance(action, dict):
+        return None, f"action must be a dict, got {type(action).__name__}"
+    if not action:
+        return None, "action is empty; nothing to command"
+    try:
+        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as _default_lowcmd
+    except ImportError as exc:  # pragma: no cover - exercised on hardware
+        return None, f"unitree_sdk2py is not installed: {exc}"
+    cmd = _default_lowcmd()
+    known_inner = {"q", "kp", "kd", "dq", "tau"}
+    for name, value in action.items():
+        slot = _G1_JOINT_INDEX.get(name)
+        if slot is None:
+            allowed = ", ".join(sorted(_G1_JOINT_INDEX))
+            return None, f"unknown joint name {name!r}; expected one of: {allowed}"
+        if isinstance(value, dict):
+            unknown_inner = set(value) - known_inner
+            if unknown_inner:
+                return None, (
+                    f"unknown per-joint keys for {name!r}: "
+                    f"{sorted(unknown_inner)}; expected a subset of {sorted(known_inner)}"
+                )
+            if "q" not in value:
+                return None, f"per-joint dict for {name!r} is missing required key 'q'"
+            q = value["q"]
+            kp = value.get("kp", _DEFAULT_KP)
+            kd = value.get("kd", _DEFAULT_KD)
+            dq = value.get("dq", 0.0)
+            tau = value.get("tau", 0.0)
+        else:
+            q, kp, kd, dq, tau = value, _DEFAULT_KP, _DEFAULT_KD, 0.0, 0.0
+        try:
+            q_f = float(q)
+            kp_f = float(kp)
+            kd_f = float(kd)
+            dq_f = float(dq)
+            tau_f = float(tau)
+        except (TypeError, ValueError) as exc:
+            return None, f"joint {name!r} carries a non-numeric target: {exc}"
+        motor = cmd.motor_cmd[slot]
+        motor.q = q_f
+        motor.dq = dq_f
+        motor.tau = tau_f
+        motor.kp = kp_f
+        motor.kd = kd_f
+    return cmd, None
+
+
+def _build_zero_torque_lowcmd() -> tuple[Any, str | None]:
+    """Return a ``LowCmd_`` with every motor's gains and effort zeroed.
+
+    A zero-kp/kd/tau motor holds no position and applies no torque - the
+    softest wire frame the SDK protocol accepts.  Used by :meth:`G1Driver.stop`
+    (issue #361 follow-up: the control loop uses the same helper on shutdown).
+
+    Kept as a free function so a test can compare the produced envelope
+    slot-by-slot without a driver instance, and so the ``stop`` and control
+    loop paths share exactly one construction site.
+    """
+    try:
+        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as _default_lowcmd
+    except ImportError as exc:  # pragma: no cover - exercised on hardware
+        return None, f"unitree_sdk2py is not installed: {exc}"
+    cmd = _default_lowcmd()
+    for motor in cmd.motor_cmd:
+        motor.q = 0.0
+        motor.dq = 0.0
+        motor.tau = 0.0
+        motor.kp = 0.0
+        motor.kd = 0.0
+    return cmd, None
