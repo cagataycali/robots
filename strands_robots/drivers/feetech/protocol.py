@@ -291,6 +291,15 @@ def parse_status_packet(raw: bytes, expected_id: int, expected_param_count: int)
         ``expected_param_count`` bytes long.
 
     Raises:
+        TypeError: If ``raw`` is not bytes-like, refused before any framing is
+            attempted.
+        ValueError: If ``expected_id`` or ``expected_param_count`` is outside
+            the domain the protocol allows. Named separately from
+            :class:`ProtocolError` even though that is itself a
+            :class:`ValueError`, because these two mark a caller bug rather
+            than wire corruption - the distinction the bus module reads this
+            boundary for, and one ``except ProtocolError`` alone would not
+            catch them.
         ProtocolError: If ``raw`` is not one well-formed status packet
             addressed to ``expected_id`` carrying ``expected_param_count``
             param bytes.
