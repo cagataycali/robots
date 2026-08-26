@@ -147,7 +147,7 @@ returns a reason naming the module and the error instead:
 The reason stops at what it can establish. It prescribes no `pip install`, because no
 install supplies a module that ships in the core distribution, and a remedy that
 cannot help is worse than none - the same rule
-[`require_optional`](../../strands_robots/utils.py) applies when it is told a module
+[`require_optional`](https://github.com/strands-labs/robots/blob/main/strands_robots/utils.py) applies when it is told a module
 arrives from a system package rather than an index.
 
 The same reason arrives as `connect_error` in `get_status`, so a mesh peer for a Mini
