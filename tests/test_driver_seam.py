@@ -57,13 +57,17 @@ _ROBOT = "so101"
 
 @pytest.fixture(autouse=True)
 def _isolate_native_driver_table(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give each test its own native-driver table.
+    """Give each test its own empty native-driver table.
 
     The table is module state that :func:`register_native_driver` writes, so a
     test that registers a driver would otherwise decide what a later test sees -
-    and the refusal tests assert on a table being *empty*.
+    and the refusal tests assert on a table being *empty*. Since the package
+    now ships drivers that auto-register on import (starting with the G1),
+    the table is not empty at collection time either; this fixture resets it
+    for the duration of every test in this module so a refusal test can
+    assert what an empty table refuses.
     """
-    monkeypatch.setattr(drivers_registry_mod, "_NATIVE_DRIVERS", dict(drivers_registry_mod._NATIVE_DRIVERS))
+    monkeypatch.setattr(drivers_registry_mod, "_NATIVE_DRIVERS", {})
 
 
 class _CompleteDriver:

@@ -27,6 +27,33 @@ from strands_robots.drivers.registry import (
     resolve_driver,
 )
 
+
+def _register_shipped_drivers() -> None:
+    """Register the drivers shipped with the package.
+
+    A driver package outside this repo calls
+    :func:`register_native_driver` itself; the drivers we ship register here
+    so ``Robot("g1", mode="real", driver="strands")`` works without a second
+    import. The registration is guarded: an import that fails (a bad SDK
+    install, a broken deps subset) leaves the table empty rather than
+    breaking every ``from strands_robots.drivers import ...`` statement, and
+    a driver package that overrides the shipped registration wins because
+    ``register_native_driver`` refuses double-registration by default.
+    """
+    try:
+        from strands_robots.drivers.g1 import G1Driver
+    except Exception:  # noqa: BLE001 - a broken driver must not break the seam
+        return
+    for canonical in ("g1", "unitree_g1"):
+        try:
+            register_native_driver(canonical, G1Driver)
+        except ValueError:
+            # Already registered - a caller registered it first, honour that.
+            pass
+
+
+_register_shipped_drivers()
+
 __all__ = [
     "DEFAULT_DRIVER",
     "DRIVER_CHOICES",
