@@ -138,7 +138,7 @@ builds, registers and answers `get_status` - and every surface that would touch 
 daemon returns a reason naming the extra instead:
 
 ```python
->>> Robot("reachy_mini", mode="real").driver.connect_eagerly()
+>>> Robot("reachy_mini", mode="real").connect_eagerly()
 "cannot import strands_robots.device_connect.reachy_transport: No module named
 'device_connect_edge' - the Reachy transport helpers ship behind an extra:
 pip install 'strands-robots[device-connect]'"
