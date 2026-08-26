@@ -21,6 +21,8 @@ this suite grades only the codec.
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from strands_robots.drivers.feetech.protocol import (
@@ -299,24 +301,45 @@ class TestParseStatusPacket:
 # ---------------------------------------------------------------------------
 # The vendor SDK, when installed, must agree with the codec byte-for-byte.
 # ---------------------------------------------------------------------------
-scservo_sdk = pytest.importorskip("scservo_sdk", reason="scservo_sdk not installed on this box")
+# ``scservo_sdk`` is Feetech's optional vendor SDK. It is not on PyPI in a form
+# the CI box can install, so upstream CI runs without it. A module-level
+# ``pytest.importorskip`` would skip the ENTIRE file - silently deselecting
+# the 46 datasheet-driven codec cells above - which is exactly the
+# "silent skip" defect class AGENTS.md > Review Learnings (PR #85) > Testing
+# names. Scope the skip to just the vendor-agreement class instead: the fixture
+# imports the SDK per-class, so ``--collect-only`` on a box without the SDK
+# reports every cell above collected and only this class's cells deselected.
+_scservo_sdk_available = importlib.util.find_spec("scservo_sdk") is not None
 
 
+@pytest.mark.skipif(
+    not _scservo_sdk_available,
+    reason="scservo_sdk not installed on this box",
+)
 class TestTheVendorAgreesOnFraming:
     """Every builder produces the same bytes the SDK's ``PacketHandler`` would.
 
-    Skipped on CI boxes without ``scservo_sdk``; the codec's own frame-shape
-    tests above do not need the SDK, and the frames they build were taken
-    from the datasheet rather than from this suite's own output.
+    Skipped on CI boxes without ``scservo_sdk`` (via ``skipif`` on the class,
+    not a module-level ``importorskip`` - the latter would silently skip the
+    46 codec cells above too). The codec's own frame-shape tests above do not
+    need the SDK, and the frames they build were taken from the datasheet
+    rather than from this suite's own output.
     """
 
     @pytest.fixture(scope="class")
-    def handler(self):  # type: ignore[no-untyped-def]
-        # Feetech's PacketHandler is a pure codec too - no port is opened.
-        return scservo_sdk.PacketHandler(0)
+    def sdk(self):  # type: ignore[no-untyped-def]
+        # Import inside the fixture so the module still imports on a box
+        # without the SDK - the class's ``skipif`` guards collection, and the
+        # fixture never runs when the class is skipped.
+        return pytest.importorskip("scservo_sdk", reason="scservo_sdk not installed on this box")
 
-    def test_ping_matches_sdk(self, handler) -> None:  # type: ignore[no-untyped-def]
-        # scservo_sdk exposes byte-offset constants (PKT_HEADER0, PKT_ID,
+    @pytest.fixture(scope="class")
+    def handler(self, sdk):  # type: ignore[no-untyped-def]
+        # Feetech's PacketHandler is a pure codec too - no port is opened.
+        return sdk.PacketHandler(0)
+
+    def test_ping_matches_sdk(self, sdk, handler) -> None:  # type: ignore[no-untyped-def]
+        # ``sdk`` exposes byte-offset constants (PKT_HEADER0, PKT_ID,
         # PKT_LENGTH, PKT_INSTRUCTION) plus INST_PING. Assemble the PING
         # frame from those primitives so the SDK's own view of the layout
         # grades our builder.
@@ -327,20 +350,20 @@ class TestTheVendorAgreesOnFraming:
                 0xFF,  # PKT_HEADER1
                 1,  # PKT_ID
                 2,  # PKT_LENGTH_L on Protocol 1: 2
-                scservo_sdk.INST_PING,
+                sdk.INST_PING,
             ]
         )
         # Feetech additive checksum over ID..INSTR.
-        sdk_frame.append((~sum(sdk_frame[scservo_sdk.PKT_ID :])) & 0xFF)
+        sdk_frame.append((~sum(sdk_frame[sdk.PKT_ID :])) & 0xFF)
         assert ping_packet(1) == bytes(sdk_frame)
 
-    def test_write_matches_sdk_checksum_formula(self, handler) -> None:  # type: ignore[no-untyped-def]
+    def test_write_matches_sdk_checksum_formula(self, sdk, handler) -> None:  # type: ignore[no-untyped-def]
         # WRITE 2 bytes at address 0x2A on motor 5.
         motor_id = 5
         address = 0x2A
         data = [0x00, 0x08]
         length = len(data) + 3  # address + INSTR + CHECKSUM
-        payload = [motor_id, length, scservo_sdk.INST_WRITE, address] + data
+        payload = [motor_id, length, sdk.INST_WRITE, address] + data
         checksum = (~sum(payload)) & 0xFF
         expected = bytes([0xFF, 0xFF] + payload + [checksum])
         assert write_packet(motor_id, address, bytes(data)) == expected
