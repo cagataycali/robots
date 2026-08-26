@@ -83,6 +83,6 @@ hatch run test-integ tests_integ/policies/moveit2/ -m moveit2 -v
 ```
 
 The integ tests live at
-[`tests_integ/policies/moveit2/test_moveit2_live.py`](../../../../../tests_integ/policies/moveit2/test_moveit2_live.py).
+[`tests_integ/policies/moveit2/test_moveit2_live.py`](../../../../tests_integ/policies/moveit2/test_moveit2_live.py).
 They exercise the full client → sidecar round-trip and expect a
 `success=True` response for an in-workspace pose.

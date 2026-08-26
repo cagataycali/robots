@@ -84,40 +84,48 @@ _PATH_STATUS = "/api/daemon/status"
 _PATH_STOP = "/api/move/stop"
 
 #: The module every daemon touch here goes through. It is a leaf that imports
-#: nothing but the standard library, but it lives inside
-#: :mod:`strands_robots.device_connect`, whose package ``__init__`` imports
-#: ``device_connect_edge`` and the three Device Connect drivers unconditionally.
-#: That package ships only in the ``[device-connect]`` extra, so on a stock
-#: ``pip install strands-robots`` importing the leaf raises
-#: ``ModuleNotFoundError: No module named 'device_connect_edge'`` as a side
-#: effect of the parent, naming a package the caller never asked for.
+#: nothing but the standard library, and its parent package
+#: :mod:`strands_robots.device_connect` resolves ``device_connect_edge`` and the
+#: three Device Connect drivers lazily, so importing the leaf executes no
+#: third-party import. Nothing an extra installs can therefore decide whether
+#: this import succeeds: on a stock ``pip install strands-robots`` it does, and a
+#: failure that still reaches :func:`_resolve_transport` is a broken install of a
+#: module the core distribution ships rather than a missing optional dependency.
 _TRANSPORT_MODULE = "strands_robots.device_connect.reachy_transport"
 
 
 def _resolve_transport() -> Any:
-    """Return the Reachy transport module, or a reason naming what is missing.
+    """Return the Reachy transport module, or a reason naming what failed.
 
     The same shape as
     :func:`~strands_robots.drivers.g1._resolve_message_class`: the seam's other
     driver resolves its lazy SDK import through a helper that hands back a
     reason string, and every refusal boundary turns that string into a named
-    failure. Doing the same here keeps the driver's no-raise contract intact on
-    an install without the ``[device-connect]`` extra - ``connect_eagerly``
-    reports a reason and leaves the driver disconnected but usable, rather than
-    raising ``ModuleNotFoundError`` through the agent tool surface.
+    failure. Doing the same here keeps the driver's no-raise contract intact
+    when the transport module cannot be imported - ``connect_eagerly`` reports a
+    reason and leaves the driver disconnected but usable, rather than raising
+    ``ModuleNotFoundError`` through the agent tool surface.
+
+    The reason reports the module and the underlying ``ImportError`` and stops
+    there. It prescribes no install remedy because there is none this branch
+    could establish: the transport leaf imports nothing outside the standard
+    library, so no ``pip install`` supplies a module whose absence would reach
+    here. That is the position the shared optional-dependency helper
+    :func:`~strands_robots.utils.require_optional` already refuses to print a
+    pip line in, because such a line "would hand the caller an instruction that
+    reports success without supplying the module". Every cause that can still
+    reach this branch - a shadowing module, a partial wheel, a corrupt install -
+    is described by the ``ImportError`` itself.
 
     Returns:
-        The imported module, or a reason string naming the extra to install.
+        The imported module, or a reason string naming the module and the cause.
     """
     try:
         import importlib
 
         return importlib.import_module(_TRANSPORT_MODULE)
     except ImportError as exc:
-        return (
-            f"cannot import {_TRANSPORT_MODULE}: {exc} - the Reachy transport "
-            "helpers ship behind an extra: pip install 'strands-robots[device-connect]'"
-        )
+        return f"cannot import {_TRANSPORT_MODULE}: {exc}"
 
 
 #: Keys the daemon status payload might carry a battery percentage under. The

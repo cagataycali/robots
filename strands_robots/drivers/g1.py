@@ -44,7 +44,11 @@ from typing import TYPE_CHECKING, Any, cast
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
-from strands_robots.utils import positive_count_error, positive_finite_number_error
+from strands_robots.utils import (
+    finite_number_error,
+    positive_count_error,
+    positive_finite_number_error,
+)
 
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
@@ -222,6 +226,9 @@ class G1Driver:
                 a caller can see which check refused.
             **kwargs: Ignored; accepted so the factory can forward extras
                 without the driver knowing what they are.
+
+        Raises:
+            ValueError: If ``battery_floor_pct`` is not a finite number.
         """
         del cameras, data_config  # accepted for parity; unused here
         if kwargs:
@@ -229,6 +236,16 @@ class G1Driver:
         self._tool_name = tool_name
         self._port = port
         self._network_interface = network_interface
+        # The floor is the only constructor value the safety gate compares a
+        # reading against, so it is held to the same shared domain
+        # ``run_policy`` holds ``duration`` to.  A bare ``float()`` accepted
+        # ``nan``: every ``battery_pct < nan`` is False, so the driver stored a
+        # floor it reported in :meth:`get_status` and enforced nowhere, and the
+        # gate opened on a critically low pack.  ``finite_number_error`` also
+        # rejects ``bool`` (``True`` would act as a silent 1.0%) and a numeric
+        # string, which is how a config file spells ``nan``.
+        if reason := finite_number_error(battery_floor_pct, "battery_floor_pct", "G1Driver"):
+            raise ValueError(reason)
         self._battery_floor_pct = float(battery_floor_pct)
 
         # Cached DDS decode results. Every one is optional per the mesh

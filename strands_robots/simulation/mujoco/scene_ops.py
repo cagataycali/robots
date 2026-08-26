@@ -354,11 +354,13 @@ def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int
     it has one ``ctrl`` slot to seed from one joint's position. It reports
     ``-1`` for a tendon, because a tendon is not a joint.
 
-    A joint can still be driven *through* that tendon, though: a fixed tendon
-    that wraps joints couples them to one ``ctrl``, which is the standard MJCF
-    gripper idiom. So a caller asking "is this joint already driven" - rather
-    than "which joint is this actuator's target" - must resolve the tendon's
-    wrap list too, or it reads an actuated joint as free. That distinction is
+    A joint can still be driven *through* that tendon, though: a tendon couples
+    several joints to one ``ctrl``, which is the standard MJCF gripper and
+    tendon-driven-hand idiom. So a caller asking "is this joint already driven" -
+    rather than "which joint is this actuator's target" - must resolve the
+    tendon's wrap list too, or it reads an actuated joint as free. Which joints
+    that list names is :func:`tendon_joint_ids`' rule, and it covers a spatial
+    tendon's site route as well as a fixed tendon's joint entries. That distinction is
     the whole reason this is a second function and not a flag on the first: the
     two questions have different answers for the same actuator, and collapsing
     them would make one of the two call sites wrong.
@@ -410,10 +412,10 @@ def actuator_target_body_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]
       id is a *reference* frame the force is measured against, not another part
       the actuator moves.
     * ``mjTRN_BODY`` -- that body.
-    * ``mjTRN_TENDON`` -- the bodies of the joints the tendon wraps, via
-      :func:`tendon_joint_ids`, so the tendon rule stays owned in one place. A
-      purely spatial tendon wraps sites rather than joints and so contributes
-      nothing, matching what that function reports.
+    * ``mjTRN_TENDON`` -- the bodies of the joints the tendon drives, via
+      :func:`tendon_joint_ids`, so the tendon rule stays owned in one place.
+      That covers a spatial tendon too: the joints its site route spans are the
+      ones between the links it moves, so their bodies are those links.
 
     Args:
         model: The compiled ``MjModel``.
@@ -453,15 +455,85 @@ def actuator_target_body_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]
     return frozenset()
 
 
+def _joints_spanning(model: Any, bodies: list[int]) -> frozenset[int]:
+    """Return the joints on the kinematic paths ``bodies`` span.
+
+    Moving a joint changes the distance between two bodies exactly when it lies
+    on the path between them, which is the path from each body up to their
+    deepest common ancestor: above that ancestor the two bodies move together,
+    so a joint there leaves every distance among them unchanged. That makes this
+    set the joints a *length*-driven coupling reaches, and no others.
+
+    Args:
+        model: The compiled ``MjModel``.
+        bodies: Body ids the route touches, in any order; duplicates are fine.
+
+    Returns:
+        The spanned joint ids, empty when the route never leaves one body.
+    """
+
+    def walk_to_world(body: int) -> list[int]:
+        """Bodies from ``body`` up to the world, nearest first, world excluded."""
+        walk: list[int] = []
+        while body > 0:
+            walk.append(body)
+            body = int(model.body_parentid[body])
+        return walk
+
+    walks = {body: walk_to_world(body) for body in set(bodies)}
+    if not walks:
+        return frozenset()
+    one = next(iter(walks.values()))
+    shared = set(one)
+    for walk in walks.values():
+        shared &= set(walk)
+    # Every shared body lies on ``one``, which is ordered nearest-first, so the
+    # deepest of them is the one appearing earliest. With no shared ancestor the
+    # bodies hang off the world separately and every joint on both walks counts.
+    deepest = min(shared, key=one.index) if shared else 0
+    spanned: set[int] = set()
+    for walk in walks.values():
+        for body in walk:
+            if body == deepest:
+                break
+            adr = int(model.body_jntadr[body])
+            num = int(model.body_jntnum[body])
+            if adr >= 0:
+                spanned.update(range(adr, adr + num))
+    return frozenset(spanned)
+
+
 def tendon_joint_ids(model: Any, tendon_id: int, mj: Any) -> frozenset[int]:
-    """Return the joint ids wired into tendon ``tendon_id`` by its wrap list.
+    """Return the joint ids tendon ``tendon_id`` drives.
 
     A tendon's wrap entries live in one flat table shared by every tendon, so a
-    reader has to slice its own span (``tendon_adr`` / ``tendon_num``) and keep
-    only the ``mjWRAP_JOINT`` entries - site and pulley wraps carry ids from
-    other spaces. Walking that table is the part both "which actuator drives
-    this joint" and "which joints does this actuator drive" need, so it lives
-    here once rather than in each direction.
+    reader has to slice its own span (``tendon_adr`` / ``tendon_num``). Two kinds
+    of entry there identify a driven joint, and which kind a tendon carries is
+    decided by how MJCF spells it:
+
+    * ``mjWRAP_JOINT`` -- a ``<fixed>`` tendon's length is a weighted sum of the
+      joint coordinates it lists, so it drives each of them directly and the id
+      is already a joint id.
+    * ``mjWRAP_SITE`` and ``mjWRAP_SPHERE`` / ``mjWRAP_CYLINDER`` -- a
+      ``<spatial>`` tendon's length is the distance along a route, so what it
+      drives is every joint BETWEEN the bodies that route touches
+      (:func:`_joints_spanning`). Sites are the points it is anchored to and
+      wrap geoms are obstacles it bends around, but both are carried by a body
+      and moving either changes the length, so both are ends of the span: with a
+      wrap geom on a body outside the sites' own span, MuJoCo moves a joint that
+      the sites alone do not reach. None of those ids is a joint id, so reading
+      the joint wraps alone reports a spatial tendon as driving nothing whatever
+      it is wired to - and the standard tendon-driven hand is actuated entirely
+      this way, one cable per finger routed over sites on the links it closes.
+      ``mjWRAP_PULLEY`` carries a divisor rather than an id and contributes
+      nothing.
+
+    The two rules are unioned rather than selected between, so a tendon carrying
+    both kinds of entry needs no separate case here.
+
+    Walking that table is the part both "which actuator drives this joint" and
+    "which joints does this actuator drive" need, so it lives here once rather
+    than in each direction.
 
     Args:
         model: The compiled ``MjModel``.
@@ -469,14 +541,28 @@ def tendon_joint_ids(model: Any, tendon_id: int, mj: Any) -> frozenset[int]:
         mj: The ``mujoco`` module.
 
     Returns:
-        The wrapped joint ids, empty when the tendon wraps no joint.
+        The driven joint ids, empty when the tendon reaches no joint - a route
+        whose sites all sit on one body, which no joint can lengthen.
     """
     if tendon_id < 0 or tendon_id >= int(model.ntendon):
         return frozenset()
     wrap_joint = int(mj.mjtWrap.mjWRAP_JOINT)
+    wrap_site = int(mj.mjtWrap.mjWRAP_SITE)
+    wrap_geom = {int(mj.mjtWrap.mjWRAP_SPHERE), int(mj.mjtWrap.mjWRAP_CYLINDER)}
     adr = int(model.tendon_adr[tendon_id])
     num = int(model.tendon_num[tendon_id])
-    return frozenset(int(model.wrap_objid[w]) for w in range(adr, adr + num) if int(model.wrap_type[w]) == wrap_joint)
+    wrapped: set[int] = set()
+    route: list[int] = []
+    for w in range(adr, adr + num):
+        kind = int(model.wrap_type[w])
+        objid = int(model.wrap_objid[w])
+        if kind == wrap_joint:
+            wrapped.add(objid)
+        elif kind == wrap_site:
+            route.append(int(model.site_bodyid[objid]))
+        elif kind in wrap_geom:
+            route.append(int(model.geom_bodyid[objid]))
+    return frozenset(wrapped) | _joints_spanning(model, route)
 
 
 def robot_owned_actuator_ids(model: Any, robot: SimRobot, mj: Any) -> list[int]:

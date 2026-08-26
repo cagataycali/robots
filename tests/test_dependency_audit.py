@@ -14,6 +14,7 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
@@ -1138,15 +1139,51 @@ def test_the_lockfile_pins_a_diffusers_that_ships_the_omni_pipeline() -> None:
 _SYSTEM_PROVIDED_MODULES = frozenset({"rclpy", "rosidl_runtime_py"})
 
 
-def _require_optional_call_sites() -> list[tuple[str, int, str, set[str]]]:
-    """Every ``require_optional``/``require_optionals`` call site in the package.
+def _unusable_remedy_reason(value: ast.expr) -> str | None:
+    """Return why ``value`` cannot serve as a ``system_install=`` remedy.
+
+    Only a literal is judged. The shipped form is a reference to a module-level
+    constant, whose text is not knowable from the syntax tree, so a name, an
+    attribute or an f-string is accepted here and left to the runtime tests in
+    ``tests/test_utils.py``. A literal, though, is decidable, and three literals
+    that satisfy the keyword's *presence* defeat what it is for -- each reason
+    below names the message ``require_optional`` really renders for it.
+
+    Args:
+        value: The expression a call site passes as ``system_install=``.
 
     Returns:
-        One ``(relative path, line number, module name, keyword names)`` tuple
+        A reason naming the consequence, or ``None`` when the value is a usable
+        remedy or is not statically decidable.
+    """
+    if not isinstance(value, ast.Constant):
+        return None
+    literal = value.value
+    if literal is None:
+        return "is None, which renders the pip block verbatim - the message passing nothing gives"
+    if not isinstance(literal, str):
+        return (
+            f"is {type(literal).__name__} rather than a string, so str.join raises TypeError "
+            f"and the documented ImportError never reaches the caller"
+        )
+    if not literal.strip():
+        return "is blank, so the refusal names the module and carries no remedy at all"
+    return None
+
+
+def _require_optional_call_sites() -> list[tuple[str, int, str, dict[str, ast.expr]]]:
+    """Every ``require_optional``/``require_optionals`` call site in the package.
+
+    The keyword *values* are carried, not only their names: whether a remedy is
+    usable is a property of the string it names, so a caller that reads only the
+    names cannot tell a real hint from one that renders nothing.
+
+    Returns:
+        One ``(relative path, line number, module name, keyword-to-value)`` tuple
         per requested module -- the aggregate helper takes a list, so a single
         call can request several.
     """
-    sites: list[tuple[str, int, str, set[str]]] = []
+    sites: list[tuple[str, int, str, dict[str, ast.expr]]] = []
     for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
@@ -1165,9 +1202,9 @@ def _require_optional_call_sites() -> list[tuple[str, int, str, set[str]]]:
                 modules = [e.value for e in first.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
             else:
                 continue
-            keywords = {kw.arg for kw in node.keywords if kw.arg}
+            remedies = {kw.arg: kw.value for kw in node.keywords if kw.arg}
             rel = path.relative_to(_REPO_ROOT).as_posix()
-            sites.extend((rel, node.lineno, module, keywords) for module in modules)
+            sites.extend((rel, node.lineno, module, remedies) for module in modules)
     return sites
 
 
@@ -1178,18 +1215,25 @@ def test_require_optional_offers_no_pip_remedy_for_a_system_provided_module() ->
     libraries every such line is an instruction the caller can follow to no
     effect. ``system_install`` replaces the block with the step that does supply
     the module, so passing it is what makes the refusal actionable.
+
+    What makes a refusal actionable is the string, not the keyword: a
+    ``system_install=`` carrying ``None`` renders the pip block byte-for-byte,
+    which is the message this guard exists to forbid. So the value is graded too,
+    by :func:`_unusable_remedy_reason`.
     """
     offenders: list[str] = []
     checked = 0
-    for rel, lineno, module, keywords in _require_optional_call_sites():
+    for rel, lineno, module, remedies in _require_optional_call_sites():
         if module.split(".")[0] not in _SYSTEM_PROVIDED_MODULES:
             continue
         checked += 1
-        pip_remedies = sorted(keywords & {"pip_install", "extra"})
+        pip_remedies = sorted(remedies.keys() & {"pip_install", "extra"})
         if pip_remedies:
             offenders.append(f"{rel}:{lineno} requests {module!r} but passes {', '.join(pip_remedies)}")
-        elif "system_install" not in keywords:
+        elif "system_install" not in remedies:
             offenders.append(f"{rel}:{lineno} requests {module!r} with no system_install= remedy")
+        elif (reason := _unusable_remedy_reason(remedies["system_install"])) is not None:
+            offenders.append(f"{rel}:{lineno} requests {module!r} but its system_install= {reason}")
     assert checked, (
         f"no require_optional site requests any of {sorted(_SYSTEM_PROVIDED_MODULES)}; "
         f"the sweep has stopped seeing them and would pass vacuously"
@@ -1200,6 +1244,143 @@ def test_require_optional_offers_no_pip_remedy_for_a_system_provided_module() ->
         "and exits 0, or a distribution name that does not resolve. Pass "
         "system_install=ROS2_SYSTEM_INSTALL_HINT instead.\n" + "\n".join(offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# A ``system_install=`` remedy is graded by the string it carries.
+#
+# The sweep above once asked only whether the keyword was present. Three
+# literals satisfy that and defeat what the keyword is for, one of them
+# byte-for-byte reproducing the message the sweep exists to forbid. Both
+# production sites pass a module-level constant, so nothing in the tree is an
+# offender today and the corpus cannot exercise the rule -- the exemplars below
+# grade the predicate directly instead, and the premises measure each refused
+# literal against ``require_optional`` itself.
+# ---------------------------------------------------------------------------
+
+#: A module name no distribution supplies, so ``require_optional`` always
+#: refuses it. Using an absent name rather than blocking a real one keeps these
+#: probes hermetic: nothing is patched, and no import cache is disturbed.
+_ABSENT_MODULE = "strands_robots_no_such_optional_dependency"
+
+#: Call sources whose ``system_install=`` the rule must accept. The first two are
+#: the shipped form (a reference to a constant, whose text the syntax tree cannot
+#: know); the rest are values that do name a step a caller can take.
+_ACCEPTED_REMEDIES = (
+    'require_optional("rclpy", system_install=ROS2_SYSTEM_INSTALL_HINT)',
+    'require_optional("rclpy", system_install=ros_telemetry.ROS2_SYSTEM_INSTALL_HINT)',
+    'require_optional("rclpy", system_install="Source a distro: source /opt/ros/jazzy/setup.bash")',
+    'require_optional("rclpy", system_install=f"Source {distro}/setup.bash")',
+)
+
+#: Call sources whose ``system_install=`` the rule must refuse, each with a
+#: phrase its reason has to carry so a reader learns the consequence, not just
+#: that the value was rejected. The phrases are chosen to distinguish the
+#: branches from one another: ``"None"`` would not, because the non-string branch
+#: reports ``NoneType`` and so satisfies it.
+_REFUSED_REMEDIES = (
+    ('require_optional("rclpy", system_install=None)', "pip block"),
+    ('require_optional("rclpy", system_install="")', "blank"),
+    ('require_optional("rclpy", system_install="   ")', "blank"),
+    ('require_optional("rclpy", system_install=0)', "TypeError"),
+    ('require_optional("rclpy", system_install=False)', "TypeError"),
+)
+
+
+def _remedy_node(source: str) -> ast.expr:
+    """Return the ``system_install=`` value node of a single-call ``source``.
+
+    Args:
+        source: One Python expression statement calling ``require_optional``.
+
+    Returns:
+        The expression the call passes as ``system_install=``.
+    """
+    statement = ast.parse(source).body[0]
+    assert isinstance(statement, ast.Expr), source
+    call = statement.value
+    assert isinstance(call, ast.Call), source
+    return next(kw.value for kw in call.keywords if kw.arg == "system_install")
+
+
+def _refusal_for(**overrides: Any) -> str:
+    """Return the ``ImportError`` text ``require_optional`` renders for an absent module.
+
+    Args:
+        **overrides: Keyword arguments forwarded verbatim, so a probe may pass a
+            value deliberately outside the declared ``str | None`` annotation.
+
+    Returns:
+        The refusal message.
+    """
+    from strands_robots import utils
+
+    with pytest.raises(ImportError) as raised:
+        utils.require_optional(_ABSENT_MODULE, purpose="a probe", **overrides)
+    return str(raised.value)
+
+
+@pytest.mark.parametrize("source", _ACCEPTED_REMEDIES)
+def test_a_usable_system_install_remedy_is_accepted(source: str) -> None:
+    """Over-reach control: grading the value must not refuse a real remedy."""
+    assert _unusable_remedy_reason(_remedy_node(source)) is None, source
+
+
+@pytest.mark.parametrize(("source", "expected_word"), _REFUSED_REMEDIES)
+def test_a_system_install_remedy_that_supplies_nothing_is_refused(source: str, expected_word: str) -> None:
+    """A literal that satisfies the keyword's presence but not its purpose."""
+    reason = _unusable_remedy_reason(_remedy_node(source))
+    assert reason is not None, source
+    assert expected_word in reason, f"{source} -> {reason!r} does not name {expected_word!r}"
+
+
+def test_the_remedy_rule_reaches_both_outcomes() -> None:
+    """Non-vacuity: the exemplars are not all judged the same way."""
+    verdicts = {
+        _unusable_remedy_reason(_remedy_node(source)) is None
+        for source in (*_ACCEPTED_REMEDIES, *(source for source, _ in _REFUSED_REMEDIES))
+    }
+    assert verdicts == {True, False}, f"the rule only ever answered {verdicts}"
+
+
+def test_a_none_remedy_renders_the_pip_block_it_exists_to_replace() -> None:
+    """Premise: ``system_install=None`` is byte-identical to omitting the keyword.
+
+    This is why ``None`` is refused rather than merely discouraged. The keyword
+    is present, so a presence check passes, and the message a caller reads is the
+    dead-end pip instruction the guard above was written to forbid.
+    """
+    with_none = _refusal_for(system_install=None)
+    assert with_none == _refusal_for(), "None must not be distinguishable from omitting the keyword"
+    assert f"pip install {_ABSENT_MODULE}" in with_none
+
+
+def test_a_blank_remedy_renders_no_remedy_at_all() -> None:
+    """Premise: a blank ``system_install=`` leaves the refusal with no next step."""
+    message = _refusal_for(system_install="")
+    assert message.strip() == f"'{_ABSENT_MODULE}' is required for a probe"
+    assert "pip install" not in message
+    assert "Install with:" not in message
+
+
+def test_a_non_string_remedy_replaces_the_documented_importerror() -> None:
+    """Premise: a non-string remedy raises ``TypeError`` from ``str.join``.
+
+    ``require_optional`` documents ``ImportError``, and a caller writing
+    ``except ImportError`` around an optional import misses this entirely.
+    """
+    from strands_robots import utils
+
+    overrides: dict[str, Any] = {"system_install": 0}
+    with pytest.raises(TypeError, match="expected str instance"):
+        utils.require_optional(_ABSENT_MODULE, purpose="a probe", **overrides)
+
+
+def test_a_real_remedy_replaces_the_pip_block() -> None:
+    """Premise: the accepted form does what the keyword promises."""
+    message = _refusal_for(system_install="Source a distro first.")
+    assert message.endswith("Source a distro first.")
+    assert "pip install" not in message
 
 
 def test_the_rclpy_refusals_name_the_step_that_supplies_it() -> None:
