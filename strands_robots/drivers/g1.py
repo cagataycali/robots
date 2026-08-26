@@ -246,19 +246,29 @@ class G1Driver:
     # ------------------------------------------------------------------ #
 
     def connect_eagerly(self) -> str | None:
-        """Attach to the DDS bus and subscribe every sensor topic.
+        """Attach to the DDS bus and subscribe every sensor topic. Idempotent.
 
-        Called by :func:`~strands_robots.robot.Robot` before returning the
-        driver, so a real bring-up fails on the connect line rather than on
-        the first :meth:`get_status` poll. The return type is a string so a
-        caller who wants a soft failure (a headless smoke test that only
-        wants the driver instance) can decide whether to raise.
+        The factory only constructs the driver; it does not connect it. Whoever
+        performs the bring-up calls this (see ``examples/robots/neon.py``) so a
+        real bring-up fails here rather than on the first :meth:`get_status`
+        poll. The return type is a string so a caller who wants a soft failure
+        (a headless smoke test that only wants the driver instance) can decide
+        whether to raise.
+
+        A second call on a connected driver is a no-op success. Rebuilding the
+        subscriber set instead would re-subscribe all four topics and drop the
+        only reference to the previous one, leaking its subscribers on a bus
+        whose bindings segfault under concurrent construction.
 
         Returns:
-            ``None`` on success. A named reason on failure - the driver is
-            left disconnected but usable, so a mesh peer for a robot that is
-            off can still be constructed for later use.
+            ``None`` on success, and on a call against an already-connected
+            driver. A named reason on failure - the driver is left
+            disconnected but usable, so a mesh peer for a robot that is off
+            can still be constructed for later use.
         """
+        if self._connected:
+            logger.debug("%s already connected; connect_eagerly() is a no-op", self._tool_name)
+            return None
         subs = DDSSubscriberSet(self._network_interface)
         err = subs.start()
         if err is not None:

@@ -460,6 +460,30 @@ def test_dds_init_lock_is_a_lock() -> None:
 # =========================================================================
 
 
+def test_connect_eagerly_is_a_no_op_on_a_connected_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second call keeps the subscriber set it already has.
+
+    Rebuilding it would re-subscribe all four topics and drop the only
+    reference to the previous :class:`DDSSubscriberSet`, leaking its
+    subscribers - on a bus whose bindings segfault under concurrent
+    ``ChannelSubscriber(...)``. No caller does this today, which is exactly
+    why the method's idempotence needs pinning rather than assuming.
+    """
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
+    already = object()
+    driver._connected = True
+    driver._subs = already
+
+    def _forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("connect_eagerly() rebuilt the subscriber set")
+
+    monkeypatch.setattr("strands_robots.drivers.g1.DDSSubscriberSet", _forbidden)
+
+    assert driver.connect_eagerly() is None
+    assert driver._subs is already
+    assert driver._connected is True
+
+
 def test_connect_eagerly_reports_reason_without_sdk() -> None:
     """A machine without ``unitree_sdk2py`` gets a named connect error.
 
