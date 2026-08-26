@@ -330,6 +330,7 @@ def test_report_names_every_blocking_path_and_the_remedy() -> None:
         merge_base_sha="32dc3f5b2ca5f226842e4f8e40aaa8e64108e383",
         blocking=[_SHARED],
         prose=["CHANGELOG.md"],
+        named=[],
         base_change_count=5,
     )
     assert _SHARED in report
@@ -345,6 +346,7 @@ def test_report_says_so_when_there_is_no_overlap() -> None:
         merge_base_sha="0123456789abcdef",
         blocking=[],
         prose=[],
+        named=[],
         base_change_count=0,
     )
     assert "No overlap" in report
@@ -428,20 +430,32 @@ def test_the_workflow_reads_the_script_from_the_base_and_names_the_head() -> Non
 # seam, so faking that is faking the network and nothing else.
 
 
-def _files(names: list[str], renamed: dict[str, str] | None = None) -> list[dict[str, object]]:
+def _files(
+    names: list[str],
+    renamed: dict[str, str] | None = None,
+    patches: dict[str, str] | None = None,
+) -> list[dict[str, object]]:
     """Build a file list in the shape both file-carrying endpoints return.
 
     ``renamed`` maps a new path to the path it was renamed from, which the API
     reports as ``previous_filename`` on that same entry rather than as a second
     entry -- so a rename is one row naming two paths, and reading only one of
     them is invisible in the payload.
+
+    ``patches`` maps a path to its unified diff, the ``patch`` field the endpoint
+    returns alongside ``filename``. Omitted by default, and omitting it is
+    meaningful rather than merely terse: an entry with no diff contributes no
+    module literal, which is the shape every path-relation test here wants.
     """
     previous = renamed or {}
+    diffs = patches or {}
     rows: list[dict[str, object]] = []
     for name in names:
         row: dict[str, object] = {"filename": name}
         if name in previous:
             row["previous_filename"] = previous[name]
+        if name in diffs:
+            row["patch"] = diffs[name]
         rows.append(row)
     return rows
 
@@ -452,12 +466,13 @@ def _compare(
     merge_base: str = "aaaa1111",
     behind_by: int = 0,
     renamed: dict[str, str] | None = None,
+    patches: dict[str, str] | None = None,
 ) -> dict[str, object]:
     """Build one ``compare`` payload in the shape the endpoint returns."""
     return {
         "merge_base_commit": {"sha": merge_base},
         "behind_by": behind_by,
-        "files": _files(files, renamed),
+        "files": _files(files, renamed, patches),
     }
 
 
@@ -1125,3 +1140,333 @@ def test_the_sweep_refuses_to_run_without_its_own_inputs(monkeypatch: pytest.Mon
     with pytest.raises(SystemExit) as raised:
         check.main(argv)
     assert raised.value.code == 2
+
+
+# --- the named-module relation ---------------------------------------------------
+#
+# `main` went red at `828f80eb` from #2762 and #2774 with the pairwise path
+# intersection empty: #2762's fixture reaches into
+# `strands_robots.device_connect` by string, #2774 rewrote that package's
+# `__init__`, and neither branch changed a path the other did. The relation these
+# pin keys on the name a test writes down rather than on a path, which is why it
+# reaches that composition. Issues #2791, #2795.
+
+#: The package #2774 rewrote, named by #2762's fixture two segments deeper.
+_NAMED_PACKAGE = "strands_robots/device_connect/__init__.py"
+
+#: The literal #2762's fixture patches, verbatim.
+_NAMED_LITERAL = "strands_robots.device_connect.reachy_transport.api"
+
+
+def _branch_naming_a_module(repo: Path, literal: str = _NAMED_LITERAL, *, in_test: bool = True) -> None:
+    """Branch off ``main`` and add a file reaching into ``literal`` by string.
+
+    ``in_test`` places the file under ``tests/`` or under the package. The
+    distinction is the relation's whole scope: production code that needs another
+    module imports it, and an import is a path the diff already carries.
+    """
+    _git(repo, "checkout", "-q", "-b", "pr")
+    body = f'monkeypatch.setattr("{literal}", stand_in)\n'
+    relative = "tests/drivers/test_reachy_transport_guards.py" if in_test else "strands_robots/drivers/reachy.py"
+    _write(repo, relative, body)
+    _commit(repo, "the pull request's commit")
+
+
+def _land_on_main_changing(repo: Path, relative: str) -> None:
+    """Land a commit on ``main`` rewriting ``relative``, as #2774 did."""
+    _git(repo, "checkout", "-q", "main")
+    _write(repo, relative, "def __getattr__(name):\n    raise AttributeError(name)\n")
+    _commit(repo, "the commit that landed on main first")
+    _git(repo, "checkout", "-q", "pr")
+
+
+def test_a_branch_whose_test_names_a_module_the_base_rewrote_is_flagged(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The #2762/#2774 topology in the single-branch mode: no shared path at all.
+
+    The branch adds a test that patches ``_NAMED_LITERAL`` by string; the base then
+    rewrites the package two segments up, which is the module that name resolves
+    through. The path intersection is empty -- the branch edits one file under
+    ``tests/`` and the base one under ``strands_robots/`` -- so the relation that
+    reaches this is the name, and the report has to say which module it was.
+    """
+    _branch_naming_a_module(repo)
+    _land_on_main_changing(repo, _NAMED_PACKAGE)
+
+    assert _run(repo) == 1
+
+    report = capsys.readouterr().out
+    assert _NAMED_PACKAGE in report
+    assert "name" in report.lower()
+
+
+def test_the_named_module_finding_shares_no_path_with_the_base(repo: Path) -> None:
+    """Premise: the path relation really is empty here, so it is not doing the work.
+
+    Without this the test above would pass on a tree where the two branches happen
+    to share a file, and the finding would be attributable to the relation that
+    already existed.
+    """
+    _branch_naming_a_module(repo)
+    _land_on_main_changing(repo, _NAMED_PACKAGE)
+
+    fork_point = check.merge_base("main", "HEAD", repo=repo)
+    branch_paths = check.changed_paths(fork_point, "HEAD", repo=repo)
+    base_paths = check.changed_paths(fork_point, "main", repo=repo)
+    assert check.overlapping_paths(branch_paths, base_paths) == ()
+    assert _NAMED_PACKAGE in base_paths
+
+
+def test_merging_the_base_clears_a_named_module_finding(repo: Path) -> None:
+    """Self-clearing, like the path relation: the remedy asked for is the remedy.
+
+    Merging the base advances the merge base, so the base-side path set is empty
+    and no module the branch names can be in it.
+    """
+    _branch_naming_a_module(repo)
+    _land_on_main_changing(repo, _NAMED_PACKAGE)
+    assert _run(repo) == 1
+
+    _git(repo, "merge", "-q", "--no-edit", "main")
+    assert _run(repo) == 0
+
+
+def test_a_module_named_by_a_test_and_changed_by_nobody_does_not_block(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Quiet where it cannot matter: a name is only a finding against a change.
+
+    Naming a module is the normal way a test reaches into one, so a relation that
+    fired on the name alone would fire on most test diffs in the tree.
+    """
+    _branch_naming_a_module(repo)
+    _git(repo, "checkout", "-q", "main")
+    _write(repo, "strands_robots/unrelated.py", "value = 1\n")
+    _commit(repo, "an unrelated commit on main")
+    _git(repo, "checkout", "-q", "pr")
+
+    assert _run(repo) == 0
+    assert _NAMED_PACKAGE not in capsys.readouterr().out
+
+
+def test_prose_naming_a_module_is_not_a_reach_into_it(repo: Path) -> None:
+    """A docstring that mentions a module is not a test that patches one.
+
+    The literal has to be the entire contents of the string for the same reason
+    the walked-root widening was rejected: a relation that fires on the characters
+    appearing anywhere would select every test whose docstring explains what it
+    covers, which is most of them.
+    """
+    _git(repo, "checkout", "-q", "-b", "pr")
+    _write(
+        repo,
+        "tests/drivers/test_reachy_transport_guards.py",
+        '"""Covers strands_robots.device_connect.reachy_transport.api indirectly."""\n',
+    )
+    _commit(repo, "a test whose prose names the module")
+    _land_on_main_changing(repo, _NAMED_PACKAGE)
+
+    assert _run(repo) == 0
+
+
+def test_a_literal_in_production_code_is_not_read(repo: Path) -> None:
+    """Scoped to test modules, which is where a name is the only coupling.
+
+    Production code that needs another module imports it, and an import puts the
+    importing file in the diff -- so the path relation already carries it and a
+    second reading of the same coupling would double-report it.
+    """
+    _branch_naming_a_module(repo, in_test=False)
+    _land_on_main_changing(repo, _NAMED_PACKAGE)
+
+    assert _run(repo) == 0
+
+
+def test_the_bare_package_root_is_not_resolved(repo: Path) -> None:
+    """``strands_robots.mesh`` resolves; ``strands_robots`` alone does not.
+
+    Measured over 2676 co-open pairs from 400 pull requests: resolving the root as
+    well adds four findings, every one of them a pair with #2486's edit to
+    ``strands_robots/__init__.py``, which every literal in the tree names by its
+    first segment. That is the shallowest coupling expressible and the one a
+    reader can least act on.
+    """
+    assert "strands_robots/__init__.py" not in check.named_module_paths({"strands_robots.mesh.core"})
+    assert "strands_robots/mesh/__init__.py" in check.named_module_paths({"strands_robots.mesh.core"})
+    assert check.named_module_paths({"strands_robots"}) == frozenset()
+
+
+def test_a_prefix_of_the_literal_resolves_because_importing_runs_it(repo: Path) -> None:
+    """The #2774 edit was two segments shallower than the name #2762 wrote.
+
+    Importing ``a.b.c`` executes ``a/b/__init__.py``, so a change to the package
+    is a change to what the name resolves through. A relation reading only the
+    full dotted path would have missed the composition that broke ``main``.
+    """
+    resolved = check.named_module_paths({_NAMED_LITERAL})
+    assert _NAMED_PACKAGE in resolved
+    assert "strands_robots/device_connect/reachy_transport.py" in resolved
+
+
+def test_a_named_module_the_branch_also_edits_is_reported_once(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """One coupling, one row: the path relation already reports this one.
+
+    A branch that both names a module and edits it is the case where the two
+    relations agree, and reporting it twice would spend a reader's attention on a
+    second row carrying no further information.
+    """
+    _git(repo, "checkout", "-q", "-b", "pr")
+    _write(repo, "tests/drivers/test_reachy_transport_guards.py", f'monkeypatch.setattr("{_NAMED_LITERAL}", x)\n')
+    _write(repo, _NAMED_PACKAGE, "value = 1\n")
+    _commit(repo, "a branch that both names and edits the module")
+    _land_on_main_changing(repo, _NAMED_PACKAGE)
+
+    assert _run(repo) == 1
+    report = capsys.readouterr().out
+    # It is in the shared-path finding, and there is no second section for it: the
+    # named-module list is what this branch's own edit already accounts for.
+    assert "behaviour-bearing path(s)" in report
+    assert "tests name" not in report
+
+
+def test_the_2762_2774_pair_is_flagged_in_the_sweep(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The incident, replayed in the mode that could have reported it before merge.
+
+    Both were open at once, so this is the pairwise relation's case, and the path
+    sets and the literal below are the real ones: #2762's ten files, #2774's five,
+    intersecting to nothing.
+    """
+    fixture = "tests/drivers/test_reachy_transport_guards_are_reachable.py"
+    patch = (
+        "@@ -0,0 +1,2 @@\n"
+        '+    for name in [n for n in list(sys.modules) if n.startswith("strands_robots.device_connect")]:\n'
+        f'+    monkeypatch.setattr("{_NAMED_LITERAL}", lambda *a, **k: dict(_LITE_STATUS))\n'
+    )
+    get = _api(
+        [_pull(2762, "head2762"), _pull(2774, "head2774")],
+        {
+            "main...head2762": _compare(
+                ["strands_robots/drivers/reachy.py", "strands_robots/drivers/__init__.py", fixture],
+                patches={fixture: patch},
+            ),
+            "head2762...main": _compare([]),
+            "main...head2774": _compare([_NAMED_PACKAGE, "strands_robots/device_connect/_impl.py"]),
+            "head2774...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "#2762 + #2774" in report
+    assert _NAMED_PACKAGE in report
+    # The path relation is silent, so the pair cannot be in the shared-path table.
+    assert "Pairs editing the same behaviour-bearing path" not in report
+
+
+def test_the_named_module_relation_costs_no_additional_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The literals come from the payload the path set is already built from.
+
+    ``patch`` arrives beside ``filename`` on the same entries, so a second reading
+    of them is free. A relation that fetched file contents per test module would
+    multiply the sweep's request count by the size of the queue, which is the cost
+    that keeps this mode runnable without a clone.
+    """
+    fixture = "tests/drivers/test_guards.py"
+    patch = f'@@ -0,0 +1 @@\n+monkeypatch.setattr("{_NAMED_LITERAL}", x)\n'
+    recorded = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare([fixture], patches={fixture: patch}),
+            "head10...main": _compare([]),
+            "main...head20": _compare([_NAMED_PACKAGE]),
+            "head20...main": _compare([]),
+        },
+    )
+    urls: list[str] = []
+
+    def counting(url: str, token: str) -> object:
+        urls.append(url)
+        return recorded(url, token)
+
+    assert _sweep(monkeypatch, counting, tmp_path) == 1
+    # Two pull requests, one page of files each: the relation adds no third fetch.
+    assert len([url for url in urls if "/files?" in url]) == 2
+
+
+def test_a_base_that_changed_a_module_the_branchs_tests_name_is_reported_with_its_distance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The stale-base half, mirroring ``stale_base_overlaps``.
+
+    Nothing re-runs a pull request idle in review, so a module its tests name can
+    be rewritten under it with its green result standing.
+    """
+    fixture = "tests/drivers/test_guards.py"
+    patch = f'@@ -0,0 +1 @@\n+import_module("{_NAMED_LITERAL}")\n'
+    get = _api(
+        [_pull(10, "head10")],
+        {
+            "main...head10": _compare([fixture], behind_by=4, patches={fixture: patch}),
+            "head10...main": _compare([_NAMED_PACKAGE]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert _NAMED_PACKAGE in report
+    assert "| #10 | 4 |" in report
+
+
+def test_both_modes_read_module_literals_through_one_extractor() -> None:
+    """Parity, for the reason the prose rule is shared: two readings would drift.
+
+    The sweep reads the API's ``patch`` field and the single-branch mode reads
+    ``git diff``, but both hand ``(path, patch)`` pairs to ``module_literals``, so
+    neither mode can disagree with the other about what a literal is.
+    """
+    sweep_side = inspect.getsource(check.literals_from_entries)
+    branch_side = inspect.getsource(check.main)
+    assert "module_literals(" in sweep_side
+    assert "module_literals(" in branch_side
+    assert "diff_entries(" in branch_side
+    # One definition of the pattern, so a change to it moves both modes together.
+    tree = ast.parse(_SCRIPT_PATH.read_text(encoding="utf-8"))
+    compiled = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "_MODULE_LITERAL" for t in node.targets)
+    ]
+    assert len(compiled) == 1
+
+
+def test_the_walk_blind_spot_is_still_named_now_that_a_name_is_reachable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Reaching a named coupling must not read as reaching every coupling.
+
+    A population resolved by ``rglob`` writes nothing down, so it shares neither a
+    path nor a literal with the siblings it grades. The caveat stays unconditional,
+    and it stays true: this relation reaches couplings a test states, not couplings
+    inferred from a glob.
+    """
+    fixture = "tests/drivers/test_guards.py"
+    patch = f'@@ -0,0 +1 @@\n+import_module("{_NAMED_LITERAL}")\n'
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare([fixture], patches={fixture: patch}),
+            "head10...main": _compare([]),
+            "main...head20": _compare([_NAMED_PACKAGE]),
+            "head20...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+    report = capsys.readouterr().out
+    assert "resolves its population from a filesystem walk" in report
+    assert "#2561" in report
