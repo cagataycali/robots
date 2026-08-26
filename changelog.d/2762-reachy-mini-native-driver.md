@@ -28,6 +28,30 @@ Off hardware the probe cannot reach a daemon and the returned reason names the
 address that did not answer, leaving the driver disconnected but usable, so a mesh
 peer for a Mini that is switched off is still constructible.
 
+Reusing that transport has a packaging consequence. It lives inside
+`strands_robots.device_connect`, whose package `__init__` imports
+`device_connect_edge` at module scope - a dependency of the `[device-connect]`
+extra. Three of that package's five modules genuinely need it, so the extra is the
+right requirement for the package; `reachy_transport` is not one of the three and
+uses nothing from it. This driver, though, ships in the core install and is
+registered in the driver seam, so importing the transport made a core-path driver
+depend on an extra purely through a package-init side effect. Every transport touch
+therefore resolves through one helper that returns the module or a reason naming
+`pip install 'strands-robots[device-connect]'`, and each caller renders that reason
+in the contract it already documents rather than letting `ModuleNotFoundError`
+escape a surface that promises a named refusal.
+
+Two orderings in that arrangement carry their own reasons, and both are pinned.
+`connect_eagerly` resolves the transport before probing the daemon, so a missing
+extra is not reported as "daemon unreachable" for a daemon that was never
+contacted. And `_wire_commands` returns the reason rather than an empty command
+list, so `send_action` names the extra instead of falling through to "nothing to
+send", which would blame the caller's axis names for a packaging problem. That
+pre-check also hides the two guards behind it - with it in place neither the daemon
+probe nor the link builder is reached with the extra absent - so those two are
+driven directly rather than through the connect path, and the pre-check is not the
+only thing standing between a stock install and a raise.
+
 The sensor attributes `strands_robots.mesh.sensors.SensorLoopsMixin` publishes are
 filled from what the link delivers: `_imu` is the head IMU verbatim, `_pose` is the
 head orientation, and `_battery` is read from the status payload when it carries

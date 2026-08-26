@@ -131,6 +131,23 @@ has a class for it, so `driver="lerobot"` remains a usable fallback. The Reachy 
 declares none: lerobot has no robot type for it, so the native driver is the only way
 to reach it and `driver="lerobot"` is refused by name.
 
+A native driver may need an extra to reach its hardware, and says so rather than
+raising. The Reachy Mini's daemon transport ships in the
+[`device-connect`](../device-connect.md) extra, so on a core install the driver still
+builds, registers and answers `get_status` - and every surface that would touch the
+daemon returns a reason naming the extra instead:
+
+```python
+>>> Robot("reachy_mini", mode="real").driver.connect_eagerly()
+"cannot import strands_robots.device_connect.reachy_transport: No module named
+'device_connect_edge' - the Reachy transport helpers ship behind an extra:
+pip install 'strands-robots[device-connect]'"
+```
+
+The same reason arrives as `connect_error` in `get_status`, so a mesh peer for a Mini
+on an install without the extra is still constructible and still reports why it is
+not connected.
+
 `hardware.driver` is optional and validated when the registry loads: a value that is not a
 driver name is refused there, naming the robot, rather than being read as "no preference".
 
