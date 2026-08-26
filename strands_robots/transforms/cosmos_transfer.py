@@ -122,6 +122,58 @@ def _generate_surface(obj: Any, subject: str) -> tuple[Any, str | None]:
         )
 
 
+def _pipeline_subject(obj: Any) -> str:
+    """Name the caller's binding in a problem, so a class names itself.
+
+    ``type(a_class).__name__`` is ``"type"``, which would report the remedy
+    against a subject the caller never wrote.
+    """
+    return f"pipeline object {obj.__name__ if isinstance(obj, type) else type(obj).__name__}"
+
+
+def _constructed_if_needed(candidate: Any, surface: Any, subject: str) -> tuple[Any, Any, list[str]]:
+    """Construct a class / zero-arg factory target, or report why it could not be.
+
+    Shared by both binding forms rather than restated in one of them. An
+    unconstructed class passes the ``generate`` probe as a plain function and
+    then receives the video as its ``self``, so the rule has to hold whether
+    the class reached the seam as an object or as a dotted import path - the
+    same value, bound two ways, has to resolve one way.
+
+    Args:
+        candidate: The resolved binding target.
+        surface: Its ``generate`` attribute as :func:`_generate_surface` read
+            it, or :data:`_UNSET` when it exposes none.
+        subject: How the caller named it, for the problem text.
+
+    Returns:
+        ``(candidate, surface, problems)`` - the constructed object and its
+        re-read surface when construction happened, the inputs unchanged when
+        it was not needed, and a one-problem list when it failed.
+    """
+    if not (isinstance(candidate, type) or (callable(candidate) and surface is _UNSET)):
+        return candidate, surface, []
+    try:
+        candidate = candidate()
+    except TypeError as exc:
+        return candidate, surface, [f"{subject} is not constructible zero-arg ({exc}) - {_PIPELINE_HELP}"]
+    except Exception as exc:  # noqa: BLE001 - never fatal during name resolution
+        # Constructing a real generation pipeline loads weights and touches a
+        # device, so the failures are the deployment's, not the signature's: no
+        # driver (``RuntimeError``), weights absent (``OSError``), an optional
+        # dep imported inside the factory body (``ImportError``), a malformed
+        # config (``ValueError``). Reported with an accurate subject rather
+        # than folded into the zero-arg wording above, which would name the
+        # wrong cause.
+        return (
+            candidate,
+            surface,
+            [f"{subject} raised {type(exc).__name__} while being constructed ({exc}) - {_PIPELINE_HELP}"],
+        )
+    surface, problem = _generate_surface(candidate, subject)
+    return candidate, surface, [problem] if problem else []
+
+
 class CosmosTransferTransform(DatasetTransform):
     """Video2video episode augmentation behind a vendor-neutral pipeline seam.
 
@@ -137,16 +189,22 @@ class CosmosTransferTransform(DatasetTransform):
         Args:
             pipeline: One of:
 
-                * a constructed object exposing
+                * an object exposing
                   ``generate(video, prompt=..., seed=...) -> ndarray`` (the
-                  pipeline protocol in the module docstring);
+                  pipeline protocol in the module docstring), or a class /
+                  zero-arg factory returning one - the same targets a dotted
+                  path may name, resolved by the same rule, so a value binds
+                  identically whichever of the two forms carries it;
                 * a dotted import path (``"pkg.mod:attr"`` or
-                  ``"pkg.mod.attr"``) naming such an object, or a zero-arg
-                  factory returning one - resolved lazily, so constructing
-                  this transform never imports a generation stack;
+                  ``"pkg.mod.attr"``) naming any of those - resolved lazily, so
+                  constructing this transform never imports a generation stack;
                 * ``None`` - the transform constructs but
                   :meth:`validate` reports the missing pipeline, so nothing is
                   read or written without one.
+
+                A class or factory is constructed once, during
+                :meth:`validate`, and the resulting object is what
+                :meth:`transform_frames` and :attr:`transform_version` read.
         """
         self._pipeline_spec = pipeline
         self._pipeline: Any | None = pipeline if pipeline is not None and not isinstance(pipeline, str) else None
@@ -175,12 +233,16 @@ class CosmosTransferTransform(DatasetTransform):
         instance validate approved.
         """
         if self._pipeline is not None:
-            subject = f"pipeline object {type(self._pipeline).__name__}"
+            subject = _pipeline_subject(self._pipeline)
             surface, problem = _generate_surface(self._pipeline, subject)
             if problem:
                 return [problem]
+            candidate, surface, problems = _constructed_if_needed(self._pipeline, surface, subject)
+            if problems:
+                return problems
             if not callable(surface):
                 return [f"{subject} has no callable generate() - {_PIPELINE_HELP}"]
+            self._pipeline = candidate
             return []
         if self._pipeline_spec is None:
             return [f"no video2video pipeline is bound - {_PIPELINE_HELP}"]
@@ -201,26 +263,9 @@ class CosmosTransferTransform(DatasetTransform):
         surface, problem = _generate_surface(candidate, subject)
         if problem:
             return [problem]
-        # A class target (or a factory with no generate of its own) is
-        # constructed zero-arg; an unconstructed class would otherwise pass the
-        # generate() probe and then receive the video as its ``self``.
-        if isinstance(candidate, type) or (callable(candidate) and surface is _UNSET):
-            try:
-                candidate = candidate()
-            except TypeError as exc:
-                return [f"{subject} is not constructible zero-arg ({exc}) - {_PIPELINE_HELP}"]
-            except Exception as exc:  # noqa: BLE001 - never fatal during name resolution
-                # Constructing a real generation pipeline loads weights and
-                # touches a device, so the failures are the deployment's, not
-                # the signature's: no driver (``RuntimeError``), weights absent
-                # (``OSError``), an optional dep imported inside the factory
-                # body (``ImportError``), a malformed config (``ValueError``).
-                # Reported with an accurate subject rather than folded into the
-                # zero-arg wording above, which would name the wrong cause.
-                return [f"{subject} raised {type(exc).__name__} while being constructed ({exc}) - {_PIPELINE_HELP}"]
-            surface, problem = _generate_surface(candidate, subject)
-            if problem:
-                return [problem]
+        candidate, surface, problems = _constructed_if_needed(candidate, surface, subject)
+        if problems:
+            return problems
         if not callable(surface):
             return [f"{subject} resolves to no generate() surface - {_PIPELINE_HELP}"]
         self._pipeline = candidate

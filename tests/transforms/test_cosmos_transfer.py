@@ -224,6 +224,16 @@ class TestEveryProbePointReportsInsteadOfRaising:
             assert any(expected in p for p in problems), problems
 
 
+def _guarded_probe_functions() -> list[str]:
+    """Module-level view of the derived probe universe, for parametrize."""
+    tree = ast.parse(pathlib.Path(cosmos_transfer.__file__).read_text(encoding="utf-8"))
+    return sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and any(isinstance(n, ast.Try) for n in ast.walk(node))
+    )
+
+
 class TestTheSeamHasOneGuardedProbeRule:
     """Structural: a probe point added later cannot re-derive an unguarded read.
 
@@ -251,7 +261,27 @@ class TestTheSeamHasOneGuardedProbeRule:
                     owners.add(func.name)
         assert owners == {"_generate_surface"}, f"the generate read must have one guarded owner, found {owners}"
 
-    @pytest.mark.parametrize("func_name", ["_generate_surface", "_pipeline_problems"])
+    @staticmethod
+    def _functions_guarding_a_probe() -> list[str]:
+        """Every function in the module that guards a probe with a ``try``.
+
+        Derived rather than listed: the class promises a probe point added
+        later is held to the rule, and a hardcoded pair cannot keep that
+        promise for a function the module does not have yet.
+        """
+        tree = ast.parse(pathlib.Path(cosmos_transfer.__file__).read_text(encoding="utf-8"))
+        return sorted(
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and any(isinstance(n, ast.Try) for n in ast.walk(node))
+        )
+
+    def test_the_derived_probe_universe_reaches_every_guarded_function(self):
+        """Premise: the derivation finds the handlers the behavioural tests drive."""
+        found = self._functions_guarding_a_probe()
+        assert {"_generate_surface", "_pipeline_problems"} <= set(found), found
+
+    @pytest.mark.parametrize("func_name", _guarded_probe_functions())
     def test_every_probe_handler_reports_rather_than_raises(self, func_name):
         """Each ``try`` in the resolution names ``Exception`` in some handler."""
         func = self._func(func_name)
@@ -399,3 +429,148 @@ class TestCallShapedAdapterExample:
         # An unseeded spec stays unseeded: no generator is fabricated for None.
         transform.transform_frames("cam", _frames(), TransformSpec(), source_episode=0, variant=0)
         assert pipe.calls[1]["generator"] is None
+
+
+class _InstanceMethodPipeline:
+    """The module docstring's documented adapter shape: ``generate(self, ...)``."""
+
+    version = "class-3.0"
+
+    def generate(self, video, prompt="", seed=None):
+        """Identity generation - schema-correct, so only the binding is under test."""
+        return np.asarray(video)
+
+
+class _StaticMethodPipeline:
+    """A class whose ``generate`` takes no ``self``."""
+
+    @staticmethod
+    def generate(video, prompt="", seed=None):
+        """Identity generation."""
+        return np.asarray(video)
+
+
+class _ClassMethodPipeline:
+    """A class whose ``generate`` binds the class rather than an instance."""
+
+    @classmethod
+    def generate(cls, video, prompt="", seed=None):
+        """Identity generation."""
+        return np.asarray(video)
+
+
+class _PipelineNeedingArguments:
+    """A pipeline whose constructor cannot be satisfied zero-arg."""
+
+    def __init__(self, weights):
+        self.weights = weights
+
+    def generate(self, video, prompt="", seed=None):
+        """Identity generation."""
+        return np.asarray(video)
+
+
+def _instance_factory():
+    """Zero-arg factory returning a bound pipeline."""
+    return _InstanceMethodPipeline()
+
+
+class TestAClassBindsTheSameWayAsItsImportPath:
+    """A class is a class whichever of the two binding forms carries it.
+
+    ``validate`` exists so a wiring mistake is a reported problem before an
+    episode is read or an output recorder is created. A class handed to
+    ``pipeline=`` reached that bar only when it arrived as a dotted path: the
+    object form skipped the construction step, approved the class, and then
+    called ``generate`` unbound - handing the video to ``self`` - from inside
+    generation, as a bare ``TypeError`` that is neither the ``error`` envelope
+    ``transform`` returns for a wiring problem nor the ``ValueError`` it
+    documents.
+    """
+
+    def test_a_class_bound_as_an_object_is_usable(self):
+        """The documented adapter shape, one character short of an instance."""
+        transform = CosmosTransferTransform(pipeline=_InstanceMethodPipeline)
+        assert transform._pipeline_problems() == []
+        out = transform.transform_frames("cam", _frames(), TransformSpec(), source_episode=0, variant=0)
+        assert out.shape == _frames().shape
+        assert out.dtype == _frames().dtype
+
+    def test_the_public_validate_reports_the_same_binding_verdict(self, tmp_path):
+        """Through the documented entry point, on a spec with nothing else wrong."""
+        spec = TransformSpec(source_root=str(tmp_path / "src"), output_root=str(tmp_path / "out"))
+        (tmp_path / "src").mkdir()
+        problems = CosmosTransferTransform(pipeline=_InstanceMethodPipeline).validate(spec)
+        assert not [p for p in problems if "pipeline" in p], problems
+
+    def test_the_two_binding_forms_agree_on_the_same_class(self):
+        """Same value, two spellings, one verdict and one resolved type."""
+        as_object = CosmosTransferTransform(pipeline=_InstanceMethodPipeline)
+        as_path = CosmosTransferTransform(pipeline=f"{__name__}:_InstanceMethodPipeline")
+        assert as_object._pipeline_problems() == as_path._pipeline_problems() == []
+        assert type(as_object._pipeline) is type(as_path._pipeline) is _InstanceMethodPipeline
+
+    def test_a_zero_arg_factory_bound_as_an_object_is_constructed(self):
+        """Parity with ``test_dotted_path_to_a_factory_is_constructed``."""
+        transform = CosmosTransferTransform(pipeline=_instance_factory)
+        assert transform._pipeline_problems() == []
+        assert isinstance(transform._pipeline, _InstanceMethodPipeline)
+
+    def test_a_class_needing_arguments_names_its_constructor(self):
+        """The refusal names the real cause, not a missing ``video`` argument."""
+        problems = CosmosTransferTransform(pipeline=_PipelineNeedingArguments)._pipeline_problems()
+        assert any("is not constructible zero-arg" in p for p in problems), problems
+        assert any("_PipelineNeedingArguments" in p for p in problems), problems
+
+    def test_the_resolved_object_is_what_the_version_is_read_from(self):
+        """Provenance pins the constructed instance, not the class handle."""
+        transform = CosmosTransferTransform(pipeline=_InstanceMethodPipeline)
+        assert transform._pipeline_problems() == []
+        assert transform.transform_version == "class-3.0"
+
+
+class TestTheBindingFormsShareOneConstructionRule:
+    """Structural: neither branch may re-derive the construction step."""
+
+    def test_the_construction_has_a_single_owner(self):
+        """No other function constructs the caller's binding target."""
+        tree = ast.parse(pathlib.Path(cosmos_transfer.__file__).read_text(encoding="utf-8"))
+        owners = set()
+        for func in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            for call in [n for n in ast.walk(func) if isinstance(n, ast.Call)]:
+                if ast.unparse(call.func) == "candidate" and not call.args and not call.keywords:
+                    owners.add(func.name)
+        assert owners == {"_constructed_if_needed"}, f"the zero-arg construction must have one owner, found {owners}"
+
+    def test_both_binding_branches_consult_the_shared_rule(self):
+        """``_pipeline_problems`` reaches the owner once per binding form."""
+        source = textwrap.dedent(inspect.getsource(CosmosTransferTransform._pipeline_problems))
+        assert source.count("_constructed_if_needed(") == 2, source
+
+
+class TestNoPreviouslyUsablePipelineIsRefused:
+    """Over-reach controls: every shape that already bound keeps binding."""
+
+    @pytest.mark.parametrize(
+        "pipeline",
+        [_StaticMethodPipeline, _ClassMethodPipeline],
+        ids=["staticmethod-class", "classmethod-class"],
+    )
+    def test_a_class_whose_generate_takes_no_instance_still_works(self, pipeline):
+        """These bound usably before the construction step was shared."""
+        transform = CosmosTransferTransform(pipeline=pipeline)
+        assert transform._pipeline_problems() == []
+        out = transform.transform_frames("cam", _frames(), TransformSpec(), source_episode=0, variant=0)
+        assert out.shape == _frames().shape
+
+    def test_an_instance_is_still_bound_as_itself(self):
+        """An already-constructed object is never re-constructed."""
+        pipeline = FakePipeline()
+        transform = CosmosTransferTransform(pipeline=pipeline)
+        assert transform._pipeline_problems() == []
+        assert transform._pipeline is pipeline
+
+    def test_an_object_with_no_generate_keeps_its_wording(self):
+        """``object()`` is not callable, so the construction step must skip it."""
+        problems = CosmosTransferTransform(pipeline=object())._pipeline_problems()
+        assert any("no callable generate()" in p for p in problems), problems
