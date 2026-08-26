@@ -12,6 +12,15 @@ into a different, reachable command: ``position=70000`` encodes as 4464 and
 success message still quotes the number the caller supplied. Bounding the field
 is what makes that message true.
 
+``Goal_Velocity`` takes more than the byte width to bound, because the STS/SMS
+series encodes it as sign-magnitude rather than plain unsigned: bit 15 carries
+the direction and bits 0-14 the magnitude. A magnitude that overflows into bit
+15 is therefore not truncated but *reinterpreted*. ``velocity=65535`` put those
+exact two bytes on the wire and the servo read them as full speed in the
+opposite direction, and ``velocity=32768`` read as magnitude zero -- stopping a
+servo the caller had just asked to run -- both reported as success quoting the
+number supplied.
+
 ``baudrate`` and ``read_bytes`` are coerced rather than checked by pyserial
 (``2.7`` becomes 2 baud, and a non-positive ``read_bytes`` reads nothing and
 reports success, which is indistinguishable from a timed-out read on a healthy
@@ -39,6 +48,16 @@ from strands_robots.utils import (
     positive_count_error,
 )
 
+# Bit index carrying the direction in the two STS/SMS registers this module
+# writes. ``Goal_Position`` (0x2A) and ``Goal_Velocity`` (0x2E) are both
+# sign-magnitude, so neither ceiling below is the two-byte maximum: a magnitude
+# reaching this bit is read by the servo as a command in the opposite
+# direction, which is a different command rather than a truncated one.
+_DIRECTION_BIT = 15
+
+# Largest magnitude either register carries with ``_DIRECTION_BIT`` still clear.
+_MAX_MAGNITUDE = (1 << _DIRECTION_BIT) - 1
+
 # Inclusive bounds and the reason for each ceiling, keyed by the parameter that
 # carries the field. The floor and the type are delegated to the shared count
 # domains so an off-type or negative value is reported in the words every other
@@ -51,7 +70,12 @@ _REGISTER_FIELDS: dict[str, tuple[int, int, str]] = {
         4095,
         "Goal_Position is a 12-bit register, the same full scale the reported angle divides by",
     ),
-    "velocity": (0, 65535, "Goal_Velocity is written as two bytes"),
+    "velocity": (
+        0,
+        _MAX_MAGNITUDE,
+        "Goal_Velocity is sign-magnitude with bit 15 the direction bit, so a larger "
+        "magnitude sets that bit and commands the opposite direction",
+    ),
 }
 
 # The options each action consumes. An action absent from this map reads none of
