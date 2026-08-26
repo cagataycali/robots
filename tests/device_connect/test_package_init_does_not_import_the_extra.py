@@ -3,7 +3,7 @@
 The package ships two kinds of contents next to each other:
 
 * ``reachy_transport`` -- stdlib-only. The native Reachy driver
-  (:mod:`strands_robots.drivers.reachy`) imports this leaf on every daemon
+  (``strands_robots.drivers.reachy``, landing in #2762) imports this leaf on every daemon
   touch, and the driver's own no-raise contract holds only if that import can
   succeed on a stock ``pip install strands-robots``.
 * Three ``DeviceRuntime``-backed drivers, plus the ``init_device_connect``

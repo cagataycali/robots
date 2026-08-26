@@ -24,7 +24,7 @@ it. The four Device Connect drivers, ``DeviceRuntime`` and the two
 
 This is required, not a stylistic choice. The sibling module
 ``strands_robots.device_connect.reachy_transport`` is stdlib-only and is
-imported by the native Reachy driver (:mod:`strands_robots.drivers.reachy`).
+imported by the native Reachy driver (``strands_robots.drivers.reachy``, landing in #2762).
 Importing that leaf executes this ``__init__``, so a package init that eagerly
 imports ``device_connect_edge`` raises ``ModuleNotFoundError`` inside the
 native driver's first daemon touch on any install without ``[device-connect]``
