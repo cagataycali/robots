@@ -160,7 +160,7 @@ class TestTheExtraIsAPackagingAccident:
         package = Path(reachy_mod.__file__).parent.parent / "device_connect"
         module = ast.parse((package / "__init__.py").read_text(encoding="utf-8"))
         imported: set[str] = set()
-        pending = [
+        pending: list[ast.AST] = [
             node for node in module.body if not (isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test))
         ]
         while pending:
