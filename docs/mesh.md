@@ -255,7 +255,8 @@ agent("E-STOP all peers")
 ```python
 # Machine A - leader publishes at 50 Hz  # requires hardware
 leader = Robot("so100", mode="real", mesh=True)
-leader.start_teleop_publish(teleoperator=leader.teleoperator,
+leader_arm = Teleoperator("so101_leader", port="/dev/ttyACM1", id="leader")
+leader.start_teleop_publish(teleoperator=leader_arm,
                             device_name="leader", method="arm", hz=50)
 
 # Machine B - follower applies incoming actions  # requires hardware
