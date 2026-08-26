@@ -1355,7 +1355,13 @@ class Robot(TeleopMixin, AgentTool):
         devices from being closed, which is the failure mode lerobot's single
         unguarded disconnect loop has.
         """
-        bus = getattr(self.robot, "bus", None)
+        # ``getattr`` on ``self``, not on ``self.robot``: this also runs on
+        # the partial-construction path, where ``__init__`` raised in the very
+        # statement that assigns ``self.robot`` and so the attribute does not
+        # exist at all. Guarding the inner attribute cannot help there.
+        # ``_shutdown_ros_bridge`` already reads its own handle this way.
+        robot = getattr(self, "robot", None)
+        bus = getattr(robot, "bus", None)
         try:
             if bus is not None and getattr(bus, "is_connected", False):
                 # disable_torque=False: this runs only where the driver's own
@@ -1370,7 +1376,7 @@ class Robot(TeleopMixin, AgentTool):
         # lerobot builds ``cameras`` with ``make_cameras_from_configs``, whose
         # contract is ``dict[str, Camera]``; anything else is not a camera set
         # this rollback can walk.
-        cameras = getattr(self.robot, "cameras", None)
+        cameras = getattr(robot, "cameras", None)
         for name, camera in cameras.items() if isinstance(cameras, Mapping) else ():
             try:
                 # A camera that failed to open already released its own
@@ -1404,8 +1410,14 @@ class Robot(TeleopMixin, AgentTool):
         gripper; closing the port underneath it skips both and leaves the arm
         energised at its last commanded position.
         """
-        disconnect = getattr(self.robot, "disconnect", None)
-        if callable(disconnect) and getattr(self.robot, "is_connected", False):
+        # ``getattr`` on ``self``, not on ``self.robot``: this also runs on
+        # the partial-construction path, where ``__init__`` raised in the very
+        # statement that assigns ``self.robot`` and so the attribute does not
+        # exist at all. Guarding the inner attribute cannot help there.
+        # ``_shutdown_ros_bridge`` already reads its own handle this way.
+        robot = getattr(self, "robot", None)
+        disconnect = getattr(robot, "disconnect", None)
+        if callable(disconnect) and getattr(robot, "is_connected", False):
             try:
                 disconnect()
                 return
