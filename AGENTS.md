@@ -343,6 +343,44 @@ hatch run format            # ruff check --fix, ruff format
    This is enforced by `.github/workflows/changelog-fragment.yml`: the rule was
    documented in two places and enforced by nothing until #1784, and a pull
    request reached `APPROVED` / `SUCCESS` / `CLEAN` having appended to the log.
+
+   **The fragment lands before a review can arrive, because its own filename
+   forces a second push.** The name is `<number>-<slug>.md` where `<number>` is
+   the pull request's, and that number does not exist until the pull request is
+   open - so for the 249 of the last 300 pull requests that claim no issue,
+   the fragment is necessarily a *second* commit onto an already-open branch.
+   `dismiss_stale_reviews_on_push` does not care that the pushed file is a
+   changelog entry, so whether that push is free depends only on whether an
+   approval has already landed. Four pull requests, one hour, same author, same
+   fragment-as-second-commit shape:
+
+   | pull request | opened | fragment pushed | approval | outcome |
+   |---|---|---|---|---|
+   | #2800 | 21:16:19 | 21:16:56 (+37s) | 21:20:23 | survived |
+   | #2802 | 21:47:47 | 21:48:54 (+67s) | 21:56:13 | survived |
+   | #2801 | 21:22:49 | 21:55:53 (+33m) | 21:27:54 | **dismissed** |
+   | #2799 | 20:46:12 | 21:47:22 (+61m) | 20:53:27, 21:31:17 | **dismissed twice** |
+
+   The ordering is the whole variable: the two that pushed the fragment inside
+   the first two minutes kept the approval that arrived afterwards, and the two
+   that pushed it after an approval had landed paid a re-approval round each -
+   #2799 twice, on a one-line documentation link fix, which is three rounds
+   spent on nothing a reviewer had asked for. Review latency is what sizes the
+   window, and here it is minutes: those two approvals arrived 3m27s and 7m19s
+   after the fragment.
+
+   So push the fragment **immediately** after opening, before requesting review
+   - or open the pull request as a draft, add it, and only then mark it ready,
+   which removes the race rather than winning it. Where the change does claim an
+   issue, use the *issue* number: that one is known at intake, so the fragment
+   ships inside the first push and there is no second push to time at all.
+
+   This is the same cost the paragraph above attributes to `CHANGELOG.md`
+   conflicts, arriving by a different route - the fragment convention removed
+   the conflict and left the extra push - so it is worth stating separately.
+   Do not reach for `--amend --force-with-lease` to fold the fragment into the
+   first commit once review has started: that destroys the review trail, and on
+   #2799 the two force-pushes are exactly what dismissed the two approvals.
 4. All tests must pass, lint must be clean
 5. Open PR from your fork, address all review comments
 
