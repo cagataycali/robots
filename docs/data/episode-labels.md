@@ -83,7 +83,7 @@ held to the same domains as one this build wrote:
 |---|---|
 | `episode_index` | a non-negative whole number, on the shared domain every surface applies. Holds in each spelling the index arrives in: the `episode` argument of `deterministic_verdict` / `annotate_episode` and the judge tools, an `episodes[i]["episode"]` entry handed to `record_deterministic_verdicts`, and a key of `measure_agreement`'s holdout mapping. A value outside it selects a *different* episode rather than failing slowly - `True` is `1` to an index - so it is refused and named |
 | `quality` | `low` / `medium` / `high` (ordered; filters compare rank). An *execution* grade, orthogonal to the outcome - see below |
-| `failure_mode` | `null` or one of `jerky_motion`, `near_miss`, `camera_occlusion`, `wrong_but_lucky`, `drift`, `collision`, `incomplete`, `other` |
+| `failure_mode` | `null` or one of `jerky_motion`, `near_miss`, `camera_occlusion`, `wrong_but_lucky`, `drift`, `collision`, `incomplete`, `other`. Holds in each spelling the tag arrives in: the `failure_mode` argument of `annotate_episode`, a `judge.failure_mode` a reader loads from the sidecar, and a holdout entry's `failure_mode` handed to `measure_agreement`. The judge's tag is confined to the vocabulary at both ends, so a tag outside it can never equal one - it would be counted as a disagreement and understate the calibration rather than measure it |
 | `success_opinion` | `null` (no opinion) or a boolean |
 | `disputes_verdict` | derived: opinion present and different from the deterministic `success` |
 | `model` | free-form provenance (`"human"`, a model id, an endpoint) |

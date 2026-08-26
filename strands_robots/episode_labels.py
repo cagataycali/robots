@@ -600,11 +600,14 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
         root: Dataset root directory.
         human_labels: Mapping of episode index to the human's labels for the
             holdout, each a dict with ``quality`` (required, one of
-            :data:`QUALITY_GRADES`) and optionally ``failure_mode``. Each key
-            is an episode index on the shared non-negative-whole-number
-            domain, checked like every other spelling of that quantity: a key
-            that is not one selects the wrong episode to calibrate against,
-            not a slower calibration.
+            :data:`QUALITY_GRADES`) and optionally ``failure_mode`` (``None``
+            or one of :data:`FAILURE_MODES`, the same domain the annotation
+            writer and the sidecar reader hold that tag to - a tag outside it
+            cannot equal the judge's, so it would understate the agreement
+            rather than measure it). Each key is an episode index on the
+            shared non-negative-whole-number domain, checked like every other
+            spelling of that quantity: a key that is not one selects the wrong
+            episode to calibrate against, not a slower calibration.
 
     Returns:
         Dict with ``episodes_compared``, ``quality_agreement`` and
@@ -615,8 +618,9 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
 
     Raises:
         FileNotFoundError: If no sidecar exists yet.
-        ValueError: If the holdout is empty, an entry is malformed, or no
-            holdout episode carries a judge annotation - agreement over
+        ValueError: If the holdout is empty, an entry is malformed (its index,
+            its grade or its failure-mode tag outside that field's domain), or
+            no holdout episode carries a judge annotation - agreement over
             nothing is not a measurement.
     """
     if not isinstance(human_labels, dict) or not human_labels:
@@ -634,6 +638,23 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
         if not isinstance(human, dict) or human.get("quality") not in QUALITY_GRADES:
             raise ValueError(
                 f"measure_agreement: human_labels[{index}] must be a dict with 'quality' in {QUALITY_GRADES}."
+            )
+        # The holdout is the third spelling of the failure-mode vocabulary, and it
+        # is checked like the other two (annotate_episode on the way in,
+        # _record_problem on the way out) for the reason the grade is: the judge's
+        # tag is confined to FAILURE_MODES at both ends, so a tag outside the
+        # vocabulary can never equal it and is scored as a disagreement - pulling
+        # the reported agreement BELOW the truth, the direction that makes a sound
+        # judge look unsound. Checked before the episode lookup so a holdout entry
+        # this function cannot compare is refused whether or not that episode
+        # happens to carry an annotation; otherwise the refusal would depend on how
+        # much of the holdout the judge got through.
+        human_mode = human.get("failure_mode")
+        if human_mode is not None and human_mode not in FAILURE_MODES:
+            raise ValueError(
+                f"measure_agreement: human_labels[{index}]['failure_mode'] must be None or one of "
+                f"{FAILURE_MODES}, got {human_mode!r}. A tag outside the vocabulary never equals the "
+                "judge's, so counting it as a disagreement would understate the calibration."
             )
         record = document["episodes"].get(str(int(index)), {})
         judge = record.get("judge")
