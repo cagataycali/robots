@@ -736,7 +736,10 @@ def test_connect_eagerly_reports_reason_without_sdk() -> None:
 
     The driver stays usable - the tests that don't need the bus can still
     call every stub - so a caller who wants a driver instance for
-    a smoke test can still get one.
+    a smoke test can still get one.  The rollback contract is pinned here
+    too: ``_connected`` stays False and ``_connect_error`` holds the
+    returned reason so a later ``connect_eagerly`` re-attempt sees the
+    same value ``send_action`` and the gates would report.
     """
     reset_dds_state()
     driver = G1Driver(tool_name="g1", port="1.2.3.4", network_interface="eth-none")
@@ -744,6 +747,10 @@ def test_connect_eagerly_reports_reason_without_sdk() -> None:
     assert err is not None
     # Same acceptance as ensure_dds: SDK-missing on Thor/CI, bind-fail in office.
     assert "unitree_sdk2py" in err or "ChannelFactoryInitialize" in err or "cannot import" in err
+    # Rollback contract: a failed connect leaves the driver in the pre-connect
+    # state, with the returned reason cached so a later gate reports it.
+    assert driver._connected is False
+    assert driver._connect_error == err
 
 
 # =========================================================================
@@ -1093,6 +1100,121 @@ def test_build_zero_torque_lowcmd_zeroes_every_motor_field() -> None:
         assert m.tau == 0.0
         assert m.kp == 0.0
         assert m.kd == 0.0
+
+
+# =========================================================================
+# Wire-frame contract: the four fields the firmware validates.           #
+# =========================================================================
+# A frame with wrong CRC, wrong mode_machine, or motor.mode = Disable is
+# silently dropped by the G1 firmware.  Every one of these tests catches a
+# concrete class of "PR reports success and the robot does nothing".
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_build_lowcmd_sets_a_matching_crc_the_firmware_will_accept() -> None:
+    """``cmd.crc`` is the SDK-computed CRC over every other field.
+
+    The G1 firmware validates ``LowCmd_.crc`` on ``rt/lowcmd`` and drops a
+    non-matching frame without reporting.  Pinning this here catches a
+    future edit that populates the frame after the CRC is stamped, or
+    forgets to stamp it at all - either yields a success envelope over a
+    frame the robot ignores.
+    """
+    from unitree_sdk2py.utils.crc import CRC
+
+    from strands_robots.drivers.g1 import _build_lowcmd_from_action
+
+    cmd, err = _build_lowcmd_from_action({"waist_yaw": 0.4}, mode_machine=7)
+    assert err is None and cmd is not None
+    # Independent oracle: recompute what the SDK would compute over the
+    # same message and compare.
+    expected = CRC().Crc(cmd)
+    assert cmd.crc == expected
+    assert cmd.crc != 0
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_build_lowcmd_echoes_mode_machine_and_pins_mode_pr_to_zero() -> None:
+    """``mode_machine`` mirrors ``LowState``; ``mode_pr`` stays PR.
+
+    The firmware refuses a ``LowCmd_`` whose ``mode_machine`` does not
+    match the value the arm-SDK last published on ``rt/lowstate``.  The
+    driver caches that value on every ``LowState`` frame in ``_fsm_id``
+    and passes it in.  ``mode_pr = 1`` (AB mode) would silently remap four
+    ankle indices, so it stays 0.
+    """
+    from strands_robots.drivers.g1 import _build_lowcmd_from_action
+
+    cmd, err = _build_lowcmd_from_action({"waist_yaw": 0.4}, mode_machine=9)
+    assert err is None and cmd is not None
+    assert cmd.mode_machine == 9
+    assert cmd.mode_pr == 0
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_build_lowcmd_enables_the_touched_slot_and_leaves_the_rest_disabled() -> None:
+    """Only commanded slots carry ``motor.mode = 1``; the others stay 0.
+
+    A frame with a valid CRC but ``motor_cmd[i].mode = 0`` (Disable) is
+    silently ignored on that slot.  The alternative would be a success
+    envelope over a joint the caller thought was commanded and that never
+    moved.  Uncommanded slots stay Disable, which is what "did not
+    command this joint" means on the wire.
+    """
+    from strands_robots.drivers.g1 import _G1_JOINT_INDEX, _build_lowcmd_from_action
+
+    cmd, err = _build_lowcmd_from_action({"waist_yaw": 0.4}, mode_machine=7)
+    assert err is None and cmd is not None
+    touched = _G1_JOINT_INDEX["waist_yaw"]
+    assert cmd.motor_cmd[touched].mode == 1
+    # Every other slot stays at 0 (Disable) - the default no-op.
+    for i, m in enumerate(cmd.motor_cmd):
+        if i == touched:
+            continue
+        assert m.mode == 0, f"slot {i} was enabled without being commanded"
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_build_zero_torque_stamps_crc_and_enables_every_slot() -> None:
+    """The soft-hold frame carries a valid CRC and Enable on every slot.
+
+    ``stop`` (and the follow-up 500 Hz loop's shutdown path) publish this
+    frame; if it lands as a wire-side no-op the arm falls freely.  Enable
+    with zero gains is the softest state the SDK protocol expresses; a
+    Disable slot with zero gains is a no-op.
+    """
+    from unitree_sdk2py.utils.crc import CRC
+
+    from strands_robots.drivers.g1 import _build_zero_torque_lowcmd
+
+    cmd, err = _build_zero_torque_lowcmd(mode_machine=7)
+    assert err is None and cmd is not None
+    assert cmd.mode_machine == 7
+    assert cmd.mode_pr == 0
+    assert cmd.crc == CRC().Crc(cmd)
+    for m in cmd.motor_cmd:
+        assert m.mode == 1
+
+
+@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+def test_send_action_passes_cached_fsm_id_as_mode_machine() -> None:
+    """``send_action`` echoes the driver's cached ``_fsm_id`` onto the wire.
+
+    ``_on_lowstate`` sets ``_fsm_id`` from each incoming ``LowState``'s
+    ``mode_machine``.  The frame we emit must mirror that same value or
+    the firmware rejects it silently.  This is the end-to-end
+    reachability check: the value in the driver's cache reaches the
+    ``motor_cmd`` frame the recorder captures.
+    """
+    driver, rec = _gated_driver()
+    driver._fsm_id = 501  # a handshake FSM; the gate accepts.
+    result = driver.send_action(robot_name="g1", action={"waist_yaw": 0.4})
+    assert result["status"] == "success"
+    assert len(rec.writes) == 1
+    _, _, cmd = rec.writes[0]
+    assert cmd.mode_machine == 501
+    assert cmd.mode_pr == 0
+    assert cmd.crc != 0
 
 
 # =========================================================================

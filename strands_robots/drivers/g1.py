@@ -69,7 +69,9 @@ _TOPIC_LOWCMD = "rt/lowcmd"
 # 35 is the wholebody layout the current firmware ships with, and slot 29
 # (``kNotUsedJoint``) is the arm-SDK enable byte the ``LowCmd_`` protocol
 # reserves - the driver leaves the enable byte at whatever the caller set.
-_G1_MOTOR_SLOTS: int = 35
+# _G1_MOTOR_SLOTS was declared here and never read - the ``LowCmd_.motor_cmd``
+# array is fixed by the IDL, so the constant is redundant.  Removed to keep
+# the module surface honest and to close CodeQL's unused-global alert.
 
 # The joint-name -> slot index mapping the driver accepts in
 # :meth:`G1Driver.send_action`.  Kept as a module-level constant so a caller
@@ -483,7 +485,7 @@ class G1Driver:
             return refusal
         if self._pubs is None:
             return _refuse("publisher not initialised - call connect_eagerly() first")
-        cmd, err = _build_lowcmd_from_action(action)
+        cmd, err = _build_lowcmd_from_action(action, mode_machine=self._fsm_id)
         if err is not None:
             return _refuse(err)
         # Lazy import.  A missing SDK on the write path is the same failure
@@ -736,6 +738,7 @@ def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
 
 def _build_lowcmd_from_action(
     action: dict[str, Any],
+    mode_machine: int | None = None,
 ) -> tuple[Any, str | None]:
     """Build a ``LowCmd_`` populated from a caller's ``send_action`` dict.
 
@@ -757,6 +760,21 @@ def _build_lowcmd_from_action(
       same reason as an unknown joint name: silent drop is worse than a
       caller-facing error.
 
+    Wire-frame contract (issue #361 review, [MUST FIX] from yinsong1986):
+
+    * ``mode_pr = 0`` - PR mode, which is what the joint-name table this
+      helper interprets is calibrated for.  AB mode (``mode_pr = 1``) would
+      silently remap four ankle indices.
+    * ``mode_machine`` is echoed from the live ``LowState`` (the driver
+      caches it at :attr:`G1Driver._fsm_id`).  Firmware drops a frame whose
+      ``mode_machine`` does not match.
+    * ``motor_cmd[i].mode = 1`` on every commanded slot - the enable byte.
+      Unset (``0`` = Disable), a frame with a valid CRC still commands
+      nothing.  Slots the caller did not touch stay at ``0``.
+    * ``crc`` is computed by the SDK's own ``CRC().Crc(cmd)`` after every
+      other field is populated.  Firmware silently drops a non-matching
+      frame, so this is the last write before return.
+
     The SDK import is lazy so this helper is safe to call in a test without
     the SDK on the box; a missing SDK returns a reason string, matching the
     driver's other error paths.
@@ -767,9 +785,14 @@ def _build_lowcmd_from_action(
         return None, "action is empty; nothing to command"
     try:
         from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as _default_lowcmd
+        from unitree_sdk2py.utils.crc import CRC as _CRC
     except ImportError as exc:  # pragma: no cover - exercised on hardware
         return None, f"unitree_sdk2py is not installed: {exc}"
     cmd = _default_lowcmd()
+    # Wire-frame contract: PR mode, echo mode_machine, enable the touched slots.
+    cmd.mode_pr = 0
+    if mode_machine is not None:
+        cmd.mode_machine = int(mode_machine)
     known_inner = {"q", "kp", "kd", "dq", "tau"}
     for name, value in action.items():
         slot = _G1_JOINT_INDEX.get(name)
@@ -801,11 +824,14 @@ def _build_lowcmd_from_action(
         except (TypeError, ValueError) as exc:
             return None, f"joint {name!r} carries a non-numeric target: {exc}"
         motor = cmd.motor_cmd[slot]
+        motor.mode = 1  # Enable - a Disable slot commands nothing regardless of CRC.
         motor.q = q_f
         motor.dq = dq_f
         motor.tau = tau_f
         motor.kp = kp_f
         motor.kd = kd_f
+    # CRC last - firmware drops a non-matching frame silently.
+    cmd.crc = _CRC().Crc(cmd)
     return cmd, None
 
 

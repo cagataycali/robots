@@ -23,10 +23,27 @@ The joint-name -> motor-slot mapping is a module constant
 silent drop is worse than a caller-facing error. Same for an unknown
 inner key on a per-joint dict, and for a missing ``q``.
 
+**Wire-frame contract.** The G1 firmware validates four fields on every
+``rt/lowcmd`` frame and silently drops a non-matching one, so the builder
+sets them all before publish:
+
+* ``crc`` computed by the SDK's own ``CRC().Crc(cmd)`` after every other
+  field is populated - a stale CRC is the single failure mode that looks
+  like success from the DDS side and does nothing on the robot.
+* ``mode_machine`` echoed from the live ``LowState`` (cached at
+  ``G1Driver._fsm_id``). A mismatched value is rejected by the firmware.
+* ``mode_pr = 0`` - PR (pitch/roll) mode, which is what the joint-name
+  table is calibrated for. AB mode would silently remap four ankle
+  indices.
+* ``motor_cmd[i].mode = 1`` on every commanded slot - the Enable byte.
+  Unset (``0`` = Disable), a frame with a valid CRC still commands
+  nothing on that slot. Uncommanded slots stay at 0 (no-op).
+
 Every DDS touch is still lazy: ``unitree_sdk2py`` is imported inside
 ``send_action`` (the ``LowCmd_`` class) and inside the free
-``_build_lowcmd_from_action`` helper (via ``unitree_hg_msg_dds__LowCmd_``),
-so the driver module still loads on Thor and on CI.
+``_build_lowcmd_from_action`` helper (via ``unitree_hg_msg_dds__LowCmd_``
+and ``unitree_sdk2py.utils.crc.CRC``), so the driver module still loads
+on Thor and on CI.
 
 This is decoupled from issue #358 (the 48 agent-facing @tool verbs); the
 driver's own write path only needs one transport primitive, and this PR
