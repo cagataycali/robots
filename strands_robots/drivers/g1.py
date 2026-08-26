@@ -145,9 +145,9 @@ _G1_NAMED_JOINTS: int = max(_G1_JOINT_INDEX.values()) + 1
 # table's range understiffens something: an arm-sized ``kp=40`` leaves each knee
 # at 40% of its reference stiffness.  The firmware treats gains as advisory --
 # it validates ``crc``, ``mode_machine`` and the Enable byte, not ``kp``/``kd``
-# -- so a mis-gained frame is accepted and reported successful, and the only
-# symptom is that the robot tracks the target badly or sags under its own
-# weight.
+# -- so a mis-gained frame is accepted and the publish reports success.  The
+# closed-loop stiffness of the joint is then whatever was sent, and there is no
+# status for a caller to read that says otherwise.
 #
 # A caller who wants different gains supplies ``kp``/``kd`` per joint in the
 # action dict; a supplied value always wins over the table.

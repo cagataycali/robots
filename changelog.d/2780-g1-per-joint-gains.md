@@ -17,9 +17,9 @@ reproduce it.
 
 Nothing surfaced this. The firmware validates `crc`, `mode_machine` and the
 per-motor Enable byte; it does not validate gains. An under-gained frame is
-therefore well formed, accepted, and reported as a successful publish, so the
-only symptom is a robot that tracks its target badly or sags under its own
-weight, with no error for an operator to read. Gains also sit inside the
+therefore well formed, accepted, and reported as a successful publish. The
+closed-loop stiffness of each joint is whatever was sent, and no status a caller
+can read says otherwise. Gains also sit inside the
 checksum payload -- the vendor's `LowCmd_` pack format spends `B3x5fI` per motor
 on mode, padding, `q`/`dq`/`tau`/`kp`/`kd`, and reserve -- so they have to be
 correct before the CRC is stamped rather than corrected in a later frame.

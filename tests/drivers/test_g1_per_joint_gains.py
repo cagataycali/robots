@@ -10,9 +10,10 @@ knees are the stiffest entries at ``kp=100, kd=2`` and they are the joints that
 hold a standing biped up.
 
 The firmware validates ``crc``, ``mode_machine`` and the Enable byte; it does
-not validate gains.  So an under-gained frame is accepted, the publish reports
-success, and the only symptom is a robot that tracks its target badly -- there
-is no error to read.  That is the class of defect these cells exist to catch.
+not validate gains.  So an under-gained frame is accepted and the publish
+reports success, leaving each joint's closed-loop stiffness at whatever was
+sent with no status that says otherwise.  That is the class of defect these
+cells exist to catch: wrong on the wire, silent at the API.
 
 Layering, and why it is this way:
 
