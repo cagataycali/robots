@@ -23,6 +23,15 @@ record (strands-robots)  ->  transform (this page)  ->  train (create_trainer)
    the action, state and task columns from the source episode unchanged. A
    generated episode is the *same trajectory* rendered differently, never a
    different trajectory.
+
+   Schema parity is part of that promise, down to how each camera is stored.
+   The output dataset declares one `dtype` for every camera, so a source whose
+   `observation.images.*` streams disagree - one `video`, one `image` - cannot
+   be reproduced: writing it anyway would re-encode a camera, flattening a
+   video stream into still frames or promoting an image column to video, and
+   which way it went would depend only on the order the features were declared
+   in. Such a source is refused, naming each camera and the dtype it declared;
+   re-record or convert it so every camera stream shares one dtype.
 2. **Provenance is mandatory.** Every generated episode is recorded in the
    output dataset's `meta/provenance.json` with `synthetic=true`, the source
    episode index, and the transform's name and version. Training filters and

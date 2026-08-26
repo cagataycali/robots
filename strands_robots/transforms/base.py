@@ -714,9 +714,13 @@ class _SourceDataset:
     """Read side of the orchestration: one opened source LeRobotDataset.
 
     Internal to :meth:`DatasetTransform.transform`; holds the schema facts
-    (camera keys / dims, state and action column names, fps, robot type) the
-    output recorder is created from, so output schema parity is derived from
-    the source rather than restated.
+    (camera keys / dims / dtypes, state and action column names, fps, robot
+    type) the output recorder is created from, so output schema parity is
+    derived from the source rather than restated.
+
+    ``use_videos`` is one flag for the whole camera set because the output
+    recorder declares one dtype for every camera, so a source whose cameras
+    disagree cannot be reproduced and :meth:`open` refuses it.
     """
 
     def __init__(self, ds: Any, spec: TransformSpec) -> None:
@@ -724,7 +728,7 @@ class _SourceDataset:
         features: dict[str, Any] = dict(ds.meta.features)
         self.camera_keys: list[str] = [k[len(_IMAGE_PREFIX) :] for k in features if k.startswith(_IMAGE_PREFIX)]
         self.camera_dims: dict[str, tuple[int, int]] = {}
-        self.use_videos = True
+        self.camera_dtypes: dict[str, str] = {}
         for cam in self.camera_keys:
             feat = features[f"{_IMAGE_PREFIX}{cam}"]
             shape = tuple(feat.get("shape", ()))
@@ -733,7 +737,12 @@ class _SourceDataset:
                 self.camera_dims[cam] = (int(shape[1]), int(shape[2]))
             elif len(shape) == 3:
                 self.camera_dims[cam] = (int(shape[0]), int(shape[1]))
-            self.use_videos = feat.get("dtype") == "video"
+            self.camera_dtypes[cam] = str(feat.get("dtype") or "")
+        # One flag for the whole camera set, because that is what the output
+        # recorder declares. Assigning it per camera inside the loop left it
+        # holding whichever camera the iteration ended on, so a source mixing
+        # dtypes re-encoded the others silently; open() refuses that source.
+        self.use_videos = all(dtype == "video" for dtype in self.camera_dtypes.values())
         state_feat = features.get("observation.state", {})
         action_feat = features.get("action", {})
         self.state_names: list[str] = list(state_feat.get("names") or [])
@@ -749,7 +758,10 @@ class _SourceDataset:
 
         A string return keeps :meth:`DatasetTransform.transform`'s error
         channel uniform (a ``TransformResult`` with ``status="error"``) for
-        every source-side refusal.
+        every source-side refusal. Three sources are refused, all for the same
+        reason - the output could not be the source rendered differently: one
+        declaring a feature the pass-through cannot preserve, one declaring no
+        camera stream at all, and one whose cameras disagree about their dtype.
         """
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -776,6 +788,23 @@ class _SourceDataset:
             return (
                 "source dataset declares no observation.images.* stream - an episode augmentation transforms "
                 "video observations, so a dataset without any has nothing to transform"
+            )
+        if len(set(reader.camera_dtypes.values())) > 1:
+            # Same reason as the unsupported-feature refusal above: the output
+            # recorder declares one dtype for every camera (use_videos is a
+            # single flag), so a mixed source cannot be reproduced. Writing it
+            # anyway re-encodes at least one camera - a video stream flattened
+            # into still images, or an image column promoted to video - and
+            # which way it goes depends on the order the features are declared
+            # in. Schema parity is part of the pass-through contract, so the
+            # source is refused rather than silently changed.
+            declared = ", ".join(f"{_IMAGE_PREFIX}{cam}={dtype!r}" for cam, dtype in reader.camera_dtypes.items())
+            return (
+                f"source dataset declares camera streams with more than one dtype: {declared}. "
+                "The output dataset declares one dtype for every camera, so at least one stream would be "
+                "re-encoded in the output - a video stream written as still images, or an image column "
+                "promoted to video - which the schema-parity half of the pass-through contract forbids. "
+                "Re-record or convert the source so every observation.images.* stream shares one dtype."
             )
         return reader
 
@@ -839,7 +868,11 @@ class _SourceDataset:
         return episode_dict
 
     def create_output_recorder(self, spec: TransformSpec) -> Any:
-        """Create the output dataset with the SOURCE schema (parity by construction)."""
+        """Create the output dataset with the SOURCE schema (parity by construction).
+
+        ``use_videos`` is the single dtype every source camera declares, which
+        :meth:`open` has already established is unambiguous.
+        """
         from strands_robots.dataset_recorder import DatasetRecorder
 
         return DatasetRecorder.create(
