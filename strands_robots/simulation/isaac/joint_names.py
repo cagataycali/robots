@@ -51,10 +51,20 @@ _BASIC_CHAR_RE = re.compile(r"[A-Za-z0-9_]")
 # (Isaac Sim 6.0.x URDF importer output, e.g. ``tn__1_`` for joint ``1``).
 _TRANSCODING_PREFIX = "tn__"
 
-# URDF joint types that produce articulation DOFs on import. ``fixed`` never
-# does; ``floating``/``planar`` are multi-DOF types the Isaac importer does
-# not map onto single named DOFs, and the registry URDFs do not use them.
-_MOVABLE_URDF_JOINT_TYPES = frozenset({"revolute", "continuous", "prismatic", "spherical"})
+# URDF joint types that produce articulation DOFs on import. The format
+# declares exactly six, and this package already records them: the map
+# ``loaders._URDF_JOINT_TYPE_MAP`` keys on all six, and ``loaders.load_urdf``
+# names that set in the refusal it raises for any other type. This set is
+# therefore drawn from those six - naming a seventh would put a joint no URDF
+# can declare into the candidate pool ``demangle_usd_joint_names`` draws
+# translations from.
+#
+# ``fixed`` produces no DOF at all. ``floating`` and ``planar`` are multi-DOF
+# types the Isaac importer does not map onto single named DOFs, which is why
+# the loader reads both as ``fixed`` too - not because they are unused: 5 of
+# the 68 URDFs the registry downloads declare a ``floating`` base (a1,
+# aliengo, go1, laikago, b2).
+_MOVABLE_URDF_JOINT_TYPES = frozenset({"revolute", "continuous", "prismatic"})
 
 
 def urdf_joint_names(urdf_path: str) -> list[str]:
@@ -63,9 +73,12 @@ def urdf_joint_names(urdf_path: str) -> list[str]:
     Stdlib-XML parse (no kit / importer dependency), so the mapping side of
     the #1900 fix is testable anywhere. Only joints whose type produces an
     articulation DOF are returned (``revolute``, ``continuous``,
-    ``prismatic``, ``spherical``) - ``fixed`` joints never surface in
-    ``dof_names``, and including them could only make a mangled-name match
-    ambiguous.
+    ``prismatic``). URDF's other three declared types never surface in
+    ``dof_names``: a ``fixed`` joint has no DOF, and ``floating`` / ``planar``
+    are multi-DOF types the importer does not map onto single named DOFs.
+    Reporting a joint the articulation cannot name could only make a
+    mangled-name match ambiguous, which is the one decode
+    :func:`demangle_usd_joint_names` refuses.
 
     Parameters
     ----------
