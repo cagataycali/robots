@@ -644,12 +644,25 @@ class G1Driver:
             logger.debug("%s: bmsstate decode failed: %s", self._tool_name, exc)
 
     def _on_lidar_state(self, msg: Any) -> None:
-        """Decode ``rt/utlidar/lidar_state`` into :attr:`_lidar_state`."""
+        """Decode ``rt/utlidar/lidar_state`` into :attr:`_lidar_state`.
+
+        The names read here are the ones ``LidarState_`` declares: the MID-360
+        reports its fault code as ``error_state`` and its scan rate as
+        ``cloud_frequency``. Reading a name the IDL does not define is
+        indistinguishable from a healthy reading in this record, because
+        ``getattr``'s default is what lands in it - so a unit whose lidar had
+        faulted would publish ``code=-1`` and ``freq=0.0`` for as long as it
+        ran, and the fleet card would read that as "no reading yet".
+
+        ``error_state`` is read once and used for both the numeric code and its
+        rendered text so the two cannot come to describe different fields.
+        """
         try:
+            error_state = getattr(msg, "error_state", -1)
             self._lidar_state = {
-                "code": int(getattr(msg, "code", -1)),
-                "code_text": decode_code(getattr(msg, "code", -1)),
-                "freq": float(getattr(msg, "freq", 0.0)),
+                "code": int(error_state),
+                "code_text": decode_code(error_state),
+                "freq": float(getattr(msg, "cloud_frequency", 0.0)),
                 "sys_rotation_speed": float(getattr(msg, "sys_rotation_speed", 0.0)),
                 "t": time.time(),
             }

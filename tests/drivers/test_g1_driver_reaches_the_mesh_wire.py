@@ -86,8 +86,15 @@ def _bms() -> Any:
 
 
 def _lidar_state() -> Any:
-    """An ``rt/utlidar/lidar_state`` sample."""
-    return types.SimpleNamespace(code=0, freq=np.float32(10.0), sys_rotation_speed=np.float32(3600.0))
+    """An ``rt/utlidar/lidar_state`` sample.
+
+    The field names are the ones ``LidarState_`` actually declares:
+    ``error_state`` for the fault code and ``cloud_frequency`` for the scan
+    rate. A double that instead spells whatever name the decoder happens to
+    read would agree with the decoder whatever that name is, which is how an
+    undeclared read stayed invisible here in the first place.
+    """
+    return types.SimpleNamespace(error_state=0, cloud_frequency=np.float32(10.0), sys_rotation_speed=np.float32(3600.0))
 
 
 def _lidar_cloud() -> Any:

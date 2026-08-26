@@ -224,3 +224,63 @@ def read_joints(device: Any) -> Any:
     # ``.pos`` is lerobot's own suffix (see SOFollower.get_observation) and the
     # shape the rest of this codebase already parses.
     return {f"{motor}.pos": value for motor, value in raw.items()}
+
+
+def _answers_a_joint_read(device: Any) -> bool:
+    """Whether :func:`read_joints` has a route to ``device``'s joint positions.
+
+    Derived from :func:`read_joints`'s own branch rather than restated: it reads
+    ``bus.sync_read`` when the device exposes one and falls back to
+    ``get_observation``, so a device carrying either can be read and a device
+    carrying neither cannot. Keeping the admission rule and the reader in one
+    module is what stops a caller admitting a device the reader then raises on,
+    or refusing one it could have read.
+
+    Args:
+        device: The candidate to test. Neither attribute is called.
+
+    Returns:
+        ``True`` when ``device`` exposes a ``bus`` with ``sync_read``, or a
+        ``get_observation``.
+    """
+    bus = getattr(device, "bus", None)
+    if bus is not None and hasattr(bus, "sync_read"):
+        return True
+    return hasattr(device, "get_observation")
+
+
+def joint_read_source(robot: Any) -> Any | None:
+    """The device to read ``robot``'s joint positions from, or ``None``.
+
+    A robot reaches its motors one of two ways. A lerobot robot is a *wrapper*:
+    :class:`strands_robots.hardware_robot.Robot` holds the device that owns the
+    bus under ``robot``, and the wrapper itself answers no read at all. A native
+    driver owns its bus directly, so it *is* the device.
+
+    Resolving only the first shape is what left the second publishing no joint
+    telemetry: a driver satisfying every member of
+    :data:`~strands_robots.drivers.DRIVER_SURFACE` reported its IMU, its lidar
+    summary and its motor temperatures - each read straight off the driver with a
+    ``getattr`` default - while ``joints`` was absent from the state topic,
+    because joints were the one section reached only through the inner device.
+    :func:`read_joints` could already read such a driver unchanged; nothing
+    handed it to it.
+
+    An inner device is still preferred whenever one is present, so a wrapper is
+    never read in place of the device it wraps.
+
+    Args:
+        robot: The object a telemetry consumer was handed - a lerobot wrapper, a
+            native driver, or anything else shaped like a driver.
+
+    Returns:
+        The inner device when ``robot`` has one that can answer a joint read;
+        ``robot`` itself when it has no inner device and can answer one; ``None``
+        when no joint read is possible, which callers report as "no joints" and
+        not as a failure.
+    """
+    device = getattr(robot, "robot", None)
+    if device is None:
+        # No inner device: a native driver owns its telemetry directly.
+        device = robot
+    return device if _answers_a_joint_read(device) else None

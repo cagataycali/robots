@@ -192,9 +192,17 @@ def test_bms_populates_battery_with_pct_and_charging() -> None:
 
 
 def test_lidar_state_decodes_code() -> None:
-    """LidarState decodes the response code through :func:`decode_code`."""
+    """LidarState renders its ``error_state`` through :func:`decode_code`.
+
+    The stand-in spells the names ``LidarState_`` declares. An earlier version
+    of this test built one that spelled the names the decoder happened to read,
+    which made it agree with the decoder whatever those names were - the reason
+    a decoder reading two undeclared fields passed here for as long as it did.
+    Field-name fidelity is graded on its own in
+    ``test_g1_lidar_state_reads_the_declared_fields.py``.
+    """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
-    msg = types.SimpleNamespace(code=0, freq=10.0, sys_rotation_speed=10.0)
+    msg = types.SimpleNamespace(error_state=0, cloud_frequency=10.0, sys_rotation_speed=10.0)
     driver._on_lidar_state(msg)
     assert driver._lidar_state is not None
     assert driver._lidar_state["code"] == 0

@@ -196,8 +196,10 @@ class TestTheRestOfTheDriverIsUnchanged:
         assert driver._battery["pct"] == pytest.approx(87.5)
 
     def test_the_lidar_state_decoder_still_populates(self) -> None:
+        # error_state / cloud_frequency are the names LidarState_ declares; a
+        # double spelling the name the decoder reads cannot grade that read.
         driver = G1Driver(tool_name="g1", port="1.2.3.4")
-        driver._on_lidar_state(types.SimpleNamespace(code=0, freq=10.0, sys_rotation_speed=3600.0))
+        driver._on_lidar_state(types.SimpleNamespace(error_state=0, cloud_frequency=10.0, sys_rotation_speed=3600.0))
         assert driver._lidar_state is not None
         assert driver._lidar_state["freq"] == pytest.approx(10.0)
 
