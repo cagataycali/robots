@@ -835,7 +835,9 @@ def _build_lowcmd_from_action(
     return cmd, None
 
 
-def _build_zero_torque_lowcmd() -> tuple[Any, str | None]:
+def _build_zero_torque_lowcmd(
+    mode_machine: int | None = None,
+) -> tuple[Any, str | None]:
     """Return a ``LowCmd_`` with every motor's gains and effort zeroed.
 
     A zero-kp/kd/tau motor holds no position and applies no torque - the
@@ -845,16 +847,38 @@ def _build_zero_torque_lowcmd() -> tuple[Any, str | None]:
     Kept as a free function so a test can compare the produced envelope
     slot-by-slot without a driver instance, and so the ``stop`` and control
     loop paths share exactly one construction site.
+
+    Wire-frame contract (parity with :func:`_build_lowcmd_from_action`):
+
+    * ``mode_pr = 0`` - PR mode.  Firmware validates the same field on the
+      stop frame as on any other; keep the value consistent.
+    * ``mode_machine`` is echoed from the caller (typically the driver's
+      cached ``_fsm_id``).  Firmware drops a stop frame whose
+      ``mode_machine`` does not match, and a dropped stop is a fall.
+    * ``motor_cmd[i].mode = 1`` (Enable) on every slot.  A Disable slot
+      with zero gains lets the joint fall freely - the arm-SDK protocol
+      treats Disable as "not controlled at all" regardless of gain.
+      Enable + zero gains is the softest *controlled* state the protocol
+      expresses; that is what a stop wants.
+    * ``crc`` is stamped last so a later populate cannot invalidate it.
     """
     try:
         from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as _default_lowcmd
+        from unitree_sdk2py.utils.crc import CRC as _CRC
     except ImportError as exc:  # pragma: no cover - exercised on hardware
         return None, f"unitree_sdk2py is not installed: {exc}"
     cmd = _default_lowcmd()
+    # Wire-frame contract: PR mode, echo mode_machine, Enable every slot.
+    cmd.mode_pr = 0
+    if mode_machine is not None:
+        cmd.mode_machine = int(mode_machine)
     for motor in cmd.motor_cmd:
+        motor.mode = 1  # Enable - a Disable slot lets the joint fall freely.
         motor.q = 0.0
         motor.dq = 0.0
         motor.tau = 0.0
         motor.kp = 0.0
         motor.kd = 0.0
+    # CRC last - firmware drops a non-matching frame silently.
+    cmd.crc = _CRC().Crc(cmd)
     return cmd, None
