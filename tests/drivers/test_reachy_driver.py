@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import sys
 from typing import Any
 
 import pytest
@@ -756,3 +757,100 @@ def _run_tool(driver: ReachyDriver, action: str) -> dict[str, Any]:
         return results[0]
 
     return asyncio.run(_drive())
+
+
+class TestAStockInstallIsRefusedByNameRatherThanCrashing:
+    """The transport lives behind an extra; its absence must not raise.
+
+    Every daemon touch here goes through
+    :mod:`strands_robots.device_connect.reachy_transport`. That module is a
+    stdlib-only leaf, but its package ``__init__`` imports ``device_connect_edge``
+    and the three Device Connect drivers unconditionally, and that package ships
+    only in the ``[device-connect]`` extra. So on a stock
+    ``pip install strands-robots`` the lazy import raises
+    ``ModuleNotFoundError: No module named 'device_connect_edge'`` as a side
+    effect of the parent - naming a package the caller never asked for, through
+    surfaces that document a returned reason instead.
+
+    CI installs ``[all]``, so the absence is invisible to the rest of this file.
+    These tests simulate it the way Python itself signals a blocked module:
+    ``sys.modules[name] = None`` makes ``importlib.import_module`` raise
+    ``ImportError``, which is what an uninstalled parent produces.
+    """
+
+    @staticmethod
+    def _block_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Make the transport module unimportable, as a stock install would."""
+        monkeypatch.setitem(sys.modules, reachy_mod._TRANSPORT_MODULE, None)
+
+    def test_the_reason_names_the_extra_to_install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A reason nobody can act on is barely better than a traceback."""
+        self._block_transport(monkeypatch)
+        reason = reachy_mod._resolve_transport()
+        assert isinstance(reason, str)
+        assert "strands-robots[device-connect]" in reason
+        assert reachy_mod._TRANSPORT_MODULE in reason
+
+    def test_connect_eagerly_returns_the_reason_instead_of_raising(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``connect_eagerly`` documents a returned reason, so it must return one."""
+        self._block_transport(monkeypatch)
+        driver = ReachyDriver(tool_name="reachy_mini", port="reachy-a.local")
+        reason = driver.connect_eagerly()
+        assert reason is not None
+        assert "strands-robots[device-connect]" in reason
+        # Left disconnected but usable, and the reason cached for a later gate.
+        assert driver._connected is False
+        assert driver._connect_error == reason
+
+    def test_connect_eagerly_does_not_blame_the_network(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A missing package is not an unreachable daemon.
+
+        The probe wraps any error it gets in ``daemon unreachable (host:port)``.
+        Reporting a missing extra through that wrapper would send an operator to
+        check a network this call never touched, so the transport is resolved
+        before the probe runs.
+        """
+        self._block_transport(monkeypatch)
+        driver = ReachyDriver(tool_name="reachy_mini", port="reachy-a.local")
+        reason = driver.connect_eagerly()
+        assert reason is not None
+        assert "daemon unreachable" not in reason
+
+    def test_send_action_refuses_rather_than_raising(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The connected gate should refuse first; the write path must not raise anyway.
+
+        ``send_action`` is reached through the agent tool surface, where an
+        exception escapes as a traceback rather than an error envelope. The
+        driver is forced past its connected gate here so the wire path itself is
+        graded, not the gate in front of it.
+        """
+        self._block_transport(monkeypatch)
+        driver = ReachyDriver(tool_name="reachy_mini", port="reachy-a.local")
+        driver._connected = True
+        envelope = driver.send_action({"head_pitch": 5.0})
+        assert envelope["status"] == "error"
+        assert "strands-robots[device-connect]" in _text(envelope)
+
+    def test_stop_does_not_claim_a_halt_it_could_not_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A stop that never reached the daemon is not a stop.
+
+        Same contract as a daemon that refuses the stop: ``_stopped`` stays
+        ``False`` so nothing downstream reports a halted robot.
+        """
+        self._block_transport(monkeypatch)
+        driver = ReachyDriver(tool_name="reachy_mini", port="reachy-a.local")
+        asyncio.run(driver.stop())
+        assert driver._stopped is False
+
+    def test_the_module_still_imports_and_registers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The driver stays constructible, which is why the refusal has to be named.
+
+        Nothing at module load touches the transport, so the class imports, the
+        registry keeps its entry and ``Robot(..., mode="real")`` builds. That is
+        precisely why the failure has to arrive as a reason at the first daemon
+        touch rather than as a ``ModuleNotFoundError``.
+        """
+        self._block_transport(monkeypatch)
+        assert get_native_driver_class("reachy_mini") is ReachyDriver
+        driver = ReachyDriver(tool_name="reachy_mini", port="reachy-a.local")
+        assert isinstance(driver, HardwareDriver)

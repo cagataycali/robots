@@ -83,6 +83,43 @@ DEFAULT_API_PORT: int = 8000
 _PATH_STATUS = "/api/daemon/status"
 _PATH_STOP = "/api/move/stop"
 
+#: The module every daemon touch here goes through. It is a leaf that imports
+#: nothing but the standard library, but it lives inside
+#: :mod:`strands_robots.device_connect`, whose package ``__init__`` imports
+#: ``device_connect_edge`` and the three Device Connect drivers unconditionally.
+#: That package ships only in the ``[device-connect]`` extra, so on a stock
+#: ``pip install strands-robots`` importing the leaf raises
+#: ``ModuleNotFoundError: No module named 'device_connect_edge'`` as a side
+#: effect of the parent, naming a package the caller never asked for.
+_TRANSPORT_MODULE = "strands_robots.device_connect.reachy_transport"
+
+
+def _resolve_transport() -> Any:
+    """Return the Reachy transport module, or a reason naming what is missing.
+
+    The same shape as
+    :func:`~strands_robots.drivers.g1._resolve_message_class`: the seam's other
+    driver resolves its lazy SDK import through a helper that hands back a
+    reason string, and every refusal boundary turns that string into a named
+    failure. Doing the same here keeps the driver's no-raise contract intact on
+    an install without the ``[device-connect]`` extra - ``connect_eagerly``
+    reports a reason and leaves the driver disconnected but usable, rather than
+    raising ``ModuleNotFoundError`` through the agent tool surface.
+
+    Returns:
+        The imported module, or a reason string naming the extra to install.
+    """
+    try:
+        import importlib
+
+        return importlib.import_module(_TRANSPORT_MODULE)
+    except ImportError as exc:
+        return (
+            f"cannot import {_TRANSPORT_MODULE}: {exc} - the Reachy transport "
+            "helpers ship behind an extra: pip install 'strands-robots[device-connect]'"
+        )
+
+
 #: Keys the daemon status payload might carry a battery percentage under. The
 #: daemon documents status as "daemon status, motor state, and control
 #: frequency" and this repo cannot confirm a battery field without hardware, so
@@ -304,6 +341,15 @@ class ReachyDriver:
             logger.debug("%s already connected; connect_eagerly() is a no-op", self._tool_name)
             return None
 
+        # Resolved before the probe so a missing extra is reported as a missing
+        # extra. Routed through the probe instead, it would come back wrapped as
+        # "daemon unreachable (host:port)" and send an operator to check a
+        # network that was never touched.
+        transport = _resolve_transport()
+        if isinstance(transport, str):
+            self._connect_error = transport
+            return transport
+
         status = self._daemon_get(_PATH_STATUS)
         if (error := status.get("error")) is not None:
             reason = f"daemon unreachable ({self._host}:{self._api_port}): {error}"
@@ -348,16 +394,18 @@ class ReachyDriver:
             A ``HardwareLink``, or a reason naming what the variant needs and
             did not get.
         """
-        from strands_robots.device_connect.reachy_transport import WebSocketLink, ZenohLink
+        transport = _resolve_transport()
+        if isinstance(transport, str):
+            return transport
 
         if is_lite:
-            return WebSocketLink(self._host, self._api_port)
+            return transport.WebSocketLink(self._host, self._api_port)
         if self._transport is None:
             return (
                 f"daemon at {self._host}:{self._api_port} reports a Wireless Mini, which is driven over "
                 "Zenoh - pass transport= to reach it"
             )
-        return ZenohLink(self._transport, self._zenoh_prefix)
+        return transport.ZenohLink(self._transport, self._zenoh_prefix)
 
     def _start_link(self, link: Any) -> str | None:
         """Start ``link`` on a dedicated background asyncio loop.
@@ -505,6 +553,8 @@ class ReachyDriver:
             return _refuse(reason)
 
         commands = _wire_commands(action)
+        if isinstance(commands, str):
+            return _refuse(f"send_action: {commands}")
         if not commands:
             return _refuse(
                 f"send_action: nothing to send - none of {sorted(action)} names a Reachy Mini axis; "
@@ -698,9 +748,12 @@ class ReachyDriver:
             :func:`~strands_robots.device_connect.reachy_transport.api` returns
             for every failure, which is why no call here needs a ``try``.
         """
-        from strands_robots.device_connect.reachy_transport import api
+        transport = _resolve_transport()
+        if isinstance(transport, str):
+            return {"error": transport}
 
-        return api(self._host, self._api_port, path)
+        result: dict[str, Any] = transport.api(self._host, self._api_port, path)
+        return result
 
     def _daemon_post(self, path: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call the daemon's REST API with POST.
@@ -712,9 +765,12 @@ class ReachyDriver:
         Returns:
             The decoded body, or ``{"error": ...}``.
         """
-        from strands_robots.device_connect.reachy_transport import api
+        transport = _resolve_transport()
+        if isinstance(transport, str):
+            return {"error": transport}
 
-        return api(self._host, self._api_port, path, method="POST", data=data)
+        result: dict[str, Any] = transport.api(self._host, self._api_port, path, method="POST", data=data)
+        return result
 
     def _send_cmd(self, command: dict[str, Any]) -> str | None:
         """Put one real-time command on the link.
@@ -769,7 +825,7 @@ _ACTION_KEYS: frozenset[str] = frozenset(
 _HEAD_KEYS: tuple[str, ...] = ("head_pitch", "head_roll", "head_yaw", "head_x", "head_y", "head_z")
 
 
-def _wire_commands(action: dict[str, Any]) -> list[dict[str, Any]]:
+def _wire_commands(action: dict[str, Any]) -> list[dict[str, Any]] | str:
     """Translate a degrees-and-millimetres action into link commands.
 
     Three commands at most, because the daemon addresses the Mini's three
@@ -784,15 +840,22 @@ def _wire_commands(action: dict[str, Any]) -> list[dict[str, Any]]:
 
     Returns:
         The commands to send, in a fixed order - head, body, antennas - so two
-        identical actions always produce the same sequence.
+        identical actions always produce the same sequence. Or a reason string
+        if the transport module cannot be imported: the head pose is built by
+        the transport's own ``rpy_to_pose``, so this is a refusal boundary like
+        the daemon calls, and returning the reason keeps it out of the raising
+        path even though ``send_action``'s connected gate should already have
+        refused.
     """
-    from strands_robots.device_connect.reachy_transport import rpy_to_pose
+    transport = _resolve_transport()
+    if isinstance(transport, str):
+        return transport
 
     commands: list[dict[str, Any]] = []
     if any(key in action for key in _HEAD_KEYS):
         commands.append(
             {
-                "head_pose": rpy_to_pose(
+                "head_pose": transport.rpy_to_pose(
                     float(action.get("head_pitch", 0.0)),
                     float(action.get("head_roll", 0.0)),
                     float(action.get("head_yaw", 0.0)),
