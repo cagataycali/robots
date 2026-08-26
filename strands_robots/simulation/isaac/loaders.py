@@ -1849,21 +1849,32 @@ def _body_collision_aabb(
     defaults: dict[str, dict[str, str]],
     childclass: str,
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
-    """Compute the AABB (center, full-size) over a body's own geoms.
+    """Compute the AABB (center, full-size) over a body's own collidable geoms.
 
-    Prefers MuJoCo collision geoms (``group="0"``); if a body has only
-    analytic geoms in another group those are used as a fallback. Geom
-    positions are taken relative to the body frame, so the returned centre
+    Prefers the geoms MuJoCo can actually collide, read off the format's own
+    contact declaration by :func:`_geom_cannot_collide`, so a decorative shell
+    drawn around a small collision primitive does not widen the proxy that
+    stands in for the body. A body whose every analytic geom is contact-free
+    falls back to all of them: an approximate bound is still better than none.
+
+    ``group`` is deliberately not consulted. It is a MuJoCo visualiser toggle
+    carrying no contact meaning, and the conventions built on it disagree -
+    Menagerie spells *collision* as ``group="3"`` while robosuite spells
+    *visual* as ``group="1"`` - which is why :func:`_mesh_geom_visual_rank`
+    takes it only as a weak hint. Selecting on ``group="0"`` also missed every
+    geom that omits the attribute, which is MJCF's spelling of group 0.
+
+    Geom positions are taken relative to the body frame, so the returned centre
     is a body-frame offset. Returns ``None`` when no analytic geom is found
     (e.g. a mesh-only visual body).
     """
-    for group_filter in ("0", None):
+    for collidable_only in (True, False):
         mins = [float("inf")] * 3
         maxs = [float("-inf")] * 3
         found = False
         for geom in body_el.findall("geom"):
             attrs = _class_attrs(geom, defaults, childclass)
-            if group_filter is not None and attrs.get("group") != group_filter:
+            if collidable_only and _geom_cannot_collide(attrs):
                 continue
             aabb = _geom_aabb(geom, defaults, childclass)
             if aabb is None:
