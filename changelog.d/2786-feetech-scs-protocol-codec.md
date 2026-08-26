@@ -31,6 +31,18 @@ Refuses at the boundary:
 - Status packets that are truncated, have trailing bytes, mismatch the
   addressed ID, mismatch the expected LEN, or fail the additive checksum
 
+Every refusal is documented and catchable. All six exported callables
+(`build_packet`, `ping_packet`, `read_packet`, `write_packet`,
+`sync_write_packet`, `parse_status_packet`) can hand a caller a `TypeError` or a
+`ValueError`, so each names both in its own `Raises:` block - including the ones
+raised a frame down in `_validate_id`, which is where a caller who passes
+`motor_id="3"` to `build_packet` actually receives its `TypeError`. `ProtocolError`
+is exported alongside them, because every parser docstring names it as the class
+that separates a wire fault from a caller bug and a handler the package will not
+hand out is a contract the caller cannot write. It subclasses `ValueError`, so a
+bus that wants wire faults alone writes `except ProtocolError` and one that wants
+every refusal writes `except ValueError`.
+
 Importing the package does not pull `scservo_sdk` (grader:
 `tests/drivers/test_feetech_module_load.py`), matching the module-load pin the
 Dynamixel driver package carries against `dynamixel_sdk`.

@@ -175,6 +175,15 @@ def build_packet(motor_id: int, instruction: int, params: bytes = b"", *, allow_
 
     Returns:
         The complete frame ``FF FF ID LEN INSTR params CHECKSUM``.
+
+    Raises:
+        TypeError: If ``motor_id`` is not an :class:`int`. A :class:`bool` is
+            refused with it, since ``True`` would silently address motor 1.
+        ValueError: If ``motor_id``, ``instruction`` or the length of
+            ``params`` is outside the range the frame can carry, or if
+            ``motor_id`` is the broadcast while ``allow_broadcast`` is
+            ``False``. The type and range refusals come from
+            :func:`_validate_id`, so a caller sees them from here.
     """
     _validate_id(motor_id, allow_broadcast=allow_broadcast)
     _validate_params(params)
@@ -191,6 +200,11 @@ def ping_packet(motor_id: int) -> bytes:
 
     The servo replies with an empty status packet whose error byte reports
     its state; that reply is what the bus module reads back.
+
+    Raises:
+        TypeError: If ``motor_id`` is not an :class:`int`.
+        ValueError: If ``motor_id`` is outside ``0x00..0xFE``, or is the
+            broadcast - a ``PING`` is answered, so it is never reply-less.
     """
     return build_packet(motor_id, Instruction.PING)
 
@@ -200,6 +214,12 @@ def read_packet(motor_id: int, address: int, length: int) -> bytes:
 
     ``address`` and ``length`` are one byte each. The reply is an
     :func:`parse_status_packet`-shaped frame carrying ``length`` param bytes.
+
+    Raises:
+        TypeError: If ``motor_id`` is not an :class:`int`.
+        ValueError: If ``motor_id``, ``address`` or ``length`` is outside its
+            one-byte range, or if ``motor_id`` is the broadcast - a ``READ``
+            is answered, so it is never reply-less.
     """
     if not 0 <= address <= 0xFF:
         raise ValueError(f"address out of range 0..0xFF: {address:#x}")
@@ -216,6 +236,12 @@ def write_packet(motor_id: int, address: int, data: bytes, *, allow_broadcast: b
     reply-less write opt in - the default refuses a broadcast because a
     caller who addresses one by mistake would otherwise silently wait for a
     reply that never comes.
+
+    Raises:
+        TypeError: If ``motor_id`` is not an :class:`int`.
+        ValueError: If ``motor_id`` or ``address`` is out of range, if
+            ``data`` is empty, or if ``motor_id`` is the broadcast while
+            ``allow_broadcast`` is ``False``.
     """
     if not 0 <= address <= 0xFF:
         raise ValueError(f"address out of range 0..0xFF: {address:#x}")
@@ -230,6 +256,14 @@ def sync_write_packet(address: int, per_motor_length: int, motor_data: list[tupl
     ``motor_data`` is ``(motor_id, data)`` pairs; each ``data`` block must be
     exactly ``per_motor_length`` bytes so the servo's parser can carve the
     packet into per-servo slices without a per-servo length field.
+
+    Raises:
+        TypeError: If any ``motor_id`` in ``motor_data`` is not an
+            :class:`int`.
+        ValueError: If ``address`` or ``per_motor_length`` is out of range, if
+            ``motor_data`` is empty, if it names one ``motor_id`` twice, if a
+            ``data`` block is not exactly ``per_motor_length`` bytes, or if a
+            ``motor_id`` inside ``motor_data`` is the broadcast.
     """
     if not 0 <= address <= 0xFF:
         raise ValueError(f"address out of range 0..0xFF: {address:#x}")
