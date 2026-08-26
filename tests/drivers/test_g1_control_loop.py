@@ -648,7 +648,7 @@ class TestRunPolicyAdmissionLock:
         from strands_robots.drivers.g1 import G1Driver
 
         driver = G1Driver(port="127.0.0.1", network_interface="lo")
-        driver._pubs = _RecordingPublisher()
+        driver._pubs = _RecordingPublisher()  # type: ignore[assignment]
         driver._connected = True
         driver._mode_machine = 9
         driver._fsm_id = 500
@@ -681,7 +681,7 @@ class TestRunPolicyAdmissionLock:
         from strands_robots.drivers.g1 import G1Driver
 
         driver = G1Driver(port="127.0.0.1", network_interface="lo")
-        driver._pubs = _RecordingPublisher()
+        driver._pubs = _RecordingPublisher()  # type: ignore[assignment]
         driver._connected = True
         driver._mode_machine = 9
         driver._fsm_id = 500
@@ -730,7 +730,7 @@ class TestRunPolicyValidatesBudgets:
         from strands_robots.drivers.g1 import G1Driver
 
         driver = G1Driver(port="127.0.0.1", network_interface="lo")
-        driver._pubs = _RecordingPublisher()
+        driver._pubs = _RecordingPublisher()  # type: ignore[assignment]
         driver._connected = True
         driver._mode_machine = 9
         driver._fsm_id = 500

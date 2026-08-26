@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
@@ -671,7 +671,7 @@ class G1Driver:
 
     def run_policy(
         self,
-        policy_object: Policy,
+        policy_object: Policy | Callable[[Any], dict[str, Any]],
         instruction: str = "",
         duration: float = 30.0,
         n_steps: int | None = None,
@@ -686,8 +686,11 @@ class G1Driver:
         with the last commanded posture on a robot whose FSM just left the
         allowed set.
 
-        ``policy_object`` is called on each step with a snapshot of the
-        cached observations (``mode_machine``, ``fsm_id``, ``imu``, etc.)
+        ``policy_object`` is either a built :class:`~strands_robots.policies.Policy`
+        or a bare callable - the admission check below accepts a ``.step()``
+        attribute *or* a callable object, so the annotation admits the same
+        set the refusal enforces.  It is called on each step with a snapshot
+        of the cached observations (``mode_machine``, ``fsm_id``, ``imu``, etc.)
         and is expected to return a joint-name-keyed action dict of the
         same shape :meth:`send_action` accepts.  A policy that returns
         ``None`` or an unusable action is refused inside the loop; the
