@@ -8,6 +8,7 @@ This tool provides comprehensive pose management for robotic arms, including:
 - Safety checks and validation
 - Integration with LeRobot and serial communication
 - Pose interpolation and smooth transitions
+- Framed decoding of servo status replies
 """
 
 import json
@@ -389,6 +390,83 @@ def _pose_target_error(
     return _joint_delta_error(action, motor_name, delta)
 
 
+# --------------------------------------------------------------------------- #
+# Feetech status-packet framing
+# --------------------------------------------------------------------------- #
+# A servo answers a read with ``FF FF ID LEN ERR <params> CHK``. ``LEN`` counts
+# the error byte, the parameters and the checksum, so a whole frame is
+# ``LEN + 4`` bytes and its checksum is ``~sum(frame[2:-1]) & 0xFF`` -- the same
+# sum :meth:`MotorController.build_feetech_packet` writes on the way out.
+#
+# The reply cannot be read at fixed offsets. The bus is half-duplex and shared by
+# every servo on the arm, so what comes back may carry a leading byte the host's
+# own transmission echoed, or the late answer to a read that already timed out,
+# sent by a different motor. Indexing straight into the buffer turns either of
+# those into a position that is wrong rather than missing: a single leading byte
+# shifts the two position bytes by one, which reports a joint ninety degrees from
+# where it is and offers nothing to say the number is not a measurement.
+#
+# So the frame is located and verified instead. This mirrors the vendor SDK,
+# which is the authority for the wire format: ``scservo_sdk``'s ``rxPacket``
+# searches for the header, re-derives the frame length from ``LEN`` and verifies
+# the checksum, and its ``txRxPacket`` keeps reading until the responding ID
+# matches the one that was asked. Recovering the frame rather than refusing the
+# read is the deliberate half: bytes in front of the header do not make a reply
+# corrupt, they make it offset, and the position it carries is the real one.
+
+#: Both header bytes of a status packet.
+_STATUS_HEADER = b"\xff\xff"
+
+#: Shortest frame the format allows: ``FF FF ID LEN ERR CHK``.
+_STATUS_MIN_FRAME = 6
+
+#: Highest ID a *responding* servo can carry. 0xFE addresses every motor at once
+#: and 0xFF is a header byte, so neither can name the motor that answered.
+_STATUS_MAX_ID = 0xFD
+
+#: The error byte's top bit is unused, so anything above this is not an error
+#: byte and the header it followed was a coincidence in someone's payload.
+_STATUS_MAX_ERROR = 0x7F
+
+
+def _parse_status_packet(raw: bytes, motor_id: int, param_count: int) -> tuple[int, ...] | None:
+    """Extract the parameters of ``motor_id``'s reply from ``raw``, or ``None``.
+
+    Every candidate header in ``raw`` is tried, so a frame arriving behind
+    echoed or stale bytes is still found, and a pair of payload bytes that
+    merely looks like a header does not end the search.
+
+    Args:
+        raw: The bytes read from the bus, which may carry leading noise.
+        motor_id: The ID that was asked; only its answer counts.
+        param_count: How many parameter bytes the reply must carry.
+
+    Returns:
+        The reply's parameter bytes, or ``None`` when ``raw`` holds no verified
+        answer from ``motor_id``.
+    """
+    start = 0
+    while (index := raw.find(_STATUS_HEADER, start)) != -1:
+        start = index + 1
+        frame = raw[index:]
+        if len(frame) < _STATUS_MIN_FRAME:
+            # Every later header starts further right, so none can be longer.
+            break
+        responder, length, error = frame[2], frame[3], frame[4]
+        total = length + 4
+        if responder > _STATUS_MAX_ID or error > _STATUS_MAX_ERROR:
+            continue
+        if length != param_count + 2 or len(frame) < total:
+            continue
+        frame = frame[:total]
+        if (~sum(frame[2:-1])) & 0xFF != frame[-1]:
+            continue
+        if responder != motor_id:
+            continue
+        return tuple(frame[5:-1])
+    return None
+
+
 class MotorController:
     """Low-level motor control for fine movements."""
 
@@ -514,7 +592,19 @@ class MotorController:
         return failed
 
     def read_motor_position(self, motor_name: str) -> float | None:
-        """Read current motor position in degrees."""
+        """Read current motor position in degrees.
+
+        Args:
+            motor_name: Which configured motor to read.
+
+        Returns:
+            The joint angle in degrees, or ``None`` when the bus is closed or no
+            verified reply from this motor arrived. ``None`` is the established
+            "could not read" signal every caller already handles:
+            :func:`pose_tool`'s ``read_position`` turns it into an error envelope
+            instead of quoting a number, and the interpolating paths refuse to
+            build a trajectory from it.
+        """
         if not self.serial_conn or not self.serial_conn.is_open:
             return None
 
@@ -527,11 +617,21 @@ class MotorController:
             self.serial_conn.write(packet)
 
             time.sleep(0.01)  # Small delay for response
+            # An 8-byte frame answers this read. The slack is what absorbs bytes
+            # the half-duplex bus puts in front of it, which the parse then skips.
             response = self.serial_conn.read(10)
 
-            if len(response) >= 7:
-                position = response[5] | (response[6] << 8)
-                return self.position_to_degrees(motor_name, position)
+            reply = _parse_status_packet(response, motor_id, 2)
+            if reply is None:
+                logger.warning(
+                    "No verified reply from motor %s (id %d); discarding %s",
+                    motor_name,
+                    motor_id,
+                    response.hex(" ") if response else "an empty read",
+                )
+                return None
+            position = reply[0] | (reply[1] << 8)
+            return self.position_to_degrees(motor_name, position)
         except Exception as e:
             logger.error(f"Failed to read motor {motor_name}: {e}")
 
