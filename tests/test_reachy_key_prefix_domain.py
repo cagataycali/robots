@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +170,42 @@ class TestKeyPrefixDomain:
             rmd.ReachyMiniDriver(host="reachy.local", prefix=True)
 
 
+def _isolated_session(zenoh: Any) -> Any:
+    """A live Zenoh session that can reach nothing but itself.
+
+    ``zenoh.open(zenoh.Config())`` is a peer with multicast scouting on, so it
+    discovers whatever shares a multicast domain with the test run. That matters
+    here specifically: ``**`` matches zero chunks, so the widened key this cell
+    publishes -- ``reachy_mini/**/command`` -- intersects the concrete
+    ``reachy_mini/command`` inbox this very driver ships. A default-config
+    session would therefore publish an actuation-shaped payload onto the live
+    command namespace of any real Reachy Mini Wireless daemon on the developer's
+    LAN, reproducing from the unit suite the widened-publish incident this change
+    exists to prevent -- and leaving the assertion open to foreign traffic.
+
+    ``tests/conftest.py`` sets ``STRANDS_MESH=false`` to keep the unit suite off
+    Zenoh for the same reason, and ``tests/mesh/test_zenoh_transport_security.py``
+    pins loopback endpoints with multicast off wherever it needs a live session.
+    This is the single-session form of that: discovery is disabled in both
+    directions, no endpoints are configured, and the session is placed in a
+    per-run namespace, which prefixes every key it puts on the wire -- so even a
+    peer it somehow reached would not be subscribed to what it publishes.
+
+    Measured on eclipse-zenoh 1.10.0: the isolated session still delivers the
+    wildcard put to its own concrete subscriber, so the property is proven
+    unchanged, while a default-config session on the same host subscribed to both
+    ``reachy_mini/command`` and ``reachy_mini/**`` receives nothing.
+    """
+    cfg = zenoh.Config()
+    cfg.insert_json5("mode", '"peer"')
+    cfg.insert_json5("scouting/multicast/enabled", "false")
+    cfg.insert_json5("scouting/gossip/enabled", "false")
+    cfg.insert_json5("listen/endpoints", "[]")
+    cfg.insert_json5("connect/endpoints", "[]")
+    cfg.insert_json5("namespace", json.dumps(f"strands_test_{uuid.uuid4().hex}"))
+    return zenoh.open(cfg)
+
+
 class TestWhyTheConstructorOwnsTheDomain:
     """The premises that make the constructor, not the transport, the owner."""
 
@@ -186,10 +224,16 @@ class TestWhyTheConstructorOwnsTheDomain:
         assert str(zenoh.KeyExpr(key)) == key
 
     def test_a_wildcard_publish_reaches_a_concrete_subscriber(self):
-        """A command published on a widened key lands in another Mini's inbox."""
+        """A command published on a widened key lands in another Mini's inbox.
+
+        Run on a session that can reach nothing but itself -- see
+        :func:`_isolated_session`. The delivery this asserts is what makes a
+        wildcard prefix an actuation bug rather than a cosmetic one, so it is
+        proven without putting a command on any real robot's inbox.
+        """
         zenoh = pytest.importorskip("zenoh")
         received: list[str] = []
-        session = zenoh.open(zenoh.Config())
+        session = _isolated_session(zenoh)
         try:
             session.declare_subscriber(
                 "reachy_mini/robot_b/command",
