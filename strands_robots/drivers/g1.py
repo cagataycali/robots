@@ -268,6 +268,16 @@ class G1Driver:
         # reference is running so a second concurrent rollout cannot silently
         # share the wire with the first.
         self._loop: _ControlLoop | None = None
+        # ``_last_task_snapshot`` retains the loop's final snapshot after the
+        # thread joins.  ``_run``'s ``finally`` clears ``_loop`` so a second
+        # rollout starts fresh, but that clear made every self-terminating
+        # exit reason (``n_steps``, ``duration``, ``gate``, ``policy``,
+        # ``publish``) unobservable through :meth:`get_task_status`: five of
+        # the six documented exit reasons round-tripped to the caller as
+        # "no task has been started on this driver".  Stashing the snapshot
+        # right before the clear keeps the vocabulary the loop names
+        # reachable to a poller that missed the running window.
+        self._last_task_snapshot: dict[str, Any] | None = None
         # ``_task_admission`` is held across every check-then-act sequence on
         # ``_loop`` (admission in :meth:`run_policy`, stop in
         # :meth:`stop_task` / :meth:`cleanup` / :meth:`stop`, clear on loop
@@ -736,6 +746,11 @@ class G1Driver:
         with self._task_admission:
             if self._loop is not None and self._loop.is_running:
                 return _refuse("run_policy: a task is already running; call stop_task first")
+            # Clear any stashed terminal snapshot from a previous rollout so
+            # a poller between ``run_policy`` and the first published frame
+            # sees the new loop's snapshot rather than the last one's exit
+            # reason.
+            self._last_task_snapshot = None
             self._loop = loop
             loop.start()
         return {
@@ -759,10 +774,20 @@ class G1Driver:
         Returns a JSON envelope with ``running``, ``steps``, ``refusals``
         and (when finished) ``exit_reason``.  Safe to poll from any thread
         because the loop writes its snapshot under a lock.
+
+        A poller that missed the running window still sees the loop's final
+        snapshot: :attr:`_last_task_snapshot` is stashed under the admission
+        lock right before the loop's ``finally`` clears ``self._loop``, so
+        every self-terminating exit reason (``n_steps``, ``duration``,
+        ``gate``, ``policy``, ``publish``) round-trips to the caller instead
+        of collapsing to "no task has been started" once the thread joins.
         """
         with self._task_admission:
             loop = self._loop
+            last = self._last_task_snapshot
         if loop is None:
+            if last is not None:
+                return {"status": "success", "content": [{"json": last}]}
             return {
                 "status": "success",
                 "content": [
@@ -784,6 +809,13 @@ class G1Driver:
         and the loop publishes :func:`_build_zero_torque_lowcmd` on the way
         out - a soft *controlled* stop rather than a Disable that would let
         the named joints fall freely.
+
+        The returned envelope reports the join outcome honestly.  A
+        caller-supplied policy that outlasts the join budget (a remote
+        inference call is the ordinary case) surfaces as
+        ``status="error"`` naming the timeout and ``stopped=False`` in the
+        payload, so the caller cannot read "success" while the payload's
+        own ``running=True`` says the loop is still writing frames.
         """
         with self._task_admission:
             loop = self._loop
@@ -792,10 +824,32 @@ class G1Driver:
                 "status": "success",
                 "content": [{"text": "stop_task: no task is running"}],
             }
-        loop.stop("stop_task")
+        joined = loop.stop("stop_task")
+        snap = loop.snapshot()
+        snap["stopped"] = joined
+        if not joined:
+            # The loop still holds the wire.  Report as an error so a
+            # caller that reads only ``status`` cannot count the task as
+            # stopped, and name the timeout in the payload for a caller
+            # that reads it.
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "json": {
+                            **snap,
+                            "reason": (
+                                "stop_task: control loop did not join within timeout; "
+                                "policy is likely blocking - the loop will publish the "
+                                "zero-torque frame when it exits"
+                            ),
+                        }
+                    }
+                ],
+            }
         return {
             "status": "success",
-            "content": [{"json": loop.snapshot()}],
+            "content": [{"json": snap}],
         }
 
     # ------------------------------------------------------------------ #
@@ -1231,23 +1285,35 @@ class _ControlLoop:
         self._thread = threading.Thread(target=self._run, name=f"g1-control-{id(self):x}", daemon=True)
         self._thread.start()
 
-    def stop(self, reason: str = "stop_task", timeout: float = 2.0) -> None:
+    def stop(self, reason: str = "stop_task", timeout: float = 2.0) -> bool:
         """Signal the loop to exit and join its thread.
 
         Named reasons distinguish caller-driven stop (``"stop_task"``) from
         the loop's own terminal paths, which set ``_exit_reason`` directly.
         The signal wins over policy work: the loop re-reads
-        ``_stop_event.is_set()`` at the top of every step.
+        ``_stop_event.is_set()`` at the top of every step, and once more
+        after the policy returns and before the frame publishes.
+
+        Returns:
+            ``True`` when the thread joined within ``timeout``.  ``False``
+            when the loop is still running - a caller-supplied policy that
+            outlasts the join budget (a remote inference call is the
+            ordinary case) needs the honest ``stopped=False`` in the
+            :meth:`stop_task` envelope rather than a ``success`` claim the
+            payload's ``running=True`` contradicts.
         """
         self._stop_event.set()
         thread = self._thread
+        joined = True
         if thread is not None:
             thread.join(timeout=timeout)
+            joined = not thread.is_alive()
         with self._lock:
             # The loop itself may have set an exit_reason (budget expiry
             # racing the caller's stop); if not, the caller wins.
             if self._exit_reason is None:
                 self._exit_reason = reason
+        return joined
 
     def snapshot(self) -> dict[str, Any]:
         """Return the loop's public state.  Safe from any thread."""
@@ -1301,6 +1367,19 @@ class _ControlLoop:
                         action = self._call_policy()
                     except Exception as exc:  # policy is caller-supplied; catch broadly
                         self._set_exit("policy", f"raised {type(exc).__name__}: {exc}")
+                        break
+                    # Re-check the stop event *after* the policy returns and
+                    # *before* the frame publishes.  Without this, a stop
+                    # signal that arrives while the policy is still computing
+                    # (the ordinary case for a remote inference call) is only
+                    # noticed at the top of the next iteration - but by then
+                    # the in-flight action has already reached the wire, so a
+                    # fresh position command lands on ``rt/lowcmd`` after the
+                    # caller was told the task stopped.  The zero-torque frame
+                    # still goes out from ``finally``; the loop reports the
+                    # exit as ``stop_task`` since the caller's ``stop()``
+                    # already set the reason.
+                    if self._stop_event.is_set():
                         break
                     if action is None:
                         with self._lock:
@@ -1358,12 +1437,24 @@ class _ControlLoop:
                 self._emit_zero_torque()
             with self._lock:
                 self._finished_at = time.monotonic()
-            # Drop the reference under the driver's admission lock so a
-            # subsequent ``run_policy`` starts fresh; without the lock a
-            # concurrent ``run_policy`` could observe ``self._loop is not
-            # None`` right before this clear and refuse a rollout that is
-            # actually finishing.
+            # Stash the terminal snapshot before dropping the reference so a
+            # poller that missed the running window still sees the named
+            # exit reason (n_steps / duration / gate / policy / publish);
+            # without this stash, ``get_task_status`` collapsed five of the
+            # six documented exit paths to "no task has been started on
+            # this driver".  Held under the same admission lock as the
+            # clear so a concurrent ``run_policy`` observes a coherent
+            # (running loop | last snapshot) pair rather than a torn state.
+            # ``snapshot()``'s ``running`` reads ``self._thread.is_alive()``
+            # and this ``finally`` runs *inside* the thread, so it would
+            # report ``True`` on a snapshot the caller reads *after* the
+            # thread joins.  Override with a literal ``False`` - the loop
+            # is terminating; the caller polling ``_last_task_snapshot`` has
+            # already left the running window by construction.
+            terminal = self.snapshot()
+            terminal["running"] = False
             with self._driver._task_admission:
+                self._driver._last_task_snapshot = terminal
                 if self._driver._loop is self:
                     self._driver._loop = None
 

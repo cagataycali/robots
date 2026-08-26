@@ -54,3 +54,46 @@ publisher; the `unitree_sdk2py` submodules are stubbed via
 production publish lane (`_build_lowcmd_from_action` → `LowCmd_`) is
 graded on an SDK-less CI box rather than an SDK-less fallback branch
 hardware can never take.
+
+### Round 4 - terminal snapshot survives loop teardown, stop_task reports the join, in-flight action is dropped on stop
+
+Round 3's review found three shapes the earlier heads left open. They land
+here because each is a caller-visible contract, not a rewrite of the loop.
+
+**`get_task_status` no longer collapses five of six exit reasons.**
+`_run`'s `finally` used to clear `self._driver._loop`, and `get_task_status`
+read that reference, so once the loop ended by itself every self-terminating
+exit path (`n_steps`, `duration`, `gate`, `policy`, `publish`) round-tripped
+to the caller as `"no task has been started on this driver"`. The loop now
+stashes its terminal `snapshot()` in `_last_task_snapshot` under the
+admission lock *before* clearing `_loop`, and `get_task_status` returns the
+stashed value when the live loop is gone. `run_policy` clears the stash on
+admission so a poller between two rollouts cannot read the previous rollout's
+exit. Six new test cells grade the six exit reasons individually plus the
+cross-rollout stash-clear.
+
+**`stop_task` reports the join outcome honestly.** `_ControlLoop.stop` now
+returns whether the thread joined within its timeout (`thread.is_alive()`
+after the join), and `stop_task` surfaces that as `stopped=True/False` in the
+payload and as `status="error"` when the join failed. The previous shape
+returned `status="success"` while the payload's own `running=True` said the
+loop was still writing frames - a state the caller could not read as a
+"stopped" signal without contradicting itself. A blocking-policy test case
+grades this by tripping a `threading.Event`-gated policy against a shortened
+join timeout.
+
+**A stop signal between the policy call and the publish drops the pending
+frame.** The loop only read `_stop_event` at the top of each iteration, so a
+stop signal arriving *while* the policy was computing (a remote inference
+call is the ordinary case) was only observed on the next pass - but by then
+the in-flight action had already reached `rt/lowcmd`, and only *then* did the
+zero-torque frame go out. The loop now re-reads `_stop_event.is_set()` after
+`_call_policy` returns and before the publish; the finally still stamps the
+zero-torque frame, so the wire's last frame is the stop frame rather than a
+fresh position command followed by the stop frame. Graded by a recording
+publisher whose last frame's enabled-slot count separates action (1 enabled)
+from zero-torque (29 enabled).
+
+The `_fsm_id` producer the round-3 review names is `#2765`'s scope
+(motion-switcher API wiring) and stays there; the acceptance item this PR
+owns is the loop's control-flow, which is what round 4 tightens.
