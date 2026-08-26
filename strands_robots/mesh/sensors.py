@@ -298,6 +298,40 @@ class SensorLoopsMixin:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: pose tick error: %s", self.peer_id, exc)
 
+    def _stamp_local_keys(self, record: dict[str, Any], **local: Any) -> dict[str, Any]:
+        """Re-assert the keys this process decides, after a provider payload merged in.
+
+        A sensor reader seeds a record, merges the robot's provider mapping over
+        it and publishes the result to a topic it builds itself. Merged last, a
+        provider mapping carrying one of those seeded names replaces the local
+        reading -- so a record can be published to ``strands/{peer_id}/...``
+        while naming a different peer inside, and a hand record can be published
+        under one hand's name while naming another.
+
+        The presence path already resolves this collision the other way:
+        :meth:`strands_robots.mesh.session.PeerInfo.to_dict` spreads the peer's
+        own payload *first* so the four keys that process decided win. This is
+        the same precedence for the sensor records, applied after the merge
+        rather than by ordering a single literal, because a reader merges from
+        several provider attributes in turn.
+
+        ``t`` is deliberately not re-asserted. It is a stamp rather than a
+        locally computed duration, and a provider that stamps a reading when it
+        decoded it is reporting something truer than the moment the loop got
+        round to publishing it.
+
+        Args:
+            record: The outgoing record, modified in place.
+            **local: Further keys this reader decided, such as the ``hand`` a
+                hand record is published under.
+
+        Returns:
+            The same ``record``, for use as an expression.
+        """
+        record["peer_id"] = self.peer_id
+        record.update(local)
+        return record
+
     def _read_pose(self) -> dict[str, Any] | None:
         r = self.robot
         pose: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
@@ -308,6 +342,7 @@ class SensorLoopsMixin:
             if pose_data is not None:
                 if isinstance(pose_data, dict):
                     pose.update(pose_data)
+                    self._stamp_local_keys(pose)
                     pose.setdefault("source", "provider")
                     pose.setdefault("frame", "map")
                     _coerce_record(pose)
@@ -333,6 +368,7 @@ class SensorLoopsMixin:
             slam_pose = getattr(r, "_slam_pose", None)
             if slam_pose is not None and isinstance(slam_pose, dict):
                 pose.update(slam_pose)
+                self._stamp_local_keys(pose)
                 pose.setdefault("source", "slam")
                 pose.setdefault("frame", "map")
                 _coerce_record(pose)
@@ -345,6 +381,7 @@ class SensorLoopsMixin:
             odom_pose = getattr(r, "_odom_pose", None)
             if odom_pose is not None and isinstance(odom_pose, dict):
                 pose.update(odom_pose)
+                self._stamp_local_keys(pose)
                 pose.setdefault("source", "odom")
                 pose.setdefault("frame", "odom")
                 _coerce_record(pose)
@@ -466,6 +503,7 @@ class SensorLoopsMixin:
             imu_data = getattr(r, "_imu", None)
             if imu_data is not None and isinstance(imu_data, dict):
                 imu.update(imu_data)
+                self._stamp_local_keys(imu)
                 _coerce_record(imu)
                 return imu
         except Exception:  # noqa: BLE001
@@ -520,6 +558,7 @@ class SensorLoopsMixin:
             if odom_data is not None and isinstance(odom_data, dict):
                 odom: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 odom.update(odom_data)
+                self._stamp_local_keys(odom)
                 odom.setdefault("frame", "odom")
                 _coerce_record(odom)
                 return odom
@@ -567,6 +606,7 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 summary: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 summary.update(data)
+                self._stamp_local_keys(summary)
                 _coerce_record(summary)
                 return summary
         except Exception:  # noqa: BLE001
@@ -580,6 +620,7 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 state: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 state.update(data)
+                self._stamp_local_keys(state)
                 _coerce_record(state)
                 return state
         except Exception:  # noqa: BLE001
@@ -616,6 +657,7 @@ class SensorLoopsMixin:
                     if isinstance(data, dict):
                         state = {"peer_id": self.peer_id, "hand": name, "t": time.time()}
                         state.update(data)
+                        self._stamp_local_keys(state, hand=name)
                         result[name] = state
                 _coerce_record(result)
                 return result if result else None
@@ -649,6 +691,7 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 info: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 info.update(data)
+                self._stamp_local_keys(info)
                 _coerce_record(info)
                 return info
         except Exception:  # noqa: BLE001

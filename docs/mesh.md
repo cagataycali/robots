@@ -127,6 +127,16 @@ a loop. Every attempt, granted or refused, is written to the safety audit log.
 
 Sensor topics only publish when the robot exposes the attribute. Zero cost when unused.
 
+**A sensor record's identity is the publisher's too.** A reader seeds each record
+with what this process decided, merges the robot's provider mapping over it, and
+publishes to a topic built from those same keys - so the same precedence applies:
+`peer_id`, and the `hand` a hand record is filed under, win a name collision with
+the provider mapping. A provider naming another peer does not move its readings
+onto that peer's topic, and one naming another hand does not relabel the hand it
+was published under. A `t` the provider supplies *is* honoured: it is a stamp
+rather than a locally computed duration, so a driver that stamps a reading when
+it decoded it reports something truer than the moment the loop published it.
+
 ### Degraded state probes
 
 Every section of a state snapshot is optional, because a robot may be hardware,
