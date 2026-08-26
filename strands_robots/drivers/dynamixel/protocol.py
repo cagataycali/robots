@@ -89,7 +89,7 @@ class Instruction(enum.IntEnum):
 # ---------------------------------------------------------------------------
 CONTROL_TABLE: Final[dict[str, tuple[int, int, str]]] = {
     # name: (address, width_bytes, description)
-    "MODEL_NUMBER": (0, 2, "Read-only. Used by :func:`decode_model_number` for auto-detection."),
+    "MODEL_NUMBER": (0, 2, "Read-only. Decoded by :func:`decode_model_number`."),
     "MODEL_INFORMATION": (2, 4, "Read-only, opaque."),
     "FIRMWARE_VERSION": (6, 1, "Read-only."),
     "ID": (7, 1, "Read-write when torque is off. Servo's bus address."),
@@ -111,31 +111,6 @@ CONTROL_TABLE: Final[dict[str, tuple[int, int, str]]] = {
     "PRESENT_POSITION": (132, 4, "Signed 32-bit; single-turn 0..4095, wraps in extended-position mode."),
     "PRESENT_TEMPERATURE": (146, 1, "Degrees C."),
     "PRESENT_INPUT_VOLTAGE": (144, 2, "0.1V units."),
-}
-
-
-# ---------------------------------------------------------------------------
-# Model number -> canonical model name. Read from register 0 during a probe.
-# The identifiers here are the ones the Robotis e-manual and dynamixel_sdk
-# use; a downstream translator maps them to lerobot's names if needed.
-#
-# Not every Dynamixel model is here - only the ones present on the robots
-# :issue:`359` lists. Adding one is a one-line change and is deliberately
-# not gated behind a class hierarchy.
-# ---------------------------------------------------------------------------
-MODEL_NUMBERS: Final[dict[int, str]] = {
-    1060: "XL330-M077",
-    1190: "XL330-M288",
-    1030: "XL430-W250",
-    1050: "XM430-W210",
-    1120: "XM430-W350",
-    1130: "XM540-W150",
-    1140: "XM540-W270",
-    1150: "XM540-W270-R",
-    1180: "XM540-W150-R",
-    1020: "XH430-W210",
-    311: "MX-64",
-    321: "MX-106",
 }
 
 
@@ -327,31 +302,41 @@ def parse_status_packet(frame: bytes) -> dict[str, object]:
     }
 
 
-def decode_model_number(params: bytes) -> tuple[int, str | None]:
+def decode_model_number(params: bytes) -> int:
     """Decode a ``MODEL_NUMBER`` read's params.
 
-    ``MODEL_NUMBER`` is a two-byte little-endian read at register 0. The
-    driver probes this to auto-detect XL330 vs XM430 vs XM540 without user
-    config, as :issue:`359` acceptance-criterion 5 requires.
+    ``MODEL_NUMBER`` is a two-byte little-endian unsigned integer at register
+    0, and every Protocol 2.0 servo reports it in its ``PING`` reply. That
+    decode is wire format, so it belongs here.
+
+    Resolving the number to a model name (``1060`` -> ``XL430-W250``) is
+    deliberately *not* here. A name is per-model hardware metadata, checkable
+    against a servo rather than against a byte string, so a table of names in
+    this module can only be graded on its shape - upper-case, hyphenated,
+    unique - and never on whether each name belongs to the number it sits
+    against. That gap is not academic: this function has no error path for a
+    *wrong* name, so one misassigned row reports an XL430-W250 as an
+    XL330-M077 - a servo with roughly seven times less stall torque and a
+    different voltage envelope - and the probe still looks like it succeeded.
+    Silent hardware misidentification is a worse failure than no name at all,
+    so name resolution lands with the bus that can read register 0 off real
+    hardware and check itself (:issue:`359` scope 1).
 
     Args:
         params: The status packet's parameter bytes for a read of two bytes
             at register 0. Must be exactly two bytes.
 
     Returns:
-        ``(model_number, canonical_name)`` where the name is ``None`` for a
-        model not in :data:`MODEL_NUMBERS`. Returning the number rather than
-        raising is deliberate: an unknown model is a "add a row here"
-        situation, not a hardware error, and a caller can still make
-        progress with the raw number.
+        The model number, in ``0..0xFFFF``. An unrecognised number is not an
+        error here: the caller still knows which servo answered and can refuse
+        it by ID.
 
     Raises:
         ValueError: If ``params`` is not exactly two bytes.
     """
     if len(params) != 2:
         raise ValueError(f"decode_model_number: expected 2 bytes, got {len(params)}")
-    number = params[0] | (params[1] << 8)
-    return number, MODEL_NUMBERS.get(number)
+    return int.from_bytes(params, "little")
 
 
 # ---------------------------------------------------------------------------

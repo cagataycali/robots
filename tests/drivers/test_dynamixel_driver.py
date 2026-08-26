@@ -30,7 +30,6 @@ from strands_robots.drivers import (
 )
 from strands_robots.drivers.dynamixel import (
     CONTROL_TABLE,
-    MODEL_NUMBERS,
     DynamixelDriver,
     Instruction,
     build_packet,
@@ -235,18 +234,22 @@ class TestProtocol:
     # ------------------------------- model ---------------------------------
 
     @pytest.mark.parametrize(
-        "params,expected_number,expected_name",
+        "params,expected_number",
         [
-            (b"\x24\x04", 1060, "XL330-M077"),
-            (b"\xa6\x04", 1190, "XL330-M288"),
-            (b"\x60\x04", 1120, "XM430-W350"),
-            (b"\x86\x04", 1158, None),  # not in the shipped table; number is returned raw
+            (b"\x00\x00", 0x0000),
+            (b"\x24\x04", 0x0424),
+            (b"\xa6\x04", 0x04A6),
+            (b"\x60\x04", 0x0460),
+            (b"\x37\x01", 0x0137),
+            (b"\xff\xff", 0xFFFF),
         ],
     )
-    def test_decode_model_number(self, params: bytes, expected_number: int, expected_name: str | None) -> None:
-        number, name = decode_model_number(params)
-        assert number == expected_number
-        assert name == expected_name
+    def test_decode_model_number_is_little_endian(self, params: bytes, expected_number: int) -> None:
+        """Register 0 is little-endian: the low byte arrives first. Pinned at
+        both ends of the range because a byte-swap is invisible on a payload
+        whose two bytes happen to be equal, and every model number a real
+        servo reports has a non-zero high byte."""
+        assert decode_model_number(params) == expected_number
 
     def test_decode_model_number_refuses_wrong_length(self) -> None:
         with pytest.raises(ValueError, match="expected 2 bytes"):
@@ -474,24 +477,3 @@ class TestRegistration:
             assert cls is not DynamixelDriver, (
                 f"DynamixelDriver must not serve {canonical!r} (that is Feetech, issue #360)"
             )
-
-
-# ============================================================================
-# Model numbers table has no unknowns.
-# ============================================================================
-
-
-class TestModelNumbers:
-    def test_every_model_name_is_uppercase_and_hyphenated(self) -> None:
-        """Robotis names the servos as ``XL330-M077``. A lower-case or
-        underscored name is a regression: downstream translators pattern-
-        match on this shape."""
-        for number, name in MODEL_NUMBERS.items():
-            assert name.isascii(), f"model {number}: name has non-ASCII"
-            assert name.upper() == name, f"model {number}: name {name!r} is not upper-case"
-            assert "-" in name, f"model {number}: name {name!r} has no hyphen"
-
-    def test_no_duplicate_names(self) -> None:
-        """Two different model numbers must not map to the same string."""
-        names = list(MODEL_NUMBERS.values())
-        assert len(names) == len(set(names)), f"duplicate names in MODEL_NUMBERS: {sorted(names)}"

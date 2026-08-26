@@ -22,15 +22,17 @@ What this package exposes:
 The driver's registered for every Dynamixel robot the package registry knows
 about - koch, aloha, vx300s, wx250s, trossen_wxai, dynamixel_2r - so
 ``Robot("koch", mode="real", driver="strands")`` picks it up. Every one of
-those uses Protocol 2.0 with a mix of XL330 / XM430 / XM540 motors; the model
-detection is a codec-level probe (register 0, ``MODEL_NUMBER``) so it lives
-here rather than at the driver surface.
+those uses Protocol 2.0 with a mix of XL330 / XM430 / XM540 motors, and
+register 0 (``MODEL_NUMBER``) is what discriminates them on the wire. Decoding
+that register is codec-level, so :func:`decode_model_number` lives here;
+turning the number it returns into a model name is hardware metadata that
+needs a live servo to check itself against, and lands with the bus
+(:issue:`359` scope 1).
 """
 
 from strands_robots.drivers.dynamixel.driver import DynamixelDriver
 from strands_robots.drivers.dynamixel.protocol import (
     CONTROL_TABLE,
-    MODEL_NUMBERS,
     Instruction,
     build_packet,
     checksum,
@@ -43,7 +45,6 @@ __all__ = [
     "CONTROL_TABLE",
     "DynamixelDriver",
     "Instruction",
-    "MODEL_NUMBERS",
     "build_packet",
     "checksum",
     "decode_model_number",
