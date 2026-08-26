@@ -39,3 +39,11 @@ upstream fails there rather than falling silently into the reported-rather-than-
 Deliberately unchanged: an actuator whose transmission is one that mapping does not know. Nothing
 then identifies its target across the rebuild, so it is reported rather than guessed at - the same
 residual the joint key leaves for a joint whose body is also unnamed.
+
+On mujoco 3.12 exactly one member of the enum sits in that residual, and it is unreachable rather
+than unhandled: `mjTRN_SO3`, the orientation servo, whose target is a site under one spelling and a
+ball joint under the other, so its transmission type alone does not fix which table names it. Such an
+actuator takes three controls, so a model carrying one compiles with `nu > nactuator` and this
+backend already declines it - it addresses an actuator by its control index - before any rebuild
+could snapshot it. Both halves of that argument are pinned by tests, so the key learns to carry its
+target's object type on the day that refusal lifts and not before.

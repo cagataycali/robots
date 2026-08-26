@@ -45,6 +45,19 @@ reported rather than guessed at, and the mapping's coverage is derived from the
 enum here so a future MuJoCo transmission fails this file instead of silently
 falling into that branch.
 
+Exactly one member of the enum is in that state today, and it is unreachable
+rather than unhandled. ``mjTRN_SO3`` (MuJoCo 3.12) is the orientation servo,
+whose target is a site under the ``site``/``refsite`` spelling and a ball joint
+under the other -- so its ``trnid[0]`` indexes a table its transmission type
+alone does not fix. It never gets here to be disambiguated: an orientation
+actuator takes three controls (four on the quaternion chart), so a model
+carrying one compiles with ``nu > nactuator`` and
+``_unaddressable_actuator_reason`` declines it before it is ever installed --
+this backend addresses an actuator by its control index. ``TestTheKeyVocabulary``
+pins both halves: that SO3 is the only unmapped member, and that such a model is
+refused. Widening the key to carry the target's ``mjtObj`` would be dead code
+until that refusal lifts.
+
 GL-free: ``mesh=False`` and no rendering, so this runs without a GPU.
 """
 
@@ -127,6 +140,28 @@ _ACTIVATION = 1.37
 
 #: The named furniture actuator's setpoint, restored by the pre-existing key.
 _NAMED_CTRL = 0.55
+
+#: ``mjTRN_SO3`` arrived in MuJoCo 3.12; the manifest floor is 3.5.
+_SO3_TRN = getattr(mujoco.mjtTrn, "mjTRN_SO3", None)
+
+# An orientation servo on a ball joint: the one transmission the key vocabulary
+# leaves out. Its three controls are what make the model unaddressable, and so
+# what keeps it from ever reaching the snapshot.
+_ORIENTATION_XML = """
+<mujoco model="orientation">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="wrist" pos="0 0 0.2">
+      <joint name="ball" type="ball"/>
+      <geom type="box" size="0.05 0.05 0.05"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <general name="orient" joint="ball" gaintype="so3" biastype="so3"
+             gainprm="10" biasprm="0 -10 1" ctrlrange="-1 1" forcerange="0 100"/>
+  </actuator>
+</mujoco>
+"""
 
 
 def _actuator_names(model: Any) -> list[str | None]:
@@ -363,8 +398,19 @@ class TestTheKeyVocabulary:
         )
         assert scene_ops._resolve_actuator_key(model, target_handle, mujoco) == -1
 
-    def test_the_transmission_mapping_covers_every_transmission_mujoco_defines(self) -> None:
+    def test_the_only_transmission_the_mapping_leaves_out_is_the_orientation_servo(self) -> None:
         """Derived from ``mjtTrn`` so a transmission added upstream fails here.
+
+        ``mjTRN_SO3`` is the one member deliberately absent: its ``trnid[0]``
+        indexes a site or a ball joint depending on how the actuator was
+        spelled, so the transmission type does not fix the table to read the
+        target's name from. It is left unmapped rather than disambiguated
+        because it cannot arrive -- see the cell below -- and the mapping is what
+        reports it if that ever changes.
+
+        The equality is the tripwire: a transmission added upstream is in
+        neither set and fails here instead of silently reaching the branch that
+        drops an actuator's command.
 
         ``mjTRN_UNDEFINED`` is excluded: it is the sentinel for "no transmission
         resolved", not a kind of target.
@@ -376,7 +422,28 @@ class TestTheKeyVocabulary:
         }
         assert defined
         unmapped = {trn for trn in defined if scene_ops._actuator_target_kind(trn, mujoco) is None}
-        assert unmapped == set()
+        assert unmapped == ({int(_SO3_TRN)} if _SO3_TRN is not None else set())
+
+    @pytest.mark.skipif(_SO3_TRN is None, reason="mjTRN_SO3 arrived in mujoco 3.12; the manifest floor is 3.5")
+    def test_an_orientation_actuator_is_refused_before_it_could_need_a_key(self) -> None:
+        """Why the unmapped transmission is unreachable rather than unhandled.
+
+        An orientation actuator takes three controls, so the model compiles with
+        ``nu > nactuator``. This backend addresses an actuator by its control
+        index, so :func:`scene_ops._unaddressable_actuator_reason` declines such
+        a model -- and a rebuild declines it before installing it, which is the
+        only path that reaches :func:`scene_ops._actuator_key`.
+
+        Should that refusal ever lift, this cell fails and the key has to learn
+        which table the target name came from.
+        """
+        so3 = _SO3_TRN
+        assert so3 is not None, "the skipif above admits only a build that defines mjTRN_SO3"
+        model = mujoco.MjModel.from_xml_string(_ORIENTATION_XML)
+        trntypes = {int(model.actuator_trntype[aid]) for aid in range(int(getattr(model, "nactuator", model.nu)))}
+        assert int(so3) in trntypes
+        assert int(model.nu) > int(model.nactuator)
+        assert scene_ops._unaddressable_actuator_reason(model, mujoco) is not None
 
     def test_an_unknown_transmission_is_reported_rather_than_guessed(self, scene: Any) -> None:
         """The residual case: nothing identifies the target, so no key is built."""
