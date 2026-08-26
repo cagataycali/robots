@@ -249,9 +249,26 @@ robot.teleoperate(names=["arm", "base"])           # both stream into send_actio
 
 ### Bimanual leader → follower
 
+A bimanual device is two arms, so each side carries its own config object -
+there is no single `port` covering both. The registered follower name is
+`bi_so_follower`, and both `BiSOFollowerConfig` and `BiSOLeaderConfig` require a
+`left_arm_config` / `right_arm_config` pair.
+
 ```python
-bi = Robot("bi_so", mode="real", left_port="/dev/ttyACM0", right_port="/dev/ttyACM1")
-bi.attach_teleop("bi_so_leader", left_port="/dev/ttyACM2", right_port="/dev/ttyACM3")
+from lerobot.robots.so_follower import SOFollowerConfig
+from lerobot.teleoperators.so_leader import SOLeaderConfig
+
+bi = Robot(
+    "bi_so_follower",
+    mode="real",
+    left_arm_config=SOFollowerConfig(port="/dev/ttyACM0"),
+    right_arm_config=SOFollowerConfig(port="/dev/ttyACM1"),
+)
+bi.attach_teleop(
+    "bi_so_leader",
+    left_arm_config=SOLeaderConfig(port="/dev/ttyACM2"),
+    right_arm_config=SOLeaderConfig(port="/dev/ttyACM3"),
+)
 bi.teleoperate()
 ```
 
