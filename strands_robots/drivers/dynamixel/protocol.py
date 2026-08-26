@@ -1,7 +1,10 @@
 """Dynamixel Protocol 2.0 wire format. Pure, no I/O.
 
 Every function here is verifiable against Robotis' ``dynamixel_sdk`` byte-for
--byte. The point of extracting the codec from the SDK is not to avoid the
+-byte, with one deliberate exception documented on :func:`_unstuff`: the SDK's
+``removeStuffing`` is not the inverse of its own ``addStuffing``, so grading
+against it would reintroduce a byte loss. The point of extracting the codec
+from the SDK is not to avoid the
 dependency - ``dynamixel_sdk`` is on PyPI and small - but to make the wire
 format part of the driver's own test surface. The SDK's parser lives inside
 ``PacketHandler.readTxRx`` and cannot be exercised without opening a port,
@@ -208,9 +211,29 @@ def _stuff(frame: bytes) -> bytes:
 def _unstuff(payload: bytes) -> bytes:
     """Remove Protocol 2.0 escape bytes from a received payload.
 
-    The inverse of :func:`_stuff`, and the mirror of Robotis'
-    ``removeStuffing``: a ``0xFD`` that follows a ``FF FF FD`` run is an
-    escape the servo inserted and is not part of the data.
+    The exact inverse of :func:`_stuff`: a ``0xFD`` that follows a ``FF FF FD``
+    run is an escape the servo inserted and is not part of the data.
+
+    This is the one function in the module that is **not** a port of its
+    ``dynamixel_sdk`` counterpart, and the divergence is deliberate. Robotis'
+    ``removeStuffing`` compacts the packet in place, so its two-byte look-back
+    reads buffer positions the same loop has already overwritten. On a payload
+    carrying two reserved runs it therefore matches an ``FF FF`` that is not
+    there and drops a data byte: ``FF FF FD FF FD FD`` survives this function
+    unchanged and comes back from ``removeStuffing`` as ``FF FF FD FF FD``.
+
+    What goes wrong there is the in-place compaction, not the choice of buffer:
+    reading the emitted output (as below) and reading the untouched input are
+    equivalent, because a stuffed payload still carries the run intact at the
+    position being examined. Only a buffer the same loop is rewriting can
+    answer with a byte that is no longer there. The round trip is therefore the
+    adjudicator rather than parity with the SDK: an escape/unescape pair that
+    is not the identity is broken whichever implementation is older.
+
+    Do not "restore parity" by porting ``removeStuffing`` in. The invariant to
+    preserve is that ``_unstuff`` recovers exactly what :func:`_stuff` was
+    given, for every payload including one carrying two reserved runs - not
+    agreement with the SDK, which does not hold that invariant itself.
 
     Args:
         payload: The bytes from ``INST`` through the last parameter of a
