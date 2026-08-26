@@ -30,6 +30,39 @@ from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, ensure_dds
 logger = logging.getLogger(__name__)
 
 
+def _release_partial(endpoint: Any | None, what: str) -> None:
+    """Close an endpoint whose construction failed, rather than dropping it.
+
+    ``ChannelSubscriber.__init__`` and ``ChannelPublisher.__init__`` create a
+    live ``Channel`` before ``Init`` runs, and ``Init`` is not atomic either:
+    ``unitree_sdk2py`` starts the ``ch_reader`` daemon thread *before* it
+    constructs the ``DataReader`` that can raise. A construction that fails
+    part way therefore leaves an endpoint holding real DDS state, and for a
+    subscriber that state includes a running thread whose target is a bound
+    method of the channel's reader - the same thread
+    :meth:`DDSSubscriberSet.close` documents, which keeps the channel
+    reachable so no finaliser releases it.
+
+    Such an endpoint is unreachable from :meth:`DDSSubscriberSet.close` and
+    :meth:`DDSPublisher.close`, because the call that failed never recorded
+    it - so releasing it here is the only opportunity. ``Close()`` is safe on
+    a half-built endpoint: it routes to ``Channel.CloseReader`` /
+    ``CloseWriter``, which skip an entity that was never created and still
+    stop and join the reader thread.
+
+    Args:
+        endpoint: The half-built subscriber or publisher, or ``None`` when the
+            constructor itself raised and there is nothing to release.
+        what: How to name the endpoint if closing it also fails.
+    """
+    if endpoint is None:
+        return
+    try:
+        endpoint.Close()
+    except Exception as exc:  # noqa: BLE001 - SDK raises bare Exception
+        logger.warning("failed to close a partially built %s: %s", what, exc)
+
+
 class DDSSubscriberSet:
     """A bag of :class:`unitree_sdk2py.core.channel.ChannelSubscriber` objects.
 
@@ -89,7 +122,10 @@ class DDSSubscriberSet:
 
         Returns:
             ``None`` on success. An error string if the SDK is missing or the
-            subscriber constructor raised; never raises.
+            subscriber constructor raised; never raises. A construction that
+            failed part way is closed before the reason is returned, because
+            an unrecorded subscriber is one :meth:`close` can never reach -
+            see :func:`_release_partial`.
         """
         if not self._started:
             return "DDS not initialised - call start() first"
@@ -99,10 +135,12 @@ class DDSSubscriberSet:
         except ImportError as exc:  # pragma: no cover - exercised on hardware
             return f"unitree_sdk2py is not installed: {exc}"
         with _DDS_INIT_LOCK:
+            sub: Any | None = None
             try:
                 sub = ChannelSubscriber(topic, message_class)
                 sub.Init(callback, 10)
             except Exception as exc:  # noqa: BLE001 - SDK raises bare Exception
+                _release_partial(sub, f"subscriber for {topic!r}")
                 return f"failed to subscribe to {topic!r}: {exc}"
             self._subs.append(sub)
             logger.debug("subscribed to %s", topic)
@@ -211,7 +249,10 @@ class DDSPublisher:
 
         Returns:
             ``(publisher, None)`` on success. ``(None, reason)`` if the SDK
-            is missing or the publisher constructor raised; never raises.
+            is missing or the publisher constructor raised; never raises. A
+            construction that failed part way is closed before the reason is
+            returned, because an uncached publisher is one :meth:`close` can
+            never reach - see :func:`_release_partial`.
         """
         if not self._started:
             return None, "DDS not initialised - call start() first"
@@ -230,10 +271,12 @@ class DDSPublisher:
             cached = self._pubs.get(key)
             if cached is not None:
                 return cached, None
+            pub: Any | None = None
             try:
                 pub = ChannelPublisher(topic, message_class)
                 pub.Init()
             except Exception as exc:  # noqa: BLE001 - SDK raises bare Exception
+                _release_partial(pub, f"publisher for {topic!r}")
                 return None, f"failed to build publisher for {topic!r}: {exc}"
             self._pubs[key] = pub
             logger.debug("built publisher for %s", topic)

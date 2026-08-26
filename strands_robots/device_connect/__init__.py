@@ -12,23 +12,56 @@ Usage:
     # Now discoverable via Device Connect tools:
     #   discover_devices(device_type="strands_robot")
     #   invoke_device("so100-lab-1", "execute", {"instruction": "pick up cube"})
+
+Module-load discipline
+----------------------
+
+Every symbol this package exports is behind ``__getattr__`` (:pep:`562`). The
+package imports on a stock ``pip install strands-robots`` -- with no extras --
+and only reaches ``device_connect_edge`` when a caller *uses* a name that needs
+it. The four Device Connect drivers, ``DeviceRuntime`` and the two
+``init_device_connect`` entry points all sit behind that gate.
+
+This is required, not a stylistic choice. The sibling module
+``strands_robots.device_connect.reachy_transport`` is stdlib-only and is
+imported by the native Reachy driver (``strands_robots.drivers.reachy``, landing in #2762).
+Importing that leaf executes this ``__init__``, so a package init that eagerly
+imports ``device_connect_edge`` raises ``ModuleNotFoundError`` inside the
+native driver's first daemon touch on any install without ``[device-connect]``
+-- escaping the driver's own no-raise refusal contract and breaking three
+:mod:`AGENTS.md` conventions at once (\"Return error dicts, never raise\",
+``require_optional()`` for optional deps, the module-load discipline the
+driver's docstring makes explicit).
+
+The public names are unchanged: ``from strands_robots.device_connect import
+init_device_connect`` still works, and only fails when the caller reaches for a
+name whose implementation genuinely needs ``device_connect_edge``. Static tools
+(mypy, IDE autocomplete) see the names through the ``TYPE_CHECKING`` guard.
 """
 
-import asyncio
-import logging
-import os
-import threading
-import uuid
-from typing import Any
+from __future__ import annotations
 
-from device_connect_edge import DeviceRuntime
+import importlib
+from typing import TYPE_CHECKING, Any
 
-from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
-from strands_robots.device_connect.robot_driver import RobotDeviceDriver
-from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
-from strands_robots.utils import is_boolean
+if TYPE_CHECKING:  # pragma: no cover - typing-only, never executed
+    from device_connect_edge import DeviceRuntime  # noqa: F401
 
-logger = logging.getLogger(__name__)
+    from strands_robots.device_connect._impl import (  # noqa: F401
+        init_device_connect,
+        init_device_connect_sync,
+        resolve_allow_insecure,
+    )
+    from strands_robots.device_connect.reachy_mini_driver import (  # noqa: F401
+        ReachyMiniDriver,
+    )
+    from strands_robots.device_connect.robot_driver import (  # noqa: F401
+        RobotDeviceDriver,
+    )
+    from strands_robots.device_connect.sim_driver import (  # noqa: F401
+        SimulationDeviceDriver,
+    )
+
 
 __all__ = [
     "init_device_connect",
@@ -39,263 +72,111 @@ __all__ = [
     "ReachyMiniDriver",
 ]
 
-_INSECURE_TRUE = ("true", "1", "yes")
 
-# ``init_device_connect_sync`` bounds the background bring-up: the awaited half
-# constructs a ``DeviceRuntime``, which can block on a broker, so the wrapper
-# must not hang its caller forever. Expiry is a failed bring-up, not a slow one
+# The bring-up budget ``init_device_connect_sync`` bounds its background thread
+# with. A float literal with no ``device_connect_edge`` dependency, so it is
+# defined here rather than served from ``_impl``: routing it through that module
+# would make reading the shipped budget import the extra, and a deferred import
+# that still fires is not a deferral. ``init_device_connect_sync`` reads it back
+# off this package, which is also what lets a test substitute a millisecond
+# budget for the shipped 30 seconds. Expiry is a failed bring-up, not a slow one
 # that later succeeds -- the wrapper has already returned by then.
 _INIT_TIMEOUT_S: float = 30.0
 
 
-def resolve_allow_insecure(
-    explicit: bool | None = None,
-    env_value: str | None = None,
-) -> bool:
-    """Resolve the effective ``allow_insecure`` setting (secure by default).
+# Map each name callers reach through the package to the module it lives in.
+# The public :data:`__all__` names are the documented API; the additional
+# private names below are module-level symbols ``_impl`` defines or re-exports
+# (via ``from device_connect_edge import ...``) that existing tests and callers
+# reach through this package. Serving them here keeps
+# ``mock.patch("strands_robots.device_connect.DeviceRuntime", ...)`` working
+# without eagerly importing ``device_connect_edge`` on package load -- the
+# import is deferred until first access, same as every other lazy name.
+#
+# All three driver modules import ``device_connect_edge`` at module load, and
+# the two ``init_device_connect*`` entry points construct a ``DeviceRuntime``
+# from it. ``resolve_allow_insecure`` is stdlib-only, kept in the same private
+# ``_impl`` module so its behavioural pin does not drag the extra in either.
+_ATTR_TO_MODULE: dict[str, str] = {
+    "init_device_connect": "strands_robots.device_connect._impl",
+    "init_device_connect_sync": "strands_robots.device_connect._impl",
+    "resolve_allow_insecure": "strands_robots.device_connect._impl",
+    "RobotDeviceDriver": "strands_robots.device_connect.robot_driver",
+    "SimulationDeviceDriver": "strands_robots.device_connect.sim_driver",
+    "ReachyMiniDriver": "strands_robots.device_connect.reachy_mini_driver",
+    # Names re-exported by ``_impl`` from ``device_connect_edge``. Not in
+    # ``__all__`` (not part of the public API), but reachable through the
+    # package because existing tests patch them here -- and because dropping
+    # a name that used to live on the package silently is a worse contract
+    # break than any lazy-import scheme is meant to prevent.
+    "DeviceRuntime": "strands_robots.device_connect._impl",
+    # Private helper the heartbeat regression suite imports through the
+    # package (``from strands_robots.device_connect import _build_heartbeat``).
+    # Leading underscore is a "not public API" signal, not a "not reachable"
+    # signal; it lived here before this PR and existing suites depend on it.
+    "_build_heartbeat": "strands_robots.device_connect._impl",
+    # The opt-in vocabulary the insecure-setting refusal quotes. Read through
+    # the package by the ``TestParsingTheArgumentWasRejectedForAMeasuredReason``
+    # suite, which pins the refusal's contract by comparing its message against
+    # this tuple's values (an ``on``/``enabled``/``y`` spelling outside the
+    # vocabulary should read as secure, and the vocabulary itself is what the
+    # refusal quotes).
+    "_INSECURE_TRUE": "strands_robots.device_connect._impl",
+}
 
-    Precedence: explicit arg > ``DEVICE_CONNECT_ALLOW_INSECURE`` env var >
-    secure default (``False``). Insecure transport is never implicit - it
-    must be opted into via the argument or the env var.
 
-    Extracted as a pure function so the secure-by-default posture is unit
-    testable without standing up a DeviceRuntime.
+def __getattr__(name: str) -> Any:
+    """Resolve a public name lazily.
 
-    The two sources carry the same setting in different shapes, and each is held
-    to its own declared type rather than to the other's. An environment variable
-    is a string by construction, so *env_value* is **parsed**: only
-    ``("true", "1", "yes")`` opt in and every other spelling is secure. The
-    argument is declared ``bool | None``, so it is **checked**: a non-boolean is
-    refused rather than parsed with that same vocabulary.
+    Follows :pep:`562`. Called by the Python attribute machinery only when
+    ``name`` is not already in the module's namespace, so first access pays
+    the import cost and every subsequent access is a plain attribute read.
 
-    Checking the argument is what keeps the two sources from disagreeing about
-    one value. A non-empty string is truthy, so returning the argument as given
-    made ``resolve_allow_insecure("false")`` enable insecure transport while
-    ``DEVICE_CONNECT_ALLOW_INSECURE=false`` disabled it: every falsy spelling
-    inverted, and only on the path documented here as the higher precedence.
-    Parsing the argument with the environment vocabulary instead would move
-    which spellings invert rather than remove the inversion - ``"on"``,
-    ``"enabled"`` and ``"y"`` are absent from that vocabulary, so each would
-    silently resolve to secure while reading as an opt-in.
-
-    Args:
-        explicit: The caller's setting, or ``None`` to fall through to the
-            environment variable. Must be a python or numpy boolean when given.
-        env_value: The raw ``DEVICE_CONNECT_ALLOW_INSECURE`` value, or ``None``
-            when it is unset.
-
-    Returns:
-        Whether insecure transport is enabled, always as a real ``bool`` - so a
-        numpy boolean from a caller's own comparison satisfies the annotation
-        and the identity assertions the runtime's setting is pinned with.
-
-    Raises:
-        ValueError: If *explicit* is neither a boolean nor ``None``, or
-            *env_value* is neither a string nor ``None``.
+    A name that needs ``device_connect_edge`` is not imported by this package
+    on load. Reaching for one on an install without ``[device-connect]``
+    raises the ``ImportError`` from the target module rather than during
+    ``import strands_robots.device_connect``. That is what lets the stdlib-only
+    leaf ``strands_robots.device_connect.reachy_transport`` be imported on a
+    stock install: importing that leaf executes this ``__init__`` first, and
+    with this contract that ``__init__`` succeeds.
     """
-    if explicit is not None:
-        if not is_boolean(explicit):
-            raise ValueError(
-                f"allow_insecure must be a bool or None, got {explicit!r}. A string "
-                "spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where "
-                f"{_INSECURE_TRUE} opt in and anything else is secure; passed as this "
-                "argument a non-empty string is truthy, so 'false' would enable insecure "
-                "transport rather than refuse it."
-            )
-        return bool(explicit)
-    if env_value is not None:
-        if not isinstance(env_value, str):
-            raise ValueError(
-                f"env_value must be a str or None, got {env_value!r}. It carries the raw "
-                "DEVICE_CONNECT_ALLOW_INSECURE value, which is a string by construction; a "
-                "caller that has already resolved a boolean should pass it as the explicit "
-                "argument instead, where it is checked rather than parsed."
-            )
-        return env_value.lower() in _INSECURE_TRUE
-    return False
+    # Public name from the export table -- resolve to a symbol its module carries.
+    module_name = _ATTR_TO_MODULE.get(name)
+    if module_name is not None:
+        module = importlib.import_module(module_name)
+        value = getattr(module, name)
+        # Cache on the package so subsequent lookups skip __getattr__ entirely
+        # and ``getattr`` returns bit-identical references across calls.
+        globals()[name] = value
+        return value
 
-
-async def init_device_connect(
-    robot,
-    peer_id: str | None = None,
-    peer_type: str = "robot",
-    messaging_url: str | None = None,
-    messaging_backend: str | None = None,
-    tenant: str = "default",
-    allow_insecure: bool | None = None,
-) -> DeviceRuntime:
-    """Initialize Device Connect for a Robot or Simulation.
-
-    Drop-in replacement for init_mesh(). Creates a DeviceDriver adapter
-    and starts a DeviceRuntime in the background.
-
-    When messaging_backend="zenoh" and messaging_url is None, the runtime
-    enters D2D mode - devices discover each other directly via Zenoh
-    multicast scouting on the LAN. No broker, no Docker, no env vars.
-
-    Args:
-        robot: A Robot or Simulation instance to wrap.
-        peer_id: Device ID for registration (auto-generated if None).
-        peer_type: "robot" or "sim" - selects the appropriate driver.
-        messaging_url: Explicit messaging URL (overrides env vars).
-        messaging_backend: Messaging backend - "zenoh" or "nats".
-            None = auto-detect from MESSAGING_BACKEND env var (default "zenoh").
-        tenant: Device Connect tenant namespace.
-        allow_insecure: Allow insecure (unencrypted, unauthenticated)
-            transport. Must be a boolean or None; a string spelling such as
-            ``"false"`` is refused here rather than read, because the string
-            vocabulary belongs to DEVICE_CONNECT_ALLOW_INSECURE and a non-empty
-            string is truthy as an argument. None = auto-detect: respects the
-            DEVICE_CONNECT_ALLOW_INSECURE env var if set, otherwise defaults
-            to False (secure). Insecure transport must be explicitly opted
-            into; a prominent warning is logged whenever it is active.
-
-    Returns:
-        The running DeviceRuntime instance.
-    """
-    if peer_type == "sim":
-        driver = SimulationDeviceDriver(robot)
-    else:
-        driver = RobotDeviceDriver(robot)
-
-    device_id = peer_id or f"{getattr(robot, 'tool_name_str', 'robot')}-{uuid.uuid4().hex[:4]}"
-
-    urls = [messaging_url] if messaging_url else None
-
-    # Resolve messaging_backend: explicit arg > env var > default "zenoh"
-    if messaging_backend is None:
-        messaging_backend = os.environ.get("MESSAGING_BACKEND", "zenoh")
-
-    # Resolve allow_insecure: explicit arg > env var > secure default.
-    # Security hardening: insecure (unencrypted, unauthenticated) transport is
-    # NO LONGER the default. It must be explicitly opted into - via the
-    # ``allow_insecure=True`` argument or ``DEVICE_CONNECT_ALLOW_INSECURE`` env
-    # var - and we log a prominent warning whenever it is active so an insecure
-    # deployment is never silent.
-    allow_insecure = resolve_allow_insecure(allow_insecure, os.environ.get("DEVICE_CONNECT_ALLOW_INSECURE"))
-
-    if allow_insecure:
-        logger.warning(
-            "Device Connect is running in INSECURE mode (unencrypted, "
-            "unauthenticated transport). Robot commands and state are exposed "
-            "to the local network. Only use this on a trusted, isolated "
-            "network; configure a broker / secure transport for production."
-        )
-
-    runtime = DeviceRuntime(
-        driver=driver,
-        device_id=device_id,
-        messaging_urls=urls,
-        messaging_backend=messaging_backend,
-        tenant=tenant,
-        allow_insecure=allow_insecure,
-    )
-
-    # Provide robot-specific heartbeat data
-    runtime.set_heartbeat_provider(lambda: _build_heartbeat(robot, peer_type))
-
-    # Start runtime in background task; store ref to prevent GC
-    runtime._background_task = asyncio.create_task(runtime.run())
-
-    logger.info(
-        "Device Connect initialized: %s (%s, backend=%s, d2d=%s)", device_id, peer_type, messaging_backend, urls is None
-    )
-    return runtime
-
-
-def init_device_connect_sync(
-    robot,
-    peer_id: str | None = None,
-    peer_type: str = "robot",
-    messaging_url: str | None = None,
-    messaging_backend: str | None = None,
-    tenant: str = "default",
-    allow_insecure: bool | None = None,
-) -> "DeviceRuntime":
-    """Non-blocking sync wrapper around init_device_connect().
-
-    Starts the DeviceRuntime on a dedicated daemon thread so the caller
-    returns immediately - matching the Zenoh mesh ``init_mesh()`` pattern.
-    The runtime stays alive as long as the process (daemon thread).
-
-    Same parameters as :func:`init_device_connect`.
-
-    Raises:
-        Exception: Whatever :func:`init_device_connect` raised on the
-            background thread, re-raised here so a failed bring-up reaches
-            the caller rather than being confined to a thread it cannot see.
-        TimeoutError: If the bring-up does not finish within the wrapper's
-            budget. The runtime is not returned in that case, so the caller
-            is never handed ``None`` in place of a ``DeviceRuntime``.
-    """
-    loop = asyncio.new_event_loop()
-    ready = threading.Event()
-    runtime_holder = [None]
-    error_holder = [None]
-
-    async def _start():
+    # Submodule lookup -- ``getattr(pkg, "reachy_transport")`` and
+    # ``from strands_robots.device_connect import reachy_transport`` are the two
+    # spellings a caller uses to reach the leaves this package ships, and only
+    # the second one is served by Python's own import machinery before
+    # ``__getattr__`` is consulted. Attempting the import here answers the first
+    # spelling with the same module the second returns, without turning the
+    # dispatcher into a wildcard: a non-existent submodule name still raises
+    # ``AttributeError`` below, because ``import_module`` for a name that is
+    # neither a module nor in the export table raises ``ModuleNotFoundError``
+    # here rather than reaching the caller as an attribute miss.
+    if not name.startswith("_"):
         try:
-            rt = await init_device_connect(
-                robot,
-                peer_id=peer_id,
-                peer_type=peer_type,
-                messaging_url=messaging_url,
-                messaging_backend=messaging_backend,
-                tenant=tenant,
-                allow_insecure=allow_insecure,
-            )
-            runtime_holder[0] = rt
-        except Exception as exc:
-            error_holder[0] = exc
-        finally:
-            ready.set()
+            submodule = importlib.import_module(f"{__name__}.{name}")
+        except ModuleNotFoundError:
+            pass
+        else:
+            globals()[name] = submodule
+            return submodule
 
-    def _run():
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(_start())
-        loop.run_forever()
-
-    thread = threading.Thread(target=_run, daemon=True, name="device-connect-runtime")
-    thread.start()
-    started = ready.wait(timeout=_INIT_TIMEOUT_S)
-
-    # The recorded failure first: ``_start``'s ``finally`` sets the event on both
-    # paths, so a bring-up that failed inside the budget arrives with ``started``
-    # true and its own exception, which names the cause better than the budget.
-    if error_holder[0] is not None:
-        raise error_holder[0]
-    if not started:
-        raise TimeoutError(
-            f"init_device_connect_sync: the Device Connect runtime did not come up "
-            f"within {_INIT_TIMEOUT_S:g}s. The bring-up is still running on its "
-            f"background thread; check that the messaging URL / broker is reachable."
-        )
-
-    runtime = runtime_holder[0]
-    if runtime is not None:
-        runtime._loop = loop
-        runtime._thread = thread
-    return runtime
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _build_heartbeat(robot: Any, peer_type: str) -> dict[str, Any]:
-    """Build heartbeat payload with robot-specific metadata."""
-    data = {
-        "peer_type": peer_type,
-        "tool_name": getattr(robot, "tool_name_str", "unknown"),
-    }
+def __dir__() -> list[str]:
+    """Advertise the lazy names to ``dir()`` and IDE completion.
 
-    if peer_type == "robot":
-        task = getattr(robot, "_task_state", None)
-        if task:
-            data["task_status"] = getattr(task.status, "value", "unknown")
-            data["instruction"] = task.instruction or ""
-            data["step_count"] = task.step_count
-    elif peer_type == "sim":
-        world = getattr(robot, "_world", None)
-        if world:
-            data["sim_time"] = world.sim_time
-            data["step_count"] = world.step_count
-            data["robots"] = list(world.robots.keys())
-
-    return data
+    Without this, ``dir(strands_robots.device_connect)`` reports only the
+    module's own literals, hiding every public symbol from a reader listing
+    the package's contents.
+    """
+    return sorted(set(__all__) | set(globals()))

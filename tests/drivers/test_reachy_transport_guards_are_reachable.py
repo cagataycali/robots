@@ -23,14 +23,21 @@ packaging accident, that the reason reaches a mesh peer, and that a working inst
 is unaffected.
 
 The absence is simulated rather than installed, since the suite runs where the
-extra is present: :func:`_hide_extra` makes ``device_connect_edge`` unimportable and
-evicts the already-imported ``strands_robots.device_connect`` package so the next
-import re-executes the ``__init__`` that fails. That is the same failure a stock
-install produces, at the same place, and ``monkeypatch`` restores both halves.
+transport is importable. :func:`_block_transport` blocks the one module
+:func:`~strands_robots.drivers.reachy._resolve_transport` imports, and ``monkeypatch``
+restores it. Blocking that module is what ties the simulation to the resolver rather
+than to a packaging detail upstream of it: the resolver reports on this import and on
+nothing before it, so an absence staged anywhere else is only a refusal by
+coincidence. Staging it by making ``device_connect_edge`` unimportable and evicting
+the ``strands_robots.device_connect`` subtree - so the next import re-executes an
+``__init__`` that fails - stops simulating anything as soon as that ``__init__``
+stops needing the extra, and the driver then reaches the real daemon instead of
+refusing.
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import sys
 from pathlib import Path
@@ -41,24 +48,32 @@ import pytest
 import strands_robots.drivers.reachy as reachy_mod
 from strands_robots.drivers.reachy import ReachyDriver
 
-#: The dependency the ``[device-connect]`` extra supplies, and the only reason the
-#: transport package needs the extra at all.
+#: The dependency the ``[device-connect]`` extra supplies. The transport leaf needs
+#: nothing from it; only the drivers its parent package ships do.
 _EXTRA_DEP = "device_connect_edge"
+
+#: The module :func:`~strands_robots.drivers.reachy._resolve_transport` imports. A
+#: refusal-by-name has to be measured against this one being unimportable, because
+#: this import is the only thing the resolver reports on.
+_TRANSPORT_MODULE = reachy_mod._TRANSPORT_MODULE
 
 #: A daemon status body shaped like the real one. ``wireless_version=False`` is a
 #: Lite, the variant that needs no Zenoh transport and so is simplest to bring up.
 _LITE_STATUS: dict[str, Any] = {"wireless_version": False, "motors": "on"}
 
 
-def _hide_extra(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the ``[device-connect]`` extra unimportable for the current test.
+def _block_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the transport module unimportable for the current test.
+
+    Blocks that one entry and leaves the rest of ``sys.modules`` alone. Evicting the
+    ``strands_robots.device_connect`` subtree instead lets the next import build a
+    second module object for a name a later test patches through the first, so a
+    double installed on one is not read through the other.
 
     Args:
-        monkeypatch: pytest's patcher, which restores every change made here.
+        monkeypatch: pytest's patcher, which restores the entry after the test.
     """
-    for name in [n for n in list(sys.modules) if n.startswith("strands_robots.device_connect")]:
-        monkeypatch.delitem(sys.modules, name)
-    monkeypatch.setitem(sys.modules, _EXTRA_DEP, None)
+    monkeypatch.setitem(sys.modules, _TRANSPORT_MODULE, None)
 
 
 def _names_the_extra(text: str) -> bool:
@@ -125,7 +140,8 @@ class TestTheExtraIsAPackagingAccident:
     If the transport genuinely needed ``device_connect_edge``, requiring the extra
     would be correct and a refusal would be the wrong answer - the driver would
     simply not be a core-install driver. These pin that the leaf needs nothing from
-    it and that the parent package is what pulls it in.
+    it, and that nothing on the load path pulls it in either - which is why the
+    absence a refusal is measured against has to be staged at the leaf itself.
     """
 
     def test_the_transport_module_never_mentions_the_extras_dependency(self) -> None:
@@ -133,10 +149,31 @@ class TestTheExtraIsAPackagingAccident:
         package = Path(reachy_mod.__file__).parent.parent / "device_connect"
         assert _EXTRA_DEP not in (package / "reachy_transport.py").read_text(encoding="utf-8")
 
-    def test_the_package_init_is_what_pulls_the_extra_in(self) -> None:
-        """The package ``__init__`` imports the dependency at module scope."""
+    def test_the_package_init_does_not_pull_the_extra_in_at_runtime(self) -> None:
+        """No runtime module-scope import of the extra, so blocking it stages nothing.
+
+        Read off the statements that actually execute. A ``TYPE_CHECKING`` block
+        carries the same text and never runs, so a source scan that does not exclude
+        it reports an eager import where there is none - and a simulation built on
+        that reading refuses nothing.
+        """
         package = Path(reachy_mod.__file__).parent.parent / "device_connect"
-        assert f"from {_EXTRA_DEP} import" in (package / "__init__.py").read_text(encoding="utf-8")
+        module = ast.parse((package / "__init__.py").read_text(encoding="utf-8"))
+        imported: set[str] = set()
+        pending: list[ast.AST] = [
+            node for node in module.body if not (isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test))
+        ]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module or "")
+            elif not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                pending.extend(ast.iter_child_nodes(node))
+        assert not [name for name in imported if name.split(".")[0] == _EXTRA_DEP], (
+            f"{_EXTRA_DEP} is imported where the package load will execute it: {sorted(imported)}"
+        )
 
     def test_the_resolver_answers_with_the_module_when_the_extra_is_present(self) -> None:
         """The control: nothing here refuses in an install that has the extra."""
@@ -150,13 +187,13 @@ class TestEachGuardIsReachedOnItsOwn:
 
     def test_the_daemon_probe_reports_an_error_body(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``_daemon_get`` answers in the ``{"error": ...}`` shape its callers read."""
-        _hide_extra(monkeypatch)
+        _block_transport(monkeypatch)
         driver = ReachyDriver(host="reachy.local")
         assert _names_the_extra(driver._daemon_get(reachy_mod._PATH_STATUS)["error"])
 
     def test_the_link_builder_returns_the_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``_build_link`` answers in the reason contract it already documents."""
-        _hide_extra(monkeypatch)
+        _block_transport(monkeypatch)
         driver = ReachyDriver(host="reachy.local")
         assert _names_the_extra(driver._build_link(is_lite=True))
 
@@ -166,7 +203,7 @@ class TestTheReasonReachesAMeshPeer:
 
     def test_get_status_answers_and_carries_the_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``get_status`` succeeds, reporting the reason as ``connect_error``."""
-        _hide_extra(monkeypatch)
+        _block_transport(monkeypatch)
         driver = ReachyDriver(host="reachy.local")
         driver.connect_eagerly()
         status = asyncio.run(driver.get_status())
@@ -187,7 +224,7 @@ class TestSendActionRefusesInsteadOfMisdiagnosing:
         """A valid axis name must not be reported as an unrecognised one."""
         driver, _link = _connected_driver(monkeypatch)
         try:
-            _hide_extra(monkeypatch)
+            _block_transport(monkeypatch)
             assert "nothing to send" not in driver.send_action({"body_yaw": 10.0})["content"][0]["text"]
         finally:
             driver.cleanup()
@@ -196,7 +233,7 @@ class TestSendActionRefusesInsteadOfMisdiagnosing:
         """A refused action sends no partial command."""
         driver, link = _connected_driver(monkeypatch)
         try:
-            _hide_extra(monkeypatch)
+            _block_transport(monkeypatch)
             driver.send_action({"body_yaw": 10.0})
             assert link.commands == []
         finally:
