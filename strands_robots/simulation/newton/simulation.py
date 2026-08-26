@@ -39,7 +39,7 @@ import numpy as np
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import SimEngine, reject_setup_kwargs
-from strands_robots.simulation.ik import hint_matches_name
+from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
 from strands_robots.simulation.model_registry import (
     list_available_models,
     resolve_model,
@@ -95,13 +95,6 @@ logger = logging.getLogger(__name__)
 # example cadence and keeps position-servo arms tracking their targets.
 _DEFAULT_TIMESTEP = 1.0 / 600.0
 
-# Hint words for the best-guess gripper/EEF mount ``list_bodies`` advertises.
-# Newton adds "jaw" (its own MJCF vocabulary) to the MuJoCo backend's set.
-# Matched on word boundaries by
-# :func:`~strands_robots.simulation.ik.hint_matches_name` - the same rule
-# :func:`~strands_robots.simulation.ik.discover_ee_frame` applies - so the short
-# hint "ee" cannot fire inside "knee" or "wheel".
-_GRIPPER_BODY_HINTS = ("gripper", "hand", "jaw", "ee", "tool")
 
 # Valid ``add_robot(source=...)`` selectors. ``None``/``"registry"`` resolve
 # the curated registry + MJCF asset manager (the same path the MuJoCo backend
@@ -2143,7 +2136,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         path (``so_arm100/.../Moving_Jaw``); the ``json`` block returns the
         full labels and, when ``robot_name`` is given, a best-guess
         ``gripper_body`` one of whose trailing segment's *name components* is
-        ``gripper``, ``hand``, ``jaw``, ``ee``, or ``tool``. Hints match
+        one of :data:`~strands_robots.simulation.ik.GRIPPER_BODY_HINTS`, the set
+        every backend reads: ``gripper``, ``hand``, ``jaw``, ``ee`` or ``tool``.
+        Hints match
         components rather than bare substrings, so a short hint cannot fire
         inside an unrelated word: a ``knee`` or a drive ``wheel`` is not an
         end-effector because ``ee`` occurs in its name.
@@ -2181,7 +2176,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             gripper_body: str | None = None
             for name in bodies:
                 short = _short_joint_name(name)
-                if any(hint_matches_name(hint, short) for hint in _GRIPPER_BODY_HINTS):
+                if any(hint_matches_name(hint, short) for hint in GRIPPER_BODY_HINTS):
                     gripper_body = name
                     break
             json_payload["gripper_body"] = gripper_body

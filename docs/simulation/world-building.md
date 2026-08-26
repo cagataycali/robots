@@ -592,7 +592,7 @@ sim.add_camera(name="wrist", parent_body=mount,
 
 `list_bodies()` (no `robot_name`) lists every body in the world; with `robot_name` it scopes to that robot and also returns `gripper_body`, the best-guess end-effector mount.
 
-The guess matches its hint words (`gripper`, `hand`, `ee`, `tool`) on word boundaries, so a short hint cannot fire inside an unrelated word - a `knee` link or a `wheel` hub is not a gripper mount because `ee` occurs in its name. A robot with no gripper-like body reports `gripper_body: None` and omits the mount line rather than naming an unrelated body; pick the mount from the full `bodies` list in that case.
+The guess matches its hint words (`gripper`, `hand`, `jaw`, `ee`, `tool` - one set, read by every backend) on word boundaries, so a short hint cannot fire inside an unrelated word - a `knee` link or a `wheel` hub is not a gripper mount because `ee` occurs in its name. A robot with no gripper-like body reports `gripper_body: None` and omits the mount line rather than naming an unrelated body; pick the mount from the full `bodies` list in that case. `jaw` is in the set because the SO-100 family names its gripper bodies `Fixed_Jaw` / `Moving_Jaw`, so the mount resolves for those arms too.
 
 A mounted camera survives `remove_robot`, which rebuilds the whole scene: it is
 re-mounted on its body once every surviving robot is re-attached, keeping its

@@ -274,7 +274,13 @@ def test_newton_list_bodies_does_not_advertise_a_knee_or_a_wheel() -> None:
 
 
 def test_newton_list_bodies_still_advertises_a_jaw() -> None:
-    """Newton's own extra hint (``jaw``) keeps matching a real jaw body."""
+    """The fleet-wide ``jaw`` hint keeps matching a real jaw body here.
+
+    ``jaw`` used to be this backend's own extra word; it is now one entry of the
+    shared :data:`~strands_robots.simulation.ik.GRIPPER_BODY_HINTS` both
+    backends read, so this cell measures that sharing it did not cost the match
+    it was carried for.
+    """
     labels = ["bot/base/left_knee_link", "bot/base/Moving_Jaw"]
     assert _newton_gripper_body(labels) == "bot/base/Moving_Jaw"
 

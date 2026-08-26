@@ -386,6 +386,19 @@ class MinkIKBridge:
 
 _SITE_HINTS = ("attachment_site", "attachment", "grasp", "pinch", "tcp", "ee_site", "ee", "flange")
 _BODY_HINTS = ("hand", "gripper", "tool", "tcp", "ee", "wrist", "flange", "end_effector", "eef")
+
+# Hint words for the gripper/EEF mount every backend's ``list_bodies``
+# advertises in its ``gripper_body`` field. Shared rather than per-backend:
+# ``gripper_body`` is one question about one robot, so a body that is the mount
+# on one backend has to be the mount on every other. ``jaw`` is here because
+# the SO-100 family names its gripper bodies ``Fixed_Jaw`` / ``Moving_Jaw`` -
+# see :data:`~strands_robots.simulation.motion_primitives_base._GRIPPER_HINTS`,
+# which reads the same vocabulary to resolve the gripper *joint*.
+#
+# Distinct from :data:`_BODY_HINTS` above, which answers a different question:
+# which frame IK should solve *to*. That one legitimately prefers a wrist or a
+# flange over a jaw, so the two vocabularies are not interchangeable.
+GRIPPER_BODY_HINTS = ("gripper", "hand", "jaw", "ee", "tool")
 # Rung 1's search order: TCP-specific site names first, then the end-effector
 # names rung 2 matches on bodies. Order-preserving dedupe, because the two
 # tuples share tokens and the first occurrence is the one that decides.
@@ -429,9 +442,16 @@ def hint_matches_name(hint: str, name: str) -> bool:
 
     This is the one matcher for every surface that answers "which element names
     an end-effector" - :func:`discover_ee_frame` here, and the ``gripper_body``
-    each backend's ``list_bodies`` advertises - so the same name cannot be an
-    end-effector to one surface and not to another. Each caller keeps its own
-    hint vocabulary; only the matching rule is shared.
+    each backend's ``list_bodies`` advertises.
+
+    Sharing the matcher is not on its own enough for two surfaces to agree: they
+    agree only where they also read the same vocabulary. So the two backends'
+    ``list_bodies`` read one shared :data:`GRIPPER_BODY_HINTS`, because
+    ``gripper_body`` is one question about one robot and a name cannot be that
+    robot's mount on one backend and not on another. :func:`discover_ee_frame`
+    keeps :data:`_BODY_HINTS` / :data:`_SITE_HINTS` of its own because it
+    answers a different question - which frame to solve IK *to* - and may
+    legitimately prefer a wrist to a jaw on the very same robot.
 
     Args:
         hint: An end-effector hint word, e.g. one of :data:`_SITE_HINTS` /
