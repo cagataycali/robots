@@ -208,9 +208,9 @@ class G1Driver:
         # the high-level FSM state the arm-SDK / locomotion gates test against
         # (:data:`HANDSHAKE_FSMS` = {500, 501, 801}, :data:`WALK_FSMS`).  These
         # are two different fields with two different value ranges - conflating
-        # them was the source of the ``struct.error`` on ``mode_machine=500``
-        # from PR #2767 review.  ``_fsm_id`` arrives from the motion-switcher
-        # API rather than ``rt/lowstate``; until that source is wired the gate
+        # them raises ``struct.error`` on ``mode_machine=500`` because the CRC
+        # layout packs ``mode_machine`` as ``<B``.  ``_fsm_id`` arrives from
+        # the motion-switcher API rather than ``rt/lowstate``; until that source is wired the gate
         # refuses with a precise message rather than silently rejecting every
         # real frame.
         self._mode_machine: int | None = None
