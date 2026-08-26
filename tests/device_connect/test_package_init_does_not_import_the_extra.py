@@ -92,6 +92,9 @@ def without_the_extra(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, 
     try:
         sys.meta_path.remove(finder)
     except ValueError:
+        # Another fixture already tore this finder out; the invariant we care
+        # about is that it is *not* on ``sys.meta_path`` after teardown, which
+        # is what the missing entry means. Nothing to do.
         pass
 
 
