@@ -38,11 +38,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.utils import positive_count_error, positive_finite_number_error
 
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
@@ -56,6 +58,15 @@ logger = logging.getLogger(__name__)
 # Constants surfaced for tests and for issue #358 to share.
 # ---------------------------------------------------------------------------
 _BATTERY_FLOOR_PCT: float = 15.0
+
+# Control-loop cadence.  500 Hz matches the SDK's own G1 low-level example
+# (``example/g1/high_level/g1_ankle_swing_example.py`` sleeps 0.002 s between
+# writes).  Firmware validates that consecutive frames arrive on-cadence to
+# hold the last commanded posture; a slower loop lets the joints droop
+# between frames.  Kept as a module constant so a test can override it
+# without patching the sleep call directly.
+_CONTROL_LOOP_HZ: float = 500.0
+_CONTROL_LOOP_DT: float = 1.0 / _CONTROL_LOOP_HZ
 
 # The topics the driver reads. Kept together so a reader sees the whole
 # subscription set in one place.
@@ -250,6 +261,34 @@ class G1Driver:
         self._connected: bool = False
         self._connect_error: str | None = None
 
+        # ``_loop`` holds at most one :class:`_ControlLoop` at a time.  It is
+        # ``None`` before :meth:`run_policy` is called and after the loop
+        # thread joins (the loop clears the reference on exit under
+        # ``_task_admission``).  ``run_policy`` refuses when the current
+        # reference is running so a second concurrent rollout cannot silently
+        # share the wire with the first.
+        self._loop: _ControlLoop | None = None
+        # ``_last_task_snapshot`` retains the loop's final snapshot after the
+        # thread joins.  ``_run``'s ``finally`` clears ``_loop`` so a second
+        # rollout starts fresh, but that clear made every self-terminating
+        # exit reason (``n_steps``, ``duration``, ``gate``, ``policy``,
+        # ``publish``) unobservable through :meth:`get_task_status`: five of
+        # the six documented exit reasons round-tripped to the caller as
+        # "no task has been started on this driver".  Stashing the snapshot
+        # right before the clear keeps the vocabulary the loop names
+        # reachable to a poller that missed the running window.
+        self._last_task_snapshot: dict[str, Any] | None = None
+        # ``_task_admission`` is held across every check-then-act sequence on
+        # ``_loop`` (admission in :meth:`run_policy`, stop in
+        # :meth:`stop_task` / :meth:`cleanup` / :meth:`stop`, clear on loop
+        # exit).  Without it, two threads calling ``run_policy`` at once could
+        # both pass the ``is_running`` check before either assigns
+        # ``self._loop``, and an e-stop landing between the check and the
+        # start would count this peer as stopped while the rollout starts a
+        # moment later.  Mirrors ``HardwareRobot._task_admission`` -
+        # single-command-bus invariant, one lock across the whole sequence.
+        self._task_admission = threading.Lock()
+
     # ------------------------------------------------------------------ #
     # Agent tool surface (matches AgentTool's abstract members).         #
     # ------------------------------------------------------------------ #
@@ -439,17 +478,33 @@ class G1Driver:
         }
 
     async def stop(self) -> None:
-        """Refuse further writes; keep the DDS connection.
+        """Stop a running control loop and release further writes.
 
-        The motion path lands in issue #358 - until then there is nothing to
-        stop. The method exists because the driver contract requires it and
-        the mesh calls it during shutdown; the no-op has the right shape for
-        the day motion is wired.
+        The mesh calls this during shutdown.  If a rollout is running,
+        signal the loop to exit, publish the zero-torque frame, and join
+        its thread before returning - a controlled stop rather than
+        abrupt frame cessation mid-policy on a robot whose FSM has just
+        gone away.  Idempotent: no running task returns immediately.
         """
-        logger.debug("%s.stop() no-op (no motion path wired yet)", self._tool_name)
+        with self._task_admission:
+            loop = self._loop
+        if loop is not None and loop.is_running:
+            logger.debug("%s.stop() halting control loop", self._tool_name)
+            loop.stop("stop_task")
 
     def cleanup(self) -> None:
-        """Release every DDS subscriber and publisher. Idempotent."""
+        """Release every DDS subscriber and publisher. Idempotent.
+
+        Halts a running control loop first so the zero-torque shutdown
+        frame goes out on a publisher that still exists.  Closing
+        ``_pubs`` under a live 500 Hz thread would drop the loop into
+        its ``publish`` branch and skip the zero-torque frame - the fall
+        this whole path exists to prevent.
+        """
+        with self._task_admission:
+            loop = self._loop
+        if loop is not None and loop.is_running:
+            loop.stop("stop_task")
         if self._subs is not None:
             self._subs.close()
             self._subs = None
@@ -579,6 +634,10 @@ class G1Driver:
     # Task and policy paths (stubs until #358).                          #
     # ------------------------------------------------------------------ #
 
+    # ------------------------------------------------------------------ #
+    # Task and policy paths.  The 500 Hz control loop lands here.        #
+    # ------------------------------------------------------------------ #
+
     def start_task(
         self,
         instruction: str,
@@ -588,59 +647,209 @@ class G1Driver:
         duration: float = 30.0,
         **policy_kwargs: Any,
     ) -> dict[str, Any]:
-        """Refuse a task today; the FSM and battery gates are already live.
+        """Start a policy-driven task on the control loop.
 
-        The lerobot driver runs its ``start_task`` through the same policy
-        provider registry the sim uses; wiring it here needs the g1_tools
-        motion verbs (issue #358) so the loop has something to command. The
-        stub returns the shape that lerobot returns, so a caller polls the
-        same fields either way.
+        The lerobot driver runs its ``start_task`` through a policy provider
+        registry.  Providers live in :mod:`strands_robots.policies`; wiring a
+        concrete inference client (Groot, ACT, Diffusion) here needs the
+        ``g1_tools`` motion verbs (issue #358) so the loop has something to
+        command with joint-name semantics.
+
+        This driver's role for harness#361 PR-C is the **transport primitive**:
+        a background thread that spins at 500 Hz, gates every step against the
+        FSM and battery, publishes ``LowCmd_`` frames on ``rt/lowcmd``, and on
+        stop or budget expiry publishes a zero-torque frame before exiting.
+        A caller who supplies a callable-style policy via
+        :meth:`run_policy` gets the whole loop today; :meth:`start_task` still
+        refuses with a message naming issue #358 because the provider
+        registry is not yet plumbed here (that decision moves with #358 to
+        keep the two concerns separable).
 
         Scope is ``"motion"`` because a task may issue either an arm or a
         locomotion write and the caller does not classify itself; the union
-        gate matches what the tasks are able to reach. The day motion lands
-        the loop will call :meth:`_check_motion_gates` per step with the
-        correct narrower scope, so an unsafe FSM refuses the *step*, not the
-        whole task.
+        gate matches what the tasks are able to reach.  The per-step
+        re-check inside the loop is scoped ``"motion"`` for the same reason.
         """
         del instruction, policy_port, policy_host, policy_provider
         del duration, policy_kwargs
         refusal = self._check_motion_gates("motion")
         if refusal is not None:
             return refusal
-        return _refuse("start_task not wired yet (issue #358)")
+        return _refuse(
+            "start_task: provider registry not wired yet (issue #358); "
+            "use run_policy(policy_object=...) to drive the control loop today"
+        )
 
     def run_policy(
         self,
-        policy_object: Policy,
+        policy_object: Policy | Callable[[Any], dict[str, Any]],
         instruction: str = "",
         duration: float = 30.0,
         n_steps: int | None = None,
     ) -> dict[str, Any]:
-        """Refuse a rollout today; the FSM and battery gates are already live.
+        """Roll out an already-built policy on the 500 Hz control loop.
 
-        A policy rollout is a task by another name (see :meth:`start_task`),
-        so it shares the same motion-scoped gate. The narrower per-step
-        classification lands with the write lines in issue #358.
+        The loop runs on a dedicated thread so the caller returns
+        immediately; poll :meth:`get_task_status` to observe progress.
+        Every step re-gates through :meth:`_check_motion_gates` with
+        scope ``"motion"``; a gate flip refuses the step and the loop
+        publishes a zero-torque frame before exiting rather than freezing
+        with the last commanded posture on a robot whose FSM just left the
+        allowed set.
+
+        ``policy_object`` is either a built :class:`~strands_robots.policies.Policy`
+        or a bare callable - the admission check below accepts a ``.step()``
+        attribute *or* a callable object, so the annotation admits the same
+        set the refusal enforces.  It is called on each step with a snapshot
+        of the cached observations (``mode_machine``, ``fsm_id``, ``imu``, etc.)
+        and is expected to return a joint-name-keyed action dict of the
+        same shape :meth:`send_action` accepts.  A policy that returns
+        ``None`` or an unusable action is refused inside the loop; the
+        refusal name and count surface through :meth:`get_task_status`.
         """
-        del policy_object, instruction, duration, n_steps
+        del instruction  # policies own their own conditioning
+        # Validate the continuous knobs on the shared domains before the
+        # gate.  ``duration`` reaches ``deadline = started_at + duration``
+        # inside the loop; ``nan`` poisons every comparison there so the
+        # 500 Hz loop would actuate with no budget, ``inf`` collapses the
+        # exit test to always-false, and a non-numeric string raises out of
+        # a method that must return an envelope.  ``n_steps`` reaches
+        # ``self._steps >= self._n_steps`` as ``range()``-shaped index; a
+        # ``bool`` silently caps at 1, a fractional applies a cap the caller
+        # never named, and ``0`` / negative exits instantly with
+        # ``exit_reason="n_steps"`` in a success envelope for a rollout that
+        # commanded nothing (see HardwareRobot._n_steps_error for the
+        # incident that made positive_count_error load-bearing).
+        if err := positive_finite_number_error(duration, "duration", "run_policy"):
+            return _refuse(err)
+        if n_steps is not None and (err := positive_count_error(n_steps, "n_steps", "run_policy")):
+            return _refuse(err)
         refusal = self._check_motion_gates("motion")
         if refusal is not None:
             return refusal
-        return _refuse("run_policy not wired yet (issue #358)")
-
-    def get_task_status(self) -> dict[str, Any]:
-        """Report that no task is running (there is no way to start one yet)."""
+        if policy_object is None:
+            return _refuse("run_policy: policy_object is required")
+        step_fn = getattr(policy_object, "step", None)
+        if not callable(step_fn) and not callable(policy_object):
+            return _refuse("run_policy: policy_object must be callable or expose a .step() method")
+        # Admission held across the ``is_running`` check, the reference
+        # assignment and ``start()`` so a second thread cannot pass the check
+        # before either assigns ``self._loop`` (two rollouts on one wire),
+        # and an e-stop landing between the check and the start cannot count
+        # this peer as stopped while the rollout starts a moment later.
+        loop = _ControlLoop(
+            driver=self,
+            policy=policy_object,
+            duration=float(duration),
+            n_steps=n_steps,
+        )
+        with self._task_admission:
+            if self._loop is not None and self._loop.is_running:
+                return _refuse("run_policy: a task is already running; call stop_task first")
+            # Clear any stashed terminal snapshot from a previous rollout so
+            # a poller between ``run_policy`` and the first published frame
+            # sees the new loop's snapshot rather than the last one's exit
+            # reason.
+            self._last_task_snapshot = None
+            self._loop = loop
+            loop.start()
         return {
             "status": "success",
-            "content": [{"json": {"running": False, "reason": "no task path wired yet (issue #358)"}}],
+            "content": [
+                {
+                    "json": {
+                        "tool_name": self._tool_name,
+                        "task_running": True,
+                        "duration": float(duration),
+                        "n_steps": n_steps,
+                        "hz": _CONTROL_LOOP_HZ,
+                    }
+                }
+            ],
         }
 
+    def get_task_status(self) -> dict[str, Any]:
+        """Report the running task's state.
+
+        Returns a JSON envelope with ``running``, ``steps``, ``refusals``
+        and (when finished) ``exit_reason``.  Safe to poll from any thread
+        because the loop writes its snapshot under a lock.
+
+        A poller that missed the running window still sees the loop's final
+        snapshot: :attr:`_last_task_snapshot` is stashed under the admission
+        lock right before the loop's ``finally`` clears ``self._loop``, so
+        every self-terminating exit reason (``n_steps``, ``duration``,
+        ``gate``, ``policy``, ``publish``) round-trips to the caller instead
+        of collapsing to "no task has been started" once the thread joins.
+        """
+        with self._task_admission:
+            loop = self._loop
+            last = self._last_task_snapshot
+        if loop is None:
+            if last is not None:
+                return {"status": "success", "content": [{"json": last}]}
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "json": {
+                            "running": False,
+                            "reason": "no task has been started on this driver",
+                        }
+                    }
+                ],
+            }
+        return {"status": "success", "content": [{"json": loop.snapshot()}]}
+
     def stop_task(self) -> dict[str, Any]:
-        """No-op: there is no running task to stop until :meth:`start_task` is wired."""
+        """Stop the running task and publish a zero-torque frame.
+
+        Idempotent: no running task returns a success envelope naming the
+        state.  A running task signals the loop to exit, joins its thread,
+        and the loop publishes :func:`_build_zero_torque_lowcmd` on the way
+        out - a soft *controlled* stop rather than a Disable that would let
+        the named joints fall freely.
+
+        The returned envelope reports the join outcome honestly.  A
+        caller-supplied policy that outlasts the join budget (a remote
+        inference call is the ordinary case) surfaces as
+        ``status="error"`` naming the timeout and ``stopped=False`` in the
+        payload, so the caller cannot read "success" while the payload's
+        own ``running=True`` says the loop is still writing frames.
+        """
+        with self._task_admission:
+            loop = self._loop
+        if loop is None or not loop.is_running:
+            return {
+                "status": "success",
+                "content": [{"text": "stop_task: no task is running"}],
+            }
+        joined = loop.stop("stop_task")
+        snap = loop.snapshot()
+        snap["stopped"] = joined
+        if not joined:
+            # The loop still holds the wire.  Report as an error so a
+            # caller that reads only ``status`` cannot count the task as
+            # stopped, and name the timeout in the payload for a caller
+            # that reads it.
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "json": {
+                            **snap,
+                            "reason": (
+                                "stop_task: control loop did not join within timeout; "
+                                "policy is likely blocking - the loop will publish the "
+                                "zero-torque frame when it exits"
+                            ),
+                        }
+                    }
+                ],
+            }
         return {
             "status": "success",
-            "content": [{"text": "no task path wired yet (issue #358)"}],
+            "content": [{"json": snap}],
         }
 
     # ------------------------------------------------------------------ #
@@ -1005,3 +1214,292 @@ def _build_zero_torque_lowcmd(
     # CRC last - firmware drops a non-matching frame silently.
     cmd.crc = _CRC().Crc(cmd)
     return cmd, None
+
+
+class _ControlLoop:
+    """Background 500 Hz control loop that a :class:`G1Driver` owns.
+
+    Composition rather than inheritance: the driver holds one, ``run_policy``
+    hands it a policy object, and it owns the thread, the FSM re-gate loop,
+    and the zero-torque frame it emits on exit.  Kept in this module because
+    it reaches into the driver's cached observations, the pure builders and
+    the DDS publisher - three seams a sibling module would have to re-export.
+
+    Exit reasons
+    ------------
+    Every terminal path names itself so :meth:`_ControlLoop.snapshot`
+    reports why the
+    rollout stopped:
+
+    * ``"stop_task"`` - caller invoked :meth:`G1Driver.stop_task`.
+    * ``"n_steps"`` - the step budget was met.
+    * ``"duration"`` - the wall-clock budget was met.
+    * ``"gate"`` - a per-step re-gate refused; the refusal reason is stored.
+    * ``"policy"`` - the policy raised or returned an unusable action; the
+      stored reason names which.
+    * ``"publish"`` - the underlying DDS publish returned a reason string.
+
+    A zero-torque frame is published on **every** terminal path except
+    ``"publish"`` (where the wire is already reason-carrying and a second
+    stamp would clobber the reason with a fresh error).  A soft controlled
+    stop is what the biped wants; a Disable slot lets the joint fall.
+    """
+
+    def __init__(
+        self,
+        driver: G1Driver,
+        policy: Any,
+        duration: float,
+        n_steps: int | None,
+    ) -> None:
+        self._driver = driver
+        self._policy = policy
+        self._duration = float(duration)
+        self._n_steps = n_steps
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        # Snapshot fields, all under ``_lock``.
+        self._steps: int = 0
+        self._refusals: int = 0
+        self._exit_reason: str | None = None
+        self._exit_detail: str | None = None
+        self._started_at: float | None = None
+        self._finished_at: float | None = None
+
+    @property
+    def is_running(self) -> bool:
+        """Whether the loop thread is alive."""
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    def start(self) -> None:
+        """Spawn the loop thread.  Idempotent second calls are a bug."""
+        if self._thread is not None:
+            raise RuntimeError("_ControlLoop.start() called twice")
+        self._started_at = time.monotonic()
+        # ``daemon=True`` so a caller who forgets ``stop_task`` at process
+        # exit does not hang the interpreter.  The zero-torque shutdown
+        # runs at every normal exit path because :meth:`G1Driver.stop` and
+        # :meth:`G1Driver.cleanup` join the loop before closing ``_pubs``.
+        self._thread = threading.Thread(target=self._run, name=f"g1-control-{id(self):x}", daemon=True)
+        self._thread.start()
+
+    def stop(self, reason: str = "stop_task", timeout: float = 2.0) -> bool:
+        """Signal the loop to exit and join its thread.
+
+        Named reasons distinguish caller-driven stop (``"stop_task"``) from
+        the loop's own terminal paths, which set ``_exit_reason`` directly.
+        The signal wins over policy work: the loop re-reads
+        ``_stop_event.is_set()`` at the top of every step, and once more
+        after the policy returns and before the frame publishes.
+
+        Returns:
+            ``True`` when the thread joined within ``timeout``.  ``False``
+            when the loop is still running - a caller-supplied policy that
+            outlasts the join budget (a remote inference call is the
+            ordinary case) needs the honest ``stopped=False`` in the
+            :meth:`stop_task` envelope rather than a ``success`` claim the
+            payload's ``running=True`` contradicts.
+        """
+        self._stop_event.set()
+        thread = self._thread
+        joined = True
+        if thread is not None:
+            thread.join(timeout=timeout)
+            joined = not thread.is_alive()
+        with self._lock:
+            # The loop itself may have set an exit_reason (budget expiry
+            # racing the caller's stop); if not, the caller wins.
+            if self._exit_reason is None:
+                self._exit_reason = reason
+        return joined
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return the loop's public state.  Safe from any thread."""
+        with self._lock:
+            elapsed: float | None
+            if self._started_at is None:
+                elapsed = None
+            elif self._finished_at is None:
+                elapsed = time.monotonic() - self._started_at
+            else:
+                elapsed = self._finished_at - self._started_at
+            return {
+                "running": self.is_running,
+                "steps": self._steps,
+                "refusals": self._refusals,
+                "elapsed_s": elapsed,
+                "duration_budget_s": self._duration,
+                "n_steps_budget": self._n_steps,
+                "exit_reason": self._exit_reason,
+                "exit_detail": self._exit_detail,
+                "hz": _CONTROL_LOOP_HZ,
+            }
+
+    # ------------------------------------------------------------------ #
+    # Thread body.  Every branch names an exit reason before it returns. #
+    # ------------------------------------------------------------------ #
+
+    def _run(self) -> None:
+        assert self._started_at is not None
+        deadline = self._started_at + self._duration
+        publish_reason: str | None = None
+        try:
+            with Ticker(_CONTROL_LOOP_DT, self._stop_event) as ticker:
+                while not self._stop_event.is_set():
+                    now = time.monotonic()
+                    if self._n_steps is not None and self._steps >= self._n_steps:
+                        self._set_exit("n_steps", None)
+                        break
+                    if now >= deadline:
+                        self._set_exit("duration", None)
+                        break
+                    # Per-step re-gate.  A gate flip refuses the *step* rather
+                    # than the whole task, so an FSM transition out of the
+                    # allowed set exits cleanly with a zero-torque frame.
+                    refusal = self._driver._check_motion_gates("motion")
+                    if refusal is not None:
+                        detail = _refusal_text(refusal)
+                        self._set_exit("gate", detail)
+                        break
+                    try:
+                        action = self._call_policy()
+                    except Exception as exc:  # policy is caller-supplied; catch broadly
+                        self._set_exit("policy", f"raised {type(exc).__name__}: {exc}")
+                        break
+                    # Re-check the stop event *after* the policy returns and
+                    # *before* the frame publishes.  Without this, a stop
+                    # signal that arrives while the policy is still computing
+                    # (the ordinary case for a remote inference call) is only
+                    # noticed at the top of the next iteration - but by then
+                    # the in-flight action has already reached the wire, so a
+                    # fresh position command lands on ``rt/lowcmd`` after the
+                    # caller was told the task stopped.  The zero-torque frame
+                    # still goes out from ``finally``; the loop reports the
+                    # exit as ``stop_task`` since the caller's ``stop()``
+                    # already set the reason.
+                    if self._stop_event.is_set():
+                        break
+                    if action is None:
+                        with self._lock:
+                            self._refusals += 1
+                        self._set_exit("policy", "policy returned None")
+                        break
+                    cmd, err = _build_lowcmd_from_action(action, mode_machine=self._driver._mode_machine)
+                    if err is not None:
+                        with self._lock:
+                            self._refusals += 1
+                        self._set_exit("policy", f"policy returned an unusable action: {err}")
+                        break
+                    pubs = self._driver._pubs
+                    if pubs is None:
+                        self._set_exit("publish", "driver has no publisher; not connected")
+                        publish_reason = "no publisher"
+                        break
+                    # The SDK's LowCmd_ class is the wire-format handshake with
+                    # the DDS publisher: it identifies the topic type registered
+                    # on the participant.  ``_build_lowcmd_from_action`` already
+                    # returned an SDK-shaped ``cmd`` (or an err path we took
+                    # above), so importing the class here cannot introduce a
+                    # new failure mode - the same import already succeeded in
+                    # the builder.  Tests stub ``unitree_sdk2py`` via
+                    # ``monkeypatch.setitem(sys.modules, ...)`` so this same
+                    # production lane runs on an SDK-less CI box.
+                    try:
+                        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
+                    except ImportError as exc:  # pragma: no cover - hardware-only
+                        self._set_exit("publish", f"unitree_sdk2py is not installed: {exc}")
+                        publish_reason = "sdk missing"
+                        break
+                    pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
+                    if pub_err is not None:
+                        self._set_exit("publish", str(pub_err))
+                        publish_reason = str(pub_err)
+                        break
+                    with self._lock:
+                        self._steps += 1
+                    # Pace on a deadline, not a delay: the time spent in the
+                    # step above is subtracted from the next period, so a
+                    # policy that takes a few ms per step still holds 500Hz
+                    # instead of dropping to work+2ms. ``Ticker.wait`` returns
+                    # ``True`` promptly when the stop event fires, so the
+                    # interruptible-stop property of the previous
+                    # ``self._stop_event.wait(_CONTROL_LOOP_DT)`` is kept.
+                    if ticker.wait():
+                        break
+        finally:
+            # Publish a zero-torque frame on every exit path except the one
+            # where the wire itself just refused - clobbering that reason
+            # with a fresh publish error is worse than not stamping a stop
+            # frame the wire cannot carry anyway.
+            if publish_reason is None:
+                self._emit_zero_torque()
+            with self._lock:
+                self._finished_at = time.monotonic()
+            # Stash the terminal snapshot before dropping the reference so a
+            # poller that missed the running window still sees the named
+            # exit reason (n_steps / duration / gate / policy / publish);
+            # without this stash, ``get_task_status`` collapsed five of the
+            # six documented exit paths to "no task has been started on
+            # this driver".  Held under the same admission lock as the
+            # clear so a concurrent ``run_policy`` observes a coherent
+            # (running loop | last snapshot) pair rather than a torn state.
+            # ``snapshot()``'s ``running`` reads ``self._thread.is_alive()``
+            # and this ``finally`` runs *inside* the thread, so it would
+            # report ``True`` on a snapshot the caller reads *after* the
+            # thread joins.  Override with a literal ``False`` - the loop
+            # is terminating; the caller polling ``_last_task_snapshot`` has
+            # already left the running window by construction.
+            terminal = self.snapshot()
+            terminal["running"] = False
+            with self._driver._task_admission:
+                self._driver._last_task_snapshot = terminal
+                if self._driver._loop is self:
+                    self._driver._loop = None
+
+    def _call_policy(self) -> Any:
+        """Invoke the policy with a snapshot of cached observations."""
+        obs = {
+            "mode_machine": self._driver._mode_machine,
+            "fsm_id": self._driver._fsm_id,
+            "battery": self._driver._battery,
+            "imu": self._driver._imu,
+        }
+        step = getattr(self._policy, "step", None)
+        if callable(step):
+            return step(obs)
+        return self._policy(obs)  # pragma: no cover - covered by direct-callable tests
+
+    def _emit_zero_torque(self) -> None:
+        """Publish one zero-torque frame.  Errors are logged, not raised."""
+        pubs = self._driver._pubs
+        if pubs is None:
+            return
+        cmd, err = _build_zero_torque_lowcmd(mode_machine=self._driver._mode_machine)
+        if err is not None or cmd is None:
+            logger.debug("g1 control loop: zero-torque build refused: %s", err)
+            return
+        try:
+            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
+        except ImportError as exc:  # pragma: no cover - hardware-only
+            logger.debug("g1 control loop: zero-torque sdk missing: %s", exc)
+            return
+        pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
+        if pub_err is not None:
+            logger.debug("g1 control loop: zero-torque publish failed: %s", pub_err)
+
+    def _set_exit(self, reason: str, detail: str | None) -> None:
+        with self._lock:
+            if self._exit_reason is None:
+                self._exit_reason = reason
+                self._exit_detail = detail
+
+
+def _refusal_text(refusal: dict[str, Any]) -> str:
+    """Extract the text reason from a ``_refuse()`` envelope."""
+    for entry in refusal.get("content", []):
+        text = entry.get("text")
+        if isinstance(text, str):
+            return text
+    return "refused"
