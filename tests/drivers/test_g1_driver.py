@@ -454,11 +454,11 @@ def test_task_and_policy_paths_report_not_wired_when_gates_pass() -> None:
     stop = driver.stop_task()
     assert stop["status"] == "success"
 
-    # run_policy takes a Policy object we do not have here; feed None and
-    # confirm it does not touch it before refusing.
+    # ``run_policy(None)`` refuses at the transport primitive rather than
+    # touching the loop - the loop needs a policy to roll out.
     envelope = driver.run_policy(policy_object=None, instruction="", duration=1.0)  # type: ignore[arg-type]
     assert envelope["status"] == "error"
-    assert "issue #358" in envelope["content"][0]["text"]
+    assert "policy_object is required" in envelope["content"][0]["text"]
 
 
 # -------------------------------------------------------------------------
@@ -669,8 +669,11 @@ def test_motion_verbs_admit_a_literally_walkable_fsm(verb: str, fsm: int) -> Non
 
     Uses literal FSM values rather than a derivation from the composition
     under test, so this survives a maintainer's later decision to tighten
-    the ``motion`` pre-flight to the intersection. The refusal a caller
-    sees is the ``"not wired"`` reason, not the FSM-refusal reason.
+    the ``motion`` pre-flight to the intersection.  The refusal a caller
+    sees is the verb-specific reason (issue #358 for ``start_task``, the
+    ``policy_object is required`` message for ``run_policy`` fed
+    ``None``), never the FSM-refusal reason - the gate ran first and
+    passed.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
@@ -679,11 +682,13 @@ def test_motion_verbs_admit_a_literally_walkable_fsm(verb: str, fsm: int) -> Non
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     if verb == "start_task":
         result = driver.start_task("do X")
+        expected_marker = "issue #358"
     else:
         result = driver.run_policy(policy_object=None, instruction="")  # type: ignore[arg-type]
+        expected_marker = "policy_object is required"
     assert result["status"] == "error"
     text = result["content"][0]["text"]
-    assert "issue #358" in text
+    assert expected_marker in text
     assert f"FSM {fsm} refuses" not in text
 
 
@@ -1377,16 +1382,48 @@ def test_g1_driver_module_does_not_import_unitree_sdk2py_at_load_time() -> None:
     it for the driver module itself so a future edit that reaches for a
     module-level ``import unitree_sdk2py.idl.default`` fails here.  Thor
     and CI both need the driver module importable without the SDK.
+
+    Measured in a clean interpreter rather than by reloading the module in
+    this one. :func:`importlib.reload` re-executes a module body into the same
+    namespace, which rebinds every class the body defines. The driver registry
+    captures :class:`~strands_robots.drivers.g1.G1Driver` by reference when the
+    shipped table is registered, so a reload leaves that reference pointing at
+    a class object that is no longer what the module's own name resolves to:
+    every later ``is`` comparison in the session then fails between two classes
+    with an identical ``repr``. A subprocess cannot rebind anything here, and it
+    states the contract more strongly - no SDK module is loaded at all, rather
+    than none beyond whatever an earlier test in this session already imported.
     """
-    import importlib
+    import subprocess
     import sys
 
-    # Snapshot the SDK modules already loaded (may or may not be present on
-    # this box).  Then reimport the driver module and confirm no *new*
-    # unitree_sdk2py submodule crept in - just importing the driver.
-    before = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
-    importlib.reload(importlib.import_module("strands_robots.drivers.g1"))
-    after = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
-    assert after == before, (
-        f"importing strands_robots.drivers.g1 pulled in unitree_sdk2py modules: {sorted(after - before)}"
+    probe = (
+        "import sys; import strands_robots.drivers.g1; "
+        "print(sorted(n for n in sys.modules if n.startswith('unitree_sdk2py')))"
     )
+    completed = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, f"importing the driver module failed: {completed.stderr}"
+    assert completed.stdout.strip() == "[]", (
+        f"importing strands_robots.drivers.g1 pulled in unitree_sdk2py modules: {completed.stdout.strip()}"
+    )
+
+
+def test_the_sdk_import_pin_leaves_the_registered_driver_class_reachable_by_name() -> None:
+    """The pin above must not leave a second ``G1Driver`` class behind.
+
+    The registry hands back the class object it was registered with. A pin that
+    re-executed the driver module in this interpreter would rebind the module's
+    own ``G1Driver`` to a new object, so this assertion is the one that reads
+    the two apart - the failure names two classes with the same ``repr``, which
+    is the only symptom a rebind produces. Calling the pin directly rather than
+    relying on collection order means the coupling is graded in one file.
+    """
+    import importlib
+
+    from strands_robots.drivers.g1 import G1Driver
+    from strands_robots.drivers.registry import get_native_driver_class
+
+    test_g1_driver_module_does_not_import_unitree_sdk2py_at_load_time()
+
+    assert get_native_driver_class("unitree_g1") is G1Driver
+    assert importlib.import_module("strands_robots.drivers.g1").G1Driver is G1Driver
