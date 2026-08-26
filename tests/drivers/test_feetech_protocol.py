@@ -7,13 +7,16 @@ reply.
 
 Two audiences:
 
-- **The CI box**, where ``scservo_sdk`` is not installed. The cells that
-  drive this suite build frames by hand from the datasheet-published shape
-  and check them against the codec directly. No SDK, no serial, no host
-  dependency.
+- **Any box, SDK or not.** 45 of this file's 47 cells build frames by hand
+  from the datasheet-published shape and check them against the codec
+  directly. No SDK, no serial, no host dependency. Upstream CI happens to
+  carry ``scservo_sdk``, but only incidentally - it arrives transitively
+  through ``lerobot[feetech]``, which the ``all`` extra the hatch default
+  env installs pulls in - so these cells deliberately do not rely on it.
 - **A host with the SDK**, where :class:`TestTheVendorAgreesOnFraming` runs
   the same builders through :class:`scservo_sdk.PacketHandler` and confirms
-  the byte sequences match. Skipped where the SDK is absent.
+  the byte sequences match. That is the remaining 2 cells; they skip where
+  the SDK is absent.
 
 The bus / driver skeleton lands as a stacked PR (see :issue:`360` scope 2);
 this suite grades only the codec.
@@ -301,14 +304,19 @@ class TestParseStatusPacket:
 # ---------------------------------------------------------------------------
 # The vendor SDK, when installed, must agree with the codec byte-for-byte.
 # ---------------------------------------------------------------------------
-# ``scservo_sdk`` is Feetech's optional vendor SDK. It is not on PyPI in a form
-# the CI box can install, so upstream CI runs without it. A module-level
-# ``pytest.importorskip`` would skip the ENTIRE file - silently deselecting
-# the 46 datasheet-driven codec cells above - which is exactly the
-# "silent skip" defect class AGENTS.md > Review Learnings (PR #85) > Testing
-# names. Scope the skip to just the vendor-agreement class instead: the fixture
-# imports the SDK per-class, so ``--collect-only`` on a box without the SDK
-# reports every cell above collected and only this class's cells deselected.
+# ``scservo_sdk`` is Feetech's optional vendor SDK. It is an import name, not a
+# PyPI project name: the distribution that provides it is ``feetech-servo-sdk``
+# (1.0.0 on PyPI), and it does reach upstream CI - transitively, via
+# ``lerobot[feetech]`` in the ``all`` extra the hatch default env installs.
+# That makes it an incidental dependency: nothing in this repository asks for it
+# on its own behalf, so if lerobot ever drops or renames its ``feetech`` extra a
+# file gated on the SDK goes quiet with no test failing. A module-level
+# ``pytest.importorskip`` made this file exactly that - it skips the ENTIRE
+# file, silently deselecting all 45 datasheet-driven codec cells above, which is
+# the "silent skip" defect class AGENTS.md > Review Learnings (PR #85) > Testing
+# names. Scope the skip to the vendor-agreement class instead: the fixture
+# imports the SDK per-class, so a box without the SDK still runs all 45 and
+# skips only this class's 2 cells.
 _scservo_sdk_available = importlib.util.find_spec("scservo_sdk") is not None
 
 
@@ -319,9 +327,9 @@ _scservo_sdk_available = importlib.util.find_spec("scservo_sdk") is not None
 class TestTheVendorAgreesOnFraming:
     """Every builder produces the same bytes the SDK's ``PacketHandler`` would.
 
-    Skipped on CI boxes without ``scservo_sdk`` (via ``skipif`` on the class,
-    not a module-level ``importorskip`` - the latter would silently skip the
-    46 codec cells above too). The codec's own frame-shape tests above do not
+    Skipped where ``scservo_sdk`` is absent (via ``skipif`` on the class, not a
+    module-level ``importorskip`` - the latter would silently skip the 45 codec
+    cells above too). The codec's own frame-shape tests above do not
     need the SDK, and the frames they build were taken from the datasheet
     rather than from this suite's own output.
     """

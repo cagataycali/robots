@@ -9,11 +9,12 @@ accepts. The additive checksum (`~sum(payload) & 0xFF`) is the identity
 `strands_robots.tools.pose_tool` already uses inline; stating it as a function
 lets the parser grade the same bit pattern it built.
 
-Two audiences share the suite. The datasheet-published byte sequences drive
-the codec directly, so a CI box without `scservo_sdk` grades every framing,
-domain and status-parsing shape. A host that has the SDK installed also runs
-`TestTheVendorAgreesOnFraming`, which compares the codec's output byte-for-byte
-against the SDK's own `PacketHandler` internals.
+Two audiences share the suite. 45 of its 47 cells build the datasheet-published
+byte sequences by hand and drive the codec directly, so every framing, domain
+and status-parsing shape is graded whether or not `scservo_sdk` is present. The
+other 2 are `TestTheVendorAgreesOnFraming`, which runs only where the SDK is
+installed and compares the codec's output byte-for-byte against the SDK's own
+`PacketHandler` internals.
 
 The bus and driver skeleton land in follow-up PRs (issue #360 scopes 2 and 3);
 this PR ships only the codec, in the same slice the harness triage names as
