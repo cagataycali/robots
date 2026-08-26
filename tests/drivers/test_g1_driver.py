@@ -301,13 +301,18 @@ def test_mode_machine_and_fsm_id_have_disjoint_value_ranges() -> None:
     assert driver._fsm_id is None
     # A lowstate delivery fills only ``_mode_machine`` (uint8 layout id).
     driver._on_lowstate(_fake_lowstate(fsm=9))
-    assert driver._mode_machine == 9
+    mode_machine = driver._mode_machine
+    # A delivered lowstate caches the id, so this is also the narrowing the
+    # range assertion below needs: ``_mode_machine`` is ``int | None`` and an
+    # equality check does not tell a type checker which arm it landed on.
+    assert mode_machine is not None
+    assert mode_machine == 9
     assert driver._fsm_id is None  # the FSM gate's input is a different source
     # Ranges: uint8 vs the SDK's error-table constants.
     from strands_robots.tools.g1 import HANDSHAKE_FSMS
 
     assert all(v > 255 for v in HANDSHAKE_FSMS)
-    assert 0 <= driver._mode_machine <= 255
+    assert 0 <= mode_machine <= 255
 
 
 def test_send_action_refuses_without_fsm_id_source_wired() -> None:
