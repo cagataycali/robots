@@ -81,10 +81,11 @@ def _engines() -> dict[str, Any]:
     Returns:
         A mapping of backend name to engine class, derived from the table
         ``create_simulation`` resolves rather than from a list in this file.
-        Typed as ``Any`` so tests can drive ``.add_camera`` / ``.add_robot`` /
-        ``.randomize`` off it without mypy losing the shared surface at the
-        ``type`` widening step; every backend declares those bindings and the
-        assertions grade the same call across them.
+    The values are typed ``Any`` rather than ``type`` for the reason this module
+    exists. ``add_camera`` is declared on no base class, so mypy reports
+    ``"type" has no attribute "add_camera"`` against a bare ``type`` and
+    ``"type[SimEngine]" has no attribute "add_camera"`` once ``issubclass``
+    narrows it - the checker cannot see the surface these tests grade either.
     """
     out: dict[str, Any] = {}
     for name, (module_path, class_name) in sorted(_BUILTIN_BACKENDS.items()):
