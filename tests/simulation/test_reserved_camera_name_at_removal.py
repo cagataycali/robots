@@ -108,7 +108,7 @@ class TestTheFreeViewAliasCannotBeSurrendered:
         assert sim.list_cameras() == ["default"]
         assert _compiled_camera_names(sim) == ["default"]
 
-    def test_the_recordable_alias_survives_the_attempt(self, sim) -> None:
+    def test_the_recordable_alias_survives_the_attempt(self, sim, tmp_path) -> None:
         """The consequence: recording the advertised name stopped working.
 
         ``list_cameras`` kept naming ``'default'`` while ``start_recording``
@@ -119,7 +119,7 @@ class TestTheFreeViewAliasCannotBeSurrendered:
             repo_id="local/reserved_removal",
             task="t",
             fps=30,
-            root="/tmp/strands-reserved-removal",
+            root=str(tmp_path / "dataset"),
             cameras=["default"],
         )
         assert started["status"] == "success", started

@@ -1085,13 +1085,18 @@ class _FakeDatasetCameraEncoderCreate:
         return cls(repo_id, root=root)
 
 
-def test_create_passes_vcodec_directly_when_supported(monkeypatch):
+def test_create_passes_vcodec_directly_when_supported(monkeypatch, tmp_path):
     """When create() takes ``vcodec=``, the recorder forwards it as-is and does
     not synthesize a camera_encoder; backend kwargs absent from the signature
     are not sent."""
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetVcodecCreate)
     recorder = DatasetRecorder.create(
-        "user/data", fps=50, root="/tmp/ds", joint_names=["j1", "j2"], vcodec="libx264", task="pick"
+        "user/data",
+        fps=50,
+        root=str(tmp_path / "dataset"),
+        joint_names=["j1", "j2"],
+        vcodec="libx264",
+        task="pick",
     )
 
     sent = _FakeDatasetVcodecCreate.last_create_kwargs

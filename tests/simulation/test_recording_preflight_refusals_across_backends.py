@@ -255,9 +255,10 @@ class TestARefusedStartTouchesNoDataset:
             pytest.param({"cameras": "wrist"}, id="cameras"),
         ],
     )
-    def test_recording_is_not_marked_active(self, factory: Any, kwargs: Any) -> None:
+    def test_recording_is_not_marked_active(self, factory: Any, kwargs: Any, tmp_path: Path) -> None:
         engine = factory()
-        assert engine.start_recording(repo_id="local/p", root="/tmp/strands-never", **kwargs)["status"] == "error"
+        target = tmp_path / "never"
+        assert engine.start_recording(repo_id="local/p", root=str(target), **kwargs)["status"] == "error"
         state = engine._recording_state()
         assert state is not None
         assert not state.get("recording")
