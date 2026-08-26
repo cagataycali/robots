@@ -203,7 +203,8 @@ open a window.
   [#2300](https://github.com/strands-labs/robots/issues/2300)) - and
   collision uses the mesh's **convex hull**, also the MuJoCo contract, with
   the same caveat for concave assets: the hull fills every cavity. A missing
-  file or an unconvertible format is refused up front, never realized as a
+  file, an unconvertible format, or an asset declaring a vertex coordinate
+  that is not finite is refused up front, never realized as a
   fallback primitive.
 - **Cameras & rendering** - `add_camera` (look-at, FOV), `render` (RGB + depth).
   World-fixed only: `parent_body` (a body-mounted wrist camera, supported on
@@ -255,7 +256,13 @@ keeps a visible box proxy, and the `load_scene` report then carries an
 explicit caveat that pixel-conditioned policy scores on that scene are not
 comparable across backends; when every object renders its mesh, the caveat
 disappears. A mesh asset that is declared but missing on disk fails the scene
-load loudly - never a silent box.
+load loudly - never a silent box - and so does one declaring a vertex
+coordinate that is not finite: `min`/`max` order a NaN as neither smaller nor
+larger than anything, so the collision AABB measured from such an asset is the
+box of the vertices that *are* finite, numerically indistinguishable from a
+mesh that declared only those, while an infinite coordinate makes the proxy
+unbounded. MuJoCo refuses the same asset (`vertex coordinate N is not
+finite`), so the scene loader does too rather than sizing a proxy around it.
 
 The accepted *input* domain matches too, so a call one backend refuses is
 refused by all three. For the setup methods that means the pose vectors, an

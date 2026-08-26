@@ -33,8 +33,9 @@ triangle-mesh parsing it is built on:
   scale.
 
 Failure semantics (the loaders' fail-loud contract): a missing file raises
-:class:`FileNotFoundError`, an unsupported extension or an asset with no
-triangle geometry raises :class:`ValueError`, and a missing ``pxr`` raises
+:class:`FileNotFoundError`, an unsupported extension, an asset with no
+triangle geometry or one declaring a vertex coordinate that is not finite
+raises :class:`ValueError`, and a missing ``pxr`` raises
 :class:`ImportError` with an install hint. Nothing here degrades to a silent
 default box.
 """
@@ -42,8 +43,10 @@ default box.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import struct
+from itertools import chain
 
 from strands_robots.utils import get_base_dir
 
@@ -81,6 +84,45 @@ def _require_mesh_file(mesh_path: str) -> str:
     return ext
 
 
+def _non_finite_vertex_error(mesh_path: str, index: int, vertex: tuple[float, float, float]) -> ValueError:
+    """The refusal for a vertex whose coordinates are not all finite.
+
+    A NaN or infinite coordinate is not a position, and neither of the two
+    ways this module measures ``points`` reports that. ``min``/``max``
+    order a NaN as neither smaller nor larger than anything, so
+    :func:`mesh_aabb`'s running comparison drops it and returns the bounds
+    of the vertices that are finite - the same numbers a mesh declaring
+    only those would produce, under no error at all - which is exactly the
+    outcome :func:`_unterminated_facet_error` exists to refuse, reached
+    from the other side: there the vertices are in the bounds and their
+    triangle is in no face, here the vertex is in a face and not in the
+    bounds. The extent :func:`convert_mesh_to_usd` authors is built by a
+    different spelling (``min`` over an iterable rather than a running
+    comparison) which keeps a leading NaN and drops a trailing one, so the
+    same asset can be measured two ways by one module, decided by the
+    order its vertices happen to be declared in. An infinite coordinate
+    needs no such subtlety: it makes the reported extent unbounded, and a
+    scene object sized from it is a collision proxy with no bounds.
+
+    MuJoCo - the owner of the ``.msh`` format and a reader of the other two -
+    refuses the same input rather than measuring around it
+    (``vertex coordinate N is not finite``), so refusing is the format
+    family's own disposition, and it is the one this module's fail-loud
+    contract already states.
+
+    One wording for all four parse paths, raised where they meet, so a
+    format cannot drift into tolerating what its siblings refuse. The
+    locator is the vertex index rather than a file line because two of the
+    four paths are binary and have no lines, and it is the locator MuJoCo
+    reports for exactly this refusal.
+    """
+    return ValueError(
+        f"mesh {mesh_path}: vertex {index} has a coordinate that is not finite ({vertex!r}) - "
+        f"a mesh measured around it reports bounds for geometry the file does not declare, so the "
+        f"asset is refused instead of being sized"
+    )
+
+
 def load_mesh_geometry(
     mesh_path: str,
 ) -> tuple[list[tuple[float, float, float]], list[int], list[int]]:
@@ -105,16 +147,31 @@ def load_mesh_geometry(
     FileNotFoundError
         If ``mesh_path`` doesn't exist.
     ValueError
-        If the extension is unsupported, the file is malformed, or the
+        If the extension is unsupported, the file is malformed, the
         asset declares no vertices / no faces (an empty mesh renders
-        nothing, which downstream would misread as a scene property).
+        nothing, which downstream would misread as a scene property), or
+        a vertex coordinate is not finite (a mesh measured around one
+        reports bounds for geometry the file does not declare, so it is
+        refused rather than sized).
     """
     ext = _require_mesh_file(mesh_path)
     if ext == ".obj":
-        return _parse_obj(mesh_path)
-    if ext == ".msh":
-        return _parse_msh(mesh_path)
-    return _parse_stl(mesh_path)
+        points, counts, indices = _parse_obj(mesh_path)
+    elif ext == ".msh":
+        points, counts, indices = _parse_msh(mesh_path)
+    else:
+        points, counts, indices = _parse_stl(mesh_path)
+    # One finiteness rule for every format, applied where the four parse
+    # paths meet, so the two consumers that measure ``points`` -
+    # :func:`mesh_aabb` and the extent :func:`convert_mesh_to_usd` authors -
+    # cannot disagree about the same file. The fast path is a single
+    # C-level ``map`` over the flattened coordinates (measurably ~4% of the
+    # parse it follows on the largest shipped meshes); the per-vertex walk
+    # that names the offender runs only when that map has already failed.
+    if not all(map(math.isfinite, chain.from_iterable(points))):
+        index, vertex = next((i, v) for i, v in enumerate(points) if not all(map(math.isfinite, v)))
+        raise _non_finite_vertex_error(mesh_path, index, vertex)
+    return points, counts, indices
 
 
 def _parse_obj(mesh_path: str) -> tuple[list[tuple[float, float, float]], list[int], list[int]]:
@@ -419,6 +476,14 @@ def convert_mesh_to_usd(mesh_path: str, cache_dir: str | None = None) -> str:
     if os.path.isfile(out_path):
         return out_path
 
+    # Read the asset before probing for ``pxr``, the way the extension /
+    # existence check above already precedes it: an install without the
+    # ``sim-isaac`` extra should still learn what is wrong with the mesh it
+    # handed over, not only what is missing from the environment. The cache
+    # hit above still short-circuits both, and a cache entry only exists
+    # because some earlier call parsed the same bytes successfully.
+    points, counts, indices = load_mesh_geometry(mesh_path)
+
     try:
         from pxr import Gf, Usd, UsdGeom, Vt  # type: ignore[import-not-found]
     except ImportError as e:
@@ -428,7 +493,6 @@ def convert_mesh_to_usd(mesh_path: str, cache_dir: str | None = None) -> str:
             "or directly: pip install 'usd-core>=25.5,<27.0.0'"
         ) from e
 
-    points, counts, indices = load_mesh_geometry(mesh_path)
     mins = [min(p[i] for p in points) for i in range(3)]
     maxs = [max(p[i] for p in points) for i in range(3)]
 
