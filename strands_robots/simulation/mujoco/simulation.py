@@ -5895,13 +5895,22 @@ class MuJoCoSimEngine(
         # 1) Unknown kwargs (skipped for **kwargs methods which legitimately passthrough)
         unknown = [] if method_has_var_keyword else [k for k in remapped if k not in accepted_field_names]
         if unknown:
+            # Name the offending key by the spelling the caller wrote, the same
+            # rule the ``Valid:`` list beside it already uses. ``remapped`` holds
+            # post-rewrite names, so an alias whose target is not a parameter of
+            # THIS action (``torque_vec`` -> ``torque`` on any action but
+            # ``apply_force``) would otherwise be reported under a key the
+            # payload never carried - the canonical-name refusal this helper
+            # exists to prevent, surviving in the one branch that read the loop
+            # variable directly.
+            reported_unknown = _reported_param_name(unknown[0], self._FIELD_ALIASES, received)
             valid_sorted = sorted(
                 _reported_param_name(param, self._FIELD_ALIASES, received) for param in method_param_names - {"action"}
             )
             return None, {
                 "status": "error",
                 "content": [
-                    {"text": (f"Unknown parameter '{unknown[0]}' for action '{action}'. Valid: {valid_sorted}")}
+                    {"text": (f"Unknown parameter '{reported_unknown}' for action '{action}'. Valid: {valid_sorted}")}
                 ],
             }
 

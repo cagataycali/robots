@@ -28,9 +28,11 @@ alias added later is graded without a second list to keep true.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import re
+import textwrap
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
@@ -132,6 +134,28 @@ def _aliases_by_kind(kind: str) -> list[tuple[str, str]]:
         for wire, param in MuJoCoSimEngine._FIELD_ALIASES.items()
         if _SPEC["properties"].get(wire, {}).get("type") == kind
     )
+
+
+def _actions_without_param(param: str) -> list[str]:
+    """Published actions whose method takes neither *param* nor ``**kwargs``.
+
+    Sending an alias for *param* to one of these is what makes the offending key
+    differ from what the caller wrote: the dispatcher rewrites the wire name to
+    *param* before validating, and *param* is not a field of this action, so the
+    unknown-key branch is the one that reports it.
+    """
+    out = []
+    for action in _SPEC["properties"]["action"]["enum"]:
+        if action in _VAR_KEYWORD_ACTIONS:
+            continue
+        method = getattr(MuJoCoSimEngine, MuJoCoSimEngine._ACTION_ALIASES.get(action, action), None)
+        if method is None:  # pragma: no cover - every published action resolves today
+            continue
+        names = set(inspect.signature(method).parameters) - {"self"}
+        if param in names or {"name", "robot_name"} & {param} and names & {"name", "robot_name"}:
+            continue
+        out.append(action)
+    return sorted(out)
 
 
 class TestTheAliasMapIsWhatMakesThisReachable:
@@ -373,9 +397,42 @@ class TestOneOwnerForTheReportingRule:
         messages at once.
         """
         source = inspect.getsource(MuJoCoSimEngine._validate_and_build_kwargs)
-        for raw in ("{vparam}", "{param_name}'."):
-            assert raw not in source, f"a refusal still formats the raw name {raw!r}"
-        assert source.count("_reported_param_name(") >= 4, source.count("_reported_param_name(")
+        assert source.count("_reported_param_name(") >= 5, source.count("_reported_param_name(")
+
+        # Derived rather than a list of spellings to forbid: a blocklist of
+        # format strings grades how a slot is written, not where its value came
+        # from, so it stays green for any raw name it was not told about. This
+        # asks the dataflow question instead - a name built out of ``remapped``
+        # or ``received`` carries post-rewrite keys, and a refusal may only
+        # interpolate one that has been through the shared rule.
+        function = ast.parse(textwrap.dedent(source)).body[0]
+        assert isinstance(function, ast.FunctionDef)
+        body = ast.Module(body=function.body, type_ignores=[])
+        resolved: set[str] = set()
+        tainted: set[str] = set()
+        for node in ast.walk(body):
+            if not isinstance(node, ast.Assign):
+                continue
+            value = ast.unparse(node.value)
+            names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+            if "_reported_param_name(" in value:
+                resolved |= names
+            elif "remapped" in value or "received" in value:
+                tainted |= names
+        assert "unknown" in tainted, f"premise: the post-rewrite key list is not payload-derived: {sorted(tainted)}"
+        assert resolved, "premise: no name is produced by the shared reporting rule"
+
+        for node in ast.walk(body):
+            if not isinstance(node, ast.Return) or node.value is None:
+                continue
+            for piece in ast.walk(node.value):
+                if not isinstance(piece, ast.FormattedValue):
+                    continue
+                slot = {n.id for n in ast.walk(piece.value) if isinstance(n, ast.Name)}
+                assert not (slot & tainted), (
+                    f"a refusal interpolates {sorted(slot & tainted)}, which holds post-rewrite "
+                    f"names; route it through _reported_param_name as the other sites do"
+                )
 
     def test_the_reported_spelling_prefers_the_payload_then_the_schema(self) -> None:
         """The rule's three branches, stated directly on the helper."""
@@ -387,3 +444,73 @@ class TestOneOwnerForTheReportingRule:
         assert _reported_param_name("torque", aliases, {}) == "torque_vec"
         assert _reported_param_name("force", aliases, {}) == "force"
         assert _reported_param_name("bucket", aliases, {}) == "bucket"
+
+
+class TestAnUnknownKeySentUnderAWireNameIsNamedByIt:
+    """The offending key of an ``Unknown parameter`` refusal, not just its ``Valid:`` list.
+
+    The list beside it was already resolved back to published spellings; the key
+    the refusal is *about* was interpolated straight from ``remapped``, which
+    holds post-rewrite names. An alias whose target is a parameter of some other
+    action (every entry in ``_FIELD_ALIASES``) therefore came back named as the
+    canonical parameter - a key the payload never carried, and for
+    ``torque``/``positions``/``cameras`` one the schema does not publish at all,
+    so the caller's only route back was to guess the mapping.
+
+    Derived from ``_FIELD_ALIASES``, so an alias added later is graded here
+    without a second list to keep true.
+    """
+
+    @pytest.mark.parametrize(("wire", "param"), sorted(MuJoCoSimEngine._FIELD_ALIASES.items()))
+    def test_the_refusal_names_the_wire_name_the_caller_wrote(self, sim: Simulation, wire: str, param: str) -> None:
+        """Not the canonical parameter the dispatcher rewrote it to."""
+        action = _actions_without_param(param)[0]
+        method = getattr(MuJoCoSimEngine, MuJoCoSimEngine._ACTION_ALIASES.get(action, action))
+        assert param not in inspect.signature(method).parameters, (
+            f"premise: {action!r} accepts {param!r}, so the rewrite produces no unknown key"
+        )
+        result = sim(**{"action": action, wire: _BAD_BY_TYPE["array"]})
+        assert result["status"] == "error"
+        text = _text(result)
+        assert "Unknown parameter" in text, text
+        assert f"'{wire}'" in text, f"refusal did not name the spelling the caller wrote: {text}"
+        assert f"Unknown parameter '{param}'" not in text, (
+            f"refusal named {param!r}, which the payload never carried: {text}"
+        )
+
+    @pytest.mark.parametrize(("wire", "param"), sorted(MuJoCoSimEngine._FIELD_ALIASES.items()))
+    def test_an_action_that_rejects_the_alias_target_exists(self, wire: str, param: str) -> None:
+        """Premise: the sweep above is not vacuous for any alias.
+
+        If every published action accepted *param*, the rewrite could never
+        produce an unknown key and there would be nothing to misname.
+        """
+        assert _actions_without_param(param), f"no action rejects {param!r}, so {wire!r} is ungraded"
+
+    @pytest.mark.parametrize(("wire", "param"), sorted(MuJoCoSimEngine._FIELD_ALIASES.items()))
+    def test_a_caller_who_writes_the_canonical_name_is_named_by_it(
+        self, sim: Simulation, wire: str, param: str
+    ) -> None:
+        """Over-reach control: the substitution is driven by the payload, not by the map.
+
+        A Python caller may write the canonical parameter directly. Preferring
+        the wire name unconditionally would answer them with a field they did not
+        send, which is the same defect pointed the other way.
+        """
+        action = _actions_without_param(param)[0]
+        result = sim(**{"action": action, param: _BAD_BY_TYPE["array"]})
+        assert result["status"] == "error"
+        text = _text(result)
+        assert f"Unknown parameter '{param}'" in text, f"expected the canonical name back, got: {text}"
+        assert f"'{wire}'" not in text, f"refusal named {wire!r}, which the payload never carried: {text}"
+
+    def test_a_key_with_no_alias_keeps_its_own_name(self, sim: Simulation) -> None:
+        """Over-reach control: resolving the spelling must not rewrite an ordinary typo.
+
+        A misspelling the alias map does not mention has only one name, and the
+        refusal must still report exactly that.
+        """
+        result = sim(action="step", definitely_not_a_field=1)
+        assert result["status"] == "error"
+        text = _text(result)
+        assert "Unknown parameter 'definitely_not_a_field'" in text, text
