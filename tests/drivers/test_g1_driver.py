@@ -1115,5 +1115,3 @@ def test_g1_driver_module_does_not_import_unitree_sdk2py_at_load_time() -> None:
         "importing strands_robots.drivers.g1 pulled in unitree_sdk2py modules: "
         f"{sorted(after - before)}"
     )
-    assert driver._connected is False
-    assert driver._connect_error == err
