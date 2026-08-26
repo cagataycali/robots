@@ -74,6 +74,7 @@ def shipped_robot_names(module: object, names: tuple[str, ...] | str) -> tuple[s
         return tuple(getattr(module, names))
     return names
 
+
 logger = logging.getLogger(__name__)
 
 
