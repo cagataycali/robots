@@ -732,7 +732,11 @@ class SensorLoopsMixin:
         Args:
             event_type: Short, lowercase event identifier (e.g. ``"estop"``).
             severity: The real severity. It reaches the audit record only - the
-                wire copy is uniformly ``"info"`` (issue #272).
+                wire copy is uniformly ``"info"`` (issue #272) - so the audit
+                record is the only surviving copy, and this parameter wins over
+                a ``payload`` field of the same name rather than being replaced
+                by it. A ``payload`` entry named ``severity`` is not a second
+                channel for this argument; it is discarded from the audit copy.
             payload: Event-specific fields, or ``None`` for an event with none.
         """
         if not self._running:
@@ -759,7 +763,12 @@ class SensorLoopsMixin:
             log_safety_event(
                 event_type=event_type,
                 peer_id=self.peer_id,
-                payload={"severity": severity, **record},
+                # ``severity`` last: the parameter is the documented channel for the
+                # real severity, so an event-specific field that happens to be named
+                # ``severity`` must not replace it. Same precedence as
+                # ``session.PeerInfo.to_dict``, which spreads the peer's own payload
+                # first so the keys that process decided win a name collision.
+                payload={**record, "severity": severity},
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("[mesh] %s: audit log write failed: %s", self.peer_id, exc)

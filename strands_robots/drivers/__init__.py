@@ -37,10 +37,42 @@ from strands_robots.drivers.registry import (
 #: already-registered tolerance and the alias handling are written once. Robot
 #: names are the *canonical* names; :func:`register_native_driver` resolves
 #: aliases, so listing an alias as well is harmless but redundant.
-_SHIPPED_DRIVERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+#:
+#: The names are a literal tuple, or the name of an attribute on the driver's
+#: own module holding them. A driver that supports a whole family declares that
+#: family itself - restating it here would be a second list to keep in step
+#: with the first, and the drift would show up as a robot that resolves to
+#: ``lerobot`` for no reason a reader can see.
+#:
+#: Dynamixel is first because it registers the most robots and its codec has no
+#: optional import that can fail: an ordering mistake then surfaces as the
+#: smaller driver failing after the bigger one rather than the reverse, which
+#: is the easier direction to read.
+_SHIPPED_DRIVERS: tuple[tuple[str, str, tuple[str, ...] | str], ...] = (
+    ("strands_robots.drivers.dynamixel.driver", "DynamixelDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.g1", "G1Driver", ("g1", "unitree_g1")),
     ("strands_robots.drivers.reachy", "ReachyDriver", ("reachy_mini",)),
 )
+
+
+def shipped_robot_names(module: object, names: tuple[str, ...] | str) -> tuple[str, ...]:
+    """Resolve one table entry's robot names against the driver's own module.
+
+    Shared with the test that grades every shipped driver against the seam, so
+    the names it checks are the names actually registered rather than a second
+    reading of the same table.
+
+    Args:
+        module: The driver's imported module.
+        names: A literal tuple of canonical names, or the name of an attribute
+            on *module* holding them.
+
+    Returns:
+        The canonical robot names for that entry.
+    """
+    if isinstance(names, str):
+        return tuple(getattr(module, names))
+    return names
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +94,13 @@ def _register_shipped_drivers() -> None:
 
     for module_path, class_name, robot_names in _SHIPPED_DRIVERS:
         try:
-            driver_cls = getattr(importlib.import_module(module_path), class_name)
+            module = importlib.import_module(module_path)
+            driver_cls = getattr(module, class_name)
+            canonical_names = shipped_robot_names(module, robot_names)
         except Exception:  # noqa: BLE001 - a broken driver must not break the seam
             logger.debug("Shipped driver %s.%s did not import; skipping", module_path, class_name)
             continue
-        for canonical in robot_names:
+        for canonical in canonical_names:
             try:
                 register_native_driver(canonical, driver_cls)
             except ValueError:
@@ -87,4 +121,5 @@ __all__ = [
     "missing_driver_members",
     "register_native_driver",
     "resolve_driver",
+    "shipped_robot_names",
 ]

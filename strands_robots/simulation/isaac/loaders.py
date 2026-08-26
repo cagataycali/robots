@@ -1734,6 +1734,69 @@ def _segment_length(p1: tuple[float, float, float], p2: tuple[float, float, floa
     return math.sqrt(sum(d * d for d in delta))
 
 
+def _quat_matrix(
+    quat: tuple[float, float, float, float],
+) -> tuple[
+    tuple[float, float, float],
+    tuple[float, float, float],
+    tuple[float, float, float],
+]:
+    """Rotation matrix rows of a unit ``wxyz`` quaternion.
+
+    Column ``j`` is where the geom's own axis ``j`` points in the frame the
+    quaternion is expressed in, which is what a rotated primitive's extent is
+    built from. :func:`_parse_orientation` returns a unit quaternion whichever
+    spelling the element used, so no renormalization happens here.
+    """
+    w, x, y, z = quat
+    return (
+        (1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)),
+        (2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)),
+        (2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)),
+    )
+
+
+def _rotated_box_half(
+    half: tuple[float, float, float],
+    rot: tuple[
+        tuple[float, float, float],
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ],
+) -> tuple[float, float, float]:
+    """Half-extent of a rotated box - exact, not an approximation.
+
+    A box's farthest point along axis ``i`` is the corner whose every local
+    component pushes that way, so the extent is ``sum_j |R[i][j]| * half[j]``.
+    Read without the rotation the extent is reported on the geom's own axes
+    instead of the body's, which for a quarter turn is a permutation rather
+    than a small error: a 0.16 m finger pad rotated onto ``x`` keeps reporting
+    0.0085 m there.
+    """
+    return tuple(sum(abs(rot[i][j]) * half[j] for j in range(3)) for i in range(3))  # type: ignore[return-value]
+
+
+def _rotated_ellipsoid_half(
+    half: tuple[float, float, float],
+    rot: tuple[
+        tuple[float, float, float],
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ],
+) -> tuple[float, float, float]:
+    """Half-extent of a rotated ellipsoid - exact, and tighter than its box.
+
+    The support function of an ellipsoid with semi-axes ``half`` is
+    ``sqrt(sum_j (R[i][j] * half[j]) ** 2)``, which is why this cannot reuse
+    :func:`_rotated_box_half`: the box bound of the same rotated ellipsoid is
+    correct but loose, and a collision proxy standing in for the object should
+    not be inflated by the reader's choice of formula.
+    """
+    return tuple(  # type: ignore[return-value]
+        math.sqrt(sum((rot[i][j] * half[j]) ** 2 for j in range(3))) for i in range(3)
+    )
+
+
 def _segment_aabb(
     gtype: str,
     p1: tuple[float, float, float],
@@ -1772,6 +1835,9 @@ def _geom_aabb(
     geom: ET.Element,
     defaults: dict[str, dict[str, str]],
     childclass: str,
+    *,
+    angle_scale: float = math.pi / 180.0,
+    eulerseq: str = "xyz",
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
     """Return ``(center, half_extent)`` AABB for a collision ``<geom>``.
 
@@ -1780,6 +1846,17 @@ def _geom_aabb(
     the caller can fall back to other geoms. The geom-local ``pos`` is the
     AABB centre relative to the owning body's frame.
 
+    A geom's own rotation is part of its extent. MJCF lets a geom state one
+    with ``quat``, ``euler``, ``axisangle``, ``xyaxes`` or ``zaxis``, and read
+    without it the extent is reported on the geom's own axes rather than the
+    body's - for a quarter turn a permutation of the answer, not a small error.
+    :func:`_parse_orientation` resolves whichever spelling the geom (or the
+    ``<default>`` class it inherits from) used, and the bound is then the exact
+    one for that primitive: :func:`_rotated_box_half` for a box,
+    :func:`_rotated_ellipsoid_half` for an ellipsoid, the segment bound below
+    for a capsule or cylinder, and the radius itself for a sphere, which no
+    rotation changes.
+
     A capsule or cylinder may spell its placement and axis extent with
     ``fromto`` instead of ``pos`` + ``size``, in which case the endpoints
     carry both and ``size`` holds only the radius - the same fixed-component
@@ -1787,13 +1864,17 @@ def _geom_aabb(
     :func:`strands_robots.simulation.mujoco.scene_ops.fromto_fixed_size_components`
     states for the MuJoCo backend. Read as ``pos`` + ``size`` alone such a
     geom collapses to a ball of that radius at the body origin, losing the
-    length and the offset, so :func:`_parse_fromto` is consulted first.
-    ``fromto`` on a box or ellipsoid additionally squares the cross-section
-    by copying the first ``size`` component and needs the rotated-box bound;
-    those keep returning ``None`` (no analytic AABB) so the caller falls back
-    rather than asserting an approximation this does not compute.
+    length and the offset, so :func:`_parse_fromto` is consulted first. MuJoCo
+    derives a ``fromto`` geom's orientation from the endpoints and discards any
+    the element declares, so that branch is deliberately rotation-free; the
+    ``pos`` + ``size`` spelling builds the same endpoints from the rotation and
+    shares :func:`_segment_aabb`, so one geom cannot get two different bounds
+    for being spelled two ways. ``fromto`` on a box or ellipsoid additionally
+    squares the cross-section by copying the first ``size`` component, a
+    separate rule this reader does not derive, so those keep returning ``None``
+    (no analytic AABB) and the caller falls back.
 
-    ``type``, ``pos``, ``size`` and ``fromto`` are read through
+    ``type``, ``pos``, ``size``, ``fromto`` and the orientation are read through
     :func:`_class_attrs`: MJCF's ``<default>`` classes may supply any of them, so
     asking the element directly sees only the half the geom spells itself.
     """
@@ -1805,14 +1886,16 @@ def _geom_aabb(
         sizes = [float(p) for p in size_str.replace(",", " ").split()] if size_str else []
     except (ValueError, TypeError):
         sizes = []
+    rot = _quat_matrix(_parse_orientation(attrs, own=geom.attrib, angle_scale=angle_scale, eulerseq=eulerseq))
 
     if gtype == "box":
         if len(sizes) >= 3:
-            half = (sizes[0], sizes[1], sizes[2])
+            half = _rotated_box_half((sizes[0], sizes[1], sizes[2]), rot)
         else:
             return None
     elif gtype == "sphere":
         if sizes:
+            # A ball is its own rotation: the extent is the radius on every axis.
             r = sizes[0]
             half = (r, r, r)
         else:
@@ -1823,11 +1906,19 @@ def _geom_aabb(
         # the endpoints carrying the placement and the axis extent.
         segment = _parse_fromto(attrs.get("fromto"))
         if segment is not None:
+            # MuJoCo takes a ``fromto`` geom's axis from the endpoints and
+            # discards a declared orientation, so ``rot`` is not applied here.
             return _segment_aabb(gtype, segment[0], segment[1], sizes[0]) if sizes else None
         if len(sizes) >= 2:
             r, hl = sizes[0], sizes[1]
-            ext = hl + (r if gtype == "capsule" else 0.0)
-            half = (r, r, ext)
+            # The rotated local +z axis is the geom's own axis in the body
+            # frame, so the same endpoints a ``fromto`` would have carried are
+            # recoverable - and the exact segment bound is then shared with
+            # that branch rather than re-derived for this spelling.
+            axis = (rot[0][2], rot[1][2], rot[2][2])
+            p1 = tuple(pos[i] - axis[i] * hl for i in range(3))
+            p2 = tuple(pos[i] + axis[i] * hl for i in range(3))
+            return _segment_aabb(gtype, p1, p2, r)  # type: ignore[arg-type]
         else:
             # One size and no ``fromto`` is not a shape MuJoCo compiles
             # ("size 1 must be positive in geom"), so there is no geometry
@@ -1835,7 +1926,7 @@ def _geom_aabb(
             return None
     elif gtype == "ellipsoid":
         if len(sizes) >= 3:
-            half = (sizes[0], sizes[1], sizes[2])
+            half = _rotated_ellipsoid_half((sizes[0], sizes[1], sizes[2]), rot)
         else:
             return None
     else:
@@ -1848,6 +1939,9 @@ def _body_collision_aabb(
     body_el: ET.Element,
     defaults: dict[str, dict[str, str]],
     childclass: str,
+    *,
+    angle_scale: float = math.pi / 180.0,
+    eulerseq: str = "xyz",
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
     """Compute the AABB (center, full-size) over a body's own collidable geoms.
 
@@ -1865,8 +1959,14 @@ def _body_collision_aabb(
     geom that omits the attribute, which is MJCF's spelling of group 0.
 
     Geom positions are taken relative to the body frame, so the returned centre
-    is a body-frame offset. Returns ``None`` when no analytic geom is found
-    (e.g. a mesh-only visual body).
+    is a body-frame offset, and each geom's own rotation is folded into its
+    extent by :func:`_geom_aabb` - a body whose collision primitive is turned
+    onto another axis is bounded on the axes it really occupies. Returns
+    ``None`` when no analytic geom is found (e.g. a mesh-only visual body).
+
+    ``angle_scale`` and ``eulerseq`` come from the model's ``<compiler>`` and
+    are only forwarded; they default to MJCF's own defaults (degrees, ``xyz``)
+    so a caller reading a single body needs neither.
     """
     for collidable_only in (True, False):
         mins = [float("inf")] * 3
@@ -1876,7 +1976,7 @@ def _body_collision_aabb(
             attrs = _class_attrs(geom, defaults, childclass)
             if collidable_only and _geom_cannot_collide(attrs):
                 continue
-            aabb = _geom_aabb(geom, defaults, childclass)
+            aabb = _geom_aabb(geom, defaults, childclass, angle_scale=angle_scale, eulerseq=eulerseq)
             if aabb is None:
                 continue
             center, half = aabb
@@ -1897,6 +1997,9 @@ def _recursive_collision_aabb(
     bounds: list[list[float]],
     defaults: dict[str, dict[str, str]],
     childclass: str,
+    *,
+    angle_scale: float = math.pi / 180.0,
+    eulerseq: str = "xyz",
 ) -> bool:
     """Fold this body's (and nested bodies') collision AABBs into ``bounds``.
 
@@ -1906,7 +2009,7 @@ def _recursive_collision_aabb(
     """
     childclass = body_el.get("childclass") or childclass
     found = False
-    aabb = _body_collision_aabb(body_el, defaults, childclass)
+    aabb = _body_collision_aabb(body_el, defaults, childclass, angle_scale=angle_scale, eulerseq=eulerseq)
     if aabb is not None:
         center, size = aabb
         for i in range(3):
@@ -1918,7 +2021,12 @@ def _recursive_collision_aabb(
     for child in body_el.findall("body"):
         child_off = _parse_xyz(child.get("pos"))
         new_off = (offset[0] + child_off[0], offset[1] + child_off[1], offset[2] + child_off[2])
-        found = _recursive_collision_aabb(child, new_off, bounds, defaults, childclass) or found
+        found = (
+            _recursive_collision_aabb(
+                child, new_off, bounds, defaults, childclass, angle_scale=angle_scale, eulerseq=eulerseq
+            )
+            or found
+        )
     return found
 
 
@@ -2050,7 +2158,9 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
         # (e.g. ``living_room_table`` -> ``living_room_table_col``), folding
         # nested-body offsets into the AABB.
         bounds = [[float("inf")] * 3, [float("-inf")] * 3]
-        found = _recursive_collision_aabb(body_el, (0.0, 0.0, 0.0), bounds, geom_defaults, cc)
+        found = _recursive_collision_aabb(
+            body_el, (0.0, 0.0, 0.0), bounds, geom_defaults, cc, angle_scale=angle_scale, eulerseq=eulerseq
+        )
         mins, maxs = bounds[0], bounds[1]
 
         if found:

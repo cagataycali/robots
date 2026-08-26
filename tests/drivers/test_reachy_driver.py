@@ -726,13 +726,17 @@ class TestTheLerobotPathIsUnaffected:
         # same contract without editing this test.
         import importlib
 
-        from strands_robots.drivers import _SHIPPED_DRIVERS
+        from strands_robots.drivers import _SHIPPED_DRIVERS, shipped_robot_names
 
         assert _SHIPPED_DRIVERS, "the shipped-driver table is empty"
         for module_path, class_name, robot_names in _SHIPPED_DRIVERS:
-            driver_cls = getattr(importlib.import_module(module_path), class_name)
+            module = importlib.import_module(module_path)
+            driver_cls = getattr(module, class_name)
             assert missing_driver_members(driver_cls) == (), f"{class_name} is missing driver members"
-            assert robot_names, f"{class_name} is registered for no robot"
+            # Resolved through the same helper the registration loop uses, so an
+            # entry that names its family on its own module is graded on the
+            # names actually registered rather than on the attribute name.
+            assert shipped_robot_names(module, robot_names), f"{class_name} is registered for no robot"
 
 
 def _run_tool(driver: ReachyDriver, action: str) -> dict[str, Any]:

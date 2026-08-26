@@ -107,7 +107,7 @@ def _transport_port_error(port: int, param: str, context: str) -> str | None:
     """
     if port > _TRANSPORT_MAX_PORT:
         return (
-            f"{context}: port {port!r} is a legal TCP port that the rosbridge WebSocket "
+            f"{context}: {param} {port!r} is a legal TCP port that the rosbridge WebSocket "
             f"transport cannot address (it addresses 1-{_TRANSPORT_MAX_PORT}; autobahn's "
             "URL builder excludes the top of the range)"
         )

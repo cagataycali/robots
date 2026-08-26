@@ -109,15 +109,35 @@ class DDSSubscriberSet:
             return None
 
     def close(self) -> None:
-        """Release every subscriber. Idempotent.
+        """Close every subscriber and forget it. Idempotent, and never raises.
 
-        ``ChannelSubscriber`` in ``unitree_sdk2py`` has no explicit close - it
-        relies on garbage collection - so this drops the references and lets
-        the collector claim them. Called from
-        :meth:`~strands_robots.drivers.g1.G1Driver.cleanup`.
+        ``ChannelSubscriber.Close()`` is what releases a subscription, and
+        dropping the reference is not a substitute. :meth:`subscribe` builds
+        each subscriber with ``queueLen=10``, and at any queue length above
+        zero ``unitree_sdk2py`` starts a ``ch_reader`` daemon thread whose
+        target is a bound method of the channel's reader. That running thread
+        keeps the whole channel reachable, so the CycloneDDS ``__del__`` that
+        would release the ``DataReader`` never runs: the thread keeps looping,
+        the reader stays matched, and the decoder callback keeps filling caches
+        for a driver that believes it is disconnected. ``Close()`` sets the
+        thread's stop event, joins it and drops the reader; nothing else does.
+
+        The list is swapped out under :attr:`_lock` before any ``Close()``
+        runs, so a second call finds nothing to close and a concurrent
+        :meth:`subscribe` - which appends without that lock - cannot mutate
+        the list being walked. Each subscriber is then closed under its own
+        ``try``, because a teardown that abandons the subscribers behind a
+        failing one leaks exactly what it was called to release.
+
+        Called from :meth:`~strands_robots.drivers.g1.G1Driver.cleanup`.
         """
         with self._lock:
-            self._subs.clear()
+            subs, self._subs = self._subs, []
+        for sub in subs:
+            try:
+                sub.Close()
+            except Exception as exc:  # noqa: BLE001 - SDK raises bare Exception
+                logger.warning("failed to close a DDS subscriber: %s", exc)
 
 
 class DDSPublisher:
@@ -251,12 +271,27 @@ class DDSPublisher:
         return None
 
     def close(self) -> None:
-        """Release every publisher. Idempotent.
+        """Close every publisher and forget it. Idempotent, and never raises.
 
-        ``ChannelPublisher`` in ``unitree_sdk2py`` has no explicit close - it
-        relies on garbage collection - so this drops the references and lets
-        the collector claim them. Called from
-        :meth:`~strands_robots.drivers.g1.G1Driver.cleanup`.
+        ``ChannelPublisher.Close()`` releases the writer through
+        ``Channel.CloseWriter``. A writer starts no reader thread, so unlike
+        :meth:`DDSSubscriberSet.close` a dropped reference here does reach
+        CycloneDDS' ``__del__`` and the ``DataWriter`` is collected - but only
+        whenever the last reference happens to go, which a live traceback or a
+        reference cycle can defer indefinitely. Closing says when.
+
+        Mirrors :meth:`DDSSubscriberSet.close`: the cache is swapped out under
+        :attr:`_lock` so a second call closes nothing twice, and each publisher
+        is closed under its own ``try`` so one failure cannot strand the rest.
+
+        The driver holds no :class:`DDSPublisher` yet - the control loop that
+        owns one lands with issue #361 - so today this is reached only by a
+        caller that built its own.
         """
         with self._lock:
-            self._pubs.clear()
+            pubs, self._pubs = list(self._pubs.values()), {}
+        for pub in pubs:
+            try:
+                pub.Close()
+            except Exception as exc:  # noqa: BLE001 - SDK raises bare Exception
+                logger.warning("failed to close a DDS publisher: %s", exc)

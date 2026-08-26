@@ -82,8 +82,9 @@ Three questions, two keys
     always shares its own claim.
 
 ``--all-open``
-    Review, keyed on the added path. Do two open pull requests create the same
-    file? Needs no issue number, which is the point: see below.
+    Review, keyed on what a branch creates. Do two open pull requests create the
+    same file, or two fragments naming one changelog entry? Needs no issue
+    number, which is the point: see below.
 
 The key a claim-free pair collides on
 -------------------------------------
@@ -107,29 +108,54 @@ merge order plus possibly one test run. Two branches *creating* one file is not 
 composition at all. It is two answers to one question, and one of them is going
 to be closed.
 
-Measured over those same 300 pull requests, on the 1802 pairs that were open at
-the same instant::
+Measured over 353 pull requests (#2345 through #2767), on the 2002 pairs that
+were open at the same instant::
 
-    relation              pairs   duplicates among them
-    both edit a path        117   a composition question, not this one
-    both add a path           2   2
+    relation                        pairs   duplicates among them
+    both edit a path                  127   a composition question, not this one
+    both add a path                     2   2
+    both create the same thing          3   3   <- what this sweep pairs on
 
-Both of the two are duplicates, and neither was reachable from a claim::
+All three are duplicates, and none was reachable from a claim::
 
-    shared added path                                       pair           closed
-    tests/test_recorder_counters_track_on_disk_frames.py    #2388, #2389   #2389
-    tests/training/test_checkpoint_cadence_domain.py        #2707, #2708   #2707
+    what both create                                        pair           closed
+    tests/test_recorder_counters_track_on_disk_frames.py     #2388, #2389   #2389
+    tests/training/test_checkpoint_cadence_domain.py         #2707, #2708   #2707
+    changelog.d/*-g1-send-action-wired.md                    #2766, #2767   open
 
 The two keys are complementary rather than nested, which is why this is a second
 key and not a replacement for the first. The same window holds two *issue-keyed*
 pairs -- #2570/#2571 on #2569, and #2480/#2508 on #2466 -- and neither of them
-shares an added path, while neither claim-free pair claims an issue. Four
-duplicate pairs, two reachable from each key, none from both.
+shares an added path, while no claim-free pair claims an issue. Five duplicate
+pairs, two reachable from the claim and three from what they create, none from
+both.
 
-The 2-of-1802 rate is the whole claim. The relation the sibling file rejected --
+The 3-of-2002 rate is the whole claim. The relation the sibling file rejected --
 widening a path intersection to a test's walked root -- selected 11 of 36 pairs
 and named no defect, and a finding attached to a third of the queue reads as
 boilerplate.
+
+Why a raw path was not the key
+------------------------------
+The third row was not reachable when this sweep shipped, and the reason is worth
+stating because it was written down as a certainty. A test asserted that a
+changelog fragment can never be the shared path, "because its name embeds the
+number", and the fixtures carried one to demonstrate it. That is true of the raw
+path, and it is exactly why the number has to be dropped: a fragment is named
+``<number>-<slug>.md``, so two branches describing one change write one slug under
+two numbers and collide on nothing.
+
+The fear behind that exclusion was that keying on a fragment "would fire on every
+pair in the queue". Measured, it does not. Of the 353 pull requests, 350 add a
+fragment, and between them they use **350 distinct slugs**; exactly two slugs are
+used twice, and both times the two users are a duplicate pair. The number is the
+noisy half, not the slug: it is meant to be the pull request's own number and in
+40 of those 350 it is not, because it is chosen before the pull request exists and
+races with whatever merges first.
+
+So the key is the identity a created path declares -- see :func:`addition_key`.
+For everything except a fragment that is the path itself, which is why widening it
+selected the same two pairs plus one and lost none.
 
 Why this question cannot be asked at intake
 -------------------------------------------
@@ -163,7 +189,8 @@ What this reports, and what it deliberately does not
 ``--all-open`` reports the same three shapes over the other key:
 
 ``unique-additions``
-    No two open pull requests create the same file. The convention working.
+    No two open pull requests create the same file, and no two name one changelog
+    entry. The convention working.
 
 ``duplicate-addition``
     The finding.
@@ -178,9 +205,9 @@ Out of scope, deliberately:
   branches that both omit the keyword collide invisibly there, and still do:
   requiring a claim is what 18 of the last 30 merges would fail, so neither
   claim-keyed mode demands one. What changed is that the pair is no longer
-  unreachable -- ``--all-open`` collides it on an added path instead, and the
-  measurement above is the argument that this is narrow enough to be worth
-  reporting. See #2709 and #1961.
+  unreachable -- ``--all-open`` collides it on what the two branches create
+  instead, and the measurement above is the argument that this is narrow enough to
+  be worth reporting. See #2709 and #1961.
 - **Whether the issue exists, or is already closed.** A stale number is a
   different defect, and refusing it would report a finding against correct work
   whose issue someone else closed first.
@@ -220,6 +247,7 @@ exits ``2``.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import itertools
 import json
 import os
@@ -228,6 +256,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from types import ModuleType
 
 API_ROOT = "https://api.github.com"
 
@@ -260,6 +290,42 @@ UNKNOWN_CLAIMS = "unknown-claims"
 UNIQUE_ADDITIONS = "unique-additions"
 DUPLICATE_ADDITION = "duplicate-addition"
 UNKNOWN_ADDITIONS = "unknown-additions"
+
+#: The directory whose created files name a change rather than being one.
+FRAGMENT_DIR = "changelog.d/"
+
+
+def _load_assembler() -> ModuleType:
+    """Load ``assemble_changelog`` from beside this script, for the naming rule.
+
+    By path, registered in :data:`sys.modules` before execution and reusing an
+    already-loaded copy: the shape and every reason for it are
+    ``scripts/check_changelog_fragment.py``'s :func:`_load_assembler`, which
+    reuses this same module for this same rule.
+    """
+    loaded = sys.modules.get("assemble_changelog")
+    if loaded is not None:
+        return loaded
+    path = Path(__file__).resolve().parent / "assemble_changelog.py"
+    spec = importlib.util.spec_from_file_location("assemble_changelog", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        raise RuntimeError(f"cannot load the fragment naming rule from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["assemble_changelog"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules["assemble_changelog"]
+        raise
+    return module
+
+
+#: The single source of what a fragment name is. Reused rather than restated so
+#: this sweep and the assembler cannot disagree about whether a created file
+#: under :data:`FRAGMENT_DIR` is a fragment at all -- a name the assembler would
+#: reject keys on itself here, which is the conservative direction.
+_ASSEMBLER = _load_assembler()
+
 
 #: The one ``changeType`` this key reads. GitHub's enum also carries
 #: ``MODIFIED``, ``REMOVED``, ``RENAMED``, ``COPIED`` and ``CHANGED``, and every
@@ -419,20 +485,20 @@ class AdditionVerdict:
         if self.outcome == UNKNOWN_ADDITIONS:
             return (
                 f"Could not read every file list: {self.detail} Not treated as a finding, because "
-                "an unreadable file list is not evidence that two branches create one file."
+                "an unreadable file list is not evidence that two branches create one thing."
             )
         if self.outcome == UNIQUE_ADDITIONS:
             return (
-                f"No two of the {self.scanned} open pull requests create the same file "
-                f"({self.compared} pair(s) compared)."
+                f"No two of the {self.scanned} open pull requests create the same file or name the "
+                f"same changelog entry ({self.compared} pair(s) compared)."
             )
         parts = "; ".join(
             f"{_pulls((left, right))} both create {_paths(paths)}" for left, right, paths in self.collisions
         )
         return (
-            f"{parts}. Two branches creating one file are two answers to one question rather "
-            "than a composition to verify, and whichever is closed spends a review approval on a "
-            "change that will not ship."
+            f"{parts}. Two branches creating one file, or two fragments declaring one changelog "
+            "entry, are two answers to one question rather than a composition to verify, and "
+            "whichever is closed spends a review approval on a change that will not ship."
         )
 
 
@@ -476,22 +542,73 @@ def find_collisions(
     return tuple(collisions)
 
 
+def addition_key(path: str) -> str:
+    """Return the identity a created path declares, which is what collides.
+
+    Almost every created path *is* its own identity: two branches writing
+    ``tests/foo.py`` have written one file, and the path is what says so.
+
+    A changelog fragment is the exception, and it is the only one. Its name is
+    ``<number>-<slug>.md`` by convention, so two branches describing the same
+    change write the same slug under two numbers and their paths differ -- while
+    the entry they are each declaring is the same entry. Measured over
+    #2345..#2767: 350 of the 353 pull requests add a fragment, between them using
+    **350 distinct slugs**, and the only two slugs used twice are #2388/#2389 and
+    #2766/#2767 -- both duplicate pairs. So a slug is in practice a name for a
+    piece of work, and two of them colliding is the thing this sweep looks for.
+
+    The number is dropped rather than compared because it carries no signal: it is
+    meant to be the pull request's own number and in 40 of those 350 it is not,
+    since a number is chosen before the pull request is opened and races with
+    whatever merges first.
+
+    Returned as a glob (``changelog.d/*-<slug>.md``) so the report names what the
+    two branches share without naming a file that exists on neither. A name the
+    assembler would not accept as a fragment -- a reserved ``README.md``, a
+    nested path, a slug that is not lowercase-and-hyphens -- keys on itself, which
+    is the conservative direction: it can only fail to report a pair, never invent
+    one.
+    """
+    if not path.startswith(FRAGMENT_DIR):
+        return path
+    name = path[len(FRAGMENT_DIR) :]
+    # Checked before the pattern rather than left to it. The pattern happens to
+    # reject today's only reserved name, but only because ``README.md`` has no
+    # leading digits; a reserved name that did would match it, and the assembler's
+    # list is the authority on which names are not fragments. A nested path needs
+    # no such check -- ``/`` is outside every character class in the pattern.
+    if name in _ASSEMBLER.RESERVED_NAMES:
+        return path
+    match = _ASSEMBLER.FRAGMENT_NAME.match(name)
+    if match is None:
+        return path
+    return f"{FRAGMENT_DIR}*-{name[match.end('number') + 1 :]}"
+
+
 def find_addition_collisions(
     additions: Mapping[int, Sequence[str]],
 ) -> tuple[tuple[int, int, tuple[str, ...]], ...]:
-    """Return every pair of open pull requests that creates the same file.
+    """Return every pair of open pull requests that creates the same thing.
+
+    Paired on :func:`addition_key` rather than on the raw path, so a pair whose
+    only shared creation is a changelog entry under two fragment numbers is
+    reported. For every other path the key is the path, so this is a strict
+    widening: measured over the 2002 co-open pairs in #2345..#2767 it selects the
+    same 2 pairs the raw path selects, plus #2766/#2767, and loses none.
 
     Every pair is compared rather than only adjacent ones: two runs a few minutes
     apart usually get consecutive numbers, but nothing guarantees it, and a
     relation that holds for a pair is not a property of their distance.
 
     Deterministic in all three axes -- the pairs by lower then higher number, and
-    each shared path list sorted -- for the reason :func:`find_collisions` gives.
+    each shared list sorted -- for the reason :func:`find_collisions` gives.
     """
     ordered = sorted(additions)
     found: list[tuple[int, int, tuple[str, ...]]] = []
     for left, right in itertools.combinations(ordered, 2):
-        shared = tuple(sorted(set(additions[left]) & set(additions[right])))
+        shared = tuple(
+            sorted({addition_key(path) for path in additions[left]} & {addition_key(path) for path in additions[right]})
+        )
         if shared:
             found.append((left, right, shared))
     return tuple(found)
@@ -732,7 +849,7 @@ def render_additions(verdict: AdditionVerdict, repo: str) -> str:
     a list of report lines is indistinguishable from a forgotten comma.
     """
     lines = [
-        "## Duplicate work - two branches creating one file",
+        "## Duplicate work - two branches creating one file or one changelog entry",
         "",
         f"Outcome: **{verdict.outcome}**",
         "",
@@ -749,7 +866,7 @@ def render_additions(verdict: AdditionVerdict, repo: str) -> str:
     lines += [
         f"| pull requests implicated | {_pulls(verdict.implicated)} |",
         "",
-        "| pull requests | file(s) both create |",
+        "| pull requests | what both create |",
         "|---|---|",
     ]
     for left, right, paths in verdict.collisions:
@@ -761,14 +878,15 @@ def render_additions(verdict: AdditionVerdict, repo: str) -> str:
     )
     clears = (
         "Close whichever of the two is redundant, or -- if both are wanted -- change one so it "
-        + "no longer creates the same path, which is the case where the shared name was the "
-        + "accident rather than the work. This is a report rather than a branch-clearable gate: "
+        + "no longer creates the same path or names the same changelog entry, which is the case "
+        + "where the shared name was the accident rather than the work. "
+        + "This is a report rather than a branch-clearable gate: "
         + "the remedy is a decision between two authors, and no push by one of them settles it."
     )
     blind = (
         "Neither pull request need have claimed an issue for this to be reported, which is the "
-        + "point of the second key: measured over the last 300 pull requests, two duplicate pairs "
-        + "were reachable from a claim and two only from an added path, with no pair reachable "
+        + "point of the second key: measured over #2345..#2767, two duplicate pairs were reachable "
+        + "from a claim and three only from something they both create, with no pair reachable "
         + "from both."
     )
     lines += ["", "### What this means", "", why, "", "### What clears this", "", clears, "", blind]
