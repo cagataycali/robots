@@ -300,20 +300,23 @@ def test_send_action_refuses_below_battery_floor() -> None:
     assert "12.0%" in result["content"][0]["text"]
 
 
-def test_send_action_reports_motion_not_wired_when_gates_pass() -> None:
-    """Every gate passes - the refusal is the honest "issue #358" reason.
+def test_send_action_reports_not_connected_when_publisher_is_missing() -> None:
+    """A driver that survived every gate but has no publisher still refuses.
 
-    The motion path lands with the g1_tools bundle. Until then, a caller who
-    survives every gate gets the named reason instead of a stub that would
-    look like a successful write.
+    Defense-in-depth: :meth:`_check_motion_gates` already refuses on
+    ``not self._connected``, so this state (connected but ``_publisher`` is
+    ``None``) is not reachable from a real bring-up. The second check is
+    for the day the gate discipline evolves - a code path that would touch
+    ``publisher.publish`` on ``None`` fails a test here first.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
     driver._connected = True
     driver._fsm_id = 501
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
-    result = driver.send_action({"any": 0.0})
+    driver._publisher = None  # explicit; the real bring-up sets one
+    result = driver.send_action({"joints": []})
     assert result["status"] == "error"
-    assert "issue #358" in result["content"][0]["text"]
+    assert "not connected" in result["content"][0]["text"]
 
 
 # =========================================================================
@@ -453,11 +456,14 @@ def test_send_action_admits_every_handshake_fsm(fsm: int) -> None:
     driver._connected = True
     driver._fsm_id = fsm
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
-    result = driver.send_action({"any": 0.0})
+    driver._publisher = None  # gate passes; defense-in-depth trips instead
+    result = driver.send_action({"joints": []})
     assert result["status"] == "error"
     text = result["content"][0]["text"]
-    # Every handshake FSM passes the gate - the refusal is "not wired".
-    assert "issue #358" in text
+    # Every handshake FSM passes the gate - the refusal is the defense-in-depth
+    # message, not the FSM refusal. Absence of "FSM {fsm} refuses" is the
+    # positive assertion that the gate accepted this FSM.
+    assert "not connected" in text
     # The FSM was accepted, so its number is *not* mentioned as a refusal.
     assert f"FSM {fsm} refuses" not in text
 
@@ -477,11 +483,15 @@ def test_walk_fsms_has_a_consumer_and_a_documented_boundary() -> None:
     driver._connected = True
     driver._fsm_id = 500  # sitting: in HANDSHAKE_FSMS, not in WALK_FSMS
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
+    driver._publisher = None  # arm gate passes; defense-in-depth trips instead
 
     # Arm-scoped write at 500 passes the gate (500 is in HANDSHAKE_FSMS).
-    arm_result = driver.send_action({"any": 0.0})
+    arm_result = driver.send_action({"joints": []})
     assert arm_result["status"] == "error"
-    assert "issue #358" in arm_result["content"][0]["text"]  # not gated
+    # The gate accepted 500; the refusal is the defense-in-depth message
+    # (a real bring-up would have set ``_publisher`` before this call).
+    assert "not connected" in arm_result["content"][0]["text"]
+    assert "FSM 500 refuses" not in arm_result["content"][0]["text"]
 
     # Loco-scoped gate at 500 refuses. Calling the helper directly is the
     # narrow way to pin the boundary before any write verb classifies its

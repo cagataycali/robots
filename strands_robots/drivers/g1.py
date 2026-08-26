@@ -37,7 +37,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
-from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
+from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
 
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
@@ -58,6 +58,20 @@ _TOPIC_LOWSTATE = "rt/lowstate"
 _TOPIC_BMS = "rt/lf/bmsstate"
 _TOPIC_LIDAR_STATE = "rt/utlidar/lidar_state"
 _TOPIC_LIDAR_CLOUD = "rt/utlidar/cloud_livox_mid360"
+_TOPIC_LOWCMD = "rt/lowcmd"
+
+# IDL class path for the write path. Resolved lazily on first ``send_action``
+# call so ``import g1`` stays safe without ``unitree_sdk2py``. Shape kept
+# identical to :meth:`G1Driver._subscription_plan` for the read path so a
+# future reader sees the same convention on both halves of the engine.
+_LOWCMD_CLS_PATH = ("unitree_sdk2py.idl.unitree_hg.msg.dds_", "LowCmd_")
+
+# Number of ``motor_cmd`` entries a G1 ``LowCmd_`` carries. The IDL fixes the
+# array length; we do not resize it, we only fill the leading ``N`` entries
+# a caller named in ``action``. The exact upper bound is a firmware detail
+# and the tests do not depend on it - the driver only writes what the caller
+# asked to write, and leaves the rest at whatever the IDL default is.
+_G1_LOWCMD_MOTOR_FIELDS: tuple[str, ...] = ("q", "dq", "tau", "kp", "kd")
 
 
 class G1Driver:
@@ -128,6 +142,11 @@ class G1Driver:
         # Populated by :meth:`connect_eagerly`. ``None`` on a machine that
         # never connected - a valid state for tests and imports.
         self._subs: DDSSubscriberSet | None = None
+        self._publisher: DDSPublisher | None = None
+        # Resolved LowCmd_ IDL class, cached on first send_action so the loop
+        # does not re-import for every step. ``None`` until the first write
+        # or a connect-time resolution failure.
+        self._lowcmd_class: Any | None = None
         self._connected: bool = False
         self._connect_error: str | None = None
 
@@ -274,6 +293,18 @@ class G1Driver:
                 self._connect_error = err
                 return err
         self._subs = subs
+        # Build the write half on the same call. It shares the shared init
+        # lock and lazy SDK import - :func:`ensure_dds` inside ``start`` is
+        # idempotent, so the subscriber set's earlier ``start`` is why this
+        # ``start`` returns ``None`` without touching the SDK a second time.
+        # An error here fails the connect the same way a subscriber failure
+        # does, so a caller does not end up with reads-only.
+        publisher = DDSPublisher(self._network_interface)
+        err = publisher.start()
+        if err is not None:
+            self._connect_error = err
+            return err
+        self._publisher = publisher
         self._connected = True
         self._connect_error = None
         return None
@@ -314,10 +345,13 @@ class G1Driver:
         logger.debug("%s.stop() no-op (no motion path wired yet)", self._tool_name)
 
     def cleanup(self) -> None:
-        """Release every DDS subscriber. Idempotent."""
+        """Release every DDS subscriber and publisher. Idempotent."""
         if self._subs is not None:
             self._subs.close()
             self._subs = None
+        if self._publisher is not None:
+            self._publisher.close()
+            self._publisher = None
         self._connected = False
 
     # ------------------------------------------------------------------ #
@@ -367,24 +401,146 @@ class G1Driver:
         action: dict[str, Any],
         robot_name: str | None = None,
     ) -> dict[str, Any]:
-        """Refuse writes today; the FSM and battery gates are already live.
+        """Publish an arm-SDK write on ``rt/lowcmd`` after safety gates pass.
 
-        The motion writes to ``rt/armsdk`` and ``rt/lowcmd`` land in issue
-        #358 - but the gates that a real ``send_action`` will consult are
-        cheap to install now, and installing them here means the day the
-        write lines land the gates already have coverage. The envelope
-        matches what a rejected motion call will return.
+        The write path is a single DDS publish: the caller names a set of
+        joints and their targets in ``action``; the driver populates a
+        ``LowCmd_`` message, writes it, and returns the envelope agent
+        callers already parse. No arm-SDK RPC is used - lerobot's driver
+        talks the arm SDK directly at 500Hz, so this driver does the same
+        primitive at the same layer. The higher-level tool verbs that a
+        user reaches for (``g1_arm_release``, ``g1_arm_get_state``, ...)
+        remain in issue #358; they wrap the same publisher this method uses.
 
-        Scope is ``"arm"`` because ``send_action`` in the lerobot driver
-        writes joint targets to the arm SDK; base velocity is not a
-        ``send_action`` verb. When the write lines land they will consult
-        the same :meth:`_check_motion_gates` call and pass the same scope.
+        Scope is ``"arm"`` because ``send_action`` writes joint targets to
+        arm-facing joints. Base velocity is a separate verb (locomotion,
+        FSM 501/801) and does not go through ``send_action`` in the
+        lerobot driver either.
+
+        Args:
+            action: Mapping the caller owns. The recognised keys are
+                ``"joints"`` (list of ints - the motor indices to command),
+                ``"q"``, ``"dq"``, ``"tau"``, ``"kp"``, ``"kd"`` (lists of
+                floats, one per index in ``joints``). Every field is
+                optional except ``joints``; a missing ``q`` for example
+                leaves ``motor_cmd[i].q`` at its IDL default (0.0). Extra
+                keys are ignored - the shape is loose because a policy
+                loop and a one-shot pose both call this with slightly
+                different payloads and neither should have to know about
+                the other's fields.
+            robot_name: Accepted for parity with the lerobot driver's
+                signature; unused here because a single driver instance
+                owns one robot.
+
+        Returns:
+            ``{"status": "success", "content": [{"text": <what was written>}]}``
+            on a real publish, or the standard refusal shape from
+            :func:`_refuse` if a gate said no or the SDK is unreachable.
         """
-        del action, robot_name  # gates run before we would use them
+        del robot_name  # single-robot driver
         refusal = self._check_motion_gates("arm")
         if refusal is not None:
             return refusal
-        return _refuse("motion path not wired yet (issue #358)")
+        if self._publisher is None:
+            return _refuse("driver not connected - call connect_eagerly() first")
+        lowcmd_cls = self._resolve_lowcmd_class()
+        if isinstance(lowcmd_cls, str):
+            return _refuse(lowcmd_cls)
+        message, build_err = self._build_lowcmd(action, lowcmd_cls)
+        if build_err is not None:
+            return _refuse(build_err)
+        assert message is not None  # narrowing: build_err is None ⇒ message set
+        err = self._publisher.publish(_TOPIC_LOWCMD, lowcmd_cls, message)
+        if err is not None:
+            return _refuse(err)
+        joints = action.get("joints", [])
+        return {
+            "status": "success",
+            "content": [{"text": (f"wrote LowCmd_ on {_TOPIC_LOWCMD} for {len(joints)} joint(s)")}],
+        }
+
+    def _resolve_lowcmd_class(self) -> Any:
+        """Return the ``LowCmd_`` IDL class or a reason string.
+
+        Cached on :attr:`_lowcmd_class` so a control-loop caller pays the
+        import cost once. Kept out of ``connect_eagerly`` on purpose: a
+        driver that connects reads-only should not fail on a missing write
+        IDL, since the write path is a separate concern - the read path
+        is what the mesh calls into for status.
+        """
+        cached = self._lowcmd_class
+        if cached is not None:
+            return cached
+        resolved = _resolve_message_class(_LOWCMD_CLS_PATH)
+        if isinstance(resolved, str):
+            return resolved
+        self._lowcmd_class = resolved
+        return resolved
+
+    def _build_lowcmd(
+        self,
+        action: dict[str, Any],
+        lowcmd_cls: Any,
+    ) -> tuple[Any | None, str | None]:
+        """Populate a fresh ``LowCmd_`` from ``action``.
+
+        Every recognised field is optional and independently checked; a
+        length mismatch between ``joints`` and one of the array fields is
+        the only structural error, because the mapping is positional (the
+        caller's ``q[i]`` targets ``joints[i]``). An unknown motor index is
+        surfaced as an error too - silently dropping a write would be worse
+        than refusing it.
+
+        Args:
+            action: See :meth:`send_action` for the shape.
+            lowcmd_cls: The IDL class to instantiate. Injected so the
+                caller can hand in a mock.
+
+        Returns:
+            ``(message, None)`` on success. ``(None, reason)`` on a shape
+            error; never raises.
+        """
+        try:
+            message = lowcmd_cls()
+        except Exception as exc:  # noqa: BLE001 - IDL constructors can raise
+            return None, f"cannot construct LowCmd_: {exc}"
+        joints_raw = action.get("joints", None)
+        if joints_raw is None:
+            # Empty write - no joints named. This is a valid stop payload
+            # (every motor stays at IDL default), so we let it through.
+            return message, None
+        try:
+            joints = [int(j) for j in joints_raw]
+        except (TypeError, ValueError) as exc:
+            return None, f"'joints' must be a list of ints: {exc}"
+        motor_cmd = getattr(message, "motor_cmd", None)
+        if motor_cmd is None:
+            return None, "LowCmd_ has no motor_cmd field - IDL mismatch"
+        # Validate every value-array shape before writing anything so a
+        # partial write is impossible on a shape error.
+        arrays: dict[str, list[float]] = {}
+        for field in _G1_LOWCMD_MOTOR_FIELDS:
+            raw = action.get(field, None)
+            if raw is None:
+                continue
+            try:
+                values = [float(v) for v in raw]
+            except (TypeError, ValueError) as exc:
+                return None, f"'{field}' must be a list of floats: {exc}"
+            if len(values) != len(joints):
+                return None, (f"'{field}' has {len(values)} values but 'joints' has {len(joints)} entries")
+            arrays[field] = values
+        for idx, joint in enumerate(joints):
+            try:
+                entry = motor_cmd[joint]
+            except (IndexError, KeyError, TypeError) as exc:
+                return None, f"motor_cmd[{joint}] is out of range: {exc}"
+            for field, values in arrays.items():
+                try:
+                    setattr(entry, field, values[idx])
+                except AttributeError as exc:
+                    return None, f"motor_cmd[{joint}] has no {field}: {exc}"
+        return message, None
 
     # ------------------------------------------------------------------ #
     # Task and policy paths (stubs until #358).                          #
