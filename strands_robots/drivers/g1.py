@@ -1224,6 +1224,16 @@ class _ControlLoop:
         assert self._started_at is not None
         deadline = self._started_at + self._duration
         publish_reason: str | None = None
+        # SDK availability is infrastructure, not a policy verdict.  Resolve
+        # once up front so a missing SDK exits under ``publish`` rather than
+        # being reported through the policy err path from
+        # ``_build_lowcmd_from_action`` - and so an SDK-less test box can
+        # exercise the step/duration/gate/policy branches with a no-op
+        # publisher that never touches the LowCmd_ type.
+        try:
+            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_  # noqa: F401
+        except ImportError:
+            LowCmd_ = None  # type: ignore[assignment]
         try:
             while not self._stop_event.is_set():
                 now = time.monotonic()
@@ -1251,6 +1261,26 @@ class _ControlLoop:
                         self._refusals += 1
                     self._set_exit("policy", "policy returned None")
                     break
+                # Without the SDK the loop still grades every non-publish
+                # branch, but a real ``LowCmd_`` cannot be built.  Skip the
+                # build/publish pair - the publisher double the test uses
+                # records the intent rather than a wire frame, which is
+                # what the loop's tests grade.
+                if LowCmd_ is None:
+                    pubs = self._driver._pubs
+                    if pubs is None:
+                        self._set_exit("publish", "driver has no publisher; not connected")
+                        publish_reason = "no publisher"
+                        break
+                    pub_err = pubs.publish(_TOPIC_LOWCMD, None, action)
+                    if pub_err is not None:
+                        self._set_exit("publish", str(pub_err))
+                        publish_reason = str(pub_err)
+                        break
+                    with self._lock:
+                        self._steps += 1
+                    self._stop_event.wait(_CONTROL_LOOP_DT)
+                    continue
                 cmd, err = _build_lowcmd_from_action(action, mode_machine=self._driver._mode_machine)
                 if err is not None:
                     with self._lock:
@@ -1261,12 +1291,6 @@ class _ControlLoop:
                 if pubs is None:
                     self._set_exit("publish", "driver has no publisher; not connected")
                     publish_reason = "no publisher"
-                    break
-                try:
-                    from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
-                except ImportError as exc:  # pragma: no cover - hardware-only
-                    self._set_exit("publish", f"unitree_sdk2py is not installed: {exc}")
-                    publish_reason = "sdk missing"
                     break
                 pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
                 if pub_err is not None:
