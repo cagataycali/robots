@@ -127,8 +127,21 @@ def _episode_frame_rows(root: Path, episode: int) -> list[dict[str, Any]]:
     ``timestamp`` and ``state`` (the flattened ``observation.state`` vector,
     read through :func:`_state_vector` so a single-DOF recording's scalar
     column is the one-element vector its metadata declares).
-    Raises ValueError when the dataset has no data parquet or the episode has
-    no frames.
+
+    The returned series is the whole episode or nothing. An unreadable shard
+    is refused rather than skipped: the caller's product is a motion summary
+    over consecutive frames, so dropping a shard makes the surviving rows read
+    as consecutive when they are not, and ``max_state_delta`` /
+    ``rms_state_jerk`` then measure the gap instead of the robot.
+    :func:`strands_robots.dataset_recorder.read_dataset_episode_indices`
+    tolerates the same damage because naming the damaged files *is* its
+    product; it reports them in ``unreadable_files`` and documents its totals
+    as a lower bound. Here there is no field to carry that caveat into a
+    statistic, so the read is refused.
+
+    Raises:
+        ValueError: If the dataset has no data parquet, if any data shard is
+            unreadable, or if the episode has no frames.
     """
     try:
         import pyarrow.parquet as pq
@@ -143,13 +156,14 @@ def _episode_frame_rows(root: Path, episode: int) -> list[dict[str, Any]]:
         )
 
     rows: list[dict[str, Any]] = []
+    unreadable: list[str] = []
     for pf in parquet_files:
         try:
             table = pq.read_table(pf)
-        except (ValueError, OSError):
-            # A corrupt shard loses its own frames only; the readable rest of
-            # the dataset still answers for this episode (mirrors
-            # read_dataset_episode_indices).
+        except (ValueError, OSError) as e:
+            # Record the damage; the refusal below reports every damaged shard
+            # at once rather than only the first one a reader tripped over.
+            unreadable.append(f"{pf.relative_to(root)}: {e}")
             continue
         columns = table.column_names
         if "episode_index" not in columns:
@@ -166,6 +180,13 @@ def _episode_frame_rows(root: Path, episode: int) -> list[dict[str, Any]]:
                     "state": _state_vector(state),
                 }
             )
+    if unreadable:
+        raise ValueError(
+            f"Episode {episode} cannot be sampled: {len(unreadable)} of {len(parquet_files)} data "
+            f"shard(s) under {root} are unreadable, so the frame series would have a hole in it "
+            "and the motion summary would measure the gap rather than the robot. Repair or "
+            "re-download the dataset. " + "; ".join(unreadable)
+        )
     if not rows:
         raise ValueError(f"Episode {episode} has no frames in {root}.")
     rows.sort(key=lambda r: r["frame_index"])
