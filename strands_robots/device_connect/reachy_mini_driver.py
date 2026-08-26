@@ -548,14 +548,57 @@ class ReachyMiniDriver(DeviceDriver):
 
     @rpc()
     async def getDaemonStatus(self) -> dict[str, Any]:
-        """Get daemon status, motor state, and control frequency."""
+        """Report the daemon's status payload under this driver's own verdict.
+
+        The payload's keys are merged into the envelope so a caller reads
+        ``motors_on`` / ``freq`` at the top level, and ``status`` is re-asserted
+        afterwards. Merged last, a daemon reply carrying a ``status`` field of
+        its own replaced this envelope's verdict: a healthy call answered
+        ``status="idle"``, and a daemon reporting its own fault answered
+        ``status="error"`` for an RPC that reached it and succeeded. The
+        presence path resolves the same collision the same way, by spreading
+        the foreign mapping first so the locally decided keys win - see
+        :meth:`strands_robots.mesh.sensors.SensorLoopsMixin._stamp_local_keys`.
+
+        A daemon that was not reached is reported rather than merged.
+        :func:`~strands_robots.device_connect.reachy_transport.api` answers
+        every HTTP and connection failure with ``{"error": ...}`` instead of
+        raising, so the unreachable daemon this RPC exists to detect came back
+        as ``status="success"`` with the reason merged in beside it. The native
+        driver reads this same endpoint and refuses that shape - see
+        :meth:`strands_robots.drivers.reachy.ReachyDriver.connect_eagerly`.
+        The error envelope is used rather than the ``RuntimeError``
+        :meth:`_stop_motion_impl` raises, because that one guards a stop, where
+        a caller acting on a false success stops nothing; this one answers a
+        question, and its callers already branch on ``status``.
+
+        A body that decodes to something other than a JSON object is reported
+        for the same reason: spreading it raises ``TypeError`` out of a method
+        whose whole contract is the envelope.
+
+        Returns:
+            ``{**payload, "status": "success"}`` when the daemon answered with
+            a JSON object, otherwise ``{"status": "error", "reason": ...}``
+            naming the daemon that was not reached or the body that could not
+            be merged.
+        """
         result = await asyncio.to_thread(
             api,
             self._host,
             self._api_port,
             "/api/daemon/status",
         )
-        return {"status": "success", **result}
+        if not isinstance(result, dict):
+            return {
+                "status": "error",
+                "reason": f"daemon status is not a JSON object: {type(result).__name__}",
+            }
+        if (error := result.get("error")) is not None:
+            return {
+                "status": "error",
+                "reason": f"daemon unreachable ({self._host}:{self._api_port}): {error}",
+            }
+        return {**result, "status": "success"}
 
     # ── Events ────────────────────────────────────────────────
 
