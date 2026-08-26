@@ -145,6 +145,12 @@ hatch run format            # ruff check --fix, ruff format
     would close the class in one line and would also break the one test that
     legitimately asserts the documented default, which is why the rule lives at
     the call site. `tests_integ/` records real datasets and is out of scope.
+    Naming *a* root is not enough: a fixed absolute path such as `root="/tmp/ds"`
+    is not the shared cache and is shared all the same, with every other test
+    that names it and with every process on the host, so the guard reads the
+    value and refuses a `root` given as a string literal - a shape that cannot
+    be per-test unique. `root=root` with `root` bound from `tmp_path` is the
+    idiomatic form and is accepted.
     Pinned by tests/test_recording_root_is_not_the_shared_cache.py.
 
 16. **An example attests the records it shows, not the whole audit log** -
