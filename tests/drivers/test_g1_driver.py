@@ -22,12 +22,13 @@ from strands_robots.drivers import (
 )
 from strands_robots.drivers.g1 import G1Driver
 from strands_robots.tools.g1 import (
-    _DDS_INIT_LOCK,
     HANDSHAKE_FSMS,
+    _dds_engine,
     decode_code,
     ensure_dds,
     reset_dds_state,
 )
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 
 # =========================================================================
 # The seam - Protocol conformance and factory wiring.                     #
@@ -438,7 +439,12 @@ def test_dds_init_lock_is_a_lock() -> None:
     ``ChannelSubscriber(...)`` calls; the segfault CycloneDDS bindings
     produce under that race is what this lock exists to prevent. Test what
     matters: same object, acquirable, releasable.
+
+    The lock is private to ``_g1_common`` and reached there rather than through
+    the package, so ``_dds_engine`` binding a *copy* would be invisible at the
+    import site. The identity assertion is what makes "same object" a fact.
     """
+    assert _dds_engine._DDS_INIT_LOCK is _DDS_INIT_LOCK
     assert hasattr(_DDS_INIT_LOCK, "acquire")
     assert hasattr(_DDS_INIT_LOCK, "release")
     acquired = _DDS_INIT_LOCK.acquire(blocking=False)

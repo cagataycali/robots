@@ -9,8 +9,10 @@ those topics, so the driver owns its own subscriber layer.
 The pieces in this package are the DDS layer only. The agent ``@tool``s that
 sit *on top* of the same engine (``g1_arm``, ``g1_locomotion``, ``g1_speak``,
 ...) are a separate change (issue #358): they share this module's
-:data:`_DDS_INIT_LOCK` and :func:`ensure_dds` singleton, so the driver and the
-tools never subscribe the Livox cloud twice.
+:func:`ensure_dds` singleton and the
+:data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK` it serialises on, so
+the driver and the tools never subscribe the Livox cloud twice. That lock is
+private to ``_g1_common``; reach it there rather than through this package.
 
 ``unitree_sdk2py`` is lazy-imported: ``from strands_robots.tools.g1 import ...``
 never imports it, so a machine without the SDK - every headless CI runner, and
@@ -21,7 +23,6 @@ robot.
 """
 
 from strands_robots.tools.g1._g1_common import (
-    _DDS_INIT_LOCK,
     ERR_CODES,
     HANDSHAKE_FSMS,
     WALK_FSMS,
@@ -34,7 +35,6 @@ __all__ = [
     "ERR_CODES",
     "HANDSHAKE_FSMS",
     "WALK_FSMS",
-    "_DDS_INIT_LOCK",
     "decode_code",
     "ensure_dds",
     "reset_dds_state",
