@@ -52,6 +52,12 @@ import strands_robots.episode_labels as labels
 # least one bit, so each would have been narrowed.
 _SHARED_MODES = (0o644, 0o664, 0o640, 0o444)
 
+# The two members individual cells name. Taken from the grid rather than
+# respelled, so the modes these cells stage and the modes the parametrized cells
+# sweep cannot drift apart.
+_GROUP_READABLE = _SHARED_MODES[0]
+_READ_ONLY = _SHARED_MODES[3]
+
 # The private mode the temp file arrives with. Named here rather than read from
 # the module so a cell that grades the module's behaviour is not comparing the
 # module against itself.
@@ -138,7 +144,7 @@ class TestAnUpdateKeepsTheSidecarReadableToTheSameCallers:
         """The bit that decides whether another account can read the labels."""
         root = _seeded_dataset()
         sidecar = labels.labels_path(root)
-        os.chmod(sidecar, 0o644)
+        os.chmod(sidecar, _GROUP_READABLE)
 
         _WRITERS[writer](root)
 
@@ -173,11 +179,11 @@ class TestAnUpdateKeepsTheSidecarReadableToTheSameCallers:
         """
         root = _seeded_dataset()
         sidecar = labels.labels_path(root)
-        os.chmod(sidecar, 0o444)
+        os.chmod(sidecar, _READ_ONLY)
 
         labels.annotate_episode(root, 0, quality="medium")
 
-        assert _mode(sidecar) == 0o444, f"read-only sidecar became {oct(_mode(sidecar))}"
+        assert _mode(sidecar) == _READ_ONLY, f"read-only sidecar became {oct(_mode(sidecar))}"
         assert labels.read_labels(root)["episodes"]["0"]["judge"]["quality"] == "medium"
 
 
@@ -243,7 +249,7 @@ class TestWhatIsUnchanged:
     def test_a_failed_write_leaves_no_temp_file_and_the_sidecar_intact(self) -> None:
         root = _seeded_dataset()
         sidecar = labels.labels_path(root)
-        os.chmod(sidecar, 0o644)
+        os.chmod(sidecar, _GROUP_READABLE)
         before = sidecar.read_bytes()
 
         with pytest.raises(TypeError):
@@ -252,11 +258,11 @@ class TestWhatIsUnchanged:
 
         assert [p.name for p in root.iterdir() if p.name.endswith(".tmp")] == []
         assert sidecar.read_bytes() == before
-        assert _mode(sidecar) == 0o644
+        assert _mode(sidecar) == _GROUP_READABLE
 
     def test_a_successful_update_writes_the_content(self) -> None:
         root = _seeded_dataset()
-        os.chmod(labels.labels_path(root), 0o644)
+        os.chmod(labels.labels_path(root), _GROUP_READABLE)
 
         labels.annotate_episode(root, 0, quality="low", note="drifted")
 
