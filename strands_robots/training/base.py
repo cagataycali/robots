@@ -379,6 +379,36 @@ class Trainer(ABC):
 
         return rl_run_size_problems(spec, context=self.provider_name)
 
+    def _rl_replay_problems(self, spec: TrainSpec) -> list[str]:
+        """Replay-loop count preflight for the off-policy (FastSAC) backend.
+
+        Returns problems for :attr:`RLTrainSpec.buffer_size` /
+        :attr:`RLTrainSpec.batch_size` / :attr:`RLTrainSpec.gradient_steps` - the
+        three caller-supplied counts of a SAC replay loop (the buffer capacity,
+        the transitions sampled per gradient step, and the updates per iteration)
+        - against the same shared positive-count domain the run-size and
+        launch-topology gates use.
+
+        A :meth:`validate` that reads any of the three MUST call this instead of
+        comparing the value itself. Each is consumed directly as a count (a
+        tensor capacity, a sample size, a ``range()`` bound), so a local
+        ``<= 0`` test is weaker: it reads ``True`` as a degenerate one-slot
+        buffer / batch of one (a run that learns nothing and reports success),
+        lets a fraction or non-finite value raise deep inside ``setup`` or the
+        update loop, and raises ``TypeError`` itself on a string or ``None``. See
+        :func:`~strands_robots.training._validate.rl_replay_problems` for the
+        measured table.
+
+        Only FastSAC reads these fields; PPO sizes its minibatches from
+        ``num_mini_batches`` and never reads them, so it must not report on them.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import rl_replay_problems
+
+        return rl_replay_problems(spec, context=self.provider_name)
+
     def _learning_rate_problems(self, spec: TrainSpec) -> list[str]:
         """Learning-rate preflight shared by EVERY backend.
 
