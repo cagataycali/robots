@@ -271,23 +271,30 @@ hatch run format            # ruff check --fix, ruff format
 
    **The claim is not the only key.** 249 of the last 300 pull requests (#2345
    through #2708) link no issue at all, so for most of the traffic the query above
-   has nothing to collide on - and two of the four duplicate pairs in that window
-   were claim-free: #2388/#2389 and #2707/#2708, each pair independently creating
-   one new test file. Once your branch is pushed and the pull request is open, ask
-   the second question:
+   has nothing to collide on - and three of the five duplicate pairs in the window
+   #2345 through #2767 were claim-free: #2388/#2389, #2707/#2708 and #2766/#2767.
+   Once your branch is pushed and the pull request is open, ask the second
+   question:
 
    ```
    python3 scripts/check_duplicate_claim.py --repo strands-labs/robots --all-open
    ```
 
-   It reports only pairs that **create the same path**, which over the 1802 pairs
-   that were open at the same instant selected 2 - and both were duplicates. Two
-   branches *editing* one file is a different question with a different remedy
+   It reports only pairs that **create the same thing**, which over the 2002 pairs
+   that were open at the same instant selected 3 - and all three were duplicates.
+   For almost every path that means creating the same path. The exception is a
+   changelog fragment, which is named `<number>-<slug>.md`: two branches describing
+   one change write one slug under two numbers, so they are paired on the slug and
+   the number is dropped. That is not a loose key - across the 350 pull requests in
+   that window which add a fragment there are **350 distinct slugs**, and the only
+   two used twice are the two duplicate pairs above that reused one.
+
+   Two branches *editing* one file is a different question with a different remedy
    (a merge order, possibly one composition run), and
    `scripts/check_merge_base_overlap.py --github-repo <owner/name> --all-open`
-   owns it; that relation selects 117 of the same 1802. The two keys are complementary rather than nested: neither
-   issue-keyed pair shares an added path, and neither claim-free pair claims an
-   issue.
+   owns it; that relation selects 127 of the same 2002. The two keys are
+   complementary rather than nested: no issue-keyed pair shares an added path, and
+   no claim-free pair claims an issue.
 
    This one cannot be asked before you start, and not for want of trying: a path
    set is a property of a pushed branch, so there is nothing to read at intake. It
