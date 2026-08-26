@@ -61,11 +61,11 @@ def _isolate_native_driver_table(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The table is module state that :func:`register_native_driver` writes, so a
     test that registers a driver would otherwise decide what a later test sees -
-    and the refusal tests assert on a table being *empty*. Since the package
-    now ships drivers that auto-register on import (starting with the G1),
-    the table is not empty at collection time either; this fixture resets it
-    for the duration of every test in this module so a refusal test can
-    assert what an empty table refuses.
+    and the refusal tests assert on a table being *empty*. The shipped-driver
+    registrations that :mod:`strands_robots.drivers.__init__` performs at
+    import time (Dynamixel for koch/viperx/widowx/trossen, G1 for
+    g1/unitree_g1) are exactly that source of test-order dependence, so this
+    fixture resets to an empty dict rather than a copy of whatever is there.
     """
     monkeypatch.setattr(drivers_registry_mod, "_NATIVE_DRIVERS", {})
 
