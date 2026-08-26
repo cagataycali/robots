@@ -4942,9 +4942,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         name: str = "default",
         position: list[float] | None = None,
         target: list[float] | None = None,
+        fov: float = 60.0,
         width: int | None = None,
         height: int | None = None,
-        fov: float = 60.0,
         parent_body: str | None = None,
     ) -> dict[str, Any]:
         """Add an RTX camera to the scene.
@@ -4979,6 +4979,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             via ``omni.isaac.core.utils.viewports.set_camera_view``.
             If ``None``, the camera keeps its constructed orientation
             (identity).
+        fov : float
+            Horizontal field of view in degrees. Default 60.0. Declared in the
+            same position as on the MuJoCo and Newton backends, so a positional
+            call is read the same way on all three. Mapped onto
+            ``Camera.set_focal_length`` using the standard pinhole relation
+            ``focal_length = horizontal_aperture / (2 * tan(fov/2))`` with the
+            USD-default 24 mm horizontal aperture.
         width : int, optional
             Image width in pixels; a positive integer. ``None`` (omitted)
             takes ``IsaacConfig.camera_width``.
@@ -4999,11 +5006,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             bare ``TypeError`` naming neither the capability nor the
             alternative. Omit it (the default) for a world-fixed camera,
             which this backend does support.
-        fov : float
-            Horizontal field of view in degrees. Default 60.0. Mapped
-            onto ``Camera.set_focal_length`` using the standard pinhole
-            relation ``focal_length = horizontal_aperture / (2 * tan(fov/2))``
-            with the USD-default 24 mm horizontal aperture.
 
         Validation
         ----------

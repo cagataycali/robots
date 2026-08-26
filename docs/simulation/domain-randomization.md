@@ -52,6 +52,12 @@ domain, so an axis you can turn off on one is not left on by the other. The
 numeric knobs in the same signature keep their own domain: a `mass_range` is a
 quantity, and it is still refused as a range rather than as a flag.
 
+They also declare the parameters they share in the order shown above. Newton
+adds no axis of its own and MuJoCo adds two (`randomize_positions`,
+`position_noise`), so the two signatures are not the same length - but neither
+reorders a name the other also carries, so the three ranges cannot be read as
+each other.
+
 **Destructive** - writes into MuJoCo model arrays. To restore: `load_scene(...)` or recreate
 the sim. Every *other* scene mutation restores it too, as a side effect of rebuilding the
 model from the spec: `add_object`, `remove_object`, `add_camera`, `remove_camera`,

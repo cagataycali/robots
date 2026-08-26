@@ -213,6 +213,29 @@ hatch run format            # ruff check --fix, ruff format
     tests/mesh/test_ackermann_command_gate.py, whose inventory of bridges owing
     a gate suite is derived from the tree, so the next transport is graded on
     arrival rather than at the review that happens to look.
+19. **A backend may add a parameter but must never permute one it shares** -
+    `create_simulation(backend=...)` makes the same `sim` variable a different
+    class, and nothing in the type system relates two backends' signatures for a
+    method both implement: `add_camera` is on no ABC at all and `randomize` is
+    on `SimEngine` only as a `**kwargs` sink whose docstring hands the signature
+    to the backend. So a permutation is invisible to every gate and to Python.
+    Isaac declared `add_camera(..., width, height, fov, ...)` where MuJoCo and
+    Newton declare `(..., fov, width, height, ...)`, so
+    `add_camera("wrist", pos, target, 100, 200, 90)` asked for a 200x90 view at
+    fov 100 on two backends and a 100x200 view at fov 90 on the third - every
+    value valid under either reading, so nothing refused it and the caller found
+    out from the pixels. Newton's `randomize` had the same shape, listing the
+    three ranges in reverse. Adding a parameter is fine and shifts no shared
+    name's *relative* order (Isaac's `mjcf_path`/`usd_path`, Newton's `source`,
+    MuJoCo's `randomize_positions`); reordering one is what makes a positional
+    call ambiguous. State the shared order where a reader will copy it - the
+    signature line in `docs/simulation/newton.md` and the call in
+    `docs/simulation/domain-randomization.md` are both graded against the
+    signatures - and note that this rule is deliberately weaker than index
+    parity, which a mid-signature insertion still breaks. Pinned by
+    tests/simulation/test_backend_shared_parameter_order.py, whose backend
+    inventory is derived from the table `create_simulation` resolves, so a
+    fourth backend is held to the rule the hour it lands.
 
 ## PR Workflow
 

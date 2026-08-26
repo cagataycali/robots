@@ -54,9 +54,9 @@ _RANDOMIZE_PARAMS: tuple[str, ...] = (
     "randomize_physics",
     "randomize_positions",
     "position_noise",
-    "mass_range",
-    "friction_range",
     "color_range",
+    "friction_range",
+    "mass_range",
     "seed",
 )
 _OBS_NOISE_PARAMS: tuple[str, ...] = (
@@ -93,17 +93,18 @@ class DomainRandomizationMixin:
         randomize_colors: bool = True,
         randomize_lighting: bool = True,
         randomize_physics: bool = False,
-        mass_range: tuple[float, float] = (0.5, 2.0),
-        friction_range: tuple[float, float] = (0.5, 1.5),
         color_range: tuple[float, float] = (0.1, 1.0),
+        friction_range: tuple[float, float] = (0.5, 1.5),
+        mass_range: tuple[float, float] = (0.5, 2.0),
         seed: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Apply domain randomization to the Newton scene.
 
-        Keyword names and defaults mirror the MuJoCo backend so randomization
-        code transfers across backends unchanged - including the shared
-        boolean-flag domain each axis flag is checked on
+        Keyword names, defaults and parameter order all mirror the MuJoCo
+        backend, so randomization code transfers across backends unchanged
+        whether it passes the ranges by keyword or positionally - including the
+        shared boolean-flag domain each axis flag is checked on
         (:func:`~strands_robots.utils.boolean_flag_error`), so an axis is not
         turned off by ``"false"``, ``"no"``, ``"off"`` or ``"0"``. Each axis is
         opt-in:
@@ -132,11 +133,11 @@ class DomainRandomizationMixin:
             randomize_colors: Resample per-shape RGB.
             randomize_lighting: Jitter the directional-light orientation.
             randomize_physics: Scale per-body mass and per-shape friction.
+            color_range: ``(lo, hi)`` for uniform RGB sampling.
+            friction_range: ``(lo, hi)`` multiplicative scale on shape friction.
             mass_range: ``(lo, hi)`` multiplicative scale on body mass. Must
                 be strictly positive: a zero multiplier leaves a massless body
                 that ignores gravity rather than a lighter one.
-            friction_range: ``(lo, hi)`` multiplicative scale on shape friction.
-            color_range: ``(lo, hi)`` for uniform RGB sampling.
             seed: Optional seed for reproducible randomization; a non-negative
                 integer, or None for fresh entropy.
             **kwargs: Tolerated for MuJoCo-signature parity: ``randomize_positions``
