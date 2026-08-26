@@ -75,14 +75,18 @@ _CAMERA_CALL: tuple[Any, ...] = ("wrist", [0.1, 0.0, 0.05], [0.3, 0.0, 0.0], 100
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-def _engines() -> dict[str, type]:
+def _engines() -> dict[str, Any]:
     """Resolve every shipped backend name to its engine class.
 
     Returns:
         A mapping of backend name to engine class, derived from the table
         ``create_simulation`` resolves rather than from a list in this file.
+        Typed as ``Any`` so tests can drive ``.add_camera`` / ``.add_robot`` /
+        ``.randomize`` off it without mypy losing the shared surface at the
+        ``type`` widening step; every backend declares those bindings and the
+        assertions grade the same call across them.
     """
-    out: dict[str, type] = {}
+    out: dict[str, Any] = {}
     for name, (module_path, class_name) in sorted(_BUILTIN_BACKENDS.items()):
         out[name] = getattr(importlib.import_module(module_path), class_name)
     return out
