@@ -316,8 +316,8 @@ Destructive - writes into model arrays. Recompile scene to undo.
 
 | Action | Notes |
 |--------|-------|
-| `list_urdfs` | Loaded URDFs/MJCFs in current world |
-| `register_urdf(name, path)` | Register additional asset |
+| `list_urdfs` | Built-in robot table, plus a `Registered URDFs:` section naming every `register_urdf` asset and whether it resolves |
+| `register_urdf(name, path)` | Register additional asset - it is named by `list_urdfs` from then on |
 | `get_features(robot_name=None)` | Joint / actuator / camera / robot names of the scene (scoped to one robot with `robot_name`) - the source of truth for the action keys a policy must emit, and the feature schema used for recording |
 
 !!! tip "Discover the expected action keys"

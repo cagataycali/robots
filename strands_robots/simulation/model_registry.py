@@ -153,17 +153,48 @@ def list_registered_urdfs() -> dict[str, str | None]:
     return {config_name: resolve_urdf(config_name) for config_name in _URDF_REGISTRY}
 
 
-def list_available_models() -> str:
-    """List all available robot models (Menagerie + custom)."""
-    if _HAS_ASSET_MANAGER:
-        return str(format_robot_table())
+def _registered_urdf_lines() -> list[str]:
+    """One ``[OK]`` / ``[MISSING]`` line per user-registered URDF.
 
-    lines = ["Registered URDFs:"]
+    Single-sources the section :func:`list_available_models` appends, so the
+    built-in-table branch and the asset-manager-absent branch cannot drift into
+    two vocabularies for the same rows.
+
+    Returns:
+        One line per entry in the runtime registry, in registration order.
+        Empty when nothing has been registered.
+    """
+    lines: list[str] = []
     for name, path in _URDF_REGISTRY.items():
-        resolved = resolve_urdf(name)
-        status = "[OK]" if resolved else "[MISSING]"
+        status = "[OK]" if resolve_urdf(name) else "[MISSING]"
         lines.append(f"{status} {name}: {path}")
-    return "\n".join(lines)
+    return lines
+
+
+def list_available_models() -> str:
+    """List all available robot models (Menagerie + custom).
+
+    Both halves are always reported. The asset-manager table alone used to be
+    returned whenever the asset manager was importable - which is every normal
+    install - so a caller who had just registered an asset with
+    :func:`register_urdf` was told by the discovery surface that it did not
+    exist, while :func:`resolve_urdf` resolved it and ``add_robot`` spawned it.
+    The registered section is omitted entirely when nothing is registered, so a
+    default install's listing is unchanged.
+
+    Returns:
+        The built-in robot table, followed by a ``Registered URDFs:`` section
+        when :func:`register_urdf` has been called. Without the asset manager
+        only the registered section is available, so that is returned alone.
+    """
+    registered = _registered_urdf_lines()
+    if _HAS_ASSET_MANAGER:
+        table = str(format_robot_table())
+        if registered:
+            table += "\n\nRegistered URDFs:\n" + "\n".join(registered)
+        return table
+
+    return "\n".join(["Registered URDFs:", *registered])
 
 
 def count_sim_robots() -> int:
