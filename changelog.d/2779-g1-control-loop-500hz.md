@@ -19,8 +19,27 @@ clobber the reason with a fresh error).
 
 Every exit path names itself in `get_task_status`: `stop_task`, `n_steps`,
 `duration`, `gate` (with the refusal text), `policy` (with the exception or
-the reason the action was unusable), `publish`. `run_policy` refuses a second
-concurrent rollout so two threads cannot silently share `rt/lowcmd`.
+the reason the action was unusable), `publish`.
+
+`duration` and `n_steps` are validated up front on the shared
+`positive_finite_number_error` / `positive_count_error` domains
+`HardwareRobot` already refuses on, so the same budget cannot be refused for
+a digital twin and accepted for the biped it mirrors. `duration=nan` /
+`inf` / `0` / negative and `n_steps=True` / `0` / negative / fractional
+return refusal envelopes rather than reaching the loop.
+
+Concurrent `run_policy` calls admit through `_task_admission`, a
+`threading.Lock` mirroring `HardwareRobot._task_admission`. The lock is
+held across the `is_running` check, the `self._loop` assignment and
+`start()`, so two threads cannot both start a rollout on `rt/lowcmd` and
+an e-stop landing between the check and the start cannot count this peer
+as stopped while the rollout starts a moment later.
+
+`G1Driver.cleanup()` and `stop()` join the running loop before closing
+`_pubs`, so the zero-torque shutdown frame goes out on a publisher that
+still exists. The pre-review head closed `_pubs` under the live 500 Hz
+thread, which dropped the loop into its `publish` branch and skipped the
+zero-torque frame - the fall the whole path exists to prevent.
 
 `start_task` still refuses because the provider registry that turns an
 `instruction: str + policy_provider: "groot"` into a policy object lives in
@@ -30,5 +49,8 @@ already-live path.
 
 Contract-graded off the driver: `tests/drivers/test_g1_control_loop.py`
 exercises every exit branch with a callable-double policy and a recording
-publisher, so the loop is graded without `unitree_sdk2py` and without a DDS
-bus. Every SDK import remains inside a function body.
+publisher; the `unitree_sdk2py` submodules are stubbed via
+`monkeypatch.setitem(sys.modules, ...)` in an autouse fixture, so the
+production publish lane (`_build_lowcmd_from_action` → `LowCmd_`) is
+graded on an SDK-less CI box rather than an SDK-less fallback branch
+hardware can never take.

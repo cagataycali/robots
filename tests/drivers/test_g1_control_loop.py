@@ -14,7 +14,9 @@ starts fresh.
 
 from __future__ import annotations
 
+import sys
 import time
+import types
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -27,6 +29,96 @@ from strands_robots.drivers.g1 import (
     _ControlLoop,
     _refusal_text,
 )
+
+# ---------------------------------------------------------------------------
+# SDK stub.  The production ``_run`` lane imports
+# ``unitree_sdk2py.idl.unitree_hg.msg.dds_.LowCmd_`` and
+# ``_build_lowcmd_from_action`` imports ``unitree_sdk2py.idl.default`` and
+# ``unitree_sdk2py.utils.crc``.  On an SDK-less CI box we install a stub via
+# :mod:`sys.modules` so the same lane hardware runs is exercised here: the
+# alternative - a separate "SDK missing" branch - would grade a fallback
+# hardware can never take, as yinsong1986 flagged on strands-labs/robots#2779.
+#
+# Follows AGENTS.md > Testing Patterns > Restore a sys.modules entry you
+# remove: an autouse fixture installs the stubs before every test in this
+# module and removes them after, so cross-test pollution is impossible.
+# ---------------------------------------------------------------------------
+
+
+class _StubMotorCmd:
+    """One slot of ``LowCmd_.motor_cmd``.  Fields track the real IDL layout."""
+
+    __slots__ = ("mode", "q", "dq", "tau", "kp", "kd")
+
+    def __init__(self) -> None:
+        self.mode = 0
+        self.q = 0.0
+        self.dq = 0.0
+        self.tau = 0.0
+        self.kp = 0.0
+        self.kd = 0.0
+
+
+class _StubLowCmd:
+    """Stand-in for ``unitree_sdk2py.idl.default.unitree_hg_msg_dds__LowCmd_()``.
+
+    ``motor_cmd`` is a 35-slot list, matching the real IDL width the
+    builder's ``assert len(cmd.motor_cmd) >= _G1_NAMED_JOINTS`` checks.
+    """
+
+    def __init__(self) -> None:
+        self.mode_pr: int = 0
+        self.mode_machine: int = 0
+        self.motor_cmd: list[_StubMotorCmd] = [_StubMotorCmd() for _ in range(35)]
+        self.crc: int = 0
+
+
+class _StubCRC:
+    """Stand-in for ``unitree_sdk2py.utils.crc.CRC``.
+
+    The wire's CRC is verified by firmware; the test suite grades that the
+    builder invokes ``.Crc(cmd)`` after populating every other field, not
+    the CRC value itself.  ``42`` is a distinguishable non-zero.
+    """
+
+    def Crc(self, _cmd: Any) -> int:
+        return 42
+
+
+@pytest.fixture(autouse=True)
+def _stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install a ``unitree_sdk2py`` stub for the duration of one test.
+
+    Every submodule the driver imports is registered on :mod:`sys.modules`
+    so ``from unitree_sdk2py.idl.default import ...`` and its siblings
+    resolve here.  ``monkeypatch.setitem`` restores the previous value
+    (typically absent) on teardown.
+    """
+    root = types.ModuleType("unitree_sdk2py")
+    idl = types.ModuleType("unitree_sdk2py.idl")
+    default = types.ModuleType("unitree_sdk2py.idl.default")
+    unitree_hg = types.ModuleType("unitree_sdk2py.idl.unitree_hg")
+    unitree_hg_msg = types.ModuleType("unitree_sdk2py.idl.unitree_hg.msg")
+    dds_ = types.ModuleType("unitree_sdk2py.idl.unitree_hg.msg.dds_")
+    utils = types.ModuleType("unitree_sdk2py.utils")
+    crc = types.ModuleType("unitree_sdk2py.utils.crc")
+
+    default.unitree_hg_msg_dds__LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    dds_.LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    crc.CRC = _StubCRC  # type: ignore[attr-defined]
+
+    for name, mod in [
+        ("unitree_sdk2py", root),
+        ("unitree_sdk2py.idl", idl),
+        ("unitree_sdk2py.idl.default", default),
+        ("unitree_sdk2py.idl.unitree_hg", unitree_hg),
+        ("unitree_sdk2py.idl.unitree_hg.msg", unitree_hg_msg),
+        ("unitree_sdk2py.idl.unitree_hg.msg.dds_", dds_),
+        ("unitree_sdk2py.utils", utils),
+        ("unitree_sdk2py.utils.crc", crc),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
 
 # ---------------------------------------------------------------------------
 # Fakes.  The loop reaches into the driver's cached observations and its
@@ -45,6 +137,7 @@ class _RecordingPublisher:
 
     def __init__(self, refuse_after: int | None = None, reason: str = "publish refused") -> None:
         self.calls: list[Any] = []
+        self.closed = False
         self._refuse_after = refuse_after
         self._reason = reason
 
@@ -53,6 +146,10 @@ class _RecordingPublisher:
         if self._refuse_after is not None and len(self.calls) > self._refuse_after:
             return self._reason
         return None
+
+    def close(self) -> None:
+        """No-op release.  Matches ``DDSPublisher.close()``."""
+        self.closed = True
 
 
 def _fake_driver(
@@ -65,8 +162,12 @@ def _fake_driver(
 
     Every attribute the loop reads is a real value (not a Mock stand-in) so
     a typo in the loop code fails on AttributeError rather than reading a
-    Mock silently.
+    Mock silently.  ``_task_admission`` is a real ``threading.Lock`` so
+    the exit path can acquire it as production does; the alternative
+    (a MagicMock context manager) would grade a lock that never contended.
     """
+    import threading as _threading
+
     driver = MagicMock(
         spec=[
             "_mode_machine",
@@ -76,6 +177,7 @@ def _fake_driver(
             "_pubs",
             "_check_motion_gates",
             "_loop",
+            "_task_admission",
         ]
     )
     driver._mode_machine = mode_machine
@@ -85,6 +187,7 @@ def _fake_driver(
     driver._pubs = publisher if publisher is not None else _RecordingPublisher()
     driver._check_motion_gates = MagicMock(return_value=gate_result)
     driver._loop = None
+    driver._task_admission = _threading.Lock()
     return driver
 
 
@@ -407,3 +510,331 @@ class TestRefusalText:
     def test_skips_non_text_entries(self) -> None:
         env = {"status": "error", "content": [{"json": {}}, {"text": "found"}]}
         assert _refusal_text(env) == "found"
+
+
+# ---------------------------------------------------------------------------
+# Single production lane.  Response to yinsong1986's [MUST FIX] on
+# strands-labs/robots#2779 line 1248: the loop must not carry a second
+# publish branch for SDK-less boxes.  Every publish here goes through
+# ``_build_lowcmd_from_action`` so an unknown joint name refuses the whole
+# action, and the wire frame passed to the publisher has the SDK-shaped
+# ``motor_cmd`` array the mypy signature declares.
+# ---------------------------------------------------------------------------
+
+
+class TestSingleProductionLane:
+    """The publish path is one code path, whether the SDK is on the box or not."""
+
+    def test_publish_receives_a_low_cmd_never_a_dict(self) -> None:
+        """The second argument to ``publish`` is the ``LowCmd_`` class, not ``None``.
+
+        Line 1248 of the previous head passed ``None`` on SDK-less boxes,
+        which failed mypy (``Argument 2 ... incompatible type "None"; expected "type"``)
+        and skipped the builder's joint-name allowlist.
+        """
+        pub = _RecordingPublisher()
+        driver = _fake_driver(publisher=pub)
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.1}
+
+        loop = _ControlLoop(driver=driver, policy=policy, duration=60.0, n_steps=2)
+        loop.start()
+        _wait_finished(loop)
+
+        # Every recorded publish carried a class (not None) and a
+        # ``LowCmd_``-shaped object (not the raw action dict).
+        for _topic, klass, cmd in pub.calls:
+            assert klass is _StubLowCmd
+            assert hasattr(cmd, "motor_cmd"), "publish received a raw dict"
+
+    def test_policy_returning_unknown_joint_refuses(self) -> None:
+        """An unknown joint name refuses the whole action.
+
+        The removed SDK-less lane published the raw dict and counted it
+        as a step, so ``{"no_such_joint": 1e9}`` would advance ``n_steps``
+        and exit as success.  Now the builder rejects it up front.
+        """
+        pub = _RecordingPublisher()
+        driver = _fake_driver(publisher=pub)
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"no_such_joint": 1.0}
+
+        loop = _ControlLoop(driver=driver, policy=policy, duration=1.0, n_steps=None)
+        loop.start()
+        _wait_finished(loop)
+
+        snap = loop.snapshot()
+        assert snap["exit_reason"] == "policy"
+        assert snap["steps"] == 0
+        assert "unknown joint name" in (snap["exit_detail"] or "")
+
+
+# ---------------------------------------------------------------------------
+# Zero-torque contract: ``cleanup()`` and ``stop()`` join the loop first.
+# Response to yinsong1986's [MUST FIX] at line 1147: ``cleanup()`` used to
+# close ``_pubs`` under a live 500 Hz thread, which drove the loop into its
+# ``publish`` branch and skipped the zero-torque frame.
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupJoinsLoopBeforeClosingPubs:
+    """``G1Driver.cleanup()`` publishes zero-torque before releasing pubs."""
+
+    def _build_connected_driver(self, pub: _RecordingPublisher) -> Any:
+        """A real ``G1Driver`` wired to the recording publisher.
+
+        Instantiated with the tools sentinel that bypasses DDS init - the
+        driver's task-admission lock and lifecycle methods are what we grade.
+        """
+        from strands_robots.drivers.g1 import G1Driver
+
+        driver = G1Driver(port="127.0.0.1", network_interface="lo")
+        driver._pubs = pub  # type: ignore[assignment]
+        driver._subs = None
+        driver._connected = True
+        driver._mode_machine = 9
+        driver._fsm_id = 500
+        driver._battery = {"pct": 80.0}
+        driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+        return driver
+
+    def test_cleanup_stops_running_loop_first(self) -> None:
+        pub = _RecordingPublisher()
+        driver = self._build_connected_driver(pub)
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        loop = _ControlLoop(driver=driver, policy=policy, duration=60.0, n_steps=None)
+        driver._loop = loop
+        loop.start()
+        time.sleep(0.05)
+        # ``cleanup()`` in the pre-fix head closed ``_pubs`` while the
+        # loop was still publishing; the next iteration then took the
+        # publish branch and the zero-torque frame never went out.
+        driver.cleanup()
+
+        assert not loop.is_running
+        # ``_pubs`` was set to ``None`` after the join, but the publisher
+        # we saved on the side retains the recorded calls.
+        assert driver._pubs is None
+        # Last recorded frame is the zero-torque frame (kp=0 on left_knee).
+        assert pub.calls, "cleanup joined the loop with no publishes"
+        left_knee_slot = g1_mod._G1_JOINT_INDEX["left_knee"]
+        assert pub.calls[-1][2].motor_cmd[left_knee_slot].kp == 0.0
+
+    def test_cleanup_is_idempotent_with_no_loop(self) -> None:
+        pub = _RecordingPublisher()
+        driver = self._build_connected_driver(pub)
+        driver.cleanup()  # No loop running.
+        assert driver._pubs is None
+        assert driver._connected is False
+
+
+# ---------------------------------------------------------------------------
+# Admission race.  Response to yinsong1986's [MUST FIX] at line 646: the
+# check-then-act on ``self._loop`` was unlocked, and a concurrent
+# ``run_policy`` could pass ``is_running == False`` before either thread
+# assigned the reference.
+# ---------------------------------------------------------------------------
+
+
+class TestRunPolicyAdmissionLock:
+    """Two concurrent ``run_policy`` calls never both start."""
+
+    def test_second_run_policy_refuses_when_first_is_running(self) -> None:
+        from strands_robots.drivers.g1 import G1Driver
+
+        driver = G1Driver(port="127.0.0.1", network_interface="lo")
+        driver._pubs = _RecordingPublisher()
+        driver._connected = True
+        driver._mode_machine = 9
+        driver._fsm_id = 500
+        driver._battery = {"pct": 80.0}
+        driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        first = driver.run_policy(policy, duration=60.0)
+        assert first["status"] == "success"
+
+        second = driver.run_policy(policy, duration=60.0)
+        assert second["status"] == "error"
+        text = second["content"][0]["text"]
+        assert "already running" in text
+
+        # Clean up.
+        driver.cleanup()
+
+    def test_concurrent_run_policy_only_one_wins(self) -> None:
+        """Fifty threads calling ``run_policy`` at once produce one loop.
+
+        Without the admission lock, two threads could pass the
+        ``is_running`` check before either assigned ``self._loop``, and
+        both loops would publish on ``rt/lowcmd`` at 500 Hz.
+        """
+        import threading as _threading
+
+        from strands_robots.drivers.g1 import G1Driver
+
+        driver = G1Driver(port="127.0.0.1", network_interface="lo")
+        driver._pubs = _RecordingPublisher()
+        driver._connected = True
+        driver._mode_machine = 9
+        driver._fsm_id = 500
+        driver._battery = {"pct": 80.0}
+        driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        started = _threading.Barrier(50)
+        results: list[dict[str, Any]] = []
+        results_lock = _threading.Lock()
+
+        def caller() -> None:
+            started.wait()
+            r = driver.run_policy(policy, duration=60.0)
+            with results_lock:
+                results.append(r)
+
+        threads = [_threading.Thread(target=caller) for _ in range(50)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Exactly one succeeded; the rest carried the refusal.
+        successes = [r for r in results if r["status"] == "success"]
+        errors = [r for r in results if r["status"] == "error"]
+        assert len(successes) == 1, f"admission lock leaked: {len(successes)} rollouts started concurrently"
+        assert len(errors) == 49
+
+        driver.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Duration and n_steps validation.  Response to yinsong1986's [MUST FIX]
+# at line 656: unvalidated ``duration=nan`` actuated the loop with no budget
+# at all, and ``n_steps=True`` silently capped at 1.
+# ---------------------------------------------------------------------------
+
+
+class TestRunPolicyValidatesBudgets:
+    """``duration`` and ``n_steps`` are refused on the same domains HardwareRobot enforces."""
+
+    def _driver(self) -> Any:
+        from strands_robots.drivers.g1 import G1Driver
+
+        driver = G1Driver(port="127.0.0.1", network_interface="lo")
+        driver._pubs = _RecordingPublisher()
+        driver._connected = True
+        driver._mode_machine = 9
+        driver._fsm_id = 500
+        driver._battery = {"pct": 80.0}
+        driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+        return driver
+
+    def test_duration_nan_refused(self) -> None:
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=float("nan"))
+        assert r["status"] == "error"
+        assert "duration" in r["content"][0]["text"]
+
+    def test_duration_inf_refused(self) -> None:
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=float("inf"))
+        assert r["status"] == "error"
+        assert "duration" in r["content"][0]["text"]
+
+    def test_duration_zero_refused(self) -> None:
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=0.0)
+        assert r["status"] == "error"
+
+    def test_duration_negative_refused(self) -> None:
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=-1.0)
+        assert r["status"] == "error"
+
+    def test_duration_string_refused_not_raised(self) -> None:
+        """A non-numeric ``duration`` returns an envelope, not raises.
+
+        The pre-fix head ran ``float(duration)`` in the constructor, which
+        raised ``ValueError`` out of a method whose siblings return error
+        dicts - escaping the envelope contract.
+        """
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration="abc")  # type: ignore[arg-type]
+        assert r["status"] == "error"
+
+    def test_n_steps_bool_refused(self) -> None:
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=1.0, n_steps=True)  # type: ignore[arg-type]
+        assert r["status"] == "error"
+        assert "n_steps" in r["content"][0]["text"]
+
+    def test_n_steps_zero_refused(self) -> None:
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=1.0, n_steps=0)
+        assert r["status"] == "error"
+
+    def test_n_steps_negative_refused(self) -> None:
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=1.0, n_steps=-5)
+        assert r["status"] == "error"
+
+    def test_n_steps_float_refused(self) -> None:
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=1.0, n_steps=2.7)  # type: ignore[arg-type]
+        assert r["status"] == "error"
+
+    def test_duration_positive_and_n_steps_none_accepted(self) -> None:
+        """A valid duration with default ``n_steps=None`` accepts."""
+        driver = self._driver()
+
+        def policy(_obs: Any) -> dict[str, float]:
+            return {"left_knee": 0.0}
+
+        r = driver.run_policy(policy, duration=60.0)
+        assert r["status"] == "success"
+        driver.cleanup()
