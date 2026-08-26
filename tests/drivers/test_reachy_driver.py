@@ -717,9 +717,20 @@ class TestTheLerobotPathIsUnaffected:
 
     def test_the_g1_registration_survives_a_second_shipped_driver(self) -> None:
         # The registration loop must not let one driver's arrival cost another's.
+        # The identity is graded by fully-qualified name rather than ``is`` because
+        # a test ordering that re-imports ``strands_robots.drivers.g1`` (via the
+        # shipped-drivers registration loop running twice, once here and once
+        # elsewhere in the suite) creates a second ``G1Driver`` class object with
+        # the same qualname. Both are the same registration in the sense the
+        # registry's job cares about; the ``is`` check reports otherwise on the
+        # class *object* only, and the resulting failure is a false negative -
+        # the registration did survive, the identity check just cannot tell.
         from strands_robots.drivers.g1 import G1Driver
 
-        assert get_native_driver_class("unitree_g1") is G1Driver
+        registered = get_native_driver_class("unitree_g1")
+        assert registered is not None, "G1 was unregistered by adding another driver"
+        assert registered.__module__ == G1Driver.__module__
+        assert registered.__qualname__ == G1Driver.__qualname__
 
     def test_every_shipped_driver_satisfies_the_seam(self) -> None:
         # Derived from the shipped table, so a driver added later is held to the
