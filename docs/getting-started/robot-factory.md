@@ -131,22 +131,28 @@ has a class for it, so `driver="lerobot"` remains a usable fallback. The Reachy 
 declares none: lerobot has no robot type for it, so the native driver is the only way
 to reach it and `driver="lerobot"` is refused by name.
 
-A native driver may need an extra to reach its hardware, and says so rather than
-raising. The Reachy Mini's daemon transport ships in the
-[`device-connect`](../device-connect.md) extra, so on a core install the driver still
-builds, registers and answers `get_status` - and every surface that would touch the
-daemon returns a reason naming the extra instead:
+A native driver reports what it cannot reach rather than raising. The Reachy Mini's
+daemon transport is a standard-library-only module in the core distribution, so
+nothing an extra installs decides whether it loads - but if it cannot be imported at
+all, on a broken install or behind a shadowing module, the driver still builds,
+registers and answers `get_status`, and every surface that would touch the daemon
+returns a reason naming the module and the error instead:
 
 ```python
 >>> Robot("reachy_mini", mode="real").connect_eagerly()
 "cannot import strands_robots.device_connect.reachy_transport: No module named
-'device_connect_edge' - the Reachy transport helpers ship behind an extra:
-pip install 'strands-robots[device-connect]'"
+'strands_robots.device_connect.reachy_transport'"
 ```
 
+The reason stops at what it can establish. It prescribes no `pip install`, because no
+install supplies a module that ships in the core distribution, and a remedy that
+cannot help is worse than none - the same rule
+[`require_optional`](../../strands_robots/utils.py) applies when it is told a module
+arrives from a system package rather than an index.
+
 The same reason arrives as `connect_error` in `get_status`, so a mesh peer for a Mini
-on an install without the extra is still constructible and still reports why it is
-not connected.
+whose transport will not load is still constructible and still reports why it is not
+connected.
 
 `hardware.driver` is optional and validated when the registry loads: a value that is not a
 driver name is refused there, naming the robot, rather than being read as "no preference".

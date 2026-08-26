@@ -763,37 +763,45 @@ def _run_tool(driver: ReachyDriver, action: str) -> dict[str, Any]:
     return asyncio.run(_drive())
 
 
-class TestAStockInstallIsRefusedByNameRatherThanCrashing:
-    """The transport lives behind an extra; its absence must not raise.
+class TestAnUnimportableTransportIsRefusedByNameRatherThanCrashing:
+    """An unimportable transport must be reported, not raised.
 
     Every daemon touch here goes through
-    :mod:`strands_robots.device_connect.reachy_transport`. That module is a
-    stdlib-only leaf, but its package ``__init__`` imports ``device_connect_edge``
-    and the three Device Connect drivers unconditionally, and that package ships
-    only in the ``[device-connect]`` extra. So on a stock
-    ``pip install strands-robots`` the lazy import raises
-    ``ModuleNotFoundError: No module named 'device_connect_edge'`` as a side
-    effect of the parent - naming a package the caller never asked for, through
-    surfaces that document a returned reason instead.
+    :mod:`strands_robots.device_connect.reachy_transport`, a stdlib-only leaf
+    whose parent package resolves its third-party imports lazily. Nothing an
+    extra installs decides whether that import succeeds, so a failure reaching
+    these surfaces is a broken install of a module the core distribution ships -
+    a shadowing module, a partial wheel - which the ``ImportError`` describes and
+    no ``pip install`` line repairs.
 
-    CI installs ``[all]``, so the absence is invisible to the rest of this file.
-    These tests simulate it the way Python itself signals a blocked module:
-    ``sys.modules[name] = None`` makes ``importlib.import_module`` raise
-    ``ImportError``, which is what an uninstalled parent produces.
+    What must hold either way is that it does not raise: these surfaces document
+    a returned reason, and an escaping ``ModuleNotFoundError`` becomes a
+    traceback through the agent tool surface instead.
+
+    The failure is simulated rather than installed, the way Python itself signals
+    a blocked module: ``sys.modules[name] = None`` makes
+    ``importlib.import_module`` raise ``ImportError``.
     """
 
     @staticmethod
     def _block_transport(monkeypatch: pytest.MonkeyPatch) -> None:
-        """Make the transport module unimportable, as a stock install would."""
+        """Make the transport module unimportable for the current test."""
         monkeypatch.setitem(sys.modules, reachy_mod._TRANSPORT_MODULE, None)
 
-    def test_the_reason_names_the_extra_to_install(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A reason nobody can act on is barely better than a traceback."""
+    def test_the_reason_names_the_module_and_the_cause(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A reason nobody can act on is barely better than a traceback.
+
+        What a caller can act on here is the module that failed and the error it
+        failed with. An install command is not part of that: no ``pip install``
+        supplies this module, so naming one would be a diagnosis this branch
+        cannot establish.
+        """
         self._block_transport(monkeypatch)
         reason = reachy_mod._resolve_transport()
         assert isinstance(reason, str)
-        assert "strands-robots[device-connect]" in reason
         assert reachy_mod._TRANSPORT_MODULE in reason
+        assert "halted" in reason, f"the underlying ImportError is not reported: {reason}"
+        assert "pip install" not in reason, f"prescribes an install it cannot establish: {reason}"
 
     def test_connect_eagerly_returns_the_reason_instead_of_raising(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``connect_eagerly`` documents a returned reason, so it must return one."""
@@ -801,7 +809,8 @@ class TestAStockInstallIsRefusedByNameRatherThanCrashing:
         driver = ReachyDriver(tool_name="reachy_mini", port="reachy-a.local")
         reason = driver.connect_eagerly()
         assert reason is not None
-        assert "strands-robots[device-connect]" in reason
+        assert reachy_mod._TRANSPORT_MODULE in reason
+        assert "pip install" not in reason
         # Left disconnected but usable, and the reason cached for a later gate.
         assert driver._connected is False
         assert driver._connect_error == reason
@@ -833,7 +842,8 @@ class TestAStockInstallIsRefusedByNameRatherThanCrashing:
         driver._connected = True
         envelope = driver.send_action({"head_pitch": 5.0})
         assert envelope["status"] == "error"
-        assert "strands-robots[device-connect]" in _text(envelope)
+        assert reachy_mod._TRANSPORT_MODULE in _text(envelope)
+        assert "pip install" not in _text(envelope)
 
     def test_stop_does_not_claim_a_halt_it_could_not_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A stop that never reached the daemon is not a stop.
