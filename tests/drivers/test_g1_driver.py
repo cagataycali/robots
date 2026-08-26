@@ -458,8 +458,11 @@ def test_send_action_admits_every_handshake_fsm(fsm: int) -> None:
     result = driver.send_action({"any": 0.0})
     assert result["status"] == "error"
     text = result["content"][0]["text"]
-    # Every handshake FSM passes the gate - the refusal is "not wired".
-    assert "issue #358" in text
+    # Every handshake FSM passes the gate - the refusal is the transport
+    # not being live (no publisher until ``connect_eagerly`` runs), not
+    # an FSM refusal. PR-B (#361) wired the write; the transport-side
+    # failure supersedes the old "issue #358" surface.
+    assert "publisher not initialised" in text
     # The FSM was accepted, so its number is *not* mentioned as a refusal.
     assert f"FSM {fsm} refuses" not in text
 
@@ -483,7 +486,10 @@ def test_walk_fsms_has_a_consumer_and_a_documented_boundary() -> None:
     # Arm-scoped write at 500 passes the gate (500 is in HANDSHAKE_FSMS).
     arm_result = driver.send_action({"any": 0.0})
     assert arm_result["status"] == "error"
-    assert "issue #358" in arm_result["content"][0]["text"]  # not gated
+    # Not gated - the arm gate accepts 500; the refusal is transport-side
+    # (PR-B wired the write, so a driver without a live publisher fails
+    # here instead of at the "not wired yet" seam).
+    assert "publisher not initialised" in arm_result["content"][0]["text"]
 
     # Loco-scoped gate at 500 refuses. Calling the helper directly is the
     # narrow way to pin the boundary before any write verb classifies its
@@ -1112,6 +1118,5 @@ def test_g1_driver_module_does_not_import_unitree_sdk2py_at_load_time() -> None:
     importlib.reload(importlib.import_module("strands_robots.drivers.g1"))
     after = {n for n in sys.modules if n.startswith("unitree_sdk2py")}
     assert after == before, (
-        "importing strands_robots.drivers.g1 pulled in unitree_sdk2py modules: "
-        f"{sorted(after - before)}"
+        f"importing strands_robots.drivers.g1 pulled in unitree_sdk2py modules: {sorted(after - before)}"
     )
