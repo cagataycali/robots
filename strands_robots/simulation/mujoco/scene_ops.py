@@ -1621,6 +1621,17 @@ def reposition_body_in_scene(
 # See :func:`_joint_key`.
 _JointKey = tuple[str, str] | tuple[str, str, int]
 
+# An actuator is keyed the same way, for the same reason. A named actuator takes
+# the two-element form ``("actuator", name)``.
+#
+# An unnamed actuator takes the four-element form
+# ``("target", trntype, target_name, ordinal)``: its transmission target names
+# it, and the ordinal disambiguates the several actuators that may share one
+# target. The transmission type belongs in the key because ``mjTRN_JOINT`` and
+# ``mjTRN_JOINTINPARENT`` are different transmissions on the same joint id.
+# See :func:`_actuator_key`.
+_ActuatorKey = tuple[str, str] | tuple[str, int, str, int]
+
 
 @dataclass(frozen=True)
 class _SceneState:
@@ -1640,9 +1651,10 @@ class _SceneState:
     Attributes:
         joints: ``key -> (qpos, qvel, qfrc_applied)`` slices, each at the width
             its joint type uses (free 7/6/6, ball 4/3/3, hinge or slide 1/1/1).
-        actuators: ``actuator name -> (ctrl, act)``. ``ctrl`` is the servo
-            setpoint holding a robot's pose; ``act`` is the internal activation
-            of a stateful actuator, its effective command.
+        actuators: ``key -> (ctrl, act)``. ``ctrl`` is the servo setpoint
+            holding a robot's pose; ``act`` is the internal activation of a
+            stateful actuator, its effective command. Keyed by
+            :func:`_actuator_key`, so an unnamed actuator is carried too.
         body_wrenches: ``body name -> [fx, fy, fz, tx, ty, tz]``, the external
             wrench :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
             latches in a body's own ``xfrc_applied`` row. ``qfrc_applied``
@@ -1655,7 +1667,7 @@ class _SceneState:
     """
 
     joints: dict[_JointKey, tuple[list[float], list[float], list[float]]]
-    actuators: dict[str, tuple[float, list[float]]]
+    actuators: dict[_ActuatorKey, tuple[float, list[float]]]
     body_wrenches: dict[str, list[float]]
     time: float
 
@@ -1704,6 +1716,101 @@ def _joint_key(model: Any, jid: int, mj: Any) -> _JointKey | None:
     return ("body_joint", body_name, jid - int(model.body_jntadr[body_id]))
 
 
+def _actuator_target_kind(trntype: int, mj: Any) -> Any | None:
+    """The ``mjtObj`` an actuator's ``trnid[0]`` indexes, for ``trntype``.
+
+    Each transmission points at a different kind of element, and MJCF names
+    every one of them (an actuator references its target by name, so the target
+    is never anonymous). ``None`` for a transmission this mapping does not
+    know: a future ``mjtTrn`` member is reported rather than resolved against
+    the wrong table.
+    """
+    trn = mj.mjtTrn
+    obj = mj.mjtObj
+    return {
+        int(trn.mjTRN_JOINT): obj.mjOBJ_JOINT,
+        int(trn.mjTRN_JOINTINPARENT): obj.mjOBJ_JOINT,
+        int(trn.mjTRN_SLIDERCRANK): obj.mjOBJ_SITE,
+        int(trn.mjTRN_TENDON): obj.mjOBJ_TENDON,
+        int(trn.mjTRN_SITE): obj.mjOBJ_SITE,
+        int(trn.mjTRN_BODY): obj.mjOBJ_BODY,
+    }.get(trntype)
+
+
+def _actuator_key(model: Any, aid: int, mj: Any) -> _ActuatorKey | None:
+    """Identify actuator ``aid`` by name, or through its transmission target.
+
+    Two key forms, in order of preference:
+
+    ``("actuator", name)``
+        The actuator carries a name, which is the handle a rebuild preserves.
+    ``("target", trntype, target_name, ordinal)``
+        An unnamed actuator, identified by what it drives and by its position
+        among the actuators driving the same target through the same
+        transmission. Several actuators may share one target -- a position and
+        a velocity servo on one hinge is the ordinary spelling -- so the target
+        alone does not single one out, but the target plus that ordinal does.
+        MuJoCo stores actuators in declaration order and an eject removes a
+        robot's actuators wholesale, so the surviving order (and therefore the
+        ordinal) is preserved. The transmission type is part of the key because
+        ``mjTRN_JOINT`` and ``mjTRN_JOINTINPARENT`` are different transmissions
+        that can name the same joint id.
+
+    An unnamed ``<actuator>`` child is the ordinary MJCF spelling: of the 235
+    actuator-bearing models in the MuJoCo Menagerie tree, 7 leave every one of
+    theirs unnamed (``ufactory_lite6``, ``google_robot``, ``iit_softfoot``), so
+    dropping these would reset a whole arm's setpoints on every rebuild.
+
+    Returns:
+        The key, or ``None`` when the transmission is one this mapping does not
+        know. Nothing then identifies the actuator across a rebuild, so it is
+        reported rather than guessed at.
+    """
+    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid)
+    if name:
+        return ("actuator", name)
+    trntype = int(model.actuator_trntype[aid])
+    kind = _actuator_target_kind(trntype, mj)
+    if kind is None:
+        return None
+    target_id = int(model.actuator_trnid[aid][0])
+    target_name = mj.mj_id2name(model, kind, target_id)
+    if not target_name:
+        return None
+    ordinal = sum(
+        1
+        for other in range(aid)
+        if int(model.actuator_trntype[other]) == trntype and int(model.actuator_trnid[other][0]) == target_id
+    )
+    return ("target", trntype, str(target_name), ordinal)
+
+
+def _resolve_actuator_key(model: Any, key: _ActuatorKey, mj: Any) -> int:
+    """Resolve an :data:`_ActuatorKey` to an actuator id in ``model``, or ``-1``."""
+    if len(key) == 4:
+        _, trntype, target_name, ordinal = key
+        kind = _actuator_target_kind(int(trntype), mj)
+        if kind is None:
+            return -1
+        target_id = mj_name_to_id(model, kind, str(target_name))
+        if target_id < 0:
+            # The target is gone, so what the actuator drove no longer exists.
+            return -1
+        seen = 0
+        for aid in range(int(model.nu)):
+            if int(model.actuator_trntype[aid]) != trntype or int(model.actuator_trnid[aid][0]) != target_id:
+                continue
+            if seen == ordinal:
+                # An actuator that gained a name is carried by its own
+                # ``("actuator", name)`` key, so this handle must not claim it.
+                return -1 if mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid) else aid
+            seen += 1
+        # The target survives but no longer drives an actuator at that position.
+        return -1
+    _, name = key
+    return mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, str(name))
+
+
 def _snapshot_scene_state(world: SimWorld) -> _SceneState:
     """Capture ``world``'s dynamic state keyed by name, for a scene rebuild.
 
@@ -1734,18 +1841,20 @@ def _snapshot_scene_state(world: SimWorld) -> _SceneState:
             [float(x) for x in data.qfrc_applied[dof_adr : dof_adr + dof_w]],
         )
 
-    actuators: dict[str, tuple[float, list[float]]] = {}
+    actuators: dict[_ActuatorKey, tuple[float, list[float]]] = {}
     for aid in range(int(model.nu)):
-        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid)
-        if not name:
-            # No namespace names it, and its transmission target may drive
-            # several actuators, so it cannot be matched across the rebuild.
-            logger.debug("snapshot_scene_state: actuator id %d has no name, ctrl/act not carried over", aid)
+        akey = _actuator_key(model, aid, mj)
+        if akey is None:
+            logger.debug(
+                "snapshot_scene_state: actuator id %d drives through a transmission this build "
+                "cannot key, ctrl/act not carried over",
+                aid,
+            )
             continue
         act_adr = int(model.actuator_actadr[aid])
         act_num = int(model.actuator_actnum[aid])
         act_vals = [float(x) for x in data.act[act_adr : act_adr + act_num]] if act_adr >= 0 else []
-        actuators[name] = (float(data.ctrl[aid]), act_vals)
+        actuators[akey] = (float(data.ctrl[aid]), act_vals)
 
     return _SceneState(
         joints=joints,
@@ -1800,8 +1909,8 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
             data.qfrc_applied[dof_adr + i] = v
         restored += 1
 
-    for name, (ctrl_val, act_vals) in snapshot.actuators.items():
-        aid = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, name)
+    for akey, (ctrl_val, act_vals) in snapshot.actuators.items():
+        aid = _resolve_actuator_key(model, akey, mj)
         if aid < 0:
             continue  # actuator belonged to the ejected robot
         data.ctrl[aid] = ctrl_val
@@ -1813,7 +1922,7 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
             if act_vals or act_num:
                 logger.warning(
                     "_restore_scene_state: act width mismatch for actuator %r (%d!=%d), skipping activation",
-                    name,
+                    akey,
                     len(act_vals),
                     act_num,
                 )
