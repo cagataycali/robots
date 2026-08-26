@@ -41,6 +41,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
 from strands_robots.utils import positive_count_error, positive_finite_number_error
@@ -1279,66 +1280,75 @@ class _ControlLoop:
         deadline = self._started_at + self._duration
         publish_reason: str | None = None
         try:
-            while not self._stop_event.is_set():
-                now = time.monotonic()
-                if self._n_steps is not None and self._steps >= self._n_steps:
-                    self._set_exit("n_steps", None)
-                    break
-                if now >= deadline:
-                    self._set_exit("duration", None)
-                    break
-                # Per-step re-gate.  A gate flip refuses the *step* rather
-                # than the whole task, so an FSM transition out of the
-                # allowed set exits cleanly with a zero-torque frame.
-                refusal = self._driver._check_motion_gates("motion")
-                if refusal is not None:
-                    detail = _refusal_text(refusal)
-                    self._set_exit("gate", detail)
-                    break
-                try:
-                    action = self._call_policy()
-                except Exception as exc:  # policy is caller-supplied; catch broadly
-                    self._set_exit("policy", f"raised {type(exc).__name__}: {exc}")
-                    break
-                if action is None:
+            with Ticker(_CONTROL_LOOP_DT, self._stop_event) as ticker:
+                while not self._stop_event.is_set():
+                    now = time.monotonic()
+                    if self._n_steps is not None and self._steps >= self._n_steps:
+                        self._set_exit("n_steps", None)
+                        break
+                    if now >= deadline:
+                        self._set_exit("duration", None)
+                        break
+                    # Per-step re-gate.  A gate flip refuses the *step* rather
+                    # than the whole task, so an FSM transition out of the
+                    # allowed set exits cleanly with a zero-torque frame.
+                    refusal = self._driver._check_motion_gates("motion")
+                    if refusal is not None:
+                        detail = _refusal_text(refusal)
+                        self._set_exit("gate", detail)
+                        break
+                    try:
+                        action = self._call_policy()
+                    except Exception as exc:  # policy is caller-supplied; catch broadly
+                        self._set_exit("policy", f"raised {type(exc).__name__}: {exc}")
+                        break
+                    if action is None:
+                        with self._lock:
+                            self._refusals += 1
+                        self._set_exit("policy", "policy returned None")
+                        break
+                    cmd, err = _build_lowcmd_from_action(action, mode_machine=self._driver._mode_machine)
+                    if err is not None:
+                        with self._lock:
+                            self._refusals += 1
+                        self._set_exit("policy", f"policy returned an unusable action: {err}")
+                        break
+                    pubs = self._driver._pubs
+                    if pubs is None:
+                        self._set_exit("publish", "driver has no publisher; not connected")
+                        publish_reason = "no publisher"
+                        break
+                    # The SDK's LowCmd_ class is the wire-format handshake with
+                    # the DDS publisher: it identifies the topic type registered
+                    # on the participant.  ``_build_lowcmd_from_action`` already
+                    # returned an SDK-shaped ``cmd`` (or an err path we took
+                    # above), so importing the class here cannot introduce a
+                    # new failure mode - the same import already succeeded in
+                    # the builder.  Tests stub ``unitree_sdk2py`` via
+                    # ``monkeypatch.setitem(sys.modules, ...)`` so this same
+                    # production lane runs on an SDK-less CI box.
+                    try:
+                        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
+                    except ImportError as exc:  # pragma: no cover - hardware-only
+                        self._set_exit("publish", f"unitree_sdk2py is not installed: {exc}")
+                        publish_reason = "sdk missing"
+                        break
+                    pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
+                    if pub_err is not None:
+                        self._set_exit("publish", str(pub_err))
+                        publish_reason = str(pub_err)
+                        break
                     with self._lock:
-                        self._refusals += 1
-                    self._set_exit("policy", "policy returned None")
-                    break
-                cmd, err = _build_lowcmd_from_action(action, mode_machine=self._driver._mode_machine)
-                if err is not None:
-                    with self._lock:
-                        self._refusals += 1
-                    self._set_exit("policy", f"policy returned an unusable action: {err}")
-                    break
-                pubs = self._driver._pubs
-                if pubs is None:
-                    self._set_exit("publish", "driver has no publisher; not connected")
-                    publish_reason = "no publisher"
-                    break
-                # The SDK's LowCmd_ class is the wire-format handshake with
-                # the DDS publisher: it identifies the topic type registered
-                # on the participant.  ``_build_lowcmd_from_action`` already
-                # returned an SDK-shaped ``cmd`` (or an err path we took
-                # above), so importing the class here cannot introduce a
-                # new failure mode - the same import already succeeded in
-                # the builder.  Tests stub ``unitree_sdk2py`` via
-                # ``monkeypatch.setitem(sys.modules, ...)`` so this same
-                # production lane runs on an SDK-less CI box.
-                try:
-                    from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
-                except ImportError as exc:  # pragma: no cover - hardware-only
-                    self._set_exit("publish", f"unitree_sdk2py is not installed: {exc}")
-                    publish_reason = "sdk missing"
-                    break
-                pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
-                if pub_err is not None:
-                    self._set_exit("publish", str(pub_err))
-                    publish_reason = str(pub_err)
-                    break
-                with self._lock:
-                    self._steps += 1
-                self._stop_event.wait(_CONTROL_LOOP_DT)
+                        self._steps += 1
+                    # Pace on a deadline, not a delay: the time spent in the
+                    # step above is subtracted from the next period, so a
+                    # policy that takes a few ms per step still holds 500Hz
+                    # instead of dropping to work+2ms. ``Ticker.wait`` returns
+                    # ``True`` promptly when the stop event fires, so the
+                    # interruptible-stop property of the previous
+                    # ``self._stop_event.wait(_CONTROL_LOOP_DT)`` is kept.
+                    if ticker.wait():
+                        break
         finally:
             # Publish a zero-torque frame on every exit path except the one
             # where the wire itself just refused - clobbering that reason
