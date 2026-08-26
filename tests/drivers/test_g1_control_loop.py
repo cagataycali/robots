@@ -37,7 +37,7 @@ from strands_robots.drivers.g1 import (
 # ``unitree_sdk2py.utils.crc``.  On an SDK-less CI box we install a stub via
 # :mod:`sys.modules` so the same lane hardware runs is exercised here: the
 # alternative - a separate "SDK missing" branch - would grade a fallback
-# hardware can never take, as yinsong1986 flagged on strands-labs/robots#2779.
+# hardware can never take - the concern review feedback raised on #2779.
 #
 # Follows AGENTS.md > Testing Patterns > Restore a sys.modules entry you
 # remove: an autouse fixture installs the stubs before every test in this
@@ -513,8 +513,8 @@ class TestRefusalText:
 
 
 # ---------------------------------------------------------------------------
-# Single production lane.  Response to yinsong1986's [MUST FIX] on
-# strands-labs/robots#2779 line 1248: the loop must not carry a second
+# Single production lane.  Response to review feedback on #2779: the loop
+# must not carry a second
 # publish branch for SDK-less boxes.  Every publish here goes through
 # ``_build_lowcmd_from_action`` so an unknown joint name refuses the whole
 # action, and the wire frame passed to the publisher has the SDK-shaped
@@ -573,7 +573,7 @@ class TestSingleProductionLane:
 
 # ---------------------------------------------------------------------------
 # Zero-torque contract: ``cleanup()`` and ``stop()`` join the loop first.
-# Response to yinsong1986's [MUST FIX] at line 1147: ``cleanup()`` used to
+# Response to review feedback: ``cleanup()`` used to
 # close ``_pubs`` under a live 500 Hz thread, which drove the loop into its
 # ``publish`` branch and skipped the zero-torque frame.
 # ---------------------------------------------------------------------------
@@ -634,7 +634,7 @@ class TestCleanupJoinsLoopBeforeClosingPubs:
 
 
 # ---------------------------------------------------------------------------
-# Admission race.  Response to yinsong1986's [MUST FIX] at line 646: the
+# Admission race.  Response to review feedback: the
 # check-then-act on ``self._loop`` was unlocked, and a concurrent
 # ``run_policy`` could pass ``is_running == False`` before either thread
 # assigned the reference.
@@ -717,8 +717,8 @@ class TestRunPolicyAdmissionLock:
 
 
 # ---------------------------------------------------------------------------
-# Duration and n_steps validation.  Response to yinsong1986's [MUST FIX]
-# at line 656: unvalidated ``duration=nan`` actuated the loop with no budget
+# Duration and n_steps validation.  Response to review feedback:
+# unvalidated ``duration=nan`` actuated the loop with no budget
 # at all, and ``n_steps=True`` silently capped at 1.
 # ---------------------------------------------------------------------------
 
