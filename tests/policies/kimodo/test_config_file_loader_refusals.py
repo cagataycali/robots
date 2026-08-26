@@ -19,8 +19,18 @@ third.
 
 The survey is derived rather than listed - every public class in a
 ``strands_robots/policies/*/config.py`` module that exposes a ``from_*(path)``
-classmethod is held to it, so a fourth policy config's loader is graded the hour
+classmethod is held to it, so a fourth ``from_*`` classmethod is graded the hour
 it lands rather than inheriting an exemption by being absent from a tuple.
+
+Discovery is keyed on that classmethod shape, which is what the ``from_dict``
+half of the rule graded here needs and is also the limit of what it reaches: a
+module-level loader is outside it however many guards it drops.
+``strands_robots.policies.protomotions.config.load_config_from_yaml`` is one,
+and it landed carrying none of them. The format-agnostic half of the rule -
+expand ``~``, read a file, wrap the decode, refuse a non-mapping - is derived
+over *reading a path from disk* instead, in
+``tests/policies/protomotions/test_config_file_loader_reports_the_file.py``, so
+all four loaders are in scope there however they are spelled.
 
 One deliberate divergence stays: the two siblings refuse a file whose extension
 is not ``.json``, and ``from_json`` does not. A JSON object stored under another

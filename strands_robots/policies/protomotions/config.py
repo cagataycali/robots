@@ -366,16 +366,31 @@ def load_config_from_yaml(path: str | Path) -> ProtoMotionsConfig:
     fall back to the dataclass defaults (which are themselves pinned to the
     shipped weights, so a missing block is not an error).
 
+    An empty sidecar is the limit of "fields absent from the yaml", so it
+    yields the all-defaults config exactly as ``{}`` does - the two spell the
+    same information. ``~`` in ``path`` is expanded, the file is read as a
+    file, and a payload that is not a mapping is reported by name rather than
+    reaching the field lookups below: the reporting the sibling policy-config
+    file loaders in :mod:`strands_robots.policies.kimodo.config`,
+    :mod:`strands_robots.policies.motionbricks.config` and
+    :mod:`strands_robots.policies.wbc.config` already give.
+
+    The extension is deliberately not checked, unlike the two loaders that do:
+    a yaml document stored under any name loads here today, and refusing one
+    would stop a payload that currently works.
+
     Args:
-        path: Path to the yaml file.
+        path: Path to the yaml file. ``~`` is expanded.
 
     Returns:
         A :class:`ProtoMotionsConfig` - validated for consistent dimensions.
 
     Raises:
-        FileNotFoundError: If ``path`` does not exist.
+        FileNotFoundError: If ``path`` does not name a file (a directory does
+            not, so it is refused here rather than at the read).
         ImportError: If ``pyyaml`` is not installed.
-        ValueError: If the yaml contains an inconsistent dimension: a
+        ValueError: If the file is not valid YAML, or holds a YAML value that
+            is not a mapping, or contains an inconsistent dimension: a
             ``stiffness`` or ``damping`` length that is not the joint count, or
             an ``anchor_body_index`` / ``root_body_index`` that is not a row of
             ``body_names`` (refused by
@@ -389,12 +404,22 @@ def load_config_from_yaml(path: str | Path) -> ProtoMotionsConfig:
         purpose="reading the unified_pipeline.yaml checkpoint sidecar",
     )
 
-    path = Path(path)
-    if not path.exists():
+    path = Path(path).expanduser()
+    if not path.is_file():
         raise FileNotFoundError(f"ProtoMotions yaml not found: {path}")
-
-    with open(path) as f:
-        data = yaml.safe_load(f)  # type: ignore[attr-defined]
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))  # type: ignore[attr-defined]
+    except yaml.YAMLError as e:  # type: ignore[attr-defined]
+        raise ValueError(f"ProtoMotions yaml {path} is not valid YAML: {e}") from e
+    if data is None:
+        # An empty sidecar (and a comments-only one) carries the same
+        # information as ``{}``: every field absent. ``{}`` already returns the
+        # all-defaults config, which is what this function documents absent
+        # fields to mean, so the two spellings resolve to the same config
+        # rather than one of them dead-ending on ``None.get``.
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError(f"ProtoMotions yaml {path} must contain a mapping, got {type(data).__name__}")
 
     joint_names = tuple(data.get("joint_names", GTP_G1_JOINT_NAMES))
     body_names = tuple(data.get("body_names", GTP_G1_BODY_NAMES))
