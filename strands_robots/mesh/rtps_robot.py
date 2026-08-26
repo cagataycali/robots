@@ -52,12 +52,6 @@ _RTPS_TOPIC_RE = re.compile(r"^/[A-Za-z0-9_/]*[A-Za-z0-9_]$")
 _RTPS_NAME_RE = re.compile(r"^[A-Za-z0-9_/~]+$")
 
 
-def _check(label: str, value: str, pattern: re.Pattern[str]) -> str:
-    if not value or not pattern.match(value):
-        raise ValueError(f"invalid {label}: {value!r}")
-    return value
-
-
 class _UseRtpsTransport:
     """Transport that forwards to the pure-DDS ``use_rtps`` tool.
 
@@ -131,8 +125,14 @@ class RtpsRobot(MobileBaseRobot):
 
     _NAME_RE = _RTPS_NAME_RE
     _TOPIC_RE = _RTPS_TOPIC_RE
-    # ``use_rtps`` requires absolute topics, so the generic hint would misdirect.
-    _NAME_HINT = ""
+    # The two seams have different grammars here, so they carry different
+    # hints. ``node_name`` names this robot's agent tools rather than a node on
+    # the robot's graph, so the inherited sentence describes it correctly; a
+    # topic is written to DDS directly and must be absolute.
+    _TOPIC_HINT = (
+        " (expected an absolute topic like /turtle1/cmd_vel - use_rtps writes to DDS "
+        "directly, so a relative or ~ name has no resolver)"
+    )
 
     def __init__(
         self,

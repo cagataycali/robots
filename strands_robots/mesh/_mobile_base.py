@@ -229,8 +229,16 @@ class MobileBaseRobot:
     _NAME_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_/~]+$")
     #: Pattern a topic/service name must match. Overridable per platform.
     _TOPIC_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_/~]+$")
-    #: Appended to name-validation errors to say what a good value looks like.
+    #: Appended to ``node_name`` validation errors to say what a good value
+    #: looks like. Overridable per platform alongside :attr:`_NAME_RE`, which
+    #: it must describe.
     _NAME_HINT: str = " (expected a graph name like /turtle1/cmd_vel)"
+    #: Appended to topic and service validation errors. Overridable per
+    #: platform alongside :attr:`_TOPIC_RE`, which it must describe. Separate
+    #: from :attr:`_NAME_HINT` because the two patterns are independently
+    #: overridable: a platform whose node-name and topic grammars diverge needs
+    #: two sentences, since neither one is true of both seams.
+    _TOPIC_HINT: str = " (expected a graph name like /turtle1/cmd_vel)"
 
     def __init__(
         self,
@@ -280,18 +288,35 @@ class MobileBaseRobot:
     # -- validation ---------------------------------------------------------
 
     @classmethod
-    def _check(cls, label: str, value: str, pattern: re.Pattern[str]) -> str:
+    def _check(cls, label: str, value: str, pattern: re.Pattern[str], hint: str) -> str:
+        """Return ``value`` if ``pattern`` accepts it, else raise naming ``hint``.
+
+        Args:
+            label: Parameter name to quote in the refusal.
+            value: Candidate name.
+            pattern: Grammar the value must satisfy.
+            hint: Sentence describing ``pattern``, appended to the refusal.
+                Passed in rather than read off the class so the two seams -
+                node names and topics - each carry the hint for their own
+                grammar.
+
+        Returns:
+            ``value`` unchanged.
+
+        Raises:
+            ValueError: If ``value`` is empty or ``pattern`` refuses it.
+        """
         if not value or not pattern.match(value):
-            raise ValueError(f"invalid {label}: {value!r}{cls._NAME_HINT}")
+            raise ValueError(f"invalid {label}: {value!r}{hint}")
         return value
 
     @classmethod
     def _check_name(cls, label: str, value: str) -> str:
-        return cls._check(label, value, cls._NAME_RE)
+        return cls._check(label, value, cls._NAME_RE, cls._NAME_HINT)
 
     @classmethod
     def _check_topic(cls, label: str, value: str) -> str:
-        return cls._check(label, value, cls._TOPIC_RE)
+        return cls._check(label, value, cls._TOPIC_RE, cls._TOPIC_HINT)
 
     # -- capabilities -------------------------------------------------------
 

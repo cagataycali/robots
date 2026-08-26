@@ -192,11 +192,17 @@ def test_move_motor_without_connection_returns_false() -> None:
     assert ctrl.read_motor_position("shoulder_pan") is None
 
 
-def test_read_motor_position_decodes_response(fake_serial) -> None:
+def test_read_motor_position_decodes_a_well_formed_reply(fake_serial) -> None:
+    """A verified status packet decodes to the angle its counts name.
+
+    The frame is ``FF FF ID LEN ERR <lo> <hi> CHK`` with the checksum a servo
+    would send. The bytes are not read at fixed offsets -- what happens to a
+    reply that arrives behind echoed bytes, from another motor, or with a broken
+    checksum is graded in ``test_feetech_status_packet_framing``.
+    """
     ctrl = MotorController("/dev/ttyTEST")
     ctrl.connect()
-    # 7-byte response with position low/high at indices 5 and 6.
-    fake_serial[0].queue_read(bytes([0xFF, 0xFF, 0x01, 0x04, 0x00, 0x00, 0x08]))
+    fake_serial[0].queue_read(bytes([0xFF, 0xFF, 0x01, 0x04, 0x00, 0x00, 0x08, 0xF2]))
     deg = ctrl.read_motor_position("shoulder_pan")
     assert deg is not None
     # position 0x0800 == 2048 -> roughly mid-range for a -180..180 joint.
@@ -318,21 +324,31 @@ def test_module_source_is_ascii() -> None:
 # --------------------------------------------------------------------------- #
 # pose_tool: live-motor read/write actions (serial mocked)                     #
 # --------------------------------------------------------------------------- #
-def _position_packet(raw: int = 0x0800) -> bytes:
-    """A Feetech read response encoding ``raw`` (low|high<<8) at bytes 5/6."""
-    return bytes([0xFF, 0xFF, 0x01, 0x04, 0x00, raw & 0xFF, (raw >> 8) & 0xFF, 0, 0, 0])
+def _position_packet(raw: int = 0x0800, motor_id: int = 0x01) -> bytes:
+    """A Feetech status packet reporting ``raw`` counts for ``motor_id``.
+
+    ``FF FF ID LEN ERR <lo> <hi> CHK``, carrying the checksum a servo would send
+    so the frame passes the verification ``read_motor_position`` performs. What
+    happens to a frame that fails that verification is graded in
+    ``test_feetech_status_packet_framing``.
+    """
+    body = [motor_id, 0x04, 0x00, raw & 0xFF, (raw >> 8) & 0xFF]
+    return bytes([0xFF, 0xFF, *body, (~sum(body)) & 0xFF])
 
 
 class AlwaysReadingSerial(FakeSerial):
-    """A FakeSerial that always answers reads with a valid position packet.
+    """A FakeSerial that answers each read as the motor that read addressed.
 
     The real controller is constructed *inside* the tool dispatch, so tests
-    cannot pre-seed its read queue. This stand-in always returns a decodable
-    position so the read/store success-formatting branches are exercised.
+    cannot pre-seed its read queue. This stand-in replies with the ID the
+    outgoing packet asked for, which is what a servo bus does: a fake that
+    always answered as motor 1 would let one motor's position be reported as
+    another's with no test able to see it.
     """
 
     def read(self, n: int = 1) -> bytes:
-        return _position_packet()
+        asked = self.writes[-1][2] if self.writes else 0x01
+        return _position_packet(motor_id=asked)
 
 
 @pytest.fixture

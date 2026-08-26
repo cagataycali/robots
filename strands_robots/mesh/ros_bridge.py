@@ -219,6 +219,8 @@ class RosBridgedRobot(MobileBaseRobot):
     _NAME_RE = _ROS2_GRAPH_NAME_RE
     _TOPIC_RE = _ROS2_GRAPH_NAME_RE
     _NAME_HINT = " (expected a ROS 2 graph name like /turtle1/cmd_vel)"
+    # Both seams share one grammar here, so one sentence describes both.
+    _TOPIC_HINT = _NAME_HINT
 
     def __init__(
         self,

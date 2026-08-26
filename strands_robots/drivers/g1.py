@@ -48,13 +48,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Constants surfaced for tests and for issue #358 to share. The
-# ``_LIDAR_MAX_POINTS`` cap is deliberate: :meth:`_summarise_cloud` runs on the
-# DDS thread and a full Livox frame is ~30k points at 10 Hz. The point-cloud
-# tile (issue #356) publishes its own downsampled ``lidar/cloud`` topic; here
-# we only compute a summary.
+# Constants surfaced for tests and for issue #358 to share.
 # ---------------------------------------------------------------------------
-_LIDAR_MAX_POINTS: int = 4000
 _BATTERY_FLOOR_PCT: float = 15.0
 
 # The topics the driver reads. Kept together so a reader sees the whole
@@ -84,7 +79,6 @@ class G1Driver:
         port: str | None = None,
         network_interface: str = "eth0",
         battery_floor_pct: float = _BATTERY_FLOOR_PCT,
-        lidar_max_points: int = _LIDAR_MAX_POINTS,
         **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` does the DDS work.
@@ -109,9 +103,6 @@ class G1Driver:
             battery_floor_pct: Percentage below which :meth:`send_action`
                 refuses to write. The floor is separate from the FSM gate so
                 a caller can see which check refused.
-            lidar_max_points: Cap for the downsampled point count reported in
-                ``_lidar_summary``. Full clouds go through the dashboard's
-                own topic (issue #356), not this one.
             **kwargs: Ignored; accepted so the factory can forward extras
                 without the driver knowing what they are.
         """
@@ -122,7 +113,6 @@ class G1Driver:
         self._port = port
         self._network_interface = network_interface
         self._battery_floor_pct = float(battery_floor_pct)
-        self._lidar_max_points = int(lidar_max_points)
 
         # Cached DDS decode results. Every one is optional per the mesh
         # contract, so a driver that has not connected yet is not broken.
@@ -562,6 +552,14 @@ class G1Driver:
         too much to publish unpaced. The summary is what the mesh's health
         chip reads; the 3D tile (issue #356) subscribes the raw cloud itself
         through a paced publisher and does its own downsampling.
+
+        What bounds this record is that every field is read from the message
+        *header* - ``width``, ``height``, ``point_step``, ``row_step`` - so its
+        size is the same for a 200-point frame and a 30k-point one. No point is
+        enumerated here, and nothing is downsampled, so there is no point count
+        for a cap to apply to. ``count`` is therefore the cloud's true size: a
+        MID-360 that drops from 24000 points to 3000 is reporting a fault, and
+        clamping the number would hide exactly that.
         """
         try:
             width = int(getattr(msg, "width", 0))
@@ -569,7 +567,6 @@ class G1Driver:
             count = width * height
             self._lidar_summary = {
                 "count": count,
-                "capped_at": self._lidar_max_points,
                 "width": width,
                 "height": height,
                 "point_step": int(getattr(msg, "point_step", 0)),

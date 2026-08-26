@@ -57,6 +57,9 @@ FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
     # The RL run-size gate. Its two fields live on ``RLTrainSpec`` and no
     # provider forwards them, so it is graded on the reader scan only.
     "_rl_run_size_problems": ("total_timesteps", "rollout_steps"),
+    # The RL replay-count gate. Its three fields live on ``RLTrainSpec`` and no
+    # provider forwards them, so it is graded on the reader scan only.
+    "_rl_replay_problems": ("buffer_size", "batch_size", "gradient_steps"),
     # The RL-hyperparameter gates. Their fields live on ``RLTrainSpec`` and no
     # provider forwards them today, so they are graded on the reader scan only
     # (see TestTheForwardingProviderIsInScopeForEveryGateItReads, which derives
@@ -183,6 +186,7 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
             "test_loss_weight_domain.py",
             "test_optimization_epochs_domain.py",
             "test_rl_run_size_domain.py",
+            "test_rl_replay_domain.py",
             "test_seed_domain.py",
             "test_temperature_learning_rate_domain.py",
             "test_validation_episodes_domain.py",

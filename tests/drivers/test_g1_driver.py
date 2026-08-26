@@ -215,15 +215,16 @@ def test_lidar_cloud_summary_is_bounded() -> None:
 
     The mesh publishes ``_lidar_summary`` as a small dict every tick; if
     :meth:`_on_lidar_cloud` shipped 30k points into that field the topic
-    would drown Zenoh. The cap is asserted here so a regression is loud.
+    would drown Zenoh. What keeps the record small is that every field is read
+    from the message header, so the summary has the same shape whatever the
+    cloud's size - which is what the absence of a point list asserts here.
     """
-    driver = G1Driver(tool_name="g1", port="1.2.3.4", lidar_max_points=4000)
+    driver = G1Driver(tool_name="g1", port="1.2.3.4")
     # Livox at 10 Hz reports width ~ 24000, height 1
     msg = types.SimpleNamespace(width=24000, height=1, point_step=16, row_step=24000 * 16)
     driver._on_lidar_cloud(msg)
     assert driver._lidar_summary is not None
     assert driver._lidar_summary["count"] == 24000
-    assert driver._lidar_summary["capped_at"] == 4000
     # No raw point list: the summary dict is small and fixed-shape.
     assert "points" not in driver._lidar_summary
 

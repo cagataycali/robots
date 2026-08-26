@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.training.base import TrainResult, TrainSpec
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_count_error, require_optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import torch
@@ -161,15 +161,30 @@ class FastSacTrainer(BaseRLAlgo):
         # and accepts any count >= 1. Only this backend can state it.
         if spec.num_envs != 1:
             problems.append(f"the MuJoCo backend is single-env (num_envs must be 1), got {spec.num_envs}")
-        if spec.buffer_size <= 0:
-            problems.append(f"buffer_size must be > 0, got {spec.buffer_size}")
-        if spec.batch_size <= 0:
-            problems.append(f"batch_size must be > 0, got {spec.batch_size}")
-        if spec.gradient_steps <= 0:
-            problems.append(f"gradient_steps must be > 0, got {spec.gradient_steps}")
+        # buffer_size, batch_size and gradient_steps are the replay loop's three
+        # caller-supplied counts: the buffer capacity, the transitions sampled
+        # per gradient step, and the SAC updates per iteration. Each is consumed
+        # directly as a count (a tensor capacity, a sample size, a range() bound),
+        # so a local <= 0 test is weaker than the shared count domain - it admits
+        # True as a degenerate size (a one-slot buffer that never fills, a batch
+        # of one), lets every fraction / non-finite value raise inside setup or
+        # the update loop after the env, networks, optimizers and buffer are
+        # built, and raises TypeError itself on a string or None.
+        problems.extend(self._rl_replay_problems(spec))
         if not 0.0 < spec.tau <= 1.0:
             problems.append(f"tau must be in (0, 1], got {spec.tau}")
-        if spec.learning_starts < spec.batch_size:
+        # learning_starts >= batch_size is a relation between two counts, so it can
+        # only be asked once batch_size is one: a str / None reaches ``<`` and
+        # raises (out of a method documented to return problems), and a bool /
+        # float would compare nonsensically. batch_size is graded by the shared
+        # gate above; this consults the same domain rather than relying on that
+        # call having run, so it holds wherever it sits. learning_starts is not in
+        # that domain, so a non-count there still raises here as it did before - a
+        # separate field on a separate axis.
+        if (
+            positive_count_error(spec.batch_size, "batch_size", self.provider_name) is None
+            and spec.learning_starts < spec.batch_size
+        ):
             problems.append(
                 f"learning_starts ({spec.learning_starts}) must be >= batch_size ({spec.batch_size}) "
                 "so the first gradient step can sample a full batch"

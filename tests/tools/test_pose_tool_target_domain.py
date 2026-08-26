@@ -370,9 +370,15 @@ class TestNeighbouringTargetProducersStayOutOfScope:
         )
 
 
-def _position_packet(raw: int) -> bytes:
-    """A Feetech read response encoding ``raw`` at bytes 5/6."""
-    return bytes([0xFF, 0xFF, 0x01, 0x04, 0x00, raw & 0xFF, (raw >> 8) & 0xFF, 0, 0, 0])
+def _position_packet(raw: int, motor_id: int = 0x01) -> bytes:
+    """A Feetech status packet reporting ``raw`` counts for ``motor_id``.
+
+    ``FF FF ID LEN ERR <lo> <hi> CHK``, with the checksum a servo would send so
+    the frame passes the verification ``read_motor_position`` performs. Framing
+    itself is graded in ``test_feetech_status_packet_framing``.
+    """
+    body = [motor_id, 0x04, 0x00, raw & 0xFF, (raw >> 8) & 0xFF]
+    return bytes([0xFF, 0xFF, *body, (~sum(body)) & 0xFF])
 
 
 # A joint parked near the upper end of its travel, and a displacement inside the
@@ -394,7 +400,11 @@ class _ReadingSerial(FakeSerial):
     """
 
     def read(self, n: int = 1) -> bytes:
-        return _position_packet(_NEAR_UPPER_RAW)
+        # Answer as the motor the outgoing packet addressed; a servo bus does,
+        # and a fake that always answered as motor 1 would let a read attribute
+        # one motor's position to another with no test able to see it.
+        asked = self.writes[-1][2] if self.writes else 0x01
+        return _position_packet(_NEAR_UPPER_RAW, motor_id=asked)
 
 
 @pytest.fixture
