@@ -4,10 +4,13 @@ Two things need to be true across the driver and (later, issue #358) the
 agent tools:
 
 * ``ChannelFactoryInitialize`` is called exactly once per process, with a
-  known network interface. Calling it twice from separate imports raises
-  from ``unitree_sdk2py``; calling it never leaves subscribers with no bus.
-  :func:`ensure_dds` runs it under a lock, records the interface, and is
-  idempotent for callers with the same choice.
+  known network interface. Calling it never leaves subscribers with no bus;
+  calling it a second time is *not* an error the SDK reports -
+  ``ChannelFactory.Init`` short-circuits on ``if __initialized: return True``
+  and ignores its ``networkInterface`` argument, so a re-init is a silent
+  no-op that is indistinguishable from a successful bind.
+  :func:`ensure_dds` runs it under a lock, records the interface it actually
+  bound, and is idempotent for callers with the same choice.
 * A ``ChannelSubscriber`` and a ``ChannelPublisher`` cannot be constructed
   concurrently: the CycloneDDS bindings segfault. :data:`_DDS_INIT_LOCK` is
   the *shared* lock the driver and the tools (issue #358) both hold while
@@ -21,6 +24,7 @@ mock the bus and skips the SDK entirely on Thor.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import threading
 
@@ -80,6 +84,47 @@ def decode_code(code: object) -> str:
 # ---------------------------------------------------------------------------
 _DDS_INIT_LOCK: threading.Lock = threading.Lock()
 
+#: The attribute ``ChannelFactory`` records "the bus is up" on. Nothing public
+#: reports it: ``Init`` returns ``True`` both when it binds an interface and
+#: when it short-circuits, and ``ChannelFactoryInitialize`` discards that bool.
+#: Reading the attribute is the only way to tell a bind from a no-op, and it is
+#: a narrower coupling to the SDK than matching its exception text, which
+#: :func:`ensure_dds` already does below.
+_SDK_FACTORY_BOUND_ATTR = "_ChannelFactory__initialized"
+
+
+def _sdk_factory_already_bound(channel_module: object) -> bool | None:
+    """Whether the SDK's channel factory is already bound to an interface.
+
+    Args:
+        channel_module: The imported ``unitree_sdk2py.core.channel`` module.
+
+    Returns:
+        ``True`` or ``False`` when this SDK build reports its factory state;
+        ``None`` when it does not expose it, so a caller keeps the behaviour
+        it had before rather than guessing which way to fail.
+    """
+    factory = getattr(channel_module, "ChannelFactory", None)
+    bound = getattr(factory, _SDK_FACTORY_BOUND_ATTR, None)
+    return bound if isinstance(bound, bool) else None
+
+
+def _bound_elsewhere_error(network_interface: str) -> str:
+    """The reason a bus this process did not bind cannot be confirmed.
+
+    Args:
+        network_interface: The interface the caller asked to bind.
+
+    Returns:
+        A named reason, in the voice the caller can act on.
+    """
+    return (
+        "the DDS channel factory was already initialised outside ensure_dds, so a "
+        f"bind to {network_interface!r} cannot be confirmed; let the driver initialise "
+        "the bus, or drop the ChannelFactoryInitialize call that runs before it"
+    )
+
+
 # Recorded once by :func:`ensure_dds` for a running process. A second call
 # with a different interface is a bug worth catching, not a silent no-op.
 _dds_state: dict[str, object] = {"initialized": False, "interface": None}
@@ -117,19 +162,33 @@ def ensure_dds(network_interface: str = "eth0") -> str | None:
             # does not have it (Thor, CI, every unit test) the ImportError is
             # returned as a named string rather than raised, and the caller
             # can decide whether to proceed with a mocked bus.
-            from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+            sdk_channel = importlib.import_module("unitree_sdk2py.core.channel")
         except ImportError as exc:  # pragma: no cover - exercised on hardware
             return f"unitree_sdk2py is not installed: {exc}"
+        if _sdk_factory_already_bound(sdk_channel):
+            # Something bound the bus without coming through here, so the
+            # interface it is on is not this process's to know. Calling
+            # ChannelFactoryInitialize now would short-circuit and return
+            # normally, and recording ``network_interface`` off the back of
+            # that would attach every later subscriber to whichever NIC the
+            # first caller chose while reporting the one this caller asked
+            # for - the silent re-bind the refusal below exists to prevent.
+            return _bound_elsewhere_error(network_interface)
         try:
-            ChannelFactoryInitialize(0, network_interface)
+            sdk_channel.ChannelFactoryInitialize(0, network_interface)
         except Exception as exc:  # noqa: BLE001 - SDK raises bare Exception
             message = str(exc).lower()
             if "already" in message or "initialized" in message:
-                # Some SDK builds refuse a second init - treat that as success
-                # for the interface we recorded.
-                _dds_state["initialized"] = True
-                _dds_state["interface"] = network_interface
-                return None
+                # An SDK build that refuses a second init instead of
+                # short-circuiting: the same situation as the probe above, so
+                # the same answer. The bus is up, but on an interface this
+                # process did not choose, so reporting success here would
+                # record a NIC nobody bound.
+                return (
+                    "ChannelFactoryInitialize reports the factory was already "
+                    f"initialised, so a bind to {network_interface!r} cannot be "
+                    f"confirmed: {exc}"
+                )
             return f"ChannelFactoryInitialize failed: {exc}"
         _dds_state["initialized"] = True
         _dds_state["interface"] = network_interface
