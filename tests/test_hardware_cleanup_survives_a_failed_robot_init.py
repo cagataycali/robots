@@ -127,11 +127,15 @@ def _init_assignments() -> dict[str, int]:
     fn = ast.parse(textwrap.dedent(inspect.getsource(HwRobot.__init__))).body[0]
     first: dict[str, int] = {}
     for node in ast.walk(fn):
-        targets: list[ast.expr] = []
+        targets: list[ast.expr]
         if isinstance(node, ast.Assign):
             targets = list(node.targets)
         elif isinstance(node, ast.AnnAssign):
             targets = [node.target]
+        else:
+            # Narrows ``node`` to the two statement types that carry ``lineno``
+            # below; ``ast.walk`` is typed as yielding bare ``ast.AST``.
+            continue
         for target in targets:
             if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
                 first.setdefault(target.attr, node.lineno)
@@ -249,6 +253,9 @@ def _self_probes(name: str) -> set[str]:
             and isinstance(node.args[0], ast.Name)
             and node.args[0].id == "self"
             and isinstance(node.args[1], ast.Constant)
+            # An attribute name is a string literal; ``ast.Constant.value`` is a
+            # union over every literal type, so the probe is what narrows it.
+            and isinstance(node.args[1].value, str)
         ):
             out.add(node.args[1].value)
     return out
