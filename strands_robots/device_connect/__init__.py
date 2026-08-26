@@ -73,11 +73,22 @@ __all__ = [
 ]
 
 
+# The bring-up budget ``init_device_connect_sync`` bounds its background thread
+# with. A float literal with no ``device_connect_edge`` dependency, so it is
+# defined here rather than served from ``_impl``: routing it through that module
+# would make reading the shipped budget import the extra, and a deferred import
+# that still fires is not a deferral. ``init_device_connect_sync`` reads it back
+# off this package, which is also what lets a test substitute a millisecond
+# budget for the shipped 30 seconds. Expiry is a failed bring-up, not a slow one
+# that later succeeds -- the wrapper has already returned by then.
+_INIT_TIMEOUT_S: float = 30.0
+
+
 # Map each name callers reach through the package to the module it lives in.
 # The public :data:`__all__` names are the documented API; the additional
-# ``_PATCH_TARGETS`` names below are module-level symbols the ``_impl`` submodule
-# re-exports (via ``from device_connect_edge import ...``) that existing tests
-# and callers patch through this package. Serving them here keeps
+# private names below are module-level symbols ``_impl`` defines or re-exports
+# (via ``from device_connect_edge import ...``) that existing tests and callers
+# reach through this package. Serving them here keeps
 # ``mock.patch("strands_robots.device_connect.DeviceRuntime", ...)`` working
 # without eagerly importing ``device_connect_edge`` on package load -- the
 # import is deferred until first access, same as every other lazy name.
@@ -104,12 +115,6 @@ _ATTR_TO_MODULE: dict[str, str] = {
     # Leading underscore is a "not public API" signal, not a "not reachable"
     # signal; it lived here before this PR and existing suites depend on it.
     "_build_heartbeat": "strands_robots.device_connect._impl",
-    # Module-level budget the sync wrapper reads through the package (see the
-    # comment inside ``init_device_connect_sync``). Reachable here so
-    # ``module._INIT_TIMEOUT_S`` and ``monkeypatch.setattr(module,
-    # "_INIT_TIMEOUT_S", ...)`` -- the shape every wrapper-budget test uses --
-    # find the value on first access without eagerly importing ``_impl``.
-    "_INIT_TIMEOUT_S": "strands_robots.device_connect._impl",
     # The opt-in vocabulary the insecure-setting refusal quotes. Read through
     # the package by the ``TestParsingTheArgumentWasRejectedForAMeasuredReason``
     # suite, which pins the refusal's contract by comparing its message against

@@ -34,6 +34,11 @@ Split across four measured behaviours:
   package, so subsequent lookups return bit-identical references. This is what
   keeps ``isinstance`` checks and identity assertions from breaking as a
   side-effect of using the lazy dispatcher.
+* :class:`TestANameThatNeedsNoExtraIsReadableWithoutIt` -- the other direction.
+  Deferring an import is only half the discipline: a name that has no
+  ``device_connect_edge`` dependency must not be *routed* through a module that
+  does, because the deferral then only moves when the same
+  ``ModuleNotFoundError`` fires.
 """
 
 from __future__ import annotations
@@ -273,3 +278,37 @@ class TestLazyLoadingIsIdempotent:
         assert "resolve_allow_insecure" not in vars(module) or True
         _ = module.resolve_allow_insecure
         assert "resolve_allow_insecure" in vars(module)
+
+
+class TestANameThatNeedsNoExtraIsReadableWithoutIt:
+    """Where a name lives decides whether the extra gates it.
+
+    The classes above grade *when* the extra is imported. This one grades
+    *whether it needs to be*: a name with no ``device_connect_edge`` dependency
+    that is served out of the extras-bearing ``_impl`` submodule is still
+    trapped, because resolving it imports that module and every module-scope
+    import it carries. Deferral moves the ``ModuleNotFoundError``; it does not
+    remove it.
+    """
+
+    def test_the_bring_up_budget_resolves_without_the_extra(self, without_the_extra: None) -> None:
+        """``_INIT_TIMEOUT_S`` is a float literal, so it reads on a stock install.
+
+        ``init_device_connect_sync`` bounds its background bring-up with this
+        value and looks it up through the package, which is what lets a test
+        substitute a millisecond budget for the shipped 30 seconds. Nothing
+        about a number needs the extra -- so a caller (or a test) reading the
+        shipped budget must not have to install ``[device-connect]`` to see it.
+
+        Fails while the definition sits in ``_impl``: resolving the name imports
+        that module, whose own ``from device_connect_edge import DeviceRuntime``
+        raises inside the block.
+        """
+        module = importlib.import_module(_MODULE)
+
+        budget = module._INIT_TIMEOUT_S
+
+        assert isinstance(budget, float)
+        assert 0.0 < budget < float("inf")
+        # And reading it did not drag the extra in behind the value.
+        assert "device_connect_edge" not in sys.modules

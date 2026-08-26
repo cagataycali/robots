@@ -41,12 +41,6 @@ __all__ = [
 
 _INSECURE_TRUE = ("true", "1", "yes")
 
-# ``init_device_connect_sync`` bounds the background bring-up: the awaited half
-# constructs a ``DeviceRuntime``, which can block on a broker, so the wrapper
-# must not hang its caller forever. Expiry is a failed bring-up, not a slow one
-# that later succeeds -- the wrapper has already returned by then.
-_INIT_TIMEOUT_S: float = 30.0
-
 
 def resolve_allow_insecure(
     explicit: bool | None = None,
@@ -271,12 +265,12 @@ def init_device_connect_sync(
 
     thread = threading.Thread(target=_run, daemon=True, name="device-connect-runtime")
     thread.start()
-    # ``_INIT_TIMEOUT_S`` is read through the package rather than the module-local
-    # binding so that ``monkeypatch.setattr(strands_robots.device_connect,
-    # "_INIT_TIMEOUT_S", budget)`` -- the shape every wrapper-budget test uses
-    # -- reaches this read. The module-local literal above is still the source
-    # of truth on first access; the lookup here just honours a caller that
-    # overrode it through the package.
+    # The budget is defined on the package, not here: it is a float literal with
+    # no ``device_connect_edge`` dependency, so serving it out of this module
+    # would put the extra between a caller and a number that does not need it.
+    # Reading it back through the package is also what makes
+    # ``monkeypatch.setattr(strands_robots.device_connect, "_INIT_TIMEOUT_S",
+    # budget)`` -- the shape every wrapper-budget test uses -- reach this read.
     import strands_robots.device_connect as _pkg  # noqa: PLC0415 - lazy on purpose
 
     _timeout = _pkg._INIT_TIMEOUT_S
