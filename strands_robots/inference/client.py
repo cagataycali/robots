@@ -186,27 +186,38 @@ class RemotePolicy(Policy):
                 f"Underlying error: {type(exc).__name__}: {exc}"
             ) from exc
 
-        ready = protocol.loads(self._ws.recv(timeout=self.connect_timeout))
-        if ready.get("type") != protocol.MSG_READY:
-            raise ConnectionError(f"expected a '{protocol.MSG_READY}' handshake, got {ready.get('type')!r}")
-        server_version = ready.get("protocol_version")
-        if server_version != protocol.PROTOCOL_VERSION:
-            raise ConnectionError(
-                f"protocol version mismatch: client speaks {protocol.PROTOCOL_VERSION}, "
-                f"server speaks {server_version}. Upgrade the older peer."
-            )
-        self._apply_metadata(ready.get("metadata", {}))
-        logger.info("RemotePolicy connected to %s (remote provider=%s)", self.uri, self._remote_provider_name)
+        # Everything from here on runs with ``self._ws`` already live, so a
+        # failure has to un-cache it: ``_ensure_connected`` short-circuits on a
+        # non-``None`` ``self._ws``, and a connection whose handshake this
+        # client *rejected* would otherwise be handed to the next request -
+        # raising the mismatch once and then serving on it silently.
+        established = False
+        try:
+            ready = protocol.loads(self._ws.recv(timeout=self.connect_timeout))
+            if ready.get("type") != protocol.MSG_READY:
+                raise ConnectionError(f"expected a '{protocol.MSG_READY}' handshake, got {ready.get('type')!r}")
+            server_version = ready.get("protocol_version")
+            if server_version != protocol.PROTOCOL_VERSION:
+                raise ConnectionError(
+                    f"protocol version mismatch: client speaks {protocol.PROTOCOL_VERSION}, "
+                    f"server speaks {server_version}. Upgrade the older peer."
+                )
+            self._apply_metadata(ready.get("metadata", {}))
+            logger.info("RemotePolicy connected to %s (remote provider=%s)", self.uri, self._remote_provider_name)
 
-        # Replay config that was set before the connection existed.
-        if self._robot_state_keys:
-            self._request({"type": protocol.MSG_SET_STATE_KEYS, "keys": self._robot_state_keys})
-        if self.control_frequency is not None:
-            self._request({"type": protocol.MSG_SET_CONTROL_FREQUENCY, "hz": self.control_frequency})
-        if self._reset_pending:
-            reply = self._request({"type": protocol.MSG_RESET, "seed": self._reset_seed})
-            self._apply_metadata(reply.get("metadata", {}))
-            self._reset_pending = False
+            # Replay config that was set before the connection existed.
+            if self._robot_state_keys:
+                self._request({"type": protocol.MSG_SET_STATE_KEYS, "keys": self._robot_state_keys})
+            if self.control_frequency is not None:
+                self._request({"type": protocol.MSG_SET_CONTROL_FREQUENCY, "hz": self.control_frequency})
+            if self._reset_pending:
+                reply = self._request({"type": protocol.MSG_RESET, "seed": self._reset_seed})
+                self._apply_metadata(reply.get("metadata", {}))
+                self._reset_pending = False
+            established = True
+        finally:
+            if not established:
+                self._discard_connection()
 
     def _ensure_connected(self) -> None:
         """Open the connection if it is not open yet, serialised with the other wire users.
@@ -262,11 +273,56 @@ class RemotePolicy(Policy):
 
     # -- wire helpers (call while holding ``self._lock``) ---------------------
 
+    def _discard_connection(self) -> None:
+        """Drop the connection, without taking ``self._lock``.
+
+        Every caller is a wire helper that already holds it, and :meth:`close`
+        takes the same lock - routing through ``close`` from here would deadlock
+        on a plain ``Lock``. Clearing ``self._ws`` first means the next
+        :meth:`_ensure_connected` reconnects even if the close itself fails.
+        """
+        ws, self._ws = self._ws, None
+        if ws is None:
+            return
+        try:
+            ws.close()
+        except OSError as exc:
+            # The connection is being abandoned either way; a close that fails
+            # on an already-broken socket is not news the caller can act on.
+            logger.debug("RemotePolicy: closing an abandoned connection raised %s", exc)
+
     def _request(self, message: dict[str, Any]) -> dict[str, Any]:
-        """Send a message and return the decoded reply, raising on server error."""
+        """Send a message and return the decoded reply, raising on server error.
+
+        Discards the connection unless the exchange completes. A request whose
+        reply never arrived leaves that reply queued on the socket, so the next
+        request reads the previous one's answer - and keeps reading one behind
+        for the life of the connection. Neither the reply's own type nor the
+        callers can see it: a stale action chunk carries the very
+        ``MSG_ACTIONS`` type this call expects, and a ``MSG_OK`` read as an
+        action chunk yields ``[]`` through
+        :meth:`_get_actions_blocking`'s ``reply.get("actions", [])``, which is
+        a legitimate "the policy emitted nothing". A robot then executes a
+        chunk computed for an observation it has already moved past.
+
+        A ``MSG_ERROR`` reply is deliberately *not* a failed exchange: the
+        server marshals any dispatch failure back on this connection and
+        carries on serving, so the stream stays in step and the connection is
+        still good for the next request.
+
+        The bookkeeping is a ``finally`` rather than an ``except`` so a
+        ``BaseException`` - a cancellation between the send and the receive
+        leaves the same undelivered reply behind - discards the connection too.
+        """
         assert self._ws is not None  # noqa: S101 - guarded by _ensure_connected
-        self._ws.send(protocol.dumps(message))
-        reply = protocol.loads(self._ws.recv(timeout=self.request_timeout))
+        exchanged = False
+        try:
+            self._ws.send(protocol.dumps(message))
+            reply = protocol.loads(self._ws.recv(timeout=self.request_timeout))
+            exchanged = True
+        finally:
+            if not exchanged:
+                self._discard_connection()
         if reply.get("type") == protocol.MSG_ERROR:
             detail = reply.get("traceback") or reply.get("error", "unknown error")
             raise RuntimeError(f"remote policy server error:\n{detail}")
