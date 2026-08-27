@@ -71,6 +71,28 @@ _Fourier N1 / GR-1 Humanoid (26-DOF)_
 
 _Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)_
 
+**Real hardware.** The Microduck is driven natively through its on-robot
+`robotd` daemon (Pollen's `duck-ipc-proto` JSON-RPC over a Unix socket) — the
+same policy code that runs in sim drives the physical robot:
+
+```python
+from strands_robots import Robot
+
+# On the robot (robotd's default socket), or a socket forwarded over SSH.
+duck = Robot("microduck", mode="real")                       # /run/robotd.sock
+duck = Robot("microduck", mode="real", port="/tmp/robotd.sock")
+
+duck.connect_eagerly()                 # Hello handshake + subscribe to state
+duck.send_action({"vx": 0.15})         # walk forward (robot.move intent)
+duck.send_action({"skill": "kick_left"})  # a named skill (robot.do)
+duck.emergency_stop()                  # robot.stop
+```
+
+`robotd` owns the walking/skill ONNX on-device, so `run_policy`/`start_task`
+refuse and point back at the intent path; use `mode="sim"` for a host-driven
+`MicroduckPolicy` rollout. For a remote robot, forward its socket to a local
+path (`ssh -L`/`socat`) and pass that path as `port=`.
+
 ### `open_duck_mini`
 
 ![open_duck_mini](../assets/sim_render_open_duck_mini.png){ width=400 }
