@@ -52,12 +52,15 @@ import pytest
 
 import strands_robots.tools.robot_mesh as rmt
 
-# The two gated actions whose handler re-reads a pre-validated command body,
+# The gated actions whose handler re-reads a pre-validated command body,
 # with the transport method each one dispatches through and the call-arg index
 # holding the command. ``send`` targets one peer (``send(target, cmd, ...)``);
-# ``broadcast`` is fleet-wide (``broadcast(cmd, ...)``).
+# ``sim_call`` also targets one peer via ``send(target, cmd, ...)`` with an
+# assembled ``sim_call`` command body; ``broadcast`` is fleet-wide
+# (``broadcast(cmd, ...)``).
 _PRE_VALIDATED_ACTIONS: list[tuple[str, str, dict[str, Any], int]] = [
     ("send", "send", {"target": "peer-b", "command": '{"action": "status"}'}, 1),
+    ("sim_call", "send", {"target": "peer-b", "function": "get_pose"}, 1),
     ("broadcast", "broadcast", {"command": '{"action": "status"}'}, 0),
 ]
 
@@ -201,8 +204,12 @@ class TestTheGuardsAreExplicitRaisesNotAsserts:
     validated command body fails here until its handler carries the guard too.
     """
 
-    def test_the_sentinel_set_is_the_two_known_command_bodies(self) -> None:
-        assert _sentinels_assigned() == {"validated_send_cmd", "validated_broadcast_cmd"}
+    def test_the_sentinel_set_is_the_three_known_command_bodies(self) -> None:
+        assert _sentinels_assigned() == {
+            "validated_send_cmd",
+            "validated_broadcast_cmd",
+            "validated_sim_call_cmd",
+        }
 
     def test_every_assigned_sentinel_is_guarded_by_a_raise(self) -> None:
         assigned = _sentinels_assigned()
@@ -330,4 +337,9 @@ class TestTheHonoredPathStillDispatchesTheValidatedCommand:
         dispatched = getattr(transport, transport_attr).call_args.args[cmd_index]
         assert dispatched is returned[0]
         assert isinstance(dispatched, dict)
-        assert dispatched["action"] == "status"
+        # ``send``/``broadcast`` echo the raw ``action`` from the kwargs JSON
+        # command body; ``sim_call`` assembles its own body with the fixed top-level
+        # ``action: sim_call``, since the model-authored "function" is nested as
+        # ``sim_action``.
+        _expected_dispatched_action = {"send": "status", "broadcast": "status", "sim_call": "sim_call"}[action]
+        assert dispatched["action"] == _expected_dispatched_action
