@@ -406,7 +406,9 @@ class G1Driver:
             await self.stop()
             envelope = {
                 "status": "success",
-                "content": [{"text": "stop: control loop halted; a running task publishes a zero-torque frame on exit"}],
+                "content": [
+                    {"text": "stop: control loop halted; a running task publishes a zero-torque frame on exit"}
+                ],
             }
         yield {"toolUseId": tool_use_id, **envelope}
 
