@@ -332,13 +332,18 @@ class TestNoTargetSurfaceDrifts:
 class TestNeighbouringTargetProducersStayOutOfScope:
     """The boundary of this change, pinned so it narrows deliberately.
 
-    Both remaining producers of a clamped target come from somewhere other than
-    the caller's arguments, so neither is reachable from the guard above:
+    ``reset_to_home`` is the one remaining producer of a clamped target that
+    comes from somewhere other than the caller's arguments, and it is not
+    reachable from the guard above: it supplies its own literal targets, and
+    every one of them is inside its joint's travel.
 
-    * a **stored pose** is validated by ``PoseManager.validate_pose``, which
-      already refuses an out-of-bounds position - but only when the pose file
-      carries ``safety_bounds``;
-    * ``reset_to_home`` supplies its own literal targets, which are in range.
+    A **stored pose** used to be listed here too, deferred to
+    ``PoseManager.validate_pose``. That deferral did not hold: ``validate_pose``
+    consults the pose's own optional ``safety_bounds``, which no caller of
+    ``store_pose`` supplies, so it answered "No safety bounds defined" for every
+    pose this tool writes. ``load_pose`` now routes its stored positions through
+    :func:`_joint_target_error` as well, and
+    ``test_pose_tool_stored_pose_target_domain`` grades that path.
 
     ``degrees_to_position`` therefore keeps its clamp. It is unreachable from
     ``move_motor`` / ``move_multiple``, whose targets are absolute and are held

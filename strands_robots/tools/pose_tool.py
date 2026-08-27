@@ -414,6 +414,38 @@ def _pose_target_error(
     return _joint_delta_error(action, motor_name, delta)
 
 
+def _stored_pose_target_error(pose: RobotPose) -> str | None:
+    """Error text when a stored pose names a target its joint cannot be driven to.
+
+    A pose read back from disk reaches a servo through the same
+    :meth:`MotorController.degrees_to_position` as a caller-supplied one, so it
+    is bounded by the same configured travel. The bounds are not restated here:
+    every position is delegated to :func:`_joint_target_error`, so a stored
+    target and an argument target are held to one authority and cannot drift.
+
+    ``PoseManager.validate_pose`` is not this check. It consults the pose's own
+    optional ``safety_bounds``, and returns "No safety bounds defined" when the
+    field is absent -- which it is for every pose this tool writes, because
+    ``store_pose`` is only ever called without it. The arm's travel is a
+    property of the arm, not an annotation a pose file has to carry.
+
+    The label names the pose as well as the joint: the value lives in a
+    persisted artifact rather than in the call, so a caller who is refused needs
+    to know which stored pose to correct.
+
+    Args:
+        pose: The stored pose whose positions are about to be driven.
+
+    Returns:
+        The first error message, or ``None`` when every stored target is usable.
+    """
+    for name, value in pose.positions.items():
+        label = f"pose {pose.name!r} positions[{name!r}]"
+        if error := _joint_target_error("load_pose", label, name, value):
+            return error
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # Feetech status-packet framing
 # --------------------------------------------------------------------------- #
@@ -1135,6 +1167,15 @@ def pose_tool(
             is_valid, msg = pose_manager.validate_pose(pose)
             if not is_valid:
                 return {"status": "error", "content": [{"text": f"Pose validation failed: {msg}"}]}
+
+            # The stored positions are degree-valued targets like any other, and
+            # reach the servo through the same clamping conversion, so they are
+            # held to the same configured travel as an argument target. Refused
+            # here, before the port is opened, for the reason the argument check
+            # gives above: the arm must not travel to an end stop on a target
+            # that could not be honored.
+            if stored_error := _stored_pose_target_error(pose):
+                return {"status": "error", "content": [{"text": stored_error}]}
 
             connected, error = controller.connect()
             if not connected:
