@@ -92,9 +92,21 @@ speed in the opposite direction, and `velocity=32768` read as magnitude zero,
 stopping a servo the caller had just asked to run. `position` was already inside
 that limit at 4095; `velocity` now is too.
 
+`motor_id` takes more than the byte width for a different reason: the ID byte
+carries one address that is no servo. `0xfe` is the broadcast, which every servo
+on the bus receives, and for an instruction that expects a reply every servo
+answers at once - on a half-duplex bus those replies collide, so what
+`action="feetech_ping"` reads back belongs to no single servo. A reply-less
+write to the broadcast means what it says and is still accepted, so
+`feetech_position` and `feetech_velocity` take the whole `[1, 254]`; only a
+reply-expecting action is held to a single servo. The Protocol 1 codec applies
+the same rule to the frames it builds
+(`build_packet(..., allow_broadcast=False)`), so the tool and the driver cannot
+disagree about which address is a servo and which is the whole bus.
+
 | Option | Accepted | Why the bound is where it is |
 |--------|----------|------------------------------|
-| `motor_id` | integer in `[1, 254]` | the frame carries the ID in one byte, and `255` is the header value |
+| `motor_id` | integer in `[1, 254]`, or `[1, 253]` for an action that reads a reply | the frame carries the ID in one byte, of which `0xfd` is the highest a servo may hold and `0xfe` is the broadcast, while `0xff` is the header value |
 | `position` | integer in `[0, 4095]` | `Goal_Position` is a 12-bit register - the same full scale the reported angle divides by |
 | `velocity` | integer in `[0, 32767]` | `Goal_Velocity` is sign-magnitude with bit 15 the direction bit, so a larger magnitude commands the opposite direction |
 | `baudrate` | positive integer | pyserial coerces rather than checks, so `2.7` opens the port at 2 baud |
