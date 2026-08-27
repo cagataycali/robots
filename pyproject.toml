@@ -225,6 +225,16 @@ protomotions = [
     # ship in huggingface_hub 1.5.0. See the [wbc] comment for the full reason.
     "huggingface_hub>=1.5,<2.0.0",
 ]
+microduck = [
+    # Pollen Microduck locomotion policies - ONNX actors with the input
+    # normaliser fused into the exported graph. onnxruntime runs the graph;
+    # the provider self-configures from the ONNX metadata, so nothing else is
+    # needed to load a weight file. Weights are NOT bundled - they ship in
+    # Pollen's microduck repo under policies/*.onnx. A MuJoCo rollout uses the
+    # separate [sim-mujoco] extra. See strands_robots/policies/microduck/ and
+    # docs/policies/microduck.md.
+    "onnxruntime>=1.17.0,<2.0.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec

@@ -137,6 +137,7 @@ _MUST_VALIDATE = {
     "policies/lerobot_async/policy.py::LerobotAsyncPolicy",
     "policies/lerobot_local/policy.py::LerobotLocalPolicy",
     "policies/mock.py::MockPolicy",
+    "policies/microduck/policy.py::MicroduckPolicy",
     "policies/moveit2/policy.py::MoveIt2Policy",
     "policies/vera/provider.py::VeraPolicy",
 }
@@ -161,6 +162,7 @@ _TOTAL_BY_MEMBERSHIP = {
 # is the one that fires.
 _MUST_FORWARD = {
     "policies/composite.py::CompositePolicy",
+    "policies/microduck/composite.py::MicroduckPolicyBundle",
     "policies/persistent.py::PersistentPolicy",
 }
 
@@ -823,6 +825,13 @@ def _vera() -> Any:
     return VeraPolicy(auto_launch_server=False, client=client)
 
 
+def _microduck() -> Any:
+    """A Microduck policy with only a path set - the setter never builds the session."""
+    from strands_robots.policies.microduck import MicroduckPolicy
+
+    return MicroduckPolicy(onnx_path="alpha_walking.onnx")
+
+
 # (surface id as classified above, factory, the attribute the setter binds into,
 # the import its constructor needs). A ``None`` attribute means the provider
 # validates without storing; a ``None`` import means it needs no extra.
@@ -834,6 +843,7 @@ _OWNING_SURFACES: list[_Surface] = [
     ("policies/groot/policy.py::Gr00tPolicy", _groot, None, "zmq"),
     ("policies/lerobot_async/policy.py::LerobotAsyncPolicy", _lerobot_async, "robot_state_keys", None),
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),
+    ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),
     ("policies/moveit2/policy.py::MoveIt2Policy", _moveit2, "_robot_state_keys", "zmq"),
     ("policies/vera/provider.py::VeraPolicy", _vera, "_robot_state_keys", None),
 ]
