@@ -1058,6 +1058,19 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
       (no C0/DEL/CRLF). The operator's second factor for clearing an e-stop
       lockout is bounded here so it cannot carry a control character into the
       audit trail, and cannot reach ``Mesh._resume_lockout`` as a non-string.
+    * ``sim_call``: bounds the wire shape of a Simulation call exactly as
+      :func:`validate_device_rpc` bounds a Device Connect native (identifier
+      charset, JSON-object params, encoded size), and closes the one hole
+      peer-side dispatch cannot see -- a rollout capability riding in through
+      opaque params.
+        - ``sim_action``: REQUIRED, non-empty, and refused when it names a
+          member of :data:`SIM_CALL_BLOCKED_ACTIONS`. Each blocked name starts
+          a policy rollout, and the rollout surface has its own validated verb
+          (``execute``/``start``) whose ``policy_provider`` / HF-repo / host
+          allowlists would be bypassed if the same capability arrived here.
+        - ``sim_params`` (optional): JSON object, bounded as ``device_rpc``'s
+          params are. A refusal from either field is re-raised under
+          ``sim_call`` so it names the field the caller actually sent.
 
     Raises :class:`ValidationError` on any rule violation.
     """
