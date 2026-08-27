@@ -25,7 +25,7 @@ run in sim (byte-compat 0.0), so a sim rollout predicts the hardware for equal o
 
 Continuous intents (``robot.move``/``robot.head``/``robot.pose``/``robot.mouth``)
 are sent as JSON-RPC *notifications* (no ``id``, no reply); discrete ones
-(``robot.do``/``robot.enable``/``robot.init``/``robot.stop``/``robot.relax``) as
+(``robot.do``/``robot.enable``/``robot.stop``/``robot.relax``) as
 *requests* whose id-correlated reply is awaited.
 
 The 15-vs-14 papercut: robotd's ``JOINT_NAMES`` is 15 wide with ``"mouth"``
@@ -47,7 +47,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.policies.microduck import MICRODUCK_JOINT_NAMES
-from strands_robots.utils import finite_number_error
+from strands_robots.utils import boolean_flag_error, finite_number_error
 
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
@@ -106,7 +106,6 @@ _M_POSE = "robot.pose"
 _M_MOUTH = "robot.mouth"
 _M_DO = "robot.do"
 _M_ENABLE = "robot.enable"
-_M_INIT = "robot.init"
 _M_RELAX = "robot.relax"
 _M_STOP = "robot.stop"
 _M_STATE = "robot.state"
@@ -184,6 +183,11 @@ def action_to_wire(action: dict[str, Any]) -> list[tuple[str, dict[str, Any], bo
     head_roll}``, ``PoseParams{z,roll,pitch,active}``, ``MouthParams{open}``,
     ``DoParams{skill}``.
     """
+    if "active" in action and (reason := boolean_flag_error(action["active"], "active", "send_action")) is not None:
+        # A posture flag selects a standing pose on hardware; reading it by
+        # truthiness would send active=true for the string "false". Refuse.
+        return reason
+
     commands: list[tuple[str, dict[str, Any], bool]] = []
 
     if any(k in action for k in ("vx", "vy", "vyaw")):
@@ -396,7 +400,8 @@ class _RobotdClient:
             ConnectionError: If robotd returned a JSON-RPC error.
         """
         rid = self._alloc_id()
-        event, box = threading.Event(), {}
+        event = threading.Event()
+        box: dict[str, Any] = {}
         with self._pending_lock:
             self._pending[rid] = (event, box)
         self._write(_request(rid, method, params))
@@ -420,11 +425,11 @@ class _RobotdClient:
             try:
                 self._sock.shutdown(socket.SHUT_RDWR)
             except OSError:
-                pass
+                pass  # already half-closed; a shutdown race here is not actionable
             try:
                 self._sock.close()
             except OSError:
-                pass
+                pass  # closing a socket that is already gone is fine
         self._sock = None
         self._rfile = None
 
@@ -610,7 +615,7 @@ class MicroduckDriver:
 
         try:
             hello = client.hello(self._api_version)
-        except (OSError, ValueError, ConnectionError) as exc:
+        except (OSError, ValueError) as exc:
             client.close()
             self._connect_error = f"robotd Hello failed: {exc}"
             return self._connect_error
@@ -627,7 +632,7 @@ class MicroduckDriver:
         client.start_reader(self._on_state)
         try:
             client.call(_M_SUBSCRIBE, {} if self._subscribe_hz is None else {"hz": self._subscribe_hz})
-        except (OSError, TimeoutError, ConnectionError) as exc:
+        except OSError as exc:
             client.close()
             self._connect_error = f"robot.subscribe failed: {exc}"
             return self._connect_error
@@ -636,7 +641,7 @@ class MicroduckDriver:
         # a robotd that cannot read the bus omits it, and the driver stays up.
         try:
             self._absorb_health(client.call(_M_HEALTH, {}))
-        except (OSError, TimeoutError, ConnectionError) as exc:
+        except OSError as exc:
             logger.debug("%s: robot.health unavailable at connect: %s", self._tool_name, exc)
 
         self._client = client
@@ -672,7 +677,7 @@ class MicroduckDriver:
         try:
             self._client.call(_M_STOP, {})
             self._stopped = True
-        except (OSError, TimeoutError, ConnectionError) as exc:
+        except OSError as exc:
             logger.warning("%s.stop(): robotd refused the stop: %s", self._tool_name, exc)
 
     def cleanup(self) -> None:
@@ -732,7 +737,7 @@ class MicroduckDriver:
                 else:
                     result = self._client.call(method, params)
                     sent.append({"method": method, "params": params, "result": result})
-            except (OSError, TimeoutError, ConnectionError) as exc:
+            except OSError as exc:
                 return _refuse(f"send_action: {method} failed: {exc}")
         self._stopped = False
         return {"status": "success", "content": [{"json": {"sent": sent, "robot": self._tool_name}}]}
@@ -792,7 +797,7 @@ class MicroduckDriver:
             return _refuse("stop_task: not connected")
         try:
             self._client.call(_M_STOP, {})
-        except (OSError, TimeoutError, ConnectionError) as exc:
+        except OSError as exc:
             return _refuse(f"stop_task: robotd refused the stop: {exc}")
         self._stopped = True
         return {"status": "success", "content": [{"text": "asked robotd to stop the robot (robot.stop)"}]}
@@ -803,7 +808,10 @@ class MicroduckDriver:
 
     def enable_torque(self, on: bool = True) -> dict[str, Any]:
         """Enable or disable the policy/torque via ``robot.enable``."""
-        return self._discrete(_M_ENABLE, {"on": bool(on), "toggle": False}, "enable_torque")
+        if (reason := boolean_flag_error(on, "on", "enable_torque")) is not None:
+            # on=false energising the servos is the failure mode this refuses.
+            return _refuse(reason)
+        return self._discrete(_M_ENABLE, {"on": on, "toggle": False}, "enable_torque")
 
     def relax(self) -> dict[str, Any]:
         """Cut joint power via ``robot.relax`` (the robot collapses if unheld)."""
@@ -818,7 +826,7 @@ class MicroduckDriver:
             return _refuse(f"{label}: not connected")
         try:
             result = self._client.call(method, params)
-        except (OSError, TimeoutError, ConnectionError) as exc:
+        except OSError as exc:
             return _refuse(f"{label}: {method} failed: {exc}")
         return {"status": "success", "content": [{"json": {"method": method, "result": result}}]}
 

@@ -89,11 +89,11 @@ class MockRobotd:
                 try:
                     sock.close()
                 except OSError:
-                    pass
+                    pass  # teardown best-effort; an already-closed socket is fine
         try:
             os.unlink(self.path)
         except OSError:
-            pass
+            pass  # the socket file may never have been bound, or be gone already
 
     # -- server internals ------------------------------------------------ #
 
