@@ -81,9 +81,7 @@ def test_turning_it_on_from_the_ui_actually_locks_the_route():
     assert task_confirm_required() is True
     assert client.post("/api/robots/so101-arm-1/task", json={"instruction": "go"}).status_code == 403
     # and the play path still works, which is what makes turning it on cheap
-    assert client.post(
-        "/api/robots/so101-arm-1/task", json={"instruction": "go", "confirmed": True}
-    ).status_code == 200
+    assert client.post("/api/robots/so101-arm-1/task", json={"instruction": "go", "confirmed": True}).status_code == 200
 
 
 def test_turning_it_off_clears_rather_than_deletes():
@@ -101,8 +99,9 @@ def test_turning_it_off_clears_rather_than_deletes():
 def test_the_screen_shows_the_row_in_both_states():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[1]
-           / "strands_robots/dashboard/frontend/src/components/ConsentSettings.tsx").read_text()
+    src = (
+        Path(__file__).resolve().parents[1] / "strands_robots/dashboard/frontend/src/components/ConsentSettings.tsx"
+    ).read_text()
     # rendered on the presence of `locks`, never on the flag itself
     assert "state?.locks ?" in src
     assert "task_requires_confirm\n" not in src.split("state?.locks ?")[0][-200:]

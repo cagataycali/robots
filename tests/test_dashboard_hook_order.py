@@ -45,8 +45,7 @@ def _hooks_after_early_return(source: str) -> list[tuple[int, str]]:
         # guard that cries wolf is a guard somebody deletes.
         if re.match(r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|const|let|class)\b", line):
             is_component = bool(
-                COMPONENT_START.match(line)
-                or re.match(r"^(?:export\s+)?const\s+[A-Z]\w*\s*[:=].*=>", line)
+                COMPONENT_START.match(line) or re.match(r"^(?:export\s+)?const\s+[A-Z]\w*\s*[:=].*=>", line)
             )
             body_started, early = is_component, None
             continue

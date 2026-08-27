@@ -50,11 +50,13 @@ def manager(monkeypatch):
     fixture broke its own concurrency tests.
     """
     monkeypatch.setattr(
-        dm, "subprocess",
+        dm,
+        "subprocess",
         types.SimpleNamespace(Popen=lambda *a, **k: FakeProc(), PIPE=-1, STDOUT=-2),
     )
     monkeypatch.setattr(
-        dm, "time",
+        dm,
+        "time",
         types.SimpleNamespace(
             time=lambda: 1_787_136_722.0,  # the same second, always
             monotonic=time.monotonic,
@@ -71,6 +73,7 @@ def manager(monkeypatch):
 # --------------------------------------------------------------------------
 # the orphan: two starts in one second
 # --------------------------------------------------------------------------
+
 
 def test_two_replays_in_the_same_second_are_two_tracked_peers(manager):
     """The original bug: the second start erased the first from self.robots."""
@@ -124,6 +127,7 @@ def test_ids_stay_unique_under_a_thundering_herd(manager):
 # --------------------------------------------------------------------------
 # the guard: the same job twice
 # --------------------------------------------------------------------------
+
 
 def test_the_same_episode_twice_is_refused_and_names_the_live_peer(manager):
     first = manager.replay("user/ds", episode=3)
@@ -216,7 +220,10 @@ def test_an_untracked_manager_still_mints_the_plain_id(manager):
 def test_a_job_field_absent_from_a_peer_never_matches(manager):
     """A hand-made peer with no job must not be mistaken for a running replay."""
     manager.robots["hand-made"] = ManagedRobot(
-        peer_id="hand-made", robot_name="so101", mode="replay", process=FakeProc(),
+        peer_id="hand-made",
+        robot_name="so101",
+        mode="replay",
+        process=FakeProc(),
     )
     r = manager.replay("user/ds", episode=0)
     assert r.get("already_running") is None

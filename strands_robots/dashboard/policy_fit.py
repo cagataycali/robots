@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -9,6 +8,7 @@ __all__ = ["camera_keys", "state_dim", "action_dim", "policy_fit"]
 #: lerobot's prefix for image observations. Everything after it is the camera's name.
 _IMAGE_PREFIX = "observation.images."
 
+
 def _shape(entry: Any) -> list[int] | None:
     if not isinstance(entry, Mapping):
         return None
@@ -17,25 +17,29 @@ def _shape(entry: Any) -> list[int] | None:
         return [int(n) for n in shape]
     return None
 
+
 def camera_keys(features: Mapping[str, Any] | None) -> list[str]:
     """The camera NAMES a policy expects, in declaration order."""
     out: list[str] = []
-    for key in (features or {}):
+    for key in features or {}:
         if isinstance(key, str) and key.startswith(_IMAGE_PREFIX):
-            name = key[len(_IMAGE_PREFIX):].strip()
+            name = key[len(_IMAGE_PREFIX) :].strip()
             if name and name not in out:
                 out.append(name)
     return out
+
 
 def state_dim(features: Mapping[str, Any] | None) -> int | None:
     """How many state values the policy was trained to read, or None when not stated."""
     shape = _shape((features or {}).get("observation.state"))
     return shape[0] if shape else None
 
+
 def action_dim(features: Mapping[str, Any] | None) -> int | None:
     """How many values the policy emits per step, or None when not stated."""
     shape = _shape((features or {}).get("action"))
     return shape[0] if shape else None
+
 
 def policy_fit(
     *,
@@ -61,14 +65,16 @@ def policy_fit(
     wanted = (norm_tag or "").strip()
     if wanted and tags:
         if wanted not in tags:
-            problems.append({
-                "kind": "norm_tag",
-                "detail": (
-                    f"this checkpoint declares no normalisation stats for {wanted!r}, so its inputs "
-                    f"would be scaled by the wrong statistics and its actions would drive {metal} to "
-                    f"the wrong places - pick one of the tags it does declare: {', '.join(tags)}"
-                ),
-            })
+            problems.append(
+                {
+                    "kind": "norm_tag",
+                    "detail": (
+                        f"this checkpoint declares no normalisation stats for {wanted!r}, so its inputs "
+                        f"would be scaled by the wrong statistics and its actions would drive {metal} to "
+                        f"the wrong places - pick one of the tags it does declare: {', '.join(tags)}"
+                    ),
+                }
+            )
         else:
             checked.append("norm_tag")
 
@@ -81,40 +87,46 @@ def policy_fit(
         if sd is not None:
             checked.append("state")
             if sd != n:
-                problems.append({
-                    "kind": "state_dim",
-                    "detail": (
-                        f"this policy reads a {sd}-value state and this robot reports {n} joints "
-                        f"({', '.join(joint_names)}). It was trained on different hardware: the "
-                        f"observation cannot be assembled, and the run fails after {metal} has "
-                        f"already been energised and parked"
-                    ),
-                })
+                problems.append(
+                    {
+                        "kind": "state_dim",
+                        "detail": (
+                            f"this policy reads a {sd}-value state and this robot reports {n} joints "
+                            f"({', '.join(joint_names)}). It was trained on different hardware: the "
+                            f"observation cannot be assembled, and the run fails after {metal} has "
+                            f"already been energised and parked"
+                        ),
+                    }
+                )
         if ad is not None:
             checked.append("action")
             if ad != n:
-                problems.append({
-                    "kind": "action_dim",
-                    "detail": (
-                        f"this policy emits {ad} value(s) per step and this robot has {n} joints. "
-                        f"Those numbers cannot be joint commands for this arm - at best the run "
-                        f"errors with {metal} torqued, at worst the values land on the wrong joints"
-                    ),
-                })
+                problems.append(
+                    {
+                        "kind": "action_dim",
+                        "detail": (
+                            f"this policy emits {ad} value(s) per step and this robot has {n} joints. "
+                            f"Those numbers cannot be joint commands for this arm - at best the run "
+                            f"errors with {metal} torqued, at worst the values land on the wrong joints"
+                        ),
+                    }
+                )
 
     if needed and camera_names:
         checked.append("cameras")
         missing = [c for c in needed if c not in camera_names]
         if missing:
-            problems.append({
-                "kind": "cameras",
-                "detail": (
-                    f"this policy was trained with camera(s) {', '.join(missing)} and this robot "
-                    f"announces {', '.join(camera_names)}. Without that view the policy sees no "
-                    f"image for it, so it acts on a blank frame rather than on the scene - and it "
-                    f"will not say so"
-                ),
-            })
+            problems.append(
+                {
+                    "kind": "cameras",
+                    "detail": (
+                        f"this policy was trained with camera(s) {', '.join(missing)} and this robot "
+                        f"announces {', '.join(camera_names)}. Without that view the policy sees no "
+                        f"image for it, so it acts on a blank frame rather than on the scene - and it "
+                        f"will not say so"
+                    ),
+                }
+            )
 
     return {
         "ok": not problems,

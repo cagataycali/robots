@@ -52,8 +52,10 @@ INTERESTING_ENV = [
     "STRANDS_DASH_TASK_REQUIRES_CONFIRM",
 ]
 
+
 def is_secret(key: str) -> bool:
     return bool(SECRET_RX.search(key))
+
 
 # : .env is read by every process the dashboard spawns, so an unrestricted : upsert is
 # configuration -> code execution (PATH=/tmp/evil hijacks python/ : ffmpeg for every child).
@@ -61,8 +63,10 @@ ALLOWED_ENV_PREFIXES: tuple[str, ...] = ("STRANDS_", "DASHBOARD_", "VOICE_", "HF
 ALLOWED_ENV_KEYS = frozenset(INTERESTING_ENV)
 ENV_VALUE_MAX_LEN = 4096
 
+
 def env_key_allowed(key: str) -> bool:
     return key in ALLOWED_ENV_KEYS or key.startswith(ALLOWED_ENV_PREFIXES)
+
 
 def env_entry_error(key: str, value: str) -> str | None:
     """Why this key/value pair must not reach the env file, or None if fine."""
@@ -81,6 +85,7 @@ def env_entry_error(key: str, value: str) -> str | None:
         return f"env value for {key} exceeds {ENV_VALUE_MAX_LEN} characters"
     return None
 
+
 def mask(value: str) -> str:
     """``sk-abc...xyz`` -> ``sk-••••••yz``. Short values are fully hidden."""
     if not value:
@@ -89,12 +94,15 @@ def mask(value: str) -> str:
         return "•" * 6
     return f"{value[:3]}{'•' * 6}{value[-2:]}"
 
+
 def looks_masked(value: Any) -> bool:
     return isinstance(value, str) and any(m in value for m in _MASK_MARKERS)
+
 
 # ----------------------------------------------------------------------
 # .env read / write
 # ----------------------------------------------------------------------
+
 
 def read_env_file() -> dict[str, str]:
     out: dict[str, str] = {}
@@ -113,6 +121,7 @@ def read_env_file() -> dict[str, str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not read %s: %s", ENV_FILE, exc)
     return out
+
 
 def upsert_env_file(updates: dict[str, str]) -> list[str]:
     """Order-preserving upsert into the env file. Returns the keys written."""
@@ -143,6 +152,7 @@ def upsert_env_file(updates: dict[str, str]) -> list[str]:
         pass
     return list(updates)
 
+
 def split_env_patch(
     raw: Mapping[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
@@ -155,6 +165,7 @@ def split_env_patch(
         else:
             updates[name] = value
     return updates, deletions
+
 
 def delete_env_keys(keys: Sequence[str]) -> list[str]:
     """Remove keys from the env file, order-preserving. Returns those removed."""
@@ -180,9 +191,8 @@ def delete_env_keys(keys: Sequence[str]) -> list[str]:
             pass
     return removed
 
-def bootstrap_env(
-    from_file: Mapping[str, str], environ: Mapping[str, str]
-) -> tuple[dict[str, str], list[str]]:
+
+def bootstrap_env(from_file: Mapping[str, str], environ: Mapping[str, str]) -> tuple[dict[str, str], list[str]]:
     """(values to export, keys the process environment already decides)."""
     to_set: dict[str, str] = {}
     shadowed: list[str] = []
@@ -194,12 +204,14 @@ def bootstrap_env(
             shadowed.append(key)
     return to_set, sorted(shadowed)
 
+
 def load_env_file() -> tuple[list[str], list[str]]:
     """Apply .env to this process (once, at startup). Returns (exported, shadowed)."""
     to_set, shadowed = bootstrap_env(read_env_file(), os.environ)
     for key, value in to_set.items():
         os.environ[key] = value
     return sorted(to_set), shadowed
+
 
 def env_view() -> list[dict[str, Any]]:
     """Masked env listing for the UI: .env contents + interesting live vars."""
@@ -215,15 +227,18 @@ def env_view() -> list[dict[str, Any]]:
         raw = live if live else from_file.get(key, "")
         shadowed = bool(in_file and live and live != from_file.get(key))
         secret = is_secret(key)
-        rows.append({
-            "key": key,
-            "value": mask(raw) if secret and raw else raw,
-            "secret": secret,
-            "set": bool(raw),
-            "in_file": in_file,
-            "shadowed": shadowed,
-        })
+        rows.append(
+            {
+                "key": key,
+                "value": mask(raw) if secret and raw else raw,
+                "secret": secret,
+                "set": bool(raw),
+                "in_file": in_file,
+                "shadowed": shadowed,
+            }
+        )
     return rows
+
 
 # ----------------------------------------------------------------------
 # Combined document
@@ -278,6 +293,7 @@ _WIRE_ALIASES = {
     "server_address": "server_address",
 }
 
+
 def _policy_catalog() -> list[dict[str, Any]]:
     """Full provider objects from ``registry/policies.json``."""
     try:
@@ -289,6 +305,7 @@ def _policy_catalog() -> list[dict[str, Any]]:
     try:
         from strands_robots.mesh.security import is_safe_policy_provider
     except Exception:  # noqa: BLE001
+
         def is_safe_policy_provider(_name: str) -> bool:  # type: ignore[misc]
             return True
 
@@ -305,37 +322,43 @@ def _policy_catalog() -> list[dict[str, Any]]:
         for key in dict.fromkeys(requires + config_keys):
             wire_key = _WIRE_ALIASES.get(key, key)
             if wire_key in WIRE_CMD_KEYS:
-                wire_fields.append({
-                    "key": key,
-                    "wire_key": wire_key,
-                    "type": WIRE_KEY_TYPES.get(wire_key, "string"),
-                    "required": key in requires,
-                    "default": (spec.get("defaults") or {}).get(key),
-                })
+                wire_fields.append(
+                    {
+                        "key": key,
+                        "wire_key": wire_key,
+                        "type": WIRE_KEY_TYPES.get(wire_key, "string"),
+                        "required": key in requires,
+                        "default": (spec.get("defaults") or {}).get(key),
+                    }
+                )
             else:
                 unsettable.append(key)
-        out.append({
-            "name": name,
-            "description": spec.get("description", ""),
-            "requires": requires,
-            "config_keys": config_keys,
-            "defaults": dict(spec.get("defaults") or {}),
-            "shorthands": list(spec.get("shorthands") or []),
-            "url_patterns": list(spec.get("url_patterns") or []),
-            "extra": spec.get("extra"),
-            "trainable": bool(spec.get("trainer")),
-            "wire_fields": wire_fields,
-            "unsettable_over_mesh": unsettable,
-            # False -> the mesh security gate rejects it; the card shows a lock
-            # and points at STRANDS_MESH_POLICY_TYPE_ALLOW rather than letting
-            # the operator discover it as a wire rejection.
-            "wire_safe": bool(is_safe_policy_provider(name)),
-            # Hardware peers cannot build checkpoint policies over the wire
-            # (they only accept {port, host, data_config}).
-            "server_based": bool({"port", "policy_port", "server_address", "host"}
-                                & set(spec.get("requires") or [])),
-        })
+        out.append(
+            {
+                "name": name,
+                "description": spec.get("description", ""),
+                "requires": requires,
+                "config_keys": config_keys,
+                "defaults": dict(spec.get("defaults") or {}),
+                "shorthands": list(spec.get("shorthands") or []),
+                "url_patterns": list(spec.get("url_patterns") or []),
+                "extra": spec.get("extra"),
+                "trainable": bool(spec.get("trainer")),
+                "wire_fields": wire_fields,
+                "unsettable_over_mesh": unsettable,
+                # False -> the mesh security gate rejects it; the card shows a lock
+                # and points at STRANDS_MESH_POLICY_TYPE_ALLOW rather than letting
+                # the operator discover it as a wire rejection.
+                "wire_safe": bool(is_safe_policy_provider(name)),
+                # Hardware peers cannot build checkpoint policies over the wire
+                # (they only accept {port, host, data_config}).
+                "server_based": bool(
+                    {"port", "policy_port", "server_address", "host"} & set(spec.get("requires") or [])
+                ),
+            }
+        )
     return out
+
 
 def snapshot(*, bridge: Any = None, agent_status: dict[str, Any] | None = None) -> dict[str, Any]:
     """The ``GET /api/config`` document."""
@@ -375,6 +398,7 @@ def snapshot(*, bridge: Any = None, agent_status: dict[str, Any] | None = None) 
         "settings_file": str(settings.SETTINGS_FILE),
     }
 
+
 #: Settings keys that only take effect on a new mesh session. Everything else
 #: is hot-applied, and the response says which is which per field rather than
 #: making the operator guess.
@@ -386,12 +410,11 @@ _STARTUP_KEYS = {"security.cors_origins"}
 
 #: Body fields of ``POST /api/config`` that are NOT settings sections: the
 #: caller's own vocabulary, so they must never be reported as unknown settings.
-_BODY_NON_SECTION_KEYS = frozenset(
-    {"env", "reset_prompt", "reset_agent", "clear_history", "restart_mesh", "force"}
-)
+_BODY_NON_SECTION_KEYS = frozenset({"env", "reset_prompt", "reset_agent", "clear_history", "restart_mesh", "force"})
 
 #: Changing these rebuilds the agent on the next turn.
 _AGENT_KEYS = {"agent.model_id", "agent.system_prompt", "agent.temperature", "agent.max_tokens"}
+
 
 def apply(body: dict[str, Any]) -> dict[str, Any]:
     """Apply a ``POST /api/config`` body.
@@ -429,7 +452,8 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
         local_dev = os.getenv("STRANDS_MESH_LOCAL_DEV", "") not in ("", "0", "false")
         if not local_dev:
             bad = [
-                ep for key in ("connect", "listen")
+                ep
+                for key in ("connect", "listen")
                 for ep in settings.as_list(mesh_patch.get(key))
                 if ep.split("/", 1)[0] in ("tcp", "udp", "ws")
             ]
@@ -444,11 +468,7 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
     # Names the schema does not know are dropped without an error, so without this the drawer says
     # "nothing changed" for a patch that changed nothing BECAUSE IT WAS NOT UNDERSTOOD.
     ignored = settings.unknown_keys(
-        {
-            key: value
-            for key, value in body.items()
-            if isinstance(value, dict) and key not in _BODY_NON_SECTION_KEYS
-        }
+        {key: value for key, value in body.items() if isinstance(value, dict) and key not in _BODY_NON_SECTION_KEYS}
     )
 
     if patch:
@@ -504,9 +524,7 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
         # Stored, and inherited by the NEXT child - but not applied to anything running, so it
         # does not belong in `applied` either.
         "applied": sorted(
-            k
-            for k in changed
-            if k not in _RESTART_KEYS and k not in _RESPAWN_KEYS and k not in _STARTUP_KEYS
+            k for k in changed if k not in _RESTART_KEYS and k not in _RESPAWN_KEYS and k not in _STARTUP_KEYS
         ),
         "restart_required": restart_required,
         "respawn_required": respawn_required,

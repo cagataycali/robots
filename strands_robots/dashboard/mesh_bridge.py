@@ -26,6 +26,7 @@ PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
 # : How long a peer may stay quiet before it is dropped from the fleet snapshot : entirely.
 PEER_TTL_S = float(os.getenv("STRANDS_DASHBOARD_PEER_TTL_S", "300"))
 
+
 def prune_peers(
     peers: dict[str, dict[str, Any]],
     now: float,
@@ -46,6 +47,7 @@ def prune_peers(
         out[pid] = {**entry, "stale": age > stale_after}
     return out
 
+
 # : Transport low-pass filter on ``**/cmd`` (_zenoh_config.DEFAULT_MAX_CMD_BYTES). : Anything
 # larger is dropped pre-deserialise and the sender only ever sees a : timeout, so we check
 # before publishing and return a real error instead.
@@ -58,6 +60,7 @@ MAX_CMD_BYTES = _cmd_bytes_cap()
 
 #: How many fleet actions to keep for the activity panel.
 ACTIVITY_CAP = 300
+
 
 def peer_is_known(
     peer_id: str,
@@ -75,6 +78,7 @@ def peer_is_known(
     # timeout this guard exists to avoid.
     parent, _, child = peer_id.partition("__")
     return bool(parent and child) and parent in haystack
+
 
 def managed_without_presence(
     peers: Mapping[str, Mapping[str, Any]],
@@ -101,6 +105,7 @@ def managed_without_presence(
             continue
         out.append(pid)
     return sorted(out)
+
 
 def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None:
     ids = list(peers)
@@ -131,6 +136,7 @@ def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None
         **({"stale": stale} if stale else {}),
     }
 
+
 def peer_origins(
     peer_ids: Mapping[str, Any] | Iterable[str],
     managed_ids: Iterable[str] = (),
@@ -147,6 +153,7 @@ def peer_origins(
         return "external"
 
     return {pid: origin(pid) for pid in peer_ids}
+
 
 def absent_children(
     peers: Mapping[str, Any] | Iterable[str],
@@ -175,6 +182,7 @@ def absent_children(
     out.sort(key=lambda c: c["peer_id"])
     return out
 
+
 def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Route commands aimed at a child sim peer to its parent Simulation peer."""
     if "__" in target and not cmd.get("robot_name"):
@@ -183,6 +191,7 @@ def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, 
             cmd = {**cmd, "robot_name": robot_name}
             target = parent
     return target, cmd
+
 
 def command_succeeded(response: dict[str, Any] | None) -> bool:
     """Did a peer actually carry the command out?"""
@@ -208,6 +217,7 @@ def command_succeeded(response: dict[str, Any] | None) -> bool:
         if isinstance(inner, dict) and inner.get("error"):
             return False
     return True
+
 
 def _raw_to_jpeg(raw: bytes, shape: Any) -> tuple[bytes | None, str | None]:
     """Transcode raw pixel bytes to JPEG. Returns ``(jpeg, error)``. Only called for frames whose
@@ -242,6 +252,7 @@ def _raw_to_jpeg(raw: bytes, shape: Any) -> tuple[bytes | None, str | None]:
     except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the sub
         return None, f"raw frame transcode failed: {type(exc).__name__}: {exc}"
 
+
 def stop_outcome(response: dict[str, Any] | None) -> dict[str, Any]:
     """Classify one peer's answer to a stop into the three honest states. ``stopped`` / ``not_stopped``
     (the peer answered but could not stop) / ``no_answer`` (timeout).
@@ -258,6 +269,7 @@ def stop_outcome(response: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(result, dict):
         detail = str(result.get("error") or result.get("status") or "")
     return {"state": "not_stopped", "detail": detail or str(error or "refused")}
+
 
 # : Per-type ceiling on UNCHANGED repeats, in Hz.
 COALESCE_HZ: dict[str, float] = {
@@ -279,23 +291,41 @@ COALESCE_HZ: dict[str, float] = {
 
 #: Fields that tick on their own and therefore say nothing about whether the
 #: PAYLOAD changed. Compared-out so a per-frame timestamp cannot defeat coalescing.
-_VOLATILE_FIELDS = frozenset({
-    "t", "ts", "time", "timestamp", "last_seen", "seq", "frame", "frames",
-    "frame_id", "count", "uptime", "uptime_s", "elapsed", "fps",
-})
+_VOLATILE_FIELDS = frozenset(
+    {
+        "t",
+        "ts",
+        "time",
+        "timestamp",
+        "last_seen",
+        "seq",
+        "frame",
+        "frames",
+        "frame_id",
+        "count",
+        "uptime",
+        "uptime_s",
+        "elapsed",
+        "fps",
+    }
+)
+
 
 def _stable_content(data: Any) -> str:
     """A comparable rendering of an event payload, minus self-ticking fields."""
+
     def strip(v: Any) -> Any:
         if isinstance(v, dict):
             return {k: strip(x) for k, x in sorted(v.items()) if k not in _VOLATILE_FIELDS}
         if isinstance(v, (list, tuple)):
             return [strip(x) for x in v]
         return v
+
     try:
         return json.dumps(strip(data), sort_keys=True, default=str)
     except Exception:  # noqa: BLE001 - never let bookkeeping drop an event
         return repr(data)[:2000]
+
 
 class EventCoalescer:
     """Decides whether an event is worth another JSON serialization."""
@@ -343,6 +373,7 @@ class EventCoalescer:
             "suppressed_pct": round(100 * self.suppressed / total, 1) if total else 0.0,
             "rates_hz": dict(self.rates),
         }
+
 
 class MeshBridge:
     """Dashboard-side mesh peer. One instance per server process."""
@@ -598,12 +629,14 @@ class MeshBridge:
         with self._queues_lock:
             queues = list(self._queues)
         for q in queues:
+
             def _put(q=q):
                 if q.full():
                     with contextlib.suppress(asyncio.QueueEmpty):
                         q.get_nowait()  # drop oldest - dashboards want latest
                 with contextlib.suppress(asyncio.QueueFull):
                     q.put_nowait(event)
+
             loop.call_soon_threadsafe(_put)
 
     # ------------------------------------------------------------------
@@ -779,9 +812,7 @@ class MeshBridge:
         # A five-second flash in the header was the ONLY representation of a lockout in
         # this product, so a reload erased it while two arms stayed locked for ten hours.
         with self._peers_lock:
-            self._lockout = safety_state.apply_event(
-                self._lockout, kind=kind, data=data, now=time.time()
-            )
+            self._lockout = safety_state.apply_event(self._lockout, kind=kind, data=data, now=time.time())
             if kind == "estop":
                 self._lockout_proof.clear()
         self.record_activity("safety", kind, detail=data, ok=True)
@@ -809,7 +840,9 @@ class MeshBridge:
             if expected is not None and responder != expected:
                 logger.warning(
                     "[mesh_bridge] response for turn %s rejected: responder %r != expected %r",
-                    turn, responder, expected,
+                    turn,
+                    responder,
+                    expected,
                 )
                 return
             self._responses[turn] = data
@@ -904,7 +937,7 @@ class MeshBridge:
             result = {
                 "ok": False,
                 "error": f"command too large: {size} B > transport cap {MAX_CMD_BYTES} B "
-                         "(raise STRANDS_MESH_MAX_CMD_BYTES on every peer, or shrink the payload)",
+                "(raise STRANDS_MESH_MAX_CMD_BYTES on every peer, or shrink the payload)",
             }
             self.record_activity(source, cmd.get("action", "?"), target=target, detail=result, ok=False)
             return result
@@ -1046,10 +1079,7 @@ class MeshBridge:
         """Peer ids with a fresh presence heartbeat."""
         now = time.time()
         with self._peers_lock:
-            return [
-                pid for pid, entry in self.peers.items()
-                if (now - entry.get("last_seen", 0)) <= PEER_STALE_S
-            ]
+            return [pid for pid, entry in self.peers.items() if (now - entry.get("last_seen", 0)) <= PEER_STALE_S]
 
     def latest_frame(self, peer_id: str, cam: str) -> dict[str, Any] | None:
         with self._frames_lock:

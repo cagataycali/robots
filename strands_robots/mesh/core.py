@@ -496,6 +496,8 @@ def degraded_report(records: Mapping[str, dict[str, Any]], now: float) -> dict[s
             entry["skipped"] = True
         out[category] = entry
     return out
+
+
 def _sensor_present(robot: Any, *attrs: str) -> bool:
     """Report whether *robot* answers any of *attrs* with a value.
 

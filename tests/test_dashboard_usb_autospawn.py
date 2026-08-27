@@ -74,6 +74,7 @@ def make_watcher(manager, ports, peers=(), missing_polls=2):
 
 # ---------------------------------------------------------------- profile_key
 
+
 def test_profile_key_prefers_serial_and_falls_back_to_path():
     assert profile_key(ARM1) == "SER-ARM-1"
     assert profile_key(ARM_NO_SERIAL) == "/dev/cu.usbserial-2"
@@ -81,6 +82,7 @@ def test_profile_key_prefers_serial_and_falls_back_to_path():
 
 
 # ---------------------------------------------------------------- ProfileStore
+
 
 def test_profile_store_round_trip(store, tmp_path):
     saved = store.save("SER-ARM-1", {"peer_id": "so101-arm-1", "port": "/dev/cu.usbmodem101"})
@@ -102,9 +104,11 @@ def test_profile_store_corrupt_file_starts_empty(tmp_path):
 
 # ------------------------------------------------------------- appear -> spawn
 
+
 def test_known_board_appears_and_is_spawned(store):
-    store.save("SER-ARM-1", {"peer_id": "so101-arm-1", "robot_name": "so101",
-                             "mode": "real", "port": "/dev/cu.OLD-PATH"})
+    store.save(
+        "SER-ARM-1", {"peer_id": "so101-arm-1", "robot_name": "so101", "mode": "real", "port": "/dev/cu.OLD-PATH"}
+    )
     mgr = FakeManager(store)
     w, _ = make_watcher(mgr, [ARM1])
     res = w.poll()
@@ -129,6 +133,7 @@ def test_unknown_board_is_only_reported(store):
 
 
 # --------------------------------------------------------------------- dedupe
+
 
 def test_port_claimed_by_managed_robot_is_skipped(store):
     store.save("SER-ARM-1", {"peer_id": "so101-arm-1", "port": ARM1["device"]})
@@ -161,6 +166,7 @@ def test_mesh_lookup_failure_refuses_to_spawn(store):
 
 # --------------------------------------------------------- disappear -> despawn
 
+
 def test_unplug_despawns_after_consecutive_misses(store):
     store.save("SER-ARM-1", {"peer_id": "so101-arm-1", "port": "/dev/cu.OLD"})
     mgr = FakeManager(store)
@@ -168,7 +174,7 @@ def test_unplug_despawns_after_consecutive_misses(store):
     assert w.poll()["spawned"] == ["so101-arm-1"]
 
     bus["ports"] = []  # unplugged
-    assert w.poll()["despawned"] == []          # miss 1 of 2 - debounce
+    assert w.poll()["despawned"] == []  # miss 1 of 2 - debounce
     assert w.poll()["despawned"] == ["so101-arm-1"]  # miss 2 - stopped
     assert mgr.despawn_calls == ["so101-arm-1"]
     assert w.adopted == {}
@@ -179,9 +185,9 @@ def test_flapping_port_is_not_despawned(store):
     mgr = FakeManager(store)
     w, bus = make_watcher(mgr, [ARM1], missing_polls=2)
     w.poll()
-    bus["ports"] = []       # one missed poll…
+    bus["ports"] = []  # one missed poll…
     w.poll()
-    bus["ports"] = [ARM1]   # …but it re-enumerates (USB flap)
+    bus["ports"] = [ARM1]  # …but it re-enumerates (USB flap)
     w.poll()
     assert mgr.despawn_calls == []
     assert w.adopted  # still adopted
@@ -205,6 +211,7 @@ def test_failed_spawn_is_not_adopted(store):
 
 
 # ---------------------------------------------------------------- kill switch
+
 
 def test_kill_switch_disables_polling(store, monkeypatch):
     store.save("SER-ARM-1", {"peer_id": "so101-arm-1", "port": "/dev/cu.OLD"})

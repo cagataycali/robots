@@ -6,6 +6,7 @@ not unblock is worse than a refusal, because the operator believes they are thro
 symmetric first draft of this code did exactly that for `policy_host='gpu.lan:8000'` (policy_host is
 matched LITERALLY while server_address strips the port). Measurement caught it, so it is pinned here.
 """
+
 from __future__ import annotations
 
 import pytest

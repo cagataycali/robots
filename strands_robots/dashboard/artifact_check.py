@@ -29,6 +29,7 @@ WEIGHT_NAMES = ("model.safetensors", "pytorch_model.bin", "adapter_model.safeten
 #: finished. A real policy head is megabytes; 4KB is one filesystem block.
 MIN_WEIGHT_BYTES = 4096
 
+
 def _is_file(p: Path) -> bool:
     """``Path.is_file`` that cannot raise."""
     try:
@@ -36,8 +37,10 @@ def _is_file(p: Path) -> bool:
     except OSError:
         return False
 
+
 def _is_weight(p: Path) -> bool:
     return p.name in WEIGHT_NAMES or p.suffix.lower() in WEIGHT_SUFFIXES
+
 
 def _weights(directory: Path) -> list[Path]:
     """Weight files in this directory, plus one level down."""
@@ -48,14 +51,13 @@ def _weights(directory: Path) -> list[Path]:
                 found.append(entry)
             elif entry.is_dir():
                 try:
-                    found.extend(
-                        c for c in sorted(entry.iterdir()) if _is_file(c) and _is_weight(c)
-                    )
+                    found.extend(c for c in sorted(entry.iterdir()) if _is_file(c) and _is_weight(c))
                 except OSError:
                     continue
     except OSError:
         return []
     return found
+
 
 def artifact_verdict(path: str | os.PathLike[str] | None) -> dict[str, Any]:
     """What can be said about an exported artifact WITHOUT loading it. Returns ``{"ok": bool, "path":

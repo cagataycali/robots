@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -8,8 +7,7 @@ from typing import Any
 STATES = ("blocked", "absent", "vanished", "assigned", "in_use", "unreadable", "ready")
 
 _VANISHED_REASON = (
-    "a camera answered at this index earlier and none does now - it was unplugged, went to sleep, or "
-    "its hub dropped it"
+    "a camera answered at this index earlier and none does now - it was unplugged, went to sleep, or its hub dropped it"
 )
 _VANISHED_REMEDY = (
     "replug it (and prefer a direct port over a hub chain), then rescan. Do NOT assume the index still "
@@ -17,6 +15,7 @@ _VANISHED_REMEDY = (
     "assigning it to an arm - a shifted index records a dataset from the wrong view while everything "
     "on screen looks healthy"
 )
+
 
 class CameraUnavailable(RuntimeError):
     """A camera fault that knows WHY, and what to do about it."""
@@ -30,6 +29,7 @@ class CameraUnavailable(RuntimeError):
         if remedy:
             msg += f" - {remedy}"
         super().__init__(msg)
+
 
 def classify_probe_stderr(text: str) -> tuple[str, str, str | None]:
     """Turn OpenCV's chatter into (state, reason, remedy)."""
@@ -55,11 +55,13 @@ def classify_probe_stderr(text: str) -> tuple[str, str, str | None]:
         return ("unreadable", "the camera did not start streaming when opened", "unplug and replug it, then rescan")
     return ("absent", "no camera answered at this index", None)
 
+
 def _geometry(entry: Mapping[str, Any] | None) -> dict[str, Any]:
     if not entry:
         return {}
     out = {k: entry[k] for k in ("width", "height", "fps") if entry.get(k)}
     return out
+
 
 def roster_name(index: int, roster: Sequence[Mapping[str, Any]]) -> str | None:
     """Best-effort human name for an index, from the platform listing."""
@@ -68,6 +70,7 @@ def roster_name(index: int, roster: Sequence[Mapping[str, Any]]) -> str | None:
             name = item.get("name")
             return str(name) if name else None
     return None
+
 
 def merge_cameras(
     *,
@@ -116,10 +119,7 @@ def merge_cameras(
                 row["remedy"] = f"despawn {owner} to free it"
             else:
                 row["state"] = "assigned"
-                row["reason"] = (
-                    f"assigned to {owner}, but no frames are arriving - that robot could not "
-                    f"open it either"
-                )
+                row["reason"] = f"assigned to {owner}, but no frames are arriving - that robot could not open it either"
                 row["remedy"] = f"check {owner}'s log (devices > logs), then respawn it"
             row.update(_geometry(remembered.get(index)))
             if _geometry(remembered.get(index)):
@@ -145,6 +145,7 @@ def merge_cameras(
         rows.append(row)
     return rows
 
+
 def probe_needed(
     *,
     refresh: bool,
@@ -160,6 +161,7 @@ def probe_needed(
         return True
     return (now - cache_t) > ttl_s
 
+
 def blocked_verdict(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
     """A one-line diagnosis for the whole machine, when there is one."""
     if not rows:
@@ -172,8 +174,7 @@ def blocked_verdict(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
     return {
         "kind": "camera_permission",
         "message": (
-            "macOS is blocking camera access for the process running the dashboard, "
-            "so no camera can be opened here."
+            "macOS is blocking camera access for the process running the dashboard, so no camera can be opened here."
         ),
         "remedy": blocked[0].get("remedy"),
         "indices": [r["index"] for r in blocked],

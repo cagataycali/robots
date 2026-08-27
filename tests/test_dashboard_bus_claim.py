@@ -5,6 +5,7 @@ DeviceManager.robots was empty, so every in-process check passed and the only sy
 missing from the fleet. The rule under test is therefore not "is this peer_id taken" but "does
 anything on this machine already own this UART".
 """
+
 from __future__ import annotations
 
 import pytest
@@ -38,8 +39,8 @@ def test_a_stranger_names_the_pid_and_the_cure():
 
 def test_a_stranger_wins_even_when_one_holder_is_ours():
     msg = bus_claim.bus_conflict(PORT, [4242, 99001], {4242: "so101-arm-1"})
-    assert "reap_orphan_buses.sh" in msg          # the stranger decides the advice
-    assert "so101-arm-1" in msg                   # but our own child is still disclosed
+    assert "reap_orphan_buses.sh" in msg  # the stranger decides the advice
+    assert "so101-arm-1" in msg  # but our own child is still disclosed
 
 
 def test_the_tty_sibling_of_a_cu_device_is_checked_too():

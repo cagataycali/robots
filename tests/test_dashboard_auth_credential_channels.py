@@ -58,9 +58,9 @@ def isolated(tmp_path, monkeypatch):
 def static_token(monkeypatch):
     """Configure the machine-level static token, nothing else."""
     monkeypatch.setattr(
-        srv.settings, "get",
-        lambda section, key, default=None: STATIC
-        if (section, key) == ("security", "auth_token") else default,
+        srv.settings,
+        "get",
+        lambda section, key, default=None: STATIC if (section, key) == ("security", "auth_token") else default,
     )
     return STATIC
 
@@ -134,7 +134,8 @@ class TestTheXDashboardTokenHeader:
         assert run_scope(_scope(headers={"x-dashboard-token": "nope"})) == 401
 
     @pytest.mark.parametrize(
-        "value", [STATIC[:-1], STATIC[:8], STATIC + "x", STATIC.upper(), ""],
+        "value",
+        [STATIC[:-1], STATIC[:8], STATIC + "x", STATIC.upper(), ""],
     )
     def test_near_misses_are_refused_whole_value(self, static_token, value):
         # Not startswith, not a prefix match, not case-insensitive: a guard that
@@ -143,37 +144,51 @@ class TestTheXDashboardTokenHeader:
 
 
 class TestChannelsThatDisagree:
-    def test_a_wrong_bearer_beats_a_correct_header_and_the_request_is_refused(
-        self, static_token
-    ):
+    def test_a_wrong_bearer_beats_a_correct_header_and_the_request_is_refused(self, static_token):
         # Pinning the DECISION, not an accident: Authorization wins, and the
         # request is judged on it alone. Searching every channel for something
         # that works would make each extra header a free guess.
-        got = run_scope(_scope(headers={
-            "authorization": "Bearer wrong-token",
-            "x-dashboard-token": STATIC,
-        }))
+        got = run_scope(
+            _scope(
+                headers={
+                    "authorization": "Bearer wrong-token",
+                    "x-dashboard-token": STATIC,
+                }
+            )
+        )
         assert got == 401, (
             "the guard fell back to a second credential channel after the one the "
             "client named failed - one request presents one credential"
         )
 
     def test_a_correct_bearer_wins_over_a_wrong_header(self, static_token):
-        assert run_scope(_scope(headers={
-            "authorization": f"Bearer {STATIC}",
-            "x-dashboard-token": "wrong-token",
-        })) == "passed"
+        assert (
+            run_scope(
+                _scope(
+                    headers={
+                        "authorization": f"Bearer {STATIC}",
+                        "x-dashboard-token": "wrong-token",
+                    }
+                )
+            )
+            == "passed"
+        )
 
-    def test_a_non_bearer_authorization_scheme_falls_through_to_the_header(
-        self, static_token
-    ):
+    def test_a_non_bearer_authorization_scheme_falls_through_to_the_header(self, static_token):
         # Basic auth is not this API's scheme; _presented only claims the
         # Authorization header when it says "Bearer", so a proxy that adds Basic
         # credentials must not lock the operator out of their own dashboard.
-        assert run_scope(_scope(headers={
-            "authorization": "Basic dXNlcjpwYXNz",
-            "x-dashboard-token": STATIC,
-        })) == "passed"
+        assert (
+            run_scope(
+                _scope(
+                    headers={
+                        "authorization": "Basic dXNlcjpwYXNz",
+                        "x-dashboard-token": STATIC,
+                    }
+                )
+            )
+            == "passed"
+        )
 
 
 class TestTheQueryStringChannelOnPlainHttp:

@@ -80,7 +80,10 @@ class FakeDevices:
 
     def add(self, peer_id, mode="real", port="/dev/cu.usb1", robot_name="so101"):
         self.robots[peer_id] = SimpleNamespace(
-            peer_id=peer_id, robot_name=robot_name, mode=mode, port=port,
+            peer_id=peer_id,
+            robot_name=robot_name,
+            mode=mode,
+            port=port,
             cameras={"top": {"index_or_path": 0}},
         )
 
@@ -91,8 +94,7 @@ class FakeDevices:
 
     def spawn(self, **cfg):
         self.spawned.append(cfg)
-        self.add(cfg["peer_id"], mode=cfg["mode"], port=cfg["port"],
-                 robot_name=cfg["robot_name"])
+        self.add(cfg["peer_id"], mode=cfg["mode"], port=cfg["port"], robot_name=cfg["robot_name"])
         return {"peer_id": cfg["peer_id"], "pid": 123, "mode": cfg["mode"]}
 
 
@@ -110,15 +112,18 @@ def make_controller(tmp_path, devices=None, backend_factory=None):
     ctl = RecordController(
         devices,
         backend_factory=backend_factory or default_backend_factory,
-        recorder_factory_factory=lambda backend: (lambda **kw: FakeRecorder()),
+        recorder_factory_factory=lambda backend: lambda **kw: FakeRecorder(),
         thumb_root=str(tmp_path / "thumbs"),
     )
     return ctl, devices, backends
 
 
 OPEN = {
-    "dataset": "cagatay/so101-pick", "task": "pick the cube",
-    "leader": "arm-leader", "follower": "arm-follower", "target_episodes": 2,
+    "dataset": "cagatay/so101-pick",
+    "task": "pick the cube",
+    "leader": "arm-leader",
+    "follower": "arm-follower",
+    "target_episodes": 2,
 }
 
 
@@ -218,9 +223,7 @@ def test_http_surface_speaks_the_contract(tmp_path):
     assert body["phase"] == "idle" and body["episodes"][0]["frames"] >= 1
     # discard validation
     assert client.post("/api/record/episode/discard", json={}).status_code == 422
-    assert client.post(
-        "/api/record/episode/discard", json={"index": 99}
-    ).status_code == 404
+    assert client.post("/api/record/episode/discard", json={"index": 99}).status_code == 404
     # thumbnail written by the first frame is served; traversal shapes 404
     r = client.get("/api/record/thumb/0/top")
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
@@ -237,6 +240,7 @@ def test_http_surface_speaks_the_contract(tmp_path):
 # only to logger.warning: the refusal still read "no session was opened", the frontend added "the arms
 # are untouched and still in the fleet", and both robot cards were gone. The operator cannot see the
 # server log; they can see the sentence the click produced.
+
 
 class RefusingSpawnDevices(FakeDevices):
     """Despawns fine, refuses to bring one arm back - the shape of a port still held."""

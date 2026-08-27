@@ -67,15 +67,18 @@ name these per-robot tools.
 
 _agent_lock = threading.Lock()
 _agent: Any = None
-_turn_lock = threading.Lock()   # one agent turn at a time (chat + voice share the agent)
+_turn_lock = threading.Lock()  # one agent turn at a time (chat + voice share the agent)
 
 # Conversation history survives dashboard restarts.
-HISTORY_FILE = Path(os.getenv(
-    "DASHBOARD_HISTORY_FILE",
-    os.path.join(tempfile.gettempdir(), "strands_dashboard", "chat_history.json"),
-))
+HISTORY_FILE = Path(
+    os.getenv(
+        "DASHBOARD_HISTORY_FILE",
+        os.path.join(tempfile.gettempdir(), "strands_dashboard", "chat_history.json"),
+    )
+)
 
 HISTORY_LIMIT = 200
+
 
 def _is_plain_user_message(msg: Any) -> bool:
     """A user message carrying only text - i.e. a safe conversation boundary."""
@@ -85,6 +88,7 @@ def _is_plain_user_message(msg: Any) -> bool:
     if not isinstance(content, list) or not content:
         return False
     return all(isinstance(c, dict) and "toolResult" not in c and "toolUse" not in c for c in content)
+
 
 def _trim_history(messages: list) -> list:
     """Trim to the limit on a user-message boundary. A blind ``messages[-200:]`` can slice between an
@@ -103,6 +107,7 @@ def _trim_history(messages: list) -> list:
             return messages[i:]
     return []
 
+
 def _json_safe(messages: list) -> list:
     """Round-trip messages through JSON, dropping anything that won't."""
     safe = []
@@ -112,6 +117,7 @@ def _json_safe(messages: list) -> list:
         except (TypeError, ValueError):
             logger.debug("dropping non-serialisable message from history")
     return safe
+
 
 def _tool_ids(msg: Any, key: str) -> set:
     """Ids of ``toolUse``/``toolResult`` blocks carried by one message."""
@@ -123,6 +129,7 @@ def _tool_ids(msg: Any, key: str) -> set:
             if tid is not None:
                 out.add(tid)
     return out
+
 
 def _drop_orphan_tool_blocks(messages: list) -> list:
     """Remove toolUse blocks with no toolResult and vice versa."""
@@ -150,6 +157,7 @@ def _drop_orphan_tool_blocks(messages: list) -> list:
             kept.append({**msg, "content": blocks})
     return kept
 
+
 def sanitize_history(messages: Any) -> list:
     """Make a persisted conversation structurally safe to restore."""
     if not isinstance(messages, list):
@@ -158,6 +166,7 @@ def sanitize_history(messages: Any) -> list:
     while out and not _is_plain_user_message(out[0]):
         out.pop(0)
     return out if _history_problem(out) is None else []
+
 
 def _history_problem(messages: list) -> str | None:
     """Why this conversation would be rejected, or None if it is valid."""
@@ -174,6 +183,7 @@ def _history_problem(messages: list) -> str | None:
         return f"orphaned tool blocks: {sorted(used ^ resulted)}"
     return None
 
+
 def _backup_history_file() -> Path | None:
     """Keep the poisoned file aside so it is inspectable, not just gone."""
     try:
@@ -185,6 +195,7 @@ def _backup_history_file() -> Path | None:
         logger.warning("could not back up chat history: %s", e)
     return None
 
+
 def _load_history() -> list:
     try:
         if HISTORY_FILE.exists():
@@ -195,12 +206,14 @@ def _load_history() -> list:
         logger.warning("could not load chat history: %s", e)
     return []
 
+
 def _save_history(messages: list) -> None:
     try:
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         HISTORY_FILE.write_text(json.dumps(sanitize_history(list(messages))))
     except Exception as e:
         logger.debug("could not save chat history: %s", e)
+
 
 def clear_history() -> bool:
     """Drop the persisted conversation. The self-heal escape hatch."""
@@ -211,12 +224,14 @@ def clear_history() -> bool:
         logger.warning("could not clear chat history: %s", e)
         return False
 
+
 # Set by server.py at startup - the dashboard's mesh gateway. robot_mesh cannot be used here:
 # it requires an in-process Robot()/Simulation() as its Zenoh gateway, and the dashboard is a
 # robot-less peer.
 _bridge: Any = None
 
 _refusal_listeners: list[Any] = []
+
 
 def add_refusal_listener(cb: Any) -> Any:
     """Register ``cb(text)`` for continuable refusals raised inside the fleet tool. Returns a remover."""
@@ -230,6 +245,7 @@ def add_refusal_listener(cb: Any) -> Any:
 
     return _remove
 
+
 def _notify_refusal(text: str) -> None:
     for cb in list(_refusal_listeners):
         try:
@@ -237,16 +253,20 @@ def _notify_refusal(text: str) -> None:
         except Exception:  # noqa: BLE001 - a listener is a notification, never a gate
             logger.debug("refusal listener failed", exc_info=True)
 
+
 def set_bridge(bridge: Any) -> None:
     global _bridge
     _bridge = bridge
 
+
 _devices: Any = None
+
 
 def set_devices(devices: Any) -> None:
     """Hand the DeviceManager over so direct-serial refusals can NAME the holding peer."""
     global _devices
     _devices = devices
+
 
 def _tracked_children() -> dict[int, str]:
     """pid -> peer_id for this dashboard's own live spawned robots (device_manager.py pattern)."""
@@ -255,13 +275,10 @@ def _tracked_children() -> dict[int, str]:
         return {}
     try:
         with dm._lock:
-            return {
-                r.process.pid: pid_key
-                for pid_key, r in dm.robots.items()
-                if r.process is not None and r.alive()
-            }
+            return {r.process.pid: pid_key for pid_key, r in dm.robots.items() if r.process is not None and r.alive()}
     except Exception:  # noqa: BLE001 - an unreadable roster means no names, never a crash
         return {}
+
 
 def _direct_serial_tools() -> list:
     """Bus-guarded pose_tool + serial_tool (direct_serial.py), or [] when they cannot import."""
@@ -273,6 +290,7 @@ def _direct_serial_tools() -> list:
         logger.warning("direct serial tools unavailable - agent runs without them", exc_info=True)
         return []
 
+
 def _peers_snapshot() -> dict:
     """Current fleet peers for the motion gate - read at call time, never cached."""
     if _bridge is None:
@@ -282,19 +300,23 @@ def _peers_snapshot() -> dict:
     except Exception:  # noqa: BLE001 - unreadable snapshot means UNKNOWN, i.e. metal
         return {}
 
+
 # --- pending HITL interrupt (one at a time: one agent, one turn lock) ---------
 _pending_lock = threading.Lock()
 _pending_interrupt: dict[str, Any] | None = None
+
 
 def pending_interrupt() -> dict[str, Any] | None:
     """The unanswered motion confirm, or None. Surfaced in agent_status for reloads."""
     with _pending_lock:
         return dict(_pending_interrupt) if _pending_interrupt else None
 
+
 def _set_pending(value: dict[str, Any] | None) -> None:
     global _pending_interrupt
     with _pending_lock:
         _pending_interrupt = value
+
 
 def _abandon_pending() -> None:
     """A new prompt arrived over an unanswered confirm: drop the parked turn.
@@ -306,6 +328,7 @@ def _abandon_pending() -> None:
     global _agent
     with _agent_lock:
         _agent = None
+
 
 def _make_fleet_tool() -> Any:
     from strands import tool
@@ -332,13 +355,13 @@ def _make_fleet_tool() -> Any:
                     continue
                 pres = p.get("presence") or {}
                 st = p.get("state") or {}
-                task = (st.get("task") or {})
+                task = st.get("task") or {}
                 cams = list((p.get("cameras") or {}).keys())
                 joints = len(st.get("joints") or {})
                 lines.append(
-                    f"- {pid}: type={pres.get('robot_type','?')} hw_connected={pres.get('connected')} "
-                    f"cameras={cams} joints={joints} task={task.get('status','idle')} "
-                    f"instruction={task.get('instruction','')!r}"
+                    f"- {pid}: type={pres.get('robot_type', '?')} hw_connected={pres.get('connected')} "
+                    f"cameras={cams} joints={joints} task={task.get('status', 'idle')} "
+                    f"instruction={task.get('instruction', '')!r}"
                 )
             text = "Online peers:\n" + "\n".join(lines) if lines else "No live peers on the mesh."
             return {"status": "success", "content": [{"text": text}]}
@@ -357,18 +380,23 @@ def _make_fleet_tool() -> Any:
             # A human yes on the interrupt confirm deposits a one-shot grant;
             # consuming it satisfies the backstop without weakening it.
             approved = consume_grant(
-                "fleet", {"action": "task", "target": target, "instruction": instruction},
+                "fleet",
+                {"action": "task", "target": target, "instruction": instruction},
             )
             if not approved:
                 verdict = agent_motion_allowed(
-                    "task", peer=snap_peers.get(target), target=target,
+                    "task",
+                    peer=snap_peers.get(target),
+                    target=target,
                 )
                 if not verdict["allowed"]:
                     _notify_refusal(verdict["reason"])
                     return {"status": "error", "content": [{"text": verdict["reason"]}]}
             cmd = {
-                "action": "execute", "instruction": instruction,
-                "policy_provider": policy_provider, "duration": float(duration),
+                "action": "execute",
+                "instruction": instruction,
+                "policy_provider": policy_provider,
+                "duration": float(duration),
             }
             if robot_name:
                 cmd["robot_name"] = robot_name
@@ -400,9 +428,13 @@ def _make_fleet_tool() -> Any:
             res = _bridge.send_cmd(target, {"action": "status"}, timeout=10.0, source="agent")
             return {"status": "success", "content": [{"text": _json.dumps(res)[:800]}]}
 
-        return {"status": "error", "content": [{"text": f"unknown action {action!r}. Valid: peers, task, stop, stop_all, status"}]}
+        return {
+            "status": "error",
+            "content": [{"text": f"unknown action {action!r}. Valid: peers, task, stop, stop_all, status"}],
+        }
 
     return fleet
+
 
 def _robot_mesh_tool() -> Any:
     """The SDK's own mesh tool, if importable - the agent-native surface.
@@ -419,6 +451,7 @@ def _robot_mesh_tool() -> Any:
     except Exception:  # noqa: BLE001 - the agent must build even if the tool cannot import
         logger.warning("robot_mesh tool unavailable - agent runs with fleet only", exc_info=True)
         return None
+
 
 def _peer_proxy_tools() -> list:
     """One native tool per tool-worthy fleet peer, routed through the bridge.
@@ -513,6 +546,7 @@ def _build_agent() -> Any:
             logger.warning("history restore failed: %s", e)
     return agent
 
+
 def get_agent() -> Any:
     global _agent
     with _agent_lock:
@@ -533,6 +567,7 @@ def get_agent() -> Any:
             _agent = _build_agent()
         return _agent
 
+
 def reset_agent(clear_history_too: bool = False, *, clear_history: bool | None = None) -> None:
     """Drop the agent so the next turn rebuilds it from current settings."""
     global _agent
@@ -543,6 +578,7 @@ def reset_agent(clear_history_too: bool = False, *, clear_history: bool | None =
             _agent = None
         if clear_history_too:
             globals()["clear_history"]()
+
 
 def agent_status() -> dict[str, Any]:
     """Readiness for the dock badge - never builds the agent as a side effect."""
@@ -584,8 +620,10 @@ def agent_status() -> dict[str, Any]:
         "history_file": str(HISTORY_FILE),
     }
 
+
 class TurnCancelled(Exception):
     """The client that asked for this turn went away - abandon it."""
+
 
 class WSStreamHandler:
     """Strands callback handler -> thread-safe queue of UI events."""
@@ -613,11 +651,15 @@ class WSStreamHandler:
             tid = current_tool_use.get("toolUseId", "")
             if tid and tid not in self._tool_ids:
                 self._tool_ids.add(tid)
-                self.q.put({
-                    "type": "tool", "status": "start",
-                    "name": current_tool_use.get("name"), "id": tid,
-                    "input_preview": str(current_tool_use.get("input", ""))[:200],
-                })
+                self.q.put(
+                    {
+                        "type": "tool",
+                        "status": "start",
+                        "name": current_tool_use.get("name"),
+                        "id": tid,
+                        "input_preview": str(current_tool_use.get("input", ""))[:200],
+                    }
+                )
         if isinstance(message, dict) and message.get("role") == "user":
             for c in message.get("content", []):
                 if isinstance(c, dict) and "toolResult" in c:
@@ -628,8 +670,10 @@ class WSStreamHandler:
                             full = blk["text"]
                             break
                     event = {
-                        "type": "tool", "status": tr.get("status", "done"),
-                        "id": tr.get("toolUseId", ""), "result_preview": full[:300],
+                        "type": "tool",
+                        "status": tr.get("status", "done"),
+                        "id": tr.get("toolUseId", ""),
+                        "result_preview": full[:300],
                     }
                     # A continuable refusal must be clickable WHERE IT HAPPENED.
                     if tr.get("status") == "error":
@@ -640,6 +684,7 @@ class WSStreamHandler:
                             event["needs_consent"] = need.as_dict()
                     self.q.put(event)
 
+
 def _is_history_poisoned(exc: Exception) -> bool:
     """Does this failure look like a rejected restored conversation?"""
     text = str(exc).lower()
@@ -647,6 +692,7 @@ def _is_history_poisoned(exc: Exception) -> bool:
         marker in text
         for marker in ("validationexception", "toolresult", "tooluse", "invalid conversation", "messages")
     )
+
 
 def run_turn_blocking(
     prompt: str,
@@ -662,6 +708,7 @@ def run_turn_blocking(
         q.put({"type": "notice", "text": "the pending motion confirm was dismissed - nothing was sent"})
     _run_agent_input(prompt, q, cancel)
 
+
 def resume_interrupt_blocking(
     interrupt_id: str,
     response: Any,
@@ -671,14 +718,17 @@ def resume_interrupt_blocking(
     """Answer a pending motion confirm and continue the SAME turn."""
     pending = pending_interrupt()
     if pending is None or pending.get("id") != interrupt_id:
-        q.put({
-            "type": "error",
-            "error": "no pending confirm with that id - it may have been dismissed or already answered",
-        })
+        q.put(
+            {
+                "type": "error",
+                "error": "no pending confirm with that id - it may have been dismissed or already answered",
+            }
+        )
         q.put({"type": "__END__"})
         return
     payload = [{"interruptResponse": {"interruptId": interrupt_id, "response": response}}]
     _run_agent_input(payload, q, cancel)
+
 
 def _run_agent_input(
     agent_input: Any,
@@ -737,7 +787,9 @@ def _run_agent_input(
         try:
             msg = getattr(result, "message", None)
             if isinstance(msg, dict):
-                text = "\n".join(c.get("text", "") for c in msg.get("content", []) if isinstance(c, dict) and "text" in c)
+                text = "\n".join(
+                    c.get("text", "") for c in msg.get("content", []) if isinstance(c, dict) and "text" in c
+                )
             else:
                 text = str(result)
         except Exception:

@@ -66,6 +66,7 @@ try:  # passkey auth is optional at import time (needs webauthn + PyJWT)
 except Exception:  # pragma: no cover - deps missing in minimal installs
     dash_auth = None  # type: ignore[assignment]
 
+
 class TokenAuthMiddleware:
     """Bearer-token gate for /api and /ws, as raw ASGI."""
 
@@ -206,12 +207,14 @@ class TokenAuthMiddleware:
         response = JSONResponse({"detail": "unauthorized"}, status_code=401)
         await response(scope, receive, send)
 
+
 # : The frame types /ws/chat implements.
 _REFUSALS = RefusalTally()
 
 _CHAT_FRAME_TYPES = frozenset({"chat", "ping", "interrupt_response"})
 
 CHAT_MAX_FRAME_BYTES = 32 * 1024  # a generous chat turn; 2 MB frames ran real model turns
+
 
 def parse_chat_frame(message: dict[str, Any]) -> tuple[str | dict[str, Any] | None, dict[str, Any] | None]:
     """One /ws/chat frame -> ``(turn, reply)``. Exactly one of the two is non-None, or both are None
@@ -262,6 +265,7 @@ def parse_chat_frame(message: dict[str, Any]) -> tuple[str | dict[str, Any] | No
     prompt = text.strip()
     return (prompt or None), None
 
+
 async def _client_gone(ws: WebSocket) -> None:
     """Park on the socket's inbound channel until the client actually leaves."""
     try:
@@ -272,20 +276,28 @@ async def _client_gone(ws: WebSocket) -> None:
     except (WebSocketDisconnect, RuntimeError):
         return
 
+
 def _audit_autospawn(bridge: Any, did: dict[str, Any] | None) -> None:
     """Land the auto-spawn watcher's poll results in the activity trail."""
     if not did:
         return
     for peer_id in did.get("spawned") or []:
         bridge.record_activity(
-            "api", "spawn", target=peer_id,
-            detail="USB auto-spawn (board plugged in)", ok=True,
+            "api",
+            "spawn",
+            target=peer_id,
+            detail="USB auto-spawn (board plugged in)",
+            ok=True,
         )
     for peer_id in did.get("despawned") or []:
         bridge.record_activity(
-            "api", "despawn", target=peer_id,
-            detail="USB auto-spawn (board unplugged)", ok=True,
+            "api",
+            "despawn",
+            target=peer_id,
+            detail="USB auto-spawn (board unplugged)",
+            ok=True,
         )
+
 
 _HASHED_EXT = r"(?:js|css|woff2?|png|svg|jpg|jpeg|webp|ico)"
 # Q184: a HUMAN-WORD tail — TitleCase words, optionally -/_ joined, no digits. That is what a
@@ -332,6 +344,7 @@ def static_cache_control(path: str) -> str:
     # these from a cache pins the whole app at an old build.
     return "no-cache"
 
+
 def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     app = FastAPI(title="strands-robots dashboard")
     from strands_robots.dashboard.config_api import load_env_file
@@ -373,15 +386,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     # parks the arms' fleet peers around a session; see record_api.py.
     from strands_robots.dashboard import record_api
 
-    app.state.record = record_api.RecordController(
-        app.state.devices, bridge=app.state.bridge
-    )
+    app.state.record = record_api.RecordController(app.state.devices, bridge=app.state.bridge)
     # Late-bound on purpose: capturing the bound method here would pin the
     # router to THIS bridge instance forever (tests swap it, restart_mesh may).
-    app.include_router(record_api.build_router(
-        app.state.record,
-        on_activity=lambda *a, **k: app.state.bridge.record_activity(*a, **k),
-    ))
+    app.include_router(
+        record_api.build_router(
+            app.state.record,
+            on_activity=lambda *a, **k: app.state.bridge.record_activity(*a, **k),
+        )
+    )
     # A peer with a LIVE managed local process is never aged out of the fleet
     # snapshot, even if its state stream goes quiet.
     app.state.bridge.protected_peer_ids = lambda: {
@@ -439,9 +452,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     @app.get("/api/network/hint")
     async def network_hint(request: Request) -> dict[str, Any]:
         fwd = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for")
-        client_ip = (fwd.split(",")[0].strip() if fwd else None) or (
-            request.client.host if request.client else None
-        )
+        client_ip = (fwd.split(",")[0].strip() if fwd else None) or (request.client.host if request.client else None)
         own: list[str] = []
         try:  # psutil is already a dashboard dependency; a failure here is not fatal
             import psutil
@@ -476,11 +487,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "peers": len(app.state.bridge.peers),
             # How much /ws/mesh fan-out the coalescer avoided.
             "mesh_coalesce": _coalesce,
-            **(
-                {"joint_streams": js}
-                if (js := silent_arms(app.state.bridge.peers)) is not None
-                else {}
-            ),
+            **({"joint_streams": js} if (js := silent_arms(app.state.bridge.peers)) is not None else {}),
             # Which build is answering.
             "build": build_info(),
             "t": time.time(),
@@ -636,11 +643,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if peer_is_known(peer_id, getattr(bridge, "peers", None) or {}, managed):
             return
         known = sorted(set(getattr(bridge, "peers", None) or {}) | set(managed))
-        raise HTTPException(404, {
-            "error": f"no peer {peer_id!r} in the fleet",
-            "hint": "GET /api/fleet lists the peers that can be commanded",
-            "known_peers": known,
-        })
+        raise HTTPException(
+            404,
+            {
+                "error": f"no peer {peer_id!r} in the fleet",
+                "hint": "GET /api/fleet lists the peers that can be commanded",
+                "known_peers": known,
+            },
+        )
 
     @app.get("/api/robots/{peer_id}/teleop")
     async def teleop_status(peer_id: str) -> dict[str, Any]:
@@ -669,13 +679,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 if not source or source == peer_id:
                     continue
                 try:
-                    src = await app.state.bridge.send_cmd_async(
-                        source, {"action": "teleop_status"}, timeout=10.0)
+                    src = await app.state.bridge.send_cmd_async(source, {"action": "teleop_status"}, timeout=10.0)
                 except Exception as exc:  # noqa: BLE001 - a quiet leader is data too
                     logger.debug("could not ask leader %s about its publisher: %r", source, exc)
                     continue
-                frames = published_frames(
-                    src.get("result") if isinstance(src, dict) else src, device or "leader")
+                frames = published_frames(src.get("result") if isinstance(src, dict) else src, device or "leader")
                 if frames is not None:
                     counted[key] = frames
             if counted:
@@ -773,9 +781,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(422, "repo_id required")
         from strands_robots.dashboard.device_manager import validate_replay
 
-        bad = validate_replay(
-            repo_id, body.get("episode", 0), body.get("root"), body.get("speed", 1.0)
-        )
+        bad = validate_replay(repo_id, body.get("episode", 0), body.get("root"), body.get("speed", 1.0))
         if bad:
             raise HTTPException(422, bad)
         result = await asyncio.to_thread(
@@ -890,7 +896,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         result = await asyncio.to_thread(training.submit, body)
         job = (result.get("data") or {}).get("job_id") if isinstance(result, dict) else None
         app.state.bridge.record_activity(
-            "training", "submit", target=str(job or body.get("provider", "?")),
+            "training",
+            "submit",
+            target=str(job or body.get("provider", "?")),
             detail=f"{body.get('provider')} on {body.get('dataset_root') or body.get('dataset_repo_id') or '?'}",
             ok=bool(isinstance(result, dict) and result.get("status") == "success"),
         )
@@ -995,10 +1003,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             if scope["scope_note"]:
                 result["scope_note"] = scope["scope_note"]
         if not observation_keys:
-            result["note"] = (
-                "no live observation keys for that peer - camera/joint routing "
-                "was not checked"
-            )
+            result["note"] = "no live observation keys for that peer - camera/joint routing was not checked"
 
         try:
             from strands_robots.dashboard.checkpoints import declared_features
@@ -1033,9 +1038,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                         # the form arms play on that flag.
                         result["ok"] = False
                         result["stage"] = "fit"
-                        result["error"] = "; ".join(
-                            p.get("detail", "") for p in fit.get("problems", [])
-                        )
+                        result["error"] = "; ".join(p.get("detail", "") for p in fit.get("problems", []))
         except Exception:  # noqa: BLE001 - a fit hint must never break validate
             logger.debug("policy fit check failed", exc_info=True)
 
@@ -1110,9 +1113,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # blocks until the rollout ends.
         from strands_robots.dashboard.task_timeout import task_ack_budget, timeout_verdict
 
-        timeout_s, timeout_kind = task_ack_budget(
-            cmd["action"], body.get("timeout"), duration
-        )
+        timeout_s, timeout_kind = task_ack_budget(cmd["action"], body.get("timeout"), duration)
         # Twin mirroring: fire the same instruction at '<peer>-twin' when one
         # is live (fire-and-forget; twin progress streams on the mesh).
         twin_id = f"{peer_id}-twin"
@@ -1178,7 +1179,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         for info in per_peer.values():
             counts[info["state"]] = counts.get(info["state"], 0) + 1
         bridge.record_activity(
-            "estop", "stop_all", target="fleet",
+            "estop",
+            "stop_all",
+            target="fleet",
             detail=f"{counts['stopped']}/{len(peers)} confirmed stopped",
             ok=counts["stopped"] == len(peers) and bool(peers),
         )
@@ -1207,7 +1210,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         result = await asyncio.to_thread(app.state.bridge.signed_resume, code)
         bridge2: MeshBridge = app.state.bridge
         bridge2.record_activity(
-            "resume", "safety_resume", target="fleet",
+            "resume",
+            "safety_resume",
+            target="fleet",
             detail=result.get("status", result.get("error", "?")),
             ok=result.get("status") == "ok",
         )
@@ -1269,8 +1274,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         except Exception:  # noqa: BLE001 - a cache warm-up must not fail a grant
             logger.debug("consent: allowlist warm-up failed", exc_info=True)
         app.state.bridge.record_activity(
-            "api", "consent", target=request.scope,
-            detail=f"approved: {', '.join(request.grants)}", ok=True,
+            "api",
+            "consent",
+            target=request.scope,
+            detail=f"approved: {', '.join(request.grants)}",
+            ok=True,
         )
         return {
             "granted": True,
@@ -1307,7 +1315,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             else:
                 os.environ.pop(key, None)
         app.state.bridge.record_activity(
-            "api", "consent", target=request.scope, detail="revoked", ok=True,
+            "api",
+            "consent",
+            target=request.scope,
+            detail="revoked",
+            ok=True,
         )
         return {
             "revoked": True,
@@ -1348,8 +1360,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def post_mesh_config(body: dict[str, Any]) -> dict[str, Any]:
         """Persist mesh endpoints and (by default) re-point the session."""
         body = body or {}
-        mesh = {k: v for k, v in body.items()
-                if k in ("connect", "listen", "port", "backend", "camera_hz", "policy_type_allow")}
+        mesh = {
+            k: v
+            for k, v in body.items()
+            if k in ("connect", "listen", "port", "backend", "camera_hz", "policy_type_allow")
+        }
         result = await asyncio.to_thread(config_api.apply, {"mesh": mesh})
         if result["errors"]:
             raise HTTPException(422, "; ".join(result["errors"]))
@@ -1425,20 +1440,23 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         """One JPEG frame from an unclaimed camera index."""
         try:
             jpeg = await asyncio.to_thread(
-                app.state.devices.preview_frame, index, _live_camera_names(),
+                app.state.devices.preview_frame,
+                index,
+                _live_camera_names(),
             )
         except PermissionError as e:
             raise HTTPException(409, str(e)) from e
         except Exception as e:  # noqa: BLE001 - camera faults become HTTP, not tracebacks
             raise HTTPException(503, str(e)) from e
-        return Response(content=jpeg, media_type="image/jpeg",
-                        headers={"Cache-Control": "no-store"})
+        return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @app.get("/api/devices/camera/{index}/modes")
     async def camera_modes(index: int) -> dict[str, Any]:
         try:
             return await asyncio.to_thread(
-                app.state.devices.probe_modes, index, _live_camera_names(),
+                app.state.devices.probe_modes,
+                index,
+                _live_camera_names(),
             )
         except PermissionError as e:
             raise HTTPException(409, str(e)) from e
@@ -1467,8 +1485,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         checked = await asyncio.to_thread(validate_spawn, robot_name, body.get("mode", "sim"))
         if isinstance(checked, dict):
             app.state.bridge.record_activity(
-                "api", "spawn", target=str(robot_name),
-                detail=f"refused: {checked['error']}", ok=False,
+                "api",
+                "spawn",
+                target=str(robot_name),
+                detail=f"refused: {checked['error']}",
+                ok=False,
             )
             raise HTTPException(422, checked)
         result = await asyncio.to_thread(
@@ -1494,15 +1515,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 # Surface it in the field every caller already reads, so a
                 # dead spawn cannot be mistaken for a live one by any client.
                 result["error"] = outcome.get("reason") or "the peer did not start"
-                consent.attach_consent(
-                    result, result["error"], "\n".join(outcome.get("log_tail") or [])
-                )
+                consent.attach_consent(result, result["error"], "\n".join(outcome.get("log_tail") or []))
 
         # Lifecycle lands in the audit trail: "who started this peer" is as
         # unanswerable as "who moved that arm" without it - the auto-spawn
         # watcher and the UI use this same route.
         app.state.bridge.record_activity(
-            "api", "spawn", target=result.get("peer_id") or robot_name,
+            "api",
+            "spawn",
+            target=result.get("peer_id") or robot_name,
             detail=(
                 f"{robot_name} mode={body.get('mode', 'sim')}"
                 + (f" -> {result['error']}" if result.get("error") else "")
@@ -1560,7 +1581,10 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(422, "peer_id required")
         result = await asyncio.to_thread(app.state.devices.despawn, peer_id)
         app.state.bridge.record_activity(
-            "api", "despawn", target=peer_id, ok="error" not in result,
+            "api",
+            "despawn",
+            target=peer_id,
+            ok="error" not in result,
         )
         return result
 
@@ -1573,13 +1597,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         bad = validate_cameras(body.get("cameras"))
         if bad:
             raise HTTPException(422, bad)
-        result = await asyncio.to_thread(
-            app.state.devices.reconfigure_cameras, peer_id, body.get("cameras")
-        )
+        result = await asyncio.to_thread(app.state.devices.reconfigure_cameras, peer_id, body.get("cameras"))
         if "error" in result and not result.get("reconfigured"):
             app.state.bridge.record_activity(
-                "api", "cameras", target=peer_id,
-                detail=f"refused: {result['error']}", ok=False,
+                "api",
+                "cameras",
+                target=peer_id,
+                detail=f"refused: {result['error']}",
+                ok=False,
             )
             status = 404 if "unknown managed peer" in result["error"] else 409
             raise HTTPException(status, result)
@@ -1594,7 +1619,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if outcome.get("status") == "failed":
             result["error"] = outcome.get("reason") or "the peer did not come back"
         app.state.bridge.record_activity(
-            "api", "cameras", target=peer_id,
+            "api",
+            "cameras",
+            target=peer_id,
             detail=f"respawned with {len(body.get('cameras') or {})} camera(s)"
             + (f" -> {result['error']}" if result.get("error") else ""),
             ok="error" not in result,
@@ -1607,11 +1634,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         out = app.state.devices.logs(peer_id)
         if "error" in out:
             managed = sorted(getattr(app.state.devices, "robots", None) or {})
-            raise HTTPException(404, {
-                "error": out["error"],
-                "hint": "only locally spawned robots keep a log ring buffer",
-                "managed_peers": managed,
-            })
+            raise HTTPException(
+                404,
+                {
+                    "error": out["error"],
+                    "hint": "only locally spawned robots keep a log ring buffer",
+                    "managed_peers": managed,
+                },
+            )
         return out
 
     @app.post("/api/robots/{peer_id}/twin")
@@ -1651,21 +1681,27 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
 
         found = await asyncio.to_thread(
-            calib.candidates, name, device_type=device_type, device_model=device_model,
+            calib.candidates,
+            name,
+            device_type=device_type,
+            device_model=device_model,
         )
         if not found:
-            raise HTTPException(404, {
-                "error": f"no calibration named {name!r}",
-                "hint": "GET /api/calibration lists every calibration on this machine",
-            })
+            raise HTTPException(
+                404,
+                {
+                    "error": f"no calibration named {name!r}",
+                    "hint": "GET /api/calibration lists every calibration on this machine",
+                },
+            )
         if len(found) > 1:
-            raise HTTPException(409, {
-                "error": (
-                    f"{name!r} exists {len(found)} times - say which with "
-                    "?device_type=&device_model="
-                ),
-                "candidates": found,
-            })
+            raise HTTPException(
+                409,
+                {
+                    "error": (f"{name!r} exists {len(found)} times - say which with ?device_type=&device_model="),
+                    "candidates": found,
+                },
+            )
         target = found[0]
         res = await asyncio.to_thread(
             lambda: lerobot_calibrate(
@@ -1701,12 +1737,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         port = str(payload.get("port") or "").strip()
         owner = app.state.devices.port_owner(port)
         if owner:
-            raise HTTPException(409, {
-                "error": f"{port} is held by the running robot {owner!r} — two owners on one "
-                "servo bus is the 'Port is in use!' collision, and the wizard would measure "
-                "a bus that is mid-conversation",
-                "remedy": f"despawn {owner} first (its profile is remembered, respawn after)",
-            })
+            raise HTTPException(
+                409,
+                {
+                    "error": f"{port} is held by the running robot {owner!r} — two owners on one "
+                    "servo bus is the 'Port is in use!' collision, and the wizard would measure "
+                    "a bus that is mid-conversation",
+                    "remedy": f"despawn {owner} first (its profile is remembered, respawn after)",
+                },
+            )
         try:
             run = cr.start(
                 role=str(payload.get("role") or ""),
@@ -1726,8 +1765,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
         run = cr.get(sid)
         if run is None:
-            raise HTTPException(404, f"no calibration session {sid!r} — it may have been "
-                                     "superseded; start a new one from the devices drawer")
+            raise HTTPException(
+                404,
+                f"no calibration session {sid!r} — it may have been "
+                "superseded; start a new one from the devices drawer",
+            )
         return run.status()
 
     @app.post("/api/calibration/run/{sid}/key")
@@ -1821,10 +1863,17 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # camera, and old bundles already render `camera_error` text - so even the tab that caused
             # this can explain itself.
             with contextlib.suppress(Exception):
-                await ws.send_text(json.dumps({
-                    "type": "camera_error", "peer_id": peer_id, "cam": cam,
-                    "error": churn.reason, "throttled": True,
-                }))
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "camera_error",
+                            "peer_id": peer_id,
+                            "cam": cam,
+                            "error": churn.reason,
+                            "throttled": True,
+                        }
+                    )
+                )
         last_sent_at: float | None = None
         gone = asyncio.create_task(_client_gone(ws))
         try:
@@ -1848,10 +1897,17 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                         # One text frame per distinct problem: the tile can then
                         # say "raw frames, cannot decode" instead of going black.
                         reported = f["error"]
-                        await ws.send_text(json.dumps({
-                            "type": "camera_error", "peer_id": peer_id, "cam": cam,
-                            "error": f["error"], "encoding": f.get("encoding"),
-                        }))
+                        await ws.send_text(
+                            json.dumps(
+                                {
+                                    "type": "camera_error",
+                                    "peer_id": peer_id,
+                                    "cam": cam,
+                                    "error": f["error"],
+                                    "encoding": f.get("encoding"),
+                                }
+                            )
+                        )
                 await asyncio.sleep(1 / 15)
         except (WebSocketDisconnect, RuntimeError):
             pass
@@ -1859,9 +1915,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             gone.cancel()
             # Rate-limited per peer/camera, with the suppressed count carried forward, so
             # a storm reads as a storm instead of drowning the log it would explain.
-            log_now, suppressed = getattr(
-                ws.app.state, "camera_close_log", _CAMERA_CLOSE_LOG
-            ).should_log(f"{peer_id}/{cam}")
+            log_now, suppressed = getattr(ws.app.state, "camera_close_log", _CAMERA_CLOSE_LOG).should_log(
+                f"{peer_id}/{cam}"
+            )
             if log_now:
                 verdict = close_verdict(
                     frames_sent=frames_sent,
@@ -1870,12 +1926,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     bytes_sent=bytes_sent,
                 )
                 churn_note = (
-                    "" if not churn.throttled
+                    ""
+                    if not churn.throttled
                     else f" [server churn cap: {churn.opens_in_window} opens/min from this viewer]"
                 )
                 line = close_line(
-                    peer_id=peer_id, cam=cam,
-                    verdict=verdict + cap_note(cap) + churn_note, suppressed=suppressed,
+                    peer_id=peer_id,
+                    cam=cam,
+                    verdict=verdict + cap_note(cap) + churn_note,
+                    suppressed=suppressed,
                 )
                 (logger.info if frames_sent else logger.warning)(line)
 
@@ -1902,10 +1961,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 if turn is None:
                     continue
                 if _turn_lock.locked():
-                    await ws.send_text(json.dumps({
-                        "type": "notice",
-                        "text": "another turn is running - yours is queued and will start when it finishes",
-                    }))
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "type": "notice",
+                                "text": "another turn is running - yours is queued and will start when it finishes",
+                            }
+                        )
+                    )
                 q: _queue.Queue = _queue.Queue()
                 cancel = _threading.Event()
                 if isinstance(turn, dict):
@@ -1958,7 +2021,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             def file_response(self, *args: Any, **kwargs: Any) -> Response:
                 resp = super().file_response(*args, **kwargs)
                 resp.headers.setdefault(
-                    "Cache-Control", static_cache_control(getattr(resp, "path", "") or ""),
+                    "Cache-Control",
+                    static_cache_control(getattr(resp, "path", "") or ""),
                 )
                 return resp
 
@@ -1980,7 +2044,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             candidate = FRONTEND_DIST / path
             if path and candidate.is_file():
                 return FileResponse(
-                    candidate, headers={"Cache-Control": static_cache_control(path)},
+                    candidate,
+                    headers={"Cache-Control": static_cache_control(path)},
                 )
             # An SPA route falls back to the entry point, so it is labelled like one.
             return FileResponse(

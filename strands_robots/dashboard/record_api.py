@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import asyncio
@@ -29,10 +28,17 @@ LEADER_TYPES = {
 }
 
 EMPTY_SESSION: dict[str, Any] = {
-    "dataset": None, "task": "", "leader": None, "follower": None,
-    "target_episodes": 10, "fps": 30, "phase": "idle", "episodes": [],
+    "dataset": None,
+    "task": "",
+    "leader": None,
+    "follower": None,
+    "target_episodes": 10,
+    "fps": 30,
+    "phase": "idle",
+    "episodes": [],
     "error": None,
 }
+
 
 def _target_facts(dataset: str) -> dict[str, Any]:
     """What is on disk where this dataset would be written."""
@@ -48,9 +54,7 @@ def _target_facts(dataset: str) -> dict[str, Any]:
         meta = (d / "meta" / "info.json").exists()
         episodes = None
         if meta:
-            episodes = _as_int(
-                json.loads((d / "meta" / "info.json").read_text()).get("total_episodes")
-            )
+            episodes = _as_int(json.loads((d / "meta" / "info.json").read_text()).get("total_episodes"))
         return {
             "exists": True,
             "has_meta": meta,
@@ -59,6 +63,7 @@ def _target_facts(dataset: str) -> dict[str, Any]:
         }
     except Exception:  # noqa: BLE001 - a blind check must never block a recording
         return {}
+
 
 def _hub_facts(repo_id: str | None) -> dict[str, Any]:
     name = (repo_id or "").strip().strip("/")
@@ -82,6 +87,7 @@ def _hub_facts(repo_id: str | None) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         return {}
 
+
 def _default_recorder_factory(backend: Any) -> Callable[..., Any]:
     def make(*, repo_id: str, fps: int, task: str) -> Any:
         from strands_robots.dataset_recorder import DatasetRecorder
@@ -90,6 +96,7 @@ def _default_recorder_factory(backend: Any) -> Callable[..., Any]:
         return DatasetRecorder.create(repo_id=repo_id, fps=fps, task=task, **extra)
 
     return make
+
 
 class RecordController:
     """One recording session at a time, with fleet peers parked around it."""
@@ -107,12 +114,8 @@ class RecordController:
         # Where the live per-camera frame evidence comes from.
         self._bridge = bridge
         self._backend_factory = backend_factory or hardware_backend
-        self._recorder_factory_factory = (
-            recorder_factory_factory or _default_recorder_factory
-        )
-        self._thumb_root = Path(
-            thumb_root or (Path(tempfile.gettempdir()) / "strands-record-thumbs")
-        )
+        self._recorder_factory_factory = recorder_factory_factory or _default_recorder_factory
+        self._thumb_root = Path(thumb_root or (Path(tempfile.gettempdir()) / "strands-record-thumbs"))
         self._lock = threading.Lock()
         self._worker: RecordWorker | None = None
         self._crumb = record_crash.crumb_path()
@@ -167,9 +170,7 @@ class RecordController:
     def open(self, body: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             if self._worker is not None:
-                raise HTTPException(
-                    409, "a recording session is already open - close it first"
-                )
+                raise HTTPException(409, "a recording session is already open - close it first")
             dataset = str(body.get("dataset", "")).strip()
             task = str(body.get("task", "")).strip()
             leader_id = str(body.get("leader", "")).strip()
@@ -187,8 +188,11 @@ class RecordController:
             _now = time.time()
             for _role, _pid in (("leader", leader_id), ("follower", follower_id)):
                 bad_joints = record_joints.refusal(
-                    role=_role, peer_id=_pid, peer=self._peer_snapshot(_pid),
-                    problem=self._joint_problem(_pid), now=_now,
+                    role=_role,
+                    peer_id=_pid,
+                    peer=self._peer_snapshot(_pid),
+                    problem=self._joint_problem(_pid),
+                    now=_now,
                 )
                 if bad_joints:
                     raise HTTPException(409, bad_joints)
@@ -196,41 +200,26 @@ class RecordController:
             # A dataset is the expensive artifact here: an hour of hand-guiding an arm, discovered to be
             # useless at training time.
             if not body.get("ignore_dead_cameras"):
-                dead = camera_liveness.dead_cameras(
-                    follower.cameras, self._camera_meta(follower_id), now=time.time()
-                )
+                dead = camera_liveness.dead_cameras(follower.cameras, self._camera_meta(follower_id), now=time.time())
                 if dead:
-                    raise HTTPException(
-                        409, camera_liveness.refusal(dead, peer_id=follower_id)
-                    )
+                    raise HTTPException(409, camera_liveness.refusal(dead, peer_id=follower_id))
 
             # The rail above judges frame AGE, so it is blind to a camera that never published at all -
             # which is exactly a camera unplugged before the arm subscribed.
             if not body.get("ignore_missing_cameras"):
-                missing = camera_liveness.missing_cameras(
-                    follower.cameras, self._present_camera_indices()
-                )
+                missing = camera_liveness.missing_cameras(follower.cameras, self._present_camera_indices())
                 if missing:
-                    raise HTTPException(
-                        409, camera_liveness.missing_refusal(missing, peer_id=follower_id)
-                    )
+                    raise HTTPException(409, camera_liveness.missing_refusal(missing, peer_id=follower_id))
 
             # The third shape, and the one both rails above call healthy: an index is a POSITION in a list
             # that closes up when a device is removed, so pulling the camera at index 1 slides index 2
             # into its place.
             if not body.get("ignore_camera_identity"):
-                drift = camera_liveness.identity_drift(
-                    follower.cameras, self._present_camera_roster()
-                )
+                drift = camera_liveness.identity_drift(follower.cameras, self._present_camera_roster())
                 if drift:
-                    raise HTTPException(
-                        409, camera_liveness.drift_refusal(drift, peer_id=follower_id)
-                    )
+                    raise HTTPException(409, camera_liveness.drift_refusal(drift, peer_id=follower_id))
 
-            leader_type = str(
-                body.get("leader_type")
-                or LEADER_TYPES.get(leader.robot_name, "")
-            ).strip()
+            leader_type = str(body.get("leader_type") or LEADER_TYPES.get(leader.robot_name, "")).strip()
             if not leader_type:
                 raise HTTPException(
                     422,
@@ -242,7 +231,8 @@ class RecordController:
             # Park the peers: remember their spawn configs, stop them, and
             # keep the watcher's hands off the freed ports.
             parked = [
-                self._spawn_cfg(leader), self._spawn_cfg(follower),
+                self._spawn_cfg(leader),
+                self._spawn_cfg(follower),
             ]
             watcher = getattr(self._devices, "autospawn", None)
             if watcher is not None:
@@ -274,18 +264,14 @@ class RecordController:
                 lost = self._unpark_locked()
                 if not lost:
                     raise
-                raise HTTPException(
-                    exc.status_code, _with_lost_arms(exc.detail, lost)
-                ) from exc
+                raise HTTPException(exc.status_code, _with_lost_arms(exc.detail, lost)) from exc
             except ValueError as exc:
                 lost = self._unpark_locked()
                 raise HTTPException(422, _with_lost_arms(str(exc), lost)) from exc
             except Exception as exc:
                 # a failed open must leave the fleet exactly as it found it - and admit it when it could not
                 lost = self._unpark_locked()
-                raise HTTPException(
-                    500, _with_lost_arms(f"could not open the arms: {exc}", lost)
-                ) from exc
+                raise HTTPException(500, _with_lost_arms(f"could not open the arms: {exc}", lost)) from exc
             opened = self._worker.session()
             record_crash.write_crumb(opened, path=self._crumb)
             return opened
@@ -362,16 +348,19 @@ class RecordController:
         if m.mode != "real" or not m.port:
             raise HTTPException(
                 422,
-                f"{role} '{peer_id}' is {m.mode} - recording teleop episodes "
-                f"needs a real arm with a serial port",
+                f"{role} '{peer_id}' is {m.mode} - recording teleop episodes needs a real arm with a serial port",
             )
         return m
 
     @staticmethod
     def _spawn_cfg(m: Any) -> dict[str, Any]:
         return {
-            "robot_name": m.robot_name, "mode": m.mode, "peer_id": m.peer_id,
-            "port": m.port, "cameras": m.cameras, "remember": False,
+            "robot_name": m.robot_name,
+            "mode": m.mode,
+            "peer_id": m.peer_id,
+            "port": m.port,
+            "cameras": m.cameras,
+            "remember": False,
         }
 
     # --------------------------------------------------------------- steps
@@ -428,13 +417,15 @@ class RecordController:
                 if res.get("error"):
                     logger.warning(
                         "respawn of %s after record session failed: %s",
-                        cfg.get("peer_id"), res["error"],
+                        cfg.get("peer_id"),
+                        res["error"],
                     )
                     lost.append(f"{peer} ({res['error']})")
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "respawn of %s after record session failed: %r",
-                    cfg.get("peer_id"), exc,
+                    cfg.get("peer_id"),
+                    exc,
                 )
                 lost.append(f"{peer} ({exc})")
         self._parked = []
@@ -442,6 +433,7 @@ class RecordController:
         if watcher is not None:
             watcher.suspended = False
         return lost
+
 
 def _with_lost_arms(detail: Any, lost: Sequence[str]) -> Any:
     """Append the arms that did not come back to whatever the refusal was going to say."""
@@ -457,6 +449,7 @@ def _with_lost_arms(detail: Any, lost: Sequence[str]) -> Any:
         merged["hint"] = f"{detail['hint']} {note}" if isinstance(detail.get("hint"), str) else note
         return merged
     return f"{detail} - {note}" if detail else note
+
 
 def build_router(
     controller: RecordController,
@@ -494,7 +487,8 @@ def build_router(
         # screen taking the robots away from the fleet.
         if on_activity is not None:
             on_activity(
-                "record", "session_open",
+                "record",
+                "session_open",
                 target=str(body.get("dataset") or body.get("repo_id") or "session"),
                 detail=f"task={body.get('task', '')!r}",
                 ok="error" not in result,
@@ -525,7 +519,9 @@ def build_router(
         if on_activity is not None:
             episodes = result.get("episodes_kept", result.get("episodes"))
             on_activity(
-                "record", "session_close", target="session",
+                "record",
+                "session_close",
+                target="session",
                 detail=None if episodes is None else f"{episodes} episodes",
                 ok="error" not in result,
             )

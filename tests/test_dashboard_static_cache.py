@@ -7,6 +7,7 @@ its own cache without asking the server - the structural other half of the eleve
 phone in Seattle was running, and one no amount of service-worker polling can cure, because the poll
 never gets to happen.
 """
+
 from __future__ import annotations
 
 import os
@@ -54,29 +55,40 @@ HASHED = [
 ENTRY = ["index.html", "sw.js", "registerSW.js", "manifest.webmanifest", ""]
 # Named, unhashed assets. apple-touch-icon.png is the trap: allowing a hyphen inside the hash matched
 # it, and a year-long immutable cache on a file whose name never changes cannot be fixed from here.
-UNHASHED = ["apple-touch-icon.png", "maskable-192.png", "icon-192.png", "icon.svg",
-            # The reason the digit rule could not simply be DROPPED: eight lowercase letters that a
-            # person typed. Mixed case and digits are what a hash has and a hand-written name does
-            # not, so this must stay revalidated - its bytes can change under a name that never does.
-            "favicon-original.png", "sw-registration-helper.js",
-            "strands-dashboard.png", "robots.txt",
-            # These two are the mutation-hardening cases. apple-touch-icon.png survives a LOOSER
-            # charset only because of the digit rule, and maskable-192.png survives a dropped digit
-            # rule only because "192" is short - so a name with BOTH a hyphenated tail and a digit is
-            # the case that needs stating outright, or neither guard is really pinned.
-            "apple-touch-icon-192.png", "camera-preview-2x.png",
-            # The cases that pin the Q177 widening: once '-' is allowed INSIDE the hash, a
-            # hyphenated hand-written name is only kept out by the MIXED-CASE demand. All-lowercase
-            # with a digit is what a person writes; upper+lower is what a base64url hash has.
-            "camera-preview-fullscreen.png", "sw-registration-helper-2.js",
-            "robot-arm-preview-192.png",
-            # Q184: the fixtures above shared the widened rule's blind spot — all lowercase, so
-            # "demand mixed case" looked sufficient while any CAPITALISED kebab/TitleCase name at
-            # the dist root got a year-long immutable cache. These are the measured escapees: both
-            # patterns matched all three (TitleCase IS mixed case). A hash tell is a digit or an
-            # internal -/_ in a non-word-shaped tail; a person writes words.
-            "Logo-Wordmark.png", "hero-BannerImage.png", "icon-Placeholder.svg",
-            "My-Logo-Wordmark.png"]
+UNHASHED = [
+    "apple-touch-icon.png",
+    "maskable-192.png",
+    "icon-192.png",
+    "icon.svg",
+    # The reason the digit rule could not simply be DROPPED: eight lowercase letters that a
+    # person typed. Mixed case and digits are what a hash has and a hand-written name does
+    # not, so this must stay revalidated - its bytes can change under a name that never does.
+    "favicon-original.png",
+    "sw-registration-helper.js",
+    "strands-dashboard.png",
+    "robots.txt",
+    # These two are the mutation-hardening cases. apple-touch-icon.png survives a LOOSER
+    # charset only because of the digit rule, and maskable-192.png survives a dropped digit
+    # rule only because "192" is short - so a name with BOTH a hyphenated tail and a digit is
+    # the case that needs stating outright, or neither guard is really pinned.
+    "apple-touch-icon-192.png",
+    "camera-preview-2x.png",
+    # The cases that pin the Q177 widening: once '-' is allowed INSIDE the hash, a
+    # hyphenated hand-written name is only kept out by the MIXED-CASE demand. All-lowercase
+    # with a digit is what a person writes; upper+lower is what a base64url hash has.
+    "camera-preview-fullscreen.png",
+    "sw-registration-helper-2.js",
+    "robot-arm-preview-192.png",
+    # Q184: the fixtures above shared the widened rule's blind spot — all lowercase, so
+    # "demand mixed case" looked sufficient while any CAPITALISED kebab/TitleCase name at
+    # the dist root got a year-long immutable cache. These are the measured escapees: both
+    # patterns matched all three (TitleCase IS mixed case). A hash tell is a digit or an
+    # internal -/_ in a non-word-shaped tail; a person writes words.
+    "Logo-Wordmark.png",
+    "hero-BannerImage.png",
+    "icon-Placeholder.svg",
+    "My-Logo-Wordmark.png",
+]
 
 
 @pytest.mark.parametrize("name", HASHED)

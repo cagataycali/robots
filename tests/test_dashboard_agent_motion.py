@@ -48,8 +48,7 @@ def test_a_sim_task_is_allowed_because_a_reflex_grant_is_a_dead_gate():
     assert v["allowed"] is True
     assert v["physical"] is False
     assert v["gated"] is True  # it WAS considered, and passed
-    for pres in ({"robot_type": "simulation"}, {"robot_type": "mujoco"},
-                 {"sim": True}, {"mode": "sim"}):
+    for pres in ({"robot_type": "simulation"}, {"robot_type": "mujoco"}, {"sim": True}, {"mode": "sim"}):
         assert agent_motion_allowed("task", peer={"presence": pres}, env={})["allowed"] is True, pres
 
 
@@ -65,8 +64,7 @@ def test_the_grant_is_an_env_var_so_it_can_be_seen_and_taken_back():
 
 def test_an_unclassifiable_peer_counts_as_metal():
     """runRisk's rule: a needless prompt costs a click, a missing one costs a collision."""
-    for peer in (None, {}, {"presence": {}}, {"presence": {"robot_type": ""}},
-                 {"presence": {"hw": ""}}, {"state": {}}):
+    for peer in (None, {}, {"presence": {}}, {"presence": {"robot_type": ""}}, {"presence": {"hw": ""}}, {"state": {}}):
         physical, why = peer_is_physical(peer)
         assert physical is True, peer
         assert why

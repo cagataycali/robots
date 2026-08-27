@@ -1,4 +1,5 @@
 """Does another PROCESS already hold this arm's serial bus?"""
+
 from __future__ import annotations
 
 import os
@@ -15,8 +16,9 @@ def sibling_devices(port: str) -> list[str]:
     base = os.path.basename(port)
     for a, b in (("cu.", "tty."), ("tty.", "cu.")):
         if base.startswith(a):
-            out.append(os.path.join(os.path.dirname(port), b + base[len(a):]))
+            out.append(os.path.join(os.path.dirname(port), b + base[len(a) :]))
     return out
+
 
 def bus_holders(port: str, *, _run=None) -> list[int]:
     """Pids with this bus (or its sibling device) open, excluding ourselves. lsof is not on the agent
@@ -37,6 +39,7 @@ def bus_holders(port: str, *, _run=None) -> list[int]:
                 pids.add(int(line))
     pids.discard(os.getpid())
     return sorted(pids)
+
 
 def bus_conflict(port: str, holders: list[int], tracked: dict[int, str]) -> str | None:
     """The refusal text, or None when the bus is ours to take. Pure -- the whole judgement is here."""

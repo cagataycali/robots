@@ -2,6 +2,7 @@
 
 __all__ = ["main"]
 
+
 def main() -> None:
     from strands_robots.dashboard.cli import main as cli_main
 

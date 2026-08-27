@@ -77,14 +77,18 @@ class TestOccupiedPort:
         assert cli._port_in_use(taken_port, "0.0.0.0") is not None
 
     def test_reported_when_the_owner_cannot_be_named(
-        self, taken_port: int, monkeypatch: pytest.MonkeyPatch,
+        self,
+        taken_port: int,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """With every lookup blinded, the port is still refused - generically."""
         monkeypatch.setattr(cli, "_listening_pid", lambda port: None)
         assert cli._port_in_use(taken_port) == "an unidentified process"
 
     def test_names_the_pid_and_command_when_discoverable(
-        self, taken_port: int, monkeypatch: pytest.MonkeyPatch,
+        self,
+        taken_port: int,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A discovered owner reaches the message as ``pid N (command)``."""
         monkeypatch.setattr(cli, "_listening_pid", lambda port: 4242)
@@ -92,7 +96,9 @@ class TestOccupiedPort:
         assert cli._port_in_use(taken_port) == "pid 4242 (python -m strands_robots dashboard)"
 
     def test_pid_alone_when_the_command_is_unreadable(
-        self, taken_port: int, monkeypatch: pytest.MonkeyPatch,
+        self,
+        taken_port: int,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A pid without a command line still names the instance to look at."""
         monkeypatch.setattr(cli, "_listening_pid", lambda port: 4242)
@@ -161,8 +167,7 @@ class TestLeftoverConnectionIsNotAPileup:
             client.close()  # -> accepted transitions to CLOSE_WAIT
             lst.close()  # no listener remains, only the CLOSE_WAIT socket
             assert cli._port_in_use(port, "127.0.0.1") is None, (
-                "a CLOSE_WAIT leftover is not a pileup - uvicorn binds "
-                "past it, so the guard must too"
+                "a CLOSE_WAIT leftover is not a pileup - uvicorn binds past it, so the guard must too"
             )
         finally:
             accepted.close()

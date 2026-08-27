@@ -91,8 +91,6 @@ def test_a_holdout_adds_no_complaint_of_its_own() -> None:
 
 def test_the_coverage_test_would_have_caught_the_missing_field(monkeypatch) -> None:
     """Non-vacuity: with val_episodes taken back out of SPEC_KEYS, coverage must FAIL."""
-    monkeypatch.setattr(
-        training, "SPEC_KEYS", tuple(k for k in training.SPEC_KEYS if k != "val_episodes")
-    )
+    monkeypatch.setattr(training, "SPEC_KEYS", tuple(k for k in training.SPEC_KEYS if k != "val_episodes"))
     with pytest.raises(AssertionError, match="val_episodes"):
         test_every_train_policy_parameter_is_either_sendable_or_explained()

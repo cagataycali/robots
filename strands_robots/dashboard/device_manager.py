@@ -50,11 +50,12 @@ SERVO_VIDS = {0x1A86, 0x0403}
 SERVO_KEYWORDS = ("feetech", "dynamixel", "sts3215", "xl430", "xl330", "usb single serial", "ch340", "ch343")
 EXCLUDE_KEYWORDS = ("bluetooth", "debug", "internal", "apple", "modem-phone")
 
+
 @dataclass
 class ManagedRobot:
     peer_id: str
     robot_name: str
-    mode: str                      # "real" | "sim"
+    mode: str  # "real" | "sim"
     port: str | None = None
     # The lerobot calibration id this child was started with.
     robot_id: str | None = None
@@ -73,9 +74,11 @@ class ManagedRobot:
     def alive(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
+
 # : lerobot's calibration store.
 _CALIBRATION_ROOT = Path.home() / ".cache" / "huggingface" / "lerobot" / "calibration"
 _CALIB_CACHE: dict[str, Any] = {"at": 0.0, "value": {}}
+
 
 def _calibrations_on_disk(ttl: float = 30.0) -> dict[str, list[str]]:
     """``{"robots/so101_follower": ["follower", ...]}`` — the ids that HAVE a calibration file."""
@@ -99,6 +102,7 @@ def _calibrations_on_disk(ttl: float = 30.0) -> dict[str, list[str]]:
     _CALIB_CACHE.update(at=now, value=found)
     return dict(found)
 
+
 def crash_reason(lines: Iterable[str]) -> str | None:
     """The line that explains why a child died, or None if nothing does."""
     cleaned: list[str] = []
@@ -108,9 +112,7 @@ def crash_reason(lines: Iterable[str]) -> str | None:
             continue
         body = _strip_log_prefixes(line)
         low = body.lower()
-        if low.startswith("during handling of the above") or low.startswith(
-            "the above exception was the direct cause"
-        ):
+        if low.startswith("during handling of the above") or low.startswith("the above exception was the direct cause"):
             # A chained block starts here: everything after it is fallout.
             break
         if "cleanup error" in low:
@@ -138,6 +140,7 @@ def crash_reason(lines: Iterable[str]) -> str | None:
         return "the process died with a traceback (see the log)"
     return None
 
+
 def _strip_log_prefixes(line: str) -> str:
     """Drop the drain thread's ``HH:MM:SS`` stamp and any ``LEVEL:logger:``."""
     body = line
@@ -145,10 +148,11 @@ def _strip_log_prefixes(line: str) -> str:
         body = body[9:]
     for level in ("ERROR:", "CRITICAL:", "WARNING:"):
         if body.lstrip().startswith(level):
-            rest = body.lstrip()[len(level):]
+            rest = body.lstrip()[len(level) :]
             body = rest.split(":", 1)[1].strip() if ":" in rest else rest.strip()
             break
     return body
+
 
 def _looks_like_a_fault(text: str) -> bool:
     """True when a line reads like the reason a process stopped."""
@@ -159,6 +163,7 @@ def _looks_like_a_fault(text: str) -> bool:
         return True  # "ValueError: ..." / "ConnectionError: ..."
     low = text.lower()
     return low.startswith(("traceback (most recent", "fatal", "error:", "usage:"))
+
 
 def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
     """Continuously read child stdout so the pipe never fills."""
@@ -177,6 +182,7 @@ def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
             code = proc.poll()
         logs.append(f"[process exited code={code}]")
         logger.info("robot %s child exited (code=%s)", peer_id, code)
+
 
 def scan_serial_ports() -> list[dict[str, Any]]:
     """Enumerate candidate servo-bus serial ports."""
@@ -201,23 +207,28 @@ def scan_serial_ports() -> list[dict[str, Any]]:
             cu = device.replace("/dev/tty.", "/dev/cu.")
             if os.path.exists(cu):
                 device = cu
-        out.append({
-            "device": device,
-            "description": p.description,
-            "vid": f"{p.vid:04x}" if p.vid else None,
-            "pid": f"{p.pid:04x}" if p.pid else None,
-            "serial_number": getattr(p, "serial_number", None),
-            "likely_robot": "so101" if (p.vid == 0x1A86) else None,
-        })
+        out.append(
+            {
+                "device": device,
+                "description": p.description,
+                "vid": f"{p.vid:04x}" if p.vid else None,
+                "pid": f"{p.pid:04x}" if p.pid else None,
+                "serial_number": getattr(p, "serial_number", None),
+                "likely_robot": "so101" if (p.vid == 0x1A86) else None,
+            }
+        )
     return out
+
 
 def scan_cameras(max_index: int = 4, skip: set[int] | None = None) -> list[dict[str, Any]]:
     """Probe OpenCV camera indices. Cheap open/read/release per index."""
     cams, _ = scan_cameras_with_failures(max_index=max_index, skip=skip)
     return cams
 
+
 def scan_cameras_with_failures(
-    max_index: int = 4, skip: set[int] | None = None,
+    max_index: int = 4,
+    skip: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[int, str]]:
     """Like :func:`scan_cameras`, but also says WHY each index failed."""
     try:
@@ -237,16 +248,21 @@ def scan_cameras_with_failures(
                 if ok and frame is not None:
                     h, w = frame.shape[:2]
                     fps = cap.get(cv2.CAP_PROP_FPS) or 0
-                    cams.append({
-                        "index": i, "width": w, "height": h,
-                        "fps": round(fps, 1) if fps and fps > 0 else None,
-                    })
+                    cams.append(
+                        {
+                            "index": i,
+                            "width": w,
+                            "height": h,
+                            "fps": round(fps, 1) if fps and fps > 0 else None,
+                        }
+                    )
                     got = True
         finally:
             cap.release()
         if not got:
             failed.append(i)
     return cams, diagnose_camera_indices(failed)
+
 
 #: Re-probe one index and let OpenCV print its own complaint to stderr.
 _DIAGNOSE_SRC = (
@@ -258,6 +274,7 @@ _DIAGNOSE_SRC = (
     "print('opened' if r else 'failed')"
 )
 
+
 def diagnose_camera_indices(indices: Sequence[int], timeout: float = 12.0) -> dict[int, str]:
     """index -> the stderr OpenCV produced while failing to open it."""
     out: dict[int, str] = {}
@@ -265,7 +282,9 @@ def diagnose_camera_indices(indices: Sequence[int], timeout: float = 12.0) -> di
         try:
             proc = subprocess.run(
                 [sys.executable, "-c", _DIAGNOSE_SRC, str(index)],
-                capture_output=True, text=True, timeout=timeout,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
             out[index] = proc.stderr or ""
         except subprocess.TimeoutExpired:
@@ -276,6 +295,7 @@ def diagnose_camera_indices(indices: Sequence[int], timeout: float = 12.0) -> di
             logger.debug("camera diagnosis for index %s failed: %r", index, e)
             out[index] = ""
     return out
+
 
 #: Read Present_Voltage from each servo id on a Feetech bus. Register 62, one
 #: byte, read-only - this script physically cannot move an arm.
@@ -305,12 +325,18 @@ print(json.dumps(out))
 #: Resolutions worth asking a USB camera about - the ones lerobot configs
 #: actually use. The camera's answer, not this list, is what gets offered.
 CAMERA_MODE_CANDIDATES: tuple[tuple[int, int], ...] = (
-    (320, 240), (640, 480), (800, 600), (1280, 720), (1920, 1080),
+    (320, 240),
+    (640, 480),
+    (800, 600),
+    (1280, 720),
+    (1920, 1080),
 )
 CAMERA_FPS_CANDIDATES: tuple[int, ...] = (15, 30, 60)
 
+
 def modes_from_readbacks(
-    native: Mapping[str, Any], readbacks: Iterable[Mapping[str, Any]],
+    native: Mapping[str, Any],
+    readbacks: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     """Distill set/read-back probes into the modes a camera really has."""
     keep: dict[tuple[int, int, int], dict[str, Any]] = {}
@@ -328,13 +354,16 @@ def modes_from_readbacks(
     for rb in readbacks:
         req, got = rb.get("requested") or {}, rb.get("got") or {}
         try:
-            if (int(got.get("width", -1)) == int(req.get("width", -2))
-                    and int(got.get("height", -1)) == int(req.get("height", -2))
-                    and abs(float(got.get("fps", -99)) - float(req.get("fps", -1))) <= 1.0):
+            if (
+                int(got.get("width", -1)) == int(req.get("width", -2))
+                and int(got.get("height", -1)) == int(req.get("height", -2))
+                and abs(float(got.get("fps", -99)) - float(req.get("fps", -1))) <= 1.0
+            ):
                 _add(req.get("width"), req.get("height"), req.get("fps"))
         except (TypeError, ValueError):
             continue
     return sorted(keep.values(), key=lambda m: (m["width"] * m["height"], m["fps"]))
+
 
 def scan_camera_names() -> list[dict[str, Any]]:
     """Human names of the attached cameras, best effort per platform. macOS: parsed from ffmpeg's
@@ -354,7 +383,9 @@ def scan_camera_names() -> list[dict[str, Any]]:
         try:
             out = subprocess.run(
                 [ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             ).stderr
         except Exception as e:  # noqa: BLE001 - enumeration is decoration, never fatal
             logger.debug("camera name scan failed: %r", e)
@@ -382,7 +413,8 @@ def scan_camera_names() -> list[dict[str, Any]]:
                 continue
     return names
 
-_SPAWNER = r'''
+
+_SPAWNER = r"""
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
 os.environ.setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")
@@ -434,9 +466,9 @@ else:
     while True:
         sim.step(5)
         time.sleep(0.2)
-'''
+"""
 
-_COLLECT_SPAWNER = r'''
+_COLLECT_SPAWNER = r"""
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
 os.environ.setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")
@@ -486,9 +518,9 @@ for block in res.get("content", []):
         print(f"collect: {status}: {block['text'][:300]}", flush=True)
 time.sleep(3)
 os._exit(0)
-'''
+"""
 
-_REPLAY_SPAWNER = r'''
+_REPLAY_SPAWNER = r"""
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
 os.environ.setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")
@@ -521,7 +553,8 @@ for block in res.get("content", []):
 # keep this one-shot process alive forever after the script body returns.
 time.sleep(3)
 os._exit(0)
-'''
+"""
+
 
 def profile_key(port: dict[str, Any]) -> str:
     """Stable identity for a detected serial board. The USB serial number survives replug and port
@@ -531,6 +564,7 @@ def profile_key(port: dict[str, Any]) -> str:
     if serial:
         return str(serial)
     return str(port.get("device") or "")
+
 
 def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
     if not profile:
@@ -554,6 +588,7 @@ def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
     if profile.get("robot_id"):
         out["robot_id"] = str(profile["robot_id"])
     return out
+
 
 def remembered_camera_health(
     cameras: Mapping[str, Any] | None,
@@ -609,20 +644,25 @@ def remembered_camera_health(
         ),
     }
 
+
 def respawn_payload(profile: Mapping[str, Any] | None, port: str) -> dict[str, Any]:
     if not profile:
-        return {"error": (
-            "no saved profile for this board, so there is nothing to bring back - spawn it once "
-            "with the form above and it will be remembered by its USB serial"
-        )}
+        return {
+            "error": (
+                "no saved profile for this board, so there is nothing to bring back - spawn it once "
+                "with the form above and it will be remembered by its USB serial"
+            )
+        }
     peer_id = str(profile.get("peer_id") or profile.get("name") or "").strip()
     robot_name = str(profile.get("robot_name") or "").strip()
     if not peer_id or not robot_name:
-        return {"error": (
-            "the saved profile for this board is incomplete (no "
-            + ("peer name" if not peer_id else "robot family")
-            + "), so it cannot be spawned as it stands - use the form above"
-        )}
+        return {
+            "error": (
+                "the saved profile for this board is incomplete (no "
+                + ("peer name" if not peer_id else "robot family")
+                + "), so it cannot be spawned as it stands - use the form above"
+            )
+        }
     payload: dict[str, Any] = {
         "robot_name": robot_name,
         "mode": str(profile.get("mode") or "real"),
@@ -635,6 +675,7 @@ def respawn_payload(profile: Mapping[str, Any] | None, port: str) -> dict[str, A
     if saved_port and saved_port != port:
         payload["port_moved"] = {"was": saved_port, "now": port}
     return payload
+
 
 class ProfileStore:
     """USB device profiles on disk: serial number -> saved spawn payload."""
@@ -677,13 +718,15 @@ class ProfileStore:
             return None
         with self._lock:
             entry = dict(self._data.get(key) or {})
-            entry.update({
-                "serial_number": key,
-                "role": role,
-                "role_volts": verdict.get("volts"),
-                "role_source": "measured",
-                "role_measured_at": time.time(),
-            })
+            entry.update(
+                {
+                    "serial_number": key,
+                    "role": role,
+                    "role_volts": verdict.get("volts"),
+                    "role_source": "measured",
+                    "role_measured_at": time.time(),
+                }
+            )
             entry.setdefault("name", key)
             self._data[key] = entry
             snapshot = {k: dict(v) for k, v in self._data.items()}
@@ -732,6 +775,7 @@ class ProfileStore:
             # profile will not survive a restart.
             logger.warning("could not persist device profile %s to %s: %r", key, self.path, e)
 
+
 def autospawn_veto(env: Mapping[str, str]) -> str | None:
     """Why USB auto-spawn must NOT bring boards up in this process, or None when it may."""
     raw = str(env.get("STRANDS_DASHBOARD_AUTOSPAWN", "")).strip().lower()
@@ -750,6 +794,7 @@ def autospawn_veto(env: Mapping[str, str]) -> str | None:
     if str(env.get("STRANDS_MESH", "")).strip().lower() in ("0", "false", "no", "off"):
         return "STRANDS_MESH is off (the hard kill switch): a robot child must not be started"
     return None
+
 
 class AutoSpawnWatcher:
     """Brings known USB boards up (and unplugged ones down) on its own."""
@@ -874,11 +919,13 @@ class AutoSpawnWatcher:
         """Ask :meth:`run_forever` to return after the current sleep."""
         self._stop.set()
 
+
 # : The only modes the dashboard can spawn.
 SPAWNABLE_MODES = ("sim", "real")
 
 # : What a caller-chosen peer_id may look like.
 _PEER_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+
 
 def validate_peer_id(peer_id: Any) -> str | None:
     """Refusal reason for a caller-supplied peer_id, or None if acceptable. Only judges ids a CALLER
@@ -896,6 +943,7 @@ def validate_peer_id(peer_id: Any) -> str | None:
         )
     return None
 
+
 def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, str]:
     """Normalise and check what a spawn was asked for, BEFORE any process exists. Returns
     ``(robot_name, mode)`` or an ``{"error": ...}`` dict.
@@ -906,7 +954,8 @@ def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, st
         extra = (
             " 'auto' is an SDK-side detection that resolves inside the child, so"
             " the dashboard cannot label the card honestly - say which you mean."
-            if mode_s == "auto" else ""
+            if mode_s == "auto"
+            else ""
         )
         return {"error": f"mode must be one of {', '.join(SPAWNABLE_MODES)} (got {shown!r}).{extra}"}
 
@@ -926,9 +975,8 @@ def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, st
         return (name_s, mode_s)
     return (canonical, mode_s)
 
-def validate_replay(
-    repo_id: Any, episode: Any, root: Any = None, speed: Any = 1.0
-) -> dict[str, str] | None:
+
+def validate_replay(repo_id: Any, episode: Any, root: Any = None, speed: Any = 1.0) -> dict[str, str] | None:
     """Refusal reason for a replay request, or None - judged BEFORE any process."""
     # The episode domain is the SHARED rule, not a second copy of it.
     episode_error = non_negative_whole_number_error(episode, "episode", "replay")
@@ -952,12 +1000,22 @@ def validate_replay(
             return {"error": f"root {root!r} does not exist on this machine - a replay from it can only fail"}
     return None
 
+
 # : The camera options lerobot's OpenCVCameraConfig declares, as a fallback for when lerobot
 # cannot be : imported (the dashboard must validate a config on a machine with no robot stack
 # installed).
 _CAMERA_OPTION_FIELDS = (
-    "backend", "color_mode", "fourcc", "fps", "height", "index_or_path", "rotation", "warmup_s", "width",
+    "backend",
+    "color_mode",
+    "fourcc",
+    "fps",
+    "height",
+    "index_or_path",
+    "rotation",
+    "warmup_s",
+    "width",
 )
+
 
 def _camera_option_names() -> tuple[str, ...]:
     try:
@@ -968,6 +1026,7 @@ def _camera_option_names() -> tuple[str, ...]:
         return _CAMERA_OPTION_FIELDS
     return tuple(sorted(f.name for f in dataclasses.fields(OpenCVCameraConfig)))
 
+
 # : The ENUMERATED camera option values lerobot publishes, as a fallback for when lerobot
 # cannot be : imported (same contract as _CAMERA_OPTION_FIELDS above, and a test asserts it
 # matches the real : enums wherever lerobot IS importable).
@@ -975,6 +1034,7 @@ _CAMERA_ENUM_VALUES: dict[str, tuple[str, ...]] = {
     "color_mode": ("bgr", "rgb"),
     "rotation": ("-90", "0", "90", "180"),
 }
+
 
 def _camera_option_values() -> dict[str, tuple[str, ...]]:
     """The admitted spellings per enumerated camera option, read from lerobot's own enums."""
@@ -986,6 +1046,7 @@ def _camera_option_values() -> dict[str, tuple[str, ...]]:
         "color_mode": tuple(sorted(str(m.value) for m in ColorMode)),
         "rotation": tuple(str(r.value) for r in Cv2Rotation),
     }
+
 
 def camera_option_value_problem(
     option: str, value: Any, admitted: dict[str, tuple[str, ...]] | None = None
@@ -1014,11 +1075,13 @@ def camera_option_value_problem(
         f"lerobot refuses the spelling itself, so the child would die at connect"
     )
 
+
 def requested_camera_names(cameras: Any) -> list[str]:
     """The camera names a spawn ASKED for, sorted, or [] if it asked for none."""
     if not isinstance(cameras, dict):
         return []
     return sorted(str(name) for name in cameras if name)
+
 
 def indices_beyond_roster(cameras: Any, roster_size: int) -> dict[str, int]:
     """Requested camera indices this machine cannot possibly have, as {name: index}."""
@@ -1032,6 +1095,7 @@ def indices_beyond_roster(cameras: Any, roster_size: int) -> dict[str, int]:
         if idx >= roster_size or idx < 0:
             out[str(name)] = idx
     return out
+
 
 def validate_cameras(cameras: Any) -> dict[str, str] | None:
     """Refusal reason for a spawn/reconfigure camera config, or None."""
@@ -1076,8 +1140,7 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
                 }
         accepted = _camera_option_names()
         unknown = sorted(
-            k for k in cfg
-            if k not in accepted and k != "type" and k not in camera_liveness.ANNOTATION_KEYS
+            k for k in cfg if k not in accepted and k != "type" and k not in camera_liveness.ANNOTATION_KEYS
         )
         if unknown:
             hints = []
@@ -1100,6 +1163,7 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
             if problem:
                 return {"error": f"camera {name!r}: {problem}"}
     return None
+
 
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
@@ -1256,7 +1320,9 @@ class DeviceManager:
             if not mem:
                 continue
             health = remembered_camera_health(
-                (profile or {}).get("cameras"), cams, str(mem.get("peer_id") or ""),
+                (profile or {}).get("cameras"),
+                cams,
+                str(mem.get("peer_id") or ""),
             )
             if health:
                 mem["camera_health"] = health
@@ -1280,8 +1346,12 @@ class DeviceManager:
             # The keys here are PEER IDS, not pids.
             "managed": {
                 peer_id: {
-                    "peer_id": m.peer_id, "robot_name": m.robot_name, "mode": m.mode,
-                    "port": m.port, "alive": m.alive(), "started_at": m.started_at,
+                    "peer_id": m.peer_id,
+                    "robot_name": m.robot_name,
+                    "mode": m.mode,
+                    "port": m.port,
+                    "alive": m.alive(),
+                    "started_at": m.started_at,
                     # None only when the child was never started; a pid for a dead
                     # process is still useful (it is what the logs refer to), so it
                     # is reported alongside alive=False rather than blanked.
@@ -1321,8 +1391,10 @@ class DeviceManager:
                 out.setdefault(peer_id, {})["cameras_requested"] = names
             lines = list(m.logs)
             problem = joint_silence.classify(
-                lines, _calibrations_on_disk(),
-                robot_name=m.robot_name, robot_id=m.robot_id,
+                lines,
+                _calibrations_on_disk(),
+                robot_name=m.robot_name,
+                robot_id=m.robot_id,
             )
             if problem:
                 m.joint_problem_seen = problem
@@ -1348,11 +1420,7 @@ class DeviceManager:
     def _role_fields(profile: Mapping[str, Any] | None) -> dict[str, Any]:
         if not profile:
             return {}
-        return {
-            f: profile[f]
-            for f in ("role", "role_volts", "role_source")
-            if profile.get(f) is not None
-        }
+        return {f: profile[f] for f in ("role", "role_volts", "role_source") if profile.get(f) is not None}
 
     #: A roster older than this is not evidence of anything. Same number and same reason as the
     #: record gate's ROSTER_MAX_AGE_S: this morning's scan can easily omit a camera plugged in since.
@@ -1402,8 +1470,7 @@ class DeviceManager:
         streaming = self._streaming_indices(live_cameras)
         if index in claimed and (streaming is None or index in streaming):
             raise PermissionError(
-                f"camera index {index} is streaming for {claimed[index]} - "
-                f"watch it on that robot's card instead"
+                f"camera index {index} is streaming for {claimed[index]} - watch it on that robot's card instead"
             )
         import cv2
 
@@ -1460,14 +1527,16 @@ class DeviceManager:
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
                     for fps in CAMERA_FPS_CANDIDATES:
                         cap.set(cv2.CAP_PROP_FPS, fps)
-                        readbacks.append({
-                            "requested": {"width": w, "height": h, "fps": fps},
-                            "got": {
-                                "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                                "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                                "fps": float(cap.get(cv2.CAP_PROP_FPS)),
-                            },
-                        })
+                        readbacks.append(
+                            {
+                                "requested": {"width": w, "height": h, "fps": fps},
+                                "got": {
+                                    "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                                    "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                                    "fps": float(cap.get(cv2.CAP_PROP_FPS)),
+                                },
+                            }
+                        )
             finally:
                 cap.release()
         return {"index": index, "native": native, "modes": modes_from_readbacks(native, readbacks)}
@@ -1508,7 +1577,9 @@ class DeviceManager:
         try:
             proc = subprocess.run(
                 [sys.executable, "-c", code, port, motor_model, ",".join(str(i) for i in ids)],
-                capture_output=True, text=True, timeout=timeout,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired:
             return {
@@ -1629,9 +1700,7 @@ class DeviceManager:
                 return {"error": f"peer {peer_id} already running"}
             if mode == "real" and port:
                 tracked = {
-                    r.process.pid: pid_key
-                    for pid_key, r in self.robots.items()
-                    if r.process is not None and r.alive()
+                    r.process.pid: pid_key for pid_key, r in self.robots.items() if r.process is not None and r.alive()
                 }
                 conflict = bus_claim.bus_conflict(port, bus_claim.bus_holders(port), tracked)
                 if conflict:
@@ -1639,24 +1708,44 @@ class DeviceManager:
             # Stamp each numeric camera index with the device that answers it RIGHT NOW, while the
             # operator's choice and the machine's numbering are still known to agree.
             cameras = camera_liveness.stamp_device_names(cameras, self._roster_for_stamp())
-            cfg = {"robot_name": robot_name, "mode": mode, "peer_id": peer_id, "port": port, "cameras": cameras, "robot_id": robot_id}
+            cfg = {
+                "robot_name": robot_name,
+                "mode": mode,
+                "peer_id": peer_id,
+                "port": port,
+                "cameras": cameras,
+                "robot_id": robot_id,
+            }
             proc = subprocess.Popen(
                 # The child gets the camera config with the dashboard's own notes REMOVED:
                 # _build_camera_config refuses any key OpenCVCameraConfig does not declare, so a forwarded
                 # device_name would not degrade one camera, it would kill every camera on the arm.
-                [sys.executable, "-c", _SPAWNER,
-                 _json.dumps({**cfg, "cameras": camera_liveness.without_annotations(cameras)})],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                [
+                    sys.executable,
+                    "-c",
+                    _SPAWNER,
+                    _json.dumps({**cfg, "cameras": camera_liveness.without_annotations(cameras)}),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
             )
             managed = ManagedRobot(
-                peer_id=peer_id, robot_name=robot_name, mode=mode, port=port,
-                robot_id=robot_id, cameras=cameras or {}, process=proc, started_at=time.time(),
+                peer_id=peer_id,
+                robot_name=robot_name,
+                mode=mode,
+                port=port,
+                robot_id=robot_id,
+                cameras=cameras or {},
+                process=proc,
+                started_at=time.time(),
             )
             self.robots[peer_id] = managed
             # Drain stdout forever - daemon thread, ring buffer.
             threading.Thread(
-                target=_drain, args=(proc, managed.logs, peer_id),
-                name=f"drain-{peer_id}", daemon=True,
+                target=_drain,
+                args=(proc, managed.logs, peer_id),
+                name=f"drain-{peer_id}",
+                daemon=True,
             ).start()
         logger.info("spawned %s (%s, pid=%s)", peer_id, mode, proc.pid)
         if remember and mode == "real" and port:
@@ -1719,8 +1808,7 @@ class DeviceManager:
                 # can act on beats "exit code 1", and they should not have to
                 # go find a second endpoint while the card is still on screen.
                 out["reason"] = reason or (
-                    f"the process exited with code {code}" if code is not None
-                    else "the process is gone"
+                    f"the process exited with code {code}" if code is not None else "the process is gone"
                 )
                 out["log_tail"] = list(managed.logs)[-12:]
                 return out
@@ -1751,8 +1839,8 @@ class DeviceManager:
         if info is None:
             # The port is not in the scan at all, so there is no board to remember.
             logger.warning(
-                "not saving a profile for %s: it is not in the serial scan, so there is "
-                "no board to key it to", port,
+                "not saving a profile for %s: it is not in the serial scan, so there is no board to key it to",
+                port,
             )
             return None
         key = profile_key(info)
@@ -1808,22 +1896,32 @@ class DeviceManager:
                 }
             peer_id = self._unique_peer_id(f"replay-{int(time.time()) % 100000}")
             cfg = {
-                "peer_id": peer_id, "repo_id": repo_id, "episode": episode,
-                "root": root, "speed": speed, "robot_name": robot_name,
+                "peer_id": peer_id,
+                "repo_id": repo_id,
+                "episode": episode,
+                "root": root,
+                "speed": speed,
+                "robot_name": robot_name,
             }
             proc = subprocess.Popen(
                 [sys.executable, "-c", _REPLAY_SPAWNER, _json.dumps(cfg)],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
             )
             managed = ManagedRobot(
-                peer_id=peer_id, robot_name=robot_name, mode="replay",
-                process=proc, started_at=time.time(),
+                peer_id=peer_id,
+                robot_name=robot_name,
+                mode="replay",
+                process=proc,
+                started_at=time.time(),
                 job={"repo_id": repo_id, "episode": episode},
             )
             self.robots[peer_id] = managed
             threading.Thread(
-                target=_drain, args=(proc, managed.logs, peer_id),
-                name=f"drain-{peer_id}", daemon=True,
+                target=_drain,
+                args=(proc, managed.logs, peer_id),
+                name=f"drain-{peer_id}",
+                daemon=True,
             ).start()
         logger.info("replay %s ep%d as %s (pid=%s)", repo_id, episode, peer_id, proc.pid)
         return {"peer_id": peer_id, "pid": proc.pid, "repo_id": repo_id, "episode": episode}
@@ -1863,26 +1961,37 @@ class DeviceManager:
             # let two concurrent recorders both pass the check and both mint the same id -- the bug this
             # method is fixing.
             self.robots[peer_id] = ManagedRobot(
-                peer_id=peer_id, robot_name=robot_name, mode="collect",
-                started_at=time.time(), job={"dataset_root": dataset_root},
+                peer_id=peer_id,
+                robot_name=robot_name,
+                mode="collect",
+                started_at=time.time(),
+                job={"dataset_root": dataset_root},
             )
         cfg = {
-            "peer_id": peer_id, "robot_name": robot_name,
-            "policy_provider": policy_provider, "policy_config": policy_config,
-            "instruction": instruction, "n_episodes": n_episodes,
-            "duration": duration, "dataset_root": dataset_root,
-            "dataset_repo_id": dataset_repo_id, "fps": fps,
+            "peer_id": peer_id,
+            "robot_name": robot_name,
+            "policy_provider": policy_provider,
+            "policy_config": policy_config,
+            "instruction": instruction,
+            "n_episodes": n_episodes,
+            "duration": duration,
+            "dataset_root": dataset_root,
+            "dataset_repo_id": dataset_repo_id,
+            "fps": fps,
         }
         with self._lock:
             proc = subprocess.Popen(
                 [sys.executable, "-c", _COLLECT_SPAWNER, _json.dumps(cfg)],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
             )
             managed = self.robots[peer_id]  # the reservation made above
             managed.process = proc
             threading.Thread(
-                target=_drain, args=(proc, managed.logs, peer_id),
-                name=f"drain-{peer_id}", daemon=True,
+                target=_drain,
+                args=(proc, managed.logs, peer_id),
+                name=f"drain-{peer_id}",
+                daemon=True,
             ).start()
         logger.info("collect %d eps -> %s as %s (pid=%s)", n_episodes, dataset_root, peer_id, proc.pid)
         return {"peer_id": peer_id, "pid": proc.pid, "dataset_root": dataset_root, "n_episodes": n_episodes}
@@ -1945,8 +2054,13 @@ class DeviceManager:
         if "error" in stopped:
             return stopped
         result = self.spawn(
-            robot_name, mode, peer_id=peer_id, port=port, cameras=cameras,
-            robot_id=robot_id, remember=True,
+            robot_name,
+            mode,
+            peer_id=peer_id,
+            port=port,
+            cameras=cameras,
+            robot_id=robot_id,
+            remember=True,
         )
         result["reconfigured"] = "error" not in result
         return result

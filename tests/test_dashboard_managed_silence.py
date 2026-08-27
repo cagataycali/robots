@@ -4,6 +4,7 @@ silent_arms says "present but mute". This says "ours, alive, and absent" - the
 state that renders as nothing at all, which is why it went unnoticed on the real
 rig for a day.
 """
+
 from strands_robots.dashboard.mesh_bridge import managed_without_presence
 
 
@@ -32,16 +33,12 @@ def test_a_half_formed_child_id_is_still_reported():
 
 
 def test_a_freshly_spawned_child_is_not_yet_a_fault():
-    got = managed_without_presence(
-        {}, ["sim-a"], spawn_times={"sim-a": 100.0}, now=105.0, grace_s=20.0
-    )
+    got = managed_without_presence({}, ["sim-a"], spawn_times={"sim-a": 100.0}, now=105.0, grace_s=20.0)
     assert got == []
 
 
 def test_the_same_child_after_the_grace_window_is_a_fault():
-    got = managed_without_presence(
-        {}, ["sim-a"], spawn_times={"sim-a": 100.0}, now=140.0, grace_s=20.0
-    )
+    got = managed_without_presence({}, ["sim-a"], spawn_times={"sim-a": 100.0}, now=140.0, grace_s=20.0)
     assert got == ["sim-a"]
 
 

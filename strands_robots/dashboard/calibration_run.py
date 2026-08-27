@@ -294,8 +294,7 @@ def start(*, role: str, model: str, device_id: str, port: str, argv: list[str] |
     for r in runs.values():
         if r.port == port and r.alive():
             raise RuntimeError(
-                f"a calibration wizard is already running on {port} (session {r.id}) — "
-                "finish or cancel it first"
+                f"a calibration wizard is already running on {port} (session {r.id}) — finish or cancel it first"
             )
     run = CalibrationRun(role=role, model=model, device_id=device_id, port=port, argv=argv)
     runs[run.id] = run

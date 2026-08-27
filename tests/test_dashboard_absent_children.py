@@ -6,12 +6,20 @@ manager still held its exit status the whole time.
 
 These tests pin the four refusals that stop the memorial becoming a ghost peer.
 """
+
 from strands_robots.dashboard.mesh_bridge import absent_children
 
 
 def _child(peer_id, alive=False, returncode=-9, **extra):
-    return {"peer_id": peer_id, "robot_name": "so101", "mode": "sim",
-            "alive": alive, "returncode": returncode, "started_at": 1787000000, **extra}
+    return {
+        "peer_id": peer_id,
+        "robot_name": "so101",
+        "mode": "sim",
+        "alive": alive,
+        "returncode": returncode,
+        "started_at": 1787000000,
+        **extra,
+    }
 
 
 def test_the_defect_a_killed_and_pruned_child_is_reported():
@@ -59,6 +67,7 @@ def test_no_children_no_claim():
 # First attempt put absent_children in the /api/fleet route only, which is a rail
 # nothing renders from - the same mistake the peer_annotations comment already
 # recorded. These tests pin the fix so it cannot drift back.
+
 
 def _bridge():
     from strands_robots.dashboard.mesh_bridge import MeshBridge

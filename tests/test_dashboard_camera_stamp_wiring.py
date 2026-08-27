@@ -55,31 +55,43 @@ class FakeProc:
 def _manager(tmp_path, monkeypatch, *, roster=_ROSTER, roster_age=0.0):
     FakeProc.payloads = []
     monkeypatch.setattr(dm.subprocess, "Popen", FakeProc)
-    monkeypatch.setattr(dm.threading, "Thread", lambda *a, **kw: type(
-        "T", (), {"start": lambda self: None}
-    )())
+    monkeypatch.setattr(dm.threading, "Thread", lambda *a, **kw: type("T", (), {"start": lambda self: None})())
     mgr = DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
     mgr._camera_names_cache = list(roster or [])
     mgr._camera_names_cache_t = dm.time.time() - roster_age if roster else 0.0
     # A scan from inside spawn would be the bug, not the fixture: make it loud.
-    monkeypatch.setattr(dm, "scan_camera_names", lambda *a, **kw: (_ for _ in ()).throw(
-        AssertionError("spawn must never trigger a camera scan")
-    ))
     monkeypatch.setattr(
-        dm, "scan_serial_ports",
+        dm,
+        "scan_camera_names",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("spawn must never trigger a camera scan")),
+    )
+    monkeypatch.setattr(
+        dm,
+        "scan_serial_ports",
         lambda *a, **kw: [{"device": "/dev/tty.fake", "serial_number": "5AB0181806"}],
     )
-    monkeypatch.setattr(dm, "bus_claim", type("B", (), {
-        "bus_holders": staticmethod(lambda port: []),
-        "bus_conflict": staticmethod(lambda *a, **kw: None),
-    })())
+    monkeypatch.setattr(
+        dm,
+        "bus_claim",
+        type(
+            "B",
+            (),
+            {
+                "bus_holders": staticmethod(lambda port: []),
+                "bus_conflict": staticmethod(lambda *a, **kw: None),
+            },
+        )(),
+    )
     return mgr
 
 
 def _spawn(mgr, cameras):
     return mgr.spawn(
-        robot_name="so101", mode="real", port="/dev/tty.fake",
-        peer_id="stamp-test", cameras=cameras,
+        robot_name="so101",
+        mode="real",
+        port="/dev/tty.fake",
+        peer_id="stamp-test",
+        cameras=cameras,
     )
 
 
@@ -105,9 +117,7 @@ def test_a_stamped_profile_can_spawn_again(tmp_path, monkeypatch):
     mgr = _manager(tmp_path, monkeypatch)
     _spawn(mgr, {"top": {"index_or_path": 2}})
     saved = json.loads(pathlib.Path(mgr.profiles.path).read_text())
-    remembered = next(
-        p for p in saved.values() if (p or {}).get("peer_id") == "stamp-test"
-    )["cameras"]
+    remembered = next(p for p in saved.values() if (p or {}).get("peer_id") == "stamp-test")["cameras"]
     assert validate_cameras(remembered) is None, "the note must not read as an unknown option"
     mgr.despawn("stamp-test")
     again = _spawn(mgr, remembered)

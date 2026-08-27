@@ -11,6 +11,7 @@ from dataclasses import dataclass
 def _mb(n: int) -> float:
     return n / (1024 * 1024)
 
+
 def close_verdict(
     *,
     frames_sent: int,
@@ -36,10 +37,12 @@ def close_verdict(
         )
     return f"sent nothing in {lifetime_s:.0f}s although the camera is publishing - frames are not reaching this socket"
 
+
 @dataclass
 class _Seen:
     last_logged_at: float
     suppressed: int = 0
+
 
 class CloseLogThrottle:
     """Log the first close for a key, then at most one per ``window_s``."""
@@ -71,13 +74,16 @@ class CloseLogThrottle:
             entry.suppressed += 1
             return False, entry.suppressed
 
+
 def close_line(*, peer_id: str, cam: str, verdict: str, suppressed: int) -> str:
     """The log line itself, with the storm count when there is one."""
     tail = f" [+{suppressed} more closes suppressed in the last minute]" if suppressed else ""
     return f"camera socket {peer_id}/{cam} closed: {verdict}{tail}"
 
+
 MAX_CAP_FPS = 30.0
 MIN_CAP_FPS = 0.1
+
 
 def fps_cap(raw: str | None) -> float | None:
     """Parse a viewer's requested frame rate. ``None`` means "as fast as frames arrive"."""
@@ -90,6 +96,7 @@ def fps_cap(raw: str | None) -> float | None:
     if v != v or v <= 0:  # NaN or nonsense
         return None
     return max(MIN_CAP_FPS, min(MAX_CAP_FPS, v))
+
 
 def cap_note(cap: float | None) -> str:
     """What the close verdict says about the rate this socket agreed to."""

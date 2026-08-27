@@ -34,6 +34,7 @@ from webauthn.helpers.structs import (
 
 _ENV = "STRANDS_DASH_AUTH_"
 
+
 def auth_enabled() -> bool:
     """Whether passkey auth guards the API. The STORE is the source of truth: the moment a passkey is
     enrolled, auth is ON.
@@ -43,12 +44,15 @@ def auth_enabled() -> bool:
         return raw in ("1", "true", "yes", "on")
     return has_credentials()
 
+
 def _store_path() -> Path:
     default = Path.home() / ".strands_dashboard" / "auth.json"
     return Path(os.getenv(_ENV + "STORE", str(default))).expanduser().resolve()
 
+
 def _rp_name() -> str:
     return os.getenv(_ENV + "RP_NAME", "strands robots dashboard")
+
 
 def _token_ttl() -> int:
     try:
@@ -56,20 +60,25 @@ def _token_ttl() -> int:
     except ValueError:
         return 86400
 
+
 def _bootstrap_token() -> str:
     return os.getenv(_ENV + "BOOTSTRAP_TOKEN", "").strip()
+
 
 def _forced_rp_id() -> str:
     return os.getenv(_ENV + "RP_ID", "").strip()
 
+
 def _forced_origin() -> str:
     return os.getenv(_ENV + "ORIGIN", "").strip()
+
 
 # --- store: one JSON file, thread-safe, hot-reloaded on mtime change -------
 
 _lock = threading.Lock()
 _cache: dict[str, Any] = {}
 _cache_key: tuple | None = None
+
 
 def _default_store() -> dict[str, Any]:
     return {
@@ -78,12 +87,15 @@ def _default_store() -> dict[str, Any]:
         "created": time.time(),
     }
 
+
 # Set when a store on disk could not be parsed: the backup path plus why.
 _corrupt: dict[str, str] | None = None
+
 
 def store_corruption() -> dict[str, str] | None:
     """The unreadable store this process rescued, if any: {'backup': path, 'reason': str}."""
     return dict(_corrupt) if _corrupt else None
+
 
 def _preserve_corrupt(path: Path, exc: Exception) -> None:
     """Move an unparseable store aside instead of clobbering it, and remember that we did."""
@@ -98,8 +110,11 @@ def _preserve_corrupt(path: Path, exc: Exception) -> None:
     logging.getLogger(__name__).warning(
         "dashboard auth store at %s is unreadable (%s); kept as %s. Enrollment is limited to "
         "this machine until a passkey exists again.",
-        path, _corrupt["reason"], where or "<could not move it>",
+        path,
+        _corrupt["reason"],
+        where or "<could not move it>",
     )
+
 
 def _load() -> dict[str, Any]:
     """Read the store, re-reading the file whenever it changes on disk."""
@@ -124,6 +139,7 @@ def _load() -> dict[str, Any]:
         _save_locked(store)
         return store
 
+
 def _save_locked(store: dict[str, Any]) -> None:
     global _cache, _cache_key
     path = _store_path()
@@ -140,21 +156,26 @@ def _save_locked(store: dict[str, Any]) -> None:
     except OSError:
         _cache_key = None
 
+
 def _save(store: dict[str, Any]) -> None:
     with _lock:
         _save_locked(store)
 
+
 def _jwt_secret() -> str:
     return _load()["jwt_secret"]
 
+
 def has_credentials() -> bool:
     return len(_load().get("credentials", [])) > 0
+
 
 def list_credentials() -> list[dict[str, Any]]:
     return [
         {"id": c["id"], "name": c.get("name", "passkey"), "created": c.get("created")}
         for c in _load().get("credentials", [])
     ]
+
 
 def delete_credential(cred_id: str) -> dict[str, Any]:
     """Revoke a passkey. Refuses to remove the LAST one (would re-open the
@@ -169,10 +190,13 @@ def delete_credential(cred_id: str) -> dict[str, Any]:
     _save(store)
     return {"ok": True, "removed": cred_id, "remaining": len(store["credentials"])}
 
+
 # --- relying-party id / origin derivation -----------------------------------
+
 
 def _host_only(host: str) -> str:
     return host.split(":")[0]
+
 
 def _is_ip(host: str) -> bool:
     try:
@@ -180,6 +204,7 @@ def _is_ip(host: str) -> bool:
         return True
     except ValueError:
         return False
+
 
 def rpid_is_usable(host_only: str) -> bool:
     """WebAuthn rpId must be a registrable domain or 'localhost'; a raw IP is
@@ -190,17 +215,21 @@ def rpid_is_usable(host_only: str) -> bool:
         return False
     return True
 
+
 def _headers(request_or_ws: Any) -> Any:
     return request_or_ws.headers
+
 
 #: Hostnames that are always acceptable as a relying-party id: a browser on this
 #: machine is the operator, and local dev must never depend on remote config.
 _LOOPBACK_RP_IDS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+
 def known_rp_ids(store: dict | None = None) -> set:
     """Every rp_id this deployment has PROVEN it uses."""
     s = store if store is not None else _load()
     return {c["rp_id"] for c in s.get("credentials", []) if c.get("rp_id")}
+
 
 def rp_id_verdict(host_rp_id: str, forced: str = "", known: set | None = None) -> tuple:
     """Decide the rp_id for a ceremony: ``(rp_id, reason)``, or ``(None, reason)``."""
@@ -220,18 +249,23 @@ def rp_id_verdict(host_rp_id: str, forced: str = "", known: set | None = None) -
         return (host_rp_id, "legacy: no rp_id recorded yet, binding on first use")
     return (None, f"host {host_rp_id!r} is not one of the enrolled {sorted(known)}")
 
+
 def _derive_rp_id(request_or_ws: Any) -> str:
     host = _host_only(_headers(request_or_ws).get("host", "localhost"))
     rp_id, reason = rp_id_verdict(host, _forced_rp_id())
     if rp_id is None:
         logger.warning("refused WebAuthn ceremony: %s", reason)
-        raise HTTPException(400, {
-            "error": "this host cannot be used for a passkey ceremony",
-            "detail": reason,
-            "hint": "reach the dashboard on its enrolled hostname, or set "
-                    "STRANDS_DASH_AUTH_RP_ID if it legitimately changed",
-        })
+        raise HTTPException(
+            400,
+            {
+                "error": "this host cannot be used for a passkey ceremony",
+                "detail": reason,
+                "hint": "reach the dashboard on its enrolled hostname, or set "
+                "STRANDS_DASH_AUTH_RP_ID if it legitimately changed",
+            },
+        )
     return rp_id
+
 
 def _derive_origin(request_or_ws: Any) -> str:
     forced = _forced_origin()
@@ -245,6 +279,7 @@ def _derive_origin(request_or_ws: Any) -> str:
     scheme = "https" if headers.get("x-forwarded-proto") == "https" else "http"
     return f"{scheme}://{host}"
 
+
 def _rpid_error(rp_id: str) -> HTTPException:
     return HTTPException(
         400,
@@ -252,6 +287,7 @@ def _rpid_error(rp_id: str) -> HTTPException:
         "hostname or domain, not a raw IP). Open the dashboard via a hostname "
         "or set STRANDS_DASH_AUTH_RP_ID.",
     )
+
 
 # --- challenge cache (short-lived, in-memory) --------------------------------
 
@@ -268,6 +304,7 @@ _CHAL_MAX = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX", "512"))
 # operator's pending login.
 _CHAL_MAX_PER_IP = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX_PER_IP", "16"))
 
+
 def _evict_oldest(where: dict[str, dict[str, Any]], keep: int, ip: str | None = None) -> int:
     """Drop the oldest entries (optionally only one ip's) until ``keep`` remain."""
     pool = [(v["t"], k) for k, v in where.items() if ip is None or v.get("ip") == ip]
@@ -277,8 +314,12 @@ def _evict_oldest(where: dict[str, dict[str, Any]], keep: int, ip: str | None = 
         dropped += 1
     return dropped
 
+
 def _stash_challenge(
-    kind: str, challenge: bytes, extra: dict | None = None, ip: str | None = None,
+    kind: str,
+    challenge: bytes,
+    extra: dict | None = None,
+    ip: str | None = None,
 ) -> str:
     cid = secrets.token_urlsafe(16)
     now = time.time()
@@ -295,9 +336,14 @@ def _stash_challenge(
             _evict_oldest(_challenges, _CHAL_MAX - 1)
             logger.warning("challenge table full (%d); evicted oldest", _CHAL_MAX)
         _challenges[cid] = {
-            "kind": kind, "challenge": challenge, "t": now, "extra": extra or {}, "ip": ip,
+            "kind": kind,
+            "challenge": challenge,
+            "t": now,
+            "extra": extra or {},
+            "ip": ip,
         }
     return cid
+
 
 def _client_ip(request_or_ws: Any) -> str | None:
     """Best-effort client identity for the per-ip cap only -- NEVER for trust."""
@@ -311,6 +357,7 @@ def _client_ip(request_or_ws: Any) -> str | None:
     except Exception:
         return None
 
+
 def _pop_challenge(cid: str, kind: str) -> dict[str, Any]:
     with _chal_lock:
         rec = _challenges.pop(cid, None)
@@ -320,10 +367,15 @@ def _pop_challenge(cid: str, kind: str) -> dict[str, Any]:
         raise HTTPException(400, "challenge expired")
     return rec
 
+
 # --- JWT sessions ------------------------------------------------------------
 
+
 def issue_token(
-    subject: str, name: str = "", iat0: int | None = None, exp: int | None = None,
+    subject: str,
+    name: str = "",
+    iat0: int | None = None,
+    exp: int | None = None,
     via: str | None = None,
 ) -> str:
     """A session token. `iat0` is the ORIGINAL sign-in, carried unchanged through every
@@ -341,12 +393,14 @@ def issue_token(
         payload["via"] = via
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
 
+
 def _session_max_age() -> int:
     """Absolute lifetime of a session, however often it is renewed (default 30 days)."""
     try:
         return int(os.getenv(_ENV + "SESSION_MAX_AGE", "2592000"))
     except ValueError:
         return 2592000
+
 
 def renewal_verdict(
     claims: Mapping[str, Any] | None,
@@ -389,6 +443,7 @@ def renewal_verdict(
         return {"renew": False, "reason": "renewal would not extend this session", "exp": int(exp), "iat0": int(iat0)}
     return {"renew": True, "reason": "past half-life, extended", "exp": new_exp, "iat0": int(iat0)}
 
+
 def verify_token(token: str) -> dict[str, Any]:
     try:
         return jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
@@ -396,6 +451,7 @@ def verify_token(token: str) -> dict[str, Any]:
         raise HTTPException(401, "session expired")
     except jwt.PyJWTError:
         raise HTTPException(401, "invalid session")
+
 
 def renew_if_due(token: str, now: float | None = None) -> str | None:
     if not token:
@@ -414,6 +470,7 @@ def renew_if_due(token: str, now: float | None = None) -> str | None:
         exp=verdict.get("exp"),
     )
 
+
 def session_is_valid(token: str) -> bool:
     """Non-raising check for the ASGI middleware."""
     if not token:
@@ -424,7 +481,9 @@ def session_is_valid(token: str) -> bool:
     except HTTPException:
         return False
 
+
 # --- LAN handoff tokens -------------------------------------------------------
+
 
 def handoff_ttl() -> int:
     """Lifetime of a handoff token (default 5 minutes). It rides in a URL, so it must be
@@ -434,8 +493,11 @@ def handoff_ttl() -> int:
     except ValueError:
         return 300
 
+
 def handoff_verdict(
-    claims: Mapping[str, Any] | None, now: float, ttl: int | None = None,
+    claims: Mapping[str, Any] | None,
+    now: float,
+    ttl: int | None = None,
 ) -> dict[str, Any]:
     """May this session be copied into a short-lived URL token, and until when?
     The handoff never outlives the session it came from."""
@@ -449,6 +511,7 @@ def handoff_verdict(
     if exp <= now:
         return {"ok": False, "reason": "session already expired - sign in again"}
     return {"ok": True, "exp": int(min(now + ttl, exp))}
+
 
 def issue_handoff(claims: Mapping[str, Any], now: float | None = None) -> dict[str, Any]:
     """Mint the short-lived token handoff_verdict() approved, carrying the session's
@@ -466,6 +529,7 @@ def issue_handoff(claims: Mapping[str, Any], now: float | None = None) -> dict[s
     )
     return {"token": token, "exp": verdict["exp"], "expires_in": max(0, int(verdict["exp"] - now))}
 
+
 def client_is_loopback(client_host: str | None) -> bool:
     """True when the connecting client is this machine. Used so that
     auth-disabled means LOCAL-ONLY rather than open to the network."""
@@ -476,7 +540,9 @@ def client_is_loopback(client_host: str | None) -> bool:
     except ValueError:
         return client_host == "localhost"
 
+
 # --- WebAuthn ceremonies ------------------------------------------------------
+
 
 def begin_registration(request: Any, label: str = "passkey", bootstrap: str = "") -> dict[str, Any]:
     """Start a passkey enrollment. The FIRST enrollment seals the dashboard;
@@ -512,10 +578,7 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
         store["user_id"] = user_id
         _save(store)
 
-    exclude = [
-        PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["id"]))
-        for c in store.get("credentials", [])
-    ]
+    exclude = [PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["id"])) for c in store.get("credentials", [])]
     opts = generate_registration_options(
         rp_id=rp_id,
         rp_name=_rp_name(),
@@ -531,6 +594,7 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
     cid = _stash_challenge("reg", opts.challenge, {"label": label, "rp_id": rp_id}, ip=_client_ip(request))
     return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
 
+
 def finish_registration(request: Any, challenge_id: str, credential: dict) -> dict[str, Any]:
     rec = _pop_challenge(challenge_id, "reg")
     verification = verify_registration_response(
@@ -543,19 +607,22 @@ def finish_registration(request: Any, challenge_id: str, credential: dict) -> di
     cred_id = bytes_to_base64url(verification.credential_id)
     if any(c["id"] == cred_id for c in store.get("credentials", [])):
         raise HTTPException(409, "credential already registered")
-    store.setdefault("credentials", []).append({
-        "id": cred_id,
-        "public_key": bytes_to_base64url(verification.credential_public_key),
-        "sign_count": verification.sign_count,
-        "name": rec["extra"].get("label", "passkey"),
-        "created": time.time(),
-        # The binding, recorded: from here on the Host header cannot introduce a
-        # different rp_id (see rp_id_verdict).
-        "rp_id": rec["extra"]["rp_id"],
-    })
+    store.setdefault("credentials", []).append(
+        {
+            "id": cred_id,
+            "public_key": bytes_to_base64url(verification.credential_public_key),
+            "sign_count": verification.sign_count,
+            "name": rec["extra"].get("label", "passkey"),
+            "created": time.time(),
+            # The binding, recorded: from here on the Host header cannot introduce a
+            # different rp_id (see rp_id_verdict).
+            "rp_id": rec["extra"]["rp_id"],
+        }
+    )
     _save(store)
     token = issue_token(cred_id, name=rec["extra"].get("label", "passkey"))
     return {"ok": True, "token": token, "credential_id": cred_id}
+
 
 def begin_authentication(request: Any) -> dict[str, Any]:
     store = _load()
@@ -564,10 +631,7 @@ def begin_authentication(request: Any) -> dict[str, Any]:
     rp_id = _derive_rp_id(request)
     if not rpid_is_usable(rp_id):
         raise _rpid_error(rp_id)
-    allow = [
-        PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["id"]))
-        for c in store["credentials"]
-    ]
+    allow = [PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["id"])) for c in store["credentials"]]
     opts = generate_authentication_options(
         rp_id=rp_id,
         allow_credentials=allow,
@@ -575,6 +639,7 @@ def begin_authentication(request: Any) -> dict[str, Any]:
     )
     cid = _stash_challenge("auth", opts.challenge, {"rp_id": rp_id}, ip=_client_ip(request))
     return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
+
 
 def finish_authentication(request: Any, challenge_id: str, credential: dict) -> dict[str, Any]:
     rec = _pop_challenge(challenge_id, "auth")
@@ -602,6 +667,7 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
     token = issue_token(cred_id, name=match.get("name", "passkey"))
     return {"ok": True, "token": token, "credential_id": cred_id}
 
+
 def status(request: Any = None) -> dict[str, Any]:
     store = _load()
     out: dict[str, Any] = {
@@ -619,11 +685,9 @@ def status(request: Any = None) -> dict[str, Any]:
             out["secure_context"] = origin.startswith("https://") or host == "localhost"
             out["rpid_usable"] = True if forced else rpid_is_usable(host)
             if not out["secure_context"]:
-                out["warning"] = ("This origin is not a secure context. WebAuthn needs "
-                                  "HTTPS or http://localhost.")
+                out["warning"] = "This origin is not a secure context. WebAuthn needs HTTPS or http://localhost."
             elif not out["rpid_usable"]:
-                out["warning"] = (f"'{host}' cannot be a WebAuthn rpId - use a hostname "
-                                  "or set STRANDS_DASH_AUTH_RP_ID.")
+                out["warning"] = f"'{host}' cannot be a WebAuthn rpId - use a hostname or set STRANDS_DASH_AUTH_RP_ID."
         except Exception:
             pass
     return out

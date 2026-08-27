@@ -97,9 +97,7 @@ def test_open_posture_refuses_proxied_client_even_from_loopback():
     # cloudflared/nginx connect FROM 127.0.0.1 on behalf of remote clients;
     # any forwarding header means the ORIGINAL client is not local.
     for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
-        scope = _http_scope(
-            "/api/fleet", client=("127.0.0.1", 1), headers={header: "203.0.113.9"}
-        )
+        scope = _http_scope("/api/fleet", client=("127.0.0.1", 1), headers={header: "203.0.113.9"})
         assert run_scope(scope) == 401, f"{header} must defeat the loopback pass"
 
 
@@ -139,8 +137,7 @@ def test_passkeys_on_ceremony_endpoints_stay_public(monkeypatch):
 def test_passkeys_on_valid_jwt_passes(monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "true")
     token = auth.issue_token("cred1", name="phone")
-    scope = _http_scope("/api/fleet", client=("203.0.113.7", 1),
-                        headers={"authorization": f"Bearer {token}"})
+    scope = _http_scope("/api/fleet", client=("203.0.113.7", 1), headers={"authorization": f"Bearer {token}"})
     assert run_scope(scope) == "passed"
 
 
@@ -156,8 +153,7 @@ def test_passkeys_on_jwt_in_ws_query_string(monkeypatch):
 
 def test_passkeys_on_garbage_jwt_refused(monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "true")
-    scope = _http_scope("/api/fleet", client=("127.0.0.1", 1),
-                        headers={"authorization": "Bearer nonsense"})
+    scope = _http_scope("/api/fleet", client=("127.0.0.1", 1), headers={"authorization": "Bearer nonsense"})
     assert run_scope(scope) == 401
 
 
@@ -166,14 +162,13 @@ def test_passkeys_on_garbage_jwt_refused(monkeypatch):
 
 def test_static_token_passes_and_jwt_also_accepted(monkeypatch):
     monkeypatch.setattr(srv.settings, "get", lambda *a, **k: "sekrit-static")
-    ok = _http_scope("/api/fleet", client=("203.0.113.7", 1),
-                     headers={"authorization": "Bearer sekrit-static"})
+    ok = _http_scope("/api/fleet", client=("203.0.113.7", 1), headers={"authorization": "Bearer sekrit-static"})
     assert run_scope(ok) == "passed"
-    jwt_scope = _http_scope("/api/fleet", client=("203.0.113.7", 1),
-                            headers={"authorization": f"Bearer {auth.issue_token('c')}"})
+    jwt_scope = _http_scope(
+        "/api/fleet", client=("203.0.113.7", 1), headers={"authorization": f"Bearer {auth.issue_token('c')}"}
+    )
     assert run_scope(jwt_scope) == "passed"
-    bad = _http_scope("/api/fleet", client=("203.0.113.7", 1),
-                      headers={"authorization": "Bearer wrong"})
+    bad = _http_scope("/api/fleet", client=("203.0.113.7", 1), headers={"authorization": "Bearer wrong"})
     assert run_scope(bad) == 401
 
 
@@ -243,7 +238,9 @@ def test_login_begin_without_enrollment_is_400(client):
 
 def _origin_scope(method="POST", origin="https://evil.example", host="localhost:8090", path="/api/agent/reset"):
     return _http_scope(
-        path, client=("127.0.0.1", 1), method=method,
+        path,
+        client=("127.0.0.1", 1),
+        method=method,
         headers={"origin": origin, "host": host},
     )
 

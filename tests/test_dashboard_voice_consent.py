@@ -48,8 +48,7 @@ def test_the_refusal_reaches_a_listener_with_a_classifiable_text(monkeypatch):
         bridge = _Bridge()
         agent_bridge.set_bridge(bridge)
         monkeypatch.delenv(MOTION_ENV, raising=False)
-        _call(agent_bridge._make_fleet_tool())(
-            action="task", target="so101-arm-1", instruction="wave")
+        _call(agent_bridge._make_fleet_tool())(action="task", target="so101-arm-1", instruction="wave")
         assert len(heard) == 1, "voice has no other rail; the notification is the whole mechanism"
         need = classify_refusal(heard[0])
         assert need is not None and need.kind == "agent_physical_motion"
@@ -81,8 +80,7 @@ def test_a_broken_listener_cannot_break_a_turn(monkeypatch):
     try:
         agent_bridge.set_bridge(_Bridge())
         monkeypatch.delenv(MOTION_ENV, raising=False)
-        res = _call(agent_bridge._make_fleet_tool())(
-            action="task", target="so101-arm-1", instruction="wave")
+        res = _call(agent_bridge._make_fleet_tool())(action="task", target="so101-arm-1", instruction="wave")
         assert res["status"] == "error"
         assert "MOVE REAL HARDWARE" in res["content"][0]["text"]
     finally:
@@ -124,8 +122,7 @@ def test_a_granted_machine_speaks_no_card(monkeypatch):
         bridge = _Bridge()
         agent_bridge.set_bridge(bridge)
         monkeypatch.setenv(MOTION_ENV, "1")
-        res = _call(agent_bridge._make_fleet_tool())(
-            action="task", target="so101-arm-1", instruction="wave")
+        res = _call(agent_bridge._make_fleet_tool())(action="task", target="so101-arm-1", instruction="wave")
         assert res["status"] == "success" and heard == []
         assert bridge.sent and bridge.sent[0][1]["action"] == "execute"
     finally:

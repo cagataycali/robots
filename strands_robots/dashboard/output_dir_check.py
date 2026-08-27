@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import os
@@ -7,6 +6,7 @@ from typing import Any
 
 #: How many names to show. Enough to recognise a directory, few enough to read.
 SAMPLE = 5
+
 
 def classify_output_dir(
     *,
@@ -78,6 +78,7 @@ def classify_output_dir(
         ),
     }
 
+
 def inspect_output_dir(path: str, *, has_checkpoint: Any = None) -> dict[str, Any]:
     """Read the path and classify it. ``has_checkpoint`` may be a callable(path) -> bool."""
     p = Path(path).expanduser()
@@ -100,13 +101,12 @@ def inspect_output_dir(path: str, *, has_checkpoint: Any = None) -> dict[str, An
                 out = classify_output_dir(exists=True, unreadable="checkpoint probe failed")
                 out["path"] = verdict_path
                 return out
-        out = classify_output_dir(
-            exists=True, has_checkpoint=ckpt, names=entries, total=len(entries)
-        )
+        out = classify_output_dir(exists=True, has_checkpoint=ckpt, names=entries, total=len(entries))
     except OSError as exc:
         out = classify_output_dir(exists=True, unreadable=type(exc).__name__)
     out["path"] = verdict_path
     return out
+
 
 def default_checkpoint_probe(path: str) -> bool:
     """The trainer's own answer, when it can be imported (torch-less installs say False)."""

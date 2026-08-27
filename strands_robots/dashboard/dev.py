@@ -38,6 +38,7 @@ PROFILES_FILE = Path(os.path.expanduser("~/.strands_dashboard/profiles.json"))
 
 # ---------------------------------------------------------------- pure rules
 
+
 def server_argv(port: int, token_file: str | None) -> list[str]:
     """The exact child argv. --force: port-guard false-positives on CLOSE_WAIT."""
     argv = [sys.executable, "-m", "strands_robots", "dashboard", "--port", str(port), "--force"]
@@ -117,18 +118,16 @@ def calibration_verdicts(profiles: dict, has_calibration) -> list[str]:
             lines.append(f"  ok: {name} (robot_id={rid})")
         else:
             lines.append(
-                f"  MISSING: {name} robot_id={rid} has no robot-side calibration "
-                f"-> it will spawn with NO JOINTS"
+                f"  MISSING: {name} robot_id={rid} has no robot-side calibration -> it will spawn with NO JOINTS"
             )
     return lines
 
 
 # ------------------------------------------------------------- process query
 
+
 def _pgrep() -> list[int]:
-    out = subprocess.run(
-        ["pgrep", "-f", PROCESS_PATTERN], capture_output=True, text=True
-    ).stdout.split()
+    out = subprocess.run(["pgrep", "-f", PROCESS_PATTERN], capture_output=True, text=True).stdout.split()
     me = os.getpid()
     return [int(p) for p in out if p.isdigit() and int(p) != me]
 
@@ -169,6 +168,7 @@ def _token() -> str | None:
 
 # ------------------------------------------------------------------- actions
 
+
 def status(port: int) -> int:
     pids = _pgrep()
     print(f"running: pid {pids[0]}" if pids else "not running")
@@ -176,9 +176,7 @@ def status(port: int) -> int:
     print(f"http :{port} -> {code}")
     token = _token()
     if code == 200 and token:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/fleet", headers={"Authorization": f"Bearer {token}"}
-        )
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/fleet", headers={"Authorization": f"Bearer {token}"})
         try:
             with urllib.request.urlopen(req, timeout=4) as r:
                 peers = json.load(r).get("peers", {})
@@ -248,9 +246,7 @@ def start(port: int, allow_no_tty: bool, wait: bool = True) -> int:
         profiles = json.loads(PROFILES_FILE.read_text())
     except Exception:
         profiles = {}
-    for line in calibration_verdicts(
-        profiles, lambda rid: bool(glob.glob(str(CALIBRATION_DIR / "*" / f"{rid}.json")))
-    ):
+    for line in calibration_verdicts(profiles, lambda rid: bool(glob.glob(str(CALIBRATION_DIR / "*" / f"{rid}.json")))):
         print(line)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -263,7 +259,9 @@ def start(port: int, allow_no_tty: bool, wait: bool = True) -> int:
     child = subprocess.Popen(
         server_argv(port, token_file),
         cwd=package_root(),
-        stdout=fd, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        stdout=fd,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
         start_new_session=True,
     )
     os.close(fd)

@@ -24,8 +24,7 @@ def _cold() -> None:
 
 
 def _state_with(token: str, *, whoami=None, boom: Exception | None = None) -> dict:
-    with mock.patch("huggingface_hub.get_token", return_value=token), \
-         mock.patch("huggingface_hub.HfApi") as api:
+    with mock.patch("huggingface_hub.get_token", return_value=token), mock.patch("huggingface_hub.HfApi") as api:
         if boom is not None:
             api.return_value.whoami.side_effect = boom
         else:
@@ -50,8 +49,10 @@ class TestTheCacheIsKeyedToTheToken:
 
     def test_the_same_token_is_not_re_checked(self) -> None:
         _cold()
-        with mock.patch("huggingface_hub.get_token", return_value="hf_same"), \
-             mock.patch("huggingface_hub.HfApi") as api:
+        with (
+            mock.patch("huggingface_hub.get_token", return_value="hf_same"),
+            mock.patch("huggingface_hub.HfApi") as api,
+        ):
             api.return_value.whoami.return_value = {"name": "u"}
             checkpoints.hf_auth_state()
             checkpoints.hf_auth_state()

@@ -41,11 +41,7 @@ def test_voice_never_writes_the_mesh_hitl_env():
 
 def test_voice_never_grants_physical_motion():
     """Nor the fleet backstop's own grant env - same disarm, different gate."""
-    offenders = [
-        ln.strip()
-        for ln in _code_lines(_VOICE_SRC)
-        if "STRANDS_DASH_AGENT_PHYSICAL_MOTION" in ln
-    ]
+    offenders = [ln.strip() for ln in _code_lines(_VOICE_SRC) if "STRANDS_DASH_AGENT_PHYSICAL_MOTION" in ln]
     assert offenders == []
 
 

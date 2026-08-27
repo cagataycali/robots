@@ -6,6 +6,7 @@ recording never has one. A dashboard that offered a label button would 400 on ex
 it records, and a dashboard that wrote the judge block itself would poison `filter_episodes` for
 training. So the capability is reported, not faked.
 """
+
 import json
 
 import pytest
@@ -34,9 +35,17 @@ DOC = {
     "schema_version": 1,
     "benchmark": "cube_lift",
     "episodes": {
-        "0": {"episode_index": 0, "deterministic": {"success": True, "failure": False, "steps": 150},
-              "judge": {"quality": "high", "failure_mode": None, "note": "clean", "model": "human",
-                        "disputes_verdict": False}},
+        "0": {
+            "episode_index": 0,
+            "deterministic": {"success": True, "failure": False, "steps": 150},
+            "judge": {
+                "quality": "high",
+                "failure_mode": None,
+                "note": "clean",
+                "model": "human",
+                "disputes_verdict": False,
+            },
+        },
         "1": {"episode_index": 1, "deterministic": {"success": False, "failure": True, "steps": 42}},
         "2": {"episode_index": 2},
     },
@@ -78,8 +87,13 @@ def test_a_corrupt_sidecar_is_not_reported_as_no_labels_yet():
 
 def test_a_disputing_judge_is_counted_not_hidden():
     doc = json.loads(json.dumps(DOC))
-    doc["episodes"]["1"]["judge"] = {"quality": "medium", "success_opinion": True,
-                                     "disputes_verdict": True, "note": "", "model": "vlm"}
+    doc["episodes"]["1"]["judge"] = {
+        "quality": "medium",
+        "success_opinion": True,
+        "disputes_verdict": True,
+        "note": "",
+        "model": "vlm",
+    }
     view = label_view(doc)
     assert view["disputed"] == 1
     assert [r["disputes_verdict"] for r in view["episodes"] if r["episode_index"] == 1] == [True]

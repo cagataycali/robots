@@ -77,12 +77,17 @@ class Recorder:
 def make(*, moving: bool, suffix: str = ".pos", tmp_path=None):
     clock, backend = Clock(), Backend(moving=moving, suffix=suffix)
     worker = RecordWorker(
-        dataset="cagatay/so101-pick", task="pick up the cube",
-        leader="arm-leader", follower="arm-follower",
-        target_episodes=3, fps=5, backend=backend,
+        dataset="cagatay/so101-pick",
+        task="pick up the cube",
+        leader="arm-leader",
+        follower="arm-follower",
+        target_episodes=3,
+        fps=5,
+        backend=backend,
         recorder_factory=lambda **_: Recorder(),
         thumb_dir=str(tmp_path or "/tmp/rec-still-life-test"),
-        clock=clock, autostart_loop=False,
+        clock=clock,
+        autostart_loop=False,
     )
     return worker, clock
 

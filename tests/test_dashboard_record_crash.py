@@ -22,7 +22,8 @@ def test_the_notice_names_the_dataset_the_arms_and_the_age(tmp_path) -> None:
     p = tmp_path / "crumb.json"
     record_crash.write_crumb(
         {"dataset": "local/cubes", "task": "pick the cube", "leader": "so101-arm-1", "follower": "so101-arm-2"},
-        path=p, now=1000.0,
+        path=p,
+        now=1000.0,
     )
     n = record_crash.interrupted_notice(record_crash.read_crumb(p), now=1000.0 + 3 * 60)
     assert n is not None
@@ -90,6 +91,7 @@ def test_the_controller_reports_it_when_idle(tmp_path, monkeypatch) -> None:
     assert idle["interrupted"]["dataset"] == "local/cubes"
 
     record_crash.clear_crumb(crumb)
-    assert "interrupted" not in record_api.RecordController(
-        devices=object(), backend_factory=lambda **_: object()
-    ).session()
+    assert (
+        "interrupted"
+        not in record_api.RecordController(devices=object(), backend_factory=lambda **_: object()).session()
+    )

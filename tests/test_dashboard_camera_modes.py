@@ -36,9 +36,12 @@ class TestModesFromReadbacks:
 
     def test_ignored_set_contributes_nothing(self) -> None:
         # Driver answers its native mode for every request: only native survives.
-        rbs = [_rb(w, h, fps, 1280, 720, 30.0)
-               for w, h in CAMERA_MODE_CANDIDATES for fps in CAMERA_FPS_CANDIDATES
-               if (w, h) != (1280, 720)]
+        rbs = [
+            _rb(w, h, fps, 1280, 720, 30.0)
+            for w, h in CAMERA_MODE_CANDIDATES
+            for fps in CAMERA_FPS_CANDIDATES
+            if (w, h) != (1280, 720)
+        ]
         modes = modes_from_readbacks(NATIVE, rbs)
         assert modes == [{"width": 1280, "height": 720, "fps": 30}]
 
@@ -55,27 +58,32 @@ class TestModesFromReadbacks:
         assert {"width": 640, "height": 480, "fps": 60} not in modes
 
     def test_deduped_and_sorted_by_area_then_fps(self) -> None:
-        modes = modes_from_readbacks(NATIVE, [
-            _rb(1920, 1080, 30, 1920, 1080, 30),
-            _rb(640, 480, 60, 640, 480, 60),
-            _rb(640, 480, 15, 640, 480, 15),
-            _rb(640, 480, 15, 640, 480, 15),  # duplicate probe
-        ])
+        modes = modes_from_readbacks(
+            NATIVE,
+            [
+                _rb(1920, 1080, 30, 1920, 1080, 30),
+                _rb(640, 480, 60, 640, 480, 60),
+                _rb(640, 480, 15, 640, 480, 15),
+                _rb(640, 480, 15, 640, 480, 15),  # duplicate probe
+            ],
+        )
         keys = [(m["width"], m["height"], m["fps"]) for m in modes]
         assert keys == sorted(set(keys), key=lambda k: (k[0] * k[1], k[2]))
         assert len(keys) == len(set(keys))
 
     def test_garbage_native_yields_no_phantom_mode(self) -> None:
         # A broken driver reporting 0x0@0 must not put an unusable row in the select.
-        modes = modes_from_readbacks({"width": 0, "height": 0, "fps": 0.0},
-                                     [_rb(640, 480, 30, 640, 480, 30)])
+        modes = modes_from_readbacks({"width": 0, "height": 0, "fps": 0.0}, [_rb(640, 480, 30, 640, 480, 30)])
         assert modes == [{"width": 640, "height": 480, "fps": 30}]
 
     def test_non_numeric_readback_is_skipped_not_fatal(self) -> None:
-        modes = modes_from_readbacks(NATIVE, [
-            {"requested": {"width": "x"}, "got": None},
-            _rb(640, 480, 30, 640, 480, 30),
-        ])
+        modes = modes_from_readbacks(
+            NATIVE,
+            [
+                {"requested": {"width": "x"}, "got": None},
+                _rb(640, 480, 30, 640, 480, 30),
+            ],
+        )
         assert {"width": 640, "height": 480, "fps": 30} in modes
 
 

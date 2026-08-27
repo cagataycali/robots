@@ -6,6 +6,7 @@ child's log, in words, where the fleet view never looks: one arm's serial port w
 process (179 orphaned children from earlier spawns), the other board had no calibration at all.
 From outside the two are identical; their remedies are opposite.
 """
+
 import pytest
 
 from strands_robots.dashboard import joint_silence
@@ -14,7 +15,7 @@ IN_USE = (
     "13:58:52 WARNING:strands_robots.mesh.core:[mesh] so101-follower: state probe 'hw_joints' "
     "failed, that section of the snapshot is omitted (further failures logged at debug): "
     "ConnectionError(\"Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 3 "
-    "tries. [TxRxResult] Port is in use!\")"
+    'tries. [TxRxResult] Port is in use!")'
 )
 UNCALIBRATED = (
     "13:59:22 WARNING:strands_robots.mesh.core:[mesh] so101-leader: state probe 'hw_joints' "
@@ -81,7 +82,7 @@ def test_live_joints_beat_a_past_complaint():
 
 
 def test_the_complaint_survives_while_joints_are_missing():
-    peer = {"state": {"peer_id": "so101", "t": 1.0}}      # presence, no positions
+    peer = {"state": {"peer_id": "so101", "t": 1.0}}  # presence, no positions
     fields = {"joint_problem": {"kind": "uncalibrated"}}
     assert joint_silence.merge(peer, fields)["joint_problem"]["kind"] == "uncalibrated"
 
@@ -96,14 +97,22 @@ def test_no_joints_means_no_joints(state):
 # route that happens to be easiest to call. Both halves are checked here -- the annotation the
 # DeviceManager contributes, and the gate MeshBridge applies to it.
 
+
 def test_the_device_manager_contributes_the_verdict_from_the_childs_own_log():
     from strands_robots.dashboard.device_manager import DeviceManager, ManagedRobot
 
-    dm = DeviceManager.__new__(DeviceManager)          # no ports, no processes, no threads
-    dm.robots = {"so101-follower": ManagedRobot(
-        peer_id="so101-follower", robot_name="so101", mode="real",
-        port="/dev/cu.usbmodem5AB01584281", cameras={}, process=None, started_at=0.0,
-    )}
+    dm = DeviceManager.__new__(DeviceManager)  # no ports, no processes, no threads
+    dm.robots = {
+        "so101-follower": ManagedRobot(
+            peer_id="so101-follower",
+            robot_name="so101",
+            mode="real",
+            port="/dev/cu.usbmodem5AB01584281",
+            cameras={},
+            process=None,
+            started_at=0.0,
+        )
+    }
     dm.robots["so101-follower"].logs.extend(["hardware connected", IN_USE])
     dm.roles_by_peer = lambda: {}
 
@@ -119,8 +128,7 @@ def test_the_bridge_snapshot_carries_it_and_the_gate_clears_it():
 
     silent = {"so101": {"state": {"peer_id": "so101", "t": 1.0}}}
     assert MeshBridge._peer_annotations(br)["so101"]["joint_problem"]
-    got = {**silent["so101"], **joint_silence.merge(silent["so101"],
-                                                    br.peer_annotations()["so101"])}
+    got = {**silent["so101"], **joint_silence.merge(silent["so101"], br.peer_annotations()["so101"])}
     assert got["joint_problem"]["kind"] == "port_in_use"
 
     reading = {"state": {"shoulder_pan.pos": 1.0}}
@@ -153,8 +161,16 @@ def test_live_joints_clear_a_log_derived_badge() -> None:
 
 def test_a_peer_reported_fault_carries_the_matching_remedy_and_its_duration() -> None:
     got = joint_silence.classify_state(
-        {"degraded": {"hw_joints": {"reason": "RuntimeError: has no calibration registered.",
-                                    "failures": 900, "since": 1.0, "for_seconds": 12600.0}}}
+        {
+            "degraded": {
+                "hw_joints": {
+                    "reason": "RuntimeError: has no calibration registered.",
+                    "failures": 900,
+                    "since": 1.0,
+                    "for_seconds": 12600.0,
+                }
+            }
+        }
     )
     assert got is not None
     assert got["kind"] == "uncalibrated"
@@ -165,8 +181,13 @@ def test_a_peer_reported_fault_carries_the_matching_remedy_and_its_duration() ->
 
 def test_a_peer_reported_port_conflict_says_find_the_other_owner() -> None:
     got = joint_silence.classify_state(
-        {"degraded": {"hw_joints": {"reason": "ConnectionError: Failed to sync read "
-                                              "'Present_Position' ... [TxRxResult] Port is in use!"}}}
+        {
+            "degraded": {
+                "hw_joints": {
+                    "reason": "ConnectionError: Failed to sync read 'Present_Position' ... [TxRxResult] Port is in use!"
+                }
+            }
+        }
     )
     assert got["kind"] == "port_in_use" and "lsof" in got["remedy"]
 
@@ -177,8 +198,15 @@ def test_an_unrecognised_reason_still_points_at_the_log() -> None:
 
 
 def test_silence_and_junk_stay_silent() -> None:
-    for state in (None, {}, {"degraded": {}}, {"degraded": {"hw_joints": {}}},
-                  {"degraded": {"hw_joints": {"reason": "   "}}}, {"degraded": "yes"}, "nope"):
+    for state in (
+        None,
+        {},
+        {"degraded": {}},
+        {"degraded": {"hw_joints": {}}},
+        {"degraded": {"hw_joints": {"reason": "   "}}},
+        {"degraded": "yes"},
+        "nope",
+    ):
         assert joint_silence.classify_state(state) is None
 
 
@@ -194,17 +222,24 @@ def test_the_peers_own_report_beats_a_stale_log_verdict() -> None:
 
 
 def test_a_child_older_than_the_degraded_field_keeps_its_log_verdict() -> None:
-    out = joint_silence.merge({"state": {"task": {"status": "idle"}}},
-                              {"joint_problem": {"kind": "uncalibrated"}})
+    out = joint_silence.merge({"state": {"task": {"status": "idle"}}}, {"joint_problem": {"kind": "uncalibrated"}})
     assert out["joint_problem"] == {"kind": "uncalibrated"}
 
 
 def test_a_never_ran_probe_is_not_told_to_read_the_log() -> None:
     # The log is EMPTY in this case -- nothing failed. Sending the operator there is the one wrong
     # answer, and it is what the generic fallback would have said.
-    got = joint_silence.classify_state({"degraded": {"hw_joints": {
-        "reason": "the joint probe did not run: this peer's hardware object (SO101Follower) has no "
-                  "get_observation(), so positions cannot be read", "failures": 4}}})
+    got = joint_silence.classify_state(
+        {
+            "degraded": {
+                "hw_joints": {
+                    "reason": "the joint probe did not run: this peer's hardware object (SO101Follower) has no "
+                    "get_observation(), so positions cannot be read",
+                    "failures": 4,
+                }
+            }
+        }
+    )
     assert got["kind"] == "not_probed"
     assert "nothing in the log to find" in got["remedy"]
     assert "devices > logs" not in got["remedy"]
@@ -253,12 +288,14 @@ def test_port_in_use_does_not_send_the_operator_hunting_a_process_that_does_not_
     marked in-use, and nothing in this codebase clears that flag), so the cure is respawning that same
     child. Both cases stay possible, so the remedy now tells the operator how to TELL THEM APART.
     """
-    verdict = joint_silence.classify([
-        "13:58:52 WARNING:strands_robots.mesh.core:[mesh] so101-follower: state probe 'hw_joints' "
-        "failed, that section of the snapshot is omitted (further failures logged at debug): "
-        "ConnectionError(\"Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 3 "
-        "tries. [TxRxResult] Port is in use!\")",
-    ])
+    verdict = joint_silence.classify(
+        [
+            "13:58:52 WARNING:strands_robots.mesh.core:[mesh] so101-follower: state probe 'hw_joints' "
+            "failed, that section of the snapshot is omitted (further failures logged at debug): "
+            "ConnectionError(\"Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 3 "
+            'tries. [TxRxResult] Port is in use!")',
+        ]
+    )
     assert verdict is not None, "the real measured line must still be classified"
     assert verdict["kind"] == "port_in_use"
     remedy = verdict["remedy"]
@@ -323,9 +360,7 @@ def test_the_cure_line_only_sharpens_the_port_busy_verdict() -> None:
     The two events are independent: an arm can heal a stranded flag at 12:00 and lose its calibration
     at 12:05, and the calibration answer is still the right one.
     """
-    uncal = joint_silence.classify(
-        [_CURE_RAN, "state probe 'hw_joints' failed: no calibration registered for so101"]
-    )
+    uncal = joint_silence.classify([_CURE_RAN, "state probe 'hw_joints' failed: no calibration registered for so101"])
     assert uncal is not None and uncal["kind"] == "uncalibrated"
     assert "Calibrate this arm" in uncal["remedy"]
 
@@ -338,8 +373,7 @@ def test_a_healthy_log_with_a_recovery_still_reports_nothing() -> None:
 def _busy_state(**extra):
     return {
         "peer_id": "so101-arm-1",
-        "degraded": {"hw_joints": {"reason": "[TxRxResult] Port is in use!", "failures": 40,
-                                   "for_seconds": 900}},
+        "degraded": {"hw_joints": {"reason": "[TxRxResult] Port is in use!", "failures": 40, "for_seconds": 900}},
         **extra,
     }
 
@@ -429,10 +463,17 @@ def test_the_verdict_survives_its_own_log_line_scrolling_out_of_the_window() -> 
     from strands_robots.dashboard.device_manager import DeviceManager, ManagedRobot
 
     dm = DeviceManager.__new__(DeviceManager)
-    dm.robots = {"arm": ManagedRobot(
-        peer_id="arm", robot_name="so101", mode="real",
-        port="/dev/cu.usbmodem1", cameras={}, process=None, started_at=0.0,
-    )}
+    dm.robots = {
+        "arm": ManagedRobot(
+            peer_id="arm",
+            robot_name="so101",
+            mode="real",
+            port="/dev/cu.usbmodem1",
+            cameras={},
+            process=None,
+            started_at=0.0,
+        )
+    }
     dm.roles_by_peer = lambda: {}
     arm = dm.robots["arm"]
 
@@ -461,16 +502,28 @@ def test_a_respawned_arm_does_not_inherit_the_dead_processs_complaint() -> None:
 
     dm = DeviceManager.__new__(DeviceManager)
     dm.roles_by_peer = lambda: {}
-    dm.robots = {"arm": ManagedRobot(
-        peer_id="arm", robot_name="so101", mode="real",
-        port="/dev/cu.usbmodem1", cameras={}, process=None, started_at=0.0,
-    )}
+    dm.robots = {
+        "arm": ManagedRobot(
+            peer_id="arm",
+            robot_name="so101",
+            mode="real",
+            port="/dev/cu.usbmodem1",
+            cameras={},
+            process=None,
+            started_at=0.0,
+        )
+    }
     dm.robots["arm"].logs.extend(["hardware connected", IN_USE])
     assert dm.annotations_by_peer()["arm"]["joint_problem"]["kind"] == "port_in_use"
 
-    dm.robots["arm"] = ManagedRobot(                     # the respawn
-        peer_id="arm", robot_name="so101", mode="real",
-        port="/dev/cu.usbmodem1", cameras={}, process=None, started_at=1.0,
+    dm.robots["arm"] = ManagedRobot(  # the respawn
+        peer_id="arm",
+        robot_name="so101",
+        mode="real",
+        port="/dev/cu.usbmodem1",
+        cameras={},
+        process=None,
+        started_at=1.0,
     )
     dm.robots["arm"].logs.append("hardware connected")
     assert "joint_problem" not in dm.annotations_by_peer().get("arm", {})
@@ -485,8 +538,8 @@ def test_a_respawned_arm_does_not_inherit_the_dead_processs_complaint() -> None:
 # "(further failures logged at debug)" clause, and -- for the leader -- a multi-line RuntimeError
 # repr that embeds newlines and quotes inside the reason. If a future tightening of these patterns
 # only matches a tidy paraphrase, this is the test that notices.
-_LIVE_FOLLOWER = '13:58:52 WARNING:strands_robots.mesh.core:[mesh] so101-follower: state probe \'hw_joints\' failed, that section of the snapshot is omitted (further failures logged at debug): ConnectionError("Failed to sync read \'Present_Position\' on ids=[1, 2, 3, 4, 5, 6] after 3 tries. [TxRxResult] Port is in use!")'
-_LIVE_LEADER = '13:59:22 WARNING:strands_robots.mesh.core:[mesh] so101-leader: state probe \'hw_joints\' failed, that section of the snapshot is omitted (further failures logged at debug): RuntimeError("FeetechMotorsBus(\\n    Port: \'/dev/cu.usbmodem5AB01818061\',\\n    Motors: \\n{       \'shoulder_pan\': Motor(id=1,\\n                              model=\'sts3215\',\\n                              norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                              motor_type_str=None,\\n                              recv_id=None),\\n        \'shoulder_lift\': Motor(id=2,\\n                               model=\'sts3215\',\\n                               norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                               motor_type_str=None,\\n                               recv_id=None),\\n        \'elbow_flex\': Motor(id=3,\\n                            model=\'sts3215\',\\n                            norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        \'wrist_flex\': Motor(id=4,\\n                            model=\'sts3215\',\\n                            norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        \'wrist_roll\': Motor(id=5,\\n                            model=\'sts3215\',\\n                            norm_mode=<MotorNormMode.DEGREES: \'degrees\'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        \'gripper\': Motor(id=6,\\n                         model=\'sts3215\',\\n                         norm_mode=<MotorNormMode.RANGE_0_100: \'range_0_100\'>,\\n                         motor_type_str=None,\\n                         recv_id=None)},\\n)\',\\n has no calibration registered.")'
+_LIVE_FOLLOWER = "13:58:52 WARNING:strands_robots.mesh.core:[mesh] so101-follower: state probe 'hw_joints' failed, that section of the snapshot is omitted (further failures logged at debug): ConnectionError(\"Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 3 tries. [TxRxResult] Port is in use!\")"
+_LIVE_LEADER = "13:59:22 WARNING:strands_robots.mesh.core:[mesh] so101-leader: state probe 'hw_joints' failed, that section of the snapshot is omitted (further failures logged at debug): RuntimeError(\"FeetechMotorsBus(\\n    Port: '/dev/cu.usbmodem5AB01818061',\\n    Motors: \\n{       'shoulder_pan': Motor(id=1,\\n                              model='sts3215',\\n                              norm_mode=<MotorNormMode.DEGREES: 'degrees'>,\\n                              motor_type_str=None,\\n                              recv_id=None),\\n        'shoulder_lift': Motor(id=2,\\n                               model='sts3215',\\n                               norm_mode=<MotorNormMode.DEGREES: 'degrees'>,\\n                               motor_type_str=None,\\n                               recv_id=None),\\n        'elbow_flex': Motor(id=3,\\n                            model='sts3215',\\n                            norm_mode=<MotorNormMode.DEGREES: 'degrees'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        'wrist_flex': Motor(id=4,\\n                            model='sts3215',\\n                            norm_mode=<MotorNormMode.DEGREES: 'degrees'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        'wrist_roll': Motor(id=5,\\n                            model='sts3215',\\n                            norm_mode=<MotorNormMode.DEGREES: 'degrees'>,\\n                            motor_type_str=None,\\n                            recv_id=None),\\n        'gripper': Motor(id=6,\\n                         model='sts3215',\\n                         norm_mode=<MotorNormMode.RANGE_0_100: 'range_0_100'>,\\n                         motor_type_str=None,\\n                         recv_id=None)},\\n)',\\n has no calibration registered.\")"
 
 
 def test_the_live_port_in_use_line_classifies():

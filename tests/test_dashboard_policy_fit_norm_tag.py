@@ -1,4 +1,5 @@
 """An undeclared norm_tag is refused while the form is open, not after the arm is torqued."""
+
 from __future__ import annotations
 
 import json
@@ -62,11 +63,18 @@ def test_every_problem_this_module_can_emit_has_the_keys_THE_SCREEN_RENDERS() ->
     verdicts = [
         _fit(norm_tag="mean_std", declared_norm_tags=["min_max"]),
         # a state dim that disagrees, an action dim that disagrees, a camera the peer lacks
-        policy_fit(input_features={"observation.state": {"type": "STATE", "shape": [5]}},
-                   output_features={"action": {"type": "ACTION", "shape": [2]}},
-                   joints=ARM["joints"], cameras=["top"]),
-        policy_fit(input_features={"observation.images.front": {"type": "VISUAL", "shape": [3, 8, 8]}},
-                   output_features=OUT, joints=ARM["joints"], cameras=["top", "wrist"]),
+        policy_fit(
+            input_features={"observation.state": {"type": "STATE", "shape": [5]}},
+            output_features={"action": {"type": "ACTION", "shape": [2]}},
+            joints=ARM["joints"],
+            cameras=["top"],
+        ),
+        policy_fit(
+            input_features={"observation.images.front": {"type": "VISUAL", "shape": [3, 8, 8]}},
+            output_features=OUT,
+            joints=ARM["joints"],
+            cameras=["top", "wrist"],
+        ),
     ]
     seen = [p for v in verdicts for p in v["problems"]]
     assert len(seen) >= 3, "the premise: these inputs really do produce problems to inspect"

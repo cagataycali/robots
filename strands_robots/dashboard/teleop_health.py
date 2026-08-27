@@ -12,13 +12,12 @@ __all__ = ["diagnose_receiver", "envelope_refusal", "published_frames", "teleop_
 _RANGE_RE = re.compile(
     r"input frame value for '([^']{1,120})' out of range: \|(-?[0-9.eE+]{1,40})\| > ([0-9.eE+]{1,40})"
 )
-_SLEW_RE = re.compile(
-    r"input frame slew for '([^']{1,120})' out of range: ([0-9.eE+\-]{1,40}) > ([0-9.eE+\-]{1,40})"
-)
+_SLEW_RE = re.compile(r"input frame slew for '([^']{1,120})' out of range: ([0-9.eE+\-]{1,40}) > ([0-9.eE+\-]{1,40})")
 _SLEW_NO_TIME_RE = re.compile(
     r"input frame slew for '([^']{1,120})' out of range: moved ([0-9.eE+\-]{1,40}) units with no "
     r"elapsed time.*?\(bound ([0-9.eE+\-]{1,40}) units/s\)"
 )
+
 
 def envelope_refusal(log_tail: Any) -> dict[str, Any] | None:
     """The most recent value/slew refusal in a child's log, parsed. Returns ``{"joint", "value",
@@ -30,15 +29,18 @@ def envelope_refusal(log_tail: Any) -> dict[str, Any] | None:
         m = _RANGE_RE.search(line)
         if m:
             try:
-                return {"kind": "value", "joint": m.group(1), "value": abs(float(m.group(2))),
-                        "bound": float(m.group(3))}
+                return {
+                    "kind": "value",
+                    "joint": m.group(1),
+                    "value": abs(float(m.group(2))),
+                    "bound": float(m.group(3)),
+                }
             except ValueError:
                 continue
         m = _SLEW_RE.search(line)
         if m:
             try:
-                return {"kind": "slew", "joint": m.group(1), "value": float(m.group(2)),
-                        "bound": float(m.group(3))}
+                return {"kind": "slew", "joint": m.group(1), "value": float(m.group(2)), "bound": float(m.group(3))}
             except ValueError:
                 continue
         m = _SLEW_NO_TIME_RE.search(line)
@@ -46,12 +48,18 @@ def envelope_refusal(log_tail: Any) -> dict[str, Any] | None:
             try:
                 # No elapsed time means the implied speed is unbounded, and inf is the honest value: any bound
                 # is exceeded.
-                return {"kind": "slew", "joint": m.group(1), "value": float("inf"),
-                        "bound": float(m.group(3)), "instant": True,
-                        "delta": float(m.group(2))}
+                return {
+                    "kind": "slew",
+                    "joint": m.group(1),
+                    "value": float("inf"),
+                    "bound": float(m.group(3)),
+                    "instant": True,
+                    "delta": float(m.group(2)),
+                }
             except ValueError:
                 continue
     return None
+
 
 def diagnose_receiver(
     stats: Mapping[str, Any],
@@ -72,11 +80,14 @@ def diagnose_receiver(
     if got == 0 and (rejected or slew):
         refusal = envelope_refusal(log_tail)
         detail = (
-            f"{rejected + slew} frames arrived from {source} and every one was refused, "
-            "so the follower has not moved."
+            f"{rejected + slew} frames arrived from {source} and every one was refused, so the follower has not moved."
         )
-        out: dict[str, Any] = {"state": "refusing", "headline": "every frame is being refused",
-                               "detail": detail, "refusal": refusal}
+        out: dict[str, Any] = {
+            "state": "refusing",
+            "headline": "every frame is being refused",
+            "detail": detail,
+            "refusal": refusal,
+        }
         if refusal and refusal.get("instant"):
             out["detail"] = (
                 f"{detail} Two frames carried the SAME timestamp, so the follower could not compute "
@@ -113,8 +124,8 @@ def diagnose_receiver(
             "state": "silent",
             "headline": f"subscribed to {source}, but no frames are arriving",
             "detail": "the leader is not publishing - start its stream first "
-                      "(POST /api/robots/{leader}/teleop/publish)"
-                      + ("" if source_frames is None else " (its publisher reports 0 frames)"),
+            "(POST /api/robots/{leader}/teleop/publish)"
+            + ("" if source_frames is None else " (its publisher reports 0 frames)"),
         }
 
     hz = float(stats.get("hz_actual") or 0.0)
@@ -124,8 +135,8 @@ def diagnose_receiver(
         extra.append(f"{rejected + slew} frames refused")
     if dropped:
         extra.append(f"{dropped} dropped to the rate cap")
-    return {"state": "following", "headline": note,
-            "detail": ", ".join(extra) or None}
+    return {"state": "following", "headline": note, "detail": ", ".join(extra) or None}
+
 
 def published_frames(status: Any, device_name: str) -> int | None:
     """How many frames a peer's ``device_name`` publisher has sent, if it says."""
@@ -143,6 +154,7 @@ def published_frames(status: Any, device_name: str) -> int | None:
     except (TypeError, ValueError):
         return None
 
+
 def _status_payload(status: Any) -> Mapping[str, Any] | None:
     """The counters block inside a tool-envelope status, or the block itself."""
     if not isinstance(status, Mapping):
@@ -153,6 +165,7 @@ def _status_payload(status: Any) -> Mapping[str, Any] | None:
         if isinstance(block, Mapping) and isinstance(block.get("json"), Mapping):
             return block["json"]
     return None
+
 
 def teleop_health(
     status: Any,
@@ -176,17 +189,17 @@ def teleop_health(
         frames = int(stats.get("frames") or 0)
         hz = float(stats.get("hz_actual") or 0.0)
         target = float(stats.get("hz_target") or 0.0)
-        state = "publishing" if stats.get("running") and frames else (
-            "starting" if stats.get("running") else "stopped")
+        state = "publishing" if stats.get("running") and frames else ("starting" if stats.get("running") else "stopped")
         detail = None
         # A rate far under target is not a fault: on a shared bus the state probe
         # and the camera publisher get their turns too. Say so, so nobody reads
         # it as a bug and "fixes" it by asking for more.
         if state == "publishing" and target and hz < target * 0.6:
-            detail = (f"{hz:.1f}Hz of the {target:g}Hz requested - the servo bus is shared with "
-                      "this arm's state and camera reads")
-        publishers[name] = {"state": state, "headline": f"{frames} frames at {hz:.1f}Hz",
-                            "detail": detail}
+            detail = (
+                f"{hz:.1f}Hz of the {target:g}Hz requested - the servo bus is shared with "
+                "this arm's state and camera reads"
+            )
+        publishers[name] = {"state": state, "headline": f"{frames} frames at {hz:.1f}Hz", "detail": detail}
 
     # The one line worth putting on a card: a refusal outranks everything.
     order = {"refusing": 0, "unrouted": 1, "silent": 2, "stopped": 3, "following": 4}

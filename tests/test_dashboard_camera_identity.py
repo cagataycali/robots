@@ -50,7 +50,10 @@ def test_scan_camera_names_parses_avfoundation_listing(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda _: "/opt/homebrew/bin/ffmpeg")
     names = dm.scan_camera_names()
     assert [n["name"] for n in names] == [
-        "USB2.0_CAM1", "USB2.0_CAM1", "Logi 4K Pro", "Capture screen 0",
+        "USB2.0_CAM1",
+        "USB2.0_CAM1",
+        "Logi 4K Pro",
+        "Capture screen 0",
     ]
     assert [n["listing_index"] for n in names] == [0, 1, 2, 3]
     # audio devices never leak into the roster
@@ -79,9 +82,7 @@ def test_devices_payload_carries_camera_names(monkeypatch):
     mgr = dm.DeviceManager(profiles_path="/tmp/does-not-matter-profiles.json")
     monkeypatch.setattr(dm, "scan_serial_ports", lambda: [])
     monkeypatch.setattr(dm, "scan_cameras", lambda **k: [])
-    monkeypatch.setattr(
-        dm, "scan_camera_names", lambda: [{"listing_index": 0, "name": "Logi 4K Pro"}]
-    )
+    monkeypatch.setattr(dm, "scan_camera_names", lambda: [{"listing_index": 0, "name": "Logi 4K Pro"}])
     payload = mgr.devices(refresh=True)
     assert payload["camera_names"] == [{"listing_index": 0, "name": "Logi 4K Pro"}]
 
@@ -145,7 +146,8 @@ def test_preview_faults_carry_the_reason_and_the_remedy(monkeypatch):
     fail depending on who is holding them.
     """
     monkeypatch.setattr(
-        dm, "diagnose_camera_indices",
+        dm,
+        "diagnose_camera_indices",
         lambda idx, **k: {i: "OpenCV: not authorized to capture video (status 0)" for i in idx},
     )
     cap = _FakeCap(frames=False)
@@ -178,7 +180,8 @@ def test_preview_allows_an_index_its_owner_never_opened(monkeypatch):
     # entry below is what maps the camera NAME back to index 1.
     mgr = _manager(monkeypatch, cap, claimed={1: "so101-arm-1"})
     mgr.robots["so101-arm-1"] = SimpleNamespace(
-        peer_id="so101-arm-1", alive=lambda: True,
+        peer_id="so101-arm-1",
+        alive=lambda: True,
         cameras={"wrist": {"type": "opencv", "index_or_path": 1}},
     )
     # No frames reported for that peer => nothing to steal => preview proceeds.
@@ -215,16 +218,17 @@ def test_preview_http_status_mapping(client, monkeypatch):
     devices = client.app.state.devices
 
     monkeypatch.setattr(
-        devices, "preview_frame",
-        lambda i, live=None: (_ for _ in ()).throw(
-            PermissionError("index 0 is streaming for so101-arm-1")),
+        devices,
+        "preview_frame",
+        lambda i, live=None: (_ for _ in ()).throw(PermissionError("index 0 is streaming for so101-arm-1")),
     )
     r = client.get("/api/devices/camera/0/preview")
     assert r.status_code == 409
     assert "so101-arm-1" in r.json()["detail"]
 
     monkeypatch.setattr(
-        devices, "preview_frame",
+        devices,
+        "preview_frame",
         lambda i, live=None: (_ for _ in ()).throw(RuntimeError("camera index 3 would not open")),
     )
     r = client.get("/api/devices/camera/3/preview")

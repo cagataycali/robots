@@ -11,6 +11,7 @@ Neither SDK tool raises tool_context.interrupt, so the dashboard's
 agent_hitl.MOTION_ACTIONS layer is their ONLY human gate -- registration adds
 those rows (see agent_hitl.py); this module only owns bus safety.
 """
+
 from __future__ import annotations
 
 import functools
@@ -40,6 +41,7 @@ def _scan_hint(scan: Callable[[], list[dict[str, Any]]]) -> str:
         return "no candidate servo ports are attached right now (scan_serial_ports found none)."
     return "ports on this machine: " + ", ".join(sorted(devices)) + "."
 
+
 def port_refusal(
     port: Any,
     action: str,
@@ -61,10 +63,7 @@ def port_refusal(
     p = str(port or "").strip()
     if not p or not exists(p):
         what = f"port {p!r} does not exist on this machine" if p else "no serial port was given"
-        return (
-            f"{what}, so the {act or 'requested'} action cannot proceed. "
-            f"Pass port= explicitly -- {_scan_hint(scan)}"
-        )
+        return f"{what}, so the {act or 'requested'} action cannot proceed. Pass port= explicitly -- {_scan_hint(scan)}"
     try:
         pids = holders(p)
     except Exception:  # noqa: BLE001 - an unreadable holder list means UNKNOWN, refuse loudly
@@ -86,13 +85,13 @@ def port_refusal(
         )
     if strangers:
         parts.append(
-            "held by process(es) this dashboard does not manage: pid "
-            + ", ".join(str(pid) for pid in strangers)
+            "held by process(es) this dashboard does not manage: pid " + ", ".join(str(pid) for pid in strangers)
         )
     return (
         f"{p} is {'; also '.join(parts)}. A second owner on a half-duplex serial bus corrupts "
         f"both conversations, so the call is refused. Other {_scan_hint(scan)}"
     )
+
 
 def available_names() -> list[str]:
     """Tool names build_direct_serial_tools WOULD produce -- same import rules.

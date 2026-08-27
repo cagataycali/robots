@@ -13,6 +13,7 @@ from collections.abc import Callable
 #: day-long page keep every prefix ever typed.
 DEFAULT_MAX_ENTRIES = 64
 
+
 class TTLCache[V]:
     """Thread-safe, size-bounded, self-pruning cache of values with an age."""
 

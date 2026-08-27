@@ -5,6 +5,7 @@ strings I typed: a reworded SDK refusal must fail here, loudly, rather than go q
 Found by probing this parser with the producer's real output (the Q116/Q117 method), after the same
 method found a leaked token and a lost cache header earlier today.
 """
+
 from __future__ import annotations
 
 import math

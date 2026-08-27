@@ -32,6 +32,7 @@ def _file_text():
 
 # --- strict path (the API) ---------------------------------------------------
 
+
 @pytest.mark.parametrize("bad", ["NaN", "nan", "inf", "-inf", float("nan"), float("inf")])
 def test_nonfinite_temperature_is_an_error_and_never_stored(bad):
     changed, errors = settings.update_strict({"agent": {"temperature": bad}})
@@ -57,9 +58,7 @@ def test_out_of_range_values_are_errors():
 
 
 def test_valid_keys_in_a_mixed_patch_still_apply():
-    changed, errors = settings.update_strict(
-        {"agent": {"temperature": "NaN", "max_tokens": 512}}
-    )
+    changed, errors = settings.update_strict({"agent": {"temperature": "NaN", "max_tokens": 512}})
     assert changed == ["agent.max_tokens"]
     assert len(errors) == 1 and "temperature" in errors[0]
     assert settings.get("agent", "max_tokens") == 512
@@ -81,6 +80,7 @@ def test_clearing_with_empty_string_still_works():
 
 # --- lenient path (env/CLI) keeps degrading, never raises ---------------------
 
+
 def test_lenient_update_never_raises_and_stores_none():
     changed = settings.update({"agent": {"temperature": "NaN"}})
     assert changed in ([], ["agent.temperature"])
@@ -88,6 +88,7 @@ def test_lenient_update_never_raises_and_stores_none():
 
 
 # --- belt and braces -----------------------------------------------------------
+
 
 def test_write_file_refuses_nonfinite_outright():
     with pytest.raises(ValueError):

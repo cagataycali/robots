@@ -50,9 +50,9 @@ def test_no_roster_means_no_stamp_rather_than_a_guess() -> None:
 
 def test_what_cannot_be_named_by_an_index_is_left_alone() -> None:
     configured = {
-        "path": {"index_or_path": "/dev/video9"},   # absence from an index list says nothing
-        "boolish": {"index_or_path": True},          # True == 1 must not inherit index 1's name
-        "unlisted": {"index_or_path": 7},            # nothing at 7 to remember
+        "path": {"index_or_path": "/dev/video9"},  # absence from an index list says nothing
+        "boolish": {"index_or_path": True},  # True == 1 must not inherit index 1's name
+        "unlisted": {"index_or_path": 7},  # nothing at 7 to remember
         "broken": "not-a-mapping",
     }
     assert camera_liveness.stamp_device_names(configured, _ROSTER) is configured

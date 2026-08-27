@@ -24,6 +24,7 @@ def _presence(peer="arm-1", **data):
 # what gets coalesced, and what must never be
 # --------------------------------------------------------------------------
 
+
 def test_an_unchanged_repeat_inside_the_window_is_dropped():
     c = EventCoalescer({"presence": 1.0})
     assert c.allow(_presence(), 100.0) is True
@@ -108,19 +109,19 @@ def test_the_measured_saving_on_the_reported_traffic():
     """Replay the ticket's own numbers: 6 Hz presence + 10 Hz camera_meta over 5s."""
     c = EventCoalescer({"presence": 1.0, "camera_meta": 2.0})
     sent = 0
-    for i in range(30):           # 6 Hz presence, unchanged but for its timestamp
+    for i in range(30):  # 6 Hz presence, unchanged but for its timestamp
         sent += c.allow(_presence(t=i), 100.0 + i / 6.0)
-    for i in range(50):           # 10 Hz camera_meta on one tile
-        ev = {"type": "camera_meta", "peer_id": "arm-1", "cam": "top",
-              "data": {"displayable": True, "t": i}}
+    for i in range(50):  # 10 Hz camera_meta on one tile
+        ev = {"type": "camera_meta", "peer_id": "arm-1", "cam": "top", "data": {"displayable": True, "t": i}}
         sent += c.allow(ev, 100.0 + i / 10.0)
-    assert sent <= 18            # was 80
+    assert sent <= 18  # was 80
     assert c.stats()["suppressed_pct"] > 75
 
 
 # --------------------------------------------------------------------------
 # the comparison helper
 # --------------------------------------------------------------------------
+
 
 def test_stable_content_ignores_volatile_fields_at_any_depth():
     a = _stable_content({"cams": {"top": {"displayable": True, "t": 1, "fps": 30}}})

@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -19,19 +18,21 @@ def label_view(
             continue
         det = rec.get("deterministic") if isinstance(rec.get("deterministic"), Mapping) else None
         judge = rec.get("judge") if isinstance(rec.get("judge"), Mapping) else None
-        rows.append({
-            "episode_index": _as_int(rec.get("episode_index", key)),
-            "verdict": None if det is None else ("success" if det.get("success") else "failure"),
-            "steps": None if det is None else det.get("steps"),
-            "quality": None if judge is None else judge.get("quality"),
-            "failure_mode": None if judge is None else judge.get("failure_mode"),
-            "note": None if judge is None else judge.get("note"),
-            "disputes_verdict": bool(judge.get("disputes_verdict")) if judge else False,
-            "model": None if judge is None else judge.get("model"),
-            # The one field the UI needs to know whether a label CONTROL may be offered for this
-            # row: annotate_episode refuses without a deterministic verdict, full stop.
-            "annotatable": det is not None,
-        })
+        rows.append(
+            {
+                "episode_index": _as_int(rec.get("episode_index", key)),
+                "verdict": None if det is None else ("success" if det.get("success") else "failure"),
+                "steps": None if det is None else det.get("steps"),
+                "quality": None if judge is None else judge.get("quality"),
+                "failure_mode": None if judge is None else judge.get("failure_mode"),
+                "note": None if judge is None else judge.get("note"),
+                "disputes_verdict": bool(judge.get("disputes_verdict")) if judge else False,
+                "model": None if judge is None else judge.get("model"),
+                # The one field the UI needs to know whether a label CONTROL may be offered for this
+                # row: annotate_episode refuses without a deterministic verdict, full stop.
+                "annotatable": det is not None,
+            }
+        )
 
     labelled = sum(1 for r in rows if r["quality"])
     can, why = _capability(document, rows, sidecar_error)
@@ -47,6 +48,7 @@ def label_view(
         "why": why,
         "sidecar_error": sidecar_error,
     }
+
 
 def _capability(
     document: Mapping[str, Any] | None,
@@ -77,6 +79,7 @@ def _capability(
     if unjudged:
         return True, f"{len(unjudged)} episode(s) carry a verdict and are waiting for a quality grade"
     return True, "every episode with a verdict already carries a judge annotation"
+
 
 def _as_int(value: Any) -> int:
     try:

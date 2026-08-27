@@ -61,9 +61,7 @@ class _Bridge:
 def _cache(tmp_path, repo: str, inp: dict, out: dict) -> None:
     snap = tmp_path / "hub" / f"models--{repo.replace('/', '--')}" / "snapshots" / "a"
     snap.mkdir(parents=True)
-    (snap / "config.json").write_text(
-        json.dumps({"type": "act", "input_features": inp, "output_features": out})
-    )
+    (snap / "config.json").write_text(json.dumps({"type": "act", "input_features": inp, "output_features": out}))
 
 
 def _client() -> TestClient:
@@ -73,7 +71,8 @@ def _client() -> TestClient:
 def test_the_mismatch_that_used_to_reach_the_arm(tmp_path):
     # The real shape of cagataydev/scout-act-sim-v0: 5-value state, 2-value action, camera "front".
     _cache(
-        tmp_path, "org/scout",
+        tmp_path,
+        "org/scout",
         {"observation.images.front": {"shape": [3, 480, 640]}, "observation.state": {"shape": [5]}},
         {"action": {"shape": [2]}},
     )
@@ -93,9 +92,13 @@ def test_the_mismatch_that_used_to_reach_the_arm(tmp_path):
 
 def test_a_matching_checkpoint_passes_and_names_what_it_checked(tmp_path):
     _cache(
-        tmp_path, "org/arm",
-        {"observation.state": {"shape": [6]}, "observation.images.top": {"shape": [3, 1, 1]},
-         "observation.images.wrist": {"shape": [3, 1, 1]}},
+        tmp_path,
+        "org/arm",
+        {
+            "observation.state": {"shape": [6]},
+            "observation.images.top": {"shape": [3, 1, 1]},
+            "observation.images.wrist": {"shape": [3, 1, 1]},
+        },
         {"action": {"shape": [6]}},
     )
     v = _client().get("/api/robots/so101-arm-2/policy-fit?repo_id=org/arm").json()
@@ -128,14 +131,19 @@ def test_validate_also_carries_the_fit_and_flips_ok(tmp_path):
     """The form's existing validate call must not answer a green tick about a policy that cannot
     drive this robot -- the fit overrides `ok`, because that flag is what arms the button."""
     _cache(
-        tmp_path, "org/scout2",
-        {"observation.state": {"shape": [5]}}, {"action": {"shape": [2]}},
+        tmp_path,
+        "org/scout2",
+        {"observation.state": {"shape": [5]}},
+        {"action": {"shape": [2]}},
     )
-    r = _client().post("/api/policies/validate", json={
-        "policy_provider": "lerobot_local",
-        "policy_config": {"pretrained_name_or_path": "org/scout2"},
-        "peer_id": "so101-arm-2",
-    })
+    r = _client().post(
+        "/api/policies/validate",
+        json={
+            "policy_provider": "lerobot_local",
+            "policy_config": {"pretrained_name_or_path": "org/scout2"},
+            "peer_id": "so101-arm-2",
+        },
+    )
     assert r.status_code == 200
     v = r.json()
     assert v["fit"]["blocking"] is True

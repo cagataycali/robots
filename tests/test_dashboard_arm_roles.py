@@ -122,7 +122,9 @@ def _mgr(tmp_path):
 def test_a_live_child_owns_its_port_and_the_read_is_refused(tmp_path):
     mgr = _mgr(tmp_path)
     mgr.robots["so101-arm-1"] = SimpleNamespace(
-        peer_id="so101-arm-1", port="/dev/cu.usbmodem1", alive=lambda: True,
+        peer_id="so101-arm-1",
+        port="/dev/cu.usbmodem1",
+        alive=lambda: True,
     )
     with pytest.raises(PermissionError, match="held by so101-arm-1"):
         mgr.read_bus_role("/dev/cu.usbmodem1")
@@ -160,7 +162,8 @@ def test_a_hung_bus_becomes_a_verdict_not_an_exception(tmp_path, monkeypatch):
 
 def test_the_sdks_own_words_survive_a_failed_read(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        dm.subprocess, "run",
+        dm.subprocess,
+        "run",
         lambda argv, **kw: SimpleNamespace(stdout="{}", stderr="m1: No response from motor 1\n"),
     )
     v = _mgr(tmp_path).read_bus_role("/dev/cu.usbmodem1")
@@ -169,7 +172,8 @@ def test_the_sdks_own_words_survive_a_failed_read(tmp_path, monkeypatch):
 
 def test_garbage_on_stdout_does_not_crash_the_read(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        dm.subprocess, "run",
+        dm.subprocess,
+        "run",
         lambda argv, **kw: SimpleNamespace(stdout="not json at all", stderr=""),
     )
     assert _mgr(tmp_path).read_bus_role("/dev/cu.usbmodem1")["role"] == "unknown"
@@ -182,7 +186,8 @@ def test_profiles_are_looked_up_by_serial_not_by_port(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path)
     mgr.profiles.save("5AB0158428", {"robot_name": "so101", "role": "leader"})
     monkeypatch.setattr(
-        dm, "scan_serial_ports",
+        dm,
+        "scan_serial_ports",
         lambda: [{"device": "/dev/cu.usbmodem5AB01584281", "serial_number": "5AB0158428"}],
     )
     assert mgr.profile_for_port("/dev/cu.usbmodem5AB01584281")["role"] == "leader"
@@ -229,11 +234,13 @@ def test_measure_arm_role_remembers_and_reports_the_mismatch(tmp_path, monkeypat
     mgr = _mgr(tmp_path)
     mgr.profiles.save("5AB0158428", {"robot_name": "so101", "role": "leader"})
     monkeypatch.setattr(
-        dm, "scan_serial_ports",
+        dm,
+        "scan_serial_ports",
         lambda: [{"device": "/dev/cu.usbmodemX", "serial_number": "5AB0158428"}],
     )
     monkeypatch.setattr(
-        dm.subprocess, "run",
+        dm.subprocess,
+        "run",
         lambda argv, **kw: SimpleNamespace(stdout=json.dumps({"m1": 12.6, "m2": 12.6}), stderr=""),
     )
     v = mgr.measure_arm_role("/dev/cu.usbmodemX")
@@ -246,7 +253,8 @@ def test_a_board_without_a_serial_says_why_it_cannot_be_remembered(tmp_path, mon
     mgr = _mgr(tmp_path)
     monkeypatch.setattr(dm, "scan_serial_ports", lambda: [{"device": "/dev/cu.usbmodemX"}])
     monkeypatch.setattr(
-        dm.subprocess, "run",
+        dm.subprocess,
+        "run",
         lambda argv, **kw: SimpleNamespace(stdout=json.dumps({"m1": 7.5}), stderr=""),
     )
     v = mgr.measure_arm_role("/dev/cu.usbmodemX")
@@ -258,9 +266,12 @@ def test_the_devices_payload_carries_the_known_role(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path)
     mgr.profiles.record_role("5AB0158428", {"role": "follower", "volts": 12.6})
     monkeypatch.setattr(
-        dm, "scan_serial_ports",
-        lambda: [{"device": "/dev/cu.usbmodemX", "serial_number": "5AB0158428"},
-                 {"device": "/dev/cu.usbmodemY", "serial_number": "never-measured"}],
+        dm,
+        "scan_serial_ports",
+        lambda: [
+            {"device": "/dev/cu.usbmodemX", "serial_number": "5AB0158428"},
+            {"device": "/dev/cu.usbmodemY", "serial_number": "never-measured"},
+        ],
     )
     monkeypatch.setattr(mgr, "_cameras", lambda **kw: [])
     monkeypatch.setattr(mgr, "_camera_names", lambda **kw: [])
@@ -277,7 +288,8 @@ def test_no_profile_is_written_for_a_port_that_is_not_there(tmp_path, monkeypatc
     key - that one is matchable, because the scan produced it."""
     mgr = _mgr(tmp_path)
     monkeypatch.setattr(
-        dm, "scan_serial_ports",
+        dm,
+        "scan_serial_ports",
         lambda: [{"device": "/dev/cu.real", "serial_number": None}],
     )
     assert mgr.remember_profile({"port": "/dev/cu.ghost", "robot_name": "so101"}) is None
@@ -300,8 +312,7 @@ def test_roles_by_peer_is_cheap_and_absent_when_unmeasured(tmp_path, monkeypatch
 
     def one_scan():
         scans.append(1)
-        return [{"device": "/dev/cu.a", "serial_number": "SER-A"},
-                {"device": "/dev/cu.b", "serial_number": "SER-B"}]
+        return [{"device": "/dev/cu.a", "serial_number": "SER-A"}, {"device": "/dev/cu.b", "serial_number": "SER-B"}]
 
     monkeypatch.setattr(dm, "scan_serial_ports", one_scan)
     for _ in range(20):
@@ -317,8 +328,7 @@ def test_a_failed_rescan_keeps_the_last_known_map(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path)
     mgr.profiles.record_role("SER-A", {"role": "leader", "volts": 7.5})
     mgr.robots["arm-a"] = SimpleNamespace(port="/dev/cu.a", peer_id="arm-a")
-    monkeypatch.setattr(dm, "scan_serial_ports",
-                        lambda: [{"device": "/dev/cu.a", "serial_number": "SER-A"}])
+    monkeypatch.setattr(dm, "scan_serial_ports", lambda: [{"device": "/dev/cu.a", "serial_number": "SER-A"}])
     assert mgr.roles_by_peer()["arm-a"]["role"] == "leader"
     mgr._port_serial_cache_t = 0.0  # force a refresh
     monkeypatch.setattr(dm, "scan_serial_ports", lambda: (_ for _ in ()).throw(OSError("bus busy")))

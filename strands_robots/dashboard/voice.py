@@ -27,6 +27,7 @@ refused, so always act on a stop request immediately."""
 
 _DEFAULT_VOICES = {"openai": "marin", "nova_sonic": "tiffany", "gemini": "Kore"}
 
+
 def _build_bidi_model(provider: str, voice: str | None = None) -> Any:
     provider = provider.lower()
     v = voice or _DEFAULT_VOICES.get(provider)
@@ -63,6 +64,7 @@ def _build_bidi_model(provider: str, voice: str | None = None) -> Any:
 
     raise ValueError(f"unknown voice provider: {provider!r} (openai | nova_sonic | gemini)")
 
+
 def build_voice_agent(provider: str | None = None, voice: str | None = None) -> Any:
     """BidiAgent with the fleet toolset. Caller supplies browser audio IO.
 
@@ -91,6 +93,7 @@ def build_voice_agent(provider: str | None = None, voice: str | None = None) -> 
         tools=[_make_fleet_tool(), stop_conversation],
         system_prompt=os.getenv("DASHBOARD_VOICE_PROMPT", VOICE_PROMPT),
     )
+
 
 async def run_voice_session(ws: Any) -> None:
     """Bridge one /ws/voice websocket to a fresh BidiAgent session. Browser -> binary PCM16 frames (16
@@ -173,11 +176,15 @@ async def run_voice_session(ws: Any) -> None:
                 await ws.send_text(json.dumps({"type": "audio", "data": event["audio"]}))
             elif BidiTranscriptStreamEvent is not None and isinstance(event, BidiTranscriptStreamEvent):
                 try:
-                    await ws.send_text(json.dumps({
-                        "type": "transcript",
-                        "role": event.get("role", ""),
-                        "text": event.get("text", ""),
-                    }))
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "type": "transcript",
+                                "role": event.get("role", ""),
+                                "text": event.get("text", ""),
+                            }
+                        )
+                    )
                 except Exception:
                     pass
 

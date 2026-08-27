@@ -76,9 +76,7 @@ def test_a_forwarded_request_must_authenticate(client):
     unauthenticated topology oracle. The guard's rule (fb5f2a0a) is that a forwarded
     request is never loopback, and this endpoint inherits it rather than opting out.
     """
-    assert client.get(
-        "/api/network/hint", headers={"CF-Connecting-IP": "2605:59ca:801b:5a80::9"}
-    ).status_code == 401
+    assert client.get("/api/network/hint", headers={"CF-Connecting-IP": "2605:59ca:801b:5a80::9"}).status_code == 401
 
 
 def test_the_forwarded_address_wins_over_the_socket_peer(client):
@@ -96,9 +94,7 @@ def test_the_forwarded_address_wins_over_the_socket_peer(client):
 
 
 def test_a_direct_visitor_falls_back_to_the_peer_address(client):
-    body = client.get(
-        "/api/network/hint", headers={"Authorization": "Bearer test-token"}
-    ).json()
+    body = client.get("/api/network/hint", headers={"Authorization": "Bearer test-token"}).json()
     assert body["client_ip"] in ("testclient", "127.0.0.1")
     # 'testclient' is not an address, so the honest answer is 'unknown', not 'local'.
     assert body["same_network"] in (True, None)

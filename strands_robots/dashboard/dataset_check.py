@@ -11,10 +11,12 @@ __all__ = ["dataset_verdict", "MIN_EPISODES"]
 #: not "small", it is "nothing was ever recorded".
 MIN_EPISODES = 1
 
+
 def _as_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return int(value)
+
 
 def dataset_verdict(
     meta: Mapping[str, Any] | None,
@@ -78,8 +80,10 @@ def dataset_verdict(
         verdict["note"] += "; data/ was not checked"
     return verdict
 
+
 # : A row that a recorder is writing into right now.
 RECORDING_REASON = "recording_in_progress"
+
 
 def _same_dataset(row: Mapping[str, Any], active: str) -> bool:
     """Is this listing row the dataset the recorder named?"""
@@ -92,6 +96,7 @@ def _same_dataset(row: Mapping[str, Any], active: str) -> bool:
     if root:
         return root == active or root.endswith("/" + active.strip("/"))
     return False
+
 
 def mark_live_recording(
     rows: list[dict[str, Any]],
@@ -108,18 +113,21 @@ def mark_live_recording(
             continue
         n = episodes_so_far if isinstance(episodes_so_far, int) else None
         so_far = f"{n} episode(s) captured so far" if n is not None else "episodes are being written"
-        out.append({
-            **row,
-            "usable": False,
-            "recording": True,
-            "reason": RECORDING_REASON,
-            "problem": (
-                f"a recording session is writing into this dataset right now - {so_far}. "
-                "Training would read a dataset that is still growing, and a replay would race the "
-                "writer. Wait for the session to close; do NOT delete the folder."
-            ),
-        })
+        out.append(
+            {
+                **row,
+                "usable": False,
+                "recording": True,
+                "reason": RECORDING_REASON,
+                "problem": (
+                    f"a recording session is writing into this dataset right now - {so_far}. "
+                    "Training would read a dataset that is still growing, and a replay would race the "
+                    "writer. Wait for the session to close; do NOT delete the folder."
+                ),
+            }
+        )
     return out
+
 
 def record_target_verdict(
     dataset: str,

@@ -26,8 +26,19 @@ _BEARER_RE = re.compile(r"(?i)(?P<key>bearer\s+)(?P<val>[A-Za-z0-9._\-~+/]{8,}=*
 #: a JWT sitting loose in a message, with no key to hang the redaction on
 _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 
-_KEYED_WORDS = ("token", "secret", "password", "passwd", "passphrase", "api_key", "apikey",
-                "access_code", "auth", "authorization", "credential")
+_KEYED_WORDS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "passphrase",
+    "api_key",
+    "apikey",
+    "access_code",
+    "auth",
+    "authorization",
+    "credential",
+)
 _KEYED_RE = re.compile(
     r"(?i)(?P<key>[\w.\-]*(?:" + "|".join(_KEYED_WORDS) + r")[\w.\-]*\"?'?\s*[:=]\s*\"?'?)"
     r"(?P<val>[A-Za-z0-9._\-~+/]{8,}=*)"
@@ -37,19 +48,23 @@ _KEYED_RE = re.compile(
 # as : literals when they are loaded.
 _known: set[str] = set()
 
+
 def register_secret(value: str | None) -> None:
     """Redact ``value`` from every future log line, whatever shape it appears in."""
     if value and len(value.strip()) >= 12:
         _known.add(value.strip())
 
+
 def forget_secrets() -> None:
     """Test-only: drop the registered literals (a leaked registration outlives one test)."""
     _known.clear()
+
 
 def fingerprint(secret: str) -> str:
     """A stable, non-usable label for a credential: its length and last 4 characters."""
     tail = secret[-4:] if len(secret) >= 8 else ""
     return f"<redacted:{len(secret)}{':' + tail if tail else ''}>"
+
 
 def redact_secrets(message: str) -> str:
     """Return ``message`` with every credential-shaped value replaced by a fingerprint."""
@@ -74,6 +89,7 @@ def redact_secrets(message: str) -> str:
             out = out.replace(secret, fingerprint(secret))
     return out
 
+
 class RedactingFilter(logging.Filter):
     """Redacts the FORMATTED message of every record that passes through."""
 
@@ -88,8 +104,10 @@ class RedactingFilter(logging.Filter):
             record.args = ()
         return True
 
+
 #: loggers that carry request lines; the root catches everything else
 _TARGETS = ("", "uvicorn", "uvicorn.access", "uvicorn.error", "fastapi", "strands_robots")
+
 
 def install_redaction(logger_names: tuple[str, ...] = _TARGETS) -> None:
     """Attach the filter to the loggers that can carry a URL. Idempotent."""

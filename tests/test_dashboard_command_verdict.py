@@ -7,9 +7,11 @@ whether the Stop button reports success, and they feed the per-peer counts behin
 The theme throughout: a response that ARRIVED is not a confirmation. The wire is layered, and a
 refusal can be phrased in at least five different ways depending on which layer refused.
 """
+
 from strands_robots.dashboard.mesh_bridge import command_succeeded, stop_outcome
 
 # --- command_succeeded: every way a response can say no -------------------------------------------
+
 
 def test_a_clean_response_is_a_success():
     assert command_succeeded({"type": "response", "result": {"ok": True}}) is True
@@ -61,12 +63,13 @@ def test_ok_true_does_not_override_a_refusal_deeper_down():
 
 # --- stop_outcome: three honest states, and never a false "stopped" ------------------------------
 
+
 def test_a_real_stop():
     assert stop_outcome({"result": {"ok": True}}) == {"state": "stopped", "detail": ""}
 
 
 def test_silence_is_never_a_stop():
-    """"unstoppable peer" and "peer offline" need different human reactions, so they are different
+    """ "unstoppable peer" and "peer offline" need different human reactions, so they are different
     states -- and neither of them is "stopped"."""
     assert stop_outcome(None)["state"] == "no_answer"
     assert stop_outcome({"error": "timeout after 5.0s"})["state"] == "no_answer"

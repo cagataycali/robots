@@ -46,7 +46,7 @@ def test_a_camera_configured_by_path_is_not_judged_by_an_index_list() -> None:
 
 
 def test_the_refusal_names_the_renumbering_trap_not_just_the_gap() -> None:
-    """"Put it back and press record" is the wrong fix and the tempting one.
+    """ "Put it back and press record" is the wrong fix and the tempting one.
 
     Removing a camera renumbers the rest, so after a replug the same index may be a different
     camera - recording then captures the wrong view while every surface looks healthy. The refusal
@@ -88,9 +88,7 @@ def test_a_renumbered_index_is_reported_with_where_the_camera_went() -> None:
     while showing what used to be index 2. The remembered device name is the only thing that can
     say so - and the operator's real question is "where is my camera now", so the answer carries it.
     """
-    drift = camera_liveness.identity_drift(
-        {"wrist": {"index_or_path": 1, "device_name": "USB2.0_CAM1"}}, _ROSTER
-    )
+    drift = camera_liveness.identity_drift({"wrist": {"index_or_path": 1, "device_name": "USB2.0_CAM1"}}, _ROSTER)
     assert drift == [
         {"camera": "wrist", "index": 1, "remembered": "USB2.0_CAM1", "now": "neon_net Camera", "moved_to": 2}
     ]
@@ -102,9 +100,7 @@ def test_two_cameras_with_ONE_name_is_admitted_as_a_guess_not_offered_as_a_fix()
     Names cannot tell them apart, so proposing an index would be a coin flip dressed as advice.
     """
     roster = [*_ROSTER, {"listing_index": 3, "name": "USB2.0_CAM1"}]
-    drift = camera_liveness.identity_drift(
-        {"wrist": {"index_or_path": 1, "device_name": "USB2.0_CAM1"}}, roster
-    )
+    drift = camera_liveness.identity_drift({"wrist": {"index_or_path": 1, "device_name": "USB2.0_CAM1"}}, roster)
     assert drift[0]["ambiguous"] is True
     assert "moved_to" not in drift[0], "no guessed index"
     text = camera_liveness.drift_refusal(drift, peer_id="arm-1")
@@ -141,9 +137,7 @@ def test_an_empty_roster_or_nameless_entries_are_not_evidence() -> None:
 
 def test_the_drift_refusal_explains_why_a_working_camera_is_being_refused() -> None:
     """Refusing something that visibly works needs the reason stated, or it reads as a bug."""
-    drift = camera_liveness.identity_drift(
-        {"wrist": {"index_or_path": 1, "device_name": "USB2.0_CAM1"}}, _ROSTER
-    )
+    drift = camera_liveness.identity_drift({"wrist": {"index_or_path": 1, "device_name": "USB2.0_CAM1"}}, _ROSTER)
     text = camera_liveness.drift_refusal(drift, peer_id="so101-arm-1")
     assert "changed hands" in text
     assert "still opens and still streams" in text and "wrong view" in text

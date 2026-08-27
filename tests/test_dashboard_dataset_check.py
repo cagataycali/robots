@@ -63,7 +63,10 @@ class TestTheHealthyOnes:
     def test_a_single_episode_is_a_dataset(self) -> None:
         # One demonstration is a legitimate thing to replay or overfit on; refusing it would be
         # a taste judgment wearing a safety check's clothes.
-        assert dataset_verdict({"total_episodes": 1, "total_frames": 300, "fps": 30}, has_data_files=True)["usable"] is True
+        assert (
+            dataset_verdict({"total_episodes": 1, "total_frames": 300, "fps": 30}, has_data_files=True)["usable"]
+            is True
+        )
 
     def test_not_probing_data_is_reported_not_assumed(self) -> None:
         v = dataset_verdict({"total_episodes": 5, "total_frames": 900, "fps": 30})
@@ -76,8 +79,12 @@ class TestTheHealthyOnes:
         assert "stale" in v["warning"]
 
     def test_odd_metadata_types_do_not_crash_the_listing(self) -> None:
-        for bad in ({"total_episodes": "many", "fps": 30}, {"total_episodes": None, "fps": 30},
-                    {"total_episodes": True, "fps": 30}, {"total_episodes": 3.0, "fps": 30}):
+        for bad in (
+            {"total_episodes": "many", "fps": 30},
+            {"total_episodes": None, "fps": 30},
+            {"total_episodes": True, "fps": 30},
+            {"total_episodes": 3.0, "fps": 30},
+        ):
             v = dataset_verdict(bad, has_data_files=True)
             assert isinstance(v["usable"], bool)
         # A float that IS a count is honoured; a bool is not a count.
@@ -138,8 +145,13 @@ class TestALiveRecordingIsNotAnAbandonedOne:
         from strands_robots.dashboard.dataset_check import mark_live_recording
 
         rows = [
-            {"root": "/data/local/sim_recording", "repo_id": "local/sim_recording",
-             "usable": False, "reason": "no_episodes", "problem": "0 episodes ... Record into it, or delete it."},
+            {
+                "root": "/data/local/sim_recording",
+                "repo_id": "local/sim_recording",
+                "usable": False,
+                "reason": "no_episodes",
+                "problem": "0 episodes ... Record into it, or delete it.",
+            },
             {"root": "/data/org/other", "repo_id": "org/other", "usable": True, "total_episodes": 9},
         ]
         out = mark_live_recording(rows, "local/sim_recording", episodes_so_far=2)

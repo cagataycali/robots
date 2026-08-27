@@ -132,7 +132,9 @@ class TestBridgeSnapshotCarriesIt:
         b._peer_annotations = lambda: {}
 
         class _C:
-            def forget(self, pid): pass
+            def forget(self, pid):
+                pass
+
         b._coalescer = _C()
         b.mesh_info = lambda: {}
         return b

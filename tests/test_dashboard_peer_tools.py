@@ -201,9 +201,7 @@ class TestSpecs:
 
     def test_sim_spec_source_is_the_shipped_tool_spec(self):
         raw = json.loads(
-            (
-                Path(pt.__file__).resolve().parents[1] / "simulation" / "mujoco" / "tool_spec.json"
-            ).read_text()
+            (Path(pt.__file__).resolve().parents[1] / "simulation" / "mujoco" / "tool_spec.json").read_text()
         )
         spec = pt.peer_tool_spec("twin-1", pt.KIND_SIM, "twin_1")
         enum = set(spec["inputSchema"]["json"]["properties"]["action"]["enum"])
@@ -230,9 +228,7 @@ class TestInvocationMapping:
         assert "action" not in cmd["sim_params"]
 
     def test_sim_robot_name_lifts_to_top_level(self):
-        cmd, err = pt.map_invocation(
-            "twin-1", pt.KIND_SIM, {"action": "get_robot_state", "robot_name": "so101"}
-        )
+        cmd, err = pt.map_invocation("twin-1", pt.KIND_SIM, {"action": "get_robot_state", "robot_name": "so101"})
         assert err is None
         assert cmd["robot_name"] == "so101" and "robot_name" not in cmd["sim_params"]
 
@@ -331,9 +327,7 @@ class TestFactory:
         sent: list = []
         tools = pt.build_peer_tools(FLEET, send_cmd=lambda *a, **k: sent.append(a) or {})
         twin = next(t for t in tools if t.tool_name == "twin_1")
-        events = _run(
-            _collect(twin.stream({"toolUseId": "t2", "input": {"action": "run_policy"}}, {}))
-        )
+        events = _run(_collect(twin.stream({"toolUseId": "t2", "input": {"action": "run_policy"}}, {})))
         assert sent == []
         assert events  # the refusal came back as a result, not an exception
 
@@ -411,12 +405,14 @@ class TestStalePresence:
             peer_state=lambda pid: {"stale": True, "last_seen_age": 90},
         )
         arm = next(t for t in tools if t.tool_name == "so101_real_689")
-        events = _run(_collect(arm.stream(
-            {"toolUseId": "t9", "input": {"action": "execute", "instruction": "wave"}}, {})))
+        events = _run(
+            _collect(arm.stream({"toolUseId": "t9", "input": {"action": "execute", "instruction": "wave"}}, {}))
+        )
         assert sent == [], "a stale peer must not burn the 30s timeout on motion"
         blob = json.dumps(
-            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e))
-             for e in events], default=str)
+            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e)) for e in events],
+            default=str,
+        )
         assert "STALE" in blob and "error" in blob
 
     def test_q185_stop_is_delivered_to_a_stale_peer_with_a_note(self):
@@ -437,8 +433,9 @@ class TestStalePresence:
         events = _run(_collect(arm.stream({"toolUseId": "ts", "input": {"action": "stop"}}, {})))
         assert sent == [("so101-real-689", "stop")], "stop must reach the wire on a stale peer"
         blob = json.dumps(
-            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e))
-             for e in events], default=str)
+            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e)) for e in events],
+            default=str,
+        )
         assert "stopped" in blob, "the real outcome must be reported"
         assert "STALE" in blob and "1430" in blob, "the staleness note must ride along"
         assert '"status": "error"' not in blob, "a delivered stop is a success, not a refusal"
@@ -448,16 +445,17 @@ class TestStalePresence:
         tools = pt.build_peer_tools(
             FLEET,
             send_cmd=lambda peer, cmd, timeout=30.0, source="": (
-                sent.append((peer, cmd["action"])) or {"status": "success",
-                                                       "content": [{"text": "joints"}]}),
+                sent.append((peer, cmd["action"])) or {"status": "success", "content": [{"text": "joints"}]}
+            ),
             peer_state=lambda pid: {"stale": True, "last_seen_age": 90},
         )
         arm = next(t for t in tools if t.tool_name == "so101_real_689")
         events = _run(_collect(arm.stream({"toolUseId": "tq", "input": {"action": "status"}}, {})))
         assert sent == [("so101-real-689", "status")]
         blob = json.dumps(
-            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e))
-             for e in events], default=str)
+            [e.tool_result if hasattr(e, "tool_result") else getattr(e, "__dict__", str(e)) for e in events],
+            default=str,
+        )
         assert "joints" in blob and "STALE" in blob
 
     def test_q185_never_gated_table_holds_the_stop_class(self):
@@ -474,8 +472,11 @@ class TestStalePresence:
     def test_without_peer_state_behaviour_is_unchanged(self):
         sent: list = []
         tools = pt.build_peer_tools(
-            FLEET, send_cmd=lambda peer, cmd, timeout=30.0, source="": (
-                sent.append(peer) or {"status": "success", "content": [{"text": "ok"}]}))
+            FLEET,
+            send_cmd=lambda peer, cmd, timeout=30.0, source="": (
+                sent.append(peer) or {"status": "success", "content": [{"text": "ok"}]}
+            ),
+        )
         arm = next(t for t in tools if t.tool_name == "so101_real_689")
         _run(_collect(arm.stream({"toolUseId": "t10", "input": {"action": "status"}}, {})))
         assert sent == ["so101-real-689"]
@@ -491,7 +492,8 @@ class TestStalePresence:
         tools = pt.build_peer_tools(
             FLEET,
             send_cmd=lambda peer, cmd, timeout=30.0, source="": (
-                sent.append(peer) or {"status": "success", "content": [{"text": "ok"}]}),
+                sent.append(peer) or {"status": "success", "content": [{"text": "ok"}]}
+            ),
             peer_state=boom,
         )
         arm = next(t for t in tools if t.tool_name == "so101_real_689")

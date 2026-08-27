@@ -35,7 +35,7 @@ def test_guard_ok_requires_both_halves():
     assert guard_ok(401, 200)
     assert not guard_ok(200, 200)  # anonymous accepted = guard down
     assert not guard_ok(401, 401)  # token refused = wrong token
-    assert not guard_ok(0, 0)      # server not answering
+    assert not guard_ok(0, 0)  # server not answering
 
 
 def test_logs_to_prune_keeps_the_newest_five():
@@ -168,11 +168,12 @@ def test_stop_sweeps_a_linux_arm_bus_it_finds_held(monkeypatch):
     capture = f"{LSOF_HEADER}\n{LSOF_LINUX_ARM}\n{LSOF_LINUX_BRIDGE}"
     killed: list[int] = []
 
-    monkeypatch.setattr(dev, "_pgrep", lambda: [])            # nothing to SIGTERM
+    monkeypatch.setattr(dev, "_pgrep", lambda: [])  # nothing to SIGTERM
     monkeypatch.setattr(dev, "_port_holder", lambda port: None)  # ports already free
     monkeypatch.setattr(dev, "_lsof", lambda: "/usr/bin/lsof")
     monkeypatch.setattr(
-        dev.subprocess, "run",
+        dev.subprocess,
+        "run",
         lambda *a, **k: type("R", (), {"stdout": capture, "returncode": 0})(),
     )
     monkeypatch.setattr(dev.os, "kill", lambda pid, sig: killed.append(pid))
@@ -180,6 +181,5 @@ def test_stop_sweeps_a_linux_arm_bus_it_finds_held(monkeypatch):
 
     assert dev.stop(8090) == 0
     assert sorted(killed) == [543393, 543394], (
-        f"stop swept {sorted(killed)} -- a Linux arm bus was held by an orphan "
-        f"and the sweep did not reach it"
+        f"stop swept {sorted(killed)} -- a Linux arm bus was held by an orphan and the sweep did not reach it"
     )

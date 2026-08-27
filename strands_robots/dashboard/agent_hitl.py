@@ -43,6 +43,7 @@ DIRECT_SERIAL_TOOLS: frozenset[str] = frozenset({"pose_tool", "serial_tool"})
 #: the motion-bearing fields, in the order an operator reads them.
 _DETAIL_FIELDS = ("pose_name", "motor_name", "positions", "position", "delta", "steps", "data")
 
+
 def _direct_serial_detail(action: str, tool_input: dict) -> str:
     """The gated call's own motion fields as one readable line -- never invented."""
     parts = [action]
@@ -52,6 +53,7 @@ def _direct_serial_detail(action: str, tool_input: dict) -> str:
             continue
         parts.append(f"{key}={value}")
     return " ".join(parts) if len(parts) > 1 else ""
+
 
 _TRUE = ("1", "true", "yes", "on")
 
@@ -145,12 +147,14 @@ _grants: set[str] = set()
 
 def _grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
     tool_input = tool_input or {}
-    return "|".join((
-        tool_name,
-        str(tool_input.get("action") or ""),
-        str(tool_input.get("target") or ""),
-        str(tool_input.get("instruction") or tool_input.get("message") or ""),
-    ))
+    return "|".join(
+        (
+            tool_name,
+            str(tool_input.get("action") or ""),
+            str(tool_input.get("target") or ""),
+            str(tool_input.get("instruction") or tool_input.get("message") or ""),
+        )
+    )
 
 
 def deposit_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> None:

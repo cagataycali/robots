@@ -20,8 +20,7 @@ def _tool_result(text: str, status: str = "error") -> dict:
     return {
         "message": {
             "role": "user",
-            "content": [{"toolResult": {"toolUseId": "t1", "status": status,
-                                        "content": [{"text": text}]}}],
+            "content": [{"toolResult": {"toolUseId": "t1", "status": status, "content": [{"text": text}]}}],
         }
     }
 
@@ -78,16 +77,22 @@ def test_an_ordinary_error_is_not_dressed_up_as_a_permission_problem():
 def test_the_other_guards_reach_the_chat_surface_too():
     """This seam is not agent-motion-specific: any continuable refusal a tool returns is offered."""
     q: queue.Queue = queue.Queue()
-    WSStreamHandler(q)(**_tool_result(
-        "trust: provider loads models with trust_remote_code=True. export STRANDS_TRUST_REMOTE_CODE=1"
-    ))
+    WSStreamHandler(q)(
+        **_tool_result("trust: provider loads models with trust_remote_code=True. export STRANDS_TRUST_REMOTE_CODE=1")
+    )
     (ev,) = _drain(q)
     assert ev["needs_consent"]["kind"] == "trust_remote_code"
 
 
 def test_a_result_with_no_text_block_does_not_explode():
     q: queue.Queue = queue.Queue()
-    WSStreamHandler(q)(**{"message": {"role": "user", "content": [
-        {"toolResult": {"toolUseId": "t2", "status": "error", "content": [{"json": {"a": 1}}]}}]}})
+    WSStreamHandler(q)(
+        **{
+            "message": {
+                "role": "user",
+                "content": [{"toolResult": {"toolUseId": "t2", "status": "error", "content": [{"json": {"a": 1}}]}}],
+            }
+        }
+    )
     (ev,) = _drain(q)
     assert ev["result_preview"] == "" and "needs_consent" not in ev

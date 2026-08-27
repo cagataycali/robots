@@ -72,7 +72,6 @@ from tests.mocks.torch_mock import install_torch_mock
 install_torch_mock()
 
 
-
 def _surviving_children() -> list[dict[str, object]]:
     """Every surviving DESCENDANT of this pytest process, as {pid, cmdline}.
 
@@ -90,7 +89,9 @@ def _surviving_children() -> list[dict[str, object]]:
     try:
         out = subprocess.run(
             ["/bin/ps", "-ax", "-o", "pid=,ppid=,command="],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         ).stdout
     except Exception:
         return []
@@ -203,7 +204,6 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ANN001, ARG001
             pass
         if reporter is not None:
             reporter.write_line(f"  -> leaked mesh session: {closed}, module global reset")
-
 
 
 @pytest.fixture(autouse=True)
@@ -329,7 +329,9 @@ def _never_touch_the_real_dashboard_state(request, tmp_path_factory, monkeypatch
             import importlib
 
             _m = importlib.import_module(f"strands_robots.dashboard.{_mod}")
-            monkeypatch.setattr(_m, _attr, home / ("settings.json" if _attr == "SETTINGS_FILE" else ".env"), raising=False)
+            monkeypatch.setattr(
+                _m, _attr, home / ("settings.json" if _attr == "SETTINGS_FILE" else ".env"), raising=False
+            )
         except Exception:  # pragma: no cover - import shape is not this fixture's business
             pass
 

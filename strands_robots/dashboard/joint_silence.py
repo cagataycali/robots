@@ -53,8 +53,7 @@ _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
         "uncalibrated",
         "no calibration registered",
         "this board has no calibration, so its positions cannot be read in degrees",
-        "Calibrate this arm (devices > calibrate). Nothing is contended and a restart will not "
-        "help.",
+        "Calibrate this arm (devices > calibrate). Nothing is contended and a restart will not help.",
     ),
     (
         "no_response",
@@ -64,6 +63,7 @@ _SIGNATURES: tuple[tuple[str, str, str, str], ...] = (
         "answers some reads and not others.",
     ),
 )
+
 
 def classify(
     log_lines: Any,
@@ -95,10 +95,11 @@ def classify(
             "kind": "probe_failed",
             "headline": "the joint read failed and the snapshot omits joints",
             "remedy": "Open this robot's log (devices > logs) - the exception the probe raised is "
-                      "recorded there in full.",
+            "recorded there in full.",
             "detail": _tail(line),
         }
     return None
+
 
 def calibration_advice(available: Any, *, robot_name: Any = None, robot_id: Any = None) -> str | None:
     """A better remedy for ``uncalibrated`` when calibration files ALREADY EXIST on this machine."""
@@ -124,12 +125,15 @@ def calibration_advice(available: Any, *, robot_name: Any = None, robot_id: Any 
         "calibrated is physical work to fix a filename."
     )
 
+
 def _self_healed(log_lines: Any) -> bool:
     return any(_FLAG_CLEARED_LINE.search(str(x)) for x in log_lines)
+
 
 def recovered(log_lines: Any) -> bool:
     """Whether this child's log SAYS the joint probe is working again."""
     return any(_RECOVERED_LINE.search(str(x)) for x in log_lines)
+
 
 def _tail(line: str, limit: int = 240) -> str:
     """The exception part of the log line, trimmed - a multi-page motor dump is not a badge."""
@@ -140,6 +144,7 @@ def _tail(line: str, limit: int = 240) -> str:
     text = " ".join(text.split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
+
 def _match(text: Any) -> dict[str, str] | None:
     """The signature this text carries, or None. Shared by the log and snapshot readers."""
     haystack = str(text).lower()
@@ -147,6 +152,7 @@ def _match(text: Any) -> dict[str, str] | None:
         if needle.lower() in haystack:
             return {"kind": kind, "headline": headline, "remedy": remedy}
     return None
+
 
 def classify_state(state: Any) -> dict[str, Any] | None:
     """Explain a joint fault the PEER ITSELF reported in its snapshot, or return None."""
@@ -164,8 +170,7 @@ def classify_state(state: Any) -> dict[str, Any] | None:
     matched = _match(reason) or {
         "kind": "probe_failed",
         "headline": "the joint read failed and the snapshot omits joints",
-        "remedy": "Open this robot's log (devices > logs) - the exception the probe raised is "
-                  "recorded there in full.",
+        "remedy": "Open this robot's log (devices > logs) - the exception the probe raised is recorded there in full.",
     }
     if matched["kind"] == "port_in_use" and _published_recoveries(state) > 0:
         # The snapshot's own fingerprint, exactly parallel to the log's (see _FLAG_CLEARED_LINE):
@@ -179,6 +184,7 @@ def classify_state(state: Any) -> dict[str, Any] | None:
             out[key] = value
     return out
 
+
 def _published_recoveries(state: Any) -> int:
     """How many stranded in-use flags the peer says it has cleared (``bus_recoveries``)."""
     if not isinstance(state, Mapping):
@@ -188,6 +194,7 @@ def _published_recoveries(state: Any) -> int:
         return 0
     return int(value) if value > 0 else 0
 
+
 def has_joints(state: Any) -> bool:
     """Does this peer's published state carry any joint position at all?"""
     if not isinstance(state, Mapping):
@@ -196,6 +203,7 @@ def has_joints(state: Any) -> bool:
     if isinstance(joints, Mapping) and len(joints) > 0:
         return True
     return any(str(k).endswith(".pos") for k in state)
+
 
 def merge(peer: Mapping[str, Any], fields: Mapping[str, Any]) -> dict[str, Any]:
     """The annotation fields to apply to ``peer``, with a stale joint complaint removed."""
@@ -212,6 +220,7 @@ def merge(peer: Mapping[str, Any], fields: Mapping[str, Any]) -> dict[str, Any]:
         out["joint_problem"] = reported
     return out
 
+
 def _advice_for_this_arm(available: Mapping, robot_name: Any, robot_id: Any) -> str | None:
     """The same advice, but for THIS arm — the exact path lerobot wanted and the ids that would work."""
     name = str(robot_name or "").strip()
@@ -221,17 +230,20 @@ def _advice_for_this_arm(available: Mapping, robot_name: Any, robot_id: Any) -> 
     models = sorted(
         group.split("/", 1)[1]
         for group in available
-        if isinstance(group, str) and group.startswith("robots/")
+        if isinstance(group, str)
+        and group.startswith("robots/")
         and (group.split("/", 1)[1] == name or group.split("/", 1)[1].startswith(f"{name}_"))
     )
     if not models:
         return None
-    ids = sorted({
-        str(n)
-        for model in models
-        for n in (available.get(f"robots/{model}") or [])
-        if isinstance(available.get(f"robots/{model}"), (list, tuple))
-    })
+    ids = sorted(
+        {
+            str(n)
+            for model in models
+            for n in (available.get(f"robots/{model}") or [])
+            if isinstance(available.get(f"robots/{model}"), (list, tuple))
+        }
+    )
     if rid in ids:
         # The file lerobot wants IS there. Whatever went wrong, "your calibration is missing" is not
         # it, and sending this operator to recalibrate would be re-teaching a calibrated arm.
@@ -243,8 +255,10 @@ def _advice_for_this_arm(available: Mapping, robot_name: Any, robot_id: Any) -> 
     elsewhere = sorted(
         f"{group}/{rid}.json"
         for group, names in available.items()
-        if isinstance(group, str) and not group.startswith("robots/")
-        and isinstance(names, (list, tuple)) and rid in [str(n) for n in names]
+        if isinstance(group, str)
+        and not group.startswith("robots/")
+        and isinstance(names, (list, tuple))
+        and rid in [str(n) for n in names]
     )
     wanted = f"robots/{models[0]}/{rid}.json"
     if elsewhere:
@@ -255,9 +269,9 @@ def _advice_for_this_arm(available: Mapping, robot_name: Any, robot_id: Any) -> 
             + "or copy that file to the path above. Do NOT recalibrate - re-teaching a calibrated arm "
             "is physical work to fix a path."
         )
-    return (
-        f"lerobot wanted {wanted}, which does not exist"
-        + (f"; the ids calibrated for this robot are {', '.join(ids)}. Respawn this arm as one of "
-           "them, or calibrate it under the id you are using." if ids
-           else ". Calibrate this arm under the id you are using.")
+    return f"lerobot wanted {wanted}, which does not exist" + (
+        f"; the ids calibrated for this robot are {', '.join(ids)}. Respawn this arm as one of "
+        "them, or calibrate it under the id you are using."
+        if ids
+        else ". Calibrate this arm under the id you are using."
     )

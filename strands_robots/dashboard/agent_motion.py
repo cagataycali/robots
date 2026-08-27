@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import os
@@ -17,9 +16,11 @@ GATED_ACTIONS: frozenset[str] = frozenset({"task"})
 
 _TRUE = ("1", "true", "yes", "on")
 
+
 def _granted(env: Mapping[str, str] | None) -> bool:
     env = os.environ if env is None else env
     return str(env.get(MOTION_ENV, "")).strip().lower() in _TRUE
+
 
 def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
     """Is this peer metal? Returns (physical, why) -- the server-side twin of lib/runRisk.ts."""
@@ -37,6 +38,7 @@ def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
     if not presence:
         return True, "this peer has announced no presence yet, so it cannot be shown to be a sim"
     return True, "it did not say it was a simulation"
+
 
 def agent_motion_allowed(
     action: str,
@@ -80,15 +82,18 @@ def agent_motion_allowed(
         ),
     }
 
+
 # --- the OTHER half of the same asymmetry: the HTTP route
 # ------------------------------------------ agent_motion_allowed() guards the in-process
 # fleet tool.
 TASK_CONFIRM_ENV = "STRANDS_DASH_TASK_REQUIRES_CONFIRM"
 
+
 def task_confirm_required(env: Mapping[str, str] | None = None) -> bool:
     """Has the operator asked for real-motion task POSTs to carry a confirmation?"""
     env = env if env is not None else os.environ
     return str(env.get(TASK_CONFIRM_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
+
 
 def task_post_allowed(
     *,

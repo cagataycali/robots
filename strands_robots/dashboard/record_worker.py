@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import logging
@@ -13,6 +12,7 @@ from strands_robots.dashboard import record_motion
 logger = logging.getLogger(__name__)
 
 THUMB_MAX_WIDTH = 160
+
 
 class TeleopBackend(Protocol):
     """What the worker needs from hardware. One leader, one follower."""
@@ -34,13 +34,16 @@ class TeleopBackend(Protocol):
 
     def close(self) -> None: ...
 
+
 def achieved_fps(frames: int, duration_s: float) -> float | None:
     """The rate frames were REALLY captured at, or None when unknowable."""
     if frames < 2 or duration_s <= 0:
         return None
     return round(frames / duration_s, 2)
 
+
 FPS_DRIFT_TOLERANCE = 0.10
+
 
 def fps_verdict(declared: int, measured: float | None) -> dict[str, Any] | None:
     """What the operator must know when the dataset's fps is not its rate."""
@@ -65,6 +68,7 @@ def fps_verdict(declared: int, measured: float | None) -> dict[str, Any] | None:
         ),
     }
 
+
 class EpisodeState:
     """Bookkeeping for one episode; ``to_dict`` speaks the wire contract."""
 
@@ -88,6 +92,7 @@ class EpisodeState:
             "thumbnails": dict(self.thumbnails),
             "discarded": self.discarded,
         }
+
 
 def _save_thumbnail(frame: Any, path: Path) -> bool:
     """Write a small JPEG for the episode strip; best-effort, never raises."""
@@ -115,6 +120,7 @@ def _save_thumbnail(frame: Any, path: Path) -> bool:
     except Exception as exc:  # noqa: BLE001 - decoration only
         logger.debug("thumbnail skipped: %r", exc)
         return False
+
 
 def upload_verdict(
     *,
@@ -153,6 +159,7 @@ def upload_verdict(
             f"({result!r}), so whether it published is UNKNOWN - check the Hub"
         ),
     }
+
 
 class RecordWorker:
     """The record session state machine + control loop. Phases: ``idle`` (between episodes) and
@@ -194,9 +201,7 @@ class RecordWorker:
         self.target_episodes = target
         self.fps = fps
         self._backend = backend
-        self._recorder = recorder_factory(
-            repo_id=self.dataset, fps=fps, task=self.task
-        )
+        self._recorder = recorder_factory(repo_id=self.dataset, fps=fps, task=self.task)
         self._thumb_dir = Path(thumb_dir)
         self._clock = clock
 
@@ -217,9 +222,7 @@ class RecordWorker:
         self._stop_evt = threading.Event()
         self._thread: threading.Thread | None = None
         if autostart_loop:
-            self._thread = threading.Thread(
-                target=self._loop, name="record-loop", daemon=True
-            )
+            self._thread = threading.Thread(target=self._loop, name="record-loop", daemon=True)
             self._thread.start()
 
     # ------------------------------------------------------------- session
@@ -276,10 +279,7 @@ class RecordWorker:
             # made the verdict depend on whether anyone was WATCHING - an unattended collection run would
             # keep the frames and lose the finding.
             self._motion_notice = (
-                record_motion.motion_verdict(
-                    self._motion, now=self._clock(), frames=ep.frames
-                )
-                or self._motion_notice
+                record_motion.motion_verdict(self._motion, now=self._clock(), frames=ep.frames) or self._motion_notice
             )
             self._phase = "idle"
             self._current = None
@@ -287,9 +287,7 @@ class RecordWorker:
                 # An empty episode cannot be saved (LeRobot rejects empty
                 # buffers) and keeping a 0-frame entry would lie about the
                 # dataset's contents. Surface it instead of half-keeping it.
-                self._last_error = (
-                    "episode had 0 frames - nothing was captured, check teleop"
-                )
+                self._last_error = "episode had 0 frames - nothing was captured, check teleop"
                 return self.session()
             info = self._recorder.save_episode()
             if isinstance(info, dict) and info.get("status") == "error":
@@ -320,9 +318,7 @@ class RecordWorker:
                 raise KeyError(f"no saved episode with index {index}")
         return self.session()
 
-    def close(
-        self, *, upload: bool = False, repo_id: str | None = None
-    ) -> dict[str, Any]:
+    def close(self, *, upload: bool = False, repo_id: str | None = None) -> dict[str, Any]:
         with self._lock:
             if self._closed:
                 return {"ok": True, "detail": "session already closed"}
@@ -377,11 +373,10 @@ class RecordWorker:
         if notice:
             missing = ", ".join(notice.get("missing") or ())
             result["camera_notice"] = notice
-            result["detail"] = (
-                f"{detail} - WITHOUT camera(s) {missing}: "
-                + ("no image channel at all, so this dataset cannot train a visual policy"
-                   if not notice.get("present")
-                   else "those image channels are missing from every episode")
+            result["detail"] = f"{detail} - WITHOUT camera(s) {missing}: " + (
+                "no image channel at all, so this dataset cannot train a visual policy"
+                if not notice.get("present")
+                else "those image channels are missing from every episode"
             )
         return result
 
@@ -414,9 +409,7 @@ class RecordWorker:
     def _motion_verdict_locked(self) -> dict[str, Any] | None:
         """Whether the follower is holding one pose. Caller holds ``self._lock``."""
         if self._phase == "recording" and self._current is not None:
-            verdict = record_motion.motion_verdict(
-                self._motion, now=self._clock(), frames=self._current.frames
-            )
+            verdict = record_motion.motion_verdict(self._motion, now=self._clock(), frames=self._current.frames)
             if verdict is not None:
                 self._motion_notice = verdict
             return verdict or self._motion_notice
@@ -464,6 +457,7 @@ class RecordWorker:
                             ep.thumbnails[cam] = f"/api/record/thumb/{ep.index}/{cam}"
             return True
 
+
 def camera_verdict(requested, present) -> dict[str, Any] | None:
     """What the operator must be told about cameras BEFORE they collect."""
     req = sorted(str(c) for c in (requested or ()))
@@ -488,6 +482,7 @@ def camera_verdict(requested, present) -> dict[str, Any] | None:
         ),
     }
 
+
 def hardware_backend(
     *,
     follower_name: str,
@@ -507,7 +502,9 @@ def hardware_backend(
     class _Hardware:
         def __init__(self) -> None:
             self._robot = Robot(
-                follower_name, mode="real", port=follower_port,
+                follower_name,
+                mode="real",
+                port=follower_port,
                 cameras=cameras or {},
             )
             # HardwareRobot connects lazily on the first task; recording reads observations directly, so
@@ -534,12 +531,8 @@ def hardware_backend(
                         "a headless server cannot run the interactive wizard."
                     )
             obs = self._robot.get_observation()
-            self.camera_keys = sorted(
-                k for k, v in obs.items() if getattr(v, "ndim", 0) == 3
-            )
-            self._camera_dims = {
-                k: (obs[k].shape[0], obs[k].shape[1]) for k in self.camera_keys
-            }
+            self.camera_keys = sorted(k for k, v in obs.items() if getattr(v, "ndim", 0) == 3)
+            self._camera_dims = {k: (obs[k].shape[0], obs[k].shape[1]) for k in self.camera_keys}
             # Requested vs actually-present, judged at OPEN time: the caller's
             # ``cameras`` dict is the intent, the first observation is reality.
             self.camera_notice = camera_verdict(cameras or {}, self.camera_keys)

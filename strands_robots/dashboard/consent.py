@@ -47,6 +47,7 @@ _POLICY_SUBJECT_RE = re.compile(r"policy_(?:provider|type)=(?:'([^']{1,80})'|\"(
 #: The refusal text can be a whole traceback; keep the evidence bounded.
 _MAX_MESSAGE = 2000
 
+
 def _host_entry(raw: object, *, strip_url: bool = False) -> str | None:
     """The allowlist ENTRY that grants ``raw``, or None if nothing safe can be derived."""
     if not isinstance(raw, str):
@@ -69,6 +70,7 @@ def _host_entry(raw: object, *, strip_url: bool = False) -> str | None:
     if not s or not _POLICY_HOST_ENTRY_RE.match(s):
         return None
     return s
+
 
 @dataclass(frozen=True)
 class ConsentRequest:
@@ -105,6 +107,7 @@ class ConsentRequest:
             "grantable": self.grantable,
         }
 
+
 # : The only things an operator can be asked to approve.
 KINDS: tuple[str, ...] = (
     "trust_remote_code",
@@ -114,6 +117,7 @@ KINDS: tuple[str, ...] = (
     "policy_type_allow",
     "policy_host_allow",
 )
+
 
 def build_request(kind: str, subject: object = None, message: str = "") -> ConsentRequest | None:
     """Construct a consent request from ``kind`` + ``subject``, validating both."""
@@ -209,10 +213,7 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
             env_var=_POLICY_HOST_ENV,
             subject=host,
             message=text,
-            grants=(
-                f"reach the policy server at {host}" if host
-                else "nothing yet - the host could not be read",
-            ),
+            grants=(f"reach the policy server at {host}" if host else "nothing yet - the host could not be read",),
         )
 
     if kind == "policy_type_allow":
@@ -233,10 +234,7 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
             env_var=_POLICY_TYPE_ENV,
             subject=name,
             message=text,
-            grants=(
-                f"build and run the policy {name}" if name
-                else "nothing yet - the policy name could not be read",
-            ),
+            grants=(f"build and run the policy {name}" if name else "nothing yet - the policy name could not be read",),
         )
 
     if name is not None and not _HF_ENTRY_RE.match(name):
@@ -255,6 +253,7 @@ def build_request(kind: str, subject: object = None, message: str = "") -> Conse
         message=text,
         grants=(f"load {name}" if name else "nothing yet - the repository name could not be read",),
     )
+
 
 def classify_refusal(text: object) -> ConsentRequest | None:
     """Recognise a *continuable* refusal in ``text``, else ``None``."""
@@ -299,6 +298,7 @@ def classify_refusal(text: object) -> ConsentRequest | None:
         return build_request("hf_repo_allow", repo, message)
 
     return None
+
 
 def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> dict[str, str]:
     """The smallest env change that grants ``request``, given the current ``env``."""
@@ -354,6 +354,7 @@ def env_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> 
 
     return {}
 
+
 def granted_state(env: Mapping[str, str] | None = None) -> dict:
     """What this machine currently grants - every kind, in one place."""
     env = os.environ if env is None else env
@@ -365,21 +366,15 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
         "trust_remote_code": str(env.get(_TRUST_ENV, "")).strip().lower() in ("1", "true", "yes"),
         # Reported as what the environment ACTUALLY holds: a hand-set "on" is in force and must be
         # visible, or the screen would deny a permission the agent is currently using.
-        "agent_physical_motion": (
-            str(env.get(_AGENT_MOTION_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
-        ),
+        "agent_physical_motion": (str(env.get(_AGENT_MOTION_ENV, "")).strip().lower() in ("1", "true", "yes", "on")),
         "hf_repo_allow": allow,
         # Shown for the same reason the teleop envelope had to be: a grant with no surface cannot
         # be revoked, while the dialog promises it can.
-        "policy_type_allow": [
-            e.strip() for e in str(env.get(_POLICY_TYPE_ENV, "")).split(",") if e.strip()
-        ],
+        "policy_type_allow": [e.strip() for e in str(env.get(_POLICY_TYPE_ENV, "")).split(",") if e.strip()],
         # Loopback is allowed by the SDK's own default and is NOT listed: this key answers "what has
         # this machine been opened up to", and printing localhost as a grant would bury the one entry
         # that matters among defaults nobody approved.
-        "policy_host_allow": [
-            e.strip() for e in str(env.get(_POLICY_HOST_ENV, "")).split(",") if e.strip()
-        ],
+        "policy_host_allow": [e.strip() for e in str(env.get(_POLICY_HOST_ENV, "")).split(",") if e.strip()],
         "teleop_degree_units": {
             "granted": bool(value_abs or slew_abs),
             "value_abs": value_abs or None,
@@ -397,6 +392,7 @@ def granted_state(env: Mapping[str, str] | None = None) -> dict:
             "task_requires_confirm_env": _TASK_CONFIRM_ENV,
         },
     }
+
 
 def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) -> dict[str, str]:
     """The env change that takes a grant BACK, given the current ``env``."""
@@ -455,6 +451,7 @@ def revoke_patch(request: ConsentRequest, env: Mapping[str, str] | None = None) 
         return {_HF_ENV: ",".join(e for e in current if e != repo)}
 
     return {}
+
 
 def attach_consent(payload: dict, *sources: object) -> dict:
     """Add ``needs_consent`` to an error ``payload`` if any source is continuable."""

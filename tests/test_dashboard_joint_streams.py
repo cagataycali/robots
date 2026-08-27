@@ -51,6 +51,7 @@ def test_a_stale_peers_silence_is_explained_by_its_staleness():
 
 def test_the_live_shape_from_this_fleet():
     # Measured from /api/fleet on 2026-08-22: two real arms, both present, both mute.
-    got = silent_arms({"so101-follower": {"state": {}, "stale": False},
-                       "so101-leader": {"state": {"joints": {}}, "stale": False}})
+    got = silent_arms(
+        {"so101-follower": {"state": {}, "stale": False}, "so101-leader": {"state": {"joints": {}}, "stale": False}}
+    )
     assert got == {"streaming": 0, "silent": ["so101-follower", "so101-leader"]}

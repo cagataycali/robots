@@ -62,6 +62,7 @@ def _manager(**managed_kwargs) -> tuple[DeviceManager, ManagedRobot]:
 # crash_reason: the cause, not the fallout
 # --------------------------------------------------------------------------
 
+
 def test_the_cause_wins_over_the_cleanup_error_that_follows_it():
     """The exact log from the live incident, in the order it was written."""
     lines = [
@@ -78,36 +79,38 @@ def test_the_cause_wins_over_the_cleanup_error_that_follows_it():
     # reason last, so "Traceback (most recent call last):" is the first
     # fault-shaped line and tells an operator nothing. (This test asserted the
     # header until the live probe returned exactly that and proved it useless.)
-    assert reason == (
-        "ValueError: Camera 'main' config must be a mapping of option name to value, got int: 3."
-    )
+    assert reason == ("ValueError: Camera 'main' config must be a mapping of option name to value, got int: 3.")
     assert "Cleanup error" not in reason  # never blame teardown
 
 
 def test_a_chained_exception_reports_the_root_cause_not_the_fallout():
     """The first block is the cause; later blocks unwind a half-built object."""
-    reason = crash_reason([
-        "Traceback (most recent call last):",
-        '  File "/…/hardware_robot.py", line 177, in _build_camera_config',
-        "OSError: [Errno 16] Resource busy: '/dev/cu.usbmodem5AB0181806'",
-        "",
-        "During handling of the above exception, another exception occurred:",
-        "",
-        "Traceback (most recent call last):",
-        '  File "/…/hardware_robot.py", line 233, in disconnect',
-        "AttributeError: 'Robot' object has no attribute 'robot'",
-    ])
+    reason = crash_reason(
+        [
+            "Traceback (most recent call last):",
+            '  File "/…/hardware_robot.py", line 177, in _build_camera_config',
+            "OSError: [Errno 16] Resource busy: '/dev/cu.usbmodem5AB0181806'",
+            "",
+            "During handling of the above exception, another exception occurred:",
+            "",
+            "Traceback (most recent call last):",
+            '  File "/…/hardware_robot.py", line 233, in disconnect',
+            "AttributeError: 'Robot' object has no attribute 'robot'",
+        ]
+    )
 
     assert reason == "OSError: [Errno 16] Resource busy: '/dev/cu.usbmodem5AB0181806'"
 
 
 def test_a_traceback_whose_tail_was_cut_says_so_instead_of_quoting_a_frame():
     """The ring buffer can drop the message; a frame is not an explanation."""
-    reason = crash_reason([
-        "Traceback (most recent call last):",
-        '  File "/…/hardware_robot.py", line 997, in _initialize_robot',
-        "    config = self._create_minimal_config(robot, cameras, **kwargs)",
-    ])
+    reason = crash_reason(
+        [
+            "Traceback (most recent call last):",
+            '  File "/…/hardware_robot.py", line 997, in _initialize_robot',
+            "    config = self._create_minimal_config(robot, cameras, **kwargs)",
+        ]
+    )
 
     assert reason == "the process died with a traceback (see the log)"
 
@@ -123,11 +126,16 @@ def test_a_logger_prefix_is_stripped_so_the_message_leads():
 
 
 def test_ordinary_startup_chatter_is_not_a_reason():
-    assert crash_reason([
-        "10:00:00 INFO:strands_robots:connecting so101",
-        "10:00:01 INFO:strands_robots:zenoh session opened",
-        "",
-    ]) is None
+    assert (
+        crash_reason(
+            [
+                "10:00:00 INFO:strands_robots:connecting so101",
+                "10:00:01 INFO:strands_robots:zenoh session opened",
+                "",
+            ]
+        )
+        is None
+    )
 
 
 def test_no_output_at_all_blames_nothing():
@@ -144,13 +152,16 @@ def test_a_reason_is_capped_so_one_line_stays_one_line():
 # settle: the four honest answers
 # --------------------------------------------------------------------------
 
+
 def test_a_child_that_dies_is_reported_as_failed_with_the_reason():
     proc = FakeProc(exits_after=2, code=1)
     dm, m = _manager(process=proc)
-    m.logs = deque([
-        "02:12:54 ValueError: Camera 'main' config must be a mapping of option name to value, got int: 3.",
-        "02:12:54 ERROR:strands_robots.hardware_robot:Cleanup error for so101: no attribute 'robot'",
-    ])
+    m.logs = deque(
+        [
+            "02:12:54 ValueError: Camera 'main' config must be a mapping of option name to value, got int: 3.",
+            "02:12:54 ERROR:strands_robots.hardware_robot:Cleanup error for so101: no attribute 'robot'",
+        ]
+    )
     clock = Clock()
 
     out = dm.settle("so101-real-1", timeout=5, sleep=clock.sleep, now=clock.now)
@@ -191,8 +202,7 @@ def test_alive_but_unannounced_is_starting_not_success():
     dm, _ = _manager(process=FakeProc())
     clock = Clock()
 
-    out = dm.settle("so101-real-1", timeout=2, is_up=lambda pid: False,
-                    sleep=clock.sleep, now=clock.now)
+    out = dm.settle("so101-real-1", timeout=2, is_up=lambda pid: False, sleep=clock.sleep, now=clock.now)
 
     assert out["status"] == "starting"
     assert out["waited_s"] == 2.0
@@ -215,8 +225,7 @@ def test_a_broken_presence_probe_cannot_fail_a_good_spawn():
     def exploding(pid: str) -> bool:
         raise RuntimeError("bridge is mid-restart")
 
-    out = dm.settle("so101-real-1", timeout=1, is_up=exploding,
-                    sleep=clock.sleep, now=clock.now)
+    out = dm.settle("so101-real-1", timeout=1, is_up=exploding, sleep=clock.sleep, now=clock.now)
 
     assert out["status"] == "starting"  # degraded to unconfirmed, not failed
 

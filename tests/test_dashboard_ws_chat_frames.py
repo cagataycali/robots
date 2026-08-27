@@ -24,6 +24,7 @@ def _text(payload) -> dict:
 
 # --- Q17: frames that used to kill the socket --------------------------------
 
+
 def test_binary_frame_is_a_typed_error_not_a_crash():
     prompt, reply = parse_chat_frame({"type": "websocket.receive", "bytes": b"\x00\x01\x02"})
     assert prompt is None
@@ -38,6 +39,7 @@ def test_non_string_text_is_a_typed_error():
 
 
 # --- Q18: junk never becomes a paid model turn --------------------------------
+
 
 def test_non_json_frame_is_an_error_not_a_prompt():
     prompt, reply = parse_chat_frame(_text("this is not json at all"))
@@ -67,6 +69,7 @@ def test_cap_is_generous_enough_for_a_real_turn():
 
 # --- normal protocol unchanged -------------------------------------------------
 
+
 def test_ping_pong():
     prompt, reply = parse_chat_frame(_text(json.dumps({"type": "ping"})))
     assert prompt is None and reply == {"type": "pong"}
@@ -78,7 +81,12 @@ def test_valid_chat_frame_yields_prompt():
 
 
 def test_empty_or_missing_text_is_silently_ignored():
-    for payload in ({"type": "chat"}, {"type": "chat", "text": ""}, {"type": "chat", "text": "   "}, {"type": "chat", "text": None}):
+    for payload in (
+        {"type": "chat"},
+        {"type": "chat", "text": ""},
+        {"type": "chat", "text": "   "},
+        {"type": "chat", "text": None},
+    ):
         prompt, reply = parse_chat_frame(_text(json.dumps(payload)))
         assert prompt is None and reply is None, payload
 
@@ -89,6 +97,7 @@ def test_disconnect_message_raises_disconnect():
 
 
 # --- through the real route: socket SURVIVES the bad frame --------------------
+
 
 class _StubBridge:
     peers: dict = {}
@@ -112,6 +121,7 @@ def test_socket_survives_binary_then_answers_ping(monkeypatch, tmp_path):
     from starlette.testclient import TestClient
 
     from strands_robots.dashboard import auth
+
     auth._cache_key = None
     auth._cache = {}
 
@@ -140,6 +150,7 @@ def test_queued_notice_when_turn_lock_is_held(monkeypatch, tmp_path):
     from starlette.testclient import TestClient
 
     from strands_robots.dashboard import agent_bridge, auth
+
     auth._cache_key = None
     auth._cache = {}
 
@@ -167,6 +178,7 @@ def test_queued_notice_when_turn_lock_is_held(monkeypatch, tmp_path):
 # here and {"type":"stop"} on /ws/voice, and both are implemented -- so this is a guard against the next
 # frame type, which will be added to the UI before the server learns it. A websocket has no status code:
 # without this the operator taps a button, the socket stays healthily open, and nothing happens anywhere.
+
 
 def test_unknown_frame_type_is_answered_by_name():
     prompt, reply = parse_chat_frame(_text(json.dumps({"type": "cancel", "run": 3})))
@@ -197,26 +209,39 @@ def test_known_types_keep_their_silence():
 
 # --- interrupt_response: answering a motion confirm ----------------------------
 
+
 def test_interrupt_response_frame_yields_a_resume_turn():
-    turn, reply = parse_chat_frame(_text(json.dumps(
-        {"type": "interrupt_response", "id": " int-1 ", "response": {"approve": True}},
-    )))
+    turn, reply = parse_chat_frame(
+        _text(
+            json.dumps(
+                {"type": "interrupt_response", "id": " int-1 ", "response": {"approve": True}},
+            )
+        )
+    )
     assert reply is None
     assert turn == {"interrupt_id": "int-1", "response": {"approve": True}}
 
 
 def test_interrupt_response_no_is_carried_verbatim():
-    turn, reply = parse_chat_frame(_text(json.dumps(
-        {"type": "interrupt_response", "id": "int-1", "response": False},
-    )))
+    turn, reply = parse_chat_frame(
+        _text(
+            json.dumps(
+                {"type": "interrupt_response", "id": "int-1", "response": False},
+            )
+        )
+    )
     assert reply is None and turn["response"] is False
 
 
 def test_interrupt_response_requires_a_string_id():
     for bad in ({}, {"id": ""}, {"id": 42}, {"id": None}):
-        turn, reply = parse_chat_frame(_text(json.dumps(
-            {"type": "interrupt_response", "response": True, **bad},
-        )))
+        turn, reply = parse_chat_frame(
+            _text(
+                json.dumps(
+                    {"type": "interrupt_response", "response": True, **bad},
+                )
+            )
+        )
         assert turn is None, bad
         assert reply["type"] == "error" and "id" in reply["error"], bad
 
@@ -233,6 +258,7 @@ def test_interrupt_response_reaches_resume_not_run(monkeypatch, tmp_path):
     from starlette.testclient import TestClient
 
     from strands_robots.dashboard import agent_bridge, auth
+
     auth._cache_key = None
     auth._cache = {}
 

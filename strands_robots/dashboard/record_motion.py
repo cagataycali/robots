@@ -20,6 +20,7 @@ MIN_SAMPLES = 10
 # : How far back to look.
 WINDOW_S = 8.0
 
+
 def joint_positions(obs: Mapping[str, Any] | None) -> dict[str, float]:
     """The finite numeric joint positions of one observation."""
     out: dict[str, float] = {}
@@ -33,6 +34,7 @@ def joint_positions(obs: Mapping[str, Any] | None) -> dict[str, float]:
             out[key] = v
     return out
 
+
 def prune(
     samples: Sequence[tuple[float, Mapping[str, float]]], now: float, window_s: float = WINDOW_S
 ) -> list[tuple[float, Mapping[str, float]]]:
@@ -41,6 +43,7 @@ def prune(
         return []
     cutoff = now - max(0.0, float(window_s))
     return [(t, p) for t, p in samples if t >= cutoff]
+
 
 def _travel(samples: Iterable[tuple[float, Mapping[str, float]]]) -> tuple[str | None, float]:
     """The joint that moved most inside these samples, and by how much."""
@@ -68,6 +71,7 @@ def _travel(samples: Iterable[tuple[float, Mapping[str, float]]]) -> tuple[str |
         if best_joint is None or span > best:
             best_joint, best = joint, span
     return best_joint, best
+
 
 def motion_verdict(
     samples: Sequence[tuple[float, Mapping[str, float]]],

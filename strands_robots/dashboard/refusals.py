@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,6 +12,7 @@ STORM_THRESHOLD = 10
 
 # : Distinct clients tracked.
 MAX_CLIENTS = 64
+
 
 @dataclass
 class RefusalTally:
@@ -60,8 +60,7 @@ class RefusalTally:
             # Refused in the past, quiet now. Worth saying, because "the storm stopped" is the
             # answer to "did my fix work?" — and it says it without inventing a culprit.
             out["text"] = (
-                f"{self.total} handshake(s) refused since start, none in the last "
-                f"{int(WINDOW_S / 60)} minutes."
+                f"{self.total} handshake(s) refused since start, none in the last {int(WINDOW_S / 60)} minutes."
             )
             return out
         (client, path, kind), stamps = max(live.items(), key=lambda kv: len(kv[1]))

@@ -32,6 +32,7 @@ def read_commit(root: Path | str | None) -> str | None:
         return None
     return head[:12]
 
+
 def package_version() -> str | None:
     """The installed strands-robots version, or None in a source checkout with nothing installed."""
     try:
@@ -47,9 +48,11 @@ def package_version() -> str | None:
             return None
     return None
 
+
 def stamp(*, commit: str | None, version: str | None, started: float) -> dict[str, Any]:
     """Assemble the payload. Pure, so the shape is testable without a filesystem or a clock."""
     return {"commit": commit, "version": version, "started": started}
+
 
 @lru_cache(maxsize=1)
 def build_info(root: str | None = None) -> dict[str, Any]:

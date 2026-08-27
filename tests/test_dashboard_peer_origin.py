@@ -41,11 +41,12 @@ def test_every_peer_gets_a_label():
 
 
 def test_a_child_sim_peer_inherits_its_parents_origin():
-    """"<parent>__<robot>" lives INSIDE the parent's process, so if we started
+    """ "<parent>__<robot>" lives INSIDE the parent's process, so if we started
     the parent we started the child - the same rule prune_peers and
     peer_is_known already use for these ids."""
     out = mb.peer_origins(
-        ["sim-a", "sim-a__so101", "wild__so101"], managed_ids=["sim-a"],
+        ["sim-a", "sim-a__so101", "wild__so101"],
+        managed_ids=["sim-a"],
     )
     assert out["sim-a"] == "managed"
     assert out["sim-a__so101"] == "managed"
@@ -64,7 +65,8 @@ def test_a_mapping_of_peers_is_accepted_like_the_snapshot_passes_it():
     """snapshot() hands its peer dict straight in; iterating keys must be enough."""
     peers = {"ours": {"peer_id": "ours"}, "theirs": {"peer_id": "theirs"}}
     assert mb.peer_origins(peers, managed_ids={"ours"}) == {
-        "ours": "managed", "theirs": "external",
+        "ours": "managed",
+        "theirs": "external",
     }
 
 
@@ -93,6 +95,7 @@ def _bridge(peers: dict, managed: set[str]) -> mb.MeshBridge:
 def _live(peer_id: str) -> dict:
     """A peer entry as the mesh reports one, with a fresh heartbeat."""
     import time
+
     return {
         "peer_id": peer_id,
         "last_seen": time.time(),

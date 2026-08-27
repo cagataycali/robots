@@ -106,7 +106,8 @@ class TestReplayRefusesBeforePopen:
         import strands_robots.dashboard.device_manager as mod
 
         monkeypatch.setattr(
-            mod.subprocess, "Popen",
+            mod.subprocess,
+            "Popen",
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("Popen reached")),
         )
         result = dm.replay("local/set", episode=0, root=str(tmp_path / "missing"))

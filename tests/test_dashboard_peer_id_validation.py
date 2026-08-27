@@ -27,7 +27,7 @@ class TestValidatePeerId:
             "so101-arm-1",
             "replay-1234",
             "so101.real:2",
-            "A_z" .replace("_", "-"),
+            "A_z".replace("_", "-"),
             "x" * 64,
         ],
     )
@@ -37,16 +37,16 @@ class TestValidatePeerId:
     @pytest.mark.parametrize(
         "bad",
         [
-            "*",              # fleet-wide wildcard
-            "**",             # multi-level wildcard
-            "so101/*",        # wildcard inside a hierarchy
-            "a/b",            # splices a key level
+            "*",  # fleet-wide wildcard
+            "**",  # multi-level wildcard
+            "so101/*",  # wildcard inside a hierarchy
+            "a/b",  # splices a key level
             "../../../tmp/pwn",
-            "so101 arm",      # space
-            "{a:1}",          # brace DSL
-            "$now",           # dollar DSL
-            "",               # empty
-            "x" * 65,         # over-long
+            "so101 arm",  # space
+            "{a:1}",  # brace DSL
+            "$now",  # dollar DSL
+            "",  # empty
+            "x" * 65,  # over-long
         ],
     )
     def test_key_expression_syntax_is_refused_with_the_reason(self, bad: str) -> None:
@@ -94,4 +94,6 @@ class TestSpawnRefusesBeforeAnyProcessExists:
         monkeypatch.setattr(mod.threading, "Thread", lambda *a, **k: type("T", (), {"start": lambda self: None})())
         result = dm.spawn("so101", "sim", peer_id=None, remember=False)
         assert result.get("pid") == 4242, result
-        assert validate_peer_id(result["peer_id"]) is None, "generated ids must satisfy the same rule callers are held to"
+        assert validate_peer_id(result["peer_id"]) is None, (
+            "generated ids must satisfy the same rule callers are held to"
+        )

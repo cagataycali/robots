@@ -89,12 +89,17 @@ def make_worker(**over):
     recorder = over.pop("recorder", FakeRecorder())
     clock = over.pop("clock", Clock())
     kw = dict(
-        dataset="cagatay/so101-pick", task="pick up the cube",
-        leader="arm-leader", follower="arm-follower",
-        target_episodes=3, fps=30,
-        backend=backend, recorder_factory=lambda **_: recorder,
+        dataset="cagatay/so101-pick",
+        task="pick up the cube",
+        leader="arm-leader",
+        follower="arm-follower",
+        target_episodes=3,
+        fps=30,
+        backend=backend,
+        recorder_factory=lambda **_: recorder,
         thumb_dir=over.pop("thumb_dir", "/tmp/rec-thumbs-test"),
-        clock=clock, autostart_loop=False,
+        clock=clock,
+        autostart_loop=False,
     )
     kw.update(over)
     return RecordWorker(**kw), backend, recorder, clock
@@ -102,10 +107,15 @@ def make_worker(**over):
 
 # ------------------------------------------------------------ construction
 
+
 def test_open_validation_refuses_the_obvious():
     for bad in (
-        dict(dataset="  "), dict(task=""), dict(follower="arm-leader"),
-        dict(fps=0), dict(fps=500), dict(target_episodes=0),
+        dict(dataset="  "),
+        dict(task=""),
+        dict(follower="arm-leader"),
+        dict(fps=0),
+        dict(fps=500),
+        dict(target_episodes=0),
     ):
         with pytest.raises(ValueError):
             make_worker(**bad)
@@ -122,6 +132,7 @@ def test_fresh_session_matches_the_wire_contract():
 
 
 # ------------------------------------------------------------- recording
+
 
 def test_record_stop_keeps_an_episode_with_frames_and_duration(tmp_path):
     w, backend, recorder, clock = make_worker(thumb_dir=tmp_path)

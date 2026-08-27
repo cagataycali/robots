@@ -61,8 +61,7 @@ class TestHfAuthState:
 
     def test_valid_token_names_the_user(self):
         _no_cache()
-        with mock.patch("huggingface_hub.get_token", return_value="hf_x"), \
-             mock.patch("huggingface_hub.HfApi") as api:
+        with mock.patch("huggingface_hub.get_token", return_value="hf_x"), mock.patch("huggingface_hub.HfApi") as api:
             api.return_value.whoami.return_value = {"name": "cagataycali"}
             st = checkpoints.hf_auth_state()
         assert st == {"authenticated": True, "user": "cagataycali", "detail": None}
@@ -70,8 +69,10 @@ class TestHfAuthState:
     def test_rejected_token_is_distinct_from_no_token(self):
         # revoked token != anonymity: gated downloads will 401, not public-only
         _no_cache()
-        with mock.patch("huggingface_hub.get_token", return_value="hf_dead"), \
-             mock.patch("huggingface_hub.HfApi") as api:
+        with (
+            mock.patch("huggingface_hub.get_token", return_value="hf_dead"),
+            mock.patch("huggingface_hub.HfApi") as api,
+        ):
             api.return_value.whoami.side_effect = PermissionError("401")
             st = checkpoints.hf_auth_state()
         assert st["authenticated"] is False
@@ -79,8 +80,7 @@ class TestHfAuthState:
 
     def test_whoami_answer_is_cached(self):
         _no_cache()
-        with mock.patch("huggingface_hub.get_token", return_value="hf_x"), \
-             mock.patch("huggingface_hub.HfApi") as api:
+        with mock.patch("huggingface_hub.get_token", return_value="hf_x"), mock.patch("huggingface_hub.HfApi") as api:
             api.return_value.whoami.return_value = {"name": "u"}
             checkpoints.hf_auth_state()
             checkpoints.hf_auth_state()
@@ -90,9 +90,17 @@ class TestHfAuthState:
 class TestSearchEnvelope:
     def test_search_carries_hub_problem_and_auth(self):
         _no_cache()
-        with mock.patch.object(checkpoints, "local_checkpoints", return_value=[]), \
-             mock.patch.object(checkpoints, "hub_search", return_value=([], "Hub search unavailable (X) - showing local cache only")), \
-             mock.patch.object(checkpoints, "hf_auth_state", return_value={"authenticated": False, "user": None, "detail": "no HF token on this machine"}):
+        with (
+            mock.patch.object(checkpoints, "local_checkpoints", return_value=[]),
+            mock.patch.object(
+                checkpoints, "hub_search", return_value=([], "Hub search unavailable (X) - showing local cache only")
+            ),
+            mock.patch.object(
+                checkpoints,
+                "hf_auth_state",
+                return_value={"authenticated": False, "user": None, "detail": "no HF token on this machine"},
+            ),
+        ):
             out = checkpoints.search("q", limit=5)
         assert out["hub_problem"].startswith("Hub search unavailable")
         assert out["hf_auth"]["authenticated"] is False

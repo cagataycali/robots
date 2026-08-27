@@ -9,6 +9,7 @@ SDK's own sentence says); policy_host is a separate variable and a separate step
 The refusal text comes from the SDK on every run, so a reworded refusal fails HERE instead of
 quietly removing the only way through in a browser.
 """
+
 from __future__ import annotations
 
 import pytest

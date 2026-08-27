@@ -18,6 +18,7 @@ _LSOF_CANDIDATES: tuple[str, ...] = ("/usr/sbin/lsof", "/usr/bin/lsof")
 # : Longest command line reproduced in the refusal.
 _COMMAND_CHARS = 120
 
+
 def _lsof_path() -> str | None:
     """Absolute path of an ``lsof`` binary, or ``None`` if none is installed."""
     found = shutil.which("lsof")
@@ -27,6 +28,7 @@ def _lsof_path() -> str | None:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return None
+
 
 def _listening_pid(port: int) -> int | None:
     """Pid of the process *listening* on ``port``, or ``None`` if not found."""
@@ -50,7 +52,10 @@ def _listening_pid(port: int) -> int | None:
     try:
         out = subprocess.run(
             [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
-            capture_output=True, text=True, timeout=5, check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return None
@@ -60,6 +65,7 @@ def _listening_pid(port: int) -> int | None:
         except ValueError:
             continue
     return None
+
 
 def _process_command(pid: int) -> str | None:
     """Command line of ``pid``, truncated for a one-line message.
@@ -84,11 +90,15 @@ def _process_command(pid: int) -> str | None:
     try:
         out = subprocess.run(
             ["ps", "-o", "command=", "-p", str(pid)],
-            capture_output=True, text=True, timeout=5, check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None
     return out.splitlines()[0][:_COMMAND_CHARS] if out else None
+
 
 def _port_in_use(port: int, host: str = "0.0.0.0") -> str | None:
     """Describe whoever holds ``port``, or ``None`` when it is free to bind."""
@@ -118,6 +128,7 @@ def _port_in_use(port: int, host: str = "0.0.0.0") -> str | None:
     command = _process_command(pid)
     return f"pid {pid} ({command})" if command else f"pid {pid}"
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="strands-robots dashboard",
@@ -126,7 +137,9 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--peer-id", default=None, help="Mesh peer id for the dashboard (auto if omitted)")
-    parser.add_argument("--local-dev", action="store_true", help="Set STRANDS_MESH_LOCAL_DEV=1 (no TLS, single machine)")
+    parser.add_argument(
+        "--local-dev", action="store_true", help="Set STRANDS_MESH_LOCAL_DEV=1 (no TLS, single machine)"
+    )
     parser.add_argument("--log-level", default="info")
 
     mesh = parser.add_argument_group(
@@ -136,43 +149,57 @@ def main() -> None:
         "from the UI (Settings -> Mesh).",
     )
     mesh.add_argument(
-        "--zenoh-connect", default=None, metavar="EP[,EP...]",
+        "--zenoh-connect",
+        default=None,
+        metavar="EP[,EP...]",
         help="Endpoints to dial, e.g. tls/robot.lan:7447 (sets ZENOH_CONNECT)",
     )
     mesh.add_argument(
-        "--zenoh-listen", default=None, metavar="EP[,EP...]",
+        "--zenoh-listen",
+        default=None,
+        metavar="EP[,EP...]",
         help="Endpoints to listen on, e.g. tls/0.0.0.0:7447 (sets ZENOH_LISTEN)",
     )
     mesh.add_argument("--mesh-port", type=int, default=None, help="Mesh port (default 7447)")
     mesh.add_argument(
-        "--mesh-backend", default=None, choices=("zenoh", "iot", "bridge"),
+        "--mesh-backend",
+        default=None,
+        choices=("zenoh", "iot", "bridge"),
         help="Transport: zenoh (LAN/VPN), iot (AWS IoT Core over the internet), bridge",
     )
     mesh.add_argument("--camera-hz", type=float, default=None, help="Camera publish rate cap")
 
     sec = parser.add_argument_group("security")
     sec.add_argument(
-        "--auth-token", default=None, metavar="TOKEN",
+        "--auth-token",
+        default=None,
+        metavar="TOKEN",
         help="Require this bearer token on every /api and /ws request. Without "
-             "it the dashboard is open to anyone who can reach the port - and "
-             "it moves real motors. NOTE: a token on the command line is "
-             "readable by every local user via ps; prefer --auth-token-file.",
+        "it the dashboard is open to anyone who can reach the port - and "
+        "it moves real motors. NOTE: a token on the command line is "
+        "readable by every local user via ps; prefer --auth-token-file.",
     )
     sec.add_argument(
-        "--auth-token-file", default=None, metavar="PATH",
+        "--auth-token-file",
+        default=None,
+        metavar="PATH",
         help="Read the bearer token from this file (first line, whitespace "
-             "stripped) instead of the command line, so it never appears in "
-             "ps output or shell history.",
+        "stripped) instead of the command line, so it never appears in "
+        "ps output or shell history.",
     )
     sec.add_argument(
-        "--cors-origin", action="append", default=None, metavar="ORIGIN",
+        "--cors-origin",
+        action="append",
+        default=None,
+        metavar="ORIGIN",
         help="Allowed CORS origin (repeatable). Default '*'.",
     )
     parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Start even when --port is already bound. Without it a second "
-             "dashboard on a taken port is refused, because it joins the mesh "
-             "as a duplicate hub before the bind fails.",
+        "dashboard on a taken port is refused, because it joins the mesh "
+        "as a duplicate hub before the bind fails.",
     )
     args = parser.parse_args()
 
@@ -258,10 +285,12 @@ def main() -> None:
     local_dev = os.getenv("STRANDS_MESH_LOCAL_DEV", "") not in ("", "0", "false")
 
     print(f"strands-robots dashboard on http://{args.host}:{args.port}")
-    print(f"   mesh: backend={mesh_cfg.get('backend') or 'zenoh'} "
-          f"port={mesh_cfg.get('port') or 7447} "
-          f"connect={mesh_cfg.get('connect') or ['<multicast/local>']} "
-          f"listen={mesh_cfg.get('listen') or ['<default>']}")
+    print(
+        f"   mesh: backend={mesh_cfg.get('backend') or 'zenoh'} "
+        f"port={mesh_cfg.get('port') or 7447} "
+        f"connect={mesh_cfg.get('connect') or ['<multicast/local>']} "
+        f"listen={mesh_cfg.get('listen') or ['<default>']}"
+    )
     if local_dev:
         print("   WARNING: STRANDS_MESH_LOCAL_DEV=1 - WIRE SECURITY DISABLED (no TLS, no auth)")
     if resolved["security"].get("auth_token"):
@@ -270,16 +299,20 @@ def main() -> None:
             # JOURNEYS #15, the half that is code: --auth-token-file exists and restart_dashboard.sh uses
             # it, but nothing told an operator who typed --auth-token that the secret is now in every `ps`
             # listing for the life of the process - and help text they already skipped is not a warning.
-            print("   WARNING: the token came from the command line, so every local "
-                  "user can read it: ps -eww | grep auth-token")
-            print("      fix (next start): put it in a 0600 file and pass "
-                  "--auth-token-file PATH instead")
+            print(
+                "   WARNING: the token came from the command line, so every local "
+                "user can read it: ps -eww | grep auth-token"
+            )
+            print("      fix (next start): put it in a 0600 file and pass --auth-token-file PATH instead")
         if token_only_this_run:
-            print("   note: this token applies to THIS run only - a different one is "
-                  "saved in settings and was left untouched")
+            print(
+                "   note: this token applies to THIS run only - a different one is "
+                "saved in settings and was left untouched"
+            )
     else:
-        print("   WARNING: no auth token - anyone who can reach this port can move motors "
-              "(--auth-token to require one)")
+        print(
+            "   WARNING: no auth token - anyone who can reach this port can move motors (--auth-token to require one)"
+        )
     if changed:
         print(f"   saved to {settings.SETTINGS_FILE}: {', '.join(changed)}")
     # Piped stdout is block-buffered, so without this the security warnings land
@@ -288,6 +321,7 @@ def main() -> None:
 
     app = create_app(MeshBridge(peer_id=args.peer_id))
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+
 
 if __name__ == "__main__":
     main()

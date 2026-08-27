@@ -23,12 +23,14 @@ class Lockout:
             out["by"] = self.by
         return out
 
+
 def _source_of(data: dict[str, Any]) -> str | None:
     for key in ("source", "coordinator", "peer_id", "source_peer_id", "by", "sender"):
         v = data.get(key)
         if isinstance(v, str) and v.strip():
             return v.strip()
     return None
+
 
 def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float) -> Lockout:
     """Fold one `strands/safety/**` event into the verdict."""
@@ -39,9 +41,7 @@ def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float
             state="locked",
             since=float(when),
             by=who,
-            reason=(
-                f"an e-stop from {who} locked the fleet" if who else "an e-stop locked the fleet"
-            ),
+            reason=(f"an e-stop from {who} locked the fleet" if who else "an e-stop locked the fleet"),
         )
     if kind == "resume":
         # NOT clear: every peer re-verifies the override code on its own and may refuse.
@@ -56,6 +56,7 @@ def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float
         )
     return current
 
+
 def note_command_accepted(current: Lockout, *, now: float) -> Lockout:
     """A peer accepted a command a lockout would have refused: that is proof."""
     if current.state == "clear":
@@ -67,12 +68,15 @@ def note_command_accepted(current: Lockout, *, now: float) -> Lockout:
         reason="a command this peer accepted proves its lockout is not engaged",
     )
 
+
 #: Actions a locked-out peer still answers, so accepting one proves nothing.
 LOCKOUT_EXEMPT_ACTIONS = frozenset({"status", "resume"})
+
 
 def proves_clear(action: str) -> bool:
     """Would a locked-out peer have refused this action?"""
     return bool(action) and action not in LOCKOUT_EXEMPT_ACTIONS
+
 
 def peer_lockout(fleet: Lockout, *, first_seen: float | None) -> Lockout:
     """The verdict for ONE peer, given when the dashboard first saw it.
@@ -91,9 +95,8 @@ def peer_lockout(fleet: Lockout, *, first_seen: float | None) -> Lockout:
             )
     return fleet
 
-def resolve_peer(
-    fleet: Lockout, *, first_seen: float | None = None, proof_at: float | None = None
-) -> Lockout:
+
+def resolve_peer(fleet: Lockout, *, first_seen: float | None = None, proof_at: float | None = None) -> Lockout:
     """The verdict shown on one peer's card."""
     verdict = peer_lockout(fleet, first_seen=first_seen)
     if proof_at is not None and (fleet.since is None or proof_at > fleet.since):

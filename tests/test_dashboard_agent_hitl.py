@@ -37,6 +37,7 @@ def _no_env_grant(monkeypatch):
 
 # --- motion_intent: which calls pause ---------------------------------------
 
+
 def test_task_on_real_peer_yields_structured_reason():
     reason = motion_intent("fleet", TASK_INPUT, {"arm-1": REAL_PEER})
     assert reason["tool"] == "fleet"
@@ -73,12 +74,16 @@ def test_ungated_tool_passes():
 
 def test_robot_mesh_is_never_gated_here_its_sdk_interrupt_owns_that():
     """Double-gating would ask the operator twice for one command (see MOTION_ACTIONS)."""
-    assert motion_intent("robot_mesh", {"action": "send", "target": "arm-1", "message": "go"}, {"arm-1": REAL_PEER}) is None
+    assert (
+        motion_intent("robot_mesh", {"action": "send", "target": "arm-1", "message": "go"}, {"arm-1": REAL_PEER})
+        is None
+    )
     assert motion_intent("robot_mesh", {"action": "broadcast", "message": "go"}, {}) is None
     assert motion_intent("robot_mesh", {"action": "peers"}, {}) is None
 
 
 # --- response interpretation -------------------------------------------------
+
 
 def test_only_explicit_yes_approves():
     assert response_approves(True)
@@ -94,6 +99,7 @@ def test_only_explicit_yes_approves():
 
 # --- one-shot grants ----------------------------------------------------------
 
+
 def test_grant_is_consumed_exactly_once():
     deposit_grant("fleet", TASK_INPUT)
     assert consume_grant("fleet", TASK_INPUT) is True
@@ -108,6 +114,7 @@ def test_grant_does_not_leak_to_a_different_call():
 
 
 # --- the hook against the real SDK event --------------------------------------
+
 
 def _event(tool_input, agent):
     from strands.hooks import BeforeToolCallEvent

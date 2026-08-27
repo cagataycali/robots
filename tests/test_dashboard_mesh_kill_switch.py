@@ -8,6 +8,7 @@ startup crash (mTLS is the default auth mode, so building a config for a session
 nobody asked for raises), which is why nobody had noticed the quieter half - with
 certs present, the dashboard would simply have joined the live fleet.
 """
+
 from __future__ import annotations
 
 import pytest

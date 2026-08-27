@@ -176,8 +176,11 @@ def test_fleet_tool_consumes_a_deposited_grant(monkeypatch):
 
 
 RM_REASON = {
-    "action": "broadcast", "target": "*ALL_PEERS*", "function": "",
-    "command": {"action": "execute", "instruction": "wave"}, "instruction": "",
+    "action": "broadcast",
+    "target": "*ALL_PEERS*",
+    "function": "",
+    "command": {"action": "execute", "instruction": "wave"},
+    "instruction": "",
     "warning": "Fleet-wide physical effect. Reply 'y' to approve, anything else to deny.",
 }
 
@@ -188,14 +191,19 @@ def test_parking_is_name_agnostic_robot_mesh_interrupts_flow_verbatim(_clean):
     The rail must forward name and reason untouched - a filter on
     'physical_motion' here would silently swallow every SDK-native confirm.
     """
+
     class _RmAgent(_FakeAgent):
         def __call__(self, agent_input):
             self.calls.append(agent_input)
             if isinstance(agent_input, str):
-                return _Result("interrupt", [_Interrupt(id="rm-1", name="robot_mesh-broadcast-approval", reason=RM_REASON)])
+                return _Result(
+                    "interrupt", [_Interrupt(id="rm-1", name="robot_mesh-broadcast-approval", reason=RM_REASON)]
+                )
             return _Result("end_turn", text="broadcast sent")
+
     import queue as _q
     from unittest.mock import patch as _patch
+
     rm = _RmAgent()
     with _patch.object(ab, "get_agent", lambda: rm):
         q: _q.Queue = _q.Queue()

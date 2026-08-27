@@ -55,39 +55,53 @@ def mgr(tmp_path, monkeypatch):
     FakeProc.payloads = []
     monkeypatch.setattr(dm.subprocess, "Popen", FakeProc)
     monkeypatch.setattr(
-        dm.threading, "Thread",
+        dm.threading,
+        "Thread",
         lambda *a, **kw: type("T", (), {"start": lambda self: None})(),
     )
     m = DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
     m._camera_names_cache = list(_ROSTER)
     m._camera_names_cache_t = dm.time.time()
-    monkeypatch.setattr(dm, "scan_serial_ports", lambda *a, **kw: [
-        {"device": "/dev/tty.fake", "serial_number": "5AB0181806"},
-    ])
-    monkeypatch.setattr(dm, "bus_claim", type("B", (), {
-        "bus_holders": staticmethod(lambda port: []),
-        "bus_conflict": staticmethod(lambda *a, **kw: None),
-    })())
+    monkeypatch.setattr(
+        dm,
+        "scan_serial_ports",
+        lambda *a, **kw: [
+            {"device": "/dev/tty.fake", "serial_number": "5AB0181806"},
+        ],
+    )
+    monkeypatch.setattr(
+        dm,
+        "bus_claim",
+        type(
+            "B",
+            (),
+            {
+                "bus_holders": staticmethod(lambda port: []),
+                "bus_conflict": staticmethod(lambda *a, **kw: None),
+            },
+        )(),
+    )
     return m
 
 
 def _spawn(m, cameras):
     return m.spawn(
-        robot_name="so101", mode="real", port="/dev/tty.fake",
-        peer_id="u19-arm", cameras=cameras,
+        robot_name="so101",
+        mode="real",
+        port="/dev/tty.fake",
+        peer_id="u19-arm",
+        cameras=cameras,
     )
 
 
 def test_the_new_fps_and_resolution_reach_the_child_process(mgr):
     _spawn(mgr, {"wrist": {"index_or_path": 1, "fps": 30}})
-    out = mgr.reconfigure_cameras(
-        "u19-arm", {"wrist": {"index_or_path": 1, "fps": 60, "width": 1280, "height": 720}}
-    )
+    out = mgr.reconfigure_cameras("u19-arm", {"wrist": {"index_or_path": 1, "fps": 60, "width": 1280, "height": 720}})
     assert out.get("reconfigured") is True
     child = FakeProc.payloads[-1]
-    assert child["cameras"] == {
-        "wrist": {"index_or_path": 1, "fps": 60, "width": 1280, "height": 720}
-    }, "the exact settings the operator asked for, with the dashboard's own note stripped"
+    assert child["cameras"] == {"wrist": {"index_or_path": 1, "fps": 60, "width": 1280, "height": 720}}, (
+        "the exact settings the operator asked for, with the dashboard's own note stripped"
+    )
     assert "device_name" not in child["cameras"]["wrist"], (
         "an undeclared key does not degrade one camera, it kills every camera on the arm"
     )
@@ -112,9 +126,7 @@ def test_a_detach_reaches_the_child_as_no_cameras_at_all(mgr):
 def test_the_change_survives_a_replug_because_the_profile_remembers_it(mgr):
     """reconfigure passes remember=True - this is what that has to MEAN."""
     _spawn(mgr, {"wrist": {"index_or_path": 1, "fps": 30}})
-    mgr.reconfigure_cameras(
-        "u19-arm", {"wrist": {"index_or_path": 1, "fps": 60, "width": 1280, "height": 720}}
-    )
+    mgr.reconfigure_cameras("u19-arm", {"wrist": {"index_or_path": 1, "fps": 60, "width": 1280, "height": 720}})
     saved = json.loads(pathlib.Path(mgr.profiles.path).read_text())
     profile = next(p for p in saved.values() if (p or {}).get("peer_id") == "u19-arm")
     cams = profile["cameras"]["wrist"]

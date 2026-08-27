@@ -41,9 +41,7 @@ KIND_SKIP = "skip"
 #: SIM_CALL_BLOCKED_ACTIONS): rollouts must ride execute/start, whose
 #: provider/HF-repo/host allowlists would otherwise be bypassed. The proxy
 #: spec must not advertise what the wire will refuse.
-SIM_CALL_BLOCKED: frozenset[str] = frozenset(
-    {"run_policy", "start_policy", "replay_episode", "eval_policy"}
-)
+SIM_CALL_BLOCKED: frozenset[str] = frozenset({"run_policy", "start_policy", "replay_episode", "eval_policy"})
 
 _SIM_TYPES = ("sim", "simulation", "mujoco")
 
@@ -437,9 +435,7 @@ def build_peer_tools(
             tool_use_id = tool_use.get("toolUseId", "")
             cmd, err = map_invocation(self._peer_id, self._kind, tool_use.get("input") or {})
             if err is not None:
-                yield ToolResultEvent(
-                    {"toolUseId": tool_use_id, "status": "error", "content": [{"text": err}]}
-                )
+                yield ToolResultEvent({"toolUseId": tool_use_id, "status": "error", "content": [{"text": err}]})
                 return
             staleness_note: str | None = None
             if peer_state is not None:
@@ -457,8 +453,7 @@ def build_peer_tools(
                     refusal = stale_refusal(self._peer_id, live)
                     if refusal is not None:
                         yield ToolResultEvent(
-                            {"toolUseId": tool_use_id, "status": "error",
-                             "content": [{"text": refusal}]}
+                            {"toolUseId": tool_use_id, "status": "error", "content": [{"text": refusal}]}
                         )
                         return
             try:
@@ -548,8 +543,4 @@ def motion_actions_for(tools: list[Any]) -> dict[str, frozenset[str]]:
     are never gated. Deriving the table from the built tools means the gate
     and the tool surface cannot drift apart.
     """
-    return {
-        t.tool_name: frozenset({"execute", "start"})
-        for t in tools
-        if getattr(t, "peer_kind", None) == KIND_REAL
-    }
+    return {t.tool_name: frozenset({"execute", "start"}) for t in tools if getattr(t, "peer_kind", None) == KIND_REAL}

@@ -12,6 +12,7 @@ This is a tripwire, not a complaint. The day the registry makes norm_tag settabl
 precheck becomes operator-facing and the run form has to send it - and that day this test fails and
 says exactly that, instead of the capability arriving silently with no screen behind it.
 """
+
 from __future__ import annotations
 
 import pytest

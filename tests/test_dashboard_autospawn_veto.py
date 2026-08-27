@@ -10,6 +10,7 @@ This is the same class as Q30 (a pytest sweep e-stopping the real fleet) and Q32
 the mesh with STRANDS_MESH=false): the suite reached hardware because nothing in the product asked
 whether it was allowed to.
 """
+
 import os
 
 from strands_robots.dashboard.device_manager import AutoSpawnWatcher, autospawn_veto

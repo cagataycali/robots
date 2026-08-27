@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -14,6 +13,7 @@ USB_RAIL_V = 5.5
 #: Wider than any real supply ripple; a spread this large means the readings are
 #: not describing one bus.
 SPREAD_MAX_V = 1.5
+
 
 def classify_role(volts: float | None) -> tuple[str, str]:
     """One reading → (role, reason). Roles: follower / leader / unpowered / unknown."""
@@ -35,6 +35,7 @@ def classify_role(volts: float | None) -> tuple[str, str]:
         f"{volts:.1f}V - this arm is not on its power supply, so its role cannot be read "
         f"(an unpowered arm reads like nothing at all, not like a leader)",
     )
+
 
 def role_verdict(readings: Mapping[Any, float | None]) -> dict[str, Any]:
     """Several servos on one bus → one verdict, or an honest refusal."""
@@ -75,6 +76,7 @@ def role_verdict(readings: Mapping[Any, float | None]) -> dict[str, Any]:
         verdict["remedy"] = "switch on / plug in this arm's power supply, then retry"
     return verdict
 
+
 def disagreement(profile_role: str | None, measured: Mapping[str, Any]) -> dict[str, Any] | None:
     """The point of the whole exercise: does the label match the hardware?"""
     measured_role = measured.get("role")
@@ -89,6 +91,5 @@ def disagreement(profile_role: str | None, measured: Mapping[str, Any]) -> dict[
             f"this arm is labelled {profile_role} but its bus reads "
             f"{measured.get('volts')}V, which is the {measured_role} arm"
         ),
-        "remedy": f"relabel it {measured_role} before teleop or recording - "
-                  f"the roles decide which arm is driven",
+        "remedy": f"relabel it {measured_role} before teleop or recording - the roles decide which arm is driven",
     }

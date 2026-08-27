@@ -71,6 +71,7 @@ _overrides: dict[str, dict[str, Any]] = {}
 # Coercion
 # ----------------------------------------------------------------------
 
+
 def _as_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -80,20 +81,24 @@ def _as_list(value: Any) -> list[str]:
         return [str(p).strip() for p in value if str(p).strip()]
     return []
 
+
 def _as_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in ("1", "true", "yes", "on")
+
 
 #: Public alias - other dashboard modules parse comma-separated endpoint
 #: strings with the same rules the settings store uses.
 def as_list(value: Any) -> list[str]:
     return _as_list(value)
 
+
 class CoercionError(ValueError):
     """A settings value that must be REPORTED, not silently defaulted. Raised only on the strict path
     (UI/API writes).
     """
+
 
 def _finite_float(key: str, value: Any) -> float:
     try:
@@ -105,6 +110,7 @@ def _finite_float(key: str, value: Any) -> float:
         # such write bricks the config screen for every browser forever.
         raise CoercionError(f"{key}: {value!r} is not a finite number")
     return out
+
 
 def _coerce(section: str, key: str, value: Any, strict: bool = False) -> Any:
     try:
@@ -119,24 +125,22 @@ def _coerce(section: str, key: str, value: Any, strict: bool = False) -> Any:
             return []
         return None if key in ("temperature", "camera_hz", "max_tokens", "port") else value
 
+
 # : What "true" and "false" may be spelled like.
 _TRUTHY = ("1", "true", "yes", "on")
 _FALSY = ("0", "false", "no", "off", "")
 
+
 def _coerce_strict(section: str, key: str, value: Any) -> Any:
     if (section, key) in _LIST_KEYS:
         if value is not None and not isinstance(value, (str, list, tuple)):
-            raise CoercionError(
-                f"{key}: expected a list or comma-separated string, got {type(value).__name__}"
-            )
+            raise CoercionError(f"{key}: expected a list or comma-separated string, got {type(value).__name__}")
         return _as_list(value)
     if key in ("trust_remote_code",):
         if not isinstance(value, bool):
             spelled = str(value).strip().lower()
             if spelled not in _TRUTHY and spelled not in _FALSY:
-                raise CoercionError(
-                    f"{key}: {value!r} is not a boolean (use true/false)"
-                )
+                raise CoercionError(f"{key}: {value!r} is not a boolean (use true/false)")
         return _as_bool(value)
     if key == "temperature":
         if value in (None, ""):
@@ -169,14 +173,14 @@ def _coerce_strict(section: str, key: str, value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, (dict, list, tuple, set)):
-        raise CoercionError(
-            f"{key}: expected a string, got {type(value).__name__}"
-        )
+        raise CoercionError(f"{key}: expected a string, got {type(value).__name__}")
     return str(value)
+
 
 # ----------------------------------------------------------------------
 # Load / save
 # ----------------------------------------------------------------------
+
 
 def _defaults() -> dict[str, dict[str, Any]]:
     """Built-in defaults resolved through the environment."""
@@ -187,6 +191,7 @@ def _defaults() -> dict[str, dict[str, Any]]:
             raw = os.getenv(env_name) if env_name else None
             out[section][key] = _coerce(section, key, raw if raw not in (None, "") else default)
     return out
+
 
 def _read_file() -> dict[str, Any]:
     try:
@@ -204,6 +209,7 @@ def _read_file() -> dict[str, Any]:
         logger.warning("could not read %s: %s (using defaults)", SETTINGS_FILE, exc)
     return {}
 
+
 def override(section: str, key: str, value: Any) -> None:
     """Set a value for THIS PROCESS ONLY - never written to settings.json. For a value the caller means
     for one run rather than forever.
@@ -212,11 +218,13 @@ def override(section: str, key: str, value: Any) -> None:
         _overrides.setdefault(section, {})[key] = value
         globals()["_cache"] = None
 
+
 def clear_overrides() -> None:
     """Drop every process-scoped override (tests, and re-reading from scratch)."""
     with _lock:
         _overrides.clear()
         globals()["_cache"] = None
+
 
 def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
     """Full settings tree: overrides over file values over env/defaults."""
@@ -239,6 +247,7 @@ def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
         _cache = merged
         return copy.deepcopy(merged)
 
+
 def get(section: str, key: str | None = None, default: Any = None) -> Any:
     tree = load()
     if section not in tree:
@@ -248,10 +257,12 @@ def get(section: str, key: str | None = None, default: Any = None) -> Any:
     value = tree[section].get(key)
     return default if value in (None, "", []) else value
 
+
 def update(patch: dict[str, Any]) -> list[str]:
     """Merge *patch* into the settings file. Returns the changed dotted keys."""
     changed, _ = _update(patch, strict=False)
     return changed
+
 
 def unknown_keys(patch: dict[str, Any]) -> list[str]:
     """Dotted names in ``patch`` that this schema does not know."""
@@ -267,11 +278,13 @@ def unknown_keys(patch: dict[str, Any]) -> list[str]:
                 out.append(f"{section}.{key}")
     return sorted(out)
 
+
 def update_strict(patch: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Like :func:`update`, but invalid VALUES are reported, never stored. Returns ``(changed,
     errors)`` where each error names the dotted key and the reason.
     """
     return _update(patch, strict=True)
+
 
 def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
     changed: list[str] = []
@@ -301,6 +314,7 @@ def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
             load(refresh=True)
     return changed, errors
 
+
 def _write_file(data: dict[str, Any]) -> None:
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_FILE.with_suffix(".tmp")
@@ -312,6 +326,7 @@ def _write_file(data: dict[str, Any]) -> None:
         os.chmod(SETTINGS_FILE, 0o600)
     except OSError:
         pass
+
 
 # ----------------------------------------------------------------------
 # Mesh env application
@@ -326,6 +341,7 @@ MESH_ENV = {
     "camera_hz": "STRANDS_MESH_CAMERA_HZ",
     "policy_type_allow": "STRANDS_MESH_POLICY_TYPE_ALLOW",
 }
+
 
 def apply_mesh_env() -> dict[str, str]:
     """Push mesh settings into ``os.environ``."""

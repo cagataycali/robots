@@ -66,9 +66,7 @@ class TestFamilyMatcher:
         known = sorted(PreTrainedConfig.get_known_choices())
         assert known, "lerobot registered zero policy families — registry moved?"
         misguessed = {
-            k: _guess_policy_type(f"user/{k}_base", [])
-            for k in known
-            if _guess_policy_type(f"user/{k}_base", []) != k
+            k: _guess_policy_type(f"user/{k}_base", []) for k in known if _guess_policy_type(f"user/{k}_base", []) != k
         }
         assert misguessed == {}, f"registry families the matcher cannot round-trip: {misguessed}"
 

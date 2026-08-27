@@ -73,22 +73,26 @@ def _main(monkeypatch: pytest.MonkeyPatch, *argv: str) -> None:
 
 class TestTheArgvFormIsWarnedAbout:
     def test_a_token_on_the_command_line_says_so_and_names_the_fix(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-        isolated_settings, stub_server,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        isolated_settings,
+        stub_server,
     ) -> None:
         _main(monkeypatch, "--auth-token", TOKEN, "--port", "8099")
         assert stub_server, "the CLI must reach the server after printing its banner"
         out = capsys.readouterr().out
 
         assert "auth: bearer token required" in out, "the token must still take effect"
-        assert "command line" in out and "ps" in out, (
-            f"no warning that the token is in ps output: {out!r}"
-        )
+        assert "command line" in out and "ps" in out, f"no warning that the token is in ps output: {out!r}"
         assert "--auth-token-file" in out, "a warning without the fix is just anxiety"
 
     def test_the_warning_does_not_print_the_secret_it_warns_about(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-        isolated_settings, stub_server,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        isolated_settings,
+        stub_server,
     ) -> None:
         _main(monkeypatch, "--auth-token", TOKEN, "--port", "8099")
         out = capsys.readouterr().out
@@ -102,8 +106,12 @@ class TestTheArgvFormIsWarnedAbout:
 
 class TestTheFileFormIsTheQuietPath:
     def test_a_token_file_applies_the_token_with_no_warning(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-        tmp_path: Path, isolated_settings, stub_server,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        isolated_settings,
+        stub_server,
     ) -> None:
         token_file = tmp_path / "token.txt"
         token_file.write_text(f"{TOKEN}\n")
@@ -138,8 +146,14 @@ class TestAnUnusableTokenFileRefusesToStart:
         [("missing.txt", None), ("empty.txt", ""), ("blank.txt", "   \n\n")],
     )
     def test_it_exits_instead_of_starting_open(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, isolated_settings,
-        capsys: pytest.CaptureFixture[str], stub_server, name: str, contents: str | None,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolated_settings,
+        capsys: pytest.CaptureFixture[str],
+        stub_server,
+        name: str,
+        contents: str | None,
     ) -> None:
         path = tmp_path / name
         if contents is not None:

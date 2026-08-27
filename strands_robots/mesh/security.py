@@ -450,9 +450,7 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
 #: allowlists would be bypassed if the same capability rode in through
 #: ``sim_call``'s opaque params. One gate per capability: rollouts go through
 #: ``execute``, world/sensor/render calls go through ``sim_call``.
-SIM_CALL_BLOCKED_ACTIONS: frozenset[str] = frozenset(
-    {"run_policy", "start_policy", "replay_episode", "eval_policy"}
-)
+SIM_CALL_BLOCKED_ACTIONS: frozenset[str] = frozenset({"run_policy", "start_policy", "replay_episode", "eval_policy"})
 
 #: Device Connect native-RPC function names (e.g. the Reachy's ``nod`` /
 #: ``look`` / ``playMove``). These are device-defined, NOT members of
@@ -1709,9 +1707,7 @@ def input_frame_slew_violation(
 
     if not violations:
         return None
-    worst_speed, worst_delta, worst_dt, worst_key, bound = max(
-        violations, key=lambda v: (v[0], v[1], v[3])
-    )
+    worst_speed, worst_delta, worst_dt, worst_key, bound = max(violations, key=lambda v: (v[0], v[1], v[3]))
     if worst_dt <= 0:
         return (
             f"input frame slew for {worst_key!r} out of range: moved {worst_delta:g} "

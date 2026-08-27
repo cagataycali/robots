@@ -1,4 +1,5 @@
 """Q89: an 'uncalibrated' arm whose calibration file EXISTS must not be sent to recalibrate."""
+
 from strands_robots.dashboard import joint_silence
 
 LEADER_LOG = [
@@ -27,7 +28,7 @@ def test_files_exist_so_the_remedy_is_an_id_fix_not_hardware_work():
 def test_nothing_on_disk_keeps_the_original_remedy():
     v = joint_silence.classify(LEADER_LOG, {})
     assert "Calibrate this arm" in v["remedy"], "with no evidence, the generic advice is the right advice"
-    assert joint_silence.classify(LEADER_LOG) ["remedy"].startswith("Calibrate this arm")
+    assert joint_silence.classify(LEADER_LOG)["remedy"].startswith("Calibrate this arm")
     assert joint_silence.calibration_advice(None) is None
     assert joint_silence.calibration_advice({"robots/x": []}) is None, "an empty listing is not evidence"
 

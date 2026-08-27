@@ -43,6 +43,7 @@ def isolated_store(tmp_path, monkeypatch):
 
 # --- 1. challenge TTL is enforced at POP, not only by eviction ---------------
 
+
 def test_expired_challenge_refused_at_pop():
     cid = auth._stash_challenge("auth", b"chal", ip="1.2.3.4")
     auth._challenges[cid]["t"] = time.time() - auth._CHAL_TTL - 1
@@ -65,11 +66,10 @@ def test_fresh_challenge_pops_once_then_is_gone():
 
 # --- 2. an IP rp_id is refused even when pinned -------------------------------
 
+
 def _enroll_fake_credential():
     store = auth._load()
-    store["credentials"] = [
-        {"id": "abc", "public_key": "cGs", "sign_count": 0, "name": "phone"}
-    ]
+    store["credentials"] = [{"id": "abc", "public_key": "cGs", "sign_count": 0, "name": "phone"}]
     auth._save(store)
 
 
@@ -91,6 +91,7 @@ def test_begin_authentication_needs_enrollment_first():
 
 # --- 3+4. expected-origin derivation ------------------------------------------
 
+
 def test_forced_origin_outranks_every_header(monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_ORIGIN", "https://robots.cagatay.my")
     req = FakeRequest({"host": "evil.example", "origin": "https://evil.example"})
@@ -109,6 +110,7 @@ def test_origin_falls_back_to_host_with_forwarded_proto():
 
 
 # --- bonus: a garbage TOKEN_TTL cannot break token minting --------------------
+
 
 def test_token_ttl_garbage_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_TOKEN_TTL", "banana")

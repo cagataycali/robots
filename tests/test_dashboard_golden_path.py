@@ -53,10 +53,16 @@ def _write_dataset(root: Path, episodes: int = 3) -> None:
     dataset_root IS the dataset directory - meta/info.json sits directly under
     it, not under a repo_id subfolder."""
     (root / "meta").mkdir(parents=True)
-    (root / "meta" / "info.json").write_text(json.dumps({
-        "total_episodes": episodes, "total_frames": episodes * 100,
-        "fps": 30, "robot_type": "so101",
-    }))
+    (root / "meta" / "info.json").write_text(
+        json.dumps(
+            {
+                "total_episodes": episodes,
+                "total_frames": episodes * 100,
+                "fps": 30,
+                "robot_type": "so101",
+            }
+        )
+    )
 
 
 def _write_checkpoint(output_dir: Path, step: str = "0001000") -> None:
@@ -80,11 +86,14 @@ def test_collect_train_deploy_chain(tmp_path):
         return {"ok": True, "episodes": 3, "dataset_root": dataset_root}
 
     app.state.devices.collect = mock.Mock(side_effect=fake_collect)
-    r = client.post("/api/collect", json={
-        "dataset_root": str(dataset_root),
-        "dataset_repo_id": "local/cubes",
-        "n_episodes": 3,
-    })
+    r = client.post(
+        "/api/collect",
+        json={
+            "dataset_root": str(dataset_root),
+            "dataset_repo_id": "local/cubes",
+            "n_episodes": 3,
+        },
+    )
     assert r.status_code == 200, r.text
 
     # ---- 2. the collected dataset appears in the train screen
@@ -102,13 +111,16 @@ def test_collect_train_deploy_chain(tmp_path):
         return {"status": "success", "content": [{"json": {"job_id": "job-e2e-1"}}]}
 
     with mock.patch("strands_robots.tools.train_policy.train_policy", fake_train_policy):
-        r = client.post("/api/training/submit", json={
-            "provider": "lerobot_local",
-            "dataset_root": dataset_path,
-            "base_model": "lerobot/act_base",
-            "output_dir": str(output_dir),
-            "steps": 10,
-        })
+        r = client.post(
+            "/api/training/submit",
+            json={
+                "provider": "lerobot_local",
+                "dataset_root": dataset_path,
+                "base_model": "lerobot/act_base",
+                "output_dir": str(output_dir),
+                "steps": 10,
+            },
+        )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "success"
@@ -144,12 +156,15 @@ def test_chain_survives_a_training_that_produced_nothing(tmp_path):
         # note: writes NOTHING into output_dir
 
     with mock.patch("strands_robots.tools.train_policy.train_policy", fake_train_policy):
-        r = client.post("/api/training/submit", json={
-            "provider": "lerobot_local",
-            "dataset_root": str(tmp_path / "ds"),
-            "output_dir": str(tmp_path / "never-written"),
-            "steps": 10,
-        })
+        r = client.post(
+            "/api/training/submit",
+            json={
+                "provider": "lerobot_local",
+                "dataset_root": str(tmp_path / "ds"),
+                "output_dir": str(tmp_path / "never-written"),
+                "steps": 10,
+            },
+        )
     assert r.json()["status"] == "success"  # the ledger remembers the job...
     results = client.get("/api/checkpoints/search", params={"q": ""}).json()["results"]
     assert results == []  # ...but the picker only offers what can actually load

@@ -8,6 +8,7 @@ from typing import Any
 # : A snapshot older than this says nothing about the arm's present state.
 MAX_AGE_S = 30.0
 
+
 def _joint_count(peer: Any) -> int | None:
     """How many joints this peer's snapshot reports, or None when there is nothing to read."""
     if not isinstance(peer, Mapping):
@@ -24,6 +25,7 @@ def _joint_count(peer: Any) -> int | None:
         return len(joints)
     return None  # a shape we do not understand is not evidence of absence
 
+
 def _age_s(peer: Mapping, now: float) -> float | None:
     for key in ("last_seen",):
         try:
@@ -33,6 +35,7 @@ def _age_s(peer: Mapping, now: float) -> float | None:
         if seen > 0:
             return max(0.0, now - seen)
     return None
+
 
 def refusal(
     *,
@@ -59,8 +62,7 @@ def refusal(
         detail = " ".join(p for p in (f"{headline}." if headline else "", remedy) if p).strip()
     if not detail:
         detail = (
-            "Open this robot's log (devices > logs): the joint probe records the exception it raised "
-            "there in full."
+            "Open this robot's log (devices > logs): the joint probe records the exception it raised there in full."
         )
     return (
         f"{where} is on the mesh but reports NO joint positions (reading is {age:.0f}s old), so a "

@@ -32,9 +32,7 @@ def test_supervised_providers_stay_offered():
     form has no field for). groot stays because `embodiment` IS expressible."""
     out = training.form_unsupported()
     for provider in ("lerobot_local", "mock", "groot"):
-        assert provider not in out, (
-            f"{provider} trains from a dataset - refusing it here would hide a working backend"
-        )
+        assert provider not in out, f"{provider} trains from a dataset - refusing it here would hide a working backend"
 
 
 def test_every_unsupported_provider_is_a_real_provider():

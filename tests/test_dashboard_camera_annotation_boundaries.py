@@ -16,6 +16,7 @@ grepped and both must pass through ``without_annotations``. A sink of some THIRD
 and this file says so rather than implying a completeness it cannot prove - the count it reports is
 the count it checked.
 """
+
 from __future__ import annotations
 
 import re
@@ -25,8 +26,8 @@ DASHBOARD = Path(__file__).resolve().parents[1] / "strands_robots" / "dashboard"
 
 #: A line that hands `cameras` to a child process or writes it into generated code.
 _SINK_PATTERNS = (
-    re.compile(r"dumps\(.*[\"']cameras[\"']"),      # subprocess payload
-    re.compile(r"cameras=\{?_fmt\("),                # generated python
+    re.compile(r"dumps\(.*[\"']cameras[\"']"),  # subprocess payload
+    re.compile(r"cameras=\{?_fmt\("),  # generated python
 )
 
 

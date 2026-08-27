@@ -46,6 +46,7 @@ def root(tmp_path: Path) -> Path:
 # candidates: a name is not an identity
 # --------------------------------------------------------------------------
 
+
 def test_a_unique_name_resolves_to_exactly_one_calibration(root: Path):
     found = calib.candidates("follower_arm", root=root)
     assert len(found) == 1
@@ -98,14 +99,17 @@ def test_a_missing_root_is_empty_not_a_crash(tmp_path: Path):
 # payload / motors: the structured data that was always there
 # --------------------------------------------------------------------------
 
+
 def test_motors_keep_the_file_order_not_alphabetical_order():
     """Dict order is the order of joints on the arm; sorting invents an arm."""
-    rows = calib.motors({
-        "shoulder_pan": {"id": 1},
-        "shoulder_lift": {"id": 2},
-        "elbow_flex": {"id": 3},
-        "wrist_flex": {"id": 4},
-    })
+    rows = calib.motors(
+        {
+            "shoulder_pan": {"id": 1},
+            "shoulder_lift": {"id": 2},
+            "elbow_flex": {"id": 3},
+            "wrist_flex": {"id": 4},
+        }
+    )
     assert [r["name"] for r in rows] == ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex"]
 
 
@@ -125,8 +129,12 @@ def test_a_calibration_without_motor_data_yields_no_rows(data):
 
 def test_the_datetime_is_converted_explicitly_not_by_default_str():
     info = {
-        "device_type": "robots", "device_model": "so101_follower", "device_id": "follower_arm",
-        "path": "/tmp/x.json", "size_bytes": 1234, "motor_count": 6,
+        "device_type": "robots",
+        "device_model": "so101_follower",
+        "device_id": "follower_arm",
+        "path": "/tmp/x.json",
+        "size_bytes": 1234,
+        "motor_count": 6,
         "modified_time": datetime(2026, 8, 19, 2, 47, 11),
         "data": {"shoulder_pan": {"id": 1}},
     }

@@ -30,9 +30,18 @@ REAL_REFUSAL = (
 
 
 def _receiver(**kw):
-    base = {"source": "so101-arm-1", "device": "leader", "running": True,
-            "frames_received": 0, "errors": 0, "drops": 0, "rejected": 0,
-            "rate_dropped": 0, "slew_rejected": 0, "hz_actual": 0.0}
+    base = {
+        "source": "so101-arm-1",
+        "device": "leader",
+        "running": True,
+        "frames_received": 0,
+        "errors": 0,
+        "drops": 0,
+        "rejected": 0,
+        "rate_dropped": 0,
+        "slew_rejected": 0,
+        "hz_actual": 0.0,
+    }
     base.update(kw)
     return base
 
@@ -42,8 +51,10 @@ def _receiver(**kw):
 
 def test_the_real_log_line_is_parsed():
     assert envelope_refusal([REAL_REFUSAL]) == {
-        "kind": "value", "joint": "shoulder_lift.pos",
-        "value": 46.417582417582416, "bound": 12.566370614359172,
+        "kind": "value",
+        "joint": "shoulder_lift.pos",
+        "value": 46.417582417582416,
+        "bound": 12.566370614359172,
     }
 
 
@@ -51,7 +62,7 @@ def test_the_newest_bound_wins():
     """An operator who already widened the envelope once must see the bound they
     are hitting NOW, not the first one they ever hit."""
     older = REAL_REFUSAL
-    newer = ("input frame value for 'wrist_roll.pos' out of range: |170.0| > 400.0")
+    newer = "input frame value for 'wrist_roll.pos' out of range: |170.0| > 400.0"
     got = envelope_refusal([older, newer])
     assert got["bound"] == 400.0 and got["joint"] == "wrist_roll.pos"
 
@@ -123,17 +134,22 @@ def test_a_stopped_receiver_says_so():
 
 def _envelope(receivers=None, publishers=None):
     """A status as it crosses the mesh: prose plus a json block."""
-    return {"status": "success", "content": [
-        {"text": "Teleop status: ..."},
-        {"json": {"receivers": receivers or {}, "publishers": publishers or {}}},
-    ]}
+    return {
+        "status": "success",
+        "content": [
+            {"text": "Teleop status: ..."},
+            {"json": {"receivers": receivers or {}, "publishers": publishers or {}}},
+        ],
+    }
 
 
 def test_the_worst_receiver_is_the_one_worth_showing():
-    status = _envelope(receivers={
-        "a/leader": _receiver(frames_received=100, hz_actual=8.0),
-        "b/leader": _receiver(rejected=10),
-    })
+    status = _envelope(
+        receivers={
+            "a/leader": _receiver(frames_received=100, hz_actual=8.0),
+            "b/leader": _receiver(rejected=10),
+        }
+    )
     h = teleop_health(status, [REAL_REFUSAL])
     assert h["worst"]["peer_key"] == "b/leader"
     assert h["worst"]["state"] == "refusing"
@@ -143,18 +159,26 @@ def test_a_publisher_far_under_its_target_is_explained_not_flagged():
     """Measured: 20Hz requested, 6.2Hz achieved - because the state probe and the
     camera publisher share that servo bus. Reading it as a fault invites someone
     to 'fix' it by asking for more."""
-    h = teleop_health(_envelope(publishers={
-        "leader": {"running": True, "frames": 209, "hz_actual": 6.2, "hz_target": 20.0},
-    }))
+    h = teleop_health(
+        _envelope(
+            publishers={
+                "leader": {"running": True, "frames": 209, "hz_actual": 6.2, "hz_target": 20.0},
+            }
+        )
+    )
     p = h["publishers"]["leader"]
     assert p["state"] == "publishing"
     assert "shared" in p["detail"]
 
 
 def test_a_publisher_at_its_target_needs_no_excuse():
-    h = teleop_health(_envelope(publishers={
-        "leader": {"running": True, "frames": 100, "hz_actual": 19.0, "hz_target": 20.0},
-    }))
+    h = teleop_health(
+        _envelope(
+            publishers={
+                "leader": {"running": True, "frames": 100, "hz_actual": 19.0, "hz_target": 20.0},
+            }
+        )
+    )
     assert h["publishers"]["leader"]["detail"] is None
 
 
@@ -195,16 +219,16 @@ def test_the_grant_widens_both_halves_of_the_envelope():
 
 def test_approving_twice_changes_nothing():
     req = classify_refusal(REAL_REFUSAL)
-    assert env_patch(req, {"STRANDS_MESH_INPUT_VALUE_ABS": "400",
-                           "STRANDS_MESH_INPUT_SLEW_ABS": "800"}) == {}
+    assert env_patch(req, {"STRANDS_MESH_INPUT_VALUE_ABS": "400", "STRANDS_MESH_INPUT_SLEW_ABS": "800"}) == {}
 
 
 def test_revoking_clears_rather_than_freezing_todays_default():
     """Writing 12.566... back would silently override a future SDK default."""
     req = classify_refusal(REAL_REFUSAL)
-    assert revoke_patch(req, {"STRANDS_MESH_INPUT_VALUE_ABS": "400",
-                              "STRANDS_MESH_INPUT_SLEW_ABS": "800"}) == {
-        "STRANDS_MESH_INPUT_VALUE_ABS": "", "STRANDS_MESH_INPUT_SLEW_ABS": ""}
+    assert revoke_patch(req, {"STRANDS_MESH_INPUT_VALUE_ABS": "400", "STRANDS_MESH_INPUT_SLEW_ABS": "800"}) == {
+        "STRANDS_MESH_INPUT_VALUE_ABS": "",
+        "STRANDS_MESH_INPUT_SLEW_ABS": "",
+    }
     assert revoke_patch(req, {}) == {}
 
 

@@ -20,6 +20,7 @@ from strands_robots.dashboard import calibration_run as cr
 # cli_args — the command must be the draccus shape, and refuse to guess
 # ---------------------------------------------------------------------------
 
+
 def test_follower_is_robot_prefix():
     args = cr.cli_args("follower", "so101_follower", "leader_arm", "/dev/cu.usbmodem1")
     assert args == [
@@ -55,6 +56,7 @@ def test_bad_input_is_refused_with_a_sentence(role, model, device_id, port):
 # wizard_step — every phase of the real flow, in the real output's shape
 # ---------------------------------------------------------------------------
 
+
 def step(text, alive=True, returncode=None):
     return cr.wizard_step(text, alive=alive, returncode=returncode)
 
@@ -65,13 +67,17 @@ def test_blank_output_is_starting():
 
 
 def test_reuse_prompt_is_its_own_step():
-    s = step("Press ENTER to use provided calibration file associated with the id leader_arm, or type 'c' and press ENTER to run calibration: ")
+    s = step(
+        "Press ENTER to use provided calibration file associated with the id leader_arm, or type 'c' and press ENTER to run calibration: "
+    )
     assert s["step"] == "reuse"
     assert s["waiting"] is True
 
 
 def test_middle_prompt():
-    s = step("Running calibration of so101_follower\nMove so101_follower to the middle of its range of motion and press ENTER....")
+    s = step(
+        "Running calibration of so101_follower\nMove so101_follower to the middle of its range of motion and press ENTER...."
+    )
     assert s["step"] == "middle"
     assert s["waiting"] is True
     assert "limp" in s["prompt"]  # the one physical fact the operator must know
@@ -113,7 +119,11 @@ def test_saved_wins_over_everything_before_it():
 
 
 def test_usage_screen_is_named_as_our_bug_not_the_arm():
-    s = step("usage: lerobot-calibrate [-h] ...\nlerobot-calibrate: error: unrecognized arguments\n", alive=False, returncode=2)
+    s = step(
+        "usage: lerobot-calibrate [-h] ...\nlerobot-calibrate: error: unrecognized arguments\n",
+        alive=False,
+        returncode=2,
+    )
     assert s["step"] == "failed"
     assert "bug" in s["reason"]
 
@@ -172,8 +182,11 @@ def test_full_session_walks_the_protocol(tmp_path):
     fake.write_text(FAKE)
     cr.runs.clear()
     run = cr.start(
-        role="follower", model="so101_follower", device_id="test_arm",
-        port="/dev/cu.usbmodemFAKE", argv=[sys.executable, str(fake)],
+        role="follower",
+        model="so101_follower",
+        device_id="test_arm",
+        port="/dev/cu.usbmodemFAKE",
+        argv=[sys.executable, str(fake)],
     )
     try:
         wait_for(run, "middle")
@@ -194,14 +207,20 @@ def test_second_wizard_on_same_port_is_refused(tmp_path):
     fake.write_text(FAKE)
     cr.runs.clear()
     run = cr.start(
-        role="follower", model="so101_follower", device_id="test_arm",
-        port="/dev/cu.usbmodemFAKE", argv=[sys.executable, str(fake)],
+        role="follower",
+        model="so101_follower",
+        device_id="test_arm",
+        port="/dev/cu.usbmodemFAKE",
+        argv=[sys.executable, str(fake)],
     )
     try:
         with pytest.raises(RuntimeError, match="already running on /dev/cu.usbmodemFAKE"):
             cr.start(
-                role="follower", model="so101_follower", device_id="other",
-                port="/dev/cu.usbmodemFAKE", argv=[sys.executable, str(fake)],
+                role="follower",
+                model="so101_follower",
+                device_id="other",
+                port="/dev/cu.usbmodemFAKE",
+                argv=[sys.executable, str(fake)],
             )
     finally:
         run.close()
@@ -213,8 +232,11 @@ def test_cancel_kills_the_child(tmp_path):
     fake.write_text(FAKE)
     cr.runs.clear()
     run = cr.start(
-        role="follower", model="so101_follower", device_id="test_arm",
-        port="/dev/cu.usbmodemFAKE", argv=[sys.executable, str(fake)],
+        role="follower",
+        model="so101_follower",
+        device_id="test_arm",
+        port="/dev/cu.usbmodemFAKE",
+        argv=[sys.executable, str(fake)],
     )
     try:
         wait_for(run, "middle")
@@ -230,6 +252,7 @@ def test_cancel_kills_the_child(tmp_path):
 # ---------------------------------------------------------------------------
 # the routes (guarded server surface) — refusals and the full walk over HTTP
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def client(monkeypatch, tmp_path):
@@ -265,10 +288,15 @@ def test_route_refuses_a_port_held_by_a_live_robot(client, monkeypatch):
     from strands_robots.dashboard.device_manager import DeviceManager
 
     monkeypatch.setattr(DeviceManager, "port_owner", lambda self, port: "so101-follower")
-    r = client.post("/api/calibration/run", json={
-        "role": "follower", "model": "so101_follower",
-        "device_id": "x", "port": "/dev/cu.usbmodem1",
-    })
+    r = client.post(
+        "/api/calibration/run",
+        json={
+            "role": "follower",
+            "model": "so101_follower",
+            "device_id": "x",
+            "port": "/dev/cu.usbmodem1",
+        },
+    )
     assert r.status_code == 409
     detail = r.json()["detail"]
     assert "Port is in use" in detail["error"]
@@ -281,10 +309,15 @@ def test_route_walks_the_whole_protocol(client, monkeypatch, tmp_path):
     monkeypatch.setattr(cr, "_calibrate_argv", lambda: [sys.executable, str(fake)])
     cr.runs.clear()
     try:
-        r = client.post("/api/calibration/run", json={
-            "role": "follower", "model": "so101_follower",
-            "device_id": "test_arm", "port": "/dev/cu.usbmodemFAKE",
-        })
+        r = client.post(
+            "/api/calibration/run",
+            json={
+                "role": "follower",
+                "model": "so101_follower",
+                "device_id": "test_arm",
+                "port": "/dev/cu.usbmodemFAKE",
+            },
+        )
         assert r.status_code == 200, r.text
         sid = r.json()["id"]
 
@@ -314,9 +347,15 @@ def test_route_walks_the_whole_protocol(client, monkeypatch, tmp_path):
 
 
 def test_route_422_on_unmeasured_role(client):
-    r = client.post("/api/calibration/run", json={
-        "role": "unknown", "model": "so101_follower", "device_id": "x", "port": "/dev/cu.usbmodem1",
-    })
+    r = client.post(
+        "/api/calibration/run",
+        json={
+            "role": "unknown",
+            "model": "so101_follower",
+            "device_id": "x",
+            "port": "/dev/cu.usbmodem1",
+        },
+    )
     assert r.status_code == 422
     assert "cannot be guessed" in r.json()["detail"]
 

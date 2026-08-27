@@ -17,16 +17,19 @@ from strands_robots.dashboard.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
-JOBS_FILE = Path(os.getenv(
-    "DASHBOARD_JOBS_FILE",
-    os.path.join(tempfile.gettempdir(), "strands_dashboard", "train_jobs.json"),
-))
+JOBS_FILE = Path(
+    os.getenv(
+        "DASHBOARD_JOBS_FILE",
+        os.path.join(tempfile.gettempdir(), "strands_dashboard", "train_jobs.json"),
+    )
+)
 # : Dataset roots the dashboard itself created (collect wizard).
 ROOTS_FILE = JOBS_FILE.parent / "dataset_roots.json"
 _LOCK = threading.Lock()
 
 # : Set when a ledger file existed but could not be read.
 _JOBS_PROBLEM: str | None = None
+
 
 def _write_json_durably(path: Path, payload: Any) -> None:
     """Write JSON so a crash mid-write cannot destroy what was already there."""
@@ -44,11 +47,13 @@ def _write_json_durably(path: Path, payload: Any) -> None:
             if tmp.exists():
                 tmp.unlink()
 
+
 def _quarantine(path: Path) -> Path:
     """Move an unreadable file aside, preserving it, and return where it went."""
     kept = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
     os.replace(path, kept)
     return kept
+
 
 def remember_dataset_root(root: str) -> None:
     """Persist a dataset root so local_datasets() discovers it forever."""
@@ -65,6 +70,7 @@ def remember_dataset_root(root: str) -> None:
     except Exception as e:  # noqa: BLE001
         logger.debug("could not remember dataset root: %s", e)
 
+
 def _remembered_roots() -> list[Path]:
     try:
         if ROOTS_FILE.exists():
@@ -74,6 +80,7 @@ def _remembered_roots() -> list[Path]:
     except Exception:  # noqa: BLE001
         pass
     return []
+
 
 def _load_jobs() -> list[dict[str, Any]]:
     """The job ledger, or an empty list - with ``_JOBS_PROBLEM`` set if it was lost."""
@@ -106,6 +113,7 @@ def _load_jobs() -> list[dict[str, Any]]:
     _JOBS_PROBLEM = None
     return data
 
+
 def _save_jobs(jobs: list[dict[str, Any]]) -> None:
     if _JOBS_PROBLEM and JOBS_FILE.exists():
         # the ledger is there but unreadable AND could not be quarantined; writing
@@ -117,10 +125,12 @@ def _save_jobs(jobs: list[dict[str, Any]]) -> None:
     except Exception as e:  # noqa: BLE001
         logger.warning("could not save train jobs: %s", e)
 
+
 def jobs_problem() -> str | None:
     """Why the job list may be missing entries, or None when it is trustworthy."""
     with _LOCK:
         return _JOBS_PROBLEM
+
 
 def _tool_result(res: dict[str, Any]) -> dict[str, Any]:
     """Flatten a train_policy tool result: status + text + json block."""
@@ -133,10 +143,12 @@ def _tool_result(res: dict[str, Any]) -> dict[str, Any]:
                 out["data"].update(block["json"])
     return out
 
+
 def list_trainers() -> list[str]:
     from strands_robots.training import list_trainers as _lt
 
     return list(_lt())
+
 
 # : Trainer modules whose spec this form cannot build.
 _RL_TRAINER_MODULE_PREFIX = "strands_robots.training.rl"
@@ -148,6 +160,7 @@ _RL_REASON = (
     "reinforcement-learning trainers learn from a live environment, not from a recorded "
     "dataset, so they are driven from a script (RLTrainSpec) rather than this form"
 )
+
 
 def _declared_trainer_module(provider: str) -> str:
     """Where a provider's trainer class comes from, WITHOUT importing it."""
@@ -167,6 +180,7 @@ def _declared_trainer_module(provider: str) -> str:
             return name
     return ""
 
+
 _FORM_CANNOT_EXPRESS: dict[str, str] = {
     "sagemaker": (
         "submits the job to AWS, so it needs an ECR image_uri, an execution role_arn, and s3:// "
@@ -178,6 +192,7 @@ _FORM_CANNOT_EXPRESS: dict[str, str] = {
         "experiment, and this form has no field for it - run cosmos3 from a script"
     ),
 }
+
 
 def form_unsupported() -> dict[str, str]:
     """Providers that cannot be trained FROM THIS FORM, mapped to why."""
@@ -193,14 +208,27 @@ def form_unsupported() -> dict[str, str]:
             out[provider] = _FORM_CANNOT_EXPRESS[provider]
     return out
 
+
 # : The full set of fields a training spec accepts. submit() and validate() : share it so the
 # two can never drift: a field the form sends either reaches : train_policy or is refused BY
 # NAME - silently dropping a typo'd "step" : would train 10k default steps and call it
 # success.
 SPEC_KEYS = (
-    "provider", "dataset_root", "dataset_repo_id", "base_model",
-    "output_dir", "embodiment", "steps", "batch_size", "learning_rate",
-    "save_freq", "method", "lora_r", "lora_alpha", "seed", "val_episodes",
+    "provider",
+    "dataset_root",
+    "dataset_repo_id",
+    "base_model",
+    "output_dir",
+    "embodiment",
+    "steps",
+    "batch_size",
+    "learning_rate",
+    "save_freq",
+    "method",
+    "lora_r",
+    "lora_alpha",
+    "seed",
+    "val_episodes",
 )
 
 # : train_policy parameters this form deliberately does NOT send, each with the reason.
@@ -208,20 +236,21 @@ _NOT_IN_FORM: dict[str, str] = {
     "action": "the verb, chosen by the endpoint rather than the operator",
     "job_id": "assigned by the job store; a client-chosen id could collide with a running job",
     "streaming": "mutually exclusive with val_episodes on the lerobot backend, and it is the "
-                 "wrong default for a first dataset -- a Hub stream cannot be resumed offline",
+    "wrong default for a first dataset -- a Hub stream cannot be resumed offline",
     "num_gpus": "this dashboard drives ONE host; a multi-GPU/multi-node launch is a cluster "
-                "decision, and torch elastic rendezvous on this Mac needed a fix (Q37) before "
-                "it would even start",
+    "decision, and torch elastic rendezvous on this Mac needed a fix (Q37) before "
+    "it would even start",
     "num_nodes": "same: multi-node belongs to a script that knows the cluster's addresses",
     "resume": "resuming needs the previous run's output_dir to still hold its checkpoints; "
-              "offering a tick box that silently starts fresh would be worse than not offering it",
+    "offering a tick box that silently starts fresh would be worse than not offering it",
     "lora_target_modules": "a list of model-internal module names -- unanswerable without the "
-                           "architecture in front of you",
+    "architecture in front of you",
     "tune": "a per-backend dict of component toggles (GR00T llm/visual/projector/diffusion)",
     "augmentation": "a per-backend dict of augmentation parameters",
     "fps": "read from the dataset's own metadata; a mismatching value silently retimes the data",
     "extra": "the escape hatch for backend-specific kwargs, which is what a script is for",
 }
+
 
 def _spec_kwargs(body: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """(kwargs, None) for a clean body, (None, error-result) for a bad one."""
@@ -230,12 +259,10 @@ def _spec_kwargs(body: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str,
         return None, {
             "status": "error",
             "data": {},
-            "text": (
-                "unknown field(s): " + ", ".join(unknown)
-                + ". Valid fields: " + ", ".join(SPEC_KEYS)
-            ),
+            "text": ("unknown field(s): " + ", ".join(unknown) + ". Valid fields: " + ", ".join(SPEC_KEYS)),
         }
     return {k: body[k] for k in SPEC_KEYS if body.get(k) is not None}, None
+
 
 def _has_data_files(dataset_dir: Path) -> bool | None:
     """Does ``data/`` hold at least one file? ``None`` when it cannot be looked at."""
@@ -249,6 +276,7 @@ def _has_data_files(dataset_dir: Path) -> bool | None:
         return False
     except OSError:
         return None
+
 
 def local_datasets(query: str = "") -> list[dict[str, Any]]:
     """LeRobotDataset roots on disk (meta/info.json present)."""
@@ -305,9 +333,11 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
                     pass
     return sorted(out, key=lambda r: r["repo_id"])[:50]
 
+
 _HUB_DS_TTL_S = 300.0
 #: Bounded and self-pruning - see ttl_cache: the old dict kept every prefix ever typed.
 _HUB_DS_CACHE: TTLCache[list[dict[str, Any]]] = TTLCache(_HUB_DS_TTL_S)
+
 
 def hub_datasets(query: str = "", limit: int = 12) -> tuple[list[dict[str, Any]], str | None]:
     """Type-ahead search of public LeRobot datasets on the Hub."""
@@ -328,7 +358,9 @@ def hub_datasets(query: str = "", limit: int = 12) -> tuple[list[dict[str, Any]]
                 "repo_id": d.id,
                 "local": False,
                 "downloads": getattr(d, "downloads", None),
-                "tags": [t for t in (getattr(d, "tags", None) or []) if not t.startswith(("region:", "license:", "arxiv:"))][:6],
+                "tags": [
+                    t for t in (getattr(d, "tags", None) or []) if not t.startswith(("region:", "license:", "arxiv:"))
+                ][:6],
             }
             for d in found
         ]
@@ -338,6 +370,7 @@ def hub_datasets(query: str = "", limit: int = 12) -> tuple[list[dict[str, Any]]
         return [], f"Hub search unavailable ({kind}) - showing local datasets only"
     _HUB_DS_CACHE.put(key, rows)
     return rows, None
+
 
 def search_datasets(query: str = "", limit: int = 12) -> dict[str, Any]:
     """Local dataset roots merged with a Hub search, local first."""
@@ -357,6 +390,7 @@ def search_datasets(query: str = "", limit: int = 12) -> dict[str, Any]:
         "hf_auth": _hf_auth_state(),
     }
 
+
 def _hf_auth_state() -> dict[str, Any]:
     """Who the Hub thinks we are - reused from checkpoints, not re-implemented."""
     try:
@@ -366,6 +400,7 @@ def _hf_auth_state() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - never let an auth probe break search
         return {"authenticated": False, "user": None, "detail": f"auth state unavailable ({type(exc).__name__})"}
 
+
 def output_dir_verdict(path: str) -> dict[str, Any]:
     from strands_robots.dashboard.output_dir_check import (
         default_checkpoint_probe,
@@ -373,6 +408,7 @@ def output_dir_verdict(path: str) -> dict[str, Any]:
     )
 
     return inspect_output_dir(path, has_checkpoint=default_checkpoint_probe)
+
 
 def submit(body: dict[str, Any]) -> dict[str, Any]:
     """Validate + launch a training job; persist it for the tab."""
@@ -411,6 +447,7 @@ def submit(body: dict[str, Any]) -> dict[str, Any]:
         res["job"] = job
     return res
 
+
 def validate(body: dict[str, Any]) -> dict[str, Any]:
     kwargs, err = _spec_kwargs(body)
     if err is not None:
@@ -419,10 +456,12 @@ def validate(body: dict[str, Any]) -> dict[str, Any]:
 
     return _tool_result(train_policy(action="validate", **kwargs))
 
+
 def status(provider: str, job_id: str) -> dict[str, Any]:
     from strands_robots.tools.train_policy import train_policy
 
     return _tool_result(train_policy(action="status", provider=provider, job_id=job_id))
+
 
 def export(
     provider: str,
@@ -435,17 +474,23 @@ def export(
     from strands_robots.dashboard.artifact_check import artifact_verdict
     from strands_robots.tools.train_policy import train_policy
 
-    res = _tool_result(train_policy(
-        action="export", provider=provider, output_dir=output_dir,
-        dataset_root=dataset_root or None, dataset_repo_id=dataset_repo_id,
-        base_model=base_model or "",
-    ))
+    res = _tool_result(
+        train_policy(
+            action="export",
+            provider=provider,
+            output_dir=output_dir,
+            dataset_root=dataset_root or None,
+            dataset_repo_id=dataset_repo_id,
+            base_model=base_model or "",
+        )
+    )
     exported = res.get("data", {}).get("exported_model")
     if res["status"] == "success":
         res["artifact"] = artifact_verdict(exported)
         # One boolean for the caller that only decides "may this be handed to an arm".
         res["deployable"] = bool(res["artifact"].get("ok"))
     return res
+
 
 def jobs() -> list[dict[str, Any]]:
     with _LOCK:

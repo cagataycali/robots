@@ -24,9 +24,7 @@ import re
 import strands_robots.dashboard.device_manager as dm
 from strands_robots.dashboard.device_manager import DeviceManager, validate_peer_id
 
-FRONTEND = (
-    pathlib.Path(dm.__file__).parent / "frontend" / "src" / "lib" / "peerName.ts"
-)
+FRONTEND = pathlib.Path(dm.__file__).parent / "frontend" / "src" / "lib" / "peerName.ts"
 
 
 class FakeProc:
@@ -46,9 +44,7 @@ class FakeProc:
 
 def _manager(tmp_path, monkeypatch):
     monkeypatch.setattr(dm.subprocess, "Popen", FakeProc)
-    monkeypatch.setattr(dm.threading, "Thread", lambda *a, **kw: type(
-        "T", (), {"start": lambda self: None}
-    )())
+    monkeypatch.setattr(dm.threading, "Thread", lambda *a, **kw: type("T", (), {"start": lambda self: None})())
     mgr = DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
     return mgr
 
@@ -65,9 +61,7 @@ def test_a_chosen_name_becomes_the_peer_id_and_is_remembered(tmp_path, monkeypat
     # The name the operator typed is what the fleet, the profile and the key space all carry.
     assert "left-arm" in mgr.robots
     remembered = json.loads(pathlib.Path(mgr.profiles.path).read_text())
-    assert any(
-        (p or {}).get("peer_id") == "left-arm" for p in remembered.values()
-    ), remembered
+    assert any((p or {}).get("peer_id") == "left-arm" for p in remembered.values()), remembered
 
 
 def test_no_name_still_means_generate_one(tmp_path, monkeypatch):

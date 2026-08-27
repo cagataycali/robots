@@ -51,6 +51,7 @@ def _client(peers):
 
 # --- the pure rule ---------------------------------------------------------------------------------
 
+
 def test_off_by_default_is_a_promise_not_an_accident():
     assert task_confirm_required({}) is False
     v = task_post_allowed(peer=ARM, confirmed=False, target="so101-arm-1", env={})
@@ -86,6 +87,7 @@ def test_a_peer_with_no_presence_yet_is_treated_as_real():
 
 # --- through the route ----------------------------------------------------------------------------
 
+
 def test_the_route_still_runs_an_unconfirmed_task_by_default():
     client, _ = _client({"so101-arm-1": ARM})
     r = client.post("/api/robots/so101-arm-1/task", json={"instruction": "pick the cube"})
@@ -104,8 +106,7 @@ def test_the_route_refuses_before_sending_when_locked(monkeypatch):
 def test_the_confirmed_marker_gets_through_but_never_onto_the_wire(monkeypatch):
     monkeypatch.setenv(TASK_CONFIRM_ENV, "1")
     client, app = _client({"so101-arm-1": ARM})
-    r = client.post(
-        "/api/robots/so101-arm-1/task", json={"instruction": "pick the cube", "confirmed": True})
+    r = client.post("/api/robots/so101-arm-1/task", json={"instruction": "pick the cube", "confirmed": True})
     assert r.status_code == 200
     (_target, cmd), _kw = app.state.bridge.send_cmd_async.await_args
     assert "confirmed" not in cmd, "the marker is a dashboard concern; the robot must never see it"

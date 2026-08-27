@@ -4,6 +4,7 @@ Found in the wild: ~/.strands_dashboard/profiles.json carried an entry named "q1
 config is the invalid {"main": 3} from a regression fixture -- a test had written a robot definition
 into the production file. Those entries are exactly what autospawn spawns from on real hardware.
 """
+
 from __future__ import annotations
 
 import os
@@ -47,6 +48,7 @@ def test_a_save_cannot_reach_the_real_file(tmp_path):
 
 # --- the other three production stores under his home -------------------------------------------------
 
+
 def test_the_auth_store_is_not_his_real_passkey_file():
     """His passkey store is the only door into robots.cagatay.my while he travels.
 
@@ -67,7 +69,7 @@ def test_registering_a_credential_leaves_his_real_store_byte_identical():
     auth._save({"credentials": [{"id": "isolation-test", "public_key": "x"}]})
     after = real.read_bytes() if real.exists() else None
     assert before == after, "a test just wrote into his real passkey store"
-    assert "isolation-test" in auth._store_path().read_text()   # ...and it did happen somewhere
+    assert "isolation-test" in auth._store_path().read_text()  # ...and it did happen somewhere
 
 
 def test_the_record_crumb_and_settings_file_are_redirected_too():

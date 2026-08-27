@@ -98,10 +98,17 @@ class TestMotionIntentWithProxies:
     def test_robot_mesh_stays_absent_no_double_gate(self):
         # robot_mesh raises its OWN SDK interrupt; it must not gain a row here.
         assert "robot_mesh" not in hitl.MOTION_ACTIONS
-        assert hitl.motion_intent(
-            "robot_mesh", {"action": "tell", "target": "so101-real-689"}, PEERS, NO_GRANT,
-            extra_actions=PROXY_MOTION, bound_targets=PROXY_TARGETS,
-        ) is None
+        assert (
+            hitl.motion_intent(
+                "robot_mesh",
+                {"action": "tell", "target": "so101-real-689"},
+                PEERS,
+                NO_GRANT,
+                extra_actions=PROXY_MOTION,
+                bound_targets=PROXY_TARGETS,
+            )
+            is None
+        )
 
 
 class TestHookCarriesTheTables:

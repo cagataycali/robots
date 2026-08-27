@@ -17,6 +17,7 @@ from strands_robots.dashboard.output_dir_check import classify_output_dir, inspe
 
 # ----------------------------------------------------------------- pure verdicts
 
+
 def test_a_missing_path_is_free():
     v = classify_output_dir(exists=False)
     assert v["state"] == "free" and v["needs_confirm"] is False
@@ -29,8 +30,10 @@ def test_an_empty_directory_is_free():
 
 def test_files_with_no_checkpoint_are_a_named_loss_not_a_shrug():
     v = classify_output_dir(
-        exists=True, has_checkpoint=False,
-        names=["notes.md", "episode_0.mp4", "meta"], total=3,
+        exists=True,
+        has_checkpoint=False,
+        names=["notes.md", "episode_0.mp4", "meta"],
+        total=3,
     )
     assert v["state"] == "occupied"
     assert v["destructive"] is True and v["needs_confirm"] is True
@@ -41,7 +44,9 @@ def test_files_with_no_checkpoint_are_a_named_loss_not_a_shrug():
 
 def test_a_long_listing_is_sampled_but_the_count_is_honest():
     v = classify_output_dir(
-        exists=True, names=[f"f{i}" for i in range(40)], total=40,
+        exists=True,
+        names=[f"f{i}" for i in range(40)],
+        total=40,
     )
     assert len(v["entries"]) == 5 and v["total"] == 40
     assert "and 35 more" in v["detail"]
@@ -72,6 +77,7 @@ def test_an_unreadable_path_is_unknown_never_free():
 
 # ------------------------------------------------------------- real filesystem
 
+
 def test_inspect_reads_a_real_directory(tmp_path: Path):
     (tmp_path / "keepme.txt").write_text("work")
     v = inspect_output_dir(str(tmp_path), has_checkpoint=lambda p: False)
@@ -99,15 +105,18 @@ def test_a_failing_checkpoint_probe_is_unknown_not_a_delete(tmp_path: Path):
 
 # --------------------------------------------------------------- submit() gate
 
+
 def test_submit_refuses_an_occupied_output_dir_without_touching_the_trainer(tmp_path, monkeypatch):
     (tmp_path / "my-thesis.pdf").write_text("please do not delete me")
     with mock.patch("strands_robots.tools.train_policy.train_policy") as tp:
-        res = training.submit({
-            "provider": "lerobot_local",
-            "dataset_root": "/tmp/ds",
-            "output_dir": str(tmp_path),
-            "steps": 100,
-        })
+        res = training.submit(
+            {
+                "provider": "lerobot_local",
+                "dataset_root": "/tmp/ds",
+                "output_dir": str(tmp_path),
+                "steps": 100,
+            }
+        )
         called = tp.call_args_list
     assert res["status"] == "error"
     assert res["data"]["needs_confirm"] is True
@@ -123,14 +132,15 @@ def test_confirm_clear_lets_a_deliberate_operator_through(tmp_path, monkeypatch)
     monkeypatch.setattr(training, "_load_jobs", lambda: [])
     monkeypatch.setattr(training, "_save_jobs", lambda jobs: None)
     with mock.patch("strands_robots.tools.train_policy.train_policy") as tp:
-        tp.return_value = {"status": "success", "content": [{"text": "started"}],
-                           "data": {"job_id": "j1"}}
-        res = training.submit({
-            "provider": "lerobot_local",
-            "dataset_root": "/tmp/ds",
-            "output_dir": str(tmp_path),
-            "confirm_clear": True,
-        })
+        tp.return_value = {"status": "success", "content": [{"text": "started"}], "data": {"job_id": "j1"}}
+        res = training.submit(
+            {
+                "provider": "lerobot_local",
+                "dataset_root": "/tmp/ds",
+                "output_dir": str(tmp_path),
+                "confirm_clear": True,
+            }
+        )
         seen.update(tp.call_args.kwargs)
     assert res["status"] == "success"
     # confirm_clear is a dashboard-level consent, not part of the trainer's vocabulary:
@@ -143,10 +153,8 @@ def test_a_free_output_dir_needs_no_confirmation(tmp_path, monkeypatch):
     monkeypatch.setattr(training, "_load_jobs", lambda: [])
     monkeypatch.setattr(training, "_save_jobs", lambda jobs: None)
     with mock.patch("strands_robots.tools.train_policy.train_policy") as tp:
-        tp.return_value = {"status": "success", "content": [{"text": "ok"}],
-                           "data": {"job_id": "j2"}}
-        res = training.submit({"provider": "lerobot_local", "dataset_root": "/tmp/ds",
-                               "output_dir": str(target)})
+        tp.return_value = {"status": "success", "content": [{"text": "ok"}], "data": {"job_id": "j2"}}
+        res = training.submit({"provider": "lerobot_local", "dataset_root": "/tmp/ds", "output_dir": str(target)})
     assert res["status"] == "success"
 
 
@@ -155,8 +163,13 @@ def test_confirm_clear_is_not_mistaken_for_an_unknown_field(tmp_path, monkeypatc
     monkeypatch.setattr(training, "_load_jobs", lambda: [])
     monkeypatch.setattr(training, "_save_jobs", lambda jobs: None)
     with mock.patch("strands_robots.tools.train_policy.train_policy") as tp:
-        tp.return_value = {"status": "success", "content": [{"text": "ok"}],
-                           "data": {"job_id": "j3"}}
-        res = training.submit({"provider": "lerobot_local", "dataset_root": "/tmp/ds",
-                               "output_dir": str(tmp_path / "new"), "confirm_clear": False})
+        tp.return_value = {"status": "success", "content": [{"text": "ok"}], "data": {"job_id": "j3"}}
+        res = training.submit(
+            {
+                "provider": "lerobot_local",
+                "dataset_root": "/tmp/ds",
+                "output_dir": str(tmp_path / "new"),
+                "confirm_clear": False,
+            }
+        )
     assert res["status"] == "success", res.get("text")

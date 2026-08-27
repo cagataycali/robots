@@ -33,9 +33,9 @@ def _isolate(monkeypatch, tmp_path):
 def _dataset(root, repo, episodes):
     d = root / repo
     (d / "meta").mkdir(parents=True)
-    (d / "meta" / "info.json").write_text(json.dumps(
-        {"codebase_version": "v3.0", "total_episodes": episodes, "total_frames": episodes * 100, "fps": 30}
-    ))
+    (d / "meta" / "info.json").write_text(
+        json.dumps({"codebase_version": "v3.0", "total_episodes": episodes, "total_frames": episodes * 100, "fps": 30})
+    )
     if episodes:
         chunk = d / "data" / "chunk-000"
         chunk.mkdir(parents=True)

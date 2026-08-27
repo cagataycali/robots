@@ -15,9 +15,7 @@ from strands_robots.dashboard import training
 
 class TestSpecKwargs:
     def test_clean_body_passes_through(self):
-        kwargs, err = training._spec_kwargs(
-            {"provider": "lerobot_local", "steps": 500, "dataset_root": "/tmp/d"}
-        )
+        kwargs, err = training._spec_kwargs({"provider": "lerobot_local", "steps": 500, "dataset_root": "/tmp/d"})
         assert err is None
         assert kwargs == {"provider": "lerobot_local", "steps": 500, "dataset_root": "/tmp/d"}
 

@@ -66,9 +66,7 @@ def test_trust_patch_is_empty_when_already_granted():
 def test_hf_patch_appends_and_keeps_existing_entries():
     req = classify_refusal(HF_REFUSAL)
     patch = env_patch(req, {"STRANDS_MESH_HF_REPO_ALLOW": "nvidia,lerobot"})
-    assert patch == {
-        "STRANDS_MESH_HF_REPO_ALLOW": "nvidia,lerobot,HashtagRobotics/smolvla-tic-tac-toe-games-1-5-80k"
-    }
+    assert patch == {"STRANDS_MESH_HF_REPO_ALLOW": "nvidia,lerobot,HashtagRobotics/smolvla-tic-tac-toe-games-1-5-80k"}
 
 
 def test_hf_patch_grants_the_repo_not_the_org():

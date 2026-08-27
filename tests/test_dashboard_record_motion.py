@@ -55,17 +55,11 @@ class TestAMovingArmIsNeverCalledFrozen:
 
     def test_a_swing_that_returns_to_the_same_pose_is_motion(self) -> None:
         # first-vs-last would read 0 travel here. Peak-to-peak is why it does not.
-        samples = [
-            (100.0 + i * 0.2, {"shoulder_pan.pos": 12.0 + 20.0 * math.sin(i / 10.0)})
-            for i in range(60)
-        ]
+        samples = [(100.0 + i * 0.2, {"shoulder_pan.pos": 12.0 + 20.0 * math.sin(i / 10.0)}) for i in range(60)]
         assert rm.motion_verdict(samples, now=112.0) is None
 
     def test_one_joint_moving_is_enough(self) -> None:
-        samples = [
-            (100.0 + i * 0.2, {"a.pos": 5.0, "b.pos": 5.0, "gripper.pos": 5.0 + i * 0.3})
-            for i in range(60)
-        ]
+        samples = [(100.0 + i * 0.2, {"a.pos": 5.0, "b.pos": 5.0, "gripper.pos": 5.0 + i * 0.3}) for i in range(60)]
         assert rm.motion_verdict(samples, now=112.0) is None
 
     def test_motion_just_over_the_epsilon_counts(self) -> None:

@@ -12,9 +12,7 @@ from strands_robots.dashboard import config_api, settings
 
 
 def test_unknown_key_inside_a_known_section_is_named() -> None:
-    assert settings.unknown_keys({"agent": {"model_id": "x", "modle_id": "typo"}}) == [
-        "agent.modle_id"
-    ]
+    assert settings.unknown_keys({"agent": {"model_id": "x", "modle_id": "typo"}}) == ["agent.modle_id"]
 
 
 def test_unknown_section_is_named_once_not_per_key() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 FLAG = "--auth-token"
 
+
 def token_flag_in_argv(argv: list[str] | tuple[str, ...] | None) -> str | None:
     """The exposing argument as it appears in argv, or None."""
     items = list(argv or ())
@@ -13,9 +14,10 @@ def token_flag_in_argv(argv: list[str] | tuple[str, ...] | None) -> str | None:
             if nxt and not nxt.startswith("-"):
                 return FLAG
         elif arg.startswith(f"{FLAG}="):
-            if arg[len(FLAG) + 1:]:
+            if arg[len(FLAG) + 1 :]:
                 return FLAG
     return None
+
 
 def argv_token_notice(argv: list[str] | tuple[str, ...] | None) -> dict[str, str] | None:
     """The sentence for the settings screen, or None when there is nothing to say."""

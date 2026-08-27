@@ -30,10 +30,24 @@ _CACHE: TTLCache[list[dict[str, Any]]] = TTLCache(_CACHE_TTL_S)
 # so the underscore in the pattern was unreachable. A hand list keyed to an
 # upstream registry is only as true as the day it was written.
 _FALLBACK_FAMILIES = (
-    "smolvla", "act", "diffusion", "pi0_fast", "pi05", "pi0", "tdmpc",
-    "vqbet", "groot", "molmoact2", "molmoact", "sac", "xvla", "wall_x",
-    "eo1", "evo1",
+    "smolvla",
+    "act",
+    "diffusion",
+    "pi0_fast",
+    "pi05",
+    "pi0",
+    "tdmpc",
+    "vqbet",
+    "groot",
+    "molmoact2",
+    "molmoact",
+    "sac",
+    "xvla",
+    "wall_x",
+    "eo1",
+    "evo1",
 )
+
 
 def _build_family_matcher(names: tuple[str, ...]) -> tuple[re.Pattern[str], dict[str, str]]:
     """Compile a separator-tolerant matcher + squashed-name → canonical map.
@@ -49,7 +63,9 @@ def _build_family_matcher(names: tuple[str, ...]) -> tuple[re.Pattern[str], dict
     canonical = {n.replace("_", "").lower(): n for n in names}
     return regex, canonical
 
+
 _FAMILY_MATCHER: tuple[re.Pattern[str], dict[str, str]] | None = None
+
 
 def _family_matcher() -> tuple[re.Pattern[str], dict[str, str]]:
     """The registry-derived matcher, built once; fallback list if lerobot is absent."""
@@ -66,6 +82,7 @@ def _family_matcher() -> tuple[re.Pattern[str], dict[str, str]]:
         _FAMILY_MATCHER = _build_family_matcher(names or _FALLBACK_FAMILIES)
     return _FAMILY_MATCHER
 
+
 def _guess_policy_type(repo_id: str, tags: list[str]) -> str | None:
     """Best-effort policy family from repo name + tags (form prefill only)."""
     regex, canonical = _family_matcher()
@@ -77,6 +94,7 @@ def _guess_policy_type(repo_id: str, tags: list[str]) -> str | None:
             squashed = m.group(1).lower().replace("-", "")
             return canonical.get(squashed, squashed)
     return None
+
 
 def _hf_cache_root() -> Path:
     """Where downloaded model snapshots live, honouring the env the CLI honours. HF_HUB_CACHE points at
@@ -92,6 +110,7 @@ def _hf_cache_root() -> Path:
         return Path(home).expanduser() / "hub"
     return Path.home() / ".cache" / "huggingface" / "hub"
 
+
 def local_checkpoints(query: str = "") -> list[dict[str, Any]]:
     """Already-downloaded LeRobot-shaped checkpoints in the HF cache."""
     hub = Path.home() / ".cache" / "huggingface" / "hub"
@@ -102,7 +121,7 @@ def local_checkpoints(query: str = "") -> list[dict[str, Any]]:
     for entry in hub.iterdir():
         if not entry.name.startswith("models--"):
             continue
-        repo_id = entry.name[len("models--"):].replace("--", "/", 1)
+        repo_id = entry.name[len("models--") :].replace("--", "/", 1)
         if q and q not in repo_id.lower():
             continue
         snapshots = entry / "snapshots"
@@ -131,14 +150,17 @@ def local_checkpoints(query: str = "") -> list[dict[str, Any]]:
                     continue  # transformers model, not a policy checkpoint
         except Exception:  # noqa: BLE001 - unreadable config -> still list it
             pass
-        out.append({
-            "repo_id": repo_id,
-            "local": True,
-            "downloads": None,
-            "policy_type": policy_type or _guess_policy_type(repo_id, []),
-            "tags": [],
-        })
+        out.append(
+            {
+                "repo_id": repo_id,
+                "local": True,
+                "downloads": None,
+                "policy_type": policy_type or _guess_policy_type(repo_id, []),
+                "tags": [],
+            }
+        )
     return out
+
 
 def hub_search(query: str, limit: int = 12) -> tuple[list[dict[str, Any]], str | None]:
     """Type-ahead search of public LeRobot checkpoints on the Hub. Returns ``(rows, problem)`` -
@@ -177,10 +199,12 @@ def hub_search(query: str, limit: int = 12) -> tuple[list[dict[str, Any]], str |
     _CACHE.put(key, rows)
     return rows, None
 
+
 _WHOAMI: dict[str, Any] = {"at": 0.0, "value": None, "token": None}
 _WHOAMI_TTL_S = 600.0
 # : A REJECTED token is cached far more briefly than a good one.
 _WHOAMI_REJECTED_TTL_S = 20.0
+
 
 def _token_fingerprint(token: str | None) -> str | None:
     """A stable, non-secret id for a token, for cache keying only. The verdict is about a SPECIFIC
@@ -189,6 +213,7 @@ def _token_fingerprint(token: str | None) -> str | None:
     if not token:
         return None
     return hashlib.sha256(token.encode("utf-8", "replace")).hexdigest()[:16]
+
 
 def whoami_cache_verdict(
     entry: dict[str, Any],
@@ -208,10 +233,12 @@ def whoami_cache_verdict(
     budget = ttl_s if value.get("authenticated") else rejected_ttl_s
     return value if 0.0 <= age < budget else None
 
+
 def hf_auth_state() -> dict[str, Any]:
     """Whether this machine can reach gated/private HF repos, and as whom."""
     try:
         from huggingface_hub import get_token
+
         token = get_token()
     except Exception:  # noqa: BLE001
         token = None
@@ -224,6 +251,7 @@ def hf_auth_state() -> dict[str, Any]:
         return cached
     try:
         from huggingface_hub import HfApi
+
         user = HfApi().whoami(token=token).get("name")
         value = {"authenticated": True, "user": user, "detail": None}
     except Exception as exc:  # noqa: BLE001
@@ -235,8 +263,10 @@ def hf_auth_state() -> dict[str, Any]:
     _WHOAMI.update(at=now, value=value, token=fingerprint)
     return value
 
+
 #: Widest page the hub search is asked for, and the ceiling for any caller.
 MAX_LIMIT = 40
+
 
 def clamp_limit(limit: Any, default: int = 15, ceiling: int = MAX_LIMIT) -> int:
     """A limit is a promise to the caller: 1 means one row."""
@@ -246,6 +276,7 @@ def clamp_limit(limit: Any, default: int = 15, ceiling: int = MAX_LIMIT) -> int:
         return default
     return max(1, min(n, ceiling))
 
+
 def _artifact_dir(output_dir: Path) -> Path | None:
     """The loadable artifact inside one training run's output_dir, or None."""
     if (output_dir / "config.json").exists() or (output_dir / "train_config.json").exists():
@@ -254,6 +285,7 @@ def _artifact_dir(output_dir: Path) -> Path | None:
     if not ckpts.is_dir():
         return None
     candidates = [ckpts / "last"]
+
     def _step(d: Path) -> tuple[int, str]:
         # LeRobot zero-pads step dirs so name-sort works, but a bare "900" vs
         # "1000" must still order numerically.
@@ -283,6 +315,7 @@ def _artifact_dir(output_dir: Path) -> Path | None:
         if (pm / "config.json").exists() or (pm / "train_config.json").exists():
             return pm
     return None
+
 
 def trained_checkpoints(query: str = "") -> list[dict[str, Any]]:
     """Checkpoints THIS dashboard trained, discovered via the jobs ledger."""
@@ -317,18 +350,21 @@ def trained_checkpoints(query: str = "") -> list[dict[str, Any]]:
                 policy_type = _json.loads(cfg.read_text()).get("type")
         except Exception:  # noqa: BLE001 - unreadable config -> still list it
             pass
-        out.append({
-            "repo_id": path,
-            "local": True,
-            "source": "trained",
-            "downloads": None,
-            "policy_type": policy_type or _guess_policy_type(str(job.get("base_model") or ""), []),
-            "tags": [],
-            "job_id": job.get("job_id"),
-            "dataset": job.get("dataset"),
-            "trained_at": job.get("submitted_at"),
-        })
+        out.append(
+            {
+                "repo_id": path,
+                "local": True,
+                "source": "trained",
+                "downloads": None,
+                "policy_type": policy_type or _guess_policy_type(str(job.get("base_model") or ""), []),
+                "tags": [],
+                "job_id": job.get("job_id"),
+                "dataset": job.get("dataset"),
+                "trained_at": job.get("submitted_at"),
+            }
+        )
     return out
+
 
 def search(query: str = "", limit: int = 15) -> dict[str, Any]:
     """Merged checkpoint search: trained here, then local cache, then hub."""
@@ -347,6 +383,7 @@ def search(query: str = "", limit: int = 15) -> dict[str, Any]:
         "hf_auth": hf_auth_state(),
     }
 
+
 def policy_families() -> list[str]:
     """``policy_type`` values lerobot_local accepts (for the type dropdown)."""
     try:
@@ -355,6 +392,7 @@ def policy_families() -> list[str]:
         return list(list_policy_types())
     except Exception:  # noqa: BLE001 - torch-less install
         return ["act", "diffusion", "pi0", "pi0_fast", "smolvla", "tdmpc", "vqbet"]
+
 
 def declared_features(repo_id: str) -> dict[str, Any]:
     import json
@@ -411,6 +449,7 @@ def declared_features(repo_id: str) -> dict[str, Any]:
                     "norm_tags": _declared_norm_tags(d),
                 }
     return {}
+
 
 def _declared_norm_tags(d: Path) -> list[str]:
     """The normalisation tags ``norm_stats.json`` declares in ``d``, or [] when unknowable."""

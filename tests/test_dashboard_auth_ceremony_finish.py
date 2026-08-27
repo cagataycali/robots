@@ -44,11 +44,15 @@ CRED_ID_B64 = bytes_to_base64url(CRED_ID)
 
 
 def _passing_reg_verifier(monkeypatch, cred_id: bytes = CRED_ID):
-    monkeypatch.setattr(auth, "verify_registration_response", lambda **kw: SimpleNamespace(
-        credential_id=cred_id,
-        credential_public_key=b"\x02" * 32,
-        sign_count=7,
-    ))
+    monkeypatch.setattr(
+        auth,
+        "verify_registration_response",
+        lambda **kw: SimpleNamespace(
+            credential_id=cred_id,
+            credential_public_key=b"\x02" * 32,
+            sign_count=7,
+        ),
+    )
 
 
 def _enroll(monkeypatch, request=None, label="phone") -> str:
@@ -61,6 +65,7 @@ def _enroll(monkeypatch, request=None, label="phone") -> str:
 
 
 # --- finish_registration ------------------------------------------------------
+
 
 def test_finish_registration_stores_binding_and_mints_valid_session(monkeypatch):
     request = FakeRequest()
@@ -122,10 +127,15 @@ def test_finish_registration_bubbles_verifier_refusal(monkeypatch):
 
 # --- finish_authentication ----------------------------------------------------
 
+
 def _passing_auth_verifier(monkeypatch, new_sign_count=42):
-    monkeypatch.setattr(auth, "verify_authentication_response", lambda **kw: SimpleNamespace(
-        new_sign_count=new_sign_count,
-    ))
+    monkeypatch.setattr(
+        auth,
+        "verify_authentication_response",
+        lambda **kw: SimpleNamespace(
+            new_sign_count=new_sign_count,
+        ),
+    )
 
 
 def test_finish_authentication_mints_session_and_persists_sign_count(monkeypatch):
@@ -182,6 +192,7 @@ def test_rp_id_backfill_for_pre_rpid_credential(monkeypatch, tmp_path):
     del data["credentials"][0]["rp_id"]
     path.write_text(json.dumps(data))
     import os
+
     os.utime(path, (time.time() + 2, time.time() + 2))
     auth._cache_key = None
 
@@ -204,6 +215,7 @@ def test_rp_id_backfill_never_overwrites_an_existing_binding(monkeypatch):
 
 
 # --- delete_credential --------------------------------------------------------
+
 
 def test_delete_credential_refuses_unknown_and_last(monkeypatch):
     with pytest.raises(HTTPException) as e:
@@ -234,6 +246,7 @@ def test_delete_credential_removes_one_of_two(monkeypatch):
 
 # --- status() warnings --------------------------------------------------------
 
+
 def test_status_warns_on_insecure_context():
     out = auth.status(FakeRequest({"host": "robots.example.com"}))
     assert out["secure_context"] is False
@@ -242,8 +255,7 @@ def test_status_warns_on_insecure_context():
 
 def test_status_warns_on_unusable_rpid():
     # https via proxy headers, but the host is an IP: rpId can never work.
-    out = auth.status(FakeRequest({"host": "192.168.1.50:8090",
-                                   "x-forwarded-proto": "https"}))
+    out = auth.status(FakeRequest({"host": "192.168.1.50:8090", "x-forwarded-proto": "https"}))
     assert out["rpid_usable"] is False
     assert "rpId" in out.get("warning", "")
 

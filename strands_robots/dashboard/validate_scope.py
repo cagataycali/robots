@@ -14,6 +14,7 @@ _IDENTITY_HINTS = ("pretrained", "checkpoint", "model_path", "ckpt", "weights")
 # these are set, never that the far end has anything.
 _REMOTE_HINTS = ("host", "port", "server_address", "url", "endpoint")
 
+
 def _is_set(value: Any) -> bool:
     if value is None:
         return False
@@ -22,6 +23,7 @@ def _is_set(value: Any) -> bool:
     if isinstance(value, (list, tuple, dict, set)):
         return bool(value)
     return True
+
 
 def _keys_of(spec: Any) -> list[str]:
     """Config keys a provider understands, from either shape the registry uses."""
@@ -36,9 +38,11 @@ def _keys_of(spec: Any) -> list[str]:
             keys.append(str(key))
     return keys
 
+
 def _matches(key: str, hints: tuple[str, ...]) -> bool:
     low = key.lower()
     return any(h in low for h in hints)
+
 
 def validation_scope(spec: Any, config: dict[str, Any] | None) -> dict[str, Any]:
     """Describe the preflight's reach for one provider + config."""
@@ -59,8 +63,7 @@ def validation_scope(spec: Any, config: dict[str, Any] | None) -> dict[str, Any]
                 "resolved": True,
                 "identity_keys": [],
                 "scope_note": (
-                    "the address is set, but nothing here can confirm the server at "
-                    "the other end has a policy loaded"
+                    "the address is set, but nothing here can confirm the server at the other end has a policy loaded"
                 ),
             }
         return {"resolved": True, "identity_keys": [], "scope_note": None}

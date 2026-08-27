@@ -13,6 +13,7 @@ recompute: the age of the freshest presence anyone has sent, and how much fan-ou
 last poll. Nothing here interprets a robot's health — a fleet can be legitimately quiet — so the
 verdict names what was measured, and says which measurement it lacked when it lacks one.
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -36,11 +37,7 @@ def mesh_ingest(
     polls is what makes a frozen counter visible. A single reading of a monotonic counter says
     nothing at all, which is why the frozen 19814 above never looked wrong.
     """
-    ages = [
-        now - float(p.get("last_seen") or 0.0)
-        for p in peers.values()
-        if p.get("last_seen")
-    ]
+    ages = [now - float(p.get("last_seen") or 0.0) for p in peers.values() if p.get("last_seen")]
     freshest = min(ages) if ages else None
     fresh_id = None
     if freshest is not None:

@@ -7,6 +7,7 @@ the life of the process and the `finally` block never ran. That is a leaked coro
 socket, and it is also why Q42's close verdict could not fire for the very failure it was
 written to explain ("sent nothing - that camera is not publishing").
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -50,6 +51,7 @@ def test_does_not_return_while_the_client_is_still_there():
         ws = _FakeWS([{"type": "websocket.receive", "bytes": b"x"}])
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(_client_gone(ws), 0.25)
+
     asyncio.run(go())
 
 

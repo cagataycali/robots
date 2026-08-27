@@ -7,6 +7,7 @@ from typing import Any
 
 DEAD_CAMERA_AGE_S = 120.0
 
+
 def camera_age(meta: Any, now: float) -> float | None:
     """Seconds since this camera's last CAPTURE, or None when unknowable."""
     if not isinstance(meta, Mapping):
@@ -18,6 +19,7 @@ def camera_age(meta: Any, now: float) -> float | None:
     if age < 0:
         return None
     return age
+
 
 def dead_cameras(
     configured: Iterable[str] | Mapping[str, Any] | None,
@@ -36,12 +38,14 @@ def dead_cameras(
             out.append({"camera": str(name), "age_s": round(age, 1)})
     return out
 
+
 def _ago(seconds: float) -> str:
     if seconds < 90:
         return f"{seconds:.0f}s ago"
     if seconds < 5400:
         return f"{seconds / 60:.0f}m ago"
     return f"{seconds / 3600:.1f}h ago"
+
 
 def refusal(dead: list[dict[str, Any]], *, peer_id: str) -> str:
     """Why this session is refused, in the words an operator can act on."""
@@ -53,6 +57,7 @@ def refusal(dead: list[dict[str, Any]], *, peer_id: str) -> str:
         "which you would only discover at training time. Fix or detach it in the robot's "
         "camera settings, or pass ignore_dead_cameras to record without it anyway."
     )
+
 
 def missing_cameras(
     configured: Mapping[str, Any] | None,
@@ -75,6 +80,7 @@ def missing_cameras(
             out.append({"camera": str(name), "index": index})
     return out
 
+
 def missing_refusal(missing: list[dict[str, Any]], *, peer_id: str) -> str:
     """Why a session with an unlisted camera index is refused."""
     which = ", ".join(f"{m['camera']} (index {m['index']})" for m in missing)
@@ -87,9 +93,11 @@ def missing_refusal(missing: list[dict[str, Any]], *, peer_id: str) -> str:
         "wrong view. Pass ignore_missing_cameras to record without it anyway."
     )
 
+
 def _norm(name: Any) -> str:
     """Compare device names the way a human would read them, not byte for byte."""
     return " ".join(str(name or "").split()).casefold()
+
 
 def identity_drift(
     configured: Mapping[str, Any] | None,
@@ -134,6 +142,7 @@ def identity_drift(
         out.append(item)
     return out
 
+
 def drift_refusal(drift: list[dict[str, Any]], *, peer_id: str) -> str:
     """Why a session whose camera index changed hands is refused, and how to fix it in one step."""
     parts = []
@@ -153,10 +162,12 @@ def drift_refusal(drift: list[dict[str, Any]], *, peer_id: str) -> str:
         "the index as it stands."
     )
 
+
 # : Keys the dashboard adds to a camera config for its OWN memory, which no camera driver
 # declares. : ``device_name`` is the roster name an index carried when it was configured (see
 # identity_drift).
 ANNOTATION_KEYS: tuple[str, ...] = ("device_name",)
+
 
 def stamp_device_names(
     cameras: Mapping[str, Any] | None,
@@ -196,16 +207,14 @@ def stamp_device_names(
         changed = True
     return out if changed else cameras
 
+
 def without_annotations(cameras: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
     """The same camera config with the dashboard's own bookkeeping keys removed. MUST be used on every
     path that hands a camera config to a robot process.
     """
     if not isinstance(cameras, Mapping) or not cameras:
         return cameras
-    if not any(
-        isinstance(cfg, Mapping) and any(k in cfg for k in ANNOTATION_KEYS)
-        for cfg in cameras.values()
-    ):
+    if not any(isinstance(cfg, Mapping) and any(k in cfg for k in ANNOTATION_KEYS) for cfg in cameras.values()):
         return cameras
     out: dict[str, Any] = {}
     for cam, cfg in cameras.items():

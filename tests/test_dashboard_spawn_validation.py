@@ -41,7 +41,8 @@ class FakeProc:
 @pytest.fixture
 def manager(monkeypatch):
     monkeypatch.setattr(
-        dm, "subprocess",
+        dm,
+        "subprocess",
         types.SimpleNamespace(Popen=lambda *a, **k: FakeProc(), PIPE=-1, STDOUT=-2),
     )
     d = DeviceManager.__new__(DeviceManager)
@@ -55,6 +56,7 @@ def manager(monkeypatch):
 # --------------------------------------------------------------------------
 # validate_spawn: the refusal
 # --------------------------------------------------------------------------
+
 
 def test_a_good_pair_passes_through_canonicalised():
     assert validate_spawn("so101", "sim") == ("so101", "sim")
@@ -119,6 +121,7 @@ def test_validation_never_fails_because_the_sdk_could_not_be_asked(monkeypatch):
 # spawn(): no process is created for a refused request
 # --------------------------------------------------------------------------
 
+
 def test_an_invented_mode_creates_no_process_and_no_card(manager):
     out = manager.spawn("so101", "quantum")
     assert "error" in out and "pid" not in out
@@ -159,9 +162,13 @@ def test_the_generated_peer_id_uses_the_canonical_name_and_mode(manager):
 def test_two_spawns_in_one_second_do_not_collide(manager, monkeypatch):
     """spawn() now mints its default id through the same unique-id path."""
     monkeypatch.setattr(
-        dm, "time", types.SimpleNamespace(
-            time=lambda: 1_787_140_000.0, monotonic=time.monotonic,
-            sleep=time.sleep, strftime=time.strftime,
+        dm,
+        "time",
+        types.SimpleNamespace(
+            time=lambda: 1_787_140_000.0,
+            monotonic=time.monotonic,
+            sleep=time.sleep,
+            strftime=time.strftime,
         ),
     )
     a = manager.spawn("so101", "sim")

@@ -111,13 +111,23 @@ def test_newest_job_first_and_query_filters(tmp_path, jobs):
 def test_search_ranks_trained_first_and_survives_hub_outage(tmp_path, jobs):
     run = _lerobot_run(tmp_path / "mine")
     jobs.append(_job(str(run)))
-    with mock.patch.object(checkpoints, "local_checkpoints", return_value=[
-        {"repo_id": "lerobot/smolvla_base", "local": True, "downloads": None, "tags": []},
-    ]), mock.patch.object(checkpoints, "hub_search", return_value=(
-        [{"repo_id": "lerobot/smolvla_base", "local": False},
-         {"repo_id": "org/other", "local": False}],
-        None,
-    )):
+    with (
+        mock.patch.object(
+            checkpoints,
+            "local_checkpoints",
+            return_value=[
+                {"repo_id": "lerobot/smolvla_base", "local": True, "downloads": None, "tags": []},
+            ],
+        ),
+        mock.patch.object(
+            checkpoints,
+            "hub_search",
+            return_value=(
+                [{"repo_id": "lerobot/smolvla_base", "local": False}, {"repo_id": "org/other", "local": False}],
+                None,
+            ),
+        ),
+    ):
         body = search("")
     ids = [r["repo_id"] for r in body["results"]]
     assert body["results"][0]["source"] == "trained", "own training outranks everything"

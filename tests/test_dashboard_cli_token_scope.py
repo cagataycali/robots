@@ -7,6 +7,7 @@ nobody had. Every CLI flag was persisted by design ("flags behave like the same 
 in the UI"); that is right for a mesh port and wrong for a secret, because a second
 instance is a normal thing to run and losing the credential is not a normal cost.
 """
+
 from __future__ import annotations
 
 import json

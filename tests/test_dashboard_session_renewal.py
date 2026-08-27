@@ -6,10 +6,11 @@ its websocket kept knocking for 44 hours, 18,968 refusals.
 
 The clock is passed in, never read, so every boundary here is provable.
 """
+
 from strands_robots.dashboard.auth import renewal_verdict
 
-TTL = 86400          # the shipped default
-MAX = 30 * 86400     # absolute cap
+TTL = 86400  # the shipped default
+MAX = 30 * 86400  # absolute cap
 NOW = 1_787_000_000
 
 
@@ -175,7 +176,10 @@ def test_a_renewed_token_rides_home_on_the_response(monkeypatch):
     aged = auth.issue_token("cred1", name="phone", exp=int(__import__("time").time()) + 100)
 
     scope = {
-        "type": "http", "path": "/api/fleet", "method": "GET", "client": ("192.168.1.9", 5000),
+        "type": "http",
+        "path": "/api/fleet",
+        "method": "GET",
+        "client": ("192.168.1.9", 5000),
         "headers": [(b"x-dashboard-token", aged.encode())],
     }
     sent = _run(scope, None)

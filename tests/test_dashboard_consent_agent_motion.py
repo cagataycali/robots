@@ -88,10 +88,9 @@ def test_an_error_payload_carries_the_consent_offer():
 def test_the_other_kinds_still_classify():
     """A new branch in classify_refusal must not shadow the existing three."""
     assert classify_refusal("set STRANDS_TRUST_REMOTE_CODE=1").kind == "trust_remote_code"
-    assert classify_refusal(
-        "pretrained_name_or_path='org/x' not in allowlist. Set STRANDS_MESH_HF_REPO_ALLOW"
-    ).kind == "hf_repo_allow"
-    assert classify_refusal(
-        "input frame value for wrist_roll is out of range"
-    ).kind == "teleop_degree_units"
+    assert (
+        classify_refusal("pretrained_name_or_path='org/x' not in allowlist. Set STRANDS_MESH_HF_REPO_ALLOW").kind
+        == "hf_repo_allow"
+    )
+    assert classify_refusal("input frame value for wrist_roll is out of range").kind == "teleop_degree_units"
     assert classify_refusal("just a sentence") is None

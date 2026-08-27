@@ -5,6 +5,7 @@ this feature, restart it" from the absence of the key and from the commit it rep
 commit is worse than no commit. Every test below is therefore about a case where the truth is NOT
 available and the module must say None instead of inventing a plausible string.
 """
+
 from __future__ import annotations
 
 from strands_robots.dashboard.build_info import build_info, read_commit, stamp

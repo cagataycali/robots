@@ -66,9 +66,7 @@ def _reaches(path: str, haystack: str) -> bool:
 def test_every_route_is_reached_or_explained() -> None:
     routes = _routes()
     src = DASH / "frontend" / "src"
-    frontend = COMMENT_RE.sub(
-        "", _read_all([p for p in src.rglob("*.ts*") if ".test." not in p.name])
-    )
+    frontend = COMMENT_RE.sub("", _read_all([p for p in src.rglob("*.ts*") if ".test." not in p.name]))
     # URLs the server hands to the client. The route DECLARATIONS are removed first, so a route
     # cannot be its own evidence: with a prefixed router the decorator holds only "/thumb/{...}"
     # while the emitted URL is the full "/api/record/thumb/..." string, and counting occurrences
@@ -76,8 +74,7 @@ def test_every_route_is_reached_or_explained() -> None:
     emitted = ROUTE_RE.sub("", _read_all(_py_sources()))
     docs = _read_all(list((REPO / "docs").rglob("*.md")))
     scripts = _read_all(
-        [p for p in (REPO / "scripts").rglob("*.py")]
-        + [p for p in (src.parent / "scripts").rglob("*.mjs")]
+        [p for p in (REPO / "scripts").rglob("*.py")] + [p for p in (src.parent / "scripts").rglob("*.mjs")]
     )
 
     # The scan must not silently narrow to nothing: an empty haystack would mark everything

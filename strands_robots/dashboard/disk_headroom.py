@@ -14,9 +14,11 @@ CRITICAL_MB = 2 * 1024
 # : Below this, warn.
 TIGHT_MB = 12 * 1024
 
+
 def _fmt(mb: float) -> str:
     """Sizes the way an operator reads them: 18Gi, 940Mi."""
     return f"{mb / 1024:.1f}Gi" if mb >= 1024 else f"{mb:.0f}Mi"
+
 
 def headroom_verdict(
     *,
@@ -57,6 +59,7 @@ def headroom_verdict(
         ),
     }
 
+
 def free_space(path: str | Path | None = None) -> dict[str, Any]:
     """Read free space where datasets land. Never raises."""
     try:
@@ -77,6 +80,7 @@ def free_space(path: str | Path | None = None) -> dict[str, Any]:
         }
     except Exception:  # noqa: BLE001 - no reading is a valid answer, an exception is not
         return {}
+
 
 def _dataset_home() -> Path:
     try:

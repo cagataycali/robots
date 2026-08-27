@@ -23,14 +23,20 @@ def test_a_payload_that_cannot_be_respawned_is_not_offered() -> None:
 
 
 def test_it_reports_how_the_board_comes_up() -> None:
-    r = remembered_spawn({
-        "peer_id": "so101-arm-1", "name": "so101-arm-1", "robot_name": "so101", "mode": "real",
-        "port": "/dev/cu.usbmodem5AB01818061", "saved_at": 1787115801.0,
-        "cameras": {
-            "top": {"type": "opencv", "index_or_path": 2, "fps": 30, "width": 1920, "height": 1080},
-            "wrist": {"type": "opencv", "index_or_path": 1, "fps": 30, "width": 1920, "height": 1080},
-        },
-    })
+    r = remembered_spawn(
+        {
+            "peer_id": "so101-arm-1",
+            "name": "so101-arm-1",
+            "robot_name": "so101",
+            "mode": "real",
+            "port": "/dev/cu.usbmodem5AB01818061",
+            "saved_at": 1787115801.0,
+            "cameras": {
+                "top": {"type": "opencv", "index_or_path": 2, "fps": 30, "width": 1920, "height": 1080},
+                "wrist": {"type": "opencv", "index_or_path": 1, "fps": 30, "width": 1920, "height": 1080},
+            },
+        }
+    )
     assert r["peer_id"] == "so101-arm-1"
     assert r["robot_name"] == "so101" and r["mode"] == "real"
     # NAMES, not indices: the operator recognises "top, wrist", and the indices behind them are
@@ -56,10 +62,15 @@ def test_no_cameras_is_an_empty_list_not_a_missing_key() -> None:
 
 
 def test_it_carries_no_secrets_or_paths_it_was_not_asked_for() -> None:
-    r = remembered_spawn({
-        "peer_id": "so101-arm-1", "port": "/dev/cu.x", "env": {"TOKEN": "s3cret"},
-        "role": "follower", "role_volts": 12.6,
-    })
+    r = remembered_spawn(
+        {
+            "peer_id": "so101-arm-1",
+            "port": "/dev/cu.x",
+            "env": {"TOKEN": "s3cret"},
+            "role": "follower",
+            "role_volts": 12.6,
+        }
+    )
     # The port already sits on the row this rides on, and the measured role has its own fields -
     # duplicating either invites the two copies to disagree.
     assert set(r) <= {"peer_id", "robot_name", "mode", "cameras", "saved_at", "robot_id"}
@@ -70,10 +81,16 @@ def test_devices_payload_carries_it_per_board(tmp_path) -> None:
     from strands_robots.dashboard import device_manager as dm
 
     mgr = dm.DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
-    mgr.profiles.save("5AB0181806", {
-        "peer_id": "so101-arm-1", "robot_name": "so101", "mode": "real",
-        "port": "/dev/cu.usbmodem5AB01818061", "cameras": {"top": {"index_or_path": 2}},
-    })
+    mgr.profiles.save(
+        "5AB0181806",
+        {
+            "peer_id": "so101-arm-1",
+            "robot_name": "so101",
+            "mode": "real",
+            "port": "/dev/cu.usbmodem5AB01818061",
+            "cameras": {"top": {"index_or_path": 2}},
+        },
+    )
     ports = [
         {"device": "/dev/cu.usbmodem5AB01818061", "serial_number": "5AB0181806"},
         {"device": "/dev/cu.unknown", "serial_number": "NEVERSEEN"},
@@ -123,13 +140,24 @@ def test_the_payload_is_the_remembered_one() -> None:
     from strands_robots.dashboard.device_manager import respawn_payload
 
     cams = {"top": {"index_or_path": 2}, "wrist": {"index_or_path": 1}}
-    r = respawn_payload({
-        "peer_id": "so101-arm-1", "robot_name": "so101", "mode": "real",
-        "port": "/dev/cu.usbmodem5AB01818061", "cameras": cams, "robot_id": "arm_1",
-    }, "/dev/cu.usbmodem5AB01818061")
+    r = respawn_payload(
+        {
+            "peer_id": "so101-arm-1",
+            "robot_name": "so101",
+            "mode": "real",
+            "port": "/dev/cu.usbmodem5AB01818061",
+            "cameras": cams,
+            "robot_id": "arm_1",
+        },
+        "/dev/cu.usbmodem5AB01818061",
+    )
     assert r == {
-        "robot_name": "so101", "mode": "real", "peer_id": "so101-arm-1",
-        "port": "/dev/cu.usbmodem5AB01818061", "cameras": cams, "robot_id": "arm_1",
+        "robot_name": "so101",
+        "mode": "real",
+        "peer_id": "so101-arm-1",
+        "port": "/dev/cu.usbmodem5AB01818061",
+        "cameras": cams,
+        "robot_id": "arm_1",
     }
     # A two-camera config is exactly what a client could not re-type, which is why the payload is
     # assembled server-side.
@@ -142,10 +170,15 @@ def test_the_port_is_where_the_board_is_now_not_where_it_was() -> None:
     # THE POINT OF THE WHOLE FEATURE: profiles are keyed by USB serial because /dev names move.
     # Re-using the remembered path would either find nothing, or open a DIFFERENT board with this
     # arm's calibration id.
-    r = respawn_payload({
-        "peer_id": "so101-arm-1", "robot_name": "so101",
-        "port": "/dev/cu.usbmodem5AB01818061", "robot_id": "arm_1",
-    }, "/dev/cu.usbmodem5AB01818062")
+    r = respawn_payload(
+        {
+            "peer_id": "so101-arm-1",
+            "robot_name": "so101",
+            "port": "/dev/cu.usbmodem5AB01818061",
+            "robot_id": "arm_1",
+        },
+        "/dev/cu.usbmodem5AB01818062",
+    )
     assert r["port"] == "/dev/cu.usbmodem5AB01818062"
     # ...and the move is stated, so the operator can see the board they are looking at is the one
     # that came up: same serial, new path.
@@ -176,8 +209,12 @@ def test_a_non_mapping_camera_memory_is_dropped_not_forwarded() -> None:
 # ---------------------------------------------------------------------------
 
 READY = {"index": 2, "state": "ready", "reason": "opened and delivered a frame just now"}
-BLOCKED = {"index": 1, "state": "blocked", "reason": "macOS has not granted camera access to this process",
-           "remedy": "start the dashboard from a terminal and allow access"}
+BLOCKED = {
+    "index": 1,
+    "state": "blocked",
+    "reason": "macOS has not granted camera access to this process",
+    "remedy": "start the dashboard from a terminal and allow access",
+}
 
 
 def _health(cameras, rows, peer_id=""):

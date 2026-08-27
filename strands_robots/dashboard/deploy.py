@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import ipaddress
@@ -27,6 +26,7 @@ _LIVE_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_CAMERA_HZ", "STRANDS_MESH_
 
 _SECURITY_LOOSENING_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_LOCAL_DEV"})
 
+
 def resolve_mesh_env(env: Mapping[str, str] | None) -> list[tuple[str, str]]:
     """The env block to render, taking live values over the frozen defaults."""
     live = env or {}
@@ -43,10 +43,12 @@ def resolve_mesh_env(env: Mapping[str, str] | None) -> list[tuple[str, str]]:
             out.append((key, default))
     return out
 
+
 def snippet_filename(peer_id: str) -> str:
     """A filename safe to offer as a download, derived from the peer id."""
     safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in peer_id)
     return f"{safe or 'robot'}.py"
+
 
 def _fmt(value: Any, indent: int = 0) -> str:
     """Render a payload value as Python source (JSON types only). ``repr`` is almost right but renders
@@ -60,6 +62,7 @@ def _fmt(value: Any, indent: int = 0) -> str:
         return "{\n" + items + ",\n" + " " * indent + "}"
     return repr(value)
 
+
 def hub_host_from_reached(reached_on: str | None) -> tuple[str | None, str | None]:
     """Is the host the browser reached this dashboard on usable as a ZENOH hub address?"""
     reached = (reached_on or "").strip().strip("[]").lower()
@@ -67,8 +70,7 @@ def hub_host_from_reached(reached_on: str | None) -> tuple[str | None, str | Non
         return None, None
     if reached in ("localhost", "127.0.0.1", "::1") or reached.endswith(".localhost"):
         return None, (
-            "you opened this dashboard on localhost, and on the edge device that name means the "
-            "edge device itself"
+            "you opened this dashboard on localhost, and on the edge device that name means the edge device itself"
         )
     try:
         ip = ipaddress.ip_address(reached)
@@ -90,6 +92,7 @@ def hub_host_from_reached(reached_on: str | None) -> tuple[str | None, str | Non
         "the internet. Use this machine's LAN address (the Mesh tab shows it)"
     )
 
+
 def _stamped_names(cameras: Any) -> dict[str, str]:
     """{camera: the roster name this index carried when it was configured}, for the cameras that have one."""
     if not isinstance(cameras, Mapping):
@@ -101,6 +104,7 @@ def _stamped_names(cameras: Any) -> dict[str, str]:
             if isinstance(was, str) and was.strip():
                 out[str(cam)] = was.strip()
     return out
+
 
 def render_snippet(
     payload: Mapping[str, Any],
@@ -185,9 +189,7 @@ def render_snippet(
             # reason, the only reading is "the dashboard forgot".
             lines.append(f"# NOTE: {hub_note}.")
         lines.append("# Deploying to ANOTHER machine? Point the peer at this dashboard's hub:")
-        lines.append(
-            f'# os.environ.setdefault("ZENOH_CONNECT", "tcp/<dashboard-host>:{port_txt}")'
-        )
+        lines.append(f'# os.environ.setdefault("ZENOH_CONNECT", "tcp/<dashboard-host>:{port_txt}")')
     lines += ["", "from strands_robots import Robot", "", "robot = Robot("]
     lines.append(f"    {robot_name!r},")
     lines.append(f"    mode={mode!r},")

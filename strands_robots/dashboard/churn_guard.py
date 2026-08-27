@@ -13,6 +13,7 @@ CHURN_CAP_FPS = 2.0
 #: Bound on remembered identities, so the guard cannot become the leak it prevents.
 MAX_TRACKED = 512
 
+
 @dataclass(frozen=True)
 class ChurnVerdict:
     """What the server decided about this socket, and why - in words."""
@@ -24,6 +25,7 @@ class ChurnVerdict:
     @property
     def throttled(self) -> bool:
         return self.cap_fps is not None
+
 
 class ChurnGuard:
     """Counts recent opens per (viewer, camera) and caps a storm's frame rate."""
@@ -49,9 +51,7 @@ class ChurnGuard:
         while window and window[0] < cutoff:
             window.popleft()
         if len(self._seen) > self._max_tracked:
-            for key in sorted(self._seen, key=lambda k: len(self._seen[k]))[
-                : len(self._seen) - self._max_tracked
-            ]:
+            for key in sorted(self._seen, key=lambda k: len(self._seen[k]))[: len(self._seen) - self._max_tracked]:
                 if key != identity:
                     self._seen.pop(key, None)
         count = len(window)
@@ -72,10 +72,12 @@ class ChurnGuard:
         """Drop an identity (tests, and an operator who wants a clean measurement)."""
         self._seen.pop(identity, None)
 
+
 def viewer_identity(*, subject: str | None, host: str | None, peer_id: str, cam: str) -> str:
     """Who is watching what - the key the guard counts."""
     who = subject or host or "unknown"
     return f"{who}|{peer_id}|{cam}"
+
 
 def effective_cap(requested: float | None, churn: float | None) -> float | None:
     """The rate actually served: the LOWER of what the viewer asked for and what the server will give a

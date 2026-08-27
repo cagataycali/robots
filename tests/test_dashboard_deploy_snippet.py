@@ -62,9 +62,11 @@ def _run_generated(source: str) -> tuple[tuple, dict, list[str]]:
 
     import time as _time
 
-    with mock.patch.dict(sys.modules, {"strands_robots": fake}), \
-         mock.patch.object(_time, "sleep", _sleep), \
-         mock.patch("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a)))):
+    with (
+        mock.patch.dict(sys.modules, {"strands_robots": fake}),
+        mock.patch.object(_time, "sleep", _sleep),
+        mock.patch("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a)))),
+    ):
         try:
             exec(compile(source, "generated.py", "exec"), {"__name__": "__main__"})
         except _Stop:
@@ -166,9 +168,7 @@ def _client():
     from strands_robots.dashboard.server import create_app
 
     app = create_app()
-    app.state.devices.profiles.get = mock.Mock(
-        side_effect=lambda k: dict(ARM_1) if k == "5AB0181806" else None
-    )
+    app.state.devices.profiles.get = mock.Mock(side_effect=lambda k: dict(ARM_1) if k == "5AB0181806" else None)
     return TestClient(app)
 
 
@@ -189,10 +189,14 @@ def test_route_withholds_loopback_hub_host():
     # IS offered; loopback must not be.
     body = _client().post("/api/deploy/snippet", json={"serial": "5AB0181806"}).json()
     assert "tcp/testserver:7447" in body["snippet"]
-    body2 = _client().post(
-        "/api/deploy/snippet",
-        json={"serial": "5AB0181806", "hub_host": "robots.example.com"},
-    ).json()
+    body2 = (
+        _client()
+        .post(
+            "/api/deploy/snippet",
+            json={"serial": "5AB0181806", "hub_host": "robots.example.com"},
+        )
+        .json()
+    )
     assert "tcp/robots.example.com:7447" in body2["snippet"]
 
 
@@ -229,7 +233,8 @@ def test_real_snippet_warns_the_port_is_per_machine():
 def test_sim_snippet_says_nothing_about_ports():
     """A sim rig has no port, so port advice would be noise that trains people to skim."""
     out = render_snippet(
-        {"robot_name": "so101", "mode": "sim", "peer_id": "sim-a"}, now=0,
+        {"robot_name": "so101", "mode": "sim", "peer_id": "sim-a"},
+        now=0,
     )
     assert "ttyACM0" not in out["snippet"]
     assert "per-machine" not in out["snippet"].lower()
@@ -238,7 +243,8 @@ def test_sim_snippet_says_nothing_about_ports():
 def test_port_advice_without_a_serial_stays_silent_about_serials():
     """Never claim a stable identity we were not given."""
     out = render_snippet(
-        {"robot_name": "so101", "mode": "real", "port": "/dev/ttyUSB0", "peer_id": "p"}, now=0,
+        {"robot_name": "so101", "mode": "real", "port": "/dev/ttyUSB0", "peer_id": "p"},
+        now=0,
     )
     src = out["snippet"]
     assert "how THIS machine names" in src
@@ -308,9 +314,7 @@ def test_defaults_survive_for_the_keys_that_are_not_posture():
 def test_resolve_mesh_env_is_pure_and_ordered():
     rows = deploy.resolve_mesh_env({"STRANDS_MESH_CAMERA_HZ": " 9 "})
     assert dict(rows)["STRANDS_MESH_CAMERA_HZ"] == "9", "whitespace is the operator's typo, not a value"
-    assert [k for k, _ in rows] == [
-        k for k, _ in deploy._MESH_ENV if k != "STRANDS_MESH_LOCAL_DEV"
-    ]
+    assert [k for k, _ in rows] == [k for k, _ in deploy._MESH_ENV if k != "STRANDS_MESH_LOCAL_DEV"]
 
 
 # ── Q122: the address in the snippet must be reachable from the machine that RUNS it ──
@@ -397,7 +401,9 @@ def test_the_snippet_carries_the_reason_and_never_a_rejected_address():
 
 def _stamped_payload():
     return {
-        "robot_name": "so101", "mode": "real", "port": "/dev/cu.usbmodem5AB0181806",
+        "robot_name": "so101",
+        "mode": "real",
+        "port": "/dev/cu.usbmodem5AB0181806",
         "peer_id": "so101-follower",
         "cameras": {
             "main": {"index_or_path": 0, "fps": 30, "device_name": "USB2.0_CAM1"},

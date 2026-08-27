@@ -8,6 +8,7 @@ the run form, a CLI spawn) stored None over the mapping. The next automatic resp
 the arm up BLIND, and the U19 reconfigure editor opened blank, with nothing saying a choice had
 been dropped. Same trap that once ate a measured role, different victim.
 """
+
 import pytest
 
 from strands_robots.dashboard.device_manager import ProfileStore
@@ -25,15 +26,21 @@ def store(tmp_path):
 
 def _spawn_payload(**over):
     # Shape device_manager builds for every spawn: the key is ALWAYS present.
-    payload = {"robot_name": "so101", "mode": "real", "peer_id": "so101-arm-1",
-               "port": "/dev/cu.usbmodem5AB0181806", "cameras": None, "robot_id": "arm1"}
+    payload = {
+        "robot_name": "so101",
+        "mode": "real",
+        "peer_id": "so101-arm-1",
+        "port": "/dev/cu.usbmodem5AB0181806",
+        "cameras": None,
+        "robot_id": "arm1",
+    }
     payload.update(over)
     return payload
 
 
 def test_a_camera_less_spawn_does_not_forget_the_tuned_cameras(store):
     store.save("5AB0181806", _spawn_payload(cameras=TUNED))
-    after = store.save("5AB0181806", _spawn_payload())          # watcher respawn, no cameras stated
+    after = store.save("5AB0181806", _spawn_payload())  # watcher respawn, no cameras stated
 
     assert after["cameras"] == TUNED, "the operator's fps/resolution must survive a plain respawn"
     # Verbatim, not just the names: U19 is about the numbers.

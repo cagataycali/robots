@@ -31,10 +31,17 @@ def test_the_leaker_and_its_victim_pass_in_that_order():
     """The real pin: the exact reproduction, order fixed on the command line."""
     proc = subprocess.run(
         [
-            sys.executable, "-m", "pytest",
+            sys.executable,
+            "-m",
+            "pytest",
             "tests/test_dashboard_lan_hint.py",
             "tests/test_dashboard_ws_chat_frames.py",
-            "-q", "--no-header", "-p", "no:cacheprovider", "-p", "no:randomly",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
             "--no-cov",
         ],
         cwd=ROOT,
@@ -86,12 +93,23 @@ def test_the_churn_storm_and_the_close_log_pass_in_that_order():
     """The ordered pin, same technique as Q62: pytest inside pytest."""
     proc = subprocess.run(
         [
-            sys.executable, "-m", "pytest",
+            sys.executable,
+            "-m",
+            "pytest",
             "tests/test_dashboard_churn_wiring.py",
             "tests/test_dashboard_ws_close_log.py",
-            "-q", "--no-header", "-p", "no:cacheprovider", "-p", "no:randomly", "--no-cov",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
+            "--no-cov",
         ],
-        cwd=ROOT, capture_output=True, text=True, timeout=300,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
         env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(Path.home())},
     )
     tail = "\n".join(proc.stdout.strip().splitlines()[-6:])

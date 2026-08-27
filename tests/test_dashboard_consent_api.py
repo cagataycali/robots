@@ -108,12 +108,13 @@ def test_hostile_subject_is_not_granted():
 
 def test_failed_spawn_carries_needs_consent():
     client, app = _client()
-    with mock.patch.object(
-        app.state.devices, "spawn", return_value={"peer_id": "so101-x", "pid": 4242}
-    ), mock.patch.object(
-        app.state.devices,
-        "settle",
-        return_value={"status": "failed", "exit_code": 1, "reason": HF_REFUSAL, "log_tail": []},
+    with (
+        mock.patch.object(app.state.devices, "spawn", return_value={"peer_id": "so101-x", "pid": 4242}),
+        mock.patch.object(
+            app.state.devices,
+            "settle",
+            return_value={"status": "failed", "exit_code": 1, "reason": HF_REFUSAL, "log_tail": []},
+        ),
     ):
         body = client.post("/api/devices/spawn", json={"robot_name": "so101", "mode": "sim"}).json()
     assert body["needs_consent"]["kind"] == "hf_repo_allow"
@@ -124,12 +125,13 @@ def test_failed_spawn_carries_needs_consent():
 
 def test_spawn_failure_without_a_refusal_has_no_consent_key():
     client, app = _client()
-    with mock.patch.object(
-        app.state.devices, "spawn", return_value={"peer_id": "so101-x", "pid": 1}
-    ), mock.patch.object(
-        app.state.devices,
-        "settle",
-        return_value={"status": "failed", "exit_code": 1, "reason": "port 8091 in use", "log_tail": []},
+    with (
+        mock.patch.object(app.state.devices, "spawn", return_value={"peer_id": "so101-x", "pid": 1}),
+        mock.patch.object(
+            app.state.devices,
+            "settle",
+            return_value={"status": "failed", "exit_code": 1, "reason": "port 8091 in use", "log_tail": []},
+        ),
     ):
         body = client.post("/api/devices/spawn", json={"robot_name": "so101", "mode": "sim"}).json()
     assert "needs_consent" not in body

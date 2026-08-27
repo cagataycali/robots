@@ -32,8 +32,13 @@ def _clear_cache() -> Any:
     training._HUB_DS_CACHE.clear()
 
 
-def _fake_hub(monkeypatch: pytest.MonkeyPatch, rows: list[_Ds], *, boom: Exception | None = None,
-              seen: dict[str, Any] | None = None) -> None:
+def _fake_hub(
+    monkeypatch: pytest.MonkeyPatch,
+    rows: list[_Ds],
+    *,
+    boom: Exception | None = None,
+    seen: dict[str, Any] | None = None,
+) -> None:
     class _Api:
         def list_datasets(self, **kw: Any) -> list[_Ds]:
             if seen is not None:
@@ -71,9 +76,7 @@ class TestHubDatasets:
         assert rows == []
         assert problem and "OSError" in problem, "outage, no network and no-matches must not look identical"
 
-    def test_a_failure_is_never_cached_so_the_next_keystroke_retries(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_failure_is_never_cached_so_the_next_keystroke_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: dict[str, Any] = {}
         _fake_hub(monkeypatch, [], boom=OSError("flap"), seen=seen)
         training.hub_datasets("q", 5)
@@ -110,8 +113,9 @@ class TestHubDatasets:
 
 class TestSearchDatasets:
     def test_local_comes_first_and_keeps_its_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(training, "local_datasets",
-                            lambda q="": [{"root": "/data/mine", "repo_id": "mine", "total_episodes": 3}])
+        monkeypatch.setattr(
+            training, "local_datasets", lambda q="": [{"root": "/data/mine", "repo_id": "mine", "total_episodes": 3}]
+        )
         _fake_hub(monkeypatch, [_Ds("lerobot/pusht", 999)])
         out = training.search_datasets("", 10)
         assert out["datasets"][0]["repo_id"] == "mine", "what you just recorded is what the train screen offers first"
@@ -120,22 +124,22 @@ class TestSearchDatasets:
         assert out["local_count"] == 1 and out["hub_count"] == 1
 
     def test_a_dataset_on_disk_is_not_offered_as_a_download(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(training, "local_datasets",
-                            lambda q="": [{"root": "/c/lerobot/pusht", "repo_id": "lerobot/pusht"}])
+        monkeypatch.setattr(
+            training, "local_datasets", lambda q="": [{"root": "/c/lerobot/pusht", "repo_id": "lerobot/pusht"}]
+        )
         _fake_hub(monkeypatch, [_Ds("lerobot/pusht", 999), _Ds("other/ds")])
         out = training.search_datasets("", 10)
         ids = [r["repo_id"] for r in out["datasets"]]
         assert ids.count("lerobot/pusht") == 1, "the local copy trains offline; the Hub duplicate is noise"
         assert out["datasets"][0]["local"] is True
 
-    def test_the_limit_is_a_promise_even_when_local_rows_are_many(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_the_limit_is_a_promise_even_when_local_rows_are_many(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # THE BUG I NEARLY SHIPPED: `[: max(limit, len(local))]` (which
         # checkpoints.clamp_limit's docstring exists to warn about) means a
         # type-ahead asking for 1 row gets every local row instead.
-        monkeypatch.setattr(training, "local_datasets",
-                            lambda q="": [{"root": f"/d/{i}", "repo_id": f"d{i}"} for i in range(9)])
+        monkeypatch.setattr(
+            training, "local_datasets", lambda q="": [{"root": f"/d/{i}", "repo_id": f"d{i}"} for i in range(9)]
+        )
         _fake_hub(monkeypatch, [_Ds("hub/one")])
         out = training.search_datasets("", 2)
         assert len(out["datasets"]) == 2

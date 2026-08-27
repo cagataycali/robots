@@ -19,29 +19,19 @@ from strands_robots.dashboard.device_manager import DeviceManager
 def test_probe_needed_refresh_probes_when_cache_predates_the_request() -> None:
     # The operator pressed rescan to learn about a cable they just plugged in;
     # an answer measured BEFORE they asked cannot contain it.
-    assert camera_facts.probe_needed(
-        refresh=True, requested_at=100.0, cache_t=99.0, ttl_s=30.0, now=100.0
-    )
+    assert camera_facts.probe_needed(refresh=True, requested_at=100.0, cache_t=99.0, ttl_s=30.0, now=100.0)
 
 
 def test_probe_needed_answer_that_landed_after_the_request_is_enough() -> None:
     # A probe finished while we waited for the lock: its result is at least as new
     # as the question, so re-probing would only fight it for the devices.
-    assert not camera_facts.probe_needed(
-        refresh=True, requested_at=100.0, cache_t=100.5, ttl_s=30.0, now=101.0
-    )
-    assert not camera_facts.probe_needed(
-        refresh=False, requested_at=100.0, cache_t=100.0, ttl_s=30.0, now=101.0
-    )
+    assert not camera_facts.probe_needed(refresh=True, requested_at=100.0, cache_t=100.5, ttl_s=30.0, now=101.0)
+    assert not camera_facts.probe_needed(refresh=False, requested_at=100.0, cache_t=100.0, ttl_s=30.0, now=101.0)
 
 
 def test_probe_needed_plain_poll_still_honours_the_ttl() -> None:
-    assert not camera_facts.probe_needed(
-        refresh=False, requested_at=100.0, cache_t=80.0, ttl_s=30.0, now=100.0
-    )
-    assert camera_facts.probe_needed(
-        refresh=False, requested_at=100.0, cache_t=60.0, ttl_s=30.0, now=100.0
-    )
+    assert not camera_facts.probe_needed(refresh=False, requested_at=100.0, cache_t=80.0, ttl_s=30.0, now=100.0)
+    assert camera_facts.probe_needed(refresh=False, requested_at=100.0, cache_t=60.0, ttl_s=30.0, now=100.0)
 
 
 # ------------------------------------------------------------- the real manager
@@ -62,9 +52,7 @@ def test_concurrent_refresh_requests_probe_the_hardware_once(monkeypatch) -> Non
         running.clear()
         return ([{"index": 0, "width": 640, "height": 480}], {})
 
-    monkeypatch.setattr(
-        "strands_robots.dashboard.device_manager.scan_cameras_with_failures", slow_scan
-    )
+    monkeypatch.setattr("strands_robots.dashboard.device_manager.scan_cameras_with_failures", slow_scan)
     monkeypatch.setattr(mgr, "_camera_names", lambda refresh=False: [])
     monkeypatch.setattr(mgr, "_claimed_camera_indices", lambda: {})
     monkeypatch.setattr(mgr, "_streaming_indices", lambda live: set())
@@ -88,9 +76,7 @@ def test_a_later_refresh_still_gets_a_fresh_probe(monkeypatch) -> None:
         calls.append(1)
         return ([{"index": len(calls) - 1, "width": 640, "height": 480}], {})
 
-    monkeypatch.setattr(
-        "strands_robots.dashboard.device_manager.scan_cameras_with_failures", scan
-    )
+    monkeypatch.setattr("strands_robots.dashboard.device_manager.scan_cameras_with_failures", scan)
     monkeypatch.setattr(mgr, "_camera_names", lambda refresh=False: [])
     monkeypatch.setattr(mgr, "_claimed_camera_indices", lambda: {})
     monkeypatch.setattr(mgr, "_streaming_indices", lambda live: set())

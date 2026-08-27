@@ -1,10 +1,10 @@
-
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
 __all__ = ["upload_preflight", "destination"]
+
 
 def destination(dataset: str, user: str | None) -> str | None:
     """The repo id a push would really create, or None when it cannot be known yet."""
@@ -16,6 +16,7 @@ def destination(dataset: str, user: str | None) -> str | None:
     if not user:
         return None
     return f"{user}/{name}"
+
 
 def upload_preflight(
     *,
@@ -56,8 +57,8 @@ def upload_preflight(
                 "the Hugging Face token on this machine is present but REJECTED, so the push would "
                 "fail after the session is finished. Log in again (huggingface-cli login) before "
                 "you finish; the episodes stay on this machine either way"
-                if rejected else
-                "no Hugging Face credential on this machine, so the push would fail after the "
+                if rejected
+                else "no Hugging Face credential on this machine, so the push would fail after the "
                 "session is finished - and closing the session destroys the recorder, so there is "
                 "no retry from here. Run huggingface-cli login (or set HF_TOKEN) first; the "
                 "episodes stay on this machine either way"

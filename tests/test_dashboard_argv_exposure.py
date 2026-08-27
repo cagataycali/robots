@@ -47,15 +47,11 @@ def test_the_notice_reaches_the_config_document(monkeypatch) -> None:
     """It must ride the AUTHENTICATED endpoint, and vanish when the posture is clean."""
     from strands_robots.dashboard import config_api
 
-    monkeypatch.setattr(
-        "sys.argv", ["-m", "strands_robots", "dashboard", "--auth-token", "secret-value", "--force"]
-    )
+    monkeypatch.setattr("sys.argv", ["-m", "strands_robots", "dashboard", "--auth-token", "secret-value", "--force"])
     doc = config_api.snapshot()
     assert doc["security"]["notice"]["kind"] == "token_in_argv"
     assert "secret-value" not in str(doc["security"])
 
-    monkeypatch.setattr(
-        "sys.argv", ["-m", "strands_robots", "dashboard", "--auth-token-file", "/tmp/tok"]
-    )
+    monkeypatch.setattr("sys.argv", ["-m", "strands_robots", "dashboard", "--auth-token-file", "/tmp/tok"])
     # ABSENT, not null: a screen that renders on presence shows nothing at all.
     assert "notice" not in config_api.snapshot()["security"]

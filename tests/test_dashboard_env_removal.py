@@ -5,6 +5,7 @@ the field -- which wrote ``KEY=`` and exported ``""`` into the live process. Set
 absent: ``os.getenv("X", default)`` returns ``""``, an empty token authenticates as an empty token
 instead of falling back to anonymous, and the operator who did it believes the variable is gone.
 """
+
 from __future__ import annotations
 
 import os
@@ -23,10 +24,9 @@ def env_file(tmp_path, monkeypatch):
 
 # --- the pure split ---------------------------------------------------------
 
+
 def test_null_means_remove_and_empty_string_still_means_empty():
-    updates, deletions = config_api.split_env_patch(
-        {"STRANDS_A": "1", "STRANDS_B": None, "STRANDS_C": ""}
-    )
+    updates, deletions = config_api.split_env_patch({"STRANDS_A": "1", "STRANDS_B": None, "STRANDS_C": ""})
     assert updates == {"STRANDS_A": "1", "STRANDS_C": ""}
     assert deletions == ["STRANDS_B"]
 
@@ -47,14 +47,9 @@ def test_split_strips_key_whitespace_like_the_write_path():
 
 # --- the file operation -----------------------------------------------------
 
+
 def test_delete_removes_the_line_and_keeps_everything_else(env_file):
-    env_file.write_text(
-        "# a hand-written comment\n"
-        "STRANDS_KEEP=1\n"
-        "\n"
-        "STRANDS_GONE=secret\n"
-        "STRANDS_ALSO_KEEP=2\n"
-    )
+    env_file.write_text("# a hand-written comment\nSTRANDS_KEEP=1\n\nSTRANDS_GONE=secret\nSTRANDS_ALSO_KEEP=2\n")
     removed = config_api.delete_env_keys(["STRANDS_GONE"])
     assert removed == ["STRANDS_GONE"]
     text = env_file.read_text()
@@ -88,6 +83,7 @@ def test_delete_with_no_file_does_not_create_one(env_file):
 
 
 # --- through apply() --------------------------------------------------------
+
 
 def test_apply_reports_removal_separately_from_writes(env_file, monkeypatch):
     env_file.write_text("STRANDS_GONE=1\n")

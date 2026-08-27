@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -16,22 +15,28 @@ def crumb_path() -> Path:
         return Path(override).expanduser()
     return Path.home() / ".strands_dashboard" / "record_session.json"
 
+
 def write_crumb(session: Mapping[str, Any], *, path: Path | None = None, now: float | None = None) -> None:
     """Remember that a session is open. Failure is silent: a breadcrumb is a courtesy, and a
     read-only home directory must not stop a recording from starting."""
     p = path or crumb_path()
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({
-            "dataset": session.get("dataset"),
-            "task": session.get("task"),
-            "leader": session.get("leader"),
-            "follower": session.get("follower"),
-            "opened_at": now if now is not None else time.time(),
-            "pid": os.getpid(),
-        }))
+        p.write_text(
+            json.dumps(
+                {
+                    "dataset": session.get("dataset"),
+                    "task": session.get("task"),
+                    "leader": session.get("leader"),
+                    "follower": session.get("follower"),
+                    "opened_at": now if now is not None else time.time(),
+                    "pid": os.getpid(),
+                }
+            )
+        )
     except Exception:  # noqa: BLE001
         pass
+
 
 def clear_crumb(path: Path | None = None) -> None:
     """A session that closed properly leaves no trace."""
@@ -39,6 +44,7 @@ def clear_crumb(path: Path | None = None) -> None:
         (path or crumb_path()).unlink(missing_ok=True)
     except Exception:  # noqa: BLE001
         pass
+
 
 def read_crumb(path: Path | None = None) -> dict[str, Any] | None:
     p = path or crumb_path()
@@ -50,6 +56,7 @@ def read_crumb(path: Path | None = None) -> dict[str, Any] | None:
     except Exception:  # noqa: BLE001 - a corrupt crumb is no evidence, not an error
         return None
 
+
 def _ago(seconds: float | None) -> str:
     if seconds is None or seconds < 0:
         return "at an unknown time"
@@ -58,6 +65,7 @@ def _ago(seconds: float | None) -> str:
     if seconds < 5400:
         return f"about {round(seconds / 60)} minutes ago"
     return f"about {round(seconds / 3600, 1)} hours ago"
+
 
 def interrupted_notice(
     crumb: Mapping[str, Any] | None,

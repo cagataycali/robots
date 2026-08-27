@@ -15,8 +15,7 @@ from strands_robots.dashboard import cameras as cam
 # macOS camera permission. The wording is the whole diagnosis and it only ever
 # appears on stderr.
 BLOCKED_STDERR = (
-    "OpenCV: not authorized to capture video (status 0), requesting...\n"
-    "OpenCV: camera failed to properly initialize!\n"
+    "OpenCV: not authorized to capture video (status 0), requesting...\nOpenCV: camera failed to properly initialize!\n"
 )
 DEAD_STDERR = "OpenCV: camera failed to properly initialize!\n"
 BUSY_STDERR = "VIDEOIO ERROR: V4L: can't open camera by index 0: Device or resource busy\n"
@@ -124,7 +123,10 @@ def test_an_index_nobody_probed_says_unknown_not_absent():
 
 def test_claimed_indices_are_never_reported_as_failures():
     rows = cam.merge_cameras(
-        probed=[], claimed={1: "arm"}, roster=ROSTER[:2], failures={1: BLOCKED_STDERR},
+        probed=[],
+        claimed={1: "arm"},
+        roster=ROSTER[:2],
+        failures={1: BLOCKED_STDERR},
     )
     (row,) = [r for r in rows if r["index"] == 1]
     assert row["state"] == "in_use"  # ownership outranks a stale probe verdict
@@ -132,7 +134,10 @@ def test_claimed_indices_are_never_reported_as_failures():
 
 def test_rows_are_sorted_and_unique():
     rows = cam.merge_cameras(
-        probed=[{"index": 2}], claimed={0: "a"}, roster=ROSTER, failures={2: ""},
+        probed=[{"index": 2}],
+        claimed={0: "a"},
+        roster=ROSTER,
+        failures={2: ""},
         remembered={9: {"width": 1, "height": 1}},
     )
     indices = [r["index"] for r in rows]
@@ -148,7 +153,10 @@ def test_empty_everything_is_an_empty_list_not_a_crash():
 
 def test_blocked_verdict_speaks_once_when_the_machine_is_blocked():
     rows = cam.merge_cameras(
-        probed=[], claimed={}, roster=ROSTER, failures={i: BLOCKED_STDERR for i in range(4)},
+        probed=[],
+        claimed={},
+        roster=ROSTER,
+        failures={i: BLOCKED_STDERR for i in range(4)},
     )
     verdict = cam.blocked_verdict(rows)
     assert verdict and verdict["kind"] == "camera_permission"
@@ -157,7 +165,10 @@ def test_blocked_verdict_speaks_once_when_the_machine_is_blocked():
 
 def test_one_working_camera_disproves_a_permission_problem():
     rows = cam.merge_cameras(
-        probed=[{"index": 0}], claimed={}, roster=ROSTER, failures={1: BLOCKED_STDERR},
+        probed=[{"index": 0}],
+        claimed={},
+        roster=ROSTER,
+        failures={1: BLOCKED_STDERR},
     )
     assert cam.blocked_verdict(rows) is None
 
@@ -175,7 +186,9 @@ def test_a_configured_camera_with_no_frames_is_assigned_not_streaming():
     """Exactly the live state on this Mac: both arm cameras were configured and
     neither opened, so the arm dropped them and published nothing."""
     rows = cam.merge_cameras(
-        probed=[], claimed={1: "so101-arm-1", 2: "so101-arm-1"}, roster=ROSTER,
+        probed=[],
+        claimed={1: "so101-arm-1", 2: "so101-arm-1"},
+        roster=ROSTER,
         streaming=set(),
     )
     states = {r["index"]: r for r in rows if r["index"] in (1, 2)}
@@ -187,19 +200,21 @@ def test_a_configured_camera_with_no_frames_is_assigned_not_streaming():
 
 def test_frames_arriving_still_reads_as_in_use():
     (row,) = [
-        r for r in cam.merge_cameras(
-            probed=[], claimed={1: "arm"}, roster=ROSTER[:2], streaming={1},
-        ) if r["index"] == 1
+        r
+        for r in cam.merge_cameras(
+            probed=[],
+            claimed={1: "arm"},
+            roster=ROSTER[:2],
+            streaming={1},
+        )
+        if r["index"] == 1
     ]
     assert row["state"] == "in_use" and "streaming for arm" in row["reason"]
 
 
 def test_no_streaming_evidence_keeps_the_kinder_reading():
     """None means nobody told us - absence of evidence is not evidence."""
-    (row,) = [
-        r for r in cam.merge_cameras(probed=[], claimed={1: "arm"}, roster=ROSTER[:2])
-        if r["index"] == 1
-    ]
+    (row,) = [r for r in cam.merge_cameras(probed=[], claimed={1: "arm"}, roster=ROSTER[:2]) if r["index"] == 1]
     assert row["state"] == "in_use"
 
 
@@ -209,7 +224,7 @@ def test_no_streaming_evidence_keeps_the_kinder_reading():
 
 
 def test_an_index_we_measured_before_reports_vanished_not_absent() -> None:
-    """"no camera answered at this index" is true here and useless.
+    """ "no camera answered at this index" is true here and useless.
 
     An index that was always empty needs no action. An index where we measured a real camera and now
     get nothing is an EVENT - unplugged, asleep, or dropped by its hub - and it was reading as the

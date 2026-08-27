@@ -1,4 +1,5 @@
 """Bus-guarded direct-serial tools (dashboard/direct_serial.py)."""
+
 from __future__ import annotations
 
 from strands_robots.dashboard.direct_serial import (
@@ -42,7 +43,9 @@ def test_nonexistent_linux_default_port_refused_by_name():
 
 def test_port_held_by_own_child_names_peer_and_pid():
     r = port_refusal(
-        PORT, "move_motor", port_free=POSE_PORT_FREE,
+        PORT,
+        "move_motor",
+        port_free=POSE_PORT_FREE,
         **_deps(holders=lambda p: [4242], tracked=lambda: {4242: "so101-real-689"}),
     )
     assert r is not None and "so101-real-689" in r and "4242" in r and "despawn" in r.lower()
@@ -66,7 +69,9 @@ def test_unreadable_holder_list_fails_closed():
 
 
 def _fake_tools(monkeypatch=None):
-    deps = _deps(holders=lambda p: [4242], tracked=lambda: {4242: "so101-real-689"}, exists=lambda p: p != "/dev/ttyACM0")
+    deps = _deps(
+        holders=lambda p: [4242], tracked=lambda: {4242: "so101-real-689"}, exists=lambda p: p != "/dev/ttyACM0"
+    )
     return build_direct_serial_tools(deps["tracked"], holders=deps["holders"], scan=deps["scan"], exists=deps["exists"])
 
 
@@ -117,7 +122,16 @@ class TestMotionGateRows:
             assert reason["target"] == PORT
 
     def test_pose_reads_and_stops_are_never_gated(self):
-        for act in ("read_position", "read_all", "list_poses", "show_pose", "delete_pose", "connect", "emergency_stop", "store_pose"):
+        for act in (
+            "read_position",
+            "read_all",
+            "list_poses",
+            "show_pose",
+            "delete_pose",
+            "connect",
+            "emergency_stop",
+            "store_pose",
+        ):
             assert self._intent("pose_tool", {"action": act, "port": PORT}) is None, act
 
     def test_serial_writes_ask_and_reads_do_not(self):
@@ -130,7 +144,9 @@ class TestMotionGateRows:
         from strands_robots.dashboard.agent_hitl import motion_intent
         from strands_robots.dashboard.agent_motion import MOTION_ENV
 
-        assert motion_intent("pose_tool", {"action": "move_motor", "port": PORT}, peers={}, env={MOTION_ENV: "1"}) is None
+        assert (
+            motion_intent("pose_tool", {"action": "move_motor", "port": PORT}, peers={}, env={MOTION_ENV: "1"}) is None
+        )
 
 
 class TestAgentWiring:
@@ -167,7 +183,9 @@ class TestConfirmDetail:
         return motion_intent(tool_name, tool_input, peers={}, env={})
 
     def test_move_motor_confirm_names_motor_and_position(self):
-        reason = self._intent("pose_tool", {"action": "move_motor", "port": PORT, "motor_name": "shoulder_pan", "position": 10.5})
+        reason = self._intent(
+            "pose_tool", {"action": "move_motor", "port": PORT, "motor_name": "shoulder_pan", "position": 10.5}
+        )
         assert reason["instruction"] == "move_motor motor_name=shoulder_pan position=10.5"
 
     def test_load_pose_confirm_names_the_pose(self):
@@ -183,5 +201,7 @@ class TestConfirmDetail:
         assert reason["instruction"] == ""
 
     def test_explicit_instruction_is_never_overwritten(self):
-        reason = self._intent("pose_tool", {"action": "move_motor", "port": PORT, "instruction": "operator words", "motor_name": "elbow"})
+        reason = self._intent(
+            "pose_tool", {"action": "move_motor", "port": PORT, "instruction": "operator words", "motor_name": "elbow"}
+        )
         assert reason["instruction"] == "operator words"

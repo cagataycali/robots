@@ -9,6 +9,7 @@ even repairing the JSON by hand could not bring it back.
 These tests pin the recovery posture instead: keep the bytes, say so, and let the person AT the
 machine re-enroll while a stranger who merely benefited from a disk error cannot.
 """
+
 import json
 
 import pytest
@@ -26,8 +27,7 @@ class FakeRequest:
 @pytest.fixture(autouse=True)
 def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    for k in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID",
-              "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
+    for k in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
         monkeypatch.delenv(k, raising=False)
     auth._cache_key = None
     auth._cache = {}
@@ -38,7 +38,7 @@ def isolated_store(tmp_path, monkeypatch):
 
 def _corrupt_store(tmp_path, body: str = '{"credentials": [{"id": "AAA'):
     path = tmp_path / "auth.json"
-    path.write_text(body)          # truncated JSON: exactly what a killed process leaves
+    path.write_text(body)  # truncated JSON: exactly what a killed process leaves
     return path
 
 
@@ -119,9 +119,7 @@ class TestTheLastNineLines:
     is exactly where that promise is usually broken.
     """
 
-    def test_a_quarantine_that_CANNOT_move_the_file_still_records_the_damage(
-        self, tmp_path, monkeypatch
-    ):
+    def test_a_quarantine_that_CANNOT_move_the_file_still_records_the_damage(self, tmp_path, monkeypatch):
         """The flag, not the backup, is what re-seals enrollment.
 
         On a read-only or full volume the rename fails - and if the code gave up there, the
@@ -131,7 +129,8 @@ class TestTheLastNineLines:
         """
         _corrupt_store(tmp_path)
         monkeypatch.setattr(
-            auth.os, "replace",
+            auth.os,
+            "replace",
             lambda *a, **k: (_ for _ in ()).throw(OSError(30, "Read-only file system")),
         )
         auth._cache_key = None
@@ -155,15 +154,14 @@ class TestTheLastNineLines:
         volume, which is a worse outcome than a file with the volume's own permissions.
         """
         monkeypatch.setattr(
-            auth.os, "chmod",
+            auth.os,
+            "chmod",
             lambda *a, **k: (_ for _ in ()).throw(OSError(45, "Operation not supported")),
         )
         auth._save({"credentials": [], "note": "kept"})
         assert json.loads((tmp_path / "auth.json").read_text())["note"] == "kept"
 
-    def test_a_store_that_vanishes_between_write_and_stat_invalidates_the_cache(
-        self, tmp_path, monkeypatch
-    ):
+    def test_a_store_that_vanishes_between_write_and_stat_invalidates_the_cache(self, tmp_path, monkeypatch):
         """The cache key is (path, mtime, size). If stat fails there is no key to trust.
 
         Setting it to None means the next _load re-reads from disk - the safe direction. Keeping a

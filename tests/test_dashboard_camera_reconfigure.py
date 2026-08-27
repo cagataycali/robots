@@ -20,10 +20,15 @@ class TestValidateCameras:
         assert validate_cameras(None) is None
 
     def test_a_lerobot_shaped_config_passes(self) -> None:
-        assert validate_cameras({
-            "top": {"index_or_path": 0, "fps": 30, "width": 1280, "height": 720},
-            "wrist": {"index_or_path": "/dev/video1"},
-        }) is None
+        assert (
+            validate_cameras(
+                {
+                    "top": {"index_or_path": 0, "fps": 30, "width": 1280, "height": 720},
+                    "wrist": {"index_or_path": "/dev/video1"},
+                }
+            )
+            is None
+        )
 
     def test_the_live_crash_shape_is_refused_with_the_example(self) -> None:
         # The exact config that killed a child after 200+pid: a bare int.
@@ -44,8 +49,7 @@ class TestValidateCameras:
 
     @pytest.mark.parametrize(
         ("field", "value"),
-        [("fps", 0), ("fps", 241), ("fps", "30"), ("fps", True),
-         ("width", 8), ("width", 100000), ("height", 5000)],
+        [("fps", 0), ("fps", 241), ("fps", "30"), ("fps", True), ("width", 8), ("width", 100000), ("height", 5000)],
     )
     def test_fantasy_settings_are_refused_by_bound_not_by_driver(self, field: str, value: object) -> None:
         bad = validate_cameras({"top": {"index_or_path": 0, field: value}})
@@ -61,7 +65,8 @@ class TestSpawnRefusesBadCamerasBeforePopen:
         import strands_robots.dashboard.device_manager as mod
 
         monkeypatch.setattr(
-            mod.subprocess, "Popen",
+            mod.subprocess,
+            "Popen",
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("Popen reached")),
         )
         result = dm.spawn("so101", "sim", cameras={"main": 3})
@@ -86,7 +91,8 @@ class TestReconfigureCameras:
         dm = DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
         self._fake_managed(dm)
         monkeypatch.setattr(
-            dm, "despawn",
+            dm,
+            "despawn",
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("despawn reached for an invalid config")),
         )
         result = dm.reconfigure_cameras("so101-sim-1", {"main": 3})
@@ -101,7 +107,9 @@ class TestReconfigureCameras:
         result = dm.reconfigure_cameras("replay-1", None)
         assert "error" in result and "replay" in result["error"]
 
-    def test_a_valid_reconfigure_despawns_then_respawns_under_the_same_id(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    def test_a_valid_reconfigure_despawns_then_respawns_under_the_same_id(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
         dm = DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
         self._fake_managed(dm)
         calls: list[tuple] = []
@@ -165,8 +173,15 @@ class TestUnknownOptionsAreRefusedBeforeAnythingStops:
         """The refusal must not become a whitelist that fights the driver it wraps."""
         full = {
             "top": {
-                "index_or_path": 0, "fps": 30, "width": 640, "height": 480,
-                "color_mode": "rgb", "rotation": 90, "warmup_s": 1, "backend": "any", "type": "opencv",
+                "index_or_path": 0,
+                "fps": 30,
+                "width": 640,
+                "height": 480,
+                "color_mode": "rgb",
+                "rotation": 90,
+                "warmup_s": 1,
+                "backend": "any",
+                "type": "opencv",
             }
         }
         assert validate_cameras(full) is None

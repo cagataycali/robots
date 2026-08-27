@@ -118,9 +118,9 @@ def test_the_real_middleware_counts_while_still_refusing(sealed_app) -> None:
     # And an accepted request adds nothing: only refusals are counted.
     before = block["total"]
     assert client.get("/api/fleet", headers={"Authorization": "Bearer the-real-token"}).status_code == 200
-    after = client.get(
-        "/api/health", headers={"Authorization": "Bearer the-real-token"}
-    ).json()["refused_handshakes"]["total"]
+    after = client.get("/api/health", headers={"Authorization": "Bearer the-real-token"}).json()["refused_handshakes"][
+        "total"
+    ]
     assert after == before
 
 
@@ -139,16 +139,14 @@ def test_an_unauthenticated_reader_gets_counts_but_no_identities(sealed_app) -> 
     public = client.get("/api/health", headers={"X-Forwarded-For": "203.0.113.9"}).json()
     block = public["refused_handshakes"]
     assert block["total"] >= STORM_THRESHOLD + 2
-    assert block["storm"] is True                      # the fact survives
-    assert "worst" not in block                        # the address does not
+    assert block["storm"] is True  # the fact survives
+    assert "worst" not in block  # the address does not
     body = str(block)
     assert "/api/fleet" not in body and "192.168." not in body and "testclient" not in body
     assert "Sign in to see" in str(block["text"])
 
     # The same server, the same moment, to the operator who CAN act on it.
-    trusted = client.get(
-        "/api/health", headers={"Authorization": "Bearer the-real-token"}
-    ).json()["refused_handshakes"]
+    trusted = client.get("/api/health", headers={"Authorization": "Bearer the-real-token"}).json()["refused_handshakes"]
     assert "/api/fleet" in str(trusted["worst"]["path"])
     assert "sign in again" in str(trusted["text"])
 

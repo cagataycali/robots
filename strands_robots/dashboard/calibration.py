@@ -9,11 +9,13 @@ from typing import Any
 #: Layout on disk: <root>/<device_type>/<device_model>/<device_id>.json
 _SUFFIX = ".json"
 
+
 def default_root() -> Path:
     """Where lerobot keeps calibrations, honouring the same env the tool does."""
     from strands_robots.tools.lerobot_calibrate import HF_LEROBOT_CALIBRATION
 
     return Path(HF_LEROBOT_CALIBRATION)
+
 
 def candidates(
     name: str,
@@ -37,13 +39,16 @@ def candidates(
                 continue
             path = model_dir / f"{name}{_SUFFIX}"
             if path.is_file():
-                out.append({
-                    "device_type": type_dir.name,
-                    "device_model": model_dir.name,
-                    "device_id": name,
-                    "path": str(path),
-                })
+                out.append(
+                    {
+                        "device_type": type_dir.name,
+                        "device_model": model_dir.name,
+                        "device_id": name,
+                        "path": str(path),
+                    }
+                )
     return out
+
 
 def motors(data: Any) -> list[dict[str, Any]]:
     """The per-motor rows, as a LIST so the UI keeps the file's own order. A calibration's dict order
@@ -60,6 +65,7 @@ def motors(data: Any) -> list[dict[str, Any]]:
             row["value"] = motor
         rows.append(row)
     return rows
+
 
 def payload(info: dict[str, Any]) -> dict[str, Any]:
     """JSON-safe view of the tool's ``calibration_info``."""
@@ -85,6 +91,7 @@ def payload(info: dict[str, Any]) -> dict[str, Any]:
         "motors": rows,
     }
 
+
 def robot_calibration_gap(
     robot_name: str,
     robot_id: str | None,
@@ -104,8 +111,7 @@ def robot_calibration_gap(
     # so101_follower), so match by prefix rather than hard-coding the suffix: a robot type this
     # dashboard has never seen must not produce a confident wrong sentence.
     models = sorted(
-        p for p in robots_dir.iterdir()
-        if p.is_dir() and (p.name == robot_name or p.name.startswith(f"{robot_name}_"))
+        p for p in robots_dir.iterdir() if p.is_dir() and (p.name == robot_name or p.name.startswith(f"{robot_name}_"))
     )
     if not models:
         return None  # unknown layout for this robot type - say nothing rather than guess

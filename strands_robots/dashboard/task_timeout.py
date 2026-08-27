@@ -7,6 +7,7 @@ DEFAULT_ACK_CAP_S = 120.0
 #: Margin over ``duration`` for a blocking ``execute``.
 ROLLOUT_MARGIN_S = 10.0
 
+
 def task_ack_budget(
     action: str,
     requested_timeout: float | None,
@@ -32,6 +33,7 @@ def task_ack_budget(
     # "start" and anything unknown: wait for an ack, never for the whole run.
     floor = min(max(dur + ROLLOUT_MARGIN_S, 0.0), max(ack_cap_s, 0.0))
     return max(asked, floor), "ack"
+
 
 def timeout_verdict(kind: str, timeout_s: float, target: str = "") -> dict[str, object]:
     """What to tell a caller whose task command timed out."""

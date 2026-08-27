@@ -3,6 +3,7 @@ through its recovery. These cases are that blackout's real numbers — forwarded
 arms 1430s stale — so the block that replaces the boolean is pinned to the incident, not to invented
 shapes.
 """
+
 from __future__ import annotations
 
 import time

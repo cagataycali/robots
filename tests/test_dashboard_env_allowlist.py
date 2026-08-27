@@ -40,11 +40,22 @@ def _env_text() -> str:
 
 # --- key allow-list ------------------------------------------------------------
 
-@pytest.mark.parametrize("key", [
-    "PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "PYTHONPATH",
-    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HOME", "SHELL",
-    "ZENOH_CONNECT", "NODE_OPTIONS",
-])
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "PATH",
+        "LD_PRELOAD",
+        "DYLD_INSERT_LIBRARIES",
+        "PYTHONPATH",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HOME",
+        "SHELL",
+        "ZENOH_CONNECT",
+        "NODE_OPTIONS",
+    ],
+)
 def test_hostile_keys_are_refused_and_reported(key):
     out = config_api.apply({"env": {key: "/tmp/evil"}})
     assert out["env_written"] == []
@@ -52,10 +63,18 @@ def test_hostile_keys_are_refused_and_reported(key):
     assert key not in _env_text()
 
 
-@pytest.mark.parametrize("key", [
-    "STRANDS_MESH_LOCAL_DEV", "DASHBOARD_AUTH_TOKEN", "VOICE_MODEL",
-    "HF_TOKEN", "OPENAI_API_KEY", "AWS_REGION", "AWS_PROFILE",
-])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "STRANDS_MESH_LOCAL_DEV",
+        "DASHBOARD_AUTH_TOKEN",
+        "VOICE_MODEL",
+        "HF_TOKEN",
+        "OPENAI_API_KEY",
+        "AWS_REGION",
+        "AWS_PROFILE",
+    ],
+)
 def test_dashboard_owned_keys_still_work(key, monkeypatch):
     monkeypatch.delenv(key, raising=False)
     out = config_api.apply({"env": {key: "value1"}})
@@ -64,6 +83,7 @@ def test_dashboard_owned_keys_still_work(key, monkeypatch):
 
 
 # --- value injection ------------------------------------------------------------
+
 
 def test_newline_in_value_cannot_smuggle_a_second_variable():
     out = config_api.apply({"env": {"HF_TOKEN": "a\nZENOH_CONNECT=tcp/evil:7447"}})
@@ -93,6 +113,7 @@ def test_mixed_batch_writes_only_the_allowed_entries():
 
 
 # --- defense in depth: the writer itself refuses --------------------------------
+
 
 def test_upsert_env_file_raises_on_disallowed_key():
     with pytest.raises(ValueError, match="not dashboard-managed"):

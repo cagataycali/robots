@@ -35,6 +35,7 @@ def _req(host: str = "robots.cagatay.my", **headers):
 # Q10 - who decides the rp_id
 # --------------------------------------------------------------------------
 
+
 def test_explicit_config_beats_a_claimed_host():
     assert rp_id_verdict("evil.example", "robots.cagatay.my")[0] == "robots.cagatay.my"
 
@@ -89,11 +90,13 @@ def test_derive_rp_id_returns_the_host_when_it_is_allowed(monkeypatch):
 
 
 def test_known_rp_ids_ignores_credentials_that_never_recorded_one():
-    store = {"credentials": [
-        {"id": "a", "name": "legacy"},                       # enrolled before this
-        {"id": "b", "rp_id": "robots.cagatay.my"},
-        {"id": "c", "rp_id": ""},                            # empty is not a binding
-    ]}
+    store = {
+        "credentials": [
+            {"id": "a", "name": "legacy"},  # enrolled before this
+            {"id": "b", "rp_id": "robots.cagatay.my"},
+            {"id": "c", "rp_id": ""},  # empty is not a binding
+        ]
+    }
     assert known_rp_ids(store) == {"robots.cagatay.my"}
 
 
@@ -107,6 +110,7 @@ def test_a_legacy_only_store_contributes_nothing_and_stays_usable():
 # --------------------------------------------------------------------------
 # Q11 - the challenge table has a bound, and one client cannot own it
 # --------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def clean_stash():

@@ -23,6 +23,7 @@ from strands_robots.dashboard.checkpoints import MAX_LIMIT, clamp_limit
 # Q22 - a limit is a promise to the caller
 # --------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "asked,expected",
     [(1, 1), (5, 5), (15, 15), (40, 40), (41, 40), (1000, MAX_LIMIT), (0, 1), (-5, 1)],
@@ -72,14 +73,21 @@ def test_local_rows_still_win_the_space_they_are_given(monkeypatch):
 # Q8 - the managed payload carries the pid it spawned
 # --------------------------------------------------------------------------
 
+
 def _dm_with(process):
     from strands_robots.dashboard.device_manager import DeviceManager, ManagedRobot
 
     dm = DeviceManager.__new__(DeviceManager)
-    dm.robots = {"so101-arm-1": ManagedRobot(
-        peer_id="so101-arm-1", robot_name="so101", mode="real",
-        port="/dev/cu.usbmodem1", process=process, started_at=1.0,
-    )}
+    dm.robots = {
+        "so101-arm-1": ManagedRobot(
+            peer_id="so101-arm-1",
+            robot_name="so101",
+            mode="real",
+            port="/dev/cu.usbmodem1",
+            process=process,
+            started_at=1.0,
+        )
+    }
     return dm
 
 

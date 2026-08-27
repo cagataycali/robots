@@ -125,11 +125,11 @@ FAKE = "kDD6toTMVDwOXYn51XfDI0vNnKGC4tSM5xP5c858aco"
 @pytest.mark.parametrize(
     "line",
     [
-        f"env STRANDS_DASHBOARD_TOKEN={FAKE} inherited by child",   # prefixed key, `=`
-        f"curl -H 'X-Auth-Token: {FAKE}' localhost:8090",           # prefixed key, `:`
-        f'{{"token": "{FAKE}"}}',                                    # JSON body echoed into a log
-        f'headers={{"authorization": "{FAKE}"}}',                    # no "Bearer " to hang it on
-        f"api_key = {FAKE}",                                        # spaces around the separator
+        f"env STRANDS_DASHBOARD_TOKEN={FAKE} inherited by child",  # prefixed key, `=`
+        f"curl -H 'X-Auth-Token: {FAKE}' localhost:8090",  # prefixed key, `:`
+        f'{{"token": "{FAKE}"}}',  # JSON body echoed into a log
+        f'headers={{"authorization": "{FAKE}"}}',  # no "Bearer " to hang it on
+        f"api_key = {FAKE}",  # spaces around the separator
     ],
 )
 def test_a_credential_is_redacted_whatever_holds_it(line: str) -> None:

@@ -8,6 +8,7 @@ from collections.abc import Iterable, Sequence
 #: A /64 is the unit a home network is delegated, and the unit SLAAC hosts share.
 V6_NETWORK_BITS = 64
 
+
 def _global_v6(addr: str) -> ipaddress.IPv6Address | None:
     """Parse a routable IPv6 address, or None for anything that proves nothing."""
     try:
@@ -19,6 +20,7 @@ def _global_v6(addr: str) -> ipaddress.IPv6Address | None:
     if ip.is_link_local or ip.is_loopback or ip.is_private or ip.is_multicast:
         return None
     return ip
+
 
 def same_network(client_ip: str | None, own_addrs: Iterable[str]) -> bool | None:
     """True/False when it can be decided from local facts, None when it cannot. Loopback is trivially
@@ -45,6 +47,7 @@ def same_network(client_ip: str | None, own_addrs: Iterable[str]) -> bool | None
         return None  # we have no global address of our own to compare against
     return any(client in n for n in nets)
 
+
 def lan_urls(private_addrs: Sequence[str], port: int) -> list[str]:
     """Direct URLs for a viewer that turns out to be local, best candidate first."""
     out: list[str] = []
@@ -59,6 +62,7 @@ def lan_urls(private_addrs: Sequence[str], port: int) -> list[str]:
                 out.append(url)
     return out
 
+
 def hint(client_ip: str | None, own_addrs: Sequence[str], port: int) -> dict:
     """The payload the UI renders. `same_network=None` must render NOTHING."""
     local = same_network(client_ip, own_addrs)
@@ -70,7 +74,7 @@ def hint(client_ip: str | None, own_addrs: Sequence[str], port: int) -> dict:
             "client_ip": client_ip,
             "lan_urls": [],
             "why": "you appear to be on this network, but the dashboard could not find a "
-                   "private address of its own to point you at",
+            "private address of its own to point you at",
         }
     if local:
         return {
@@ -78,10 +82,18 @@ def hint(client_ip: str | None, own_addrs: Sequence[str], port: int) -> dict:
             "client_ip": client_ip,
             "lan_urls": urls,
             "why": "you are on the same network as this dashboard - the local address skips "
-                   "the trip out to Cloudflare and back, which is where camera streams stall",
+            "the trip out to Cloudflare and back, which is where camera streams stall",
         }
     if local is False:
-        return {"same_network": False, "client_ip": client_ip, "lan_urls": [],
-                "why": "you are reaching this dashboard from another network"}
-    return {"same_network": None, "client_ip": client_ip, "lan_urls": [],
-            "why": "cannot tell from an IPv4 address behind NAT whether you are local"}
+        return {
+            "same_network": False,
+            "client_ip": client_ip,
+            "lan_urls": [],
+            "why": "you are reaching this dashboard from another network",
+        }
+    return {
+        "same_network": None,
+        "client_ip": client_ip,
+        "lan_urls": [],
+        "why": "cannot tell from an IPv4 address behind NAT whether you are local",
+    }

@@ -32,7 +32,10 @@ class TestItRefusesWhenThereIsRealEvidence:
 
     def test_the_classified_reason_and_remedy_travel_with_it(self):
         r = record_joints.refusal(
-            role="follower", peer_id="arm", peer=peer(None), now=NOW,
+            role="follower",
+            peer_id="arm",
+            peer=peer(None),
+            now=NOW,
             problem={"headline": "this board has no calibration", "remedy": "Respawn it as leader_arm."},
         )
         assert "this board has no calibration." in r
@@ -48,22 +51,20 @@ class TestItStaysQuietWithoutEvidence:
     """Each of these would block a legitimate recording, which is worse than the 500 it replaces."""
 
     def test_joints_present_proceeds(self):
-        assert record_joints.refusal(
-            role="follower", peer_id="arm", peer=peer({"shoulder_pan.pos": 1.0}), now=NOW) is None
+        assert (
+            record_joints.refusal(role="follower", peer_id="arm", peer=peer({"shoulder_pan.pos": 1.0}), now=NOW) is None
+        )
 
     def test_no_snapshot_at_all_proceeds(self):
         for p in (None, {}, "not a mapping", 7):
             assert record_joints.refusal(role="follower", peer_id="arm", peer=p, now=NOW) is None
 
     def test_a_peer_with_no_state_block_proceeds(self):
-        assert record_joints.refusal(
-            role="follower", peer_id="arm", peer={"last_seen": NOW - 1}, now=NOW) is None
+        assert record_joints.refusal(role="follower", peer_id="arm", peer={"last_seen": NOW - 1}, now=NOW) is None
 
     def test_a_stale_snapshot_is_not_evidence_about_now(self):
-        assert record_joints.refusal(
-            role="follower", peer_id="arm", peer=peer(None, age=31.0), now=NOW) is None
-        assert record_joints.refusal(
-            role="follower", peer_id="arm", peer=peer(None, age=29.0), now=NOW) is not None
+        assert record_joints.refusal(role="follower", peer_id="arm", peer=peer(None, age=31.0), now=NOW) is None
+        assert record_joints.refusal(role="follower", peer_id="arm", peer=peer(None, age=29.0), now=NOW) is not None
 
     def test_an_undateable_reading_is_not_evidence_either(self):
         p = peer(None)
@@ -73,5 +74,4 @@ class TestItStaysQuietWithoutEvidence:
         assert record_joints.refusal(role="follower", peer_id="arm", peer=p, now=NOW) is None
 
     def test_a_joints_shape_we_do_not_understand_is_not_absence(self):
-        assert record_joints.refusal(
-            role="follower", peer_id="arm", peer=peer("six"), now=NOW) is None
+        assert record_joints.refusal(role="follower", peer_id="arm", peer=peer("six"), now=NOW) is None

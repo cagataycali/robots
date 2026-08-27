@@ -39,9 +39,7 @@ def test_the_readers_speak_the_peers_vocabulary():
 
 
 def test_a_matching_policy_is_quiet_and_says_what_it_verified():
-    v = policy_fit(
-        input_features=ARM_IN, output_features=ARM_OUT, joints=SO101, cameras=["top", "wrist"]
-    )
+    v = policy_fit(input_features=ARM_IN, output_features=ARM_OUT, joints=SO101, cameras=["top", "wrist"])
     assert v["ok"] is True
     assert v["blocking"] is False
     # Quiet must be readable as "verified", not as "never looked".
@@ -49,9 +47,7 @@ def test_a_matching_policy_is_quiet_and_says_what_it_verified():
 
 
 def test_the_real_mismatch_a_5dof_2dim_policy_on_a_6_joint_arm():
-    v = policy_fit(
-        input_features=SCOUT_IN, output_features=SCOUT_OUT, joints=SO101, cameras=["top", "wrist"]
-    )
+    v = policy_fit(input_features=SCOUT_IN, output_features=SCOUT_OUT, joints=SO101, cameras=["top", "wrist"])
     assert v["ok"] is False
     assert v["blocking"] is True
     kinds = {p["kind"] for p in v["problems"]}
@@ -63,9 +59,7 @@ def test_the_real_mismatch_a_5dof_2dim_policy_on_a_6_joint_arm():
 
 
 def test_a_camera_the_policy_needs_and_the_robot_does_not_have():
-    v = policy_fit(
-        input_features=ARM_IN, output_features=ARM_OUT, joints=SO101, cameras=["top"]
-    )
+    v = policy_fit(input_features=ARM_IN, output_features=ARM_OUT, joints=SO101, cameras=["top"])
     assert [p["kind"] for p in v["problems"]] == ["cameras"]
     assert "wrist" in v["problems"][0]["detail"]
     # The failure mode is the quiet one, and it is spelled out.
@@ -74,7 +68,9 @@ def test_a_camera_the_policy_needs_and_the_robot_does_not_have():
 
 def test_extra_cameras_on_the_robot_are_not_a_problem():
     v = policy_fit(
-        input_features=ARM_IN, output_features=ARM_OUT, joints=SO101,
+        input_features=ARM_IN,
+        output_features=ARM_OUT,
+        joints=SO101,
         cameras=["top", "wrist", "overhead"],
     )
     assert v["ok"] is True
@@ -82,9 +78,7 @@ def test_extra_cameras_on_the_robot_are_not_a_problem():
 
 def test_absence_of_evidence_never_blocks_a_run_that_was_always_allowed():
     # Unreadable/absent features: no verdict at all.
-    assert policy_fit(joints=SO101, cameras=["top"]) == {
-        "ok": True, "blocking": False, "problems": [], "checked": []
-    }
+    assert policy_fit(joints=SO101, cameras=["top"]) == {"ok": True, "blocking": False, "problems": [], "checked": []}
     # A peer that has not announced joints yet: dimensions are unknowable, not wrong.
     v = policy_fit(input_features=SCOUT_IN, output_features=SCOUT_OUT, joints=[], cameras=["top"])
     assert [p["kind"] for p in v["problems"]] == ["cameras"]
@@ -96,17 +90,26 @@ def test_absence_of_evidence_never_blocks_a_run_that_was_always_allowed():
 
 
 def test_a_malformed_config_is_ignored_rather_than_guessed():
-    for bad in ({"observation.state": {"shape": "six"}}, {"observation.state": {}},
-                {"observation.state": None}, {"observation.state": {"shape": []}}):
+    for bad in (
+        {"observation.state": {"shape": "six"}},
+        {"observation.state": {}},
+        {"observation.state": None},
+        {"observation.state": {"shape": []}},
+    ):
         assert state_dim(bad) is None, bad
-    assert policy_fit(input_features={"observation.images.": {"shape": [3, 1, 1]}},
-                      joints=SO101, cameras=["top"])["ok"] is True
+    assert (
+        policy_fit(input_features={"observation.images.": {"shape": [3, 1, 1]}}, joints=SO101, cameras=["top"])["ok"]
+        is True
+    )
 
 
 def test_sim_runs_get_the_same_verdict_in_the_right_words():
     v = policy_fit(
-        input_features=SCOUT_IN, output_features=SCOUT_OUT, joints=SO101,
-        cameras=["top"], physical=False,
+        input_features=SCOUT_IN,
+        output_features=SCOUT_OUT,
+        joints=SO101,
+        cameras=["top"],
+        physical=False,
     )
     assert v["blocking"] is True
     joined = " ".join(p["detail"] for p in v["problems"])
@@ -123,16 +126,26 @@ def test_declared_features_reads_a_cached_snapshot(tmp_path, monkeypatch):
 
     snap = tmp_path / "hub" / "models--org--pol" / "snapshots" / "abc"
     snap.mkdir(parents=True)
-    (snap / "config.json").write_text(json.dumps({
-        "type": "act", "input_features": ARM_IN, "output_features": ARM_OUT,
-    }))
+    (snap / "config.json").write_text(
+        json.dumps(
+            {
+                "type": "act",
+                "input_features": ARM_IN,
+                "output_features": ARM_OUT,
+            }
+        )
+    )
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
     got = checkpoints.declared_features("org/pol")
     assert got["policy_type"] == "act"
     assert got["input_features"] == ARM_IN
     # And the pairing verdict is then computable with no network and no model load.
-    v = policy_fit(input_features=got["input_features"], output_features=got["output_features"],
-                   joints=SO101, cameras=["top", "wrist"])
+    v = policy_fit(
+        input_features=got["input_features"],
+        output_features=got["output_features"],
+        joints=SO101,
+        cameras=["top", "wrist"],
+    )
     assert v["ok"] is True
 
 
@@ -164,9 +177,9 @@ def test_declared_features_reads_a_local_training_output(tmp_path):
     (out / "checkpoints" / "000100" / "pretrained_model").mkdir(parents=True)
     art = out / "checkpoints" / "000100" / "pretrained_model"
     # train_config.json nests the policy config under "policy".
-    (art / "train_config.json").write_text(json.dumps({
-        "policy": {"type": "act", "input_features": ARM_IN, "output_features": ARM_OUT}
-    }))
+    (art / "train_config.json").write_text(
+        json.dumps({"policy": {"type": "act", "input_features": ARM_IN, "output_features": ARM_OUT}})
+    )
     got = checkpoints.declared_features(str(out))
     assert got["input_features"] == ARM_IN
     assert got["policy_type"] == "act"

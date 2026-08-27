@@ -132,9 +132,7 @@ Q78_AUTHED = {"authenticated": True, "user": "cagatay"}
 
 
 def test_existing_destination_refuses_but_stays_the_operators_call():
-    r = upload_preflight(
-        dataset="so101-cubes", auth=Q78_AUTHED, existing={"exists": True, "episodes": 40}
-    )
+    r = upload_preflight(dataset="so101-cubes", auth=Q78_AUTHED, existing={"exists": True, "episodes": 40})
     assert r["ok"] is False
     assert r["state"] == "destination_exists"
     # Replacing their own earlier take deliberately is legitimate -- only they know if that is this.
@@ -166,13 +164,9 @@ def test_no_evidence_is_treated_as_nothing_there():
 
 def test_auth_refusals_still_outrank_an_existing_destination():
     # The credential failure is certain and is fixed differently; it must be the sentence shown.
-    r = upload_preflight(
-        dataset="so101-cubes", auth={"authenticated": False}, existing={"exists": True}
-    )
+    r = upload_preflight(dataset="so101-cubes", auth={"authenticated": False}, existing={"exists": True})
     assert r["state"] in ("no_credential", "credential_rejected")
-    r2 = upload_preflight(
-        dataset="someorg/cubes", auth=Q78_AUTHED, existing={"exists": True, "episodes": 3}
-    )
+    r2 = upload_preflight(dataset="someorg/cubes", auth=Q78_AUTHED, existing={"exists": True, "episodes": 3})
     assert r2["state"] == "foreign_namespace"
 
 

@@ -5,6 +5,7 @@ robot first and the child's ValueError arrives in a log ring buffer after the ro
 half of that promise was missing: hardware_robot coerces neither color_mode nor rotation, so a typo'd
 spelling reached lerobot verbatim and killed the respawn.
 """
+
 from __future__ import annotations
 
 from strands_robots.dashboard.device_manager import (
