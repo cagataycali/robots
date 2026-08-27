@@ -324,6 +324,39 @@ mesh off.
 
 Mesh failures are non-fatal - `robot.mesh` becomes `None`; the sim/hardware instance still works.
 
+## Transport selection: `STRANDS_MESH_BACKEND`
+
+The mesh has three transports and one env var chooses between them at runtime.
+An install extra brings the client dependency; the env var picks which client
+the session actually constructs. Both are needed to move off the default:
+the extra without the variable installs code that never runs, and the variable
+without the extra selects a backend whose client is not importable.
+
+| Value | Transport | Extra needed | Notes |
+|-------|-----------|--------------|-------|
+| `zenoh` (default) | Local Zenoh peer discovery over UDP multicast. | none - ships with `strands-robots`. | What every unset value resolves to. |
+| `iot` | AWS IoT Core MQTT with X.509 mutual TLS. | `strands-robots[mesh-iot]` (adds `awsiotsdk`). | Requires `STRANDS_IOT_ENDPOINT`, `STRANDS_IOT_THING_NAME`, `STRANDS_IOT_CERT_DIR`. See [Security](security.md). |
+| `bridge` | Zenoh locally, mirrored to AWS IoT for fleet-wide fan-out. | `strands-robots[mesh-iot]`. | A peer speaks Zenoh to its lab neighbours and IoT to the cloud on the same publish. |
+
+```bash
+# Local dev, nothing to set - the mesh joins a Zenoh peer group.
+export STRANDS_MESH_BACKEND=zenoh   # or leave unset
+
+# AWS IoT Core - the peers are on different networks.
+export STRANDS_MESH_BACKEND=iot
+
+# Both at once - a lab peer is reachable from a remote operator.
+export STRANDS_MESH_BACKEND=bridge
+```
+
+Case and whitespace are normalised, so `IOT` and `" iot "` both select `iot`.
+An unrecognized value (`STRANDS_MESH_BACKEND=iott`) falls back to `zenoh` and
+is reported once per distinct offending value in the log - the policy is to
+keep the mesh running rather than crash a host on a typo, and to make the
+typo visible without one report per published message. The full vocabulary
+lives in `strands_robots/mesh/_backend_select.py`, which is the sole owner
+both the session gate and the transport factory read from.
+
 ## See also
 
 - [Device Connect](device-connect.md) - the recommended networking layer this mesh backs.
