@@ -289,10 +289,18 @@ def rl_run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
     ``range()`` bounds.
 
     ``num_envs``, the third factor of ``steps_per_iter``, is deliberately not
-    here. Its accepted set differs between the backends - PPO parallelizes and
-    accepts any count ``>= 1``, while the MuJoCo-backed FastSAC is single-env and
-    requires exactly ``1`` - so it is not one shared domain, and each backend
-    keeps the rule only it can state.
+    here, and the reason is narrower than the whole field: which *counts* are
+    usable differs between the backends - PPO parallelizes and accepts any
+    positive count, while the MuJoCo-backed FastSAC is single-env and requires
+    exactly ``1`` - so that half is not one shared rule and each backend keeps it.
+    That the value must be a count *at all* is not per-backend, and it is this
+    same domain, so both backends consult it before asking their own count rule.
+    Excluding the whole field would have left the third factor of this very
+    product outside the domain its two siblings are held to, which is what a bare
+    per-backend comparison could not carry: it read ``nan`` and ``inf`` as usable
+    and the ``max(1, ...)`` clamp turned them into a 1000-iteration and a
+    one-iteration run under ``status="success"``, and ``True`` into a count of one
+    from a value that reads as a flag.
 
     Args:
         spec: The spec to check.

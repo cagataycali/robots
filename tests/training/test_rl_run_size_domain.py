@@ -22,11 +22,14 @@ to *return* problems. ``rollout_steps=True`` was worse than a short run: FastSAC
 ran 16 single-step iterations instead of 4 of 4, and PPO normalized advantages
 over a length-one batch and died inside torch's ``Normal`` constraint.
 
-``num_envs``, the third factor of ``steps_per_iter``, is deliberately outside the
-shared domain because its accepted set differs per backend - PPO parallelizes and
-accepts any count ``>= 1``, the MuJoCo-backed FastSAC requires exactly ``1`` - so
-it is not one shared rule. :class:`TestNumEnvsIsNotInTheSharedDomain` pins that
-scope line rather than leaving it to prose.
+``num_envs``, the third factor of ``steps_per_iter``, is outside this gate because
+which *counts* are usable differs per backend - PPO parallelizes and accepts any
+positive count, the MuJoCo-backed FastSAC requires exactly ``1`` - so that half is
+not one shared rule. It is only that half: whether the value is a count at all is
+the same domain, and each backend consults it before asking its own count rule, so
+the third factor of this product is held to what its two siblings are held to.
+:class:`TestNumEnvsIsNotInTheSharedDomain` pins the scope line;
+``test_rl_env_count_domain.py`` pins the shared half.
 
 Every domain test here reaches the real ``validate`` entry point, so it covers
 the wiring as well as the domain.
@@ -290,8 +293,25 @@ class TestNumEnvsIsNotInTheSharedDomain:
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     def test_each_backend_still_refuses_a_non_positive_count(self, provider: str, spec: RLTrainSpec) -> None:
-        """Non-vacuity: excluding it from the domain did not leave it unchecked."""
+        """Non-vacuity: excluding the count rule did not leave the field unchecked.
+
+        ``0`` is the one unusable value a bare comparison already caught, so it
+        cannot carry this claim on its own - the values that survive such a
+        comparison are graded in ``test_rl_env_count_domain.py``, which is where
+        this class's scope line stops.
+        """
         spec.num_envs = 0
+        assert [p for p in create_trainer(provider).validate(spec) if "num_envs" in p]
+
+    @pytest.mark.parametrize("provider", RL_BACKENDS)
+    @pytest.mark.parametrize("value", NOT_A_COUNT)
+    def test_the_shared_half_reaches_it_on_both_backends(self, provider: str, value: Any, spec: RLTrainSpec) -> None:
+        """The half that IS shared: a non-count is refused wherever it is read.
+
+        The per-backend line is about which counts are usable. It is not about
+        whether the value is a count, so no backend gets to leave that open.
+        """
+        spec.num_envs = value
         assert [p for p in create_trainer(provider).validate(spec) if "num_envs" in p]
 
 

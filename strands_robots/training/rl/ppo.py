@@ -180,11 +180,25 @@ class PpoTrainer(BaseRLAlgo):
         # it reads True, a fraction below one iteration, nan and inf as a single
         # iteration under a successful run.
         problems.extend(self._rl_run_size_problems(spec))
-        # num_envs is the third factor and is NOT part of that shared domain: this
-        # backend parallelizes, so any count >= 1 is usable here while the
-        # single-env FastSAC requires exactly 1. Only this backend can state it.
-        if spec.num_envs < 1:
-            problems.append(f"num_envs must be >= 1, got {spec.num_envs}")
+        # num_envs is the third factor of that same product. Which *counts* are
+        # usable is per-backend - this one parallelizes, so any positive count is,
+        # while the single-env FastSAC requires exactly 1 - but that a count is
+        # what the field must hold is not, and it is the same
+        # ``positive_count_error`` domain the two factors above use, for the same
+        # reason: it is a factor of a ``range()`` bound. A bare ``< 1`` test
+        # cannot carry that half. It read ``nan`` as usable and the clamp turned
+        # ``rollout_steps * nan`` into one step, so a 1000-step budget over 64
+        # rollout steps ran 1000 iterations instead of 15 and announced "1000
+        # iterations x 1 steps complete"; ``inf`` ran one; an integral float made
+        # ``num_iters`` a float and raised out of ``range()`` after setup had
+        # built the env, the networks and the optimizers; ``True`` landed as a
+        # count of one from a value that reads as a flag; and a str / None raised
+        # ``TypeError`` out of the comparison itself, from a ``validate``
+        # documented to return problems. For this backend the domain is the whole
+        # rule: over the values it accepts, every positive ``int`` parallelizes,
+        # so there is no further count to test here.
+        if (error := positive_count_error(spec.num_envs, "num_envs", self.provider_name)) is not None:
+            problems.append(error)
         # num_mini_batches splits the rollout batch, so this is a relation BETWEEN
         # two counts and can only be asked once rollout_steps is one: a str reaches
         # ``%`` as string formatting (TypeError, out of a method documented to

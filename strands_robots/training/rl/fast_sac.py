@@ -156,10 +156,20 @@ class FastSacTrainer(BaseRLAlgo):
         # it reads True, a fraction below one iteration, nan and inf as a single
         # iteration under a successful run.
         problems.extend(self._rl_run_size_problems(spec))
-        # num_envs is the third factor and is NOT part of that shared domain: this
-        # backend is single-env, so only 1 is usable here while PPO parallelizes
-        # and accepts any count >= 1. Only this backend can state it.
-        if spec.num_envs != 1:
+        # num_envs is the third factor of that same product. Which *count* is
+        # usable is per-backend - this one is single-env, so only 1 is, while PPO
+        # parallelizes and accepts any positive count - but that a count is what
+        # the field must hold is not, and it is the same ``positive_count_error``
+        # domain the two factors above use. A bare ``!= 1`` test cannot carry that
+        # half: ``True`` and ``1.0`` both satisfy it, so a value that reads as a
+        # flag landed as the required single env, and ``rollout_steps * 1.0`` made
+        # ``num_iters`` a float that raised out of ``range()`` after setup had
+        # built the env, the networks, the optimizers and the replay buffer. The
+        # count rule is asked only of a count, so a non-count is reported as one
+        # rather than as the wrong number of envs.
+        if (error := positive_count_error(spec.num_envs, "num_envs", self.provider_name)) is not None:
+            problems.append(error)
+        elif spec.num_envs != 1:
             problems.append(f"the MuJoCo backend is single-env (num_envs must be 1), got {spec.num_envs}")
         # buffer_size, batch_size and gradient_steps are the replay loop's three
         # caller-supplied counts: the buffer capacity, the transitions sampled

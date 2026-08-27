@@ -95,7 +95,7 @@ def test_validate_rejects_bad_specs() -> None:
     assert not any("num_envs" in p for p in problems), problems
     # But num_envs < 1 is still invalid.
     problems = trainer.validate(RLTrainSpec(output_dir="/tmp/x", env_factory=lambda: None, num_envs=0))  # type: ignore[arg-type,return-value]
-    assert any("num_envs must be >= 1" in p for p in problems)
+    assert any("num_envs must be a positive integer" in p for p in problems)
 
     # rollout_steps must divide into num_mini_batches.
     problems = trainer.validate(RLTrainSpec(output_dir="/tmp/x", rollout_steps=10, num_mini_batches=3))
@@ -109,7 +109,7 @@ def test_validate_rejects_bad_specs() -> None:
         ({"total_timesteps": 0}, "total_timesteps must be a positive integer"),
         ({"total_timesteps": -1}, "total_timesteps must be a positive integer"),
         ({"rollout_steps": 0}, "rollout_steps must be a positive integer"),
-        ({"num_envs": 0}, "num_envs must be >= 1"),
+        ({"num_envs": 0}, "num_envs must be a positive integer"),
         ({"rollout_steps": 10, "num_mini_batches": 3}, "divisible"),
         ({"num_mini_batches": 0}, "divisible"),
     ],
