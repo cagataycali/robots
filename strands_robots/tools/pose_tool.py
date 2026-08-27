@@ -602,8 +602,9 @@ class MotorController:
             verified reply from this motor arrived. ``None`` is the established
             "could not read" signal every caller already handles:
             :func:`pose_tool`'s ``read_position`` turns it into an error envelope
-            instead of quoting a number, and the interpolating paths refuse to
-            build a trajectory from it.
+            instead of quoting a number, and the interpolating paths build no
+            trajectory from it and report the joint as uncommanded rather than
+            leaving it out of the move in silence.
         """
         if not self.serial_conn or not self.serial_conn.is_open:
             return None
@@ -666,7 +667,10 @@ class MotorController:
                 finite value.
 
         Returns:
-            True when every motor was commanded successfully.
+            True when every motor was commanded successfully. Both branches
+            answer for what they did: the one-shot branch reads each
+            :meth:`move_motor` outcome, and the interpolating branch reports
+            a motor it could not interpolate or could not write.
         """
         if smooth:
             return self._smooth_move(positions, steps=steps, step_delay=step_delay)
@@ -692,9 +696,42 @@ class MotorController:
                 :func:`pose_tool`.
 
         Returns:
-            True once every increment has been written.
+            True when every requested motor was interpolated and every write
+            reached the bus. False when a motor's current position could not be
+            read - it has no start point, so no trajectory is built for it and
+            it is never commanded - or when one of its writes failed.
+
+            Both are reported rather than passed over. Every other commanding
+            method on this class already answers for what it did:
+            ``move_multiple_motors(smooth=False)`` reads each
+            :meth:`move_motor` outcome, :meth:`disable_torque` returns the
+            motors it could not reach, and :meth:`incremental_move` refuses
+            outright when the current position is unreadable. Answering True
+            unconditionally left one method with two contracts a single
+            ``smooth`` flag apart, and ``smooth`` defaults to True - so the
+            default path was the one that could report a pose it had not
+            commanded a single packet towards.
+
+            Every motor is still attempted, matching those siblings: the
+            reported outcome changes, the packets do not. An empty loop
+            (``steps <= 0``, which :func:`_smooth_move_option_error` refuses
+            before any caller of :func:`pose_tool` reaches here) commands
+            nothing and drops nothing, so it still answers True - "you asked
+            for no increments" is not the same failure as "this joint did not
+            move".
         """
         current_positions = self.read_all_positions()
+
+        # A motor whose current position did not arrive has no start point, so
+        # the loop below builds no trajectory for it and never commands it.
+        # Name it: the caller asked for that joint to move and it will not.
+        unreadable = sorted(set(target_positions) - set(current_positions))
+        if unreadable:
+            logger.error(
+                "Interpolated move: no current position for %s, so %s left uncommanded",
+                ", ".join(unreadable),
+                "it was" if len(unreadable) == 1 else "they were",
+            )
 
         # Calculate step increments
         step_increments = {}
@@ -704,16 +741,25 @@ class MotorController:
                 step_increments[motor] = (target - current) / steps
 
         # Execute smooth movement
+        failed: set[str] = set()
         for step in range(steps + 1):
             for motor, target in target_positions.items():
                 if motor in current_positions and motor in step_increments:
                     current = current_positions[motor]
                     new_position = current + (step_increments[motor] * step)
-                    self.move_motor(motor, new_position)
+                    if not self.move_motor(motor, new_position):
+                        # Keep going: a later increment may land once the bus
+                        # recovers, and the remaining joints are still driven
+                        # towards the pose. disable_torque continues past a
+                        # failure for the same reason.
+                        failed.add(motor)
 
             time.sleep(step_delay)
 
-        return True
+        if failed:
+            logger.error("Interpolated move: writes failed for %s", ", ".join(sorted(failed)))
+
+        return not unreadable and not failed
 
     def incremental_move(self, motor_name: str, delta_degrees: float) -> bool:
         """Move motor by a small increment."""
