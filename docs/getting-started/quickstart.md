@@ -59,5 +59,5 @@ training a policy, and the full streaming data loop, each building on the last.
 ## See also
 
 - [Policy providers](../policies/overview.md) - GR00T, LeRobot Local, Cosmos 3.
-- [Robot catalog](../robots/index.md) - all 72 robots.
+- [Robot catalog](../robots/index.md) - all 73 robots.
 - [Real hardware](../hardware/robot-control.md) - same code, `mode="real"`.

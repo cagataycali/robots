@@ -26,6 +26,7 @@ sim = Robot("reachy_mini")      # Pollen Reachy Mini (expressive)
 | `elf2` | BXI Elf2 Humanoid (25-DOF) | 26 | `bxi_elf2` |
 | `fourier_n1` | Fourier N1 / GR-1 Humanoid (26-DOF) | 26 | `fourier_gr1`, `fourier_gr1_arms_only`, `fourier_gr1_arms_waist`, `fourier_gr1_full_upper_body`, `gr1` |
 | `jvrc` | JVRC-1 Humanoid (HRP-based, 45-DOF) | 45 | `jvrc1` |
+| `microduck` | Pollen Microduck (14-DOF open-source biped, Dynamixel XL330) | 15 | `micro_duck`, `pollen_microduck` |
 | `op3` | ROBOTIS OP3 Humanoid (20-DOF) | 21 | `robotis_op3` |
 | `open_duck_mini` | Open Duck Mini V2 (16-DOF expressive biped, Feetech servos) | 16 | `bdx`, `mini_bdx`, `open_duck`, `open_duck_mini_v2`, `open_duck_v2` |
 | `rby1` | Rainbow Robotics RB-Y1A Mobile Manipulator (31-DOF) | 31 | `rby1a`, `rainbow_rby1` |
@@ -63,6 +64,12 @@ _Agility Cassie Bipedal Robot_
 ![fourier_n1](../assets/sim_render_fourier_n1.png){ width=400 }
 
 _Fourier N1 / GR-1 Humanoid (26-DOF)_
+
+### `microduck`
+
+![microduck](../assets/sim_render_microduck.png){ width=400 }
+
+_Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)_
 
 ### `open_duck_mini`
 

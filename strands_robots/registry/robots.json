@@ -685,6 +685,25 @@
         "jvrc1"
       ]
     },
+    "microduck": {
+        "description": "Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)",
+        "category": "humanoid",
+        "joints": 15,
+        "asset": {
+            "dir": "microduck",
+            "model_xml": "robot_allcollisions.xml",
+            "scene_xml": "scene.xml",
+            "source": {
+                "type": "github",
+                "repo": "pollen-robotics/microduck_rl",
+                "subdir": "src/mjlab_microduck/robot/microduck"
+            }
+        },
+        "aliases": [
+            "micro_duck",
+            "pollen_microduck"
+        ]
+    },
     "op3": {
       "description": "ROBOTIS OP3 Humanoid (20-DOF)",
       "category": "humanoid",
