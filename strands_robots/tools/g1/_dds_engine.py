@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _release_partial(endpoint: Any | None, what: str) -> None:
-    """Close an endpoint whose construction failed, rather than dropping it.
+    """Close an endpoint :meth:`close` can never reach, rather than dropping it.
 
     ``ChannelSubscriber.__init__`` and ``ChannelPublisher.__init__`` create a
     live ``Channel`` before ``Init`` runs, and ``Init`` is not atomic either:
@@ -45,7 +45,11 @@ def _release_partial(endpoint: Any | None, what: str) -> None:
 
     Such an endpoint is unreachable from :meth:`DDSSubscriberSet.close` and
     :meth:`DDSPublisher.close`, because the call that failed never recorded
-    it - so releasing it here is the only opportunity. ``Close()`` is safe on
+    it - so releasing it here is the only opportunity. A construction that
+    *succeeded* reaches the same state when a concurrent teardown swapped the
+    collection away before it could record: the endpoint would land in a fresh
+    list or dict that ``close`` has already walked past, so it is released here
+    too rather than recorded somewhere nothing will look. ``Close()`` is safe on
     a half-built endpoint: it routes to ``Channel.CloseReader`` /
     ``CloseWriter``, which skip an entity that was never created and still
     stop and join the reader thread.
@@ -134,6 +138,11 @@ class DDSSubscriberSet:
             from unitree_sdk2py.core.channel import ChannelSubscriber
         except ImportError as exc:  # pragma: no cover - exercised on hardware
             return f"unitree_sdk2py is not installed: {exc}"
+        with self._lock:
+            # :meth:`close` rebinds ``_subs`` to a fresh list, so the identity
+            # of the list this call was told to append to IS the teardown
+            # generation. Captured before construction, compared after.
+            target = self._subs
         with _DDS_INIT_LOCK:
             sub: Any | None = None
             try:
@@ -142,7 +151,16 @@ class DDSSubscriberSet:
             except Exception as exc:  # noqa: BLE001 - SDK raises bare Exception
                 _release_partial(sub, f"subscriber for {topic!r}")
                 return f"failed to subscribe to {topic!r}: {exc}"
-            self._subs.append(sub)
+            with self._lock:
+                recorded = self._subs is target
+                if recorded:
+                    self._subs.append(sub)
+            if not recorded:
+                _release_partial(sub, f"subscriber for {topic!r}")
+                return (
+                    f"set was closed while subscribing to {topic!r}; the subscriber "
+                    f"was released rather than recorded where close() cannot reach it"
+                )
             logger.debug("subscribed to %s", topic)
             return None
 
@@ -161,9 +179,13 @@ class DDSSubscriberSet:
         thread's stop event, joins it and drops the reader; nothing else does.
 
         The list is swapped out under :attr:`_lock` before any ``Close()``
-        runs, so a second call finds nothing to close and a concurrent
-        :meth:`subscribe` - which appends without that lock - cannot mutate
-        the list being walked. Each subscriber is then closed under its own
+        runs, so a second call finds nothing to close. Rebinding it is also
+        the teardown generation marker: :meth:`subscribe` captures the list it
+        was told to append to, and records under the same lock only while that
+        is still the current one. So a subscribe racing this call either lands
+        in the list being walked or releases its own subscriber - it can never
+        leave a live one in a collection ``close`` has already passed. Each
+        subscriber is then closed under its own
         ``try``, because a teardown that abandons the subscribers behind a
         failing one leaks exactly what it was called to release.
 
@@ -265,6 +287,11 @@ class DDSPublisher:
             from unitree_sdk2py.core.channel import ChannelPublisher
         except ImportError as exc:  # pragma: no cover - exercised on hardware
             return None, f"unitree_sdk2py is not installed: {exc}"
+        with self._lock:
+            # :meth:`close` rebinds ``_pubs`` to a fresh dict, so the identity
+            # of the cache this call was told to write to IS the teardown
+            # generation. Captured before construction, compared after.
+            target = self._pubs
         with _DDS_INIT_LOCK:
             # Double-check under lock: another caller may have created it
             # while we were waiting on the lock.
@@ -278,7 +305,16 @@ class DDSPublisher:
             except Exception as exc:  # noqa: BLE001 - SDK raises bare Exception
                 _release_partial(pub, f"publisher for {topic!r}")
                 return None, f"failed to build publisher for {topic!r}: {exc}"
-            self._pubs[key] = pub
+            with self._lock:
+                recorded = self._pubs is target
+                if recorded:
+                    self._pubs[key] = pub
+            if not recorded:
+                _release_partial(pub, f"publisher for {topic!r}")
+                return None, (
+                    f"cache was closed while building a publisher for {topic!r}; it "
+                    f"was released rather than cached where close() cannot reach it"
+                )
             logger.debug("built publisher for %s", topic)
             return pub, None
 
@@ -324,8 +360,10 @@ class DDSPublisher:
         reference cycle can defer indefinitely. Closing says when.
 
         Mirrors :meth:`DDSSubscriberSet.close`: the cache is swapped out under
-        :attr:`_lock` so a second call closes nothing twice, and each publisher
-        is closed under its own ``try`` so one failure cannot strand the rest.
+        :attr:`_lock` so a second call closes nothing twice, that rebinding is
+        the teardown generation :meth:`get_publisher` compares against before
+        it caches, and each publisher is closed under its own ``try`` so one
+        failure cannot strand the rest.
 
         The driver holds no :class:`DDSPublisher` yet - the control loop that
         owns one lands with issue #361 - so today this is reached only by a

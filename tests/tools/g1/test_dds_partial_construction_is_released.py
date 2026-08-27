@@ -504,6 +504,22 @@ def _constructions_that_do_not_release(module_source: str) -> list[str]:
     return offenders
 
 
+def _functions_that_close_an_endpoint(source: str) -> set[str]:
+    """Names of the functions in ``source`` that call ``<endpoint>.Close()``.
+
+    A release that does not route through :func:`_release_partial` shows up
+    here as a third name, whichever call site introduced it.
+    """
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == "Close":
+                names.add(node.name)
+    return names
+
+
 class TestEveryEndpointConstructionRoutesThroughOneRelease:
     """A third endpoint kind cannot reintroduce the drop.
 
@@ -521,11 +537,17 @@ class TestEveryEndpointConstructionRoutesThroughOneRelease:
         source = inspect.getsource(_dds_engine)
         assert _endpoint_class_names(source) == {"ChannelSubscriber", "ChannelPublisher"}
 
-    def test_the_release_is_named_once_for_both_paths(self) -> None:
-        """One helper, so the two paths cannot drift apart."""
+    def test_the_release_is_named_once_for_every_path(self) -> None:
+        """One helper, so no release path can drift away from the others.
+
+        Stated as "every ``Close()`` in the module is either the helper's own
+        or a ``close`` method's" rather than as a call-site count: a count has
+        to be edited every time a release opportunity is added, and editing it
+        is indistinguishable from noticing that a new one bypassed the helper.
+        """
         source = inspect.getsource(_dds_engine)
         assert source.count("def _release_partial(") == 1
-        assert source.count("_release_partial(") == 3
+        assert _functions_that_close_an_endpoint(source) == {"_release_partial", "close"}
 
     @pytest.mark.parametrize(
         ("label", "handler_body", "expected_offenders"),
