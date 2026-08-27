@@ -1053,11 +1053,35 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         - ``source_peer_id``: REQUIRED.
         - ``device_name`` (optional): defaults to ``"leader"`` downstream.
     * ``teleop_stop``: ``device_name`` (optional) must be a str or null.
+    * ``teleop_publish``: publishes the leader's own inputs on the mesh so a
+      follower can subscribe to them. ``device_name`` (optional) becomes a
+      segment of the published Zenoh key expression, so it is validated by
+      the same :func:`validate_mesh_identifier` rule as
+      ``teleop_receive.device_name`` -- no wildcards, no unicode / control
+      characters. ``hz`` (optional) is a float in ``(0, 200]`` bounding the
+      publish loop's 1/hz period; an absurd rate is a denial of service
+      against the arm's own state stream, and a boolean is refused as a
+      number so ``True`` cannot silently reach the rate limiter as ``1.0``.
+      ``robot_name`` (optional) follows the same identifier rule as the
+      other robot-scoped actions.
     * ``resume``: ``override_code`` (optional, defaults to ``""``): str of at
       most :data:`MAX_OVERRIDE_CODE_LEN` characters, printable ASCII only
       (no C0/DEL/CRLF). The operator's second factor for clearing an e-stop
       lockout is bounded here so it cannot carry a control character into the
       audit trail, and cannot reach ``Mesh._resume_lockout`` as a non-string.
+    * ``sim_call``: invokes one published Simulation action on the target
+      peer. ``sim_action`` (required, non-empty) and ``sim_params`` (optional
+      dict) are shape-bounded by :func:`validate_device_rpc` -- identifier
+      charset, JSON-object params, encoded size -- exactly as a Device Connect
+      native RPC is. In addition, ``sim_action`` is refused when it names an
+      action in :data:`SIM_CALL_BLOCKED_ACTIONS`: policy rollouts
+      (``run_policy`` / ``start_policy`` / ``replay_episode`` / ``eval_policy``)
+      must ride the ``execute`` / ``start`` actions instead, so the
+      ``policy_provider`` / HF-repo / ``policy_host`` allowlists cannot be
+      bypassed by tunnelling a rollout through opaque ``sim_params``.
+      ``robot_name`` (optional) disambiguates which robot in a multi-robot
+      world the action targets and follows the same identifier rule as
+      ``execute.robot_name``.
 
     Raises :class:`ValidationError` on any rule violation.
     """
