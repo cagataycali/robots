@@ -322,7 +322,11 @@ class TestTheRefusalLocatesAnUnnamedGeom:
 
 
 class TestOneOwnerForTheWording:
-    """One guard for all four parse paths, so no spelling drifts from the rest."""
+    """One guard for every parse path, so no spelling drifts from the rest.
+
+    Four geom paths (``pos``, ``size``, the orientation spelling, ``fromto``)
+    and the body placements the same bound is composed from.
+    """
 
     def test_every_finiteness_refusal_in_the_module_is_the_shared_one(self) -> None:
         import ast
@@ -341,7 +345,26 @@ class TestOneOwnerForTheWording:
                 if isinstance(inner, ast.Attribute) and inner.attr == "isfinite":
                     owners.add(node.name)
         assert owners, "the scan found no finiteness test at all - it is looking in the wrong place"
-        assert owners == {"_refuse_non_finite_geom"}, owners
+        assert owners == {"_refuse_non_finite_placement"}, owners
+
+    def test_every_locator_delegates_to_that_one_owner(self) -> None:
+        # Geoms and bodies are located differently but share the wording, so
+        # each locator must reach the single owner rather than raise its own.
+        import ast
+        import inspect
+
+        from strands_robots.simulation.isaac import loaders
+
+        for wrapper in ("_refuse_non_finite_geom", "_refuse_non_finite_body"):
+            tree = ast.parse(inspect.getsource(getattr(loaders, wrapper)).strip())
+            called = {
+                node.func.id
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            }
+            assert "_refuse_non_finite_placement" in called, (wrapper, called)
+            raises = [n for n in ast.walk(tree) if isinstance(n, ast.Raise)]
+            assert raises == [], (wrapper, "a locator must not carry its own wording")
 
     def test_the_guard_is_reached_from_every_parse_path(self) -> None:
         import ast

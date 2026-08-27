@@ -1831,6 +1831,61 @@ def _segment_aabb(
     return center, half  # type: ignore[return-value]
 
 
+def _refuse_non_finite_placement(where: str, attribute: str, values: Sequence[float]) -> None:
+    """Refuse a placement or extent that parsed but is not finite.
+
+    The single owner of the finiteness test, so the geom paths and the body
+    paths cannot drift into tolerating what the other refuses. ``where`` is the
+    locator its caller built - :func:`_refuse_non_finite_geom` for a geom,
+    :func:`_refuse_non_finite_body` for a body - because the two elements are
+    located differently and only the wording below is shared.
+
+    Args:
+        where: The element at fault, already rendered for the message.
+        attribute: The MJCF attribute whose parsed value is not finite.
+        values: The parsed components, reported so the caller sees which.
+
+    Raises:
+        ValueError: If any component of ``values`` is not finite.
+    """
+    if all(map(math.isfinite, values)):
+        return
+    raise ValueError(
+        f"{where}: {attribute} has a component that is not finite ({tuple(values)!r}) - a body "
+        f"measured around it reports a collision bound for geometry the scene does not declare, "
+        f"so the geom is refused instead of measured around"
+    )
+
+
+def _refuse_non_finite_body(body_el: ET.Element, attribute: str, values: Sequence[float]) -> None:
+    """Refuse a body whose own placement parsed but is not finite.
+
+    A body's ``pos`` is folded into the bound exactly as a geom's is - the
+    top-level one becomes the object's reported ``position``, and a nested
+    one becomes the running offset every geom below it is measured from. A
+    non-finite component there is dropped by the same running ``min``/``max``
+    :func:`_refuse_non_finite_geom` describes, so the whole subtree disappears
+    from the bound while every field the loader reports stays finite: a table
+    whose leg hangs off a ``pos="0 0 nan"`` body is measured as its tabletop
+    alone, byte-identical to the same fixture with the leg deleted.
+
+    Bodies carry no ``type``, so an unnamed one is located as ``<body>`` rather
+    than by the resolved-type fallback the geom locator uses. The element is
+    read directly rather than through :func:`_class_attrs`: MJCF ``<default>``
+    classes supply geom attributes, not a body's own placement.
+
+    Args:
+        body_el: The ``<body>`` whose parsed placement is not finite.
+        attribute: The MJCF attribute at fault (``pos`` or the orientation).
+        values: The parsed components, reported so the caller sees which.
+
+    Raises:
+        ValueError: If any component of ``values`` is not finite.
+    """
+    name = body_el.get("name")
+    _refuse_non_finite_placement(f"body {name!r}" if name else "unnamed <body>", attribute, values)
+
+
 def _refuse_non_finite_geom(attrs: Mapping[str, str], attribute: str, values: Sequence[float]) -> None:
     """Refuse a geom whose placement or extent parsed but is not finite.
 
@@ -1882,15 +1937,9 @@ def _refuse_non_finite_geom(attrs: Mapping[str, str], attribute: str, values: Se
     Raises:
         ValueError: If any component of ``values`` is not finite.
     """
-    if all(map(math.isfinite, values)):
-        return
     name = attrs.get("name")
     where = f"geom {name!r}" if name else f'unnamed <geom type="{attrs.get("type", "sphere")}">'
-    raise ValueError(
-        f"{where}: {attribute} has a component that is not finite ({tuple(values)!r}) - a body "
-        f"measured around it reports a collision bound for geometry the scene does not declare, "
-        f"so the geom is refused instead of measured around"
-    )
+    _refuse_non_finite_placement(where, attribute, values)
 
 
 def _geom_aabb(
@@ -2047,9 +2096,12 @@ def _body_collision_aabb(
     The union below is a running ``min``/``max``, which would order a NaN as
     neither smaller nor larger than anything and drop the geom carrying it -
     reporting the bounds of the geoms that are finite, under no error. That
-    input never arrives here: :func:`_geom_aabb` refuses a non-finite
-    placement or extent at the parse (:func:`_refuse_non_finite_geom`), so
-    every AABB folded in is finite by the time it reaches this comparison.
+    input never arrives here: :func:`_geom_aabb` refuses a non-finite geom
+    placement or extent at the parse (:func:`_refuse_non_finite_geom`), and
+    :func:`_recursive_collision_aabb` refuses a non-finite body ``pos`` before
+    it becomes the offset a subtree is measured from
+    (:func:`_refuse_non_finite_body`), so every AABB folded in is finite by the
+    time it reaches this comparison.
 
     ``angle_scale`` and ``eulerseq`` come from the model's ``<compiler>`` and
     are only forwarded; they default to MJCF's own defaults (degrees, ``xyz``)
@@ -2107,6 +2159,11 @@ def _recursive_collision_aabb(
         found = True
     for child in body_el.findall("body"):
         child_off = _parse_xyz(child.get("pos"))
+        # The running offset every geom below this child is measured from, so a
+        # non-finite component makes each of their bounds non-finite and the
+        # min/max above drops the whole subtree - leaving every field the loader
+        # reports finite and the bound describing the geoms that remain.
+        _refuse_non_finite_body(child, "pos", child_off)
         new_off = (offset[0] + child_off[0], offset[1] + child_off[1], offset[2] + child_off[2])
         found = (
             _recursive_collision_aabb(
@@ -2167,7 +2224,7 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
     ValueError
         If the XML is malformed, the root isn't ``<mujoco>``, there is no
         ``<worldbody>``, a selected mesh asset file is missing on disk, or a
-        geom declares a placement or extent that is not finite (a body
+        geom or body declares a placement or extent that is not finite (a body
         measured around one reports a collision bound for geometry the scene
         does not declare, so it is refused rather than approximated).
     """
@@ -2203,7 +2260,13 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
             continue
 
         body_pos = _parse_xyz(body_el.get("pos"))
+        _refuse_non_finite_body(body_el, "pos", body_pos)
         body_quat = _parse_orientation(body_el.attrib, angle_scale=angle_scale, eulerseq=eulerseq)
+        # Name the spelling the file used, so the refusal points at an attribute
+        # a reader can go and look at rather than at the resolved quaternion -
+        # the rule _geom_aabb already follows for a geom's orientation.
+        body_spelling = next((a for a in _ORIENTATION_SPELLINGS if body_el.get(a)), "quat")
+        _refuse_non_finite_body(body_el, body_spelling, body_quat)
 
         # Movable object? -> has a free joint (``<freejoint>`` or
         # ``<joint type="free">``). Otherwise treat as a static fixture.
