@@ -27,7 +27,7 @@ import keyword
 import re
 from collections.abc import AsyncGenerator, Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # ── classification ──────────────────────────────────────────────────────────
 
@@ -408,7 +408,7 @@ def build_peer_tools(
 
         @property
         def tool_name(self) -> str:
-            return self._spec["name"]
+            return cast(str, self._spec["name"])
 
         @property
         def tool_spec(self) -> dict[str, Any]:

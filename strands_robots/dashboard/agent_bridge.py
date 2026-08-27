@@ -372,7 +372,7 @@ def _make_fleet_tool() -> Any:
             from strands_robots.dashboard.agent_hitl import consume_grant
             from strands_robots.dashboard.agent_motion import agent_motion_allowed
 
-            snap_peers = {}
+            snap_peers: dict[str, Any] = {}
             try:
                 snap_peers = _bridge.snapshot().get("peers") or {}
             except Exception:  # noqa: BLE001 - an unreadable snapshot means UNKNOWN, i.e. metal

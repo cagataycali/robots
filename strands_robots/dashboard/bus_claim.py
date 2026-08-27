@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from typing import Any
 
 
 def sibling_devices(port: str) -> list[str]:
@@ -20,7 +21,7 @@ def sibling_devices(port: str) -> list[str]:
     return out
 
 
-def bus_holders(port: str, *, _run=None) -> list[int]:
+def bus_holders(port: str, *, _run: Any = None) -> list[int]:
     """Pids with this bus (or its sibling device) open, excluding ourselves. lsof is not on the agent
     shell's PATH on this Mac, hence the explicit /usr/sbin probe.
     """

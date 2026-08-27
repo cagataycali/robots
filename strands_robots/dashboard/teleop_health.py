@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 __all__ = ["diagnose_receiver", "envelope_refusal", "published_frames", "teleop_health"]
 
@@ -163,7 +163,7 @@ def _status_payload(status: Any) -> Mapping[str, Any] | None:
         return status
     for block in status.get("content") or []:
         if isinstance(block, Mapping) and isinstance(block.get("json"), Mapping):
-            return block["json"]
+            return cast("Mapping[str, Any]", block["json"])
     return None
 
 

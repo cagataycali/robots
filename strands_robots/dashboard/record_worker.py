@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from strands_robots.dashboard import record_motion
 
@@ -458,7 +458,7 @@ class RecordWorker:
             return True
 
 
-def camera_verdict(requested, present) -> dict[str, Any] | None:
+def camera_verdict(requested: Any, present: Any) -> dict[str, Any] | None:
     """What the operator must be told about cameras BEFORE they collect."""
     req = sorted(str(c) for c in (requested or ()))
     got = sorted(str(c) for c in (present or ()))
@@ -530,7 +530,7 @@ def hardware_backend(
                         "or copy an existing calibration json to that path - "
                         "a headless server cannot run the interactive wizard."
                     )
-            obs = self._robot.get_observation()
+            obs = cast(Any, self._robot).get_observation()
             self.camera_keys = sorted(k for k, v in obs.items() if getattr(v, "ndim", 0) == 3)
             self._camera_dims = {k: (obs[k].shape[0], obs[k].shape[1]) for k in self.camera_keys}
             # Requested vs actually-present, judged at OPEN time: the caller's
@@ -558,7 +558,7 @@ def hardware_backend(
             return dict(sent) if isinstance(sent, dict) else dict(action)
 
         def follower_observation(self) -> dict[str, Any]:
-            return dict(self._robot.get_observation())
+            return dict(cast(Any, self._robot).get_observation())
 
         def close(self) -> None:
             for dev in (self._leader, self._robot):

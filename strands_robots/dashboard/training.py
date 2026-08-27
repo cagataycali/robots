@@ -416,6 +416,7 @@ def submit(body: dict[str, Any]) -> dict[str, Any]:
     kwargs, err = _spec_kwargs(body)
     if err is not None:
         return err
+    kwargs = kwargs or {}
     if not confirm_clear and kwargs and kwargs.get("output_dir"):
         verdict = output_dir_verdict(str(kwargs["output_dir"]))
         if verdict.get("needs_confirm"):
@@ -452,6 +453,7 @@ def validate(body: dict[str, Any]) -> dict[str, Any]:
     kwargs, err = _spec_kwargs(body)
     if err is not None:
         return err
+    kwargs = kwargs or {}
     from strands_robots.tools.train_policy import train_policy
 
     return _tool_result(train_policy(action="validate", **kwargs))

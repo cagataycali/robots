@@ -14,7 +14,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, cast
 
 from strands_robots.dashboard import joint_silence, safety_state
 from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
@@ -630,7 +630,7 @@ class MeshBridge:
             queues = list(self._queues)
         for q in queues:
 
-            def _put(q=q):
+            def _put(q: Any = q) -> None:
                 if q.full():
                     with contextlib.suppress(asyncio.QueueEmpty):
                         q.get_nowait()  # drop oldest - dashboards want latest
@@ -706,7 +706,7 @@ class MeshBridge:
         import base64
 
         try:
-            raw = base64.b64decode(encoded)
+            raw: bytes | None = base64.b64decode(encoded)
         except Exception:
             return
         meta: dict[str, Any] = {
@@ -716,7 +716,7 @@ class MeshBridge:
         }
         # A peer may publish raw pixel bytes instead of JPEG.
         if str(meta["encoding"] or "jpeg").lower() not in ("jpeg", "jpg"):
-            raw, error = _raw_to_jpeg(raw, meta.get("shape"))
+            raw, error = _raw_to_jpeg(cast(bytes, raw), meta.get("shape"))
             meta["converted"] = error is None
             if error:
                 meta["error"] = error

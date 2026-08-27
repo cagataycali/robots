@@ -13,7 +13,7 @@ import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jwt  # PyJWT
 from fastapi import HTTPException
@@ -163,7 +163,7 @@ def _save(store: dict[str, Any]) -> None:
 
 
 def _jwt_secret() -> str:
-    return _load()["jwt_secret"]
+    return cast(str, _load()["jwt_secret"])
 
 
 def has_credentials() -> bool:
@@ -264,7 +264,7 @@ def _derive_rp_id(request_or_ws: Any) -> str:
                 "STRANDS_DASH_AUTH_RP_ID if it legitimately changed",
             },
         )
-    return rp_id
+    return cast(str, rp_id)
 
 
 def _derive_origin(request_or_ws: Any) -> str:
@@ -274,7 +274,7 @@ def _derive_origin(request_or_ws: Any) -> str:
     headers = _headers(request_or_ws)
     origin = headers.get("origin")
     if origin:
-        return origin.rstrip("/")
+        return cast(str, origin.rstrip("/"))
     host = headers.get("host", "localhost:8090")
     scheme = "https" if headers.get("x-forwarded-proto") == "https" else "http"
     return f"{scheme}://{host}"
@@ -664,7 +664,7 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
         match["rp_id"] = rec["extra"]["rp_id"]
         logger.info("recorded rp_id %r for credential %s", match["rp_id"], match.get("name"))
     _save(store)
-    token = issue_token(cred_id, name=match.get("name", "passkey"))
+    token = issue_token(cast(str, cred_id), name=match.get("name", "passkey"))
     return {"ok": True, "token": token, "credential_id": cred_id}
 
 

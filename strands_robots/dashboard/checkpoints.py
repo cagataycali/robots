@@ -437,7 +437,8 @@ def declared_features(repo_id: str) -> dict[str, Any]:
             if not isinstance(data, dict):
                 continue
             # train_config.json nests the policy config under "policy".
-            block = data.get("policy") if isinstance(data.get("policy"), dict) else data
+            pol = data.get("policy")
+            block = pol if isinstance(pol, dict) else data
             inp = block.get("input_features")
             out = block.get("output_features")
             if isinstance(inp, dict) or isinstance(out, dict):

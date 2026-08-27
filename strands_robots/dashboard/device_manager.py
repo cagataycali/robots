@@ -19,7 +19,7 @@ from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from strands_robots.dashboard import bus_claim
 
@@ -177,7 +177,7 @@ def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
         logs.append(f"[drain error: {e}]")
     finally:
         try:
-            code = proc.wait(timeout=5)  # EOF usually precedes reaping by a tick
+            code: int | None = proc.wait(timeout=5)  # EOF usually precedes reaping by a tick
         except Exception:
             code = proc.poll()
         logs.append(f"[process exited code={code}]")
@@ -1334,7 +1334,7 @@ class DeviceManager:
                     **roles.get(e.get("device"), {}),
                     # Absent stays absent: a board nobody configured carries no `remembered` key at
                     # all, rather than an empty object a screen would have to special-case.
-                    **({"remembered": r} if (r := remembered.get(e.get("device"))) else {}),
+                    **({"remembered": r} if (r := remembered.get(cast(str, e.get("device")))) else {}),
                 }
                 for e in ports
             ],
@@ -1707,7 +1707,10 @@ class DeviceManager:
                     return {"error": conflict}
             # Stamp each numeric camera index with the device that answers it RIGHT NOW, while the
             # operator's choice and the machine's numbering are still known to agree.
-            cameras = camera_liveness.stamp_device_names(cameras, self._roster_for_stamp())
+            cameras = cast(
+                "dict[str, Any] | None",
+                camera_liveness.stamp_device_names(cameras, self._roster_for_stamp()),
+            )
             cfg = {
                 "robot_name": robot_name,
                 "mode": mode,

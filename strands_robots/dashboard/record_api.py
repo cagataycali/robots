@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -147,7 +147,7 @@ class RecordController:
                 idle = dict(EMPTY_SESSION)
                 crumb = record_crash.read_crumb(self._crumb)
                 notice = record_crash.interrupted_notice(
-                    crumb, same_process=bool(crumb) and crumb.get("pid") == os.getpid()
+                    crumb, same_process=bool(crumb) and cast("dict[str, Any]", crumb).get("pid") == os.getpid()
                 )
                 if notice:
                     idle["interrupted"] = notice

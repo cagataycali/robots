@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, cast
 
 from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 
@@ -110,7 +110,7 @@ def motion_intent(
     if not instruction and tool_name in DIRECT_SERIAL_TOOLS:
         # pose/serial inputs carry the motion in named fields, not an
         # instruction string; show the operator WHAT a yes moves, verbatim.
-        instruction = _direct_serial_detail(action, tool_input)
+        instruction = _direct_serial_detail(action, cast("dict[str, Any]", tool_input))
     reason: dict[str, Any] = {
         "tool": tool_name,
         "action": action,

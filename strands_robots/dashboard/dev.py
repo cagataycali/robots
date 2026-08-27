@@ -26,6 +26,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from typing import Any, cast
 
 DEFAULT_PORT = 8090
 ZENOH_PORT = 7447
@@ -106,7 +107,7 @@ def tty_refusal_reason(platform_name: str) -> str:
     return "a daemon-started start is refused by default rather than assumed camera-capable."
 
 
-def calibration_verdicts(profiles: dict, has_calibration) -> list[str]:
+def calibration_verdicts(profiles: dict, has_calibration: Any) -> list[str]:
     """One line per real-mode profile: a robot_id with no robot-side calibration file
     joins the mesh, streams cameras, and reports NO JOINTS — say it before the wait."""
     lines = []
@@ -152,7 +153,7 @@ def _http(url: str, token: str | None = None, timeout: float = 3.0) -> int:
         req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status
+            return cast(int, r.status)
     except urllib.error.HTTPError as e:
         return e.code
     except Exception:

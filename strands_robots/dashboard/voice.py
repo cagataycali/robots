@@ -87,7 +87,7 @@ def build_voice_agent(provider: str | None = None, voice: str | None = None) -> 
 
     provider = provider or os.getenv("VOICE_PROVIDER", "openai")
     voice = voice or os.getenv("VOICE_NAME") or None
-    model = _build_bidi_model(provider, voice)
+    model = _build_bidi_model(provider or "openai", voice)
     return BidiAgent(
         model=model,
         tools=[_make_fleet_tool(), stop_conversation],
@@ -112,7 +112,7 @@ async def run_voice_session(ws: Any) -> None:
             BidiTranscriptStreamEvent,
         )
     except ImportError:
-        BidiTranscriptStreamEvent = None  # older strands
+        BidiTranscriptStreamEvent = None  # type: ignore[assignment,misc]
         from strands.experimental.bidi.types.events import (  # type: ignore[no-redef]
             BidiAudioInputEvent,
             BidiAudioStreamEvent,

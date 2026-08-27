@@ -18,7 +18,7 @@ import functools
 import inspect
 import os
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, cast
 
 __all__ = [
     "POSE_PORT_FREE",
@@ -151,7 +151,7 @@ def _guard(sdk_tool: Any, port_free: frozenset[str], deps: dict[str, Any]) -> An
         )
         if refusal:
             return {"status": "error", "content": [{"text": refusal}]}
-        return fn(*args, **kwargs)
+        return cast("dict[str, Any]", fn(*args, **kwargs))
 
     return tool(guarded)
 

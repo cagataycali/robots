@@ -34,7 +34,8 @@ def _source_of(data: dict[str, Any]) -> str | None:
 
 def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float) -> Lockout:
     """Fold one `strands/safety/**` event into the verdict."""
-    when = data.get("t") if isinstance(data.get("t"), (int, float)) else now
+    t_val = data.get("t")
+    when = t_val if isinstance(t_val, (int, float)) else now
     who = _source_of(data)
     if kind == "estop":
         return Lockout(
