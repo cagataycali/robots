@@ -40,6 +40,7 @@ Two cells that grade the shape, one over-reach control:
     Grading it here surfaces that regression at the same point the shape
     is graded.
 """
+
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -47,7 +48,6 @@ import numpy as np
 import torch
 
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
-
 
 NAMED_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 
