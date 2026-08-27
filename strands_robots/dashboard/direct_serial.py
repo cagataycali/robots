@@ -1,8 +1,7 @@
 """Bus-guarded direct-serial tools for the dashboard agent.
 
 The SDK's pose_tool / serial_tool open a serial port DIRECTLY -- but this
-dashboard's robots are child processes that HOLD those buses (the
-architecture's core constraint, DASHBOARD_VS_SDK.md section 0). A second owner on a
+dashboard's robots are child processes that HOLD those buses. A second owner on a
 half-duplex servo bus corrupts both conversations, so the guarded wrappers
 here refuse a held port BEFORE the SDK tool opens it, naming the holder, and
 refuse a missing port with the machine's actual choices instead of letting
