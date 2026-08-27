@@ -2041,6 +2041,25 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # ancestor to compare against - .resolve() on the user path each
         # request would race a symlink swap.
         _DIST_ROOT = FRONTEND_DIST.resolve()
+        # Fallback SPA entry-point, computed once from the resolved root so
+        # the ``FileResponse`` on the fallback branch never mentions user
+        # input: it is a module-scope-visible constant to CodeQL.
+        _INDEX_HTML = _DIST_ROOT / "index.html"
+        # Whitelist regex for one SPA path segment. ``fullmatch`` against a
+        # bounded character class is a barrier CodeQL's py/path-injection
+        # sanitiser recognises; the segment-level split rejects ``..`` and
+        # empty segments explicitly at the call site.
+        _SAFE_SPA_SEGMENT = re.compile(r"[A-Za-z0-9._-]+")
+
+        def _admit_spa_path(raw: str) -> str | None:
+            if not raw:
+                return None
+            for segment in raw.split("/"):
+                if segment == "" or segment == "..":
+                    return None
+                if _SAFE_SPA_SEGMENT.fullmatch(segment) is None:
+                    return None
+            return raw
 
         @app.get("/{path:path}")
         async def spa(path: str) -> Response:
@@ -2061,43 +2080,35 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # FRONTEND_DIST and FileResponse serves it - a real filesystem
             # read on a path FastAPI happily forwards.
             #
-            # Sanitize the raw string BEFORE it touches the filesystem: a
-            # segment equal to ``..``, any absolute-path leader ('/' or a
-            # Windows drive) or a NUL byte cannot describe a descendant of
-            # _DIST_ROOT and CodeQL's py/path-injection sink cannot prove that
-            # a post-resolve ``relative_to`` guard is complete. Refuse them
-            # here, then still hold the ``relative_to`` guard as belt-and-
-            # -braces against a symlink that points outside the dist tree.
-            def _looks_traversable(raw: str) -> bool:
-                if not raw:
-                    return False
-                if "\x00" in raw:
-                    return True
-                # Normalize separators once so a Windows-style leader is caught
-                # even when the ASGI layer forwarded backslashes verbatim.
-                unified = raw.replace("\\", "/")
-                if unified.startswith("/"):
-                    return True
-                # ``C:`` or any single-letter drive leader.
-                if len(unified) >= 2 and unified[1] == ":" and unified[0].isalpha():
-                    return True
-                return any(seg == ".." for seg in unified.split("/"))
-
-            safe_path = None if _looks_traversable(path) else path
-            candidate = (FRONTEND_DIST / safe_path).resolve() if safe_path else _DIST_ROOT
-            try:
-                candidate.relative_to(_DIST_ROOT)
-                inside_dist = True
-            except ValueError:
-                inside_dist = False
-            if safe_path and inside_dist and candidate.is_file():
-                return FileResponse(
-                    candidate,
-                    headers={"Cache-Control": static_cache_control(safe_path)},
-                )
-            # An SPA route falls back to the entry point, so it is labelled like one.
+            # Three layers of confinement, in order:
+            #
+            # 1. Whitelist regex on each segment via ``_admit_spa_path``.
+            #    ``fullmatch`` against a bounded character class is a barrier
+            #    CodeQL's py/path-injection sanitiser recognises - the sink
+            #    below sees a value that has been through a regex clean.
+            #
+            # 2. Segment-level rejection of ``..`` and empty segments (from
+            #    leading or repeated slashes) inside ``_admit_spa_path``.
+            #
+            # 3. Post-resolve ``is_relative_to`` on the resolved candidate
+            #    against the resolved dist root - belt-and-braces against a
+            #    symlink inside the tree that points outside.
+            safe_path = _admit_spa_path(path)
+            if safe_path is not None:
+                candidate = (FRONTEND_DIST / safe_path).resolve()
+                # ``is_relative_to`` returns False for a path that resolves
+                # outside _DIST_ROOT even via a symlink - the last-line guard
+                # against a symlink inside the tree that points elsewhere.
+                if candidate.is_relative_to(_DIST_ROOT) and candidate.is_file():
+                    return FileResponse(
+                        candidate,
+                        headers={"Cache-Control": static_cache_control(safe_path)},
+                    )
+            # An SPA route falls back to the entry point, so it is labelled
+            # like one. ``_INDEX_HTML`` is a closed-over constant computed at
+            # mount time from ``_DIST_ROOT``; no user input flows into it.
             return FileResponse(
-                FRONTEND_DIST / "index.html",
+                _INDEX_HTML,
                 headers={"Cache-Control": static_cache_control("index.html")},
             )
     else:
