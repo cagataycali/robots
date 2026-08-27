@@ -123,6 +123,42 @@ def _non_finite_vertex_error(mesh_path: str, index: int, vertex: tuple[float, fl
     )
 
 
+def _non_finite_scale_error(mesh_path: str, scale: tuple[float, float, float]) -> ValueError:
+    """The refusal for a mesh scale whose components are not all finite.
+
+    :func:`load_mesh_geometry` already refuses a vertex that is not finite,
+    for the reason :func:`_non_finite_vertex_error` states: ``min``/``max``
+    order a NaN as neither smaller nor larger than anything, so the running
+    comparison drops it and reports the bounds of what remains. ``scale``
+    reaches that same comparison - :func:`mesh_aabb` measures
+    ``vertex * scale`` - so a non-finite component there poisons every
+    vertex on that axis and the comparison drops all of them, leaving the
+    axis at its ``inf``/``-inf`` seed. The asset's own coordinates being
+    finite is therefore not enough: the transform applied to them has to be
+    finite too, and it arrives from the caller rather than from the file.
+
+    The two components fail differently and neither is screenable:
+
+    * A NaN axis reports a centre of NaN and, because the reported extent is
+      floored at ``1e-4``, a **finite** size of 0.1 mm. A consumer that
+      screens the reported fields for non-finite values catches the centre
+      and not the size, so a metre-scale asset passes that screen as a
+      plausible sub-millimetre one.
+    * An infinite axis reports an infinite centre and a size of NaN, because
+      the extent is ``inf - inf``.
+
+    A scale of ``0.0`` stays accepted: it is a finite request to flatten the
+    asset on that axis, and the ``1e-4`` floor is doing the job it is there
+    for. A negative scale stays accepted too - it mirrors the asset, and the
+    running comparison is order-independent, so the bound is right.
+    """
+    return ValueError(
+        f"mesh {mesh_path}: scale has a component that is not finite ({scale!r}) - a mesh measured "
+        f"through it reports a centre that is not a position and an extent floored at 1e-4, so the "
+        f"asset is refused instead of being sized"
+    )
+
+
 def load_mesh_geometry(
     mesh_path: str,
 ) -> tuple[list[tuple[float, float, float]], list[int], list[int]]:
@@ -391,7 +427,10 @@ def mesh_aabb(
         Filesystem path to a ``.obj``, ``.stl`` or ``.msh`` (legacy MuJoCo binary mesh) file.
     scale : tuple[float, float, float]
         Per-axis scale applied to the vertices before measuring (an MJCF
-        ``<mesh scale=...>``). Defaults to unit scale.
+        ``<mesh scale=...>``). Defaults to unit scale. Every component must
+        be finite; it is checked before the asset is parsed, because a
+        transform that can never be applied is not worth reading a mesh
+        for, and the check needs nothing from the file.
 
     Returns
     -------
@@ -402,8 +441,15 @@ def mesh_aabb(
     Raises
     ------
     FileNotFoundError / ValueError
-        Same contract as :func:`load_mesh_geometry`.
+        Same contract as :func:`load_mesh_geometry`, plus
+        :func:`_non_finite_scale_error` when a ``scale`` component is not
+        finite. The asset's vertices being finite does not make the bound
+        finite: ``scale`` reaches the same running comparison, and the
+        reported extent's ``1e-4`` floor makes a NaN axis look like a
+        plausible sub-millimetre asset rather than a failure.
     """
+    if not all(map(math.isfinite, scale)):
+        raise _non_finite_scale_error(mesh_path, scale)
     points, _counts, _indices = load_mesh_geometry(mesh_path)
     mins = [float("inf")] * 3
     maxs = [float("-inf")] * 3
