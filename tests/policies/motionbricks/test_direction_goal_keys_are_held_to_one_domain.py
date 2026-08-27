@@ -46,6 +46,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 import strands_robots.policies.motionbricks.observation as observation
 import strands_robots.policies.motionbricks.policy as policy_module
@@ -77,10 +78,25 @@ def _direction_for(key: str, value: Any) -> list[float]:
 
 
 class _StubAgent:
-    """Enough of a motion agent to construct the policy; never generates."""
+    """A :class:`MotionAgent` that satisfies the protocol and never generates.
 
-    def generate(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - never called
+    Only the constructor is exercised here, so ``next_qpos`` is never reached;
+    the four class attributes are what make this a ``MotionAgent`` structurally,
+    which is how the shipped stub in ``test_policy.py`` satisfies the same seam.
+    """
+
+    clip_keys: list[str] = ["walk"]
+    clip_token_specs: list[list[int] | None] = [None]
+    min_token: int = 1
+    max_token: int = 1
+
+    def reset(self) -> None:  # pragma: no cover - never called
         return None
+
+    def next_qpos(
+        self, control_signals: dict[str, Any], controller_dt: float
+    ) -> NDArray[np.float64]:  # pragma: no cover - never called
+        raise AssertionError("these cells never step the generator")
 
 
 def _build(**kwargs: Any) -> policy_module.MotionBricksPolicy:
