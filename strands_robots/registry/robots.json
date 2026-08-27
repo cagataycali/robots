@@ -702,7 +702,10 @@
         "aliases": [
             "micro_duck",
             "pollen_microduck"
-        ]
+        ],
+        "hardware": {
+            "driver": "strands"
+        }
     },
     "op3": {
       "description": "ROBOTIS OP3 Humanoid (20-DOF)",
