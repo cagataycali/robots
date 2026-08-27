@@ -50,7 +50,7 @@ robot.cleanup()
 | `start_task(instruction, policy_port, policy_host, policy_provider, duration)` | Async; returns immediately. |
 | `stop_task()` | Halt the current task. Covers a task still in `CONNECTING` (bring-up): the rollout is abandoned before the arm is commanded. |
 | `get_task_status()` | Returns `RobotTaskState` (status, step count, error). |
-| `cleanup()` | Stop tasks, disconnect the robot (motors bus + every camera), stop mesh. Terminal - see below. |
+| `cleanup()` | Stop tasks, disconnect the robot (motors bus + every camera), stop mesh. Abandons a task still in `CONNECTING` at its next stage check, like `stop_task()`. Terminal - see below. |
 | `stop()` | Async spelling of `cleanup()`; delegates to it off the event loop. Terminal. |
 
 One rollout at a time: the arm has a single command bus, so `start_task` /
@@ -91,8 +91,11 @@ construct a new `Robot` - work without exiting the process. There is no
 name the shutdown, rather than admitting a rollout that would command the arm
 zero times. A rollout already in flight when the shutdown lands is reported
 `STOPPED`, not `COMPLETED` - a shutdown truncates a task exactly as
-`stop_task()` does, so its step count is a partial one. Construct a new `Robot`
-to run another task.
+`stop_task()` does, so its step count is a partial one. That equivalence covers
+the work as well as the report: a task still in `CONNECTING` is abandoned at its
+next stage check, so the shutdown is not followed by the policy-server dial, the
+observation read and the `Policy.reset()` that the rest of that bring-up would
+have performed. Construct a new `Robot` to run another task.
 
 ## AgentTool actions
 

@@ -1538,19 +1538,58 @@ class Robot(TeleopMixin, AgentTool):
             logger.error(f"Failed to initialize policy: {e}")
             return False
 
+    @property
+    def _rollout_stop_latched(self) -> bool:
+        """Whether either latch says the rollout in flight must not go on.
+
+        Two independent events end a rollout, and a reader that consults one of
+        them lets the stage it guards run on after the robot has been asked to
+        stop:
+
+        * ``_stop_requested`` -- an operator or fleet stop, set by
+          :meth:`stop_task` for a task in ``RUNNING`` or ``CONNECTING``.
+        * ``_shutdown_event`` -- a terminal teardown, set by :meth:`cleanup`
+          before it does anything else.
+
+        The shutdown latch is the one a reader is apt to miss, because it is the
+        only record of a teardown that lands mid-bring-up: ``cleanup()`` gates
+        its ``stop_task()`` call on ``status == RUNNING``, so a task still in
+        ``CONNECTING`` gets no stop latch at all.
+
+        Three readers ask this question -- this gate, the control loop's exit
+        condition and the terminal-status discriminator -- so they read one
+        predicate rather than three copies that can drift apart.
+        """
+        return self._stop_requested.is_set() or self._shutdown_event.is_set()
+
     def _honor_stop_request(self) -> bool:
-        """Record a latched stop request as the task's terminal state.
+        """Record a latched stop or shutdown as the task's terminal state.
 
         Called at each point in ``_execute_task_async`` where the task is about
-        to move on to a stage that commands the arm. ``stop_task`` sets the
-        latch unconditionally, so this is the only thing that has to run for a
-        stop pressed at any point during bring-up to be honored.
+        to move on to a stage with effects of its own -- a policy-server dial or
+        checkpoint load, an observation read, and finally commanding the arm.
+        Reads :attr:`_rollout_stop_latched`, so this is the only thing that has
+        to run for either latch to be honored during bring-up.
+
+        Reading only ``_stop_requested`` was not enough, and the gap was not the
+        reported status -- the terminal block below already discriminates on
+        both latches -- but the bring-up that ran after the robot had been told
+        to shut down. ``cleanup()`` sets the shutdown latch and only then calls
+        ``stop_task()``, gated on ``status == RUNNING``, so a teardown arriving
+        while the task was still in ``CONNECTING`` set no stop latch, both stage
+        checks passed, and the rollout finished the bring-up it had just been
+        asked to abandon. Measured on the two-device double, with the shutdown
+        latch already set: the motors bus opened and every camera warmed, one
+        observation read off them, and ``Policy.reset()`` called on a policy
+        object the caller may still be driving elsewhere -- the documented
+        ``policy_object=`` reuse pattern, and the same side effects
+        :meth:`_shutdown_error` refuses a *new* task for.
 
         Returns:
-            ``True`` when a stop was requested and the caller must abandon the
-            rollout, ``False`` when the task may proceed.
+            ``True`` when a stop or a shutdown was latched and the caller must
+            abandon the rollout, ``False`` when the task may proceed.
         """
-        if not self._stop_requested.is_set():
+        if not self._rollout_stop_latched:
             return False
         self._task_state.status = TaskStatus.STOPPED
         logger.info(
@@ -1688,8 +1727,7 @@ class Robot(TeleopMixin, AgentTool):
                 time.monotonic() - start_mono < duration
                 and (n_steps is None or self._task_state.step_count < n_steps)
                 and self._task_state.status == TaskStatus.RUNNING
-                and not self._stop_requested.is_set()
-                and not self._shutdown_event.is_set()
+                and not self._rollout_stop_latched
             ):
                 # Get observation from robot
                 observation = await asyncio.to_thread(read_observation, self.robot)
@@ -1760,15 +1798,18 @@ class Robot(TeleopMixin, AgentTool):
                 # is what decides here - otherwise an interrupted task reports
                 # itself completed.
                 #
-                # ``_shutdown_event`` is the other latch that ends the loop, and
-                # it needs the same treatment for a reason no entry-point guard
+                # ``_shutdown_event`` is the other latch that ends the loop and
+                # it needs the same treatment, for a reason no entry-point guard
                 # can cover: ``cleanup()`` sets it and only then calls
-                # ``stop_task()``, gated on ``status == RUNNING``. A shutdown
-                # landing while this task is still in ``CONNECTING`` therefore
-                # sets no stop latch, and the rollout goes on to finish bring-up
-                # and exit the loop on its first evaluation - reported as
-                # ``completed`` with 0 steps.
-                if self._stop_requested.is_set() or self._shutdown_event.is_set():
+                # ``stop_task()``, gated on ``status == RUNNING``, so a shutdown
+                # landing after this task's last stage check sets no stop latch.
+                # Without it such a rollout exits the loop on its first
+                # evaluation and reports ``completed`` with 0 steps.
+                #
+                # Both are read through ``_rollout_stop_latched`` -- the one
+                # predicate the bring-up gate and the loop condition above also
+                # read, so the three cannot drift apart.
+                if self._rollout_stop_latched:
                     self._task_state.status = TaskStatus.STOPPED
                     logger.info(f"Task stopped: '{instruction}' after {self._task_state.step_count} steps")
                 else:
@@ -2689,7 +2730,9 @@ class Robot(TeleopMixin, AgentTool):
         ``run_policy`` / ``start_task`` / the ``execute`` action refuse
         permanently afterwards rather than admit a rollout that would command
         the arm zero times, and a rollout still in flight when this runs is
-        reported ``STOPPED`` rather than ``COMPLETED``. Construct a new
+        abandoned at its next stage check -- rather than finishing a bring-up
+        this teardown has already made pointless -- and reported ``STOPPED``
+        rather than ``COMPLETED``. Construct a new
         ``Robot`` to run another task.
         """
         try:
