@@ -31,3 +31,17 @@ request's reply, the server marshals any dispatch failure back and carries on
 serving, so the stream stays in step. The bookkeeping is a `finally` rather than
 an `except` so a cancellation between the send and the receive, which leaves the
 same undelivered reply behind, is covered too.
+
+Discarding it moves the connection out from under a caller that had already been
+told it was live. `_get_actions_blocking` asks `_ensure_connected` outside the
+lock, so a second thread - the ordinary case here, an `rtc-prefetch` worker
+beside the rollout thread - could pass that check and then wait on the lock while
+the holder's read timed out and discarded the connection. It arrived in
+`_request` with `self._ws` gone and hit a bare `assert`: an `AssertionError`
+carrying no message, naming neither the connection nor the sibling that took it
+away, and under `python -O` no assert at all, leaving `AttributeError: 'NoneType'
+object has no attribute 'send'`. It now re-checks under the lock, as `reset`,
+`set_robot_state_keys` and `set_control_frequency` already did; where they defer,
+because the connect replay applies the config they carry, this one owes the
+caller a chunk, so it opens a fresh connection and is served. `_request` states
+the condition rather than asserting it, for any caller that does not re-check.

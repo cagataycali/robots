@@ -314,7 +314,14 @@ class RemotePolicy(Policy):
         ``BaseException`` - a cancellation between the send and the receive
         leaves the same undelivered reply behind - discards the connection too.
         """
-        assert self._ws is not None  # noqa: S101 - guarded by _ensure_connected
+        if self._ws is None:
+            # Reachable from a caller that does not re-check under the lock: a
+            # sibling's failed exchange discards the connection, so a caller
+            # holding a reference from before that arrives with nothing to send
+            # on. Naming the condition is what a bare assert could not do - and
+            # under ``python -O`` there is no assert at all, leaving
+            # ``AttributeError: 'NoneType' object has no attribute 'send'``.
+            raise ConnectionError("the connection was discarded after a failed exchange; retry to open a fresh one")
         exchanged = False
         try:
             self._ws.send(protocol.dumps(message))

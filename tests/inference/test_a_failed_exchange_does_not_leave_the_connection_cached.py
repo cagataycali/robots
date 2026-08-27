@@ -65,6 +65,7 @@ class TaggedPolicy(MockPolicy):  # type: ignore[misc]
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.park = threading.Event()
+        self.parked = threading.Event()
         self.release = threading.Event()
         self.seen: list[str] = []
 
@@ -77,6 +78,7 @@ class TaggedPolicy(MockPolicy):  # type: ignore[misc]
             # One-shot: park this reply past the client's deadline, then serve
             # every later request promptly.
             self.park.clear()
+            self.parked.set()
             self.release.wait(timeout=10.0)
         return [{"tag": marker}]
 
@@ -428,8 +430,13 @@ class TestAConcurrentCallerSurvivesADiscardByAnotherThread:
                 errors["B"] = exc
 
         def thread_a() -> None:
-            """Called after B is already waiting; arrives at the lock after B discards."""
-            time.sleep(REQUEST_TIMEOUT + 0.15)
+            """Enters while B's exchange is in flight, so it waits on the lock B holds."""
+            # Deterministic, not a timed guess: the server sets ``parked`` only
+            # after it has taken B's request, so B is provably inside
+            # ``_request`` holding the lock with ``self._ws`` still live. A sleep
+            # past the deadline lands after the discard, where this caller takes
+            # the ordinary cold-start path and exercises nothing.
+            assert policy.parked.wait(timeout=10.0), "thread B never reached the server"
             try:
                 result = client.get_actions_sync({"marker": "A-after-discard"}, "")
                 results["A"] = result
@@ -458,3 +465,99 @@ class TestAConcurrentCallerSurvivesADiscardByAnotherThread:
         # Thread A must NOT crash - it should reconnect and get its own chunk.
         assert "A" not in errors, f"thread A crashed: {errors.get('A')}"
         assert results.get("A") == [{"tag": "A-after-discard"}]
+
+    def test_a_request_on_a_discarded_connection_names_the_condition(self, tagged: Any) -> None:
+        """The refusal a bare ``assert`` could not make.
+
+        Driven directly, because the caller above now re-checks: this guard is
+        reachable only from a future caller that does not, and an
+        ``AssertionError`` carrying no message names neither the connection nor
+        the sibling that took it away.
+        """
+        _policy, _server, client = tagged
+        client.get_actions_sync({"marker": "warm"}, "")
+        client._discard_connection()
+        with pytest.raises(ConnectionError, match="discarded after a failed exchange"):
+            client._request({"type": protocol.MSG_GET_ACTIONS, "observation": {}, "instruction": "", "kwargs": {}})
+
+
+class TestEveryWireCallerHoldingTheLockRechecksUnderIt:
+    """Derived, so a wire caller added later is held to the rule on arrival.
+
+    ``reset``, ``set_robot_state_keys`` and ``set_control_frequency`` already
+    re-checked ``self._ws`` inside ``with self._lock``; they *defer* when it is
+    gone, because the connect replay applies the config they carry.
+    ``_get_actions_blocking`` was the only lock-holding wire caller that did not
+    re-check, and it is the one that cannot defer - it owes the caller a chunk.
+    """
+
+    @staticmethod
+    def _lock_holding_wire_callers() -> dict[str, str]:
+        """Map each method that sends on the wire under the lock to its locked body."""
+        tree = ast.parse(textwrap.dedent(inspect.getsource(RemotePolicy)))
+        found: dict[str, str] = {}
+        for node in tree.body[0].body:  # type: ignore[attr-defined]
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            locked = [
+                block
+                for block in ast.walk(node)
+                if isinstance(block, ast.With)
+                and any("self._lock" in ast.unparse(item.context_expr) for item in block.items)
+            ]
+            if not locked:
+                continue
+            body = "\n".join(ast.unparse(block) for block in locked)
+            if "_request(" in body or "_connect(" in body:
+                found[node.name] = body
+        return found
+
+    def test_the_survey_reaches_the_callers_it_is_about(self) -> None:
+        """Non-vacuity: an empty survey would pass the rule below while saying nothing."""
+        callers = self._lock_holding_wire_callers()
+        assert {"reset", "set_robot_state_keys", "set_control_frequency", "_get_actions_blocking"} <= set(callers)
+
+    def test_each_one_rechecks_the_connection_under_the_lock(self) -> None:
+        """The unlocked check is a fast path, so the locked one is the decision."""
+        missing = [name for name, body in self._lock_holding_wire_callers().items() if "self._ws is" not in body]
+        assert missing == [], f"sends on the wire under the lock without re-checking it: {missing}"
+
+    def test_the_hot_path_opens_the_connection_rather_than_deferring(self) -> None:
+        """Its siblings return; this one owes a chunk, so it connects."""
+        assert "self._connect()" in self._lock_holding_wire_callers()["_get_actions_blocking"]
+
+    def test_it_calls_connect_and_not_the_wrapper_that_takes_the_lock(self) -> None:
+        """``_ensure_connected`` takes ``self._lock``, which is not reentrant.
+
+        Calling it with the lock already held deadlocks, so the caller uses the
+        inner ``_connect``. Pinned because the wrapper is the more natural name
+        to reach for.
+        """
+        assert type(RemotePolicy(host="127.0.0.1", port=1)._lock) is type(threading.Lock())
+        assert "_ensure_connected()" not in self._lock_holding_wire_callers()["_get_actions_blocking"]
+
+
+class TestWhatTheRecheckDoesNotChange:
+    """An ordinary concurrent pair still gets its own answers.
+
+    The re-check is on the failure path; nothing about it serialises differently
+    or costs a reconnect while the connection is fine.
+    """
+
+    def test_two_healthy_callers_each_get_their_own_chunk(self, tagged: Any) -> None:
+        """No timeout, no discard: one connection serves both."""
+        _policy, _server, client = tagged
+        client.get_actions_sync({"marker": "warm"}, "")
+        established = client._ws
+        results: dict[str, Any] = {}
+
+        def call(marker: str) -> None:
+            results[marker] = client.get_actions_sync({"marker": marker}, "")
+
+        threads = [threading.Thread(target=call, args=(marker,)) for marker in ("P", "Q")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20.0)
+        assert results == {"P": [{"tag": "P"}], "Q": [{"tag": "Q"}]}
+        assert client._ws is established, "a healthy exchange must not cost a reconnect"
