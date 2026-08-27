@@ -90,6 +90,13 @@ def _json(envelope: dict[str, Any]) -> dict[str, Any] | None:
     return next((b["json"] for b in envelope.get("content", []) if "json" in b), None)
 
 
+def _payload(envelope: dict[str, Any]) -> dict[str, Any]:
+    """The ``json`` block, for a cell that requires the envelope to carry one."""
+    payload = _json(envelope)
+    assert payload is not None, "the envelope carries no json block"
+    return payload
+
+
 def _second_device(session: _Session) -> Any:
     """Attach a second stream so a detach can be partial."""
 
@@ -114,7 +121,7 @@ class TestThePremiseStopTeleoperateDeclinesThisTeardown:
         session = _Session(wedged=True)
         envelope = session.robot.stop_teleoperate()
         assert envelope["status"] == "error"
-        assert _json(envelope)["stopped"] is False
+        assert _payload(envelope)["stopped"] is False
         assert not _stop_reported_stopped(envelope)
         session.release()
 
