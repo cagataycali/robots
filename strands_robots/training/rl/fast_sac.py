@@ -183,15 +183,26 @@ class FastSacTrainer(BaseRLAlgo):
         problems.extend(self._rl_replay_problems(spec))
         if not 0.0 < spec.tau <= 1.0:
             problems.append(f"tau must be in (0, 1], got {spec.tau}")
-        # learning_starts >= batch_size is a relation between two counts, so it can
-        # only be asked once batch_size is one: a str / None reaches ``<`` and
-        # raises (out of a method documented to return problems), and a bool /
-        # float would compare nonsensically. batch_size is graded by the shared
-        # gate above; this consults the same domain rather than relying on that
-        # call having run, so it holds wherever it sits. learning_starts is not in
-        # that domain, so a non-count there still raises here as it did before - a
-        # separate field on a separate axis.
-        if (
+        # learning_starts >= batch_size is a relation between two counts, so BOTH
+        # operands are asked of the shared count domain and the relation only of
+        # two values that are counts. Asking it of batch_size alone was not
+        # enough: a non-finite learning_starts makes ``<`` answer False (every
+        # comparison against nan is False, and inf is below no int), so the
+        # relation passed and both consumers then read a value that is not a
+        # count. ``collect_rollout`` tests ``buffer.size < learning_starts`` to
+        # decide the random warmup and ``train`` tests ``buffer.size >=
+        # learning_starts`` to decide whether ``update()`` runs at all, so nan
+        # skips the warmup and takes zero gradient steps while inf warms up
+        # forever and takes zero gradient steps - a run that reports success
+        # having learned nothing, which is the outcome _rl_replay_problems exists
+        # to refuse for buffer_size. The domain is the strict count one its
+        # sibling operand already uses, so the relation compares two values drawn
+        # from one domain rather than one count against whatever the other side
+        # happened to be.
+        learning_starts_error = positive_count_error(spec.learning_starts, "learning_starts", self.provider_name)
+        if learning_starts_error is not None:
+            problems.append(learning_starts_error)
+        elif (
             positive_count_error(spec.batch_size, "batch_size", self.provider_name) is None
             and spec.learning_starts < spec.batch_size
         ):

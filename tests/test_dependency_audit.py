@@ -515,21 +515,34 @@ def test_ik_install_hints_name_only_declared_extras() -> None:
 # and ``[sim-libero]`` for what are really ``sim-isaac`` and ``benchmark-libero``.
 #
 # The failure mode is silent in the worst direction: pip does NOT fail on an
-# unknown extra. ``pip install 'strands-robots[vera]'`` exits 0, prints one
-# ``WARNING: strands-robots does not provide the extra 'vera'``, and installs the
-# base package with none of the dependencies the reader was promised. The reader
-# sees a successful install, then hits an ImportError somewhere unrelated-looking
-# with nothing tying it back to the install step. That makes an extra name in an
-# install hint load-bearing, and a typo in one is not cosmetic.
+# unknown extra, and on a current pip it no longer even warns. Measured on pip
+# 26.0.1 against a throwaway project whose only extra is ``real``, both
+# ``pip install --dry-run --no-deps '.[real]'`` and the same command for
+# ``'.[nope]'`` answer ``Would install extra-probe-0.0.1`` and exit 0, with no
+# mention of ``nope`` anywhere in the output. The
+# ``WARNING: ... does not provide the extra ...`` line older pip printed is gone,
+# so the only remaining signal is the ImportError the reader meets later,
+# somewhere unrelated-looking, with nothing tying it back to the install step.
+# That makes an extra name in an install hint load-bearing, and a typo in one is
+# not cosmetic.
 #
-# Two guards, one per surface that hands a name to a user: written instructions,
-# and the runtime ``require_optional(extra=...)`` messages.
+# Three guards, one per surface that hands a name to a user: a written install
+# command, a "which extra do I need" table column, and the runtime
+# ``require_optional(extra=...)`` message.
 # ---------------------------------------------------------------------------
 
 # A qualified mention -- ``strands-robots[NAME]``. Only the qualified form is
-# swept: a bare ``[wbc]`` in prose is ambiguous, because lerobot's own extras
+# swept here: a bare ``[wbc]`` in prose is ambiguous, because lerobot's own extras
 # (``[smolvla]``, ``[pi]``, ``[dataset]``) are written exactly the same way, so
 # requiring the distribution name keeps the sweep free of false positives.
+#
+# That ambiguity is a property of prose, and it does not survive a table column
+# whose header says what the column holds. A cell under ``| Install extra |`` in
+# this project's own docs names one of this project's extras by construction, so
+# the bare spelling is unambiguous there and is swept by
+# ``test_install_extra_table_columns_name_only_declared_extras`` below. The
+# policy catalogue is exactly such a column, and it is where the ``[vera]`` row in
+# the history above survived the page fix.
 _EXTRA_MENTION_RE = re.compile(r"strands[-_]robots\[([^\]\s]+)\]")
 
 # A token that can be an extra name at all. Anything else caught by the mention
@@ -649,6 +662,164 @@ def test_written_install_hints_name_only_declared_extras() -> None:
         "unknown extra and installs none of the dependencies, so the failure surfaces later and "
         f"misattributed. Declared extras: {sorted(extras)}\n" + "\n".join(offenders)
     )
+
+
+# Headers that mean "the extra you install". A column merely containing the word
+# is not one: ``Extra outputs`` in the Cosmos 3 page lists result keys, and a
+# header whose prose mentions an extra in passing is prose.
+_INSTALL_EXTRA_HEADERS = frozenset({"extra", "extras", "install extra", "install extras"})
+
+
+def _install_extra_cells(text: str) -> list[tuple[int, str]]:
+    """Return ``(line number, extra name)`` for each install-extra table cell.
+
+    Args:
+        text: Markdown source.
+
+    Returns:
+        One entry per backticked name in a column whose header is an
+        install-extra header, in either cell form in use across the tree - a bare
+        name (``sim-mujoco``) or the bracket a reader types (``[sim-mujoco]``).
+        Reading only the bare form would leave the installation and architecture
+        matrices, half the columns, ungraded. Fenced regions are skipped: a table
+        inside a fence is sample output rather than an instruction.
+    """
+    found: list[tuple[int, str]] = []
+    in_fence = False
+    columns: list[int] = []
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not line.startswith("|"):
+            columns = []
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        header = [index for index, cell in enumerate(cells) if cell.lower() in _INSTALL_EXTRA_HEADERS]
+        if header:
+            columns = header
+            continue
+        for index in columns:
+            if index >= len(cells):
+                continue
+            for token in re.findall(r"`([^`]+)`", cells[index]):
+                name = token[1:-1] if token.startswith("[") and token.endswith("]") else token
+                if _EXTRA_NAME_RE.match(name):
+                    found.append((number, name))
+    return found
+
+
+def test_install_extra_table_columns_name_only_declared_extras() -> None:
+    """A cell under ``| Install extra |`` must name an extra that exists.
+
+    This is the third surface: a reader choosing a provider or a feature scans
+    the catalogue column rather than a prose command, and copies the name out of
+    it. The qualified-mention sweep above cannot see that spelling, because the
+    cell carries the bare name - the distribution is named by the header.
+    """
+    extras = _declared_extras()
+    offenders: list[str] = []
+    columns = 0
+    cells = 0
+    for path in _iter_scanned_files():
+        if path.suffix.lower() != ".md":
+            continue
+        found = _install_extra_cells(path.read_text(encoding="utf-8", errors="ignore"))
+        if not found:
+            continue
+        columns += 1
+        cells += len(found)
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        offenders.extend(
+            f"{rel}:{number} names [{name}]" for number, name in found if _normalize_extra(name) not in extras
+        )
+    # A scan that has stopped matching must fail rather than report a clean tree.
+    assert columns >= 3, f"only {columns} file(s) with an install-extra column were read"
+    assert cells >= 20, f"only {cells} extra name(s) were read out of install-extra columns"
+    assert not offenders, (
+        "these table cells tell a reader to install an extra that does not exist. pip exits 0 on "
+        "an unknown extra without a warning, so the reader installs the base package and none of "
+        f"the dependencies the row promised. Declared extras: {sorted(extras)}\n"
+        + "\n".join(offenders)
+        + "\nDeclare the extra, or say in the cell that there is none."
+    )
+
+
+@pytest.mark.parametrize(
+    ("markdown", "expected"),
+    [
+        pytest.param(
+            "| Extra | Pulls in |\n|---|---|\n| `nope` | things |\n",
+            ["nope"],
+            id="bare-cell-form",
+        ),
+        pytest.param(
+            "| Extra | Pulls in |\n|---|---|\n| `[nope]` | things |\n",
+            ["nope"],
+            id="bracket-cell-form",
+        ),
+        pytest.param(
+            "| Provider | Class | Install extra |\n|---|---|---|\n| `p` | `C` | `nope` |\n",
+            ["nope"],
+            id="third-column",
+        ),
+        pytest.param(
+            "| Extra outputs | Meaning |\n|---|---|\n| `last_rollout` | a path |\n",
+            [],
+            id="not-an-install-column",
+        ),
+        pytest.param(
+            "```\n| Extra | Pulls in |\n|---|---|\n| `nope` | things |\n```\n",
+            [],
+            id="fenced-table-is-sample-output",
+        ),
+        pytest.param(
+            "| Extra | Pulls in |\n|---|---|\n| _(none - git-only)_ | nothing |\n",
+            [],
+            id="a-cell-that-names-no-extra",
+        ),
+    ],
+)
+def test_install_extra_cell_reader_reads_install_columns_only(markdown: str, expected: list[str]) -> None:
+    """The cell reader picks up install-extra cells in both forms, and nothing else.
+
+    Graded on constructed markdown because the tree is clean once the catalogue is
+    fixed, so the corpus can no longer exercise a rejection.
+    """
+    assert [name for _, name in _install_extra_cells(markdown)] == expected
+
+
+def test_the_install_extra_cell_rule_can_both_accept_and_reject() -> None:
+    """The rule is not constantly one answer."""
+    extras = _declared_extras()
+    outcomes = {
+        _normalize_extra(name) in extras
+        for _, name in _install_extra_cells("| Extra | Pulls in |\n|---|---|\n| `nope` | x |\n| `lerobot` | y |\n")
+    }
+    assert outcomes == {True, False}
+
+
+def test_the_policy_catalogue_names_no_vera_extra() -> None:
+    """VERA is the provider with no extra, so its row must not name one.
+
+    ``pyproject.toml`` says at length that a ``vera`` extra can never exist - it
+    would need a direct reference to the upstream git repository, which
+    ``test_pyproject_has_no_direct_reference_dependency`` separately forbids.
+    ``vera-sim`` exists and is a different thing: the gymnasium / robosuite
+    evaluation stack, declared in conflict with the lerobot extras, so it is not
+    the provider's install either.
+    """
+    extras = _declared_extras()
+    assert "vera" not in extras
+    assert "vera-sim" in extras
+    overview = (_REPO_ROOT / "docs" / "policies" / "overview.md").read_text(encoding="utf-8")
+    row = next(line for line in overview.splitlines() if line.startswith("| [`vera`]"))
+    cells = [cell.strip() for cell in row.strip("|").split("|")]
+    assert "`vera`" not in cells[2], f"the install-extra cell names an extra: {cells[2]!r}"
+    assert "none" in cells[2].lower(), f"the cell should say there is none: {cells[2]!r}"
 
 
 def test_require_optional_call_sites_name_declared_extras() -> None:
