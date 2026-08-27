@@ -79,11 +79,13 @@ def _asset_file(key: str) -> Path:
     from strands_robots.utils import get_search_paths
 
     asset = _entry()["asset"]
-    for root in get_search_paths():
-        candidate = Path(root) / asset["dir"] / asset[key]
-        if candidate.exists():
-            return candidate
-    pytest.skip(f"microduck {key} is not downloaded, so the compiled shape cannot be read")
+    present = next(
+        (candidate for root in get_search_paths() if (candidate := Path(root) / asset["dir"] / asset[key]).exists()),
+        None,
+    )
+    if present is None:
+        pytest.skip(f"microduck {key} is not downloaded, so the compiled shape cannot be read")
+    return present
 
 
 def _model(key: str = "scene_xml"):
