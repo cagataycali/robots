@@ -22,6 +22,8 @@ The well-known goal kwargs a caller passes through ``get_actions`` are:
 * ``target_velocity`` - ``[vx, vy]`` (or ``[vx, vy, vz]``) desired planar
   movement direction in the world frame; only the direction is used (the clip's
   ``avg_root_vel`` sets the speed). Absent -> walk straight ahead (``+x``).
+  Every component must be a finite number; a count outside two or three, a
+  ``nan``/``inf`` component or a ``bool`` is refused by name.
 * ``target_heading`` - facing direction as ``[hx, hy]`` (or an angle in radians
   via ``target_heading_angle``). Absent -> face the movement direction.
 """
@@ -33,8 +35,17 @@ from typing import Any
 
 import numpy as np
 
+from ...utils import finite_vector_error, sequence_length
+
 # Default movement / facing direction: walk straight ahead along +x (world).
 _DEFAULT_DIRECTION = (1.0, 0.0, 0.0)
+
+#: Component counts a planar direction may arrive with: ``[vx, vy]`` or
+#: ``[vx, vy, vz]``. Three is accepted because the world frame is 3-D and a
+#: caller holding a 3-vector should not have to slice it; the third entry is
+#: projected away, since this reader takes a direction in the XY plane.
+_MIN_DIRECTION_ENTRIES = 2
+_MAX_DIRECTION_ENTRIES = 3
 
 # Accepted ``locomotion_style`` vocabulary - the SONIC locomotion style names a
 # caller passes through ``run_policy(policy_kwargs={"locomotion_style": ...})``.
@@ -157,15 +168,65 @@ def resolve_locomotion_style(
     return clip
 
 
-def _unit_direction(vec: Any, default: tuple[float, float, float]) -> list[float]:
+def _unit_direction(vec: Any, default: tuple[float, float, float], *, method: str, param_name: str) -> list[float]:
     """Normalise a 2- or 3-vector to a unit 3-vector in the world XY plane.
 
     A near-zero vector falls back to ``default`` (so an all-zero command does
-    not produce a NaN direction).
+    not produce a NaN direction). That fallback is a magnitude test, so it
+    cannot cover a non-finite component: ``nan < 1e-6`` is ``False``, and
+    ``inf`` divided by its own norm is ``nan``, so either one fell through it and
+    produced exactly the NaN direction the fallback exists to prevent - a
+    ``movement_direction`` of ``[nan, nan, nan]`` handed to the generator, from a
+    call that reported success. The per-component domain is therefore the shared
+    :func:`~strands_robots.utils.finite_vector_error`, which the sim setters
+    already hold their own vectors to: finite, numeric, and a ``bool`` refused by
+    name rather than read as ``1.0``.
+
+    ``method`` and ``param_name`` are what make the refusal legible. This helper
+    reads two of the issue #300 well-known goal keys - ``target_velocity`` and
+    ``target_heading`` - so a message naming only "direction vector" left a
+    caller who passed both unable to tell which one was refused. The sibling
+    locomotion family names its key in every refusal
+    (:meth:`WBCPolicy._validate_velocity` answers ``target_velocity must have at
+    least 3 elements [vx, vy, omega]``), and the ABC's own reason for leaving the
+    component count out of the goal contract is that "each receiver states its
+    own arity and refuses a shape it cannot use" - which requires the refusal to
+    say which receiver and which key.
+
+    The arity is a closed range rather than a floor. Five statements in this
+    package already give the rule as two or three components - this docstring,
+    the module docstring, the policy constructor's ``target_velocity`` entry, the
+    refusal text itself and ``docs/policies/motionbricks.md`` - while the check
+    tested only the lower half, so a four-, six- or twenty-component vector was
+    accepted and silently read for its first two entries. The wire validator
+    defers the count here on purpose ("the component COUNT is not checked against
+    any receiver's arity here", :func:`~strands_robots.mesh.security.validate_command`),
+    so this is the only place it is checked at all.
+
+    Args:
+        vec: The caller's direction, two or three finite numbers.
+        default: Direction to fall back to when ``vec`` is near zero.
+        method: Calling function name, used in the message.
+        param_name: The goal key it came from, used in the message.
+
+    Returns:
+        A unit 3-vector in the world XY plane, as plain floats.
+
+    Raises:
+        ValueError: If a component is non-finite, non-numeric or a ``bool``, or
+            if the count is outside ``[2, 3]``.
     """
+    component_error = finite_vector_error(method, param_name, vec)
+    if component_error is not None:
+        raise ValueError(component_error)
+    count = sequence_length(vec)
+    if count is None or not _MIN_DIRECTION_ENTRIES <= count <= _MAX_DIRECTION_ENTRIES:
+        raise ValueError(
+            f"{method}: {param_name!r} must have "
+            f"{_MIN_DIRECTION_ENTRIES} or {_MAX_DIRECTION_ENTRIES} entries "
+            f"(a planar direction; a third entry is projected away), got {count}"
+        )
     raw = np.asarray(vec, dtype=np.float64).ravel()
-    if raw.shape[0] < 2:
-        raise ValueError(f"direction vector must have 2 or 3 entries, got {raw.shape[0]}")
     # Project onto the world XY plane (ignore any z component).
     planar = np.array([float(raw[0]), float(raw[1]), 0.0], dtype=np.float64)
     norm = float(np.linalg.norm(planar))
@@ -180,7 +241,12 @@ def _heading_to_direction(kwargs: dict[str, Any], movement_direction: list[float
         angle = float(kwargs["target_heading_angle"])
         return [math.cos(angle), math.sin(angle), 0.0]
     if kwargs.get("target_heading") is not None:
-        return _unit_direction(kwargs["target_heading"], tuple(movement_direction))  # type: ignore[arg-type]
+        return _unit_direction(
+            kwargs["target_heading"],
+            tuple(movement_direction),  # type: ignore[arg-type]
+            method="build_control_signals",
+            param_name="target_heading",
+        )
     return list(movement_direction)
 
 
@@ -245,7 +311,12 @@ def build_control_signals(
         JSON-serialisable and torch-independent; the policy wraps it in tensors.
     """
     movement = (
-        _unit_direction(kwargs["target_velocity"], _DEFAULT_DIRECTION)
+        _unit_direction(
+            kwargs["target_velocity"],
+            _DEFAULT_DIRECTION,
+            method="build_control_signals",
+            param_name="target_velocity",
+        )
         if kwargs.get("target_velocity") is not None
         else list(_DEFAULT_DIRECTION)
     )

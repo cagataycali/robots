@@ -242,9 +242,12 @@ def test_allowed_pred_num_tokens_rejects_bad_mode_and_range() -> None:
 
 
 def test_build_control_signals_rejects_short_direction() -> None:
-    # A single-component target_velocity cannot define a planar direction; the
-    # builder rejects it instead of fabricating a NaN/garbage heading.
-    with pytest.raises(ValueError, match="2 or 3 entries"):
+    # A single-component target_velocity cannot define a planar direction, so the
+    # builder rejects it and names the key it came from. This cell grades the
+    # count; a non-finite component is the other way a direction is unusable and
+    # it is graded in test_direction_goal_keys_are_held_to_one_domain.py, because
+    # the near-zero fallback is a magnitude test and cannot cover it.
+    with pytest.raises(ValueError, match="'target_velocity' must have 2 or 3 entries"):
         build_control_signals(
             mode_idx=2,
             clip_token_specs=_CLIP_SPECS,
@@ -255,8 +258,10 @@ def test_build_control_signals_rejects_short_direction() -> None:
 
 
 def test_build_control_signals_zero_velocity_falls_back_to_forward() -> None:
-    # An all-zero command must not yield a NaN direction: it falls back to the
-    # default forward (+x) heading for both movement and facing.
+    # An all-zero command falls back to the default forward (+x) heading for both
+    # movement and facing. That fallback is a magnitude test, so it answers for a
+    # zero vector and not for a nan/inf one - which is refused by the component
+    # domain instead (test_direction_goal_keys_are_held_to_one_domain.py).
     cs = build_control_signals(
         mode_idx=2,
         clip_token_specs=_CLIP_SPECS,

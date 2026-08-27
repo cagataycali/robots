@@ -138,15 +138,25 @@ policy = create_policy(
 
 ### Per-call goal kwargs
 
-| kwarg | Meaning |
-| --- | --- |
-| `style` / `mode` | Clip mode - an `int` index or `str` name (e.g. `"walk"`, `"stealth_walk"`, `"walk_boxing"`, `"hand_crawling"`). |
-| `target_velocity` | `[vx, vy]` desired planar movement direction (world frame); only the direction is used. |
-| `target_heading` | `[hx, hy]` facing direction, or `target_heading_angle` (radians). |
+| kwarg | Accepted | Meaning |
+| --- | --- | --- |
+| `style` / `mode` | `int` index or `str` name | Clip mode (e.g. `"walk"`, `"stealth_walk"`, `"walk_boxing"`, `"hand_crawling"`). |
+| `target_velocity` | 2 or 3 entries, every component a finite number | `[vx, vy]` (or `[vx, vy, vz]`) desired planar movement direction (world frame); only the direction is used, and a third entry is projected away. |
+| `target_heading` | 2 or 3 entries, every component a finite number | `[hx, hy]` facing direction, or `target_heading_angle` (radians, any finite float). |
 
 An unknown style or out-of-range index raises `ValueError` listing the
 available modes. A missing `[motionbricks]` install or checkpoint raises
 `RuntimeError` with an install hint - there is no silent fallback.
+
+A direction outside the accepted domain raises `ValueError` naming the key it
+came from, so a call passing both `target_velocity` and `target_heading` is told
+which one was refused. A `nan`/`inf` component is refused rather than normalised:
+the near-zero fallback that turns an all-zero command into "walk straight ahead"
+is a magnitude test, and `nan` does not compare small, so a non-finite component
+would otherwise reach the generator as a `[nan, nan, nan]` direction from a call
+that reported success. The same domain applies to the constructor's
+`target_velocity` default, so a default the reader cannot honour is reported at
+construction rather than on the first step of a started rollout.
 
 ## Driving the gait with the `locomotion_style` goal kwarg
 

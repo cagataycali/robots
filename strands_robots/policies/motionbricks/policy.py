@@ -59,7 +59,13 @@ from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS
 from strands_robots.utils import require_optional
 
 from .config import MotionBricksConfig
-from .observation import build_control_signals, resolve_locomotion_style, resolve_mode
+from .observation import (
+    _DEFAULT_DIRECTION,
+    _unit_direction,
+    build_control_signals,
+    resolve_locomotion_style,
+    resolve_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +140,9 @@ class MotionBricksPolicy(Policy):
             is built from it (plus ``style`` / ``device``).
         style: Default motion style (mode index or name) used when a call does
             not pass ``style`` / ``mode``. Overrides ``config.style``.
-        target_velocity: Optional default movement direction ``[vx, vy]`` used
-            when a call passes none.
+        target_velocity: Optional default movement direction ``[vx, vy]`` (or
+            ``[vx, vy, vz]``) used when a call passes none. Held to the same
+            domain as a per-call value: two or three finite numbers.
         device: Torch device for the generator (when building from ``config``).
         style_map: Optional overrides merged over the built-in
             ``locomotion_style`` -> clip-name map
@@ -171,7 +178,23 @@ class MotionBricksPolicy(Policy):
         self._default_style: int | str = (
             style if style is not None else (self._config.style if self._config is not None else "walk")
         )
-        self._default_velocity = list(target_velocity) if target_velocity is not None else None
+        # Through the same door a per-call ``target_velocity`` goes through, so a
+        # default the reader cannot honor is reported at construction rather than on
+        # the first ``get_actions`` tick of a started rollout. This mirrors the
+        # sibling locomotion family, whose constructor validates its own
+        # ``target_velocity`` default with the guard its per-call path uses.
+        self._default_velocity: list[float] | None = None
+        if target_velocity is not None:
+            # Raises when the default is outside the domain; the returned unit
+            # vector is discarded because the stored default is the caller's own
+            # components, which every call re-normalises against its own fallback.
+            _unit_direction(
+                target_velocity,
+                _DEFAULT_DIRECTION,
+                method="MotionBricksPolicy",
+                param_name="target_velocity",
+            )
+            self._default_velocity = [float(component) for component in target_velocity]
 
         # locomotion_style -> clip-name overrides: config.style_map is the base,
         # the constructor arg takes precedence; both overlay the built-in
