@@ -424,7 +424,7 @@ class TestAConcurrentCallerSurvivesADiscardByAnotherThread:
             try:
                 result = client.get_actions_sync({"marker": "B-timeout"}, "")
                 results["B"] = result
-            except (TimeoutError, Exception) as exc:
+            except Exception as exc:
                 errors["B"] = exc
 
         def thread_a() -> None:
@@ -433,7 +433,7 @@ class TestAConcurrentCallerSurvivesADiscardByAnotherThread:
             try:
                 result = client.get_actions_sync({"marker": "A-after-discard"}, "")
                 results["A"] = result
-            except (TimeoutError, Exception) as exc:
+            except Exception as exc:
                 errors["A"] = exc
 
         # Warm the connection so _ensure_connected's fast path passes for both.
