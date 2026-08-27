@@ -48,6 +48,7 @@ ALL_ACTIONS = (
     "tell",
     "send",
     "rpc",
+    "sim_call",
     "broadcast",
     "stop",
     "emergency_stop",
@@ -58,7 +59,7 @@ ALL_ACTIONS = (
 )
 
 #: Actions that hand ``timeout`` to a wait, so an unusable value is refused.
-READS_TIMEOUT = ("tell", "send", "rpc", "broadcast", "stop")
+READS_TIMEOUT = ("tell", "send", "rpc", "sim_call", "broadcast", "stop")
 
 #: Wait budgets that cannot be honored. ``0`` / ``-1`` / ``nan`` make the wait
 #: return immediately (reported as a peer that did not answer), ``inf`` raises
@@ -151,6 +152,8 @@ def _args_for(action: str) -> dict[str, Any]:
         return {"target": "peer-b", "command": '{"action": "status"}'}
     if action == "rpc":
         return {"target": "peer-b", "function": "nod"}
+    if action == "sim_call":
+        return {"target": "peer-b", "function": "add_object"}
     if action == "stop":
         return {"target": "peer-b"}
     if action == "inbox":
