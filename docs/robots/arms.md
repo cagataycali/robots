@@ -35,7 +35,7 @@ sim = Robot("so100")            # SO-ARM100 (low-cost Feetech)
 | `so100` | TrossenRobotics SO-ARM100 (6-DOF, Feetech servos) | 6 | `so100_4cam`, `so100_dualcam`, `so100_follower`, `so_arm100`, `trs_so_arm100` |
 | `so101` | RobotStudio SO-101 (6-DOF, upgraded SO-100) | 6 | `robotstudio_so101`, `so101_dualcam`, `so101_follower`, `so101_tricam` |
 | `ur10e` | Universal Robots UR10e (6-DOF industrial) | 6 | - |
-| `ur5e` | Universal Robots UR5e (6-DOF industrial) | 8 | - |
+| `ur5e` | Universal Robots UR5e (6-DOF industrial) | 6 | - |
 | `vx300s` | Trossen ViperX 300s (6-DOF + gripper) | 19 | `oxe_widowx`, `trossen_vx300s`, `viper_x300s` |
 | `wx250s` | Trossen WidowX 250s (6-DOF + gripper) | 16 | `widowx_250s`, `trossen_wx250s` |
 | `xarm7` | UFactory xArm 7 (7-DOF + gripper) | 13 | `ufactory_xarm7` |
@@ -101,11 +101,14 @@ _AgileX Piper (6-DOF + gripper)_
 
 - Most arms are loadable in MuJoCo via the registry's asset block and pull from
   [robot_descriptions.py](https://github.com/robot-descriptions/robot_descriptions.py)
-  on first use. Exceptions: `hope_jr` and `omx` have no MuJoCo sim asset and require
-  physical hardware.
-- `panda`, `so100`, and `ur5e` are also supported on real hardware via LeRobot. The rest
-  are simulation-only at the moment (real-hardware support is a per-robot effort that
-  upstreams to LeRobot).
+  on first use. Exceptions: `hope_jr`, `omx` and `rebot_b601` declare no sim asset
+  and require physical hardware.
+- Real hardware through LeRobot, where the registry entry names a `lerobot_type`:
+  `hope_jr`, `koch`, `omx`, `openarm`, `rebot_b601`, `so100`, `so101`.
+- Real hardware through a native Strands driver, selected with `driver="strands"`:
+  `dynamixel_2r`, `koch`, `vx300s`, `wx250s`.
+- Every other arm is simulation-only: `Robot(name, mode="real")` refuses it and names
+  the robots that do have a path, rather than falling back to sim.
 - Joint counts include any free joints / gripper actuators - the *control* DOF is
   usually `joints - 1` for arms with grippers.
 

@@ -31,7 +31,6 @@ import math
 from typing import Any
 
 import pytest
-import serial
 
 import strands_robots.tools.pose_tool as pose_mod
 from strands_robots.tools.pose_tool import (
@@ -42,7 +41,7 @@ from strands_robots.tools.pose_tool import (
 )
 from strands_robots.utils import positive_count_error, positive_finite_number_error
 
-from .conftest import FakeSerial
+from .conftest import FakeSerial, ReadingSerial
 
 # Actions that build an interpolated trajectory, and how each one gets there.
 # ``reset_to_home`` passes ``smooth=True`` itself, so it interpolates whatever
@@ -80,47 +79,6 @@ def _call(**kwargs: Any) -> dict[str, Any]:
 def _texts(result: dict[str, Any]) -> str:
     """Concatenate every ``text`` field of a tool result."""
     return "\n".join(item.get("text", "") for item in result.get("content", []))
-
-
-def _position_packet(raw: int = 0x0800, motor_id: int = 0x01) -> bytes:
-    """A Feetech status packet reporting ``raw`` counts for ``motor_id``.
-
-    ``FF FF ID LEN ERR <lo> <hi> CHK``, with the checksum a servo would send so
-    the frame passes the verification ``read_motor_position`` performs. Framing
-    itself is graded in ``test_feetech_status_packet_framing``.
-    """
-    body = [motor_id, 0x04, 0x00, raw & 0xFF, (raw >> 8) & 0xFF]
-    return bytes([0xFF, 0xFF, *body, (~sum(body)) & 0xFF])
-
-
-class _ReadingSerial(FakeSerial):
-    """A ``FakeSerial`` that always answers a read with a decodable position.
-
-    ``_smooth_move`` reads the current pose before interpolating and only steps
-    the motors it could read, so a source that never answers would make the
-    interpolation vacuous.
-    """
-
-    def read(self, n: int = 1) -> bytes:
-        # Answer as the motor the outgoing packet addressed; a servo bus does,
-        # and a fake that always answered as motor 1 would let a read attribute
-        # one motor's position to another with no test able to see it.
-        asked = self.writes[-1][2] if self.writes else 0x01
-        return _position_packet(motor_id=asked)
-
-
-@pytest.fixture
-def reading_serial(monkeypatch: pytest.MonkeyPatch) -> list[_ReadingSerial]:
-    """Patch ``serial.Serial`` with an always-answering position source."""
-    instances: list[_ReadingSerial] = []
-
-    def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> _ReadingSerial:
-        fs = _ReadingSerial(port, baudrate, timeout)
-        instances.append(fs)
-        return fs
-
-    monkeypatch.setattr(serial, "Serial", _ctor)
-    return instances
 
 
 @pytest.fixture
@@ -184,7 +142,7 @@ class TestTheRequestedPacingReachesTheLoop:
 
     @pytest.mark.parametrize("action", _INTERPOLATING)
     def test_the_requested_step_count_and_delay_are_the_ones_used(
-        self, action: str, cwd_tmp: Any, reading_serial: list[_ReadingSerial], pacing: dict[str, list[Any]]
+        self, action: str, cwd_tmp: Any, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
     ) -> None:
         _stored_pose(cwd_tmp)
         result = _drive(action, steps=4, step_delay=0.02)
@@ -195,7 +153,7 @@ class TestTheRequestedPacingReachesTheLoop:
 
     @pytest.mark.parametrize("action", _INTERPOLATING)
     def test_a_finer_request_writes_more_increments_than_a_coarser_one(
-        self, action: str, cwd_tmp: Any, reading_serial: list[_ReadingSerial], pacing: dict[str, list[Any]]
+        self, action: str, cwd_tmp: Any, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
     ) -> None:
         _stored_pose(cwd_tmp)
         assert _drive(action, steps=3, step_delay=0.01)["status"] == "success"
@@ -208,7 +166,7 @@ class TestTheRequestedPacingReachesTheLoop:
         assert fine == coarse * 13 // 4
 
     def test_omitting_the_options_keeps_the_documented_default_trajectory(
-        self, cwd_tmp: Any, reading_serial: list[_ReadingSerial], pacing: dict[str, list[Any]]
+        self, cwd_tmp: Any, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
     ) -> None:
         """The default path is unchanged: 20 increments at 0.05s, ~1s of travel."""
         assert _drive("move_multiple")["status"] == "success"
@@ -253,7 +211,7 @@ class TestAnUnusableOptionIsRefusedBeforeThePortOpens:
         assert "not found" not in text, text
 
     def test_a_usable_pair_is_accepted(
-        self, cwd_tmp: Any, reading_serial: list[_ReadingSerial], pacing: dict[str, list[Any]]
+        self, cwd_tmp: Any, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
     ) -> None:
         assert _drive("move_multiple", steps=1, step_delay=1e-6)["status"] == "success"
 
@@ -273,14 +231,14 @@ class TestOnlyTheInterpolatingActionsReadTheOptions:
         ],
     )
     def test_a_one_shot_action_ignores_the_interpolation_options(
-        self, action: str, extra: dict[str, Any], cwd_tmp: Any, reading_serial: list[_ReadingSerial]
+        self, action: str, extra: dict[str, Any], cwd_tmp: Any, reading_serial: list[ReadingSerial]
     ) -> None:
         result = _drive(action, steps=0, step_delay=-1, **extra)
         text = _texts(result)
         assert "steps" not in text and "step_delay" not in text, text
 
     def test_move_multiple_with_smooth_false_ignores_them(
-        self, cwd_tmp: Any, reading_serial: list[_ReadingSerial]
+        self, cwd_tmp: Any, reading_serial: list[ReadingSerial]
     ) -> None:
         result = _drive("move_multiple", smooth=False, steps=0, step_delay=-1)
         assert result["status"] == "success", _texts(result)
@@ -296,19 +254,19 @@ class TestWhyTheValuesAreRefused:
     """Each refused value measured against the loop that would have received it."""
 
     @staticmethod
-    def _connected(reading_serial: list[_ReadingSerial]) -> MotorController:
+    def _connected(reading_serial: list[ReadingSerial]) -> MotorController:
         controller = MotorController("/dev/ttyTEST")
         connected, error = controller.connect()
         assert connected, error
         return controller
 
-    def test_zero_steps_divides_by_zero(self, reading_serial: list[_ReadingSerial]) -> None:
+    def test_zero_steps_divides_by_zero(self, reading_serial: list[ReadingSerial]) -> None:
         controller = self._connected(reading_serial)
         with pytest.raises(ZeroDivisionError):
             _smooth(controller, steps=0)
 
     def test_a_negative_step_count_writes_nothing_yet_reports_success(
-        self, reading_serial: list[_ReadingSerial], pacing: dict[str, list[Any]]
+        self, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
     ) -> None:
         """``range(steps + 1)`` is empty, so the move is reported but never made."""
         controller = self._connected(reading_serial)
@@ -316,21 +274,21 @@ class TestWhyTheValuesAreRefused:
         assert pacing["moves"] == []
 
     def test_a_boolean_step_count_is_a_full_travel_jump(
-        self, reading_serial: list[_ReadingSerial], pacing: dict[str, list[Any]]
+        self, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
     ) -> None:
         """``True`` is a single increment - the jump interpolating exists to avoid."""
         controller = self._connected(reading_serial)
         assert _smooth(controller, steps=True) is True
         assert len(pacing["moves"]) == 2 * len(_MOTORS)
 
-    def test_a_fractional_step_count_cannot_bound_the_loop(self, reading_serial: list[_ReadingSerial]) -> None:
+    def test_a_fractional_step_count_cannot_bound_the_loop(self, reading_serial: list[ReadingSerial]) -> None:
         controller = self._connected(reading_serial)
         with pytest.raises(TypeError):
             _smooth(controller, steps=2.7)
 
     @pytest.mark.parametrize("delay,expected", [(-0.01, ValueError), (math.nan, ValueError), (math.inf, OverflowError)])
     def test_an_unusable_delay_raises_from_sleep(
-        self, delay: float, expected: type[BaseException], reading_serial: list[_ReadingSerial]
+        self, delay: float, expected: type[BaseException], reading_serial: list[ReadingSerial]
     ) -> None:
         controller = self._connected(reading_serial)
         with pytest.raises(expected):

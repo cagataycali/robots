@@ -21,6 +21,15 @@ opposite direction, and ``velocity=32768`` read as magnitude zero -- stopping a
 servo the caller had just asked to run -- both reported as success quoting the
 number supplied.
 
+``motor_id`` takes more than the byte width too, because the ID byte carries
+one address that is not a servo: ``0xfe`` is the broadcast, which every servo
+on the bus receives and, for an instruction that expects a reply, every servo
+answers at once. On a half-duplex bus those replies collide, so the bytes
+``action="feetech_ping"`` reads back belong to no single servo -- and it
+reported them as one, quoting an ID no servo holds. A reply-less write to the
+broadcast means exactly what it says and stays accepted; the highest address a
+servo may hold is ``0xfd``, which is what a reply-expecting action is held to.
+
 ``baudrate`` and ``read_bytes`` are coerced rather than checked by pyserial
 (``2.7`` becomes 2 baud, and a non-positive ``read_bytes`` reads nothing and
 reports success, which is indistinguishable from a timed-out read on a healthy
@@ -42,6 +51,7 @@ import serial
 import serial.tools.list_ports
 from strands import tool
 
+from strands_robots.drivers.feetech.protocol import BROADCAST_ID, MAX_UNICAST_ID
 from strands_robots.utils import (
     finite_number_error,
     non_negative_count_error,
@@ -64,7 +74,12 @@ _MAX_MAGNITUDE = (1 << _DIRECTION_BIT) - 1
 # surface uses; only the ceiling is decided here, because it is a property of
 # the packet field this module encodes into.
 _REGISTER_FIELDS: dict[str, tuple[int, int, str]] = {
-    "motor_id": (1, 254, "the packet carries the ID in one byte, and 255 is the frame header"),
+    "motor_id": (
+        1,
+        BROADCAST_ID,
+        f"the packet carries the ID in one byte, of which {MAX_UNICAST_ID:#x} is the highest a servo "
+        f"may hold and {BROADCAST_ID:#x} is the broadcast, while 0xff is the frame header",
+    ),
     "position": (
         0,
         4095,
@@ -77,6 +92,16 @@ _REGISTER_FIELDS: dict[str, tuple[int, int, str]] = {
         "magnitude sets that bit and commands the opposite direction",
     ),
 }
+
+# Actions that read a status packet back after writing. A unicast is answered by
+# one servo; the broadcast is answered by every servo at once, and on a
+# half-duplex bus those replies collide, so the bytes read back belong to no
+# single servo. :func:`~strands_robots.drivers.feetech.protocol.build_packet`
+# refuses the broadcast for exactly these instructions -- its ``allow_broadcast``
+# defaults to ``False`` -- and this is that rule at the tool's own boundary,
+# before the port is opened. A reply-less write is absent from this set, so
+# addressing the whole bus with one stays available where it means what it says.
+_REPLY_EXPECTING_ACTIONS: frozenset[str] = frozenset({"feetech_ping"})
 
 # The options each action consumes. An action absent from this map reads none of
 # them and is never refused here: ``list_ports`` returns before the port is even
@@ -113,6 +138,32 @@ def _register_field_error(value: Any, param: str, action: str) -> str | None:
     return None
 
 
+def _motor_id_error(value: Any, param: str, action: str) -> str | None:
+    """Error text when ``value`` cannot address the servo ``action`` expects to hear from.
+
+    The frame's ID byte carries the broadcast alongside every unicast address, so
+    the field bound alone accepts it. An action that reads a status packet back
+    needs one servo to answer, which the broadcast cannot give it.
+
+    Args:
+        value: The caller-supplied motor ID.
+        param: The parameter it came from; always ``"motor_id"``.
+        action: The requested action; decides whether a reply is expected.
+
+    Returns:
+        An error message, or ``None`` when the ID is one this action can use.
+    """
+    if error := _register_field_error(value, param, action):
+        return error
+    if value == BROADCAST_ID and action in _REPLY_EXPECTING_ACTIONS:
+        return (
+            f"{action}: {param} {BROADCAST_ID:#x} is the broadcast, which every servo on the bus "
+            f"answers at once, so no single reply can be read back; address one servo in "
+            f"[1, {MAX_UNICAST_ID}], got {value}."
+        )
+    return None
+
+
 def _read_timeout_error(value: Any, param: str, action: str) -> str | None:
     """Error text when ``value`` is not a usable serial read budget in seconds.
 
@@ -144,7 +195,7 @@ _OPTION_DOMAINS: tuple[tuple[str, Callable[[Any, str, str], str | None]], ...] =
     ("baudrate", positive_count_error),
     ("timeout", _read_timeout_error),
     ("read_bytes", positive_count_error),
-    ("motor_id", _register_field_error),
+    ("motor_id", _motor_id_error),
     ("position", _register_field_error),
     ("velocity", _register_field_error),
 )
@@ -211,7 +262,9 @@ def serial_tool(
             pyserial's non-blocking mode (return what is already buffered)
         data: String data to send
         hex_data: Hex string data to send (e.g., "FF FF 01 04 03 00 64 92")
-        motor_id: Motor ID for Feetech commands; an integer in [1, 254]
+        motor_id: Motor ID for Feetech commands; an integer in [1, 254], of
+            which 254 (0xfe) is the broadcast every servo receives. An action
+            that reads a reply back accepts only a single servo, [1, 253]
         position: Target position for Feetech motors; an integer in [0, 4095]
         velocity: Target velocity for Feetech motors; an integer in [0, 65535]
         read_bytes: Number of bytes to read; a positive integer
