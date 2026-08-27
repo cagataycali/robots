@@ -15,32 +15,49 @@ vendoring decision is separate from harness#361. This file pins the
 docstring to that split so a caller reading the module can trust the line
 in it about which verb refuses.
 
-Two cells:
+What is graded, and by which cell:
 
-1. The docstring names the wired verbs as wired. Reading its text for
-   "not wired yet" is the load-bearing check: today that phrase must
-   appear at most once in the docstring, and if it does appear it must
-   name ``start_task`` (the one verb that still refuses). A caller who
-   grep-reads the module for the "not wired yet" idiom must land on the
-   one verb it applies to, not three that have shipped since the idiom
-   was written.
+1. **The refusal is attributed only to a verb that refuses.**
+   :func:`test_the_docstring_never_attributes_a_refusal_to_a_wired_verb`
+   derives the refusing set by *driving* all four verbs and reading which
+   responses carry the idiom, then reads every refusal-claiming sentence in
+   the docstring and requires the verbs named on its subject side to be a
+   subset of that set. This is the cell that grades the drift: the stale
+   text named four verbs in one sentence carrying the idiom once, so a rule
+   that counts occurrences, or that asks whether the sentence mentions
+   ``start_task``, is satisfied by it. Only comparing the *named* set
+   against the *measured* set refuses it.
 
-2. The three wired verbs return a ``status`` envelope that is not the
-   generic "not wired yet" refusal. ``run_policy`` returns
-   ``status="success"`` on a callable policy (the loop starts);
-   ``stop_task`` returns a success envelope naming ``no task is running``
-   when idle; ``get_task_status`` returns a success envelope with
-   ``running=False`` reason ``no task has been started on this driver``.
-   None of these three verbs' response paths contain the string
-   ``"not wired yet"``, which is the exact idiom the docstring must not
-   claim on their behalf.
+   Attribution is subject-side on purpose. The corrected text names
+   ``run_policy`` after the idiom, as the verb a caller should use instead;
+   a whole-sentence rule reads that as a second refusal claim and refuses
+   the very wording this file ships with.
 
-The day the ``start_task`` refusal is replaced by a provider-registry
-call, cell 1 fires and this file is replaced by one that grades the new
-reachability shape. That is the correct signal for the wiring commit.
+2. **The wired verbs do not carry the idiom in their own responses.**
+   ``run_policy`` returns ``status="success"`` on a callable policy (the
+   loop starts); ``stop_task`` returns a success envelope naming ``no task
+   is running`` when idle; ``get_task_status`` returns a success envelope
+   with ``running=False`` reason ``no task has been started on this
+   driver``. These are what makes the derived set in cell 1 a measurement
+   rather than a restatement of the docstring.
+
+3. **The idiom, where the docstring still uses it, names the one verb it
+   applies to.** Two text-shape cells cover this. They are deliberately
+   weak: the shipped docstring describes ``start_task``'s refusal without
+   using the ``not wired yet`` phrase at all, so both hold trivially today
+   and only bite if a future edit reintroduces the phrase.
+
+On the wiring day -- when #358's provider registry replaces
+``start_task``'s refusal -- the cell that fires is
+:func:`test_start_task_still_returns_the_not_wired_yet_refusal`, measured
+by planting that change. The text-shape cells do not fire, because the
+wiring commit does not touch the docstring; that is exactly why cell 1
+grades the docstring against driven behaviour instead of against itself.
 """
 
 from __future__ import annotations
+
+import re
 
 import strands_robots.drivers.g1 as g1_module
 from strands_robots.drivers.g1 import G1Driver
@@ -82,6 +99,103 @@ def _make_admitted_driver() -> G1Driver:
     driver._fsm_id = 500  # inside HANDSHAKE_FSMS | WALK_FSMS; see g1._check_motion_gates
     driver._battery = {"pct": 90.0}
     return driver
+
+
+#: The four verbs the docstring's "task and policy paths" bullet describes.
+_TASK_VERBS = ("start_task", "run_policy", "stop_task", "get_task_status")
+
+#: The vocabulary a reader greps for when asking "does this verb work yet".
+#: Wider than the literal ``not wired yet`` phrase so a reworded claim -- "task
+#: and policy paths still refuse" -- is graded by the same rule.
+_REFUSAL_IDIOM = re.compile(r"not wired yet|not wired|empty stub|still refuses", re.IGNORECASE)
+
+
+def _verbs_that_refuse_with_the_idiom() -> frozenset[str]:
+    """Drive each task/policy verb and report which responses carry the idiom.
+
+    Derived rather than listed, so the day a verb is wired -- or un-wired --
+    the docstring rule below moves with it instead of grading a stale tuple.
+    Every verb is driven on an admitted driver so the response seen is the
+    verb's own, not the FSM/battery gate wall.
+    """
+    refusing = set()
+    for verb in _TASK_VERBS:
+        driver = _make_admitted_driver()
+        try:
+            if verb == "start_task":
+                result = driver.start_task(instruction="stand")
+            elif verb == "run_policy":
+                result = driver.run_policy(policy_object=_Callable(), duration=0.05)
+            else:
+                result = getattr(driver, verb)()
+            if _REFUSAL_IDIOM.search(str(result)):
+                refusing.add(verb)
+        finally:
+            driver.stop_task()
+    return frozenset(refusing)
+
+
+def _refusal_claims(doc: str) -> list[tuple[frozenset[str], str]]:
+    """Return each refusal-claiming sentence with the verbs on its subject side.
+
+    A sentence is a refusal claim when it uses the idiom vocabulary. The verbs
+    it *attributes* the refusal to are those named before the idiom; a verb
+    named after it is being offered as the alternative, not described as
+    refusing.
+    """
+    flat = " ".join(doc.split())
+    claims = []
+    for sentence in re.split(r"(?<=[.])\s+", flat):
+        match = _REFUSAL_IDIOM.search(sentence)
+        if match is None:
+            continue
+        subject = sentence[: match.start()]
+        claims.append((frozenset(v for v in _TASK_VERBS if v in subject), sentence))
+    return claims
+
+
+def test_the_driven_refusal_set_is_not_empty() -> None:
+    """Premise: driving the verbs finds a refusal, so the rule below has a subject.
+
+    If every verb were wired the derived set would be empty and the rule would
+    hold for any docstring at all, including one that calls all four un-wired.
+    """
+    assert _verbs_that_refuse_with_the_idiom(), (
+        "no task/policy verb returns the refusal idiom, so the docstring rule "
+        "below cannot distinguish a correct docstring from a stale one. If "
+        "every verb is now wired, replace this file with one grading that."
+    )
+
+
+def test_the_docstring_carries_the_task_and_policy_prose_it_is_graded_on() -> None:
+    """Premise: the docstring names the verbs, so the rule reads real prose."""
+    doc = g1_module.__doc__ or ""
+    named = [verb for verb in _TASK_VERBS if verb in doc]
+    assert len(named) == len(_TASK_VERBS), (
+        f"module docstring names only {named} of the four task/policy verbs; "
+        f"the attribution rule below has nothing to read for the rest."
+    )
+
+
+def test_the_docstring_never_attributes_a_refusal_to_a_wired_verb() -> None:
+    """Every verb a refusal sentence names must be one that actually refuses.
+
+    This is the cell that grades the drift the file exists for. The stale text
+    read ``Task and policy paths (start_task, run_policy, stop_task,
+    get_task_status) return a named "not wired yet" envelope`` -- one sentence,
+    one occurrence of the idiom, naming four verbs where one refuses. Counting
+    occurrences passes it; asking whether the sentence mentions ``start_task``
+    passes it. Comparing the named set against the driven set does not.
+    """
+    refusing = _verbs_that_refuse_with_the_idiom()
+    doc = g1_module.__doc__ or ""
+    for named, sentence in _refusal_claims(doc):
+        overclaimed = sorted(named - refusing)
+        assert not overclaimed, (
+            f"module docstring attributes a refusal to {overclaimed}, which "
+            f"return a success envelope when driven (only {sorted(refusing)} "
+            f"carries the idiom). Sentence was:\n{sentence!r}"
+        )
 
 
 def test_the_docstring_uses_the_not_wired_yet_idiom_at_most_once() -> None:

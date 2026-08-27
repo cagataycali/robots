@@ -20,12 +20,25 @@ docstring to name what each verb does today and reserves the "refuses"
 wording for the one verb it still applies to.
 
 A pinning test in
-`tests/drivers/test_g1_module_docstring_reflects_wired_verbs.py` reads the
-runtime behaviour of each verb on a driver whose gates would pass
-(healthy pack, allowed FSM, mode_machine known) and refuses the docstring
-if any of the three wired verbs (`run_policy`, `stop_task`,
-`get_task_status`) is described as returning "not wired yet". The test
-does not touch `start_task` because that verb is genuinely still a
-refusal today; it only pins that the docstring must name that specific
-verb as the one that refuses, so a future wiring commit that promotes
-`start_task` cannot leave the docstring behind.
+`tests/drivers/test_g1_module_docstring_reflects_wired_verbs.py` drives all
+four verbs on a driver whose gates would pass (healthy pack, allowed FSM,
+`mode_machine` known), derives from those responses which verbs actually
+carry the refusal idiom, and then refuses any sentence in the docstring
+that attributes the refusal to a verb outside that set. Deriving the set
+rather than listing it is what makes the check a measurement: the stale
+wording named four verbs in a single sentence that used the idiom once, so
+counting occurrences of the phrase, or asking whether that sentence
+mentions `start_task`, is satisfied by it.
+
+Attribution is read on the subject side of the idiom - the verbs named
+before it - because the corrected wording names `run_policy` after it, as
+the verb a caller should use instead. Reading the whole sentence would
+score that as a second refusal claim and refuse the corrected text.
+
+The same file pins that `start_task` still answers a refusal naming issue
+#358. When the provider registry lands and that verb is promoted, three
+cells fire: the one pinning the refusal, the attribution rule (the derived
+set becomes empty while the docstring still names a refusing verb), and
+the premise that the derived set is non-empty. Each names a different part
+of what the wiring commit has to update, so the docstring cannot be left
+behind again.
