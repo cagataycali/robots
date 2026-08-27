@@ -33,6 +33,20 @@ fetching the corpus into the temp directory instead of reporting that there was
 nothing to read; the class now confirms all six families where the assets are
 present and skips where they are not, which is what its own docstring said it did.
 
+Declining also declines the `robot_descriptions` discovery fallback, which the
+first version of the keyword did not. The resolver's first statement is a registry
+lookup, and that lookup falls back to `discover_robot` for any name the curated
+registry does not know - so for those names the promise was broken before
+`allow_download` was ever read. The import is the fetch: `robot_descriptions` calls
+`clone_to_cache` at module scope, so consulting a description module clones the
+upstream asset repository. Measured over the nine MJCF-discoverable names this
+registry does not curate, `allow_download=False` returned a path for five of them
+and asked for the Menagerie clone every time, including for `rizon4`, where the
+answer is `None` either way. The gate now lives on the shared lookup and the
+resolver hands its own decision to it, so the keyword also restores the parity its
+docstring claims: `is_robot_asset_present` reads the curated registry alone, and a
+declined resolve now answers over the same names.
+
 Declining changes no answer. The same 58 models compile and the same six families
 are derived either way, and every registry robot still resolves and loads through
 the unchanged default.

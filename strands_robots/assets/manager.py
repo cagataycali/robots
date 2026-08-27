@@ -32,20 +32,36 @@ except ImportError:
     _auto_download_robot_impl = None  # type: ignore[assignment]
 
 
-def _lookup(name: str) -> dict | None:
+def _lookup(name: str, *, allow_discovery: bool = True) -> dict | None:
     """Resolve a registry entry for *name*, with ``robot_descriptions`` fallback.
 
     A curated ``robots.json`` entry always wins. When a name is unknown to the
     curated registry, fall back to :func:`strands_robots.registry.discovery`,
     which synthesizes an entry for any MJCF-capable ``robot_descriptions`` robot
-    (the long tail: ``go2``, ``spot``, ``h1``, ...). Discovery imports the
+    (the long tail: ``gen3``, ``iiwa14``, ``viper``, ...). Discovery imports the
     description module, which can trigger an asset download on first use, so
     this helper is used only by download-capable resolvers - never by the
     side-effect-free presence check.
+
+    Args:
+        name: Robot name (canonical or alias).
+        allow_discovery: When False, answer from the curated registry alone. A
+                         resolver whose caller declined the download must pass
+                         False: the discovery import *is* the fetch, because
+                         ``robot_descriptions`` calls ``clone_to_cache`` at
+                         module scope, so consulting it would perform the exact
+                         download the caller declined - including on the miss
+                         path, where the answer is ``None`` either way.
+
+    Returns:
+        A registry-style entry, or ``None`` when the name is unknown (and, with
+        ``allow_discovery=False``, when only discovery could have synthesized one).
     """
     info = get_robot(name)
     if info is not None:
         return info
+    if not allow_discovery:
+        return None
     from strands_robots.registry.discovery import discover_robot
 
     return discover_robot(name)
@@ -187,21 +203,31 @@ def resolve_model_path(
     ``robot_descriptions`` before returning - unless ``allow_download`` declines.
 
     ``allow_download=False`` makes this a pure filesystem lookup: no network, no
-    ``robot_descriptions`` import. It is exactly equivalent to a download that
-    declines, so it cannot change the answer for an asset already on disk - an
-    absent XML still returns ``None`` and a mesh-less XML still returns its first
-    candidate, the same two outcomes a failed download produces today.
+    ``robot_descriptions`` import. Within the curated registry it is exactly
+    equivalent to a download that declines, so it cannot change the answer for an
+    asset already on disk - an absent XML still returns ``None`` and a mesh-less
+    XML still returns its first candidate, the same two outcomes a failed download
+    produces today.
+
+    It declines the discovery fallback too, so a name only
+    :mod:`strands_robots.registry.discovery` could synthesize an entry for reports
+    a miss instead of importing a description module to find out. That import is
+    itself the fetch - ``robot_descriptions`` calls ``clone_to_cache`` at module
+    scope - so consulting discovery clones the upstream asset repository on a cold
+    cache, including on the miss path where the answer is ``None`` either way.
 
     Prefer it in any caller that reports on assets rather than loading them.
-    :func:`is_robot_asset_present` answers *whether* an asset is on disk without
-    a download; this answers *where* under the same terms.
+    :func:`is_robot_asset_present` answers *whether* an asset is on disk without a
+    download; this answers *where* on the same terms and over the same names -
+    both read the curated registry alone.
 
     Args:
         name: Robot name (canonical or alias).
         prefer_scene: If True, return scene XML (with ground/lights)
                       instead of bare model XML.
-        allow_download: When False, never attempt an asset download; resolve
-                        from what is already on disk or report a miss.
+        allow_download: When False, never attempt an asset download and never
+                        consult discovery; resolve from what is already on disk
+                        for a curated name, or report a miss.
 
     Returns:
         Path to the MJCF XML file, or None if not found.
@@ -212,7 +238,7 @@ def resolve_model_path(
         resolve_model_path("so100", prefer_scene=True)  # → .../trs_so_arm100/scene.xml
         resolve_model_path("franka")            # → .../franka_emika_panda/panda.xml
     """
-    info = _lookup(name)
+    info = _lookup(name, allow_discovery=allow_download)
     if not info or "asset" not in info:
         # DEBUG, not WARNING: resolve_model() probes several candidate names
         # (incl. suffix-stripped variants) and handles a None return cleanly,
