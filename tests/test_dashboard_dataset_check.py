@@ -41,7 +41,7 @@ class TestMetadataWithoutFrames:
         assert "after the setup it charges you for" in v["problem"]
 
     def test_unreadable_meta_says_what_it_could_be(self) -> None:
-        for empty in (None, {}):
+        for empty in (None, {}):  # type: ignore[var-annotated]
             v = dataset_verdict(empty, has_data_files=True)
             assert v["usable"] is False and v["reason"] == "unreadable_meta"
             # A recording IN PROGRESS is the innocent explanation and must be offered first.

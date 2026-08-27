@@ -43,7 +43,7 @@ def test_a_child_of_nothing_is_not_known():
 def test_the_predicate_agrees_with_the_router_on_malformed_child_ids(peer_id: str):
     """If route_task_target would not reroute it, calling it known hands it
     straight back to the timeout this guard exists to avoid."""
-    peers = {"arm-1": {}}
+    peers = {"arm-1": {}}  # type: ignore[var-annotated]
     known = peer_is_known(peer_id, peers)
     target, _cmd = route_task_target(peer_id, {"action": "stop"})
     rerouted = target != peer_id

@@ -47,7 +47,7 @@ def _isolate(monkeypatch, tmp_path):
 
 
 def _client() -> TestClient:
-    return TestClient(srv.create_app(bridge=_StubBridge()))
+    return TestClient(srv.create_app(bridge=_StubBridge()))  # type: ignore[arg-type]
 
 
 def test_openapi_lists_the_api_routes() -> None:
@@ -62,9 +62,9 @@ def test_openapi_lists_the_api_routes() -> None:
 
 def test_every_route_the_app_registers_is_published() -> None:
     """A route missing from the schema would be judged "this server is too old" while it works."""
-    app = srv.create_app(bridge=_StubBridge())
+    app = srv.create_app(bridge=_StubBridge())  # type: ignore[arg-type]
     registered = {
-        r.path
+        r.path  # type: ignore[attr-defined]
         for r in app.routes
         if getattr(r, "path", "").startswith("/api/") and getattr(r, "include_in_schema", True)
     }

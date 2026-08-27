@@ -34,7 +34,7 @@ def test_names_are_sorted_and_deduped_by_shape() -> None:
 def test_junk_shapes_cannot_raise() -> None:
     # A section whose value is not a dict is the caller's problem elsewhere; this
     # helper must not crash the whole apply over it.
-    for patch in ({"agent": "not a dict"}, {"agent": None}, {"": {}}, {"x": 5}):
+    for patch in ({"agent": "not a dict"}, {"agent": None}, {"": {}}, {"x": 5}):  # type: ignore[var-annotated]
         assert isinstance(settings.unknown_keys(patch), list)  # type: ignore[arg-type]
 
 

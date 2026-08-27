@@ -24,7 +24,7 @@ class _FakeAgent:
         self.callback_handler = None
 
     def __call__(self, prompt: str):
-        self.callback_handler(data="tok")  # cancellation surfaces here
+        self.callback_handler(data="tok")  # type: ignore[misc]  # cancellation surfaces here
         return type("R", (), {"message": {"content": [{"text": "done"}]}})()
 
 

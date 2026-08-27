@@ -31,7 +31,7 @@ def test_empty_config_resolved_nothing() -> None:
 
 
 def test_blank_and_whitespace_count_as_empty() -> None:
-    for value in ("", "   ", None, [], {}):
+    for value in ("", "   ", None, [], {}):  # type: ignore[var-annotated]
         assert validation_scope(LEROBOT_LOCAL, {"pretrained_name_or_path": value})["resolved"] is False
 
 
@@ -81,7 +81,7 @@ def test_identity_key_wins_over_a_remote_address() -> None:
 
 
 def test_junk_spec_and_config_cannot_raise() -> None:
-    for spec in (None, {}, [], "lerobot_local", {"wire_fields": "nope"}, {"wire_fields": [None, {}]}):
+    for spec in (None, {}, [], "lerobot_local", {"wire_fields": "nope"}, {"wire_fields": [None, {}]}):  # type: ignore[var-annotated]
         for cfg in (None, {}, {"pretrained_name_or_path": "x"}, "not a dict"):
             out = validation_scope(spec, cfg)  # type: ignore[arg-type]
             assert set(out) == {"resolved", "identity_keys", "scope_note"}

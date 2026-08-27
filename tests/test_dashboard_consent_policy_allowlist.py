@@ -52,15 +52,15 @@ def test_both_fields_that_share_the_variable_are_continuable(field: str, value: 
 
 def test_the_grant_is_narrow_and_additive() -> None:
     req = classify_refusal(_sdk_refusal(policy_type="smolvla_x"))
-    assert env_patch(req, {ENV: "mock,lerobot"}) == {ENV: "mock,lerobot,smolvla_x"}
+    assert env_patch(req, {ENV: "mock,lerobot"}) == {ENV: "mock,lerobot,smolvla_x"}  # type: ignore[arg-type]
     # already granted: an empty patch tells the caller approving would change nothing
-    assert env_patch(req, {ENV: "mock,smolvla_x"}) == {}
+    assert env_patch(req, {ENV: "mock,smolvla_x"}) == {}  # type: ignore[arg-type]
 
 
 def test_revoking_leaves_the_rest_of_the_allowlist_alone() -> None:
     req = classify_refusal(_sdk_refusal(policy_type="smolvla_x"))
-    assert revoke_patch(req, {ENV: "mock,smolvla_x,lerobot"}) == {ENV: "mock,lerobot"}
-    assert revoke_patch(req, {ENV: "mock"}) == {}  # nothing to take back
+    assert revoke_patch(req, {ENV: "mock,smolvla_x,lerobot"}) == {ENV: "mock,lerobot"}  # type: ignore[arg-type]
+    assert revoke_patch(req, {ENV: "mock"}) == {}  # type: ignore[arg-type]  # nothing to take back
 
 
 def test_the_grant_is_visible_on_the_permissions_screen() -> None:

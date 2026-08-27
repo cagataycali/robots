@@ -61,7 +61,7 @@ def test_val_episodes_is_accepted_and_reaches_the_spec() -> None:
     import strands_robots.tools.train_policy as tp
 
     original = tp.train_policy
-    tp.train_policy = fake_train_policy
+    tp.train_policy = fake_train_policy  # type: ignore[assignment]
     try:
         training.submit(
             {

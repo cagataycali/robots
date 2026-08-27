@@ -83,12 +83,12 @@ def _bridge(peers: dict, managed: set[str]) -> mb.MeshBridge:
     b = mb.MeshBridge.__new__(mb.MeshBridge)
     b.peer_id = "dash"
     b.peers = peers
-    b._peers_lock = threading.RLock()
-    b._coalesce_lock = threading.RLock()
-    b._coalescer = SimpleNamespace(forget=lambda pid: None)
+    b._peers_lock = threading.RLock()  # type: ignore[assignment]
+    b._coalesce_lock = threading.RLock()  # type: ignore[assignment]
+    b._coalescer = SimpleNamespace(forget=lambda pid: None)  # type: ignore[assignment]
     b.protected_peer_ids = lambda: managed
     b.peer_annotations = None
-    b.mesh_info = lambda: {}
+    b.mesh_info = lambda: {}  # type: ignore[method-assign]
     return b
 
 

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from strands_robots.dashboard import voice
 
-_VOICE_SRC = Path(inspect.getsourcefile(voice)).read_text(encoding="utf-8")
+_VOICE_SRC = Path(inspect.getsourcefile(voice)).read_text(encoding="utf-8")  # type: ignore[arg-type]
 
 
 def _code_lines(src: str) -> list[str]:

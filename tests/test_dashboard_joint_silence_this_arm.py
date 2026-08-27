@@ -50,7 +50,7 @@ class TestFallingBackInsteadOfGuessing:
     """Each of these must reach the BROAD remedy, which is honest, rather than a narrow guess."""
 
     def _broad(self, a: str | None) -> bool:
-        return bool(a) and "Calibration files DO exist on this machine" in a
+        return bool(a) and "Calibration files DO exist on this machine" in a  # type: ignore[operator]
 
     def test_an_unknown_robot_family_falls_back(self):
         assert self._broad(calibration_advice(DISK, robot_name="koch", robot_id="follower"))

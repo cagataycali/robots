@@ -91,6 +91,6 @@ class TestProbeModesGuard:
     def test_streaming_index_is_refused_before_any_open(self, tmp_path) -> None:
         dm = DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
         dm._claimed_camera_indices = lambda: {0: "so101-arm-1"}  # type: ignore[method-assign]
-        dm._streaming_indices = lambda live: {0}  # type: ignore[method-assign]
+        dm._streaming_indices = lambda live: {0}  # type: ignore[method-assign, assignment]
         with pytest.raises(PermissionError, match="so101-arm-1"):
             dm.probe_modes(0, {"so101-arm-1": ["top"]})

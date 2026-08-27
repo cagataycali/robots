@@ -65,7 +65,7 @@ def _cache(tmp_path, repo: str, inp: dict, out: dict) -> None:
 
 
 def _client() -> TestClient:
-    return TestClient(srv.create_app(bridge=_Bridge()))
+    return TestClient(srv.create_app(bridge=_Bridge()))  # type: ignore[arg-type]
 
 
 def test_the_mismatch_that_used_to_reach_the_arm(tmp_path):

@@ -73,18 +73,18 @@ def test_the_grant_actually_unblocks_the_command(
 
 def test_the_grant_is_additive_and_revocation_is_narrow() -> None:
     req = classify_refusal(_refusal(policy_host="gpu.lan")[1])
-    assert env_patch(req, {ENV: "10.0.0.0/24"}) == {ENV: "10.0.0.0/24,gpu.lan"}
-    assert env_patch(req, {ENV: "gpu.lan"}) == {}  # already granted: nothing would change
-    assert revoke_patch(req, {ENV: "10.0.0.0/24,gpu.lan"}) == {ENV: "10.0.0.0/24"}
+    assert env_patch(req, {ENV: "10.0.0.0/24"}) == {ENV: "10.0.0.0/24,gpu.lan"}  # type: ignore[arg-type]
+    assert env_patch(req, {ENV: "gpu.lan"}) == {}  # type: ignore[arg-type]  # already granted: nothing would change
+    assert revoke_patch(req, {ENV: "10.0.0.0/24,gpu.lan"}) == {ENV: "10.0.0.0/24"}  # type: ignore[arg-type]
     # A hand-written CIDR may still cover the host; do not narrow a range we did not write.
-    assert revoke_patch(req, {ENV: "10.0.0.0/24"}) == {}
+    assert revoke_patch(req, {ENV: "10.0.0.0/24"}) == {}  # type: ignore[arg-type]
 
 
 def test_the_risk_names_what_the_host_is_trusted_with() -> None:
     req = classify_refusal(_refusal(server_address="http://gpu.lan:8000")[1])
-    assert "gpu.lan" in req.risk
-    assert "camera frames" in req.risk and "drive real hardware" in req.risk
-    assert "matched literally" in req.risk  # DNS trust is part of the decision
+    assert "gpu.lan" in req.risk  # type: ignore[union-attr]
+    assert "camera frames" in req.risk and "drive real hardware" in req.risk  # type: ignore[union-attr]
+    assert "matched literally" in req.risk  # type: ignore[union-attr]  # DNS trust is part of the decision
 
 
 def test_a_hostile_or_unreadable_subject_grants_nothing() -> None:

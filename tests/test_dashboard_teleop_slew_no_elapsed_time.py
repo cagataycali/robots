@@ -57,8 +57,8 @@ def test_a_zero_interval_violation_is_no_longer_invisible() -> None:
 
 def test_the_newest_line_still_wins_across_the_two_kinds() -> None:
     tail = [_no_elapsed_time(), _normal()]
-    assert envelope_refusal(tail)["value"] == 125.0
-    assert envelope_refusal(list(reversed(tail)))["instant"] is True
+    assert envelope_refusal(tail)["value"] == 125.0  # type: ignore[index]
+    assert envelope_refusal(list(reversed(tail)))["instant"] is True  # type: ignore[index]
 
 
 def test_the_sentence_does_not_blame_the_envelope_for_a_clock_problem() -> None:

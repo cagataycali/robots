@@ -81,8 +81,8 @@ def test_the_tally_is_bounded_and_never_undercounts() -> None:
         t.record(client=f"10.0.0.{i}", path="/ws/mesh", now=NOW + i)
     assert t.total == 500
     s = t.summary(NOW + 500)
-    assert s is not None and int(s["total"]) == 500
-    assert int(s["untracked"]) > 0
+    assert s is not None and int(s["total"]) == 500  # type: ignore[call-overload]
+    assert int(s["untracked"]) > 0  # type: ignore[call-overload]
     assert len(t._recent) <= 64
 
 

@@ -63,7 +63,7 @@ _needs_dist = pytest.mark.skipif(
 
 
 def _client() -> TestClient:
-    return TestClient(srv.create_app(bridge=_StubBridge()))
+    return TestClient(srv.create_app(bridge=_StubBridge()))  # type: ignore[arg-type]
 
 
 @_needs_dist

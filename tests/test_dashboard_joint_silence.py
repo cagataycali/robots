@@ -189,16 +189,16 @@ def test_a_peer_reported_port_conflict_says_find_the_other_owner() -> None:
             }
         }
     )
-    assert got["kind"] == "port_in_use" and "lsof" in got["remedy"]
+    assert got["kind"] == "port_in_use" and "lsof" in got["remedy"]  # type: ignore[index]
 
 
 def test_an_unrecognised_reason_still_points_at_the_log() -> None:
     got = joint_silence.classify_state({"degraded": {"hw_joints": {"reason": "OSError: something new"}}})
-    assert got["kind"] == "probe_failed" and "devices > logs" in got["remedy"]
+    assert got["kind"] == "probe_failed" and "devices > logs" in got["remedy"]  # type: ignore[index]
 
 
 def test_silence_and_junk_stay_silent() -> None:
-    for state in (
+    for state in (  # type: ignore[var-annotated]
         None,
         {},
         {"degraded": {}},
@@ -240,9 +240,9 @@ def test_a_never_ran_probe_is_not_told_to_read_the_log() -> None:
             }
         }
     )
-    assert got["kind"] == "not_probed"
-    assert "nothing in the log to find" in got["remedy"]
-    assert "devices > logs" not in got["remedy"]
+    assert got["kind"] == "not_probed"  # type: ignore[index]
+    assert "nothing in the log to find" in got["remedy"]  # type: ignore[index]
+    assert "devices > logs" not in got["remedy"]  # type: ignore[index]
 
 
 def test_a_recovery_line_ends_the_complaint() -> None:
@@ -474,7 +474,7 @@ def test_the_verdict_survives_its_own_log_line_scrolling_out_of_the_window() -> 
             started_at=0.0,
         )
     }
-    dm.roles_by_peer = lambda: {}
+    dm.roles_by_peer = lambda: {}  # type: ignore[method-assign]
     arm = dm.robots["arm"]
 
     arm.logs.extend(["hardware connected", IN_USE])
@@ -501,7 +501,7 @@ def test_a_respawned_arm_does_not_inherit_the_dead_processs_complaint() -> None:
     from strands_robots.dashboard.device_manager import DeviceManager, ManagedRobot
 
     dm = DeviceManager.__new__(DeviceManager)
-    dm.roles_by_peer = lambda: {}
+    dm.roles_by_peer = lambda: {}  # type: ignore[method-assign]
     dm.robots = {
         "arm": ManagedRobot(
             peer_id="arm",

@@ -52,7 +52,7 @@ class _StubBridge:
 
 
 def _trainers_payload() -> dict:
-    r = TestClient(srv.create_app(bridge=_StubBridge())).get("/api/training/trainers")
+    r = TestClient(srv.create_app(bridge=_StubBridge())).get("/api/training/trainers")  # type: ignore[arg-type]
     assert r.status_code == 200, r.text
     return r.json()
 

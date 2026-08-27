@@ -69,15 +69,15 @@ def test_a_timeout_says_the_robot_may_still_move() -> None:
     v = timeout_verdict("ack", 120.0, "so101-arm-2")
     assert v["motion_possible"] is True
     assert v["timeout_kind"] == "ack"
-    assert "no acknowledgement from so101-arm-2 within 120s" in v["error"]
-    assert "may be loading a policy and about to move" in v["error"]
-    assert "Check its log" in v["error"]
+    assert "no acknowledgement from so101-arm-2 within 120s" in v["error"]  # type: ignore[operator]
+    assert "may be loading a policy and about to move" in v["error"]  # type: ignore[operator]
+    assert "Check its log" in v["error"]  # type: ignore[operator]
 
 
 def test_a_rollout_timeout_says_the_task_may_be_fine() -> None:
     v = timeout_verdict("rollout", 3610.0)
     assert v["motion_possible"] is True
     assert v["timeout_kind"] == "rollout"
-    assert "the rollout was still running when the wait ended" in v["error"]
-    assert "may be executing normally" in v["error"]
-    assert " from " not in v["error"], "no target given - do not invent one"
+    assert "the rollout was still running when the wait ended" in v["error"]  # type: ignore[operator]
+    assert "may be executing normally" in v["error"]  # type: ignore[operator]
+    assert " from " not in v["error"], "no target given - do not invent one"  # type: ignore[operator]

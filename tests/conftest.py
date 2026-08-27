@@ -155,7 +155,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ANN001, ARG001
     # orphaned 185 of them holding cagatay's arm ports while every run printed a green summary.
     # Reported, never killed: a robot child may hold torque (see tests/hardware_leak.py).
     try:
-        from tests.hardware_leak import hardware_leak_report
+        from tests.hardware_leak import hardware_leak_report  # type: ignore[import-untyped]
 
         lines += hardware_leak_report(_surviving_children())
     except Exception:  # a tripwire must never be the reason a suite fails to finish

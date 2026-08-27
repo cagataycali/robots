@@ -52,7 +52,7 @@ def _run_generated(source: str) -> tuple[tuple, dict, list[str]]:
             return True, {}, None
 
     fake = types.ModuleType("strands_robots")
-    fake.Robot = _Robot
+    fake.Robot = _Robot  # type: ignore[attr-defined]
 
     class _Stop(Exception):
         pass
