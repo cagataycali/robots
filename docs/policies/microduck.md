@@ -13,6 +13,28 @@ also **self-configures from the ONNX metadata**: `joint_names`,
 `custom_metadata_map` on first inference, so pointing it at a different weight
 file reconfigures it. Explicit constructor arguments always win.
 
+## Walking in MuJoCo
+
+![Microduck walking in MuJoCo](../assets/microduck/microduck_walk.gif){ width=480 }
+
+_`alpha_walking.onnx` driven forward at `vx=0.3 m/s`, filmed with a
+body-tracking chase camera. Reproduce with
+[`examples/microduck/render_video.py`](https://github.com/strands-labs/robots/blob/main/examples/microduck/render_video.py):_
+
+```bash
+export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib  # macOS: Homebrew ffmpeg
+python examples/microduck/render_video.py \
+    --onnx ../microduck/policies/alpha_walking.onnx \
+    --vx 0.3 --duration 8 --out walk_forward.mp4 \
+    --gif docs/assets/microduck/microduck_walk.gif
+```
+
+`render_video.py` steps the sim manually at the control frequency and captures
+each frame with a tracking camera locked to the pelvis, so the duck stays
+centered as it walks. `--vx`/`--vy`/`--vyaw` set the twist command, and any
+shipped weight (`alpha_stand`, `roulade`, `ball_kick_*`, …) drops straight in.
+
+
 ## Install
 
 ```bash

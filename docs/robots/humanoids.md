@@ -71,6 +71,10 @@ _Fourier N1 / GR-1 Humanoid (26-DOF)_
 
 _Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)_
 
+![Microduck walking in MuJoCo](../assets/microduck/microduck_walk.gif){ width=400 }
+
+_`alpha_walking.onnx` in a MuJoCo rollout — see [Microduck policies](../policies/microduck.md#walking-in-mujoco)._
+
 **Real hardware.** The Microduck is driven natively through its on-robot
 `robotd` daemon (Pollen's `duck-ipc-proto` JSON-RPC over a Unix socket) — the
 same policy code that runs in sim drives the physical robot:
