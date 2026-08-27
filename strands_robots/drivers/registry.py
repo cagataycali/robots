@@ -154,3 +154,46 @@ def list_native_drivers() -> dict[str, str]:
         Canonical robot name -> driver class name, sorted by robot name.
     """
     return {name: cls.__name__ for name, cls in sorted(_NATIVE_DRIVERS.items())}
+
+
+def _native_driver_refusal(robot_type: str) -> str | None:
+    """Name ``robot_type``'s native driver, or ``None`` when it has none.
+
+    lerobot's ``RobotConfig`` registry and this package's native-driver registry
+    are two answers to "what builds this robot", and a robot may be in the
+    second and not the first: the Reachy Mini and the Trossen arms have no
+    lerobot robot type at all, which is the gap their native drivers exist to
+    close. When ``driver="lerobot"`` is chosen for such a robot -- and it is
+    chosen by default, because :func:`resolve_driver` falls back to
+    :data:`~strands_robots.drivers.base.DEFAULT_DRIVER` for a robot that
+    declares nothing -- lerobot cannot build it, and answering with the names of
+    the robots lerobot *does* know answers the wrong question. The driver that
+    builds this robot ships in this package, one keyword away.
+
+    The sibling of :func:`strands_robots.teleoperator._other_lerobot_kind_refusal`,
+    which does the same for the other kind of wrong entry point: that one names a
+    leader arm as a teleoperator, this one names a robot as natively driven. Both
+    are consulted before the generic listing, and both return ``None`` to leave
+    it in place -- for a name with no native driver the listing is the right
+    answer, which is why this reports rather than raises.
+
+    Args:
+        robot_type: The device type string handed to lerobot. That is the
+            robot's ``hardware.lerobot_type`` when it declares one, and its
+            canonical name otherwise -- so a robot with no lerobot type is
+            looked up here under the name a caller passed to
+            :func:`~strands_robots.robot.Robot`.
+
+    Returns:
+        A refusal naming the native driver and the ``driver="strands"`` keyword
+        that builds it, or ``None`` when no native driver serves ``robot_type``.
+    """
+    driver_cls = get_native_driver_class(robot_type)
+    if driver_cls is None:
+        return None
+    return (
+        f"Unsupported robot type: {robot_type!r}. lerobot has no robot type for it, but this "
+        f"package ships a native driver for it ({driver_cls.__name__}): build it with "
+        f"Robot({robot_type!r}, mode='real', driver='strands', ...). To make that the default "
+        f"for this robot, declare hardware.driver='strands' on its registry entry."
+    )
