@@ -38,9 +38,11 @@ that reaches the measurement; the premises that make the refusal necessary
 (MuJoCo compiles it, the asset's own vertices are finite, and the extent
 floor is what made the NaN case unscreenable); that a finite scale -
 including the negative and zero ones - measures exactly what it did before;
-that a body carrying collidable geometry never reaches the measurement and
-is deliberately unchanged; that the wording has one owner per cause; and
-that the guard precedes the parse.
+that a body carrying collidable geometry takes its bound from that geometry
+and never reaches the measurement - which is why the refusal for the value it
+still carries lives at the read rather than here, pinned in
+``test_mesh_asset_scale_is_refused_wherever_it_is_carried``; that the wording
+has one owner per cause; and that the guard precedes the parse.
 """
 
 from __future__ import annotations
@@ -283,23 +285,32 @@ class TestAFiniteScaleIsUnchanged:
         assert mesh_aabb(_asset(tmp_path)) == (UNIT_CENTER, UNIT_SIZE)
 
 
-class TestABodyWithCollidableGeometryIsDeliberatelyUnchanged:
+class TestABodyWithCollidableGeometryTakesItsBoundFromItsGeom:
     """The analytic bound wins, so such a body never reaches the measurement.
 
-    Its ``mesh_scale`` still rides into the scene object, because that field is
-    applied by the realization rather than measured here. Refusing it would be
-    a claim about a consumer this reader does not own, so the boundary is
-    pinned rather than moved.
+    That is why the measurement is the wrong place to hold the scale, not a
+    reason to leave it unheld: the scale rides onto the scene object from this
+    branch too, and the realization applies it to the visual prim's xform
+    beside the mesh geom's position and orientation - two values the reader
+    already refuses when they are not finite. The refusal for the third now
+    lives where the scale is read rather than where it is measured, pinned in
+    ``test_mesh_asset_scale_is_refused_wherever_it_is_carried``.
+
+    A finite non-unit scale is used here so the claim is about which branch
+    supplies the bound: at ``3 3 3`` the mesh would measure 0.6 m and the box
+    is what is reported.
     """
 
     def test_the_reported_bound_comes_from_the_collidable_geom(self, tmp_path: Path) -> None:
-        widget = _widget(load_mjcf_scene_objects(_scene(tmp_path, _WITH_COLLISION, "nan 1 1")))
+        widget = _widget(load_mjcf_scene_objects(_scene(tmp_path, _WITH_COLLISION, "3 3 3")))
         assert widget.position == pytest.approx((0.0, 0.0, 0.5))
         assert widget.size == pytest.approx((0.2, 0.2, 0.1))
 
-    def test_the_declared_scale_still_rides_along(self, tmp_path: Path) -> None:
-        widget = _widget(load_mjcf_scene_objects(_scene(tmp_path, _WITH_COLLISION, "nan 1 1")))
-        assert math.isnan(widget.mesh_scale[0])
+    def test_the_declared_scale_still_rides_along_when_it_is_usable(self, tmp_path: Path) -> None:
+        # The carry is what made the unchecked value reachable; it must survive
+        # for a scale the guard accepts.
+        widget = _widget(load_mjcf_scene_objects(_scene(tmp_path, _WITH_COLLISION, "3 3 3")))
+        assert widget.mesh_scale == pytest.approx((3.0, 3.0, 3.0))
 
 
 class TestOneOwnerForEachWording:
@@ -332,14 +343,31 @@ class TestOneOwnerForEachWording:
         assert "scale" in str(scale)
         assert str(vertex) != str(scale)
 
-    def test_the_scale_factory_is_reached_from_the_measurement(self) -> None:
-        source = inspect.getsource(mesh_aabb)
+    def test_the_scale_factory_is_raised_only_by_the_shared_owner(self) -> None:
+        # Two consumers reach it now - the measurement and the loader's
+        # passthrough - so the factory is raised from one owner they both call
+        # rather than from each of them.
+        raisers: set[str] = set()
+        for node in ast.walk(ast.parse(inspect.getsource(mesh_assets))):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for inner in ast.walk(node):
+                if (
+                    isinstance(inner, ast.Raise)
+                    and isinstance(inner.exc, ast.Call)
+                    and isinstance(inner.exc.func, ast.Name)
+                    and inner.exc.func.id == "_non_finite_scale_error"
+                ):
+                    raisers.add(node.name)
+        assert raisers == {"refuse_non_finite_scale"}, raisers
+
+    def test_the_measurement_reaches_that_owner(self) -> None:
         called = {
             node.func.id
-            for node in ast.walk(ast.parse(source.strip()))
+            for node in ast.walk(ast.parse(inspect.getsource(mesh_aabb).strip()))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
-        assert "_non_finite_scale_error" in called, called
+        assert "refuse_non_finite_scale" in called, called
 
 
 class TestTheGuardPrecedesTheParse:
@@ -367,6 +395,6 @@ class TestTheGuardPrecedesTheParse:
             for node in ast.walk(tree)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
-        assert "_non_finite_scale_error" in lines, lines
+        assert "refuse_non_finite_scale" in lines, lines
         assert "load_mesh_geometry" in lines, lines
-        assert lines["_non_finite_scale_error"] < lines["load_mesh_geometry"]
+        assert lines["refuse_non_finite_scale"] < lines["load_mesh_geometry"]

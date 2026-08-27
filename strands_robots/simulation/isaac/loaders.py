@@ -2248,7 +2248,12 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
         measured around one reports a collision bound for geometry the scene
         does not declare, so it is refused rather than approximated).
     """
-    from strands_robots.simulation.isaac.mesh_assets import MESH_EXTENSIONS, USD_EXTENSIONS, mesh_aabb
+    from strands_robots.simulation.isaac.mesh_assets import (
+        MESH_EXTENSIONS,
+        USD_EXTENSIONS,
+        mesh_aabb,
+        refuse_non_finite_scale,
+    )
 
     _require_existing_file(path, "MJCF scene")
     root = _parse_xml(path, "MJCF scene")
@@ -2307,6 +2312,15 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
             asset = mesh_registry.get(mesh_name)
             if asset is not None:
                 candidate_path, mesh_scale = asset
+                # Refused here rather than at the measurement below, because the
+                # scale rides onto the scene object whichever branch supplies the
+                # bound: a body with collidable geometry takes the analytic bound
+                # and never measures, yet the realization still applies this scale
+                # to the visual prim's xform, beside the mesh geom's position and
+                # orientation - which are already refused when they are not
+                # finite. Placed beside the missing-file contract for the same
+                # reason: an asset declaration a body reaches has to be usable.
+                refuse_non_finite_scale(candidate_path, mesh_scale)
                 ext = os.path.splitext(candidate_path)[1].lower()
                 if ext in MESH_EXTENSIONS or ext in USD_EXTENSIONS:
                     if not os.path.isfile(candidate_path):

@@ -56,6 +56,7 @@ __all__ = [
     "load_mesh_geometry",
     "mesh_aabb",
     "mesh_usd_cache_dir",
+    "refuse_non_finite_scale",
     "convert_mesh_to_usd",
 ]
 
@@ -137,6 +138,16 @@ def _non_finite_scale_error(mesh_path: str, scale: tuple[float, float, float]) -
     finite is therefore not enough: the transform applied to them has to be
     finite too, and it arrives from the caller rather than from the file.
 
+    The scale has two consumers and only one of them measures. :func:`mesh_aabb`
+    measures through it, and
+    :func:`~strands_robots.simulation.isaac.loaders.load_mjcf_scene_objects`
+    also *carries* it onto the scene object it builds, where the Isaac
+    realization applies it to the visual prim's xform alongside the mesh geom's
+    position and orientation. Those two siblings are already refused when they
+    are not finite, and all three are arguments of the same
+    ``_author_local_xform`` call, so the scale is held to the same test as the
+    values it travels with rather than to the reach of the measurement.
+
     The two components fail differently and neither is screenable:
 
     * A NaN axis reports a centre of NaN and, because the reported extent is
@@ -154,9 +165,35 @@ def _non_finite_scale_error(mesh_path: str, scale: tuple[float, float, float]) -
     """
     return ValueError(
         f"mesh {mesh_path}: scale has a component that is not finite ({scale!r}) - a mesh measured "
-        f"through it reports a centre that is not a position and an extent floored at 1e-4, so the "
-        f"asset is refused instead of being sized"
+        f"through it reports a centre that is not a position and an extent floored at 1e-4, and a "
+        f"visual prim authored with it is scaled by a value that is not a length, so the asset is "
+        f"refused instead of being carried"
     )
+
+
+def refuse_non_finite_scale(mesh_path: str, scale: tuple[float, float, float]) -> None:
+    """Refuse a mesh scale that parsed but is not finite.
+
+    The single owner of the scale finiteness test, so the measurement and the
+    passthrough cannot drift into tolerating what the other refuses.
+    :func:`mesh_aabb` reaches it because it measures ``vertex * scale``;
+    :func:`~strands_robots.simulation.isaac.loaders.load_mjcf_scene_objects`
+    reaches it because it carries the scale onto the scene object whether or not
+    it measures through it - a body whose bound comes from its collidable
+    geometry never calls the measurement, so a check that lived only there
+    covered the minority of the bodies that carry a scale.
+
+    Args:
+        mesh_path: The asset at fault, named in the refusal.
+        scale: The parsed per-axis scale components.
+
+    Raises:
+        ValueError: If any component of ``scale`` is not finite
+            (:func:`_non_finite_scale_error`).
+    """
+    if all(map(math.isfinite, scale)):
+        return
+    raise _non_finite_scale_error(mesh_path, scale)
 
 
 def load_mesh_geometry(
@@ -448,8 +485,7 @@ def mesh_aabb(
         reported extent's ``1e-4`` floor makes a NaN axis look like a
         plausible sub-millimetre asset rather than a failure.
     """
-    if not all(map(math.isfinite, scale)):
-        raise _non_finite_scale_error(mesh_path, scale)
+    refuse_non_finite_scale(mesh_path, scale)
     points, _counts, _indices = load_mesh_geometry(mesh_path)
     mins = [float("inf")] * 3
     maxs = [float("-inf")] * 3
