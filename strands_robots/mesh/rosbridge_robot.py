@@ -34,6 +34,7 @@ from typing import Any
 from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
+from strands_robots.mesh._mobile_base import LATCHED_VELOCITY, failed_halt_error
 from strands_robots.mesh.ros_bridge import _check_topic
 from strands_robots.tools.use_rosbridge import _HOST_RE, _transport_port_error, use_rosbridge
 from strands_robots.utils import (
@@ -213,7 +214,9 @@ class RosbridgeRobot:
         bare single-shot command latches until :meth:`stop`, like any raw
         cmd_vel publish, and every timed or multi-message non-zero command is
         followed by a single zero Twist - even if the main publish failed - so a
-        timed drive cannot leave the robot with a live velocity. The trailing
+        timed drive does not leave the robot with a live velocity. That zero is a
+        gated command in its own right, so when it is the call that fails the
+        result says so rather than reporting the hold's success. The trailing
         zero was this bridge's alone until the shared mobile base took over the
         drive contract; the other two inherit it now, so a timed drive
         self-stops wherever it is issued.
@@ -293,14 +296,20 @@ class RosbridgeRobot:
         # rule and not a substitute for validation: a hold shorter than one
         # publish period still means "send the command once".
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
+        # The trailing stop goes out from ``finally`` even when the main publish
+        # raised, and its verdict is kept rather than dropped - see
+        # :func:`~strands_robots.mesh._mobile_base.failed_halt_error`.
+        halt: dict[str, Any] | None = None
         try:
-            return self._publish_twist(v, w, count=n, tool_context=tool_context)
+            result = self._publish_twist(v, w, count=n, tool_context=tool_context)
         finally:
             # The trailing zero carries the same context as the command it
             # undoes: one that could not reach the gate would be refused on its
             # own and leave the robot latched at the speed of an approved hold.
             if (duration is not None or n > 1) and (v or w):
-                self._publish_twist(0.0, 0.0, count=1, tool_context=tool_context)
+                halt = self._publish_twist(0.0, 0.0, count=1, tool_context=tool_context)
+        latched = failed_halt_error(result, halt, topic=self.cmd_vel_topic, subject=LATCHED_VELOCITY)
+        return self._error(latched) if latched else result
 
     def stop(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
         """Publish a single zero Twist.

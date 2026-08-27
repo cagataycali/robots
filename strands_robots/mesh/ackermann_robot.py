@@ -65,6 +65,7 @@ from typing import Any
 from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
+from strands_robots.mesh._mobile_base import failed_halt_error
 from strands_robots.mesh.ros_bridge import _check_topic
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.utils import (
@@ -339,16 +340,16 @@ class AckermannRosRobot:
         finally:
             if (duration is not None or n > 1) and (angle or throttle):
                 halt = self._publish_servo(0.0, 0.0, count=1, tool_context=tool_context)
-        if halt is not None and halt.get("status") != "success" and result.get("status") == "success":
-            cause = " ".join(
-                block.get("text", "") for block in halt.get("content", []) if isinstance(block, dict)
-            ).strip()
-            return self._error(
-                f"drive: the command was published to {self.servo_topic}, but the trailing stop "
-                f"failed - the car may still be holding the commanded throttle. Halt it with stop. "
-                f"Halt failure: {cause or 'no detail reported'}"
-            )
-        return result
+        # The rule is the sibling bridges' too, so it lives with the shared drive
+        # contract rather than in a third copy of it. Only the subject differs: a
+        # car holds a throttle where a differential-drive base holds a velocity.
+        latched = failed_halt_error(
+            result,
+            halt,
+            topic=self.servo_topic,
+            subject="the car may still be holding the commanded throttle",
+        )
+        return self._error(latched) if latched else result
 
     def _publish_servo(
         self,

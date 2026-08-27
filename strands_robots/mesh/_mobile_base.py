@@ -38,7 +38,13 @@ Safety semantics, stated once because they are now implemented once:
   means "this platform declares no limit", not "zero".
 - Every timed or multi-message non-zero command is followed by a single zero
   command through ``try``/``finally`` - *even when the main publish raised* - so
-  a timed drive cannot leave a robot with a live velocity latched.
+  a timed drive does not leave a robot with a live velocity latched. Sending it
+  is not the same as landing it: that stop is a second command over the same
+  transport, and the tool it goes through reports a refusal as an error envelope
+  rather than by raising. Its verdict is therefore read, not dropped - a hold
+  that succeeded over a stop that was refused is reported as the error, because
+  the robot is still moving and a caller reading ``success`` never issues
+  :meth:`MobileBaseRobot.stop`.
 - A bare single-shot ``drive()`` latches until :meth:`stop`, matching a raw
   ``cmd_vel`` publish. This is disclosed in the agent-facing tool description
   rather than papered over.
@@ -180,6 +186,54 @@ def positive_finite(label: str, value: Any, context: str = "MobileBaseRobot") ->
     if error := positive_finite_number_error(value, label, context):
         raise ValueError(error)
     return float(value)
+
+
+#: What is still moving when a velocity command outlived the stop that ends it.
+#: Shared by every ``Twist`` bridge so the two that own their own ``drive`` say
+#: the same thing about the same failure.
+LATCHED_VELOCITY = "the robot may still be moving at the commanded velocity"
+
+
+def failed_halt_error(
+    result: dict[str, Any],
+    halt: dict[str, Any] | None,
+    *,
+    topic: str,
+    subject: str,
+) -> str | None:
+    """Report a trailing stop that failed under a command that succeeded.
+
+    A timed or repeated drive owns its own stop, and that stop is a second
+    command over the same transport: the tool it goes through reports a refusal
+    - a declined operator approval, a rate limit, a transport failure - as an
+    error envelope rather than by raising. Returning the hold's success after
+    that refusal presents a robot still moving at the commanded velocity as a
+    drive that stopped itself, and a caller reading ``success`` never issues the
+    ``stop`` that would end it.
+
+    The hold's own failure wins when both failed: that is the cause, and a stop
+    it never got to undo is a consequence of it. ``None`` for ``halt`` means no
+    stop was owed - a single-shot command latches by contract - so there is no
+    verdict to read and a queued failure from some later call cannot be
+    misattributed to this one.
+
+    Args:
+        result: The hold's own publish envelope.
+        halt: The trailing stop's envelope, or ``None`` when none was sent.
+        topic: Command topic, named so the caller knows what is still live.
+        subject: What is still moving, in the platform's own vocabulary.
+
+    Returns:
+        The error text, or ``None`` when there is nothing to report.
+    """
+    if halt is None or halt.get("status") == "success" or result.get("status") != "success":
+        return None
+    cause = " ".join(block.get("text", "") for block in halt.get("content", []) if isinstance(block, dict)).strip()
+    return (
+        f"drive: the command was published to {topic}, but the trailing stop "
+        f"failed - {subject}. Halt it with stop. "
+        f"Halt failure: {cause or 'no detail reported'}"
+    )
 
 
 class MobileBaseRobot:
@@ -431,9 +485,12 @@ class MobileBaseRobot:
 
         Returns:
             The transport's publish result, or a structured error when the
-            request was refused. The module docstring states the full safety
-            contract; the order here is deliberate and pinned by tests -
-            finite check, then ``duration``, then the handshake, then publish.
+            request was refused - or when the command was published and the
+            trailing stop that ends it was not, which names the still-live
+            topic and the stop's own cause. The module docstring states the
+            full safety contract; the order here is deliberate and pinned by
+            tests - finite check, then ``duration``, then the handshake, then
+            publish.
         """
         # One domain rule per parameter, taken from the shared guards rather than
         # restated here, so the accepted set cannot drift between this base and
@@ -473,15 +530,21 @@ class MobileBaseRobot:
             else max(-self.max_angular, min(self.max_angular, float(angular)))
         )
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
+        # The trailing stop runs from ``finally`` so it goes out even when the
+        # main publish raised, and its verdict is kept rather than dropped -
+        # see :func:`failed_halt_error`.
+        halt: dict[str, Any] | None = None
         try:
-            return self._publish_cmd(v, w, count=n, tool_context=tool_context)
+            result = self._publish_cmd(v, w, count=n, tool_context=tool_context)
         finally:
             # A timed or repeated command owns its own stop. Skipped for a
             # command that was already zero - there is nothing to undo. Carries
             # the same context as the command it undoes: a trailing zero that
             # could not reach the gate would leave the robot latched at speed.
             if (duration is not None or n > 1) and (v or w):
-                self._publish_cmd(0.0, 0.0, count=1, tool_context=tool_context)
+                halt = self._publish_cmd(0.0, 0.0, count=1, tool_context=tool_context)
+        latched = failed_halt_error(result, halt, topic=self.cmd_vel_topic, subject=LATCHED_VELOCITY)
+        return self._error(latched) if latched else result
 
     def stop(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
         """Publish a single zero-velocity command.

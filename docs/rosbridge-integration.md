@@ -161,9 +161,12 @@ scan = robot.get_scan()  # read one laser scan (error if no scan_topic)
 - **Timed-command trailing zero**: every drive with a `duration` argument and a
   non-zero command (or multi-message publish) automatically publishes a single
   zero Twist afterwards - even if the main publish failed - so a timed drive
-  cannot leave the robot with a live velocity. This was previously this bridge's
-  alone; the ROS 2 and RTPS bridges inherit it from the shared mobile base now,
-  so a timed drive self-stops on all three.
+  does not leave the robot with a live velocity. That zero is itself a gated
+  command, so when it is the call that fails - a declined approval, a rate limit,
+  a transport error - `drive` returns that failure instead of the hold's success,
+  naming the still-live topic and telling you to halt with `stop`. This was
+  previously this bridge's alone; the ROS 2 and RTPS bridges inherit it from the
+  shared mobile base now, so a timed drive self-stops on all three.
 - **stop() needs no prior state**: the stop method publishes a zero Twist
   regardless of whether an earlier command succeeded, and there is no enable
   handshake to satisfy first. It is *not* exempt from the operator gate: that
