@@ -39,7 +39,7 @@ from __future__ import annotations
 import math
 import os
 import xml.etree.ElementTree as ET
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -1831,6 +1831,68 @@ def _segment_aabb(
     return center, half  # type: ignore[return-value]
 
 
+def _refuse_non_finite_geom(attrs: Mapping[str, str], attribute: str, values: Sequence[float]) -> None:
+    """Refuse a geom whose placement or extent parsed but is not finite.
+
+    A NaN or infinite coordinate is not a position, and neither of the two ways
+    this module folds a geom into a bound reports that.
+    :func:`_body_collision_aabb` unions a body's geoms with a running
+    ``min``/``max``, which orders a NaN as neither smaller nor larger than
+    anything and so drops it - returning the bounds of the geoms that *are*
+    finite, the same numbers a body declaring only those would produce, under
+    no error at all. A fixture whose leg declares ``euler="nan 0 0"`` is
+    measured as its tabletop alone: a 4 cm slab where the file declares a 77 cm
+    table, byte-identical to the same fixture with no leg. An infinite
+    coordinate fails the other way and no more usefully: it makes one axis of
+    the reported extent unbounded, and the ``inf - inf`` that leaves is a NaN
+    which :func:`_recursive_collision_aabb`'s own accumulator drops in turn, so
+    the widest geom in a subtree can size the proxy at the ``1e-4`` floor.
+    Either way the object :func:`load_mjcf_scene_objects` emits is a collision
+    proxy for geometry the scene does not contain, which is the phantom this
+    module's failure semantics exist to refuse.
+
+    MuJoCo - the owner of the format - refuses a non-finite geom quantity
+    wherever it checks one (``nan size in geom``) and warns about the document
+    as a whole (``XML contains a 'NaN'``), so refusing is the format's own
+    disposition rather than a policy invented here. It nevertheless compiles a
+    non-finite ``pos`` or orientation on a body with no free joint, which is
+    why this reader cannot defer the question to a compile step: the scenes
+    that reach it are exactly the ones that load.
+
+    One wording for all four parse paths - ``pos``, ``size``, whichever
+    orientation spelling the geom used, and ``fromto`` - so no one spelling
+    drifts into tolerating what its siblings refuse. Only a value that
+    *parsed* is graded, so an unreadable attribute keeps falling back to the
+    documented default exactly as before.
+
+    The locator is read from the *resolved* attributes rather than the element,
+    which is the rule every other reader in this module follows: a ``<default>``
+    class may supply what a geom does not spell itself. ``name`` is the one
+    attribute a class cannot supply - MuJoCo rejects it in a ``<default>`` as a
+    schema violation - so going through the resolver costs nothing there and
+    keeps one rule answering the question for every reader.
+
+    Args:
+        attrs: The geom's attributes with ``<default>`` inheritance resolved,
+            read for the ``name`` and ``type`` that locate it. MJCF geoms are
+            frequently unnamed, so the type is the fallback locator.
+        attribute: The MJCF attribute whose parsed value is not finite.
+        values: The parsed components, reported so the caller sees which.
+
+    Raises:
+        ValueError: If any component of ``values`` is not finite.
+    """
+    if all(map(math.isfinite, values)):
+        return
+    name = attrs.get("name")
+    where = f"geom {name!r}" if name else f'unnamed <geom type="{attrs.get("type", "sphere")}">'
+    raise ValueError(
+        f"{where}: {attribute} has a component that is not finite ({tuple(values)!r}) - a body "
+        f"measured around it reports a collision bound for geometry the scene does not declare, "
+        f"so the geom is refused instead of measured around"
+    )
+
+
 def _geom_aabb(
     geom: ET.Element,
     defaults: dict[str, dict[str, str]],
@@ -1877,16 +1939,33 @@ def _geom_aabb(
     ``type``, ``pos``, ``size``, ``fromto`` and the orientation are read through
     :func:`_class_attrs`: MJCF's ``<default>`` classes may supply any of them, so
     asking the element directly sees only the half the geom spells itself.
+
+    A quantity that parses to a non-finite value is refused by
+    :func:`_refuse_non_finite_geom` rather than returned, because ``None``
+    here means "no analytic AABB, fall back to another geom" and the caller
+    would silently measure the body around the geoms that remain.
+
+    Raises:
+        ValueError: If ``pos``, ``size``, ``fromto`` or the orientation
+            resolves to a value that is not finite
+            (:func:`_refuse_non_finite_geom`).
     """
     attrs = _class_attrs(geom, defaults, childclass)
     gtype = attrs.get("type", "sphere")
     pos = _parse_xyz(attrs.get("pos"))
+    _refuse_non_finite_geom(attrs, "pos", pos)
     size_str = attrs.get("size", "")
     try:
         sizes = [float(p) for p in size_str.replace(",", " ").split()] if size_str else []
     except (ValueError, TypeError):
         sizes = []
-    rot = _quat_matrix(_parse_orientation(attrs, own=geom.attrib, angle_scale=angle_scale, eulerseq=eulerseq))
+    _refuse_non_finite_geom(attrs, "size", sizes)
+    quat = _parse_orientation(attrs, own=geom.attrib, angle_scale=angle_scale, eulerseq=eulerseq)
+    # Name the spelling the file used, so the refusal points at an attribute a
+    # reader can go and look at rather than at the resolved quaternion.
+    spelling = next((a for a in _ORIENTATION_SPELLINGS if attrs.get(a)), "quat")
+    _refuse_non_finite_geom(attrs, spelling, quat)
+    rot = _quat_matrix(quat)
 
     if gtype == "box":
         if len(sizes) >= 3:
@@ -1906,6 +1985,7 @@ def _geom_aabb(
         # the endpoints carrying the placement and the axis extent.
         segment = _parse_fromto(attrs.get("fromto"))
         if segment is not None:
+            _refuse_non_finite_geom(attrs, "fromto", (*segment[0], *segment[1]))
             # MuJoCo takes a ``fromto`` geom's axis from the endpoints and
             # discards a declared orientation, so ``rot`` is not applied here.
             return _segment_aabb(gtype, segment[0], segment[1], sizes[0]) if sizes else None
@@ -1963,6 +2043,13 @@ def _body_collision_aabb(
     extent by :func:`_geom_aabb` - a body whose collision primitive is turned
     onto another axis is bounded on the axes it really occupies. Returns
     ``None`` when no analytic geom is found (e.g. a mesh-only visual body).
+
+    The union below is a running ``min``/``max``, which would order a NaN as
+    neither smaller nor larger than anything and drop the geom carrying it -
+    reporting the bounds of the geoms that are finite, under no error. That
+    input never arrives here: :func:`_geom_aabb` refuses a non-finite
+    placement or extent at the parse (:func:`_refuse_non_finite_geom`), so
+    every AABB folded in is finite by the time it reaches this comparison.
 
     ``angle_scale`` and ``eulerseq`` come from the model's ``<compiler>`` and
     are only forwarded; they default to MJCF's own defaults (degrees, ``xyz``)
@@ -2079,7 +2166,10 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
         If ``path`` doesn't exist.
     ValueError
         If the XML is malformed, the root isn't ``<mujoco>``, there is no
-        ``<worldbody>``, or a selected mesh asset file is missing on disk.
+        ``<worldbody>``, a selected mesh asset file is missing on disk, or a
+        geom declares a placement or extent that is not finite (a body
+        measured around one reports a collision bound for geometry the scene
+        does not declare, so it is refused rather than approximated).
     """
     from strands_robots.simulation.isaac.mesh_assets import MESH_EXTENSIONS, USD_EXTENSIONS, mesh_aabb
 
