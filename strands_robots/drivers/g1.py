@@ -349,7 +349,7 @@ class G1Driver:
                                 "description": (
                                     "sensors: return the latest cached IMU/battery/lidar; "
                                     "status: report connection and FSM; "
-                                    "stop: refuse further writes (a no-op today until #358 lands the motion verbs)"
+                                    "stop: halt any running control loop and publish a zero-torque frame"
                                 ),
                                 "enum": ["sensors", "status", "stop"],
                                 "default": "sensors",
@@ -369,11 +369,15 @@ class G1Driver:
     ) -> AsyncGenerator[Any, None]:
         """Handle one agent invocation and yield exactly one tool result.
 
-        The three verbs the spec declares are read-only or a no-op; each maps
-        to a dict already computed by the DDS callbacks. Motion belongs to
-        issue #358; this driver refuses ``stop`` in the same envelope shape it
-        will use once the motion path is wired, so a caller writes the same
-        error-checking code either way.
+        The three verbs the spec declares are all agent-safe: ``sensors`` and
+        ``status`` are read-only, and ``stop`` is a controlled stop that runs
+        :meth:`stop` (which joins any running control loop and publishes a
+        zero-torque frame on the way out - see :meth:`stop_task`).  The rich
+        motion verb set (``arm``, ``walk``, ``posture``, ``speak``,
+        ``lidar_snapshot``) lands in issue #358 as vendored neon tools that
+        the agent gets in addition to the driver-as-tool; the transport
+        primitive those verbs will call - :meth:`send_action` publishing on
+        ``rt/lowcmd`` - already ships (issue #361).
         """
         del kwargs  # forward-compat only
         del invocation_state
@@ -402,7 +406,7 @@ class G1Driver:
             await self.stop()
             envelope = {
                 "status": "success",
-                "content": [{"text": "stop: no motion path wired yet (issue #358)"}],
+                "content": [{"text": "stop: control loop halted; a running task publishes a zero-torque frame on exit"}],
             }
         yield {"toolUseId": tool_use_id, **envelope}
 
@@ -680,10 +684,6 @@ class G1Driver:
                 }
             ],
         }
-
-    # ------------------------------------------------------------------ #
-    # Task and policy paths (stubs until #358).                          #
-    # ------------------------------------------------------------------ #
 
     # ------------------------------------------------------------------ #
     # Task and policy paths.  The 500 Hz control loop lands here.        #

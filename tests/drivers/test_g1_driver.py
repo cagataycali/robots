@@ -739,10 +739,14 @@ def test_stream_sensors_action_returns_the_cached_snapshots() -> None:
 
 
 def test_stream_stop_action_calls_stop() -> None:
-    """The ``stop`` verb runs :meth:`stop` and reports the no-op reason.
+    """The ``stop`` verb runs :meth:`stop` and reports the halt outcome.
 
-    Today ``stop`` is a debug log; the shape of the tool result already
-    matches what the motion-wired version will return.
+    The transport primitive that ``stop`` calls is wired: :meth:`stop`
+    joins any running control loop and the loop publishes a zero-torque
+    frame on the way out (see :meth:`stop_task`).  The envelope names
+    what happened rather than the pre-#361 refusal that claimed no
+    motion path was wired - a caller who reads the text sees the
+    behaviour the code has, not the behaviour it used to have.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
 
@@ -753,7 +757,13 @@ def test_stream_stop_action_calls_stop() -> None:
 
     event = asyncio.run(_run())
     assert event["status"] == "success"
-    assert "issue #358" in event["content"][0]["text"]
+    text = event["content"][0]["text"]
+    assert "control loop halted" in text
+    # Guard against the pre-#361 refusal text sneaking back in a rebase:
+    # the driver's stop path now maps to a running behaviour, so the
+    # envelope must not claim otherwise.
+    assert "no motion path wired" not in text
+    assert "#358" not in text
 
 
 def test_cleanup_is_idempotent() -> None:
