@@ -1,4 +1,4 @@
-"""Smoke tests for :mod:`strands_robots.policies.curobo` - no GPU required.
+"""Smoke tests for :mod:`strands_robots.policies.curobo` — no GPU required.
 
 These tests exercise the in-process :class:`CuroboPolicy` against a stubbed
 ``MotionGen`` so they run on any developer machine. The integration test
@@ -185,7 +185,7 @@ class TestCuroboPolicyConstruction:
 
     def test_missing_robot_config_and_motion_gen_raises(self) -> None:
         """Without either ``robot_config`` or a pre-built ``motion_gen``,
-        the constructor must refuse - no silent fall-through to a
+        the constructor must refuse — no silent fall-through to a
         pseudo-default planner."""
         with pytest.raises(ValueError, match="robot_config"):
             CuroboPolicy()  # no robot_config, no motion_gen
@@ -315,7 +315,7 @@ class TestCuroboPolicyPlanAndChunk:
             assert all(isinstance(v, float) for v in step.values())
 
     def test_subsequent_calls_yield_from_cache_no_replan(self) -> None:
-        """Second call must NOT re-invoke the planner - chunked-action
+        """Second call must NOT re-invoke the planner — chunked-action
         contract pins the cache as the source of truth between
         re-plans."""
         stub = _StubMotionGen(ndof=6, horizon=20)
@@ -364,7 +364,7 @@ class TestCuroboPolicyPlanAndChunk:
 
     def test_replan_kwarg_forces_replan(self) -> None:
         """``replan=True`` forces a new plan even when the cache still
-        has waypoints - useful when the world updated mid-rollout."""
+        has waypoints — useful when the world updated mid-rollout."""
         stub = _StubMotionGen(ndof=6, horizon=20)
         p = CuroboPolicy(motion_gen=stub, action_horizon=8)
         asyncio.run(
@@ -446,7 +446,7 @@ class TestCuroboPolicyPlanAndChunk:
 
     def test_planner_exception_wrapped_as_runtime_error(self) -> None:
         """An unexpected exception from cuRobo is wrapped as ``RuntimeError``
-        with the original goal in the message - saves the user from
+        with the original goal in the message — saves the user from
         reading an opaque internal trace."""
 
         class _BoomMotionGen(_StubMotionGen):
@@ -505,7 +505,7 @@ class TestCuroboPolicyInstructionFallback:
 
 
 # ---------------------------------------------------------------------------
-# reset() - best-effort, clears cache + forwards to planner
+# reset() — best-effort, clears cache + forwards to planner
 # ---------------------------------------------------------------------------
 
 
@@ -539,7 +539,7 @@ class TestCuroboPolicyReset:
         assert stub.reset_called == 1
 
     def test_reset_swallows_motion_gen_errors(self) -> None:
-        """``reset`` is best-effort - any cuRobo-side failure must be
+        """``reset`` is best-effort — any cuRobo-side failure must be
         logged and swallowed."""
 
         class _BoomMotionGen(_StubMotionGen):
@@ -552,7 +552,7 @@ class TestCuroboPolicyReset:
 
 
 # ---------------------------------------------------------------------------
-# Policy ABC contract - same shape as MockPolicy
+# Policy ABC contract — same shape as MockPolicy
 # ---------------------------------------------------------------------------
 
 

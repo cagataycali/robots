@@ -19,12 +19,6 @@ from typing import Any
 
 import pytest
 
-# The wire half of this file needs the optional ``awsiotsdk``/``awscrt`` extra:
-# IotMqttTransport.put() imports ``awscrt.mqtt5`` to build the PublishPacket, so
-# without it the publish is swallowed and the assertion reads "the transport
-# dropped the camera ref" when the truth is "an optional dependency is absent".
-pytest.importorskip("awscrt")
-
 from strands_robots.mesh.transport.bridge_transport import _should_bridge
 from strands_robots.mesh.transport.iot_transport import (
     IotMqttTransport,

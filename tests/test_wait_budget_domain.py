@@ -27,7 +27,6 @@ import ast
 import inspect
 import pathlib
 import threading
-from unittest.mock import patch
 from typing import Any
 
 import numpy as np
@@ -36,7 +35,6 @@ import pytest
 import strands_robots
 import strands_robots.hardware_rtps_bridge as rtps_mod
 from strands_robots.hardware_ros_bridge import HardwareRosBridge
-from strands_robots import hardware_rtps_bridge
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 from strands_robots.utils import positive_finite_number_error
 

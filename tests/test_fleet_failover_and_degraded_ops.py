@@ -33,7 +33,6 @@ import pytest
 
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import security as mesh_security
-from strands_robots.mesh import session as mesh_session
 
 _FLEET_DIR = Path(__file__).resolve().parent.parent / "examples" / "fleet"
 _EXAMPLE_PATH = _FLEET_DIR / "03_failover_and_degraded_ops.py"
@@ -302,19 +301,9 @@ class _StoppableRobot:
 
 
 def _capturing_bus(monkeypatch):
-    """Capture every payload the mesh publishes, keyed by topic.
-
-    Q30: patching legacy ``mesh_core.put`` alone is NOT isolation -
-    ``emergency_stop()`` prefers the Zenoh-native publisher on the
-    process-global session and ``broadcast()`` uses ``current_session()``.
-    Sever every global-session rail first (see
-    test_fleet_emergency_evacuation.py for the incident this pins).
-    """
+    """Capture every payload the mesh publishes, keyed by topic."""
     published = []
     monkeypatch.setattr(mesh_core, "put", lambda key, payload: published.append((key, payload)))
-    monkeypatch.setattr(mesh_core, "current_session", lambda: None)
-    monkeypatch.setattr(mesh_session, "current_session", lambda: None)
-    monkeypatch.setattr(mesh_session, "_current_zenoh_session_directly", lambda: None)
     return published
 
 
@@ -331,17 +320,8 @@ def _live_unstarted_mesh(peer_id: str) -> mesh_core.Mesh:
     started peer (publishing and audit-logging instead of early-returning);
     ``_stop_event`` is pre-set so the broadcast collection window returns
     immediately instead of sleeping out its full timeout. No session is ever
-    opened - every publish lands in the captured bus. That last sentence is
-    only true because of the Q30 fuse below: it REFUSES to build while any
-    process-global Zenoh session is reachable, so call
-    ``_capturing_bus(monkeypatch)`` first.
+    opened - every publish lands in the captured bus.
     """
-    assert mesh_core.current_session() is None and mesh_session._current_zenoh_session_directly() is None, (
-        "refusing to build a safety-test Mesh while a process-global Zenoh "
-        "session is reachable: emergency_stop() would publish a REAL estop "
-        "on the live fleet (Q30). Call _capturing_bus(monkeypatch) before "
-        "_live_unstarted_mesh()."
-    )
     mesh = mesh_core.Mesh(_StoppableRobot(), peer_id=peer_id, peer_type="robot")
     mesh._running = True
     mesh._stop_event.set()

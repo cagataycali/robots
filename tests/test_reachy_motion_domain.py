@@ -56,8 +56,6 @@ from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import finite_number_error
 from tests.test_reachy_mini_driver import _force_real_device_connect_edge
 
-from tests.device_connect_env import skip_reason_if_sdk_missing
-
 # Values that cannot be carried to the robot as a signed physical quantity.
 # ``True``/``False`` are included because ``bool`` is an ``int`` subclass: a bare
 # ``float()`` coercion reads ``True`` as a silent one-degree command.
@@ -234,19 +232,6 @@ class TestAuthorizationIsAnsweredFirst:
         assert link.commands == []
 
 
-#: Some tests below reach the SDK the OTHER way: they import the product package
-#: ``strands_robots.device_connect``, whose module body does ``from device_connect_edge
-#: import DeviceRuntime``. That is the same optional [device-connect] extra the fixtures
-#: gate on, so it gets the same verdict - a skip that says what is missing, not a
-#: ModuleNotFoundError that reads like our own code is broken. Marked per CLASS on
-#: purpose: the pure ast/domain tests in this file prove things about the source text and
-#: must keep running on a machine without any robot SDK at all.
-requires_device_connect_sdk = pytest.mark.skipif(
-    bool(skip_reason_if_sdk_missing()), reason=skip_reason_if_sdk_missing()
-)
-
-
-@requires_device_connect_sdk
 class TestTheDelegationIsReal:
     """The forwarding surfaces really are answered downstream, not merely shaped so.
 

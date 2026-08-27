@@ -21,15 +21,6 @@ from typing import Any
 
 import pytest
 
-# These tests drive the AWS IoT MQTT5 transport by swapping a fake into
-# ``awsiot.mqtt5_client_builder``, so they need the optional ``awsiotsdk`` extra
-# actually installed. Without this guard the import happened inside a fixture and
-# the whole file went RED with ModuleNotFoundError - 45 failures that read like a
-# broken transport when the truth is "an optional dependency is absent".
-# Same house pattern as tests/mesh/test_iot_camera_offload.py.
-pytest.importorskip("awsiot")
-
-
 from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 
 

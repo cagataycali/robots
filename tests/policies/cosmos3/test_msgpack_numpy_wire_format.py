@@ -7,14 +7,11 @@ the on-the-wire contract: a regression here silently corrupts every action the
 remote policy returns. These tests pin that contract end to end.
 """
 
+import msgpack
 import numpy as np
 import pytest
 
-# The optional extra that ships this wire format may not be installed; without a
-# module-level guard its absence is reported as a broken transport instead of a skip.
-msgpack = pytest.importorskip("msgpack", reason="msgpack (optional `cosmos3`/`vera` extra) needed for the wire format")
-
-from strands_robots.policies.cosmos3 import _msgpack_numpy as mnp  # noqa: E402
+from strands_robots.policies.cosmos3 import _msgpack_numpy as mnp
 
 
 def test_ndarray_round_trip_preserves_dtype_shape_values():

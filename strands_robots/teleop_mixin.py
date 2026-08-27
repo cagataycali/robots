@@ -2,8 +2,6 @@
 
 Shared by :class:`strands_robots.hardware_robot.Robot` and the MuJoCo
 :class:`strands_robots.simulation.Simulation`. The only contract a host
-
-
 class must satisfy is a ``send_action(action: dict, robot_name: str | None
 = None) -> dict`` method (both already have it) and, for mesh publishing,
 the ``mesh`` / ``peer_id`` attributes (both already have them).
@@ -52,44 +50,6 @@ from typing import Any
 from strands_robots.utils import name_list_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
-
-
-#: Per-joint slew bound the LOCAL teleop loop applies, in frame units per second.
-#: Wider than the mesh path's radian-scoped 8*pi because the shipped SO hardware
-#: defaults speak degrees (90 deg/s for a calm sweep, 372 deg/s for the STS3215
-#: no-load max) and the gripper speaks 0-100. Above the fastest servo in any
-#: shipped unit system while still catching encoder glitches and full-scale jumps.
-LOCAL_SLEW_DEFAULT = 500.0
-
-
-def local_slew_bound(raw: str | None) -> float:
-    """Resolve ``STRANDS_TELEOP_SLEW_ABS`` to the bound the local loop uses.
-
-    Extracted from the loop body so the POLICY can be tested without racing a
-    wall-clock session. It used to be a literal inside ``_teleop_loop``, which
-    meant the only way to ask "does the default bound accommodate a 90 deg/s
-    sweep?" was to run a real loop for a real second and convert ticks to
-    speed using the rate the machine ACHIEVED - a test that failed under load
-    while the code was correct (Q29).
-
-    A malformed or non-positive value is a misconfiguration, not a licence to
-    run unbounded: it warns and falls back to the default.
-    """
-    if not raw:
-        return LOCAL_SLEW_DEFAULT
-    try:
-        value = float(raw)
-        if value <= 0 or not math.isfinite(value):
-            raise ValueError
-    except (ValueError, TypeError):
-        logger.warning(
-            "[teleop] STRANDS_TELEOP_SLEW_ABS=%r is not a positive finite number; using default %.1f",
-            raw,
-            LOCAL_SLEW_DEFAULT,
-        )
-        return LOCAL_SLEW_DEFAULT
-    return value
-
 
 # Default local control loop frequency (Hz). Matches InputPublisher.
 _TELEOP_HZ_DEFAULT = 50.0
@@ -217,65 +177,6 @@ class TeleopMixin:
             ],
         }
 
-    def start_teleop_publish_self(
-        self,
-        device_name: str = "leader",
-        hz: float = 30.0,
-        robot_name: str | None = None,
-    ) -> dict[str, Any]:
-        """Publish THIS arm's own measured positions as a teleop stream.
-
-        The missing half of the teleop chain. ``start_teleop_publish`` needs a
-        lerobot ``Teleoperator`` handed to it in-process, and no mesh verb could
-        create one - so a remote caller could point a follower at a leader
-        stream that nothing was able to bring into existence, and the follower
-        just waited out its subscribe budget.
-
-        A leader arm the dashboard already spawned is a valid source as it is:
-        its joints come off the wire through the shared bus lock (no second
-        serial connection, no "Port is in use!"), and ``get_observation`` already
-        names them the way a follower's ``send_action`` expects. See
-        :mod:`strands_robots.teleop_source`.
-
-        READ-ONLY on this arm: it moves nothing. A follower moves only when
-        someone separately points it at this stream.
-
-        Args:
-            device_name: Input-stream name; the last segment of the mesh key.
-            hz: Publish rate. 30Hz is the default rather than the publisher's
-                50Hz because every frame here is a real bus read shared with the
-                state probe and the camera publisher.
-            robot_name: Sim only: which robot in the world is the leader.
-
-        Returns:
-            The status dict from :meth:`start_teleop_publish`, or an error dict
-            when this host cannot be read.
-        """
-        from strands_robots.teleop_source import RobotAsTeleoperator
-
-        source = RobotAsTeleoperator(self, robot_name=robot_name)
-        # Fail loudly HERE rather than starting a loop that publishes empty
-        # frames forever: a stream of {} looks alive in the counters and moves
-        # nothing, which is the worst possible failure to debug.
-        probe = source.get_action()
-        if not probe:
-            return {
-                "status": "error",
-                "content": [{
-                    "text": "this host reports no joint positions, so it cannot be a teleop leader "
-                            "(is its hardware connected?)",
-                }],
-            }
-        publish = getattr(self, "start_teleop_publish", None)
-        if publish is None:
-            return {"status": "error", "content": [{"text": "host does not support teleop publishing"}]}
-        result = dict(publish(source, device_name=device_name, method="arm", hz=hz))
-        # What the receiver needs, without making the caller parse prose.
-        result["source_peer_id"] = getattr(self, "peer_id", None)
-        result["device_name"] = device_name
-        result["joints"] = sorted(probe)
-        return result
-
     def get_teleop_status(self) -> dict[str, Any]:
         """Status of all active teleop publishers/receivers (host-agnostic)."""
         publishers = {}
@@ -304,64 +205,6 @@ class TeleopMixin:
                 },
                 {"json": {"publishers": publishers, "receivers": receivers}},
             ],
-        }
-
-    def stop_teleop(self, device_name: str | None = None) -> dict[str, Any]:
-        """Stop all or a specific teleop publisher/receiver (host-agnostic).
-
-        Q183: this lived only on the hardware ``Robot``, so a sim following a
-        leader stream could START (``start_teleop_receive`` is on this mixin)
-        but never STOP — mesh ``teleop_stop`` answered ``{"error": "robot does
-        not support stop_teleop"}`` and the only way out was killing the
-        process. The state it touches (``_input_publishers`` /
-        ``_input_receivers``) is created by this mixin and by
-        ``start_teleop_publish``, guarded with ``hasattr`` either way, so the
-        lifecycle's closing half is as host-agnostic as its opening half.
-
-        Args:
-            device_name: If provided, stop only the named publisher/receiver.
-                If None, stop all.
-
-        Returns:
-            Stats from stopped sessions.
-        """
-        results = []
-
-        # Stop publishers
-        if hasattr(self, "_input_publishers"):
-            if device_name:
-                pub = self._input_publishers.pop(device_name, None)
-                if pub:
-                    results.append(pub.stop())
-            else:
-                for _name, pub in list(self._input_publishers.items()):
-                    results.append(pub.stop())
-                self._input_publishers.clear()
-
-        # Stop receivers
-        if hasattr(self, "_input_receivers"):
-            if device_name:
-                # Match by device name suffix
-                to_remove = [k for k in self._input_receivers if k.endswith(f"/{device_name}")]
-                for k in to_remove:
-                    results.append(self._input_receivers.pop(k).stop())
-            else:
-                for _key, rcv in list(self._input_receivers.items()):
-                    results.append(rcv.stop())
-                self._input_receivers.clear()
-
-        if not results:
-            return {"status": "success", "content": [{"text": "No active teleop sessions."}]}
-
-        stats_text = "\n".join(
-            f"  {r.get('device', r.get('source', '?'))}: "
-            f"{r.get('frames', r.get('frames_received', 0))} frames, "
-            f"{r.get('hz_actual', 0):.1f} Hz"
-            for r in results
-        )
-        return {
-            "status": "success",
-            "content": [{"text": f"Teleop stopped:\n{stats_text}"}],
         }
 
     def send_action(self, action: ActionDict, robot_name: str | None = None) -> dict[str, Any]:
@@ -954,17 +797,37 @@ class TeleopMixin:
             merge_slew_baseline,
         )
 
-        # The local path uses a wider default than the mesh path because the
-        # shipped SO hardware defaults speak degrees (90 deg/s for a calm sweep,
-        # 372 deg/s for the STS3215 no-load max) and the gripper speaks 0-100.
-        # The mesh path's 8*pi default is radian-scoped and already requires
-        # explicit widening for driver-unit devices; imposing it on the local
-        # loop would refuse ordinary human teleop at default hardware settings.
-        # 500 units/s is above the fastest servo in any shipped unit system
-        # (deg, range-0-100, rad) while still catching encoder glitches and
-        # full-scale jumps that would strip gears.
-        _LOCAL_SLEW_DEFAULT = LOCAL_SLEW_DEFAULT
-        _local_slew = local_slew_bound(os.environ.get("STRANDS_TELEOP_SLEW_ABS", ""))
+        # This default is sized directly against the shipped SO hardware units:
+        # the joints speak degrees (90 deg/s for a calm sweep, 372 deg/s for the
+        # STS3215 no-load max) and the gripper speaks 0-100. 500 units/s is above
+        # the fastest servo in any shipped unit system (deg, range-0-100, rad)
+        # while still catching encoder glitches and full-scale jumps that would
+        # strip gears.
+        #
+        # It stays a constant of its own now that the mesh path is frame-unit
+        # scoped too, because the two bound different things rather than the same
+        # thing at two scales: the mesh default is its whole value envelope
+        # traversed once per second, deliberately loose enough to admit any
+        # driver unit on a stream arriving from another machine, while this loop
+        # reads a leader attached to this host whose unit system is known. So the
+        # mesh bound is the looser of the two, and narrowing it here would be a
+        # policy decision about remote streams made in the local path.
+        _LOCAL_SLEW_DEFAULT = 500.0
+        _local_slew_str = os.environ.get("STRANDS_TELEOP_SLEW_ABS", "")
+        if _local_slew_str:
+            try:
+                _local_slew = float(_local_slew_str)
+                if _local_slew <= 0 or not math.isfinite(_local_slew):
+                    raise ValueError
+            except (ValueError, TypeError):
+                logger.warning(
+                    "[teleop] STRANDS_TELEOP_SLEW_ABS=%r is not a positive finite number; using default %.1f",
+                    _local_slew_str,
+                    _LOCAL_SLEW_DEFAULT,
+                )
+                _local_slew = _LOCAL_SLEW_DEFAULT
+        else:
+            _local_slew = _LOCAL_SLEW_DEFAULT
 
         # Magnitude envelope for the baseline prune, and the reason it is
         # infinite here. ``merge_slew_baseline`` drops an entry once enough time
@@ -988,30 +851,16 @@ class TeleopMixin:
         # bound is that key set, not a time window.
         _LOCAL_VALUE_ABS = math.inf
 
-        # Ticker-paced (BUGS.md Q69). This loop already subtracted its own body
-        # time from the wait, but the wait it fed was ``Event.wait``, inflated by
-        # ~145ms in a daemon-descended process tree - so a 30Hz teleop session
-        # applied about 6 frames a second to the follower.
-        #
-        # THE SLEW GUARD IS WHY THIS MATTERS BEYOND SMOOTHNESS: its allowance is
-        # computed from ``period`` below (input_frame_slew_violation(..., period,
-        # ...)), i.e. from the NOMINAL rate, while frames really arrived ~2.45x
-        # further apart. Each frame was judged against an allowance ~2.45x
-        # smaller than the motion it legitimately carried, and the refusals read
-        # as an operator moving the leader too fast (BUGS.md Q29, "teleop
-        # slew-bound failures"). Making the nominal period true again is the
-        # precondition for judging that bound at all - it is NOT a claim that Q29
-        # is fixed, which needs a real leader-arm session to say.
-        # Imported HERE, not at module scope: importing strands_robots.mesh runs
-        # the package __init__ and reaches strands_robots.simulation, which this
-        # module must not depend on - the same reason the slew helper below is
-        # imported lazily, and an invariant the suite pins by parsing this
-        # module's module-scope imports. pacing itself is dependency-free; it is
-        # the package around it that is heavy.
+        # Paced by mesh.pacing.Ticker. Like InputPublisher._publish_loop this loop
+        # already subtracted its own body from the period with perf_counter, so the
+        # arithmetic was not what was wrong with it -- the wait that arithmetic fed
+        # was. The subtraction now has one owner instead of a copy per loop, and on a
+        # host that inflates Event.wait (see mesh.pacing) this loop no longer pays it.
+        # Imported here rather than at module scope: this module is imported by
+        # hardware paths that must not pull in the mesh package on import.
         from strands_robots.mesh.pacing import Ticker
 
-        ticker = Ticker(period, self._teleop_stop_event)
-        try:
+        with Ticker(period, self._teleop_stop_event) as ticker:
             while self._teleop_running and not self._teleop_stop_event.is_set():
                 # ``duration`` is an elapsed-time budget, so the deadline is
                 # compared on the clock it was built from. Read on ``time.time()``
@@ -1084,8 +933,6 @@ class TeleopMixin:
                 if ticker.wait():
                     break
 
-        finally:
-            ticker.close()
         self._teleop_running = False
         logger.info("[teleop] loop stopped (%d frames, %d errors)", self._teleop_frames, self._teleop_errors)
 
@@ -1149,6 +996,32 @@ class TeleopMixin:
                 {"json": telemetry},
             ],
         }
+
+
+def _stop_reported_stopped(envelope: dict[str, Any]) -> bool:
+    """Read whether a :meth:`TeleopMixin.stop_teleoperate` envelope stopped the loop.
+
+    The flag is ``stopped`` in the envelope's ``json`` block, which
+    :meth:`TeleopMixin._teleop_stats` always carries and the failed-join branch
+    sets to ``False``. Read that key rather than ``status``: the status is
+    derived from the session counters, so a session whose every frame errored
+    reports ``"error"`` after a perfectly clean join, and a caller keying on it
+    would read a healthy teardown as a live loop.
+
+    Args:
+        envelope: The envelope ``stop_teleoperate`` returned.
+
+    Returns:
+        ``True`` when the loop is known to have stopped, which includes the
+        "no active teleoperation" envelope that carries no ``json`` block at
+        all - there was nothing to stop. ``False`` only when the envelope
+        positively reports a loop that outlasted its join budget.
+    """
+    for block in envelope.get("content", []):
+        payload = block.get("json")
+        if isinstance(payload, dict) and "stopped" in payload:
+            return bool(payload["stopped"])
+    return True
 
 
 def _infer_method(teleop_type: str) -> str:

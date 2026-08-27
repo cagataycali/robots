@@ -22,7 +22,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from strands_robots._mesh_switch import NEGATIVE, mesh_env_request
+from strands_robots._mesh_switch import mesh_env_request
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
@@ -425,77 +425,6 @@ def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
     return failed
 
 
-#: Longest probe reason published in a state snapshot. The reasons are rendered on a card, and
-#: FeetechMotorsBus.__repr__ alone is ~1.5 KB of motor table -- publishing that at STATE_HZ would
-#: cost real bandwidth to say one sentence ("has no calibration registered").
-PROBE_REASON_MAX = 200
-
-
-def summarise_probe_error(exc: BaseException) -> str:
-    """One short human sentence for a failed state probe, safe to publish and to render.
-
-    Args:
-        exc: The exception a ``_read_state`` probe raised.
-
-    Returns:
-        A single line, at most :data:`PROBE_REASON_MAX` characters, always naming the exception
-        type. Never raises: a summariser that can fail would turn a degraded probe into a dead
-        state loop.
-
-    The raw ``repr`` is unusable in a UI. Q85's real message was a RuntimeError whose text is a
-    full motor table followed by the only words that matter -- ``has no calibration registered`` --
-    so the LAST non-empty line is kept rather than the first, and multi-line messages are collapsed.
-    The type name is always present because Q86's ConnectionError and Q85's RuntimeError need
-    different actions from the operator (a wire/ownership problem versus a calibration one), and an
-    exception with an empty message would otherwise publish nothing at all.
-    """
-    try:
-        kind = type(exc).__name__
-        text = str(exc).strip()
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        # The tail of a Feetech message carries the verdict; its head carries the motor dump.
-        detail = lines[-1] if lines else ""
-        detail = detail.lstrip(",)").strip() or (lines[0] if lines else "")
-        out = f"{kind}: {detail}" if detail else kind
-        if len(out) > PROBE_REASON_MAX:
-            out = out[: PROBE_REASON_MAX - 1].rstrip() + "\u2026"
-        return out
-    except Exception:  # pragma: no cover - a summariser must never break the state loop
-        return type(exc).__name__
-
-
-def degraded_report(records: Mapping[str, dict[str, Any]], now: float) -> dict[str, dict[str, Any]]:
-    """Render recorded probe failures for publication, newest fact first.
-
-    Args:
-        records: Per-category state kept by :meth:`Mesh._warn_read_state_once`.
-        now: Current epoch seconds, used for ``for_seconds``.
-
-    Returns:
-        ``{category: {reason, failures, since, for_seconds}}`` -- JSON-safe.
-
-    ``for_seconds`` exists because "this probe failed" and "this probe has been failing for three
-    hours" call for different responses, and a snapshot consumer cannot subtract two clocks it does
-    not share. A category is present only while it is CURRENTLY failing: recovery must be able to
-    remove the badge, or one transient error would libel an arm until it is restarted.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    for category, rec in records.items():
-        since = float(rec.get("since", now))
-        entry: dict[str, Any] = {
-            "reason": str(rec.get("reason", "")),
-            "failures": int(rec.get("failures", 1)),
-            "since": since,
-            "for_seconds": max(0.0, round(now - since, 1)),
-        }
-        # Present ONLY for a probe that never ran: "nothing was thrown" is a different claim from
-        # "an exception was", and a consumer must not have to parse prose to tell them apart. Absent
-        # rather than False, so an older reader sees no new field and a newer one is not told
-        # something the publisher never said.
-        if rec.get("skipped"):
-            entry["skipped"] = True
-        out[category] = entry
-    return out
 def _sensor_present(robot: Any, *attrs: str) -> bool:
     """Report whether *robot* answers any of *attrs* with a value.
 
@@ -1557,21 +1486,7 @@ class Mesh(SensorLoopsMixin):
         if degraded is not None:
             snapshot["degraded"] = degraded
 
-        # Additive key: an older cached PWA bundle ignores it, so publishing it cannot break a tab
-        # that is mid-session (the same rule /api/training/trainers follows).
-        # A degraded-only snapshot IS worth sending -- "this arm has no joints and here is why" is the
-        # case that used to travel as silence -- but only for a peer we could actually see hardware
-        # on. A hostile or non-robot object must still yield None (a contract older than this
-        # feature: tests/mesh/test_mesh.py), because if not even `robot` could be read then the
-        # problem is not this peer's joints, it is that there is no working robot behind it, and
-        # presence already carries connected/hw for that. Without this distinction every gateway and
-        # every broken object would broadcast a permanent complaint.
-        # peer_id and t are the two free keys, so content is anything beyond them.
-        records = getattr(self, "_read_state_degraded", None)
-        has_content = len(snapshot) > 2 or bool(records and getattr(self, "_read_state_hw_seen", False))
-        if records and has_content:
-            snapshot["degraded"] = degraded_report(records, time.time())
-        return snapshot if has_content else None
+        return snapshot if len(snapshot) > 2 else None
 
     def _running_policy_robots(self) -> frozenset[str]:
         """Names of this world's robots currently executing a policy.
@@ -2379,8 +2294,6 @@ class Mesh(SensorLoopsMixin):
                         **extra,
                     )
                 )
-        if action == "sim_call":
-            return self._dispatch_sim_call(r, cmd)
         if action == "step" and hasattr(r, "step"):
             return dict(r.step(cmd.get("steps", 1)))
         if action == "reset" and hasattr(r, "reset"):
@@ -2389,18 +2302,6 @@ class Mesh(SensorLoopsMixin):
             if hasattr(r, "get_teleop_status"):
                 return dict(r.get_teleop_status())
             return {"inputs": [], "publishers": {}, "receivers": {}}
-        if action == "teleop_publish":
-            # Makes this peer a teleop SOURCE from its own joints. Read-only on
-            # this arm - the mover is whoever calls teleop_receive.
-            if hasattr(r, "start_teleop_publish_self"):
-                return dict(
-                    r.start_teleop_publish_self(
-                        device_name=cmd.get("device_name", "leader"),
-                        hz=cmd.get("hz", 30.0),
-                        robot_name=cmd.get("robot_name"),
-                    )
-                )
-            return {"error": "robot does not support teleop_publish"}
         if action == "teleop_receive":
             source = cmd.get("source_peer_id", "")
             dev = cmd.get("device_name", "leader")
@@ -2571,104 +2472,6 @@ class Mesh(SensorLoopsMixin):
             return dict(sim.run_policy(robot_name, **run_kwargs))
         # action == "start"
         return dict(sim.start_policy(robot_name, **run_kwargs))
-
-    #: Byte budget for one text block of a ``sim_call`` wire reply. The
-    #: transport low-pass filter silently drops messages over its cmd cap
-    #: (default 16 KiB) in BOTH directions, so an unbounded reply (an
-    #: ``export_xml`` of a big scene, a base64 render) would not arrive large -
-    #: it would not arrive at all, surfacing as a timeout with zero
-    #: diagnostics. Truncating here turns that silent drop into a reply that
-    #: says it was truncated.
-    _SIM_CALL_REPLY_TEXT_CAP: int = 8_000
-
-    def _dispatch_sim_call(self, r: Any, cmd: dict[str, Any]) -> dict[str, Any]:
-        """Dispatch a validated ``sim_call`` command to this peer's Simulation.
-
-        The rail that puts the Simulation's PUBLISHED action surface
-        (``add_object`` / ``add_camera`` / ``register_urdf`` / ``raycast`` /
-        ...) on the mesh: ``validate_command`` has already bounded the wire
-        shape (identifier-charset ``sim_action``, JSON-object ``sim_params``,
-        rollout actions refused - :data:`~strands_robots.mesh.security.SIM_CALL_BLOCKED_ACTIONS`),
-        and the call is delegated to ``Simulation.__call__``, the same
-        dispatcher the agent-facing AgentTool uses - so per-action parameter
-        validation, field aliasing and the published-actions-only refusal
-        (#2093) all apply without a second copy of that logic here.
-
-        Structurally sim-only: a hardware peer (no ``run_policy``/``_world``)
-        answers with a refusal naming the reason, so this verb can never move
-        metal - which is exactly why no motion confirm gates it anywhere.
-
-        A command addressed to a child SimRobot peer is delegated to the
-        parent Simulation (the child dataclass carries no world of its own),
-        with ``robot_name`` pre-bound to that child ONLY when the caller sent
-        a ``robot_name`` themselves or the action is robot-scoped enough to
-        need one - we deliberately do NOT inject ``robot_name`` into every
-        call, because world-scoped actions (``add_object``, ``set_gravity``)
-        do not accept the parameter and would refuse it.
-        """
-        sim_action = cmd.get("sim_action", "")
-        params = dict(cmd.get("sim_params") or {})
-        if cmd.get("robot_name") is not None:
-            params.setdefault("robot_name", cmd["robot_name"])
-
-        # Resolve the Simulation: the peer's own robot, or the child
-        # SimRobot's parent world.
-        sim = r
-        _sim_parent = getattr(r, "_sim_parent", None)
-        if _sim_parent is not None:
-            sim = _sim_parent
-        if not (hasattr(sim, "run_policy") and hasattr(sim, "_world") and callable(sim)):
-            return {
-                "error": (
-                    "sim_call targets a SIMULATION peer; this peer is not one. "
-                    "Hardware robots are driven through execute/start (policy "
-                    "rollouts) and teleop - their surface is deliberately "
-                    "narrower than a sim's."
-                )
-            }
-
-        try:
-            result = sim(action=sim_action, **params)
-        except TypeError as exc:
-            # A published action called with a parameter it does not accept
-            # (e.g. robot_name on a world-scoped action). The message names
-            # the Python signature mismatch, which IS the actionable content.
-            return {"error": f"sim_call {sim_action!r} rejected its parameters: {exc}"}
-        if not isinstance(result, dict):
-            return {"error": f"sim_call {sim_action!r} returned non-dict {type(result).__name__}"}
-
-        # Bound the reply for the wire (see _SIM_CALL_REPLY_TEXT_CAP). Text
-        # blocks are truncated with a marker; non-text blocks (images from
-        # render) cannot ride a 16 KiB cmd reply at all, so they are replaced
-        # by a pointer to the rails that do carry pixels.
-        content = result.get("content")
-        bounded_content = []
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and isinstance(block.get("text"), str):
-                    text = block["text"]
-                    if len(text) > self._SIM_CALL_REPLY_TEXT_CAP:
-                        text = (
-                            text[: self._SIM_CALL_REPLY_TEXT_CAP]
-                            + f"\n... [truncated at {self._SIM_CALL_REPLY_TEXT_CAP} chars for the wire]"
-                        )
-                    bounded_content.append({"text": text})
-                else:
-                    bounded_content.append(
-                        {
-                            "text": (
-                                "[non-text content elided: the mesh cmd reply is capped at "
-                                "~16 KiB. Rendered frames travel on the camera stream "
-                                "(strands/<peer>/camera/<name>) - add_camera + the dashboard "
-                                "tiles, or render with a save path on the sim host.]"
-                            )
-                        }
-                    )
-        return {
-            "status": result.get("status", "error"),
-            "sim_action": sim_action,
-            "content": bounded_content,
-        }
 
     def _on_response(self, sample: Any) -> None:
         """Inbound response handler.
@@ -4397,21 +4200,6 @@ def mesh_disabled_by_env() -> bool:
 
 
 # init_mesh -- the only public constructor
-def mesh_kill_switch_engaged(env: dict[str, str] | None = None) -> bool:
-    """True when ``STRANDS_MESH`` explicitly forbids joining the mesh.
-
-    Shared so that every path which can OPEN a session asks the same question.
-    :func:`init_mesh` used to own this test inline, which let
-    ``robot_mesh._gateway_mesh()`` construct a ``Mesh`` directly and join the live
-    fleet with ``STRANDS_MESH=false`` set (BUGS.md Q32: that is how a unit-test run
-    became a live ``gateway-*`` peer with six subscriber callback threads). The
-    switch only ever forces mesh OFF - it never turns it on.
-    """
-    if env is None:
-        return mesh_disabled_by_env()
-    return env.get("STRANDS_MESH", "").strip().lower() in NEGATIVE
-
-
 def init_mesh(
     robot: Any,
     peer_id: str | None = None,

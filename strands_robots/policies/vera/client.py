@@ -29,27 +29,6 @@ logger = logging.getLogger(__name__)
 _OPEN_TIMEOUT_SECS = 600
 
 
-
-def _client_deps_hint(missing: str) -> str:
-    """Actionable message when a VERA CLIENT wire dependency is absent.
-
-    There is deliberately no ``vera`` extra (VERA is git-only, see pyproject),
-    so ``websockets`` and ``msgpack`` are NOT installed by a plain
-    ``pip install strands-robots`` - which means the first thing a user of this
-    provider can hit is a bare ``ModuleNotFoundError: No module named
-    'msgpack'`` naming a module they never mentioned. The package already knows
-    the answer and prints it in server_runner and in the module docstring; say it
-    here too, where the failure actually happens.
-    """
-    return (
-        f"The VERA policy client needs {missing!r}, which strands-robots does not "
-        "install by default (the client is deliberately independent of the vera "
-        "package):\n"
-        "  pip install websockets msgpack 'numpy>=1.24'\n"
-        "The server is separate and git-only:\n"
-        "  pip install 'vera @ git+https://github.com/sizhe-li/VERA.git'"
-    )
-
 class VeraWebsocketClient:
     """Lazy-connecting WebSocket client for ``vera.server.start_vera_server``.
 
@@ -68,10 +47,7 @@ class VeraWebsocketClient:
         self.uri = f"ws://{host}:{port}"
         self._ws: Any = None
         self._server_metadata: dict[str, Any] | None = None
-        try:
-            from . import _msgpack_numpy as _mnp  # vendored, numpy-agnostic
-        except ImportError as e:
-            raise ImportError(_client_deps_hint("msgpack")) from e
+        from . import _msgpack_numpy as _mnp  # vendored, numpy-agnostic
 
         self._mnp = _mnp
         self._packer = _mnp.Packer()
@@ -95,12 +71,7 @@ class VeraWebsocketClient:
             return self._ws
         try:
             import websockets.sync.client as _wsc
-        except ImportError as e:
-            # ModuleNotFoundError is an ImportError, NOT an OSError, so the
-            # connection-error handler below never covered this case: a machine
-            # without websockets got a bare import traceback at connect time.
-            raise ImportError(_client_deps_hint("websockets")) from e
-        try:
+
             self._ws = _wsc.connect(
                 self.uri,
                 compression=None,

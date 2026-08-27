@@ -4,13 +4,8 @@ import asyncio
 
 import numpy as np
 import pytest
-# The vera/cosmos3 packages import their vendored msgpack packer at import time, so
-# guard at module level: an absent OPTIONAL extra must skip, not fail (a bare
-# ModuleNotFoundError here reads like the policy itself is broken).
-pytest.importorskip("msgpack", reason="msgpack (optional `cosmos3`/`vera` extra) needed for the wire format")
 
-
-from strands_robots.policies.base import Policy  # noqa: E402
+from strands_robots.policies.base import Policy
 from strands_robots.policies.cosmos3 import Cosmos3Policy
 from strands_robots.policies.cosmos3.policy import _to_image_uint8
 

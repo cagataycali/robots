@@ -1,4 +1,4 @@
-"""Unit tests for the VERA policy provider (offline - no server, no GPU, no vera pkg).
+"""Unit tests for the VERA policy provider (offline — no server, no GPU, no vera pkg).
 
 Covers: config defaults + env overrides, factory registration/resolution, the
 wire client's msgpack roundtrip + error sentinel, the server runner's list-arg
@@ -12,11 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-# strands_robots.policies.vera imports its vendored msgpack packer at import
-# time, so guard here: an absent optional extra must skip, not fail.
-pytest.importorskip("msgpack", reason="msgpack (optional `cosmos3`/`vera` extra) needed for the wire format")
-
-from strands_robots.policies.factory import create_policy, list_providers  # noqa: E402
+from strands_robots.policies.factory import create_policy, list_providers
 from strands_robots.policies.vera import VeraConfig, VeraPolicy, VeraServerRunner
 from strands_robots.policies.vera import _msgpack_numpy as mnp
 
@@ -156,7 +152,7 @@ class TestMsgpackNumpy:
 
 
 # --------------------------------------------------------------------------- #
-# Server runner - list-arg command construction (no shell strings, PR #621)
+# Server runner — list-arg command construction (no shell strings, PR #621)
 # --------------------------------------------------------------------------- #
 class TestServerRunner:
     def test_command_is_list_args(self):
@@ -334,7 +330,7 @@ class TestGetActionsRoundtrip:
 
 
 # --------------------------------------------------------------------------- #
-# Docker server runner - list-arg `docker run` construction (no shell strings)
+# Docker server runner — list-arg `docker run` construction (no shell strings)
 # --------------------------------------------------------------------------- #
 class TestDockerServerRunner:
     def test_server_mode_selects_docker_runner(self):

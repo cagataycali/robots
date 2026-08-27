@@ -21,12 +21,11 @@ import difflib
 import functools
 import importlib
 import logging
-import os
 import pkgutil
 import shutil
 import threading
 import time
-from collections.abc import AsyncGenerator, Mapping, MutableMapping
+from collections.abc import AsyncGenerator, Mapping
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
@@ -40,7 +39,7 @@ from strands.types.tools import ToolResult, ToolSpec, ToolUse
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
-from strands_robots.teleop_mixin import TeleopMixin
+from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.utils import (
     boolean_flag_error,
     dds_domain_id_error,
@@ -310,136 +309,6 @@ def _normalize_max_relative_target(value: Any, robot_type: str) -> float | dict[
     if err := positive_finite_number_error(value, param, context):
         raise ValueError(f"{err} {advice}")
     return float(value)
-
-
-def _degraded_notes(host: Any) -> dict[str, str]:
-    """The ``{camera: reason}`` book of a host, created on demand.
-
-    ``Robot.__init__`` sets ``_degraded_cameras``, so this is belt and braces -
-    but the write it guards is the LAST step of a recovery that has already
-    succeeded: the camera was dropped, the motors are up, the arm is usable. An
-    AttributeError there is swallowed by the caller's ``except Exception`` and
-    reported as ``connection failed: 'Robot' object has no attribute
-    '_degraded_cameras'``, which throws away the only sentence that named the
-    broken camera and calls a rescued arm dead. Bookkeeping must never be able to
-    destroy the diagnosis it exists to record.
-
-    A free function, not a method, for the same reason ``_degrade_to_available_cameras``
-    is one: the connect paths are borrowed by hosts that are not ``Robot``
-    instances (test stubs today, a composed host tomorrow), and a host built
-    without ``__init__`` must still get an honest answer.
-    """
-    book = getattr(host, "_degraded_cameras", None)
-    if not isinstance(book, dict):
-        book = {}
-        try:
-            host._degraded_cameras = book
-        except Exception:  # noqa: BLE001 - a frozen/slotted host still gets a book
-            return book
-    return book
-
-
-def _degrade_to_available_cameras(robot: Any) -> dict[str, str]:
-    """Drop the cameras this machine will not open, so the arm can still run.
-
-    lerobot brings a robot up as one unit and gates ``is_connected`` on
-    ``bus.is_connected and all(cam.is_connected ...)``. One camera that refuses
-    to open therefore reports the WHOLE robot as disconnected -- no joints, no
-    teleop, no recording -- even though the motor bus is open and the arm is
-    mechanically fine. On macOS the common cause is not even the robot's fault:
-    the OS denies camera access to the process (TCC is granted to the app
-    responsible for the process tree), so every index fails and a perfectly
-    healthy arm looks dead.
-
-    An operator can work a camera-less arm (jog it, home it, read its joints)
-    and can go fix the camera afterwards; an arm reported dead gives them
-    nothing. So each unopened camera is retried ALONE -- which is also how its
-    own error message is obtained, rather than the one error that happened to
-    abort lerobot's loop -- and the ones that still refuse are removed from the
-    robot, leaving ``is_connected`` free to describe the motors.
-
-    This never masks a motor failure: it is called only with an open bus, and
-    it returns ``{}`` (nothing degraded, report the original error) whenever it
-    cannot produce a connected robot.
-
-    Args:
-        robot: The lerobot robot whose ``connect()`` just failed.
-
-    Returns:
-        ``{camera_name: reason}`` for every camera dropped -- empty when there
-        was nothing to drop or dropping did not help, in which case the
-        caller's original error stands.
-    """
-    # Degrading DIVERGES from the strict connect contract this class otherwise
-    # keeps: a bring-up that fails partway rolls every device back, so the retry
-    # keeps naming the camera that actually broke instead of raising
-    # "already connected" on a healthy one. Dropping the blind camera answers that
-    # same failure earlier, which is right for a host whose OS never granted
-    # camera access - without it NO arm could come up at all - but it does hide
-    # the diagnosis, so the strict behaviour stays reachable:
-    #   STRANDS_ROBOT_CAMERA_DEGRADE=0  -> nothing is dropped, the original error
-    #                                      stands and the caller rolls back.
-    # Read at call time, so one arm can be debugged without a restart. A
-    # divergence nobody can switch off is a fork; one behind a documented flag is
-    # a decision.
-    if os.getenv("STRANDS_ROBOT_CAMERA_DEGRADE", "1").strip().lower() in ("0", "false", "no", "off"):
-        return {}
-
-    cameras = getattr(robot, "cameras", None)
-    if not isinstance(cameras, MutableMapping) or not cameras:
-        return {}
-
-    # A camera failure is only degradable while the motors are actually open;
-    # otherwise the bus is the real fault and must be reported as such.
-    bus = getattr(robot, "bus", None)
-    if not getattr(bus, "is_connected", False):
-        return {}
-
-    dropped: dict[str, str] = {}
-    for name, camera in list(cameras.items()):
-        if getattr(camera, "is_connected", False):
-            continue
-        try:
-            camera.connect()
-        except Exception as exc:  # noqa: BLE001 - any refusal means "unusable"
-            dropped[name] = str(exc) or type(exc).__name__
-            continue
-        if not getattr(camera, "is_connected", False):
-            # Connected without complaint yet still not connected: lerobot's
-            # OpenCV backend does this when the OS hands back a dead device.
-            dropped[name] = "camera reported no error but did not connect"
-
-    if not dropped:
-        return {}
-
-    for name in dropped:
-        camera = cameras.pop(name, None)
-        # Keep the robot's own config in step, since that is what status
-        # reporting and dataset features read to list the cameras.
-        config_cameras = getattr(getattr(robot, "config", None), "cameras", None)
-        if isinstance(config_cameras, MutableMapping):
-            config_cameras.pop(name, None)
-        try:
-            # A camera that failed to open already released its resources;
-            # only a half-open one needs closing here.
-            if getattr(camera, "is_connected", False):
-                camera.disconnect()
-        except Exception:  # noqa: BLE001 - best-effort, per camera
-            logger.debug("camera %s close after degrade failed", name)
-
-    if not getattr(robot, "is_connected", False):
-        # Something else is still wrong -- do not claim a degraded success.
-        return {}
-
-    for name, reason in dropped.items():
-        logger.warning(
-            "camera %r is unavailable and was dropped so the arm can still be "
-            "used: %s. The motors are connected; this robot cannot record or "
-            "stream that camera until it is fixed.",
-            name,
-            reason,
-        )
-    return dropped
 
 
 @functools.cache
@@ -747,11 +616,6 @@ class Robot(TeleopMixin, AgentTool):
         # module, so the real bridge construction in _init_ros_bridge pays nothing.
         if ros2_bridge:
             self._check_ros2_bridge_deps(ros2_transport=ros2_transport)
-
-        # Cameras this machine refused to open, ``{name: reason}``. Populated by
-        # a degraded connect and reported in get_status(), so an arm running
-        # without a camera says why instead of looking healthy or looking dead.
-        self._degraded_cameras: dict[str, str] = {}
 
         # Initialize robot using lerobot's abstraction
         self.robot = self._initialize_robot(robot, cameras, **kwargs)
@@ -1230,17 +1094,36 @@ class Robot(TeleopMixin, AgentTool):
         try:
             ConfigClass = RobotConfig.get_choice_class(robot_type)
         except KeyError:
-            # A leader arm is a teleoperator, not a robot, and lerobot keeps the
-            # two in separate registries. Listing the robot types for a leader
-            # name is the retry that torque-enables the arm a human is holding,
-            # so name the kind it really is instead. ``Robot()``'s own registry
-            # guard does this for an unregistered ``*_leader`` name; a leader
-            # that IS registered -- as itself, which is the honest thing to
-            # register -- reaches this site instead.
+            # Two registries can answer better than lerobot's own listing here,
+            # and each returns a reason or ``None`` so the listing survives when
+            # neither applies.
+            #
+            # First: a robot THIS package drives natively. Its driver ships
+            # here, and lerobot's listing does not mention it, so a caller with
+            # no reason to guess ``driver="strands"`` is left at a dead end.
+            # Checked before the teleoperator arm because the two populations
+            # overlap -- ``unitree_g1`` is a lerobot teleoperator type as well
+            # as a natively driven robot -- and for a name in that overlap the
+            # native answer is the right one: someone who asked ``Robot()`` for
+            # a robot this package drives wants its driver, not an instruction
+            # to build the leader that teleoperates it.
+            from strands_robots.drivers.registry import _native_driver_refusal
+
+            if native := _native_driver_refusal(robot_type):
+                raise ValueError(native) from None
+
+            # Then: a leader arm is a teleoperator, not a robot, and lerobot
+            # keeps the two in separate registries. Listing the robot types for
+            # a leader name is the retry that torque-enables the arm a human is
+            # holding, so name the kind it really is instead. ``Robot()``'s own
+            # registry guard does this for an unregistered ``*_leader`` name; a
+            # leader that IS registered -- as itself, which is the honest thing
+            # to register -- reaches this site instead.
             from strands_robots.teleoperator import _other_lerobot_kind_refusal
 
             if other := _other_lerobot_kind_refusal(robot_type, wanted="robot"):
                 raise ValueError(other) from None
+
             available = sorted(RobotConfig.get_known_choices().keys())
             # ``from None`` -- the KeyError is an internal detail of
             # lerobot's draccus registry; suppress the chained traceback
@@ -1604,15 +1487,8 @@ class Robot(TeleopMixin, AgentTool):
                 if "already connected" in error_str or "is already connected" in error_str:
                     logger.info(f"{self.robot} connection already established")
                 else:
-                    # A camera that will not open must not cost the operator
-                    # the whole arm. If the motor bus came up and only cameras
-                    # are missing, drop them and carry on degraded; otherwise
-                    # this returns {} and the original error stands.
-                    degraded = _degrade_to_available_cameras(self.robot)
-                    if not degraded:
-                        # Re-raise if it's a different error
-                        raise e
-                    _degraded_notes(self).update(degraded)
+                    # Re-raise if it's a different error
+                    raise e
 
             # Final connection check
             if not self.robot.is_connected:
@@ -2800,57 +2676,15 @@ class Robot(TeleopMixin, AgentTool):
                 )
             )
 
-    def connect_eagerly(self) -> tuple[bool, dict[str, str], str]:
-        """Connect the hardware now, dropping cameras this machine will not open.
-
-        HardwareRobot otherwise connects lazily on the first task, which is
-        wrong for a mesh peer: the fleet wants joints and frames the moment the
-        arm appears, not after someone gives it a job. Callers that want that
-        (the dashboard's spawned children) used to call lerobot's
-        ``robot.connect()`` themselves, which meant they also inherited its
-        all-or-nothing camera behaviour and each re-implemented the recovery.
-
-        This is that one path: connect, and if the attempt fails while the motor
-        bus is open, drop the cameras that refuse to open rather than report a
-        mechanically healthy arm as dead. Synchronous, because the callers are
-        plain scripts with no event loop.
-
-        Returns:
-            ``(connected, degraded_cameras, error)`` -- ``degraded_cameras`` is
-            ``{name: reason}`` for every camera given up on (empty when all are
-            healthy), and ``error`` is non-empty only when ``connected`` is
-            False.
-        """
-        inner = self.robot
-        if getattr(inner, "is_connected", False):
-            return True, dict(_degraded_notes(self)), ""
-
-        try:
-            inner.connect(False)  # calibrate=False
-        except Exception as exc:  # noqa: BLE001 - reported, not raised
-            degraded = _degrade_to_available_cameras(inner)
-            if not degraded:
-                return False, {}, str(exc)
-            _degraded_notes(self).update(degraded)
-            return True, dict(_degraded_notes(self)), ""
-
-        if not getattr(inner, "is_connected", False):
-            # connect() reporting success while is_connected stays False is the
-            # partial-connect trap: some device in the set never came up.
-            degraded = _degrade_to_available_cameras(inner)
-            if degraded:
-                _degraded_notes(self).update(degraded)
-                return True, dict(_degraded_notes(self)), ""
-            return False, {}, f"{inner} did not connect and gave no error"
-
-        return True, dict(_degraded_notes(self)), ""
-
     def cleanup(self) -> None:
         """Cleanup resources and stop any running tasks.
 
         Terminal: this latches a shutdown, releases the task executor, tears
         down the mesh and ROS bridges, and disconnects the robot -- the motors
-        bus and every camera -- so no device node stays held. There is no
+        bus and every camera -- so no device node stays held. The one exception
+        is a teleop loop that did not join: the devices are left open rather
+        than closed under a live writer, and the reason is recorded at ERROR
+        with the remedy. There is no
         ``restart``, so
         ``run_policy`` / ``start_task`` / the ``execute`` action refuse
         permanently afterwards rather than admit a rollout that would command
@@ -2865,9 +2699,15 @@ class Robot(TeleopMixin, AgentTool):
             # Stop any local teleoperation loop + disconnect attached devices
             # (TeleopMixin). Best-effort: a teleop teardown failure must not
             # block the rest of hardware cleanup.
+            # ``stop_teleoperate`` reports whether the loop actually joined, and
+            # the devices must not be closed under one that did not - see the
+            # ``_disconnect_devices`` call below. A raise leaves the outcome
+            # unknown and keeps the pre-existing warn-and-continue contract:
+            # only a positive report of a live loop defers the close.
+            teleop_stopped = True
             if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
                 try:
-                    self.stop_teleoperate()
+                    teleop_stopped = _stop_reported_stopped(self.stop_teleoperate())
                 except Exception as teleop_exc:  # noqa: BLE001
                     logger.warning(
                         "%s: stop_teleoperate() raised during cleanup: %s",
@@ -2906,7 +2746,25 @@ class Robot(TeleopMixin, AgentTool):
             # task executor, the mesh and the ROS bridge have stopped can be
             # re-opened behind this teardown -- and would then stay open for
             # the life of the process, since nothing runs after ``cleanup()``.
-            self._disconnect_devices()
+            #
+            # The teleop loop is the one command source whose shutdown is not
+            # guaranteed by the ordering: its leader's ``get_action()`` can
+            # block past the join budget, which is why ``stop_teleoperate``
+            # reports the outcome instead of assuming it. Closing under a live
+            # one is worse than deferring on both counts -- the loop's next
+            # write re-opens the port through ``send_action``'s lazy connect, so
+            # the release does not hold, and that write lands *after* the
+            # driver's ``disconnect()`` disabled torque, leaving the arm
+            # energised at a fresh command. ``G1Driver.cleanup`` declines the
+            # same teardown for the same reason.
+            if teleop_stopped:
+                self._disconnect_devices()
+            else:
+                logger.error(
+                    "%s: devices left open because the teleop loop did not stop; "
+                    "call stop_teleoperate() to re-join it, then cleanup() again",
+                    self.tool_name_str,
+                )
 
             logger.info(f"{self.tool_name_str} cleanup completed")
 
@@ -2989,10 +2847,6 @@ class Robot(TeleopMixin, AgentTool):
                 "is_connected": is_connected,
                 "is_calibrated": is_calibrated,
                 "cameras": camera_status,
-                # Empty in the healthy case. A name here means the arm is
-                # connected and usable but that camera is not, with the
-                # operating system's or driver's own words as the reason.
-                "degraded_cameras": dict(getattr(self, "_degraded_cameras", {}) or {}),
                 "cameras_connected": cameras_connected,
                 "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
                 "ros2_transport": getattr(self, "_ros2_transport", "rclpy")
@@ -3177,4 +3031,53 @@ class Robot(TeleopMixin, AgentTool):
                     f"Remote peers can receive with: start_teleop_receive(source_peer_id='{self.peer_id}')"
                 }
             ],
+        }
+
+    def stop_teleop(self, device_name: str | None = None) -> dict[str, Any]:
+        """Stop all or a specific teleop publisher/receiver.
+
+        Args:
+            device_name: If provided, stop only the named publisher/receiver.
+                If None, stop all.
+
+        Returns:
+            Stats from stopped sessions.
+        """
+        results = []
+
+        # Stop publishers
+        if hasattr(self, "_input_publishers"):
+            if device_name:
+                pub = self._input_publishers.pop(device_name, None)
+                if pub:
+                    results.append(pub.stop())
+            else:
+                for name, pub in list(self._input_publishers.items()):
+                    results.append(pub.stop())
+                self._input_publishers.clear()
+
+        # Stop receivers
+        if hasattr(self, "_input_receivers"):
+            if device_name:
+                # Match by device name suffix
+                to_remove = [k for k in self._input_receivers if k.endswith(f"/{device_name}")]
+                for k in to_remove:
+                    results.append(self._input_receivers.pop(k).stop())
+            else:
+                for key, rcv in list(self._input_receivers.items()):
+                    results.append(rcv.stop())
+                self._input_receivers.clear()
+
+        if not results:
+            return {"status": "success", "content": [{"text": "No active teleop sessions."}]}
+
+        stats_text = "\n".join(
+            f"  {r.get('device', r.get('source', '?'))}: "
+            f"{r.get('frames', r.get('frames_received', 0))} frames, "
+            f"{r.get('hz_actual', 0):.1f} Hz"
+            for r in results
+        )
+        return {
+            "status": "success",
+            "content": [{"text": f"Teleop stopped:\n{stats_text}"}],
         }

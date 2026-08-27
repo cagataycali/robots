@@ -123,34 +123,6 @@ from strands_robots.device_connect.robot_driver import RobotDeviceDriver  # noqa
 from strands_robots.device_connect.sim_driver import SimulationDeviceDriver  # noqa: E402
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _edge_mocks_are_installed_while_this_module_runs():
-    """Re-install this module's ``device_connect_edge`` mocks before its tests RUN.
-
-    Installing them at import time is not enough. Pytest imports every collected
-    module first and runs ``teardown_module`` after each FILE, so a sibling that
-    mocks the same package (``test_device_connect_all_robots`` /
-    ``test_device_connect_drivers`` mock each other's) tears the mocks out of
-    ``sys.modules`` - and purges ``strands_robots.device_connect.*`` with them -
-    while this module is still waiting its turn. The next import inside a test
-    then hits the REAL name, which is not installed here, and 30 tests fail with
-    ``ModuleNotFoundError: No module named 'device_connect_edge'`` in a file that
-    passes alone. Whoever runs second loses, so both files ask for their mocks at
-    run time instead of trusting import time.
-    """
-    saved = {k: sys.modules.get(k) for k in _mock_keys}
-    sys.modules["device_connect_edge"] = mock_device_connect_edge
-    sys.modules["device_connect_edge.drivers"] = mock_drivers
-    sys.modules["device_connect_edge.types"] = mock_types
-    sys.modules["device_connect_edge.device"] = MagicMock()
-    yield
-    for key, original in saved.items():
-        if original is None:
-            sys.modules.pop(key, None)
-        else:
-            sys.modules[key] = original
-
-
 def teardown_module():
     """Restore real device_connect_edge modules."""
     for key, original in _saved_modules.items():

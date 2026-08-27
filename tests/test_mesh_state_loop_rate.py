@@ -316,10 +316,6 @@ def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
         # number (a poll interval dropped to 100ms, say) invalidates the excuse
         # visibly instead of quietly.
         ("mesh/core.py", "self._stop_event.wait(timeout=timeout)"): "one-shot shutdown wait, not a loop tick",
-        ("dashboard/device_manager.py", "self._stop.wait(interval)"): (
-            "AUTOSPAWN_POLL_S is 2.0s, so +137ms is 6.8% late on a USB discovery poll - "
-            "nothing streams from it and no timestamp is derived from its rate"
-        ),
         ("hardware_ros_bridge.py", "self._stop.wait(self._spin_period)"): (
             "the EXCEPTION path only: a backoff after spin_once raised, where waiting longer "
             "than spin_period is the intent. The happy path has no wait at all"

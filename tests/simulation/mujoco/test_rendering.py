@@ -420,7 +420,7 @@ def test_render_passes_scene_option_to_renderer(tmp_path: Path) -> None:
 
 
 @_requires_mujoco
-def test_recorder_thread_warms_up_until_each_camera_clears(tmp_path) -> None:
+def test_recorder_thread_warms_up_until_each_camera_clears() -> None:
     """The recorder thread renders each camera adaptively until it
     produces non-gradient output (col-std > threshold), then starts
     the timing loop.
@@ -505,7 +505,7 @@ def test_recorder_thread_warms_up_until_each_camera_clears(tmp_path) -> None:
         with patch("threading.Thread", _CaptureThread):
             r = sim.start_cameras_recording(
                 cameras=["cam_a", "cam_b"],
-                output_dir=str(tmp_path),
+                output_dir="/tmp",
                 fps=20,
                 width=64,
                 height=48,
@@ -524,7 +524,7 @@ def test_recorder_thread_warms_up_until_each_camera_clears(tmp_path) -> None:
 
 
 @_requires_mujoco
-def test_recorder_thread_warmup_continues_when_camera_stays_cold(tmp_path) -> None:
+def test_recorder_thread_warmup_continues_when_camera_stays_cold() -> None:
     """If a camera consistently returns gradient frames, warmup retries
     up to MAX_WARMUP_RENDERS (30) times before giving up. Last
     iteration logs WARNING about cameras still cold.
@@ -591,7 +591,7 @@ def test_recorder_thread_warmup_continues_when_camera_stays_cold(tmp_path) -> No
         with patch("threading.Thread", _CaptureThread):
             sim.start_cameras_recording(
                 cameras=["cam"],
-                output_dir=str(tmp_path),
+                output_dir="/tmp",
                 fps=20,
                 width=64,
                 height=48,
@@ -607,7 +607,7 @@ def test_recorder_thread_warmup_continues_when_camera_stays_cold(tmp_path) -> No
 
 
 @_requires_mujoco
-def test_recorder_thread_warmup_failure_does_not_abort(tmp_path) -> None:
+def test_recorder_thread_warmup_failure_does_not_abort() -> None:
     """If the thread-side warmup render raises, the timing loop
     still starts (and accumulates ``state['errors'][cam]`` per the
     standard error-tracking path).
@@ -644,7 +644,7 @@ def test_recorder_thread_warmup_failure_does_not_abort(tmp_path) -> None:
         with patch("threading.Thread", _CaptureThread):
             r = sim.start_cameras_recording(
                 cameras=["cam"],
-                output_dir=str(tmp_path),
+                output_dir="/tmp",
                 fps=20,
                 width=64,
                 height=48,

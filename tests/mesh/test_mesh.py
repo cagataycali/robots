@@ -51,11 +51,6 @@ class _FakeRobot:
         if with_inner_robot:
             inner = MagicMock()
             inner.is_connected = True
-            # A driver whose ONLY reader is get_observation (no separate motor bus),
-            # which is the fallback path in bus_access.read_joints. MagicMock would
-            # otherwise answer .bus.sync_read() with a Mock and this fake would stop
-            # modelling anything real.
-            inner.bus = None
             inner.name = "so100"
             inner.config.cameras = {"wrist_cam": object()}
             inner.get_observation.return_value = {
@@ -399,30 +394,6 @@ class TestReadState:
         assert "depth" not in s["joints"]
         # tolist() applied to numpy-like
         assert s["joints"]["joint_0"] == [0.1, 0.2]
-
-    def test_a_dead_camera_cannot_erase_the_joints(self) -> None:
-        """Q44, measured: so101-arm-1 published ZERO joints for eleven hours.
-
-        lerobot's get_observation() sync-reads the motors FIRST and then grabs frames,
-        so a camera raising discarded the joint positions already in hand - and the
-        hw_joints probe omitted the whole section. The arm looked healthy and non-stale
-        with an empty joints strip, and the only clue was one startup warning.
-        """
-        robot = _FakeRobot()
-        inner = MagicMock()
-        inner.is_connected = True
-        inner.config.cameras = {"top": object(), "wrist": object()}
-        inner.config.num_read_retries = 3
-        inner.get_observation.side_effect = RuntimeError(
-            "OpenCVCamera(1) read failed (status=False)."
-        )
-        inner.bus.sync_read.return_value = {"shoulder_pan": 1.0, "wrist_roll": 170.0}
-        robot.robot = inner
-
-        s = Mesh(robot, peer_id="hw")._read_state()
-        assert s is not None, "an arm with a broken camera still has joints"
-        assert s["joints"] == {"shoulder_pan.pos": 1.0, "wrist_roll.pos": 170.0}
-        inner.get_observation.assert_not_called()
 
     def test_publishes_task_progress(self) -> None:
         m = Mesh(_FakeRobot(with_task=True), peer_id="t")

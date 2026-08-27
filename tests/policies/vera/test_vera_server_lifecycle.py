@@ -1,4 +1,4 @@
-"""Lifecycle tests for the VERA server runners (offline - no server, GPU, docker).
+"""Lifecycle tests for the VERA server runners (offline — no server, GPU, docker).
 
 Covers the supervision logic that command-construction tests leave untested:
 the loopback probe in :func:`_port_open`, the subprocess runner's start /
@@ -21,7 +21,7 @@ from strands_robots.policies.vera import server_runner as sr
 
 
 # --------------------------------------------------------------------------- #
-# _port_open - the TCP readiness probe
+# _port_open — the TCP readiness probe
 # --------------------------------------------------------------------------- #
 class TestPortOpen:
     def test_returns_true_when_connection_succeeds(self, monkeypatch):
@@ -57,7 +57,7 @@ class TestPortOpen:
             return _Conn()
 
         monkeypatch.setattr(sr.socket, "create_connection", _capture)
-        # 0.0.0.0 is a bind address, not connectable - must probe loopback.
+        # 0.0.0.0 is a bind address, not connectable — must probe loopback.
         assert sr._port_open("0.0.0.0", 8820) is True
         assert seen["address"] == ("127.0.0.1", 8820)
 
@@ -104,7 +104,7 @@ class _FakeCompleted:
 
 
 # --------------------------------------------------------------------------- #
-# _require_vera_installed - git-only install gate (PR #950 regression)
+# _require_vera_installed — git-only install gate (PR #950 regression)
 # --------------------------------------------------------------------------- #
 class TestRequireVeraInstalled:
     """VERA is git-only (not a PyPI extra); the runner must gate on it clearly.
@@ -387,7 +387,7 @@ class TestDockerServerRunner:
             raise OSError("docker daemon down")
 
         monkeypatch.setattr(sr.subprocess, "run", _boom)
-        # _tail_logs must never raise - it is called on the error path.
+        # _tail_logs must never raise — it is called on the error path.
         logs = runner._tail_logs()
         assert "could not read container logs" in logs
 

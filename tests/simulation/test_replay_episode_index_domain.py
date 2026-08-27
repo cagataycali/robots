@@ -473,13 +473,6 @@ _REPLAY_EPISODE_SURFACES = {
     # not a different contract, so these are graded like the bare parameter.
     ("strands_robots/episode_labels.py", "record_deterministic_verdicts"),
     ("strands_robots/episode_labels.py", "measure_agreement"),
-    # The dashboard's pre-spawn judge and the spawn itself. validate_replay used
-    # to hand-roll `isinstance(episode, int)` and so refused 3.0 / np.int64(4) /
-    # np.float64(4.0) - values the runner and load_lerobot_episode accept - which
-    # is exactly the divergence this sweep exists to catch. It now applies the
-    # shared rule, and DeviceManager.replay forwards to it.
-    ("strands_robots/dashboard/device_manager.py", "validate_replay"),
-    ("strands_robots/dashboard/device_manager.py", "replay"),
     # The transform surfaces (``derive_variant_seed``, each backend's
     # ``transform_frames``) apply the same shared guard but are deliberately
     # NOT pinned here: they only receive an already-resolved index as a
@@ -488,14 +481,6 @@ _REPLAY_EPISODE_SURFACES = {
     # Their validation is pinned by
     # ``tests/transforms/test_frame_surface_episode_domain.py`` instead.
 }
-
-# NOTE (merge of upstream #2540): this file used to carry an _OUT_OF_SCOPE_EPISODE_SURFACES
-# exemption set, listing record_api.thumb with its reason. Upstream removed the need for it by
-# scoping the sweep to surfaces whose own docstring declares an episode INDEX, and thumb's does
-# not -- it reads `{int(episode)}_{camera}.jpg` from the thumbnail dir and 404s, with no refusal to
-# keep consistent with the runner's. Recorded here so nobody reintroduces an exemption list to
-# solve a problem the domain predicate already solves: an exemption that goes stale shrinks the
-# sweep silently, which is the failure the deleted test existed to catch.
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -616,10 +601,6 @@ def _validates_or_forwards(node: ast.AST) -> bool:
             return True
         # Forwarding verbatim to a surface that does validate.
         if ("replay" in src or "load_lerobot_episode" in src) and "episode=episode" in src:
-            return True
-        # Delegating the judgement to a validator that applies the shared rule
-        # (the dashboard's pre-spawn judge, called positionally).
-        if "validate_replay" in src and "episode" in src:
             return True
     return False
 

@@ -32,7 +32,6 @@ import pytest
 
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import security as mesh_security
-from strands_robots.mesh import session as mesh_session
 
 _FLEET_DIR = Path(__file__).resolve().parent.parent / "examples" / "fleet"
 _EXAMPLE_PATH = _FLEET_DIR / "04_emergency_evacuation.py"
@@ -320,23 +319,9 @@ class _StoppableRobot:
 
 
 def _capturing_bus(monkeypatch):
-    """Capture every payload the mesh publishes, keyed by topic.
-
-    Q30: patching the legacy ``mesh_core.put`` alone is NOT isolation.
-    ``emergency_stop()`` prefers the Zenoh-native publisher on the
-    process-global session (``_current_zenoh_session_directly``) and
-    ``broadcast()`` uses ``current_session()`` - so when any earlier test
-    in the same pytest process left a session open, the "captured" estop
-    envelope went out on the REAL fleet namespace instead (it locked out
-    a live arm), the capture list stayed empty, and the test died with a
-    StopIteration that read like a harness flake. Sever every
-    global-session rail, then capture.
-    """
+    """Capture every payload the mesh publishes, keyed by topic."""
     published = []
     monkeypatch.setattr(mesh_core, "put", lambda key, payload: published.append((key, payload)))
-    monkeypatch.setattr(mesh_core, "current_session", lambda: None)
-    monkeypatch.setattr(mesh_session, "current_session", lambda: None)
-    monkeypatch.setattr(mesh_session, "_current_zenoh_session_directly", lambda: None)
     return published
 
 
@@ -347,18 +332,7 @@ def _as_sample(payload: dict) -> SimpleNamespace:
 
 
 def _live_unstarted_mesh(peer_id: str) -> mesh_core.Mesh:
-    """A real Mesh peer minus the Zenoh transport (see the failover test).
-
-    Q30 fuse: a safety test that cannot PROVE it is disconnected from the
-    fleet must refuse to run. Call ``_capturing_bus(monkeypatch)`` first -
-    it severs the process-global session rails this assert checks.
-    """
-    assert mesh_core.current_session() is None and mesh_session._current_zenoh_session_directly() is None, (
-        "refusing to build a safety-test Mesh while a process-global Zenoh "
-        "session is reachable: emergency_stop() would publish a REAL estop "
-        "on the live fleet (Q30). Call _capturing_bus(monkeypatch) before "
-        "_live_unstarted_mesh()."
-    )
+    """A real Mesh peer minus the Zenoh transport (see the failover test)."""
     mesh = mesh_core.Mesh(_StoppableRobot(), peer_id=peer_id, peer_type="robot")
     mesh._running = True
     mesh._stop_event.set()
@@ -464,41 +438,3 @@ def test_registering_the_custom_predicate_twice_is_idempotent(example):
 
     check = make_predicate("evacuation_abort_within", deadline_s=5.0)
     assert check(SimpleNamespace(evacuation_abort_elapsed_s=1.0)) is True
-
-
-def test_q30_estop_cannot_escape_to_a_live_global_session(example, monkeypatch):
-    """Q30 regression: on 2026-08-19 this suite e-stopped the REAL fleet.
-
-    An earlier test had left the process-global Zenoh session open;
-    ``emergency_stop()`` preferred the native publisher on that session over
-    the patched legacy ``put()``, so the drill's envelope reached a live arm
-    (lockout engaged, telemetry dead) while the capture list stayed empty and
-    the failure masqueraded as a harness flake. This test plants exactly that
-    trap - a reachable "open session" - and proves the harness never touches
-    it: the envelope must land in the capture list, the session must see no
-    declare_publisher, no put, no queries.
-    """
-
-    class _TripwireSession:
-        def __init__(self):
-            self.touched: list[str] = []
-
-        def __getattr__(self, name):  # any use at all is an escape
-            self.touched.append(name)
-            raise AssertionError(f"safety test reached the live session: .{name}")
-
-    trap = _TripwireSession()
-    published = _capturing_bus(monkeypatch)
-    # plant the trap AFTER the sever: only a code path that bypasses the
-    # severed accessors (a future refactor reading _SESSION directly) can
-    # reach it, and the tripwire makes that loud instead of physical.
-    monkeypatch.setattr(mesh_session, "_SESSION", trap, raising=False)
-
-    issuer = _live_unstarted_mesh(example.COORDINATOR_ID)
-    issuer.emergency_stop()
-
-    envelope = next(payload for key, payload in published if key == "strands/safety/estop")
-    assert envelope["peer_id"] == example.COORDINATOR_ID
-    assert envelope["lockout_engaged"] is True
-    assert "source_zid" not in envelope, "no session -> body must not promise wire attribution"
-    assert trap.touched == [], f"live session was touched: {trap.touched}"

@@ -19,8 +19,6 @@ import inspect
 import os
 from unittest.mock import MagicMock, patch
 
-import tempfile
-
 import pytest
 
 # ``from strands_robots.tools import gr00t_inference`` resolves via the package's
@@ -595,44 +593,6 @@ def test_resolve_host_path_does_not_raise_on_missing_path():
     out = gi._resolve_host_path("/does/not/exist/yet/ckpt")
     assert isinstance(out, str) and out.startswith("/")
 
-@pytest.mark.parametrize("blocked", [p for p in gi._BLOCKED_VOLUME_HOST_PATHS if p != "/"])
-def test_check_volume_safety_blocks_the_realpath_of_every_protected_dir(blocked):
-    """A protected dir must be refused under BOTH of its names.
-
-    macOS reaches /etc, /var and /home through symlinks (/etc -> /private/etc),
-    and docker mounts the resolved target -- so the resolved name is the same
-    directory and must be refused too. Before this, resolving a mount of /etc
-    produced a name the blocklist did not contain, which made the symlink
-    hardening of #384 hide the very path it was added to protect; a direct mount
-    of /private/etc was never blocked at all. On Linux realpath is the identity
-    here and this test restates the plain blocklist.
-    """
-    resolved = os.path.realpath(blocked)
-    assert gi._check_volume_safety({resolved: "/data/x"}) is not None, (
-        f"{resolved} is {blocked} reached through a symlink; docker mounts the same directory"
-    )
-    assert gi._check_volume_safety({os.path.join(resolved, "child"): "/data/x"}) is not None
-
-
-def test_the_scratch_carve_out_does_not_reopen_a_protected_dir():
-    """The temp-dir exception must stay narrow.
-
-    macOS temp dirs live under /var, so the prefix rule is relaxed for the temp
-    ROOT only. If that carve-out ever grew to its parents it would silently
-    unblock /private/var (and with it /private/var/run), which is the opposite of
-    the guard's purpose - so assert the parents of the scratch root are refused.
-    """
-    root = os.path.realpath(tempfile.gettempdir())
-    assert gi._check_volume_safety({root: "/data/x"}) is None
-    parent = os.path.dirname(root)
-    protected = {os.path.realpath(p) for p in gi._BLOCKED_VOLUME_HOST_PATHS}
-    while parent not in (os.sep, ""):
-        if parent in protected:
-            assert gi._check_volume_safety({parent: "/data/x"}) is not None, (
-                f"{parent} is a protected dir and an ancestor of the scratch root; the carve-out leaked"
-            )
-        parent = os.path.dirname(parent)
-    assert gi._check_volume_safety({os.sep: "/data/x"}) is not None
 
 # --------------------------------------------------------------------------- #
 # Both sides of the blocklist comparison are resolved                          #

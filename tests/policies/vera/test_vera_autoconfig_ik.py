@@ -5,11 +5,6 @@ import types
 
 import numpy as np
 import pytest
-# The vera/cosmos3 packages import their vendored msgpack packer at import time, so
-# guard at module level: an absent OPTIONAL extra must skip, not fail (a bare
-# ModuleNotFoundError here reads like the policy itself is broken).
-pytest.importorskip("msgpack", reason="msgpack (optional `cosmos3`/`vera` extra) needed for the wire format")
-
 
 
 @pytest.fixture(autouse=True)
@@ -195,7 +190,7 @@ def test_discover_returns_none_when_mujoco_unimportable(monkeypatch):
     """When ``mujoco`` is not importable, discovery degrades to None.
 
     The IK target is only meaningful with the sim stack present; a missing
-    ``mujoco`` must not raise out of discovery - the caller falls back to an
+    ``mujoco`` must not raise out of discovery — the caller falls back to an
     explicit frame.
     """
     from strands_robots.policies.vera import ee_frame

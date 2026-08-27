@@ -41,8 +41,7 @@ The agent decides *what* to do. The policy (Mock, GR00T, LeRobot, or Cosmos 3) d
 
 - **New?** [Quickstart](getting-started/quickstart.md) gets a robot moving in five minutes.
 - **Building something?** [Quickstart](getting-started/quickstart.md) gets a robot picking up a cube; the [simulation](simulation/overview.md) and [policy](policies/overview.md) pages take it from there.
-- **Looking for a robot?** [72 of them](robots/index.md), every one addressable by name.
-- **Hardware on your desk?** The [fleet dashboard](dashboard/index.md) shows every arm, camera and joint in one page - [start here with two SO-101 arms](dashboard/quickstart.md).
+- **Looking for a robot?** [68 of them](robots/index.md), every one addressable by name.
 - **Want the shape of it?** [Architecture](architecture.md) is one diagram and a table.
 
 ## Install

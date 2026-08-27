@@ -55,42 +55,9 @@ class SteppingLeader:
         return {self.joint: self.values[i]}
 
 
-def _calls(device: object) -> int:
-    """How many times the loop has read this device (both fake shapes count)."""
-    n = getattr(device, "calls", None)
-    return int(n if n is not None else device.get_action_calls)  # type: ignore[union-attr]
-
-
-def _run_for_ticks(host: FakeHost, counted: object, ticks: int, hz: float = HZ) -> dict:
-    """Drive the loop until ``counted`` has been read ``ticks`` times, then stop.
-
-    The scripts in this file are written in TICKS (a list index, a call count),
-    but ``duration`` is WALL-CLOCK - and the loop's achieved rate sits below the
-    asked 50Hz by the scheduler's wake-up overhead (~43Hz measured idle on this
-    Mac, less under sweep load). ``duration=ticks/hz`` therefore ends a session
-    10-15%+ short of its script: a glitch scripted for tick 42 was simply never
-    emitted, and ``slew_rejected == 0`` was the loop being HONEST about a frame
-    it never saw. Driving by tick count makes the script's premise true at any
-    achieved rate. (Q29: 1 deterministic failure idle, 9-10 under load.)
-    """
-    import time as _time
-
-    host.teleoperate(hz=hz)
-    deadline = _time.monotonic() + max(5.0, 4 * ticks / hz)
-    while _calls(counted) < ticks and _time.monotonic() < deadline:
-        _time.sleep(0.002)
-    reached = _calls(counted)
-    result = host.stop_teleoperate()
-    assert reached >= ticks, (
-        f"premise: the loop achieved only {reached}/{ticks} ticks within the budget - "
-        f"the script never finished, so its assertions are not being tested"
-    )
-    return result
-
-
 def _drive(host: FakeHost, leader: object, ticks: int, hz: float = HZ) -> dict:
     host.attach_teleop(leader, name="leader")
-    return _run_for_ticks(host, leader, ticks, hz)
+    return host.teleoperate(block=True, hz=hz, duration=ticks / hz)
 
 
 class TestAnOverSpeedFrameIsNotApplied:
@@ -282,112 +249,48 @@ class TestDefaultBoundAccommodatesDriverUnits:
         # A calm 90-degree arm sweep at 50 Hz: each tick moves 1.8 degrees,
         # producing 90 deg/s peak speed. The 500 units/s default must accept it.
         positions = [i * 1.8 for i in range(50)]  # 0.0, 1.8, ... 88.2
-        refusals = _refusals_streaming_at(positions, hz=50.0)
+        host = FakeHost()
+        result = _drive(host, SteppingLeader(positions), ticks=50)
 
-        assert refusals == [], (
-            f"a 90 deg/s degree-valued stream was refused at the default bound: {refusals}"
+        telemetry = result["content"][1]["json"]
+        assert telemetry["slew_rejected"] == 0, (
+            f"a 90 deg/s degree-valued stream was refused at the default bound: {telemetry}"
         )
 
     def test_a_half_second_gripper_close_is_not_refused(self) -> None:
         # Gripper in range-0-100: close from 0 to 100 in 0.5 s at 50 Hz is
         # 25 ticks of 4 units each = 200 units/s peak. Must be accepted.
         positions = [i * 4.0 for i in range(25)]  # 0, 4, 8, ... 96
-        refusals = _refusals_streaming_at(positions, hz=50.0)
+        host = FakeHost()
+        result = _drive(host, SteppingLeader(positions), ticks=25)
 
-        assert refusals == [], (
-            f"a 200 units/s gripper close was refused at the default bound: {refusals}"
+        telemetry = result["content"][1]["json"]
+        assert telemetry["slew_rejected"] == 0, (
+            f"a 200 units/s gripper close was refused at the default bound: {telemetry}"
         )
 
     def test_sts3215_no_load_max_in_degrees_is_not_refused(self) -> None:
         # STS3215 no-load max is 6.5 rad/s = ~372 deg/s. At 50 Hz that is
         # 7.44 deg/tick. Must be accepted at the default bound.
         positions = [i * 7.44 for i in range(20)]
-        refusals = _refusals_streaming_at(positions, hz=50.0)
+        host = FakeHost()
+        result = _drive(host, SteppingLeader(positions), ticks=20)
 
-        assert refusals == [], (
-            f"a 372 deg/s stream (STS3215 max) was refused at the default bound: {refusals}"
+        telemetry = result["content"][1]["json"]
+        assert telemetry["slew_rejected"] == 0, (
+            f"a 372 deg/s stream (STS3215 max) was refused at the default bound: {telemetry}"
         )
 
     def test_a_2000_units_per_second_glitch_is_still_refused(self) -> None:
         # An encoder glitch that jumps 40 units in one tick at 50 Hz =
         # 2000 units/s. This MUST still be caught even at the wider default.
-        refusals = _refusals_streaming_at([0.0, 0.0, 40.0, 0.0, 0.0, 0.0], hz=50.0)
+        host = FakeHost()
+        result = _drive(host, SteppingLeader([0.0, 0.0, 40.0, 0.0, 0.0, 0.0]), ticks=12)
 
-        assert len(refusals) >= 1, (
-            "a 2000 units/s glitch was NOT refused at the default bound"
+        telemetry = result["content"][1]["json"]
+        assert telemetry["slew_rejected"] >= 1, (
+            f"a 2000 units/s glitch was NOT refused at the default bound: {telemetry}"
         )
-        assert "joint1" in refusals[0], refusals[0]
-
-
-def _refusals_streaming_at(positions: list[float], hz: float, joint: str = "joint1") -> list[str]:
-    """Replay *positions* as one frame per 1/hz second and collect the refusals.
-
-    Q29, the honest fix: this class states its cases in UNITS PER SECOND ("a 90
-    deg/s sweep", "a 2000 units/s glitch"), but a wall-clock ``teleoperate()``
-    loop converts per-tick steps into per-second speeds using the rate it
-    ACHIEVES, not the rate it was asked for. Achieved rate here has been measured
-    as low as 6.5Hz against an asked 50 - the scheduler, other tests, a busy
-    machine - and at 6.5Hz the scripted "2000 units/s glitch" IS only 260
-    units/s, comfortably inside the 500 bound. The loop refusing nothing was
-    correct; the test's arithmetic was the fiction. Worse, the failure mode was
-    load-dependent, which is how this file earned "9-10 pre-existing failures
-    under sweep, 1 idle".
-
-    Driving the judgment itself at an exact synthetic cadence tests the BOUND
-    rather than this machine's scheduler: the speeds are the ones the docstrings
-    claim, the result is identical on an idle Mac and a loaded one, and it runs
-    in microseconds. The loop's own contract - that it feeds real elapsed time
-    into this function, per joint - is covered by the loop-driven tests
-    elsewhere in this file, which is where that belongs.
-    """
-    dt = 1.0 / hz
-    now = 1000.0
-    baseline: dict[str, tuple[float, float]] = {}
-    refusals: list[str] = []
-    for value in positions:
-        action = {joint: value}
-        reason = security.input_frame_slew_violation(
-            action,
-            baseline,
-            now,
-            min_interval_s=0.0,
-            # The LOCAL bound, resolved by the same function the loop uses - not
-            # a number retyped here, which would keep passing if the shipped
-            # default changed under it.
-            max_slew=teleop_mixin.local_slew_bound(None),
-        )
-        if reason is not None:
-            refusals.append(reason)
-        else:
-            baseline = security.merge_slew_baseline(
-                baseline, action, now, max_slew=teleop_mixin.local_slew_bound(None)
-            )
-        now += dt
-    return refusals
-
-
-def _run_until_comeback(host: FakeHost, quiet: "QuietThenGlitchLeader", reads: int = 2) -> dict:
-    """Drive the session until the quiet device's comeback has been read *reads* times.
-
-    Q29: the tick-driven driver ended these sessions early on a slow machine, so
-    the glitch under test was never emitted and the assertions graded a session
-    that had not happened yet. Waiting for the OBSERVABLE event - the device
-    serving its comeback value - makes the premise true at any achieved rate,
-    and a loop that is genuinely wedged still fails, on the cap, in bounded time.
-    """
-    import time as _time
-
-    host.teleoperate(hz=HZ)
-    cap = _time.monotonic() + quiet.quiet_s + 15.0
-    while quiet.comeback_reads < reads and _time.monotonic() < cap:
-        _time.sleep(0.002)
-    served = quiet.comeback_reads
-    result = host.stop_teleoperate()
-    assert served >= reads, (
-        f"premise: the device served its comeback {served}/{reads} times before the cap - "
-        f"the glitch under test was never offered to the loop"
-    )
-    return result
 
 
 class QuietThenGlitchLeader:
@@ -397,26 +300,13 @@ class QuietThenGlitchLeader:
     ``get_action()`` returns ``{}`` for a while - the device commands nothing,
     so nothing of its own is applied - and its first read on return is a
     full-scale garbage value.
-
-    The gap is a DURATION, not a tick count (Q29). What the prune measures is
-    elapsed seconds - ``(value_abs + abs(value)) / max_slew`` - so a gap counted
-    in ticks is only the intended gap while the loop hits the rate it asked for.
-    At the 6.5Hz this machine has achieved under load, "quiet for 30 ticks" is
-    4.6s, not 0.6s, and the session ended before the comeback was ever read: the
-    tests failed on their own premise while the code was correct. Counting
-    seconds makes the case the docstrings describe true at any achieved rate.
     """
 
     name, id, is_connected = "quiet", None, False
 
-    def __init__(self, first: float, quiet_s: float, comeback: float, joint: str = "joint1") -> None:
-        self.first, self.quiet_s, self.comeback, self.joint = first, quiet_s, comeback, joint
+    def __init__(self, first: float, quiet_ticks: int, comeback: float, joint: str = "joint1") -> None:
+        self.first, self.quiet_ticks, self.comeback, self.joint = first, quiet_ticks, comeback, joint
         self.calls = 0
-        #: Reads served AFTER the quiet window - what a driver waits for, so
-        #: "the glitch was offered and judged" is observed, never assumed.
-        self.comeback_reads = 0
-        self._quiet_from: float | None = None
-        self.frames_during_quiet = 0
 
     def connect(self, calibrate: bool = True) -> None:  # noqa: ARG002
         self.is_connected = True
@@ -425,17 +315,11 @@ class QuietThenGlitchLeader:
         self.is_connected = False
 
     def get_action(self) -> dict[str, float]:
-        import time as _time
-
         self.calls += 1
         if self.calls == 1:
-            self._quiet_from = _time.monotonic()
             return {self.joint: self.first}
-        assert self._quiet_from is not None
-        if _time.monotonic() - self._quiet_from < self.quiet_s:
-            self.frames_during_quiet += 1
+        if self.calls <= 1 + self.quiet_ticks:
             return {}  # quiet: commands nothing
-        self.comeback_reads += 1
         return {self.joint: self.comeback}
 
 
@@ -470,33 +354,23 @@ class TestAQuietDeviceKeepsItsBaselineWhileOthersMove:
     why every single-device test above passes either way.
     """
 
-    #: Quiet gap, in seconds: past the mesh-default horizon for a joint at rest
-    #: (value_abs / slew_abs), so an entry that survives it survives because the
-    #: prune was given the LOCAL bound - the property under test.
-    QUIET_S = 0.6
-
     @staticmethod
-    def _drive_two(host: FakeHost, quiet: "QuietThenGlitchLeader", steady: object) -> dict:
+    def _drive_two(host: FakeHost, quiet: object, steady: object, ticks: int) -> dict:
         host.attach_teleop(quiet, name="quiet")
         host.attach_teleop(steady, name="steady")
-        return _run_until_comeback(host, quiet)
+        return host.teleoperate(block=True, hz=HZ, duration=ticks / HZ)
 
     def test_a_glitch_from_a_returning_device_is_still_refused(self) -> None:
         # joint1 rests at 0.0, then its device goes quiet for 30 ticks (0.6 s,
         # past the 0.5 s mesh-default horizon for a joint at rest) while joint2
         # keeps the loop applying frames. joint1's comeback read is full-scale.
         host = FakeHost()
-        quiet = QuietThenGlitchLeader(first=0.0, quiet_s=self.QUIET_S, comeback=GLITCH)
-        result = self._drive_two(host, quiet, SteadyLeader())
+        quiet = QuietThenGlitchLeader(first=0.0, quiet_ticks=30, comeback=GLITCH)
+        result = self._drive_two(host, quiet, SteadyLeader(), ticks=40)
 
-        # Premise: the OTHER device kept the loop applying frames through the
-        # quiet window, so the prune actually ran while joint1 was silent.
-        # Without this the test proves nothing. Counted as frames the quiet
-        # device served nothing on, not as a total, because the total tracks the
-        # machine's achieved rate rather than what was exercised.
-        assert quiet.frames_during_quiet >= 3, (
-            f"the prune was never exercised: {quiet.frames_during_quiet} frames during the gap"
-        )
+        # Premise: the loop kept applying frames through the quiet window, so
+        # the prune was actually exercised. Without this the test proves nothing.
+        assert len(host.sent) > 30, f"the prune was never exercised: {len(host.sent)} frames"
 
         applied_j1 = [a["joint1"] for a, _ in host.sent if "joint1" in a]
         assert GLITCH not in applied_j1, (
@@ -511,8 +385,8 @@ class TestAQuietDeviceKeepsItsBaselineWhileOthersMove:
         # The failure this pins was silent: the frame applied, nothing counted,
         # status still success. Status must reflect the refusal.
         host = FakeHost()
-        quiet = QuietThenGlitchLeader(first=0.0, quiet_s=self.QUIET_S, comeback=GLITCH)
-        result = self._drive_two(host, quiet, SteadyLeader())
+        quiet = QuietThenGlitchLeader(first=0.0, quiet_ticks=30, comeback=GLITCH)
+        result = self._drive_two(host, quiet, SteadyLeader(), ticks=40)
 
         assert "refused" in result["content"][0]["text"]
 
@@ -594,22 +468,22 @@ class TestNarrowingTheBoundDoesNotShortenTheBaseline:
 
     def test_a_returning_device_is_refused_under_a_narrowed_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_TELEOP_SLEW_ABS", "5.0")
-        quiet_s = 0.8
-        assert quiet_s > self.MESH_HORIZON_AT_REST_S, (
+        quiet_ticks = 40
+        assert quiet_ticks / HZ > self.MESH_HORIZON_AT_REST_S, (
             "premise: the gap must outlast the mesh prune horizon, or the entry survives "
             "for reasons unrelated to which parameters the prune was given"
         )
 
         host = FakeHost()
-        quiet = QuietThenGlitchLeader(0.0, quiet_s, GLITCH)
-        host.attach_teleop(quiet, name="quiet")
+        host.attach_teleop(QuietThenGlitchLeader(0.0, quiet_ticks, GLITCH), name="quiet")
         host.attach_teleop(SteadyLeader(), name="steady")
-        result = _run_until_comeback(host, quiet)
+        ticks = 2 + quiet_ticks + 4
+        result = host.teleoperate(block=True, hz=HZ, duration=ticks / HZ)
 
         applied = [a["joint1"] for a, _ in host.sent if "joint1" in a]
         assert applied, "premise: the quiet device must have applied its resting frames"
         assert GLITCH not in applied, (
-            f"a full-scale jump was applied under a narrowed bound after a {quiet_s:.2f}s gap: {applied}"
+            f"a full-scale jump was applied under a narrowed bound after a {quiet_ticks / HZ:.2f}s gap: {applied}"
         )
         assert result["content"][1]["json"]["slew_rejected"] >= 1
 
@@ -618,10 +492,9 @@ class TestNarrowingTheBoundDoesNotShortenTheBaseline:
         # entry is only ever stamped for a key that was applied - the claim the
         # unbounded envelope rests on.
         host = FakeHost()
-        quiet = QuietThenGlitchLeader(0.0, 0.2, GLITCH)
-        host.attach_teleop(quiet, name="quiet")
+        host.attach_teleop(QuietThenGlitchLeader(0.0, 10, GLITCH), name="quiet")
         host.attach_teleop(SteadyLeader(), name="steady")
-        _run_until_comeback(host, quiet)
+        host.teleoperate(block=True, hz=HZ, duration=16 / HZ)
 
         applied_keys = {k for a, _ in host.sent for k in a}
         assert applied_keys, "premise: the loop must have applied something"

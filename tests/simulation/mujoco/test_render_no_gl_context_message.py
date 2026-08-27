@@ -262,10 +262,6 @@ class TestTheFixIsPlatformCorrect:
                 head = "Depth rendering unavailable" if depth else "Rendering unavailable"
                 assert text.startswith(head)
 
-    def test_macos_names_the_context_loss_case_measured_in_q34(self):
-        """A context that worked and then vanished is not a missing install."""
-        text = rendering.no_gl_context_message(platform="darwin")
-        assert "EARLIER" in text and "fresh process" in text
     def test_the_running_platform_is_the_default(self):
         """Every consumer calls the helper with no ``platform=``.
 

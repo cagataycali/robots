@@ -48,7 +48,6 @@ ALL_ACTIONS = (
     "tell",
     "send",
     "rpc",
-    "sim_call",
     "broadcast",
     "stop",
     "emergency_stop",
@@ -59,7 +58,7 @@ ALL_ACTIONS = (
 )
 
 #: Actions that hand ``timeout`` to a wait, so an unusable value is refused.
-READS_TIMEOUT = ("tell", "send", "rpc", "sim_call", "broadcast", "stop")
+READS_TIMEOUT = ("tell", "send", "rpc", "broadcast", "stop")
 
 #: Wait budgets that cannot be honored. ``0`` / ``-1`` / ``nan`` make the wait
 #: return immediately (reported as a peer that did not answer), ``inf`` raises

@@ -44,28 +44,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-import pytest
-
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState
-
-
-@pytest.fixture(autouse=True)
-def _strict_camera_contract(monkeypatch):
-    """Pin the STRICT contract these tests describe.
-
-    This fork also carries a camera-degrade path (a camera that will not open is
-    dropped and the arm comes up degraded, because on a Mac without a TCC camera
-    grant no arm could otherwise come up at all). That path answers the same
-    failure BEFORE the rollback below can run, which silently turned every test
-    in this file red. Rather than delete an upstream behavioural pin, the degrade
-    is switchable and this file asks for the strict path explicitly - so the
-    rollback guarantee stays tested and the divergence stays visible instead of
-    living as an unexplained red suite.
-    """
-    monkeypatch.setenv("STRANDS_ROBOT_CAMERA_DEGRADE", "0")
 
 
 class _FakeCamera:

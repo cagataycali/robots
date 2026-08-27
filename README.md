@@ -307,36 +307,6 @@ robot.teleoperate(publish=True)              # also stream over the mesh
 Zero-config when action keys match; otherwise pass `map_fn`. Full matrix +
 recipes: [Teleoperation docs](https://strands-labs.github.io/robots/hardware/teleoperation/).
 
-## Fleet dashboard
-
-One command turns the whole mesh into a cockpit - every real arm, every sim
-twin, their cameras and joints, policy runs, recording and training jobs, plus
-an agent you can talk to:
-
-```bash
-python -m strands_robots dashboard --port 8090 --local-dev
-# open http://localhost:8090
-```
-
-The dashboard is a mesh peer, not a hub: a robot you start in your own script
-with `mesh=True` shows up in it unchanged. The UI is a client of a plain HTTP
-API (`/api/fleet`, `/api/devices/spawn`, `/api/collect`, `/api/training/*`, ...),
-so anything it can do, `curl` can do.
-
-| | |
-|---|---|
-| **Two SO-101 arms and a Mac?** | [10-minute quickstart](docs/dashboard/quickstart.md) - install, calibrate, spawn both arms, identify which camera is the wrist, first dataset on disk |
-| Every flag, route and panel | [Fleet dashboard reference](docs/dashboard/index.md) |
-| The same peer from your own script | [Robots defined in code](docs/dashboard/code-defined-robots.md) |
-| Episodes to a checkpoint on the arm | [Collect, train, deploy](docs/dashboard/collect-train-deploy.md) |
-| Reach it from a phone | [Remote access](docs/dashboard/remote-access.md) - guard first, tunnel second |
-| A refusal you do not understand | [Troubleshooting](docs/dashboard/troubleshooting.md) |
-
-Two facts worth knowing before the first spawn: a camera is declared as a
-**mapping of options** (`{"wrist": {"index_or_path": 1}}`), never a bare index,
-and with no credential configured the API answers **loopback only** - a
-tunnelled request is refused rather than trusted.
-
 ## Recording & streaming datasets
 
 The physical-AI data loop, end to end: **record** a LeRobotDataset from sim or
@@ -1213,7 +1183,7 @@ touches ROS 2.
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | TTL (s) for S3 presigned camera URLs; capped at 3600 | `60` |
 | `STRANDS_MESH_ACL_FILE` | Path to a JSON5 Zenoh ACL file; unset = permissive default. See `examples/mesh/mesh_acl_example.json5` (role-scoped) and `examples/mesh/mesh_acl_strict_per_peer.json5` (per-peer). **⚠️ Required on any WAN/cloud router: mTLS gives identity, not least-privilege — without a topic-level ACL one device cert can read all fleet traffic and command any robot. See [security docs](docs/security.md#production-posture-required-off-trusted-networks).** | unset |
 | `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated allowlist of VLA policy-server hosts/CIDRs for inference | loopback only |
-| `STRANDS_MESH_HITL_ACTIONS` | `robot_mesh` actions needing a human-in-the-loop interrupt: `all` / `none` / subset of `emergency_stop,broadcast,tell,send,stop,rpc,subscribe,watch,sim_call` | actuation default |
+| `STRANDS_MESH_HITL_ACTIONS` | `robot_mesh` actions needing a human-in-the-loop interrupt: `all` / `none` / subset of `emergency_stop,broadcast,tell,send,stop,rpc,subscribe,watch` | actuation default |
 | `STRANDS_MESH_SUBSCRIBE_ALLOW` | Extra Zenoh key-expr patterns the `robot_mesh` `subscribe` action may target, beyond the built-in low-impact set | shared classes only |
 | `STRANDS_MESH_OVERRIDE_CODE` | Shared secret for e-stop resume HMAC proof; unset means no remote resume possible | unset |
 | `STRANDS_MESH_INPUT_VALUE_ABS` | Absolute value clamp for teleop joint commands, in frame units -- whichever unit the leader driver puts on the wire (shipped SO leaders stream degrees, and a 0-100 gripper). Narrow it for radian or normalized -1..1 actuators, whose units are smaller | `720` (two full turns) |

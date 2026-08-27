@@ -13,7 +13,6 @@ from a single prompt - see #148 for the motivation.
 
 import os
 import re
-import tempfile
 import socket
 import subprocess
 import time
@@ -294,20 +293,6 @@ def _resolve_host_path(host_path: str) -> str:
     return os.path.realpath(os.path.expanduser(host_path))
 
 
-def _scratch_roots() -> set[str]:
-    """Resolved paths under which a mount is allowed despite a protected prefix.
-
-    Blocking a protected dir by prefix is right for system state, but macOS puts
-    the per-user temp dir INSIDE one: tempfile.gettempdir() resolves to
-    /private/var/folders/<...>/T, i.e. under /var. Refusing that would refuse
-    every staged checkpoint an operator (or this suite) writes to a tmp dir,
-    while protecting nothing -- that tree is user-writable scratch by design and
-    is no more sensitive than /Users. The carve-out is only the temp ROOT, so
-    /private/var itself and /private/var/run stay refused.
-    """
-    return {os.path.realpath(tempfile.gettempdir())}
-
-
 def _with_resolved(paths: tuple[str, ...]) -> set[str]:
     """Return each protected path AND the path its symlinks resolve to.
 
@@ -340,15 +325,10 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     """
     if not volumes:
         return None
-    # Both sides of the comparison are resolved, not just the candidate. On a
-    # host whose protected dirs are THEMSELVES symlinks the realpath hardening
-    # below would otherwise defeat itself: macOS ships /etc -> /private/etc,
-    # /var -> /private/var and /home -> /System/Volumes/Data/home, so resolving
-    # a mount of /etc produced "/private/etc", which matched no entry in the
-    # blocklist and was allowed - and a direct mount of /private/etc always was.
-    # Docker mounts the resolved target, so the two names are one directory and
-    # the blocklist has to know both. On Linux realpath is a no-op here and the
-    # set is unchanged.
+    # Both sides of the comparison are resolved: the candidate mount (#384
+    # item 2) and the blocklist itself. Resolving one side only compares a
+    # directory against a name, so a protected directory reachable under a
+    # second name was refused under one spelling and admitted under the other.
     blocked_dirs = _with_resolved(_BLOCKED_VOLUME_HOST_PATHS)
     blocked_exact = _with_resolved(_BLOCKED_VOLUME_EXACT)
     for host_path in volumes:
@@ -364,15 +344,12 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
         # /proc/1/environ, /var/run/docker.sock.bak, etc. is blocked too. Root
         # ("/") is matched exactly only -- a prefix test on "/" would reject
         # every absolute path, including legitimate operator mounts.
-        scratch = _scratch_roots()
         for blocked in blocked_dirs:
             if blocked == os.sep:
                 if os.sep in candidates:
                     return f"refusing to mount {host_path!r}: host root filesystem"
                 continue
             for cand in candidates:
-                if any(cand == root or cand.startswith(root + os.sep) for root in scratch):
-                    continue
                 if cand == blocked or cand.startswith(blocked + os.sep):
                     return f"refusing to mount {host_path!r}: under protected host path {blocked!r}"
     return None

@@ -386,7 +386,6 @@ class HardwareRtpsBridge(RosTelemetryBase):
                 if ticker.wait():
                     break
 
-
     def _start_poll(self) -> None:
         if self._poll_thread is not None and self._poll_thread.is_alive():
             return

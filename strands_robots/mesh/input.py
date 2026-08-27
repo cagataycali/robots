@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any
 from strands_robots.bus_access import write_action
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.security import (
-    input_envelope_for_units,
     ValidationError,
     input_frame_slew_violation,
     merge_slew_baseline,
@@ -55,6 +54,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 INPUT_HZ_DEFAULT = 50.0
+
+# Budget for joining the background publish thread in InputPublisher.stop.
+# Named so the docstring, the ``thread_alive`` stat and the tests read one
+# value. Matches the teleop mixin's _TELEOP_JOIN_TIMEOUT_S in purpose.
+_INPUT_JOIN_TIMEOUT_S = 2.0
 
 #: How many times each :class:`InputPublisher` loop failure is logged before
 #: going quiet. The loop runs at ``hz`` (50 Hz by default), so an unbounded
@@ -213,17 +217,25 @@ class InputPublisher:
     @property
     def stats(self) -> dict[str, Any]:
         """Live publishing counters: the target device/method, whether the
-        loop is ``running``, cumulative ``frames`` published and ``errors``
-        hit, ``event_read_errors`` (frames published with ``events: null``
-        because ``get_teleop_events()`` raised, rather than because the
-        teleoperator has no event surface), and the achieved vs. requested rate
-        (``hz_actual`` / ``hz_target``).
+        loop is ``running``, whether its ``thread_alive``, cumulative ``frames``
+        published and ``errors`` hit, ``event_read_errors`` (frames published
+        with ``events: null`` because ``get_teleop_events()`` raised, rather
+        than because the teleoperator has no event surface), and the achieved
+        vs. requested rate (``hz_actual`` / ``hz_target``).
+
+        ``running`` is the session flag, which :meth:`stop` clears before it
+        joins; ``thread_alive`` reads the publish thread itself. The two differ
+        for exactly as long as a loop outlives the stop that asked it to exit -
+        the window in which this publisher can still put a frame on the wire.
+        Without the second reading a caller polling after a stop would be told
+        ``running=False`` about a loop that is still publishing.
         """
         elapsed = time.monotonic() - self._start_mono if self._start_mono else 0
         return {
             "device": self.device_name,
             "method": self.method,
             "running": self._running,
+            "thread_alive": self._thread is not None and self._thread.is_alive(),
             "frames": self._frame_count,
             "errors": self._error_count,
             "event_read_errors": self._event_read_error_count,
@@ -252,18 +264,46 @@ class InputPublisher:
         )
 
     def stop(self) -> dict[str, Any]:
-        """Stop the input publishing loop and return stats."""
-        if not self._running:
+        """Stop the input publishing loop and return stats.
+
+        ``join()`` returns ``None`` whether or not the thread finished, so the
+        liveness read after it is the only thing that tells a stopped loop from
+        one that outlasted :data:`_INPUT_JOIN_TIMEOUT_S`. A teleoperator whose
+        ``get_action()`` blocks past that budget - a serial read on a wedged bus
+        is the ordinary case - leaves the loop free to publish one more frame
+        after this call returns, so the outcome rides back in
+        ``stats["thread_alive"]`` and is logged at WARNING rather than being
+        announced as a stop that happened.
+
+        A publisher whose join timed out is still stoppable: the session flag is
+        already clear, so the guard below admits a call that has a live thread
+        left to join. Returning early on the flag alone would make the only
+        handle to that loop unreachable through this surface.
+        """
+        thread = self._thread
+        if not self._running and not (thread is not None and thread.is_alive()):
             return self.stats
         self._running = False
         self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=2.0)
-        logger.info(
-            "[mesh] input publisher stopped: %s (%d frames)",
-            self.device_name,
-            self._frame_count,
-        )
+        if thread is not None:
+            thread.join(timeout=_INPUT_JOIN_TIMEOUT_S)
+        if thread is not None and thread.is_alive():
+            logger.warning(
+                "[mesh] input publisher did not stop within %.1fs: %s is still "
+                "publishing to %s after %d frames. The teleoperator's "
+                "get_action() is most likely blocking; call stop() again to "
+                "re-join that loop.",
+                _INPUT_JOIN_TIMEOUT_S,
+                self.device_name,
+                self.topic,
+                self._frame_count,
+            )
+        else:
+            logger.info(
+                "[mesh] input publisher stopped: %s (%d frames)",
+                self.device_name,
+                self._frame_count,
+            )
         return self.stats
 
     def _publish_loop(self) -> None:
@@ -374,61 +414,6 @@ class InputPublisher:
             return {"raw": float(action)}
 
 
-#: Frame keys are ``"{motor}.pos"``; lerobot's motor table is keyed by the bare
-#: motor name. Kept here (not in ``strands_robots.mesh.security``) because it
-#: touches a hardware object's shape, while the security module must stay
-#: importable without lerobot installed.
-def declared_units(robot: Any) -> dict[str, str]:
-    """What unit does THIS robot say each of its joints is in?
-
-    Read from ``bus.motors[name].norm_mode`` - lerobot's own declaration
-    (``DEGREES`` / ``RANGE_M100_100`` / ``RANGE_0_100``), which is why the answer
-    cannot be influenced by whoever is sending frames. An SO-101 typically
-    answers ``deg`` for the body joints and ``pct`` for the gripper, in the same
-    frame, which is exactly why the bound has to be per joint.
-
-    Every failure here is silent and returns ``{}``: an unreadable motor table
-    must fall back to the conservative radian default, never abort a teleop
-    session that would otherwise work.
-    """
-    from strands_robots.mesh.security import NORM_MODE_UNITS
-
-    units: dict[str, str] = {}
-    # The motor table can sit a couple of wrappers down (strands Robot ->
-    # hardware robot -> lerobot SOFollower.bus), so walk the .robot chain
-    # instead of assuming a depth. Bounded, and cycle-safe by identity.
-    holders: list[Any] = []
-    node, seen = robot, set()
-    while node is not None and len(holders) < 4 and id(node) not in seen:
-        seen.add(id(node))
-        holders.append(node)
-        try:
-            node = getattr(node, "robot", None)
-        except Exception:  # noqa: BLE001 - a wrapper's property may raise
-            break
-    for holder in holders:
-        try:
-            # A property on a live hardware object can do anything, including
-            # raise or block; the envelope must degrade to the conservative
-            # default rather than take a teleop session down with it.
-            bus = getattr(holder, "bus", None)
-            motors = getattr(bus, "motors", None)
-            if not isinstance(motors, dict):
-                continue
-            for name, motor in motors.items():
-                mode = getattr(motor, "norm_mode", None)
-                label = getattr(mode, "name", None) or (mode if isinstance(mode, str) else None)
-                unit = NORM_MODE_UNITS.get(str(label).upper()) if label else None
-                if unit:
-                    units[f"{name}.pos"] = unit
-        except Exception as exc:  # noqa: BLE001 - see above; nothing here is fatal
-            logger.debug("[mesh] could not read declared units from %r: %r", holder, exc)
-            continue
-        if units:
-            break
-    return units
-
-
 class InputReceiver:
     """Subscribes to a remote peer's input stream and applies actions locally.
 
@@ -484,12 +469,6 @@ class InputReceiver:
         # joints cannot erase the baseline of the ones it omits.
         self._last_applied: dict[str, tuple[float, float]] = {}
         self._start_mono = 0.0
-        # Per-joint bounds, filled in at start() from the robot's own declared
-        # units. Empty means "radian defaults", which is what a robot that
-        # declares nothing gets.
-        self._value_abs_by_key: dict[str, float] = {}
-        self._slew_abs_by_key: dict[str, float] = {}
-        self._declared_units: dict[str, str] = {}
 
     def __repr__(self) -> str:
         try:
@@ -541,10 +520,6 @@ class InputReceiver:
             "rate_dropped": self._rate_dropped,
             "slew_rejected": self._slew_rejected,
             "hz_actual": self._frame_count / elapsed if elapsed > 0 else 0,
-            # Which envelope is actually in force: a rejected-frame count is
-            # unreadable without it. Reported as the declared units themselves
-            # rather than reverse-engineered from the bounds.
-            "envelope_units": dict(sorted(self._declared_units.items())),
         }
 
     def start(self) -> None:
@@ -558,21 +533,11 @@ class InputReceiver:
             callback=self._on_input,
             name=f"input:{self.source_peer_id}/{self.device_name}",
         )
-        # Derive the per-joint safety envelope from OUR OWN hardware's declared
-        # units before the first frame can arrive. The radian default refuses
-        # every frame a degree-valued arm sends, and the refusal is only visible
-        # in this process's log, so a session that cannot work must not start
-        # quietly: the decision is logged once, either way.
-        self._declared_units = declared_units(self.robot)
-        self._value_abs_by_key, self._slew_abs_by_key, note = input_envelope_for_units(
-            self._declared_units
-        )
         if self._sub_name:
             logger.info(
-                "[mesh] input receiver started: %s from %s (envelope: %s)",
+                "[mesh] input receiver started: %s from %s",
                 self.device_name,
                 self.source_peer_id,
-                note,
             )
         else:
             logger.warning("[mesh] input receiver failed to subscribe: %s", self.topic)
@@ -712,9 +677,7 @@ class InputReceiver:
             # finite magnitude. Rejected frames are counted + logged and
             # dropped (never applied) rather than crashing the receiver.
             try:
-                safe_action = validate_input_frame(
-                    action, value_abs_by_key=self._value_abs_by_key
-                )
+                safe_action = validate_input_frame(action)
             except ValidationError as verr:
                 self._refuse(
                     "invalid",
@@ -761,7 +724,6 @@ class InputReceiver:
                 self._last_applied,
                 apply_mono,
                 min_apply_interval,
-                max_slew_by_key=self._slew_abs_by_key,
             )
             if slew_reason is not None:
                 self._slew_rejected += 1

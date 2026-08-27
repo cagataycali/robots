@@ -217,28 +217,10 @@ class TestAReaderFailureCostsOnlyThatTick:
                 # Reached only if the loop survived the failure above.
                 return [_JointState(name=["j0"], position=[0.75])]
 
-        class _StopWhenTaken:
-            """Ends the loop after the reader has been polled ``n`` times.
-
-            Deliberately NOT a count of ``is_set()`` calls: the pacer consults
-            the stop flag too, so counting calls measures the pacer's internals
-            rather than the loop's ticks - and this test's whole subject is how
-            many times the BODY ran after one of them raised.
-            """
-
-            def __init__(self, reader: Any, n: int) -> None:
-                self._reader, self._n = reader, n
-
-            def is_set(self) -> bool:
-                return self._reader.takes >= self._n
-
-            def wait(self, timeout: Any = None) -> bool:
-                return False
-
         robot = _FakeRobot()
         reader = _FlakyReader()
 
-        _poll_skeleton(reader, robot, stop=_StopWhenTaken(reader, 2))._poll_loop()  # must not propagate
+        _poll_skeleton(reader, robot, iterations=2)._poll_loop()  # must not propagate
 
         assert reader.takes == 2, "the loop stopped at the failing tick"
         assert robot.sent_actions == [{"j0": 0.75}]

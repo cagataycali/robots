@@ -1,4 +1,4 @@
-"""Regression tests for issue #708 - silent episode collapse.
+"""Regression tests for issue #708 — silent episode collapse.
 
 Background
 ==========
@@ -11,13 +11,13 @@ appended to it, and ``stop_recording`` flushed the single buffer at the end.
 Net effect: a 20-episode × 60-step rollout produced one parquet episode of
 1140 frames, but the eval status text reported ``Episodes: 20`` because the
 runner's own bookkeeping counted iterations. A run was marked status=OK and
-shipped to HuggingFace with ``total_episodes=1`` - silent data-integrity
+shipped to HuggingFace with ``total_episodes=1`` — silent data-integrity
 loss across 47/47 historical molmoact-e2e runs.
 
 The fix wires ``self._finalize_recorder_episode()`` at the end of each
 ``for ep ...`` body. The recorder is opaque-injected via
 ``world._backend_state["dataset_recorder"]`` so we don't need a real
-``LeRobotDataset`` - a stub that counts ``save_episode`` calls is enough to
+``LeRobotDataset`` — a stub that counts ``save_episode`` calls is enough to
 pin the contract.
 """
 
@@ -38,13 +38,13 @@ class _StubRecorder:
     """Minimal stand-in for ``DatasetRecorder``.
 
     Mimics the surface ``_finalize_recorder_episode`` touches:
-    * ``episode_frame_count``  - incremented by the test "step hook" so
+    * ``episode_frame_count``  — incremented by the test "step hook" so
       :meth:`PolicyRunner._finalize_recorder_episode` doesn't skip the call
       due to an empty buffer.
-    * ``save_episode``         - bumps ``episode_count``, resets
+    * ``save_episode``         — bumps ``episode_count``, resets
       ``episode_frame_count``, and records the call for assertion.
 
-    We deliberately do NOT subclass the real recorder - keeping the contract
+    We deliberately do NOT subclass the real recorder — keeping the contract
     explicit and minimal documents what the fix actually depends on.
     """
 
@@ -84,7 +84,7 @@ def _attach_recorder(sim: Simulation, frames_per_episode: int = 5) -> _StubRecor
     """Attach a stub recorder + simulate per-step ``add_frame`` calls.
 
     The real recorder gets fed by ``Simulation`` send_action callbacks. For
-    this test we don't need to wire that - we manually pump ``add_frame``
+    this test we don't need to wire that — we manually pump ``add_frame``
     inside an ``on_frame`` hook so :meth:`_finalize_recorder_episode` sees
     a non-empty buffer when it fires.
     """
@@ -157,7 +157,7 @@ class TestRecorderEpisodeBoundary:
         nothing don't trip an error.
         """
         rec = _attach_recorder(sim_with_robot)
-        # episode_frame_count starts at 0 - never wrote a frame this ep.
+        # episode_frame_count starts at 0 — never wrote a frame this ep.
         assert rec.episode_frame_count == 0
 
         runner = PolicyRunner(sim_with_robot)
@@ -185,7 +185,7 @@ class TestRecorderEpisodeBoundary:
         """Recorder.save_episode raising must not abort the eval.
 
         Eval is the dominant use case; recording is opportunistic. Log and
-        continue - matches the existing on_frame failure handling pattern.
+        continue — matches the existing on_frame failure handling pattern.
         """
         rec = _attach_recorder(sim_with_robot)
         rec.episode_frame_count = 5  # non-empty buffer

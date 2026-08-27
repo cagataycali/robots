@@ -631,10 +631,6 @@ _PYTHON_ONLY_ACTIONS = frozenset(
         "get_teleop_status",
         "get_teleoperate_status",
         "start_teleop_receive",
-        # Publishing an arm's OWN joints as a teleop stream (U3): every frame is
-        # a real serial read on a real bus, and the callers are the mesh verb
-        # ``teleop_publish`` and its HTTP route - never an LLM naming an action.
-        "start_teleop_publish_self",
         "list_teleops",
         "stop_teleoperate",
         "teleoperate",

@@ -59,7 +59,6 @@ import strands_robots.tools.robot_mesh as rmt
 _PRE_VALIDATED_ACTIONS: list[tuple[str, str, dict[str, Any], int]] = [
     ("send", "send", {"target": "peer-b", "command": '{"action": "status"}'}, 1),
     ("broadcast", "broadcast", {"command": '{"action": "status"}'}, 0),
-    ("sim_call", "send", {"target": "sim-peer", "function": "list_objects"}, 1),
 ]
 
 _ACTION_IDS = [a for a, _, _, _ in _PRE_VALIDATED_ACTIONS]
@@ -203,11 +202,7 @@ class TestTheGuardsAreExplicitRaisesNotAsserts:
     """
 
     def test_the_sentinel_set_is_the_two_known_command_bodies(self) -> None:
-        assert _sentinels_assigned() == {
-            "validated_send_cmd",
-            "validated_broadcast_cmd",
-            "validated_sim_call_cmd",
-        }
+        assert _sentinels_assigned() == {"validated_send_cmd", "validated_broadcast_cmd"}
 
     def test_every_assigned_sentinel_is_guarded_by_a_raise(self) -> None:
         assigned = _sentinels_assigned()
@@ -335,10 +330,4 @@ class TestTheHonoredPathStillDispatchesTheValidatedCommand:
         dispatched = getattr(transport, transport_attr).call_args.args[cmd_index]
         assert dispatched is returned[0]
         assert isinstance(dispatched, dict)
-        # send/broadcast dispatch the command BODY the caller wrote (a status
-        # probe here); sim_call synthesises its own command whose action IS
-        # the verb, with the caller's function under sim_action.
-        if "command" in kwargs:
-            assert dispatched["action"] == "status"
-        else:
-            assert dispatched["action"] == action
+        assert dispatched["action"] == "status"
