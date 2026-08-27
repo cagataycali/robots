@@ -37,7 +37,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from strands_robots.utils import boolean_flag_error, require_optional
+from strands_robots.utils import boolean_flag_error, finite_number_error, require_optional
 
 from .camera import CameraParams
 
@@ -95,6 +95,13 @@ class PanoramaBackground:
         rotation_deg: yaw rotation of the panorama in degrees (rotates around
             the world +Z axis). Useful for aligning the panorama with the
             scene without re-rendering it.
+
+    Raises:
+        ValueError: if ``rotation_deg`` is not a finite number. The yaw builds
+            the rotation matrix every output ray is turned by, so a non-finite
+            angle turns every ray into ``nan`` and the panorama samples nothing
+            -- the backdrop renders black rather than rotated, and nothing
+            raises to trigger a caller's fallback.
     """
 
     name = "panorama"
@@ -105,6 +112,17 @@ class PanoramaBackground:
         rotation_deg: float = 0.0,
     ) -> None:
         self._image_path = Path(image_path) if image_path else None
+        # Checked before the coercion, on the shared signed-finite domain, for
+        # the reason :func:`~strands_robots.rendering.compositor._shadow_plane_z_error`
+        # gives for a plane height: only a finite number can be honored. The
+        # yaw builds the ``Rz`` every world ray is turned by, so ``nan``/``inf``
+        # turned every direction into ``nan``, the equirect lookup sampled
+        # nothing, and the backdrop came back uniformly black -- with no
+        # exception, so a caller's photoreal-to-procedural fallback never fired.
+        # A signed domain because both senses of yaw are legitimate and a
+        # rotation wraps, so there is no floor or ceiling to impose.
+        if text := finite_number_error(rotation_deg, "rotation_deg", "PanoramaBackground"):
+            raise ValueError(text)
         self._rotation_rad = float(np.deg2rad(rotation_deg))
         self._panorama: np.ndarray | None = None
 
@@ -416,6 +434,33 @@ class GsplatBackground:
             ("own_floor", own_floor),
         ):
             if text := boolean_flag_error(_value, _param, "GsplatBackground"):
+                raise ValueError(text)
+        # The alignment *numbers*, on the shared signed-finite domain, beside
+        # the posture flags above. The flags decide which branch the fit takes;
+        # these are the quantities that branch scales and offsets by, and each
+        # was coerced with a bare ``float()`` that accepts ``nan``/``inf``. A
+        # non-finite value here poisons the whole ``world_from_gs``: the fitted
+        # 4x4 comes back with non-finite cells, so every gaussian is placed
+        # nowhere and the photoreal scene silently does not appear. ``bool`` is
+        # rejected for the reason the flags' own domain gives in reverse -- a
+        # truth value is not a length, an angle or a fraction. Signed because a
+        # yaw, a floor height and an up-sign are all legitimately negative; the
+        # domain constrains finiteness only, so no bound is imposed here.
+        for _param, _value in (
+            ("backdrop_radius", backdrop_radius),
+            ("yaw_deg", yaw_deg),
+            ("radius", radius),
+            ("floor_z", floor_z),
+            ("min_opacity", min_opacity),
+            ("floor_pct", floor_pct),
+        ):
+            if text := finite_number_error(_value, _param, "GsplatBackground"):
+                raise ValueError(text)
+        # ``up_sign`` (``None`` = auto-detect from PCA) and ``clip_below``
+        # (``None`` = drop nothing) carry a sentinel, so the domain applies to
+        # the supplied number and the sentinel passes through untouched.
+        for _param, _value in (("up_sign", up_sign), ("clip_below", clip_below)):
+            if _value is not None and (text := finite_number_error(_value, _param, "GsplatBackground")):
                 raise ValueError(text)
         self._device = device
         self._explicit_transform = transform is not None
