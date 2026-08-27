@@ -3,11 +3,14 @@
 ``robot_mesh`` gates a set of actions behind an out-of-band operator
 approval. Two constants own that set: the gateable vocabulary the env var
 accepts, and the default subset gated when the operator configures nothing.
-Several human-facing surfaces enumerate one of them - the README's
-configuration row, the security guide's gate and audit-trail bullets, the
-one-time warning logged when the gate is disabled, the dispatcher's own
-comment and docstring, an example's operator note, and the contract
-docstring of the suite that pins the resolver.
+Their difference is a third enumerated set - the actions that widening the
+gate to ``all`` adds over the shipped default, which is what the security
+guide's gate-tuning bullet describes.
+Several human-facing surfaces enumerate one of the three - the README's
+configuration row, the security guide's default-gate, gate-tuning and
+audit-trail bullets, the one-time warning logged when the gate is disabled,
+the dispatcher's own comment and docstring, an example's operator note, and
+the contract docstring of the suite that pins the resolver.
 
 An enumeration that omits a member of the set it claims to list is a
 security defect rather than a wording slip, for two measured reasons. An
@@ -63,6 +66,13 @@ class _Enumeration:
 def _enumerations() -> tuple[_Enumeration, ...]:
     gateable = frozenset(rmt._GATEABLE_ACTIONS)
     default = frozenset(rmt._DEFAULT_INTERRUPT_ACTIONS)
+    # What widening the gate to ``all`` adds over the shipped default. An
+    # action that is gateable but not gated by default is reachable only by
+    # an operator who opts it in, so this bullet has to name the delta in
+    # full: an omission leaves it reading as though ``all`` adds only the
+    # actions it does name, and an operator who would have gated the
+    # omitted one is never told it can be gated at all.
+    opt_in = gateable - default
     return (
         # The env var's whole accepted vocabulary: this row is what an
         # operator writing a subset copies from.
@@ -71,6 +81,12 @@ def _enumerations() -> tuple[_Enumeration, ...]:
             _REPO_ROOT / "README.md",
             "| `STRANDS_MESH_HITL_ACTIONS` |",
             gateable,
+        ),
+        _Enumeration(
+            "the security guide's gate-tuning bullet",
+            _REPO_ROOT / "docs" / "security.md",
+            "`STRANDS_MESH_HITL_ACTIONS` tunes the gate.",
+            opt_in,
         ),
         _Enumeration(
             "the security guide's default-gate bullet",
