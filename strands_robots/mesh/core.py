@@ -484,8 +484,8 @@ def degraded_report(records: Mapping[str, dict[str, Any]], now: float) -> dict[s
         since = float(rec.get("since", now))
         entry: dict[str, Any] = {
             "reason": str(rec.get("reason", "")),
+            "detail": str(rec.get("detail", ""))[:MAX_DEGRADED_DETAIL_LEN],
             "failures": int(rec.get("failures", 1)),
-            "since": since,
             "for_seconds": max(0.0, round(now - since, 1)),
         }
         # Present ONLY for a probe that never ran: "nothing was thrown" is a different claim from
