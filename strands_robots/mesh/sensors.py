@@ -720,6 +720,17 @@ class SensorLoopsMixin:
         value that tripped a limit, the distance that closed), and every other
         record this mixin sends to the wire is coerced before it goes.
 
+        A failed audit write is reported at ERROR for the same reason
+        :func:`~strands_robots.mesh.session._report_unencodable_payload` gives for
+        the wire half: a transport fire-and-forget tolerance is scoped to a TRANSIENT
+        failure that the next tick retries, and this is not that. A safety event is
+        published once at one transition, so there is no later tick, and the audit
+        copy is the only one carrying the real severity. Reporting the loss at DEBUG
+        left the two halves of one call disagreeing about how a permanently lost
+        safety record is announced, which is the disagreement that report was raised
+        to ERROR to close. The report names the event type and the real severity
+        because the wire copy names neither.
+
         Coerced into a copy rather than in place, so the caller keeps the mapping
         they passed unedited - the same reason :func:`_coerce_record` replaces a
         nested container instead of editing the provider's own.
@@ -770,5 +781,13 @@ class SensorLoopsMixin:
                 # first so the keys that process decided win a name collision.
                 payload={**record, "severity": severity},
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("[mesh] %s: audit log write failed: %s", self.peer_id, exc)
+        except Exception as exc:  # noqa: BLE001 - see the reporting-level note in the docstring
+            logger.error(
+                "[mesh] %s: the audit record for a %s safety event could not be written, so the "
+                "only copy carrying its real severity (%s) is lost - the wire copy is uniformly "
+                "info-level and a safety event is published once, so no later call rewrites it: %s",
+                self.peer_id,
+                event_type,
+                severity,
+                exc,
+            )
