@@ -209,8 +209,37 @@ class RemotePolicy(Policy):
             self._reset_pending = False
 
     def _ensure_connected(self) -> None:
-        if self._ws is None:
-            self._connect()
+        """Open the connection if it is not open yet, serialised with the other wire users.
+
+        Holds ``self._lock`` across :meth:`_connect` because the connect
+        sequence is itself a wire user, and the widest one: it reads the
+        handshake and then replays up to three pending-config requests through
+        :meth:`_request`, every one of them after ``self._ws`` is already live.
+        Left unlocked, those sends interleave with a concurrent :meth:`reset`,
+        :meth:`set_robot_state_keys` or :meth:`get_actions` on the same
+        connection, and ``websockets`` refuses the overlapping read with a
+        ``ConcurrencyError`` naming its own internals rather than anything the
+        caller passed - a report no ``RemotePolicy`` caller can act on.
+
+        Two threads on one policy is the ordinary case here, not a contrived
+        one: every policy coroutine resolves through
+        :mod:`strands_robots._async_utils`' reused worker thread, and the
+        async-RTC path in :mod:`strands_robots.simulation.policy_runner`
+        submits prefetch inference to its own ``rtc-prefetch`` worker while the
+        rollout thread carries on stepping.
+
+        The unlocked fast path is a benign double check. A thread that already
+        sees a live connection has nothing to serialise against; one that sees
+        ``None`` re-checks under the lock before connecting, so two racing
+        first-callers open one connection rather than two.
+        """
+        if self._ws is not None:
+            return
+        with self._lock:
+            # Re-checked under the lock: another thread may have connected
+            # while this one waited, and a second connect would leak the first.
+            if self._ws is None:
+                self._connect()
 
     def _apply_metadata(self, metadata: dict[str, Any]) -> None:
         """Mirror the server policy's introspection metadata locally."""
