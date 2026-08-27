@@ -318,6 +318,21 @@ hatch run format            # ruff check --fix, ruff format
    that window which add a fragment there are **350 distinct slugs**, and the only
    two used twice are the two duplicate pairs above that reused one.
 
+   That key reads a **name**, though, and a name is what two authors describing one
+   change need not share. #2820 and #2822 fixed one defect thirteen minutes apart
+   and called it `feetech-broadcast-is-not-a-reply-address` and
+   `feetech-motor-id-excludes-the-broadcast`; two names, so the sweep reported
+   `unique-additions` with both open (#2823). So the same command asks a second,
+   weaker question beside it: do two branches' fragments share at least **two
+   words** *and* both edit one pre-existing test? Two authors fixing one defect
+   describe the same subject and correct the same case, and the conjunction is what
+   makes that usable - measured over the 2199 co-open pairs in #2345 through #2825,
+   against the eleven pairs whose closed half names its supersedor, shared words
+   alone is 30.3% precise and fires on 37.2% of sweeps, a shared edited test alone
+   is 11.5%, and together they are **64.3% precise at 81.8% recall**, firing on
+   5.6%. Read the report's second section as a pair to check rather than a fact:
+   roughly one in three is two branches on one subject without one change.
+
    Two branches *editing* one file is a different question with a different remedy
    (a merge order, possibly one composition run), and
    `scripts/check_merge_base_overlap.py --github-repo <owner/name> --all-open`

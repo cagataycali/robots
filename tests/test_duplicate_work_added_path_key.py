@@ -169,6 +169,26 @@ def _added(*paths: str) -> list[dict[str, str]]:
     return [{"path": path, "changeType": check.ADDED_CHANGE_TYPE} for path in paths]
 
 
+def _edited(*paths: str) -> list[dict[str, str]]:
+    return [{"path": path, "changeType": check.EDITED_CHANGE_TYPE} for path in paths]
+
+
+def _creates(*paths: str) -> Any:
+    """A pull request that creates these paths and edits nothing."""
+    return check.PullFiles(created=tuple(sorted(paths)))
+
+
+def _open_set(additions: dict[int, tuple[str, ...]]) -> dict[int, Any]:
+    """``{number: the paths it added}`` as the open set the sweep classifies.
+
+    The measured fixtures record what each branch *added*, which is the evidence
+    that outlives the state change closing one half of a pair. The second key
+    reads edited paths as well, so they are the created half of a file set here
+    and the pairs stay reachable from the first key alone.
+    """
+    return {number: _creates(*paths) for number, paths in additions.items()}
+
+
 _IDS = [row[0] for row in _CLAIM_FREE_PAIRS]
 
 
@@ -179,7 +199,7 @@ class TestTheMeasuredClaimFreePairsAreReported:
     def test_the_pair_is_the_finding(
         self, label: str, additions: dict[int, tuple[str, ...]], subjects: tuple[str, ...]
     ) -> None:
-        verdict = check.classify_additions(additions)
+        verdict = check.classify_additions(_open_set(additions))
         assert verdict.outcome == check.DUPLICATE_ADDITION, label
         assert verdict.is_finding
 
@@ -188,13 +208,13 @@ class TestTheMeasuredClaimFreePairsAreReported:
         self, label: str, additions: dict[int, tuple[str, ...]], subjects: tuple[str, ...]
     ) -> None:
         left, right = sorted(additions)
-        assert check.classify_additions(additions).collisions == ((left, right, subjects),)
+        assert check.classify_additions(_open_set(additions)).collisions == ((left, right, subjects),)
 
     @pytest.mark.parametrize(("label", "additions", "subjects"), _CLAIM_FREE_PAIRS, ids=_IDS)
     def test_both_pull_requests_are_named(
         self, label: str, additions: dict[int, tuple[str, ...]], subjects: tuple[str, ...]
     ) -> None:
-        summary = check.classify_additions(additions).summary
+        summary = check.classify_additions(_open_set(additions)).summary
         for number in additions:
             assert f"#{number}" in summary
         for subject in subjects:
@@ -210,7 +230,7 @@ class TestTheMeasuredClaimFreePairsAreReported:
         subject has to have been added by both; a glob subject has to be what
         :func:`addition_key` makes of a path each side really added.
         """
-        for left, right, reported in check.classify_additions(additions).collisions:
+        for left, right, reported in check.classify_additions(_open_set(additions)).collisions:
             for subject in reported:
                 for number in (left, right):
                     matches = [path for path in additions[number] if check.addition_key(path) == subject]
@@ -234,8 +254,8 @@ class TestAFragmentCollidesOnItsSlugAndNotItsNumber:
 
     def test_two_fragments_with_one_slug_collide_under_different_numbers(self) -> None:
         additions = {
-            2766: check.added_paths(_node(2766, _added("changelog.d/2765-g1-send-action-wired.md"))),
-            2767: check.added_paths(_node(2767, _added("changelog.d/2761-g1-send-action-wired.md"))),
+            2766: check.file_sets(_node(2766, _added("changelog.d/2765-g1-send-action-wired.md"))),
+            2767: check.file_sets(_node(2767, _added("changelog.d/2761-g1-send-action-wired.md"))),
         }
         verdict = check.classify_additions(additions)
         assert verdict.outcome == check.DUPLICATE_ADDITION
@@ -244,15 +264,15 @@ class TestAFragmentCollidesOnItsSlugAndNotItsNumber:
     def test_two_fragments_with_different_slugs_do_not_collide(self) -> None:
         """The over-reach control: every branch adds a fragment, so this is the norm."""
         additions = {
-            11: check.added_paths(_node(11, _added("changelog.d/11-one-change.md"))),
-            12: check.added_paths(_node(12, _added("changelog.d/12-another-change.md"))),
+            11: check.file_sets(_node(11, _added("changelog.d/11-one-change.md"))),
+            12: check.file_sets(_node(12, _added("changelog.d/12-another-change.md"))),
         }
         assert check.classify_additions(additions).outcome == check.UNIQUE_ADDITIONS
 
     def test_the_same_slug_under_the_same_number_still_collides(self) -> None:
         """Dropping the number must not lose the identical-path case it contained."""
         shared = _added("changelog.d/11-one-change.md")
-        additions = {n: check.added_paths(_node(n, shared)) for n in (11, 12)}
+        additions = {n: check.file_sets(_node(n, shared)) for n in (11, 12)}
         assert check.classify_additions(additions).outcome == check.DUPLICATE_ADDITION
 
     @pytest.mark.parametrize(
@@ -319,7 +339,7 @@ class TestTheTwoKeysAreComplementary:
     def test_an_issue_keyed_pair_is_invisible_to_the_created_thing_key(
         self, left: int, right: int, issue: int, additions: dict[int, tuple[str, ...]]
     ) -> None:
-        assert check.classify_additions(additions).outcome == check.UNIQUE_ADDITIONS
+        assert check.classify_additions(_open_set(additions)).outcome == check.UNIQUE_ADDITIONS
 
     @pytest.mark.parametrize(("left", "right", "issue", "additions"), _ISSUE_KEYED_PAIRS)
     def test_the_claim_key_still_reports_that_pair(
@@ -345,19 +365,19 @@ class TestOnlyACreatedPathCollides:
     @pytest.mark.parametrize("change_type", ["MODIFIED", "REMOVED", "RENAMED", "COPIED", "CHANGED"])
     def test_a_path_both_branches_merely_touch_is_not_a_finding(self, change_type: str) -> None:
         shared = [{"path": "strands_robots/utils.py", "changeType": change_type}]
-        additions = {n: check.added_paths(_node(n, shared)) for n in (11, 12)}
+        additions = {n: check.file_sets(_node(n, shared)) for n in (11, 12)}
         assert check.classify_additions(additions).outcome == check.UNIQUE_ADDITIONS
 
     def test_the_same_path_created_by_both_is_the_finding(self) -> None:
         """The control for the row above: only ``changeType`` differs."""
         shared = _added("strands_robots/utils.py")
-        additions = {n: check.added_paths(_node(n, shared)) for n in (11, 12)}
+        additions = {n: check.file_sets(_node(n, shared)) for n in (11, 12)}
         assert check.classify_additions(additions).outcome == check.DUPLICATE_ADDITION
 
     def test_one_branch_creating_what_the_other_edits_is_not_a_finding(self) -> None:
         """Impossible on one base, and if the API says it the sibling sweep owns it."""
-        creator = check.added_paths(_node(11, _added("docs/new.md")))
-        editor = check.added_paths(_node(12, [{"path": "docs/new.md", "changeType": "MODIFIED"}]))
+        creator = check.file_sets(_node(11, _added("docs/new.md")))
+        editor = check.file_sets(_node(12, [{"path": "docs/new.md", "changeType": "MODIFIED"}]))
         assert check.classify_additions({11: creator, 12: editor}).outcome == check.UNIQUE_ADDITIONS
 
     def test_prose_is_not_exempt(self) -> None:
@@ -367,7 +387,7 @@ class TestOnlyACreatedPathCollides:
         does and git reports the conflict anyway. Two branches each *writing* one
         new page is duplicated authoring whatever the suffix.
         """
-        additions = {n: check.added_paths(_node(n, _added("docs/guide.md"))) for n in (11, 12)}
+        additions = {n: check.file_sets(_node(n, _added("docs/guide.md"))) for n in (11, 12)}
         verdict = check.classify_additions(additions)
         assert verdict.outcome == check.DUPLICATE_ADDITION
         assert verdict.collisions == ((11, 12, ("docs/guide.md",)),)
@@ -398,7 +418,11 @@ class TestEveryPairIsComparedAndTheReportIsStable:
             (11, 13, ("tests/test_a.py",)),
             (12, 13, ("tests/test_a.py",)),
         )
-        assert check.classify_additions(additions).implicated == (11, 12, 13)
+        assert check.classify_additions({n: _creates("tests/test_a.py") for n in (11, 12, 13)}).implicated == (
+            11,
+            12,
+            13,
+        )
 
     def test_an_empty_open_set_is_clean_and_says_so(self) -> None:
         verdict = check.classify_additions({})
@@ -406,7 +430,7 @@ class TestEveryPairIsComparedAndTheReportIsStable:
         assert verdict.compared == 0
 
     def test_the_pair_count_is_the_number_of_comparisons(self) -> None:
-        assert check.classify_additions({n: () for n in range(1, 5)}).compared == 6
+        assert check.classify_additions({n: _creates() for n in range(1, 5)}).compared == 6
 
 
 class TestAnIncompleteAnswerIsNotAFinding:
@@ -421,23 +445,23 @@ class TestAnIncompleteAnswerIsNotAFinding:
     def test_a_truncated_file_list_is_refused_rather_than_read_short(self) -> None:
         node = _node(11, _added("tests/test_a.py"), total=check.FILE_PAGE_SIZE + 1)
         with pytest.raises(check.ClaimSetUnreadable, match="file list is truncated"):
-            check.added_paths(node)
+            check.file_sets(node)
 
     def test_a_complete_file_list_is_read(self) -> None:
-        assert check.added_paths(_node(11, _added("b", "a"))) == ("a", "b")
+        assert check.file_sets(_node(11, _added("b", "a"))).created == ("a", "b")
 
     def test_a_node_without_a_file_list_is_unreadable(self) -> None:
         with pytest.raises(check.ClaimSetUnreadable, match="carried no file list"):
-            check.added_paths({"number": 11, "files": "not a list"})
+            check.file_sets({"number": 11, "files": "not a list"})
 
     def test_a_repository_that_is_not_in_owner_name_form_is_refused(self) -> None:
         with pytest.raises(check.ClaimSetUnreadable, match="owner/name form"):
-            check.resolve_open_additions("robots", "token")
+            check.resolve_open_file_sets("robots", "token")
 
     def test_an_api_error_is_unreadable_rather_than_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(check, "_post", lambda *a, **k: {"errors": [{"message": "nope"}]})
         with pytest.raises(check.ClaimSetUnreadable, match="the API returned errors"):
-            check.resolve_open_additions("owner/name", "token")
+            check.resolve_open_file_sets("owner/name", "token")
 
     def test_a_page_without_a_cursor_is_unreadable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payload = {
@@ -447,7 +471,7 @@ class TestAnIncompleteAnswerIsNotAFinding:
         }
         monkeypatch.setattr(check, "_post", lambda *a, **k: payload)
         with pytest.raises(check.ClaimSetUnreadable, match="carried no cursor"):
-            check.resolve_open_additions("owner/name", "token")
+            check.resolve_open_file_sets("owner/name", "token")
 
     def test_a_list_longer_than_the_page_bound_is_unreadable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payload = {
@@ -457,7 +481,7 @@ class TestAnIncompleteAnswerIsNotAFinding:
         }
         monkeypatch.setattr(check, "_post", lambda *a, **k: payload)
         with pytest.raises(check.ClaimSetUnreadable, match="the list was truncated"):
-            check.resolve_open_additions("owner/name", "token")
+            check.resolve_open_file_sets("owner/name", "token")
 
 
 class TestTheOpenSetIsReadLiveAndWholeAndIncludesDrafts:
@@ -493,7 +517,7 @@ class TestTheOpenSetIsReadLiveAndWholeAndIncludesDrafts:
             return pages[len(seen) - 1]
 
         monkeypatch.setattr(check, "_post", fake_post)
-        additions = check.resolve_open_additions("owner/name", "token")
+        additions = check.resolve_open_file_sets("owner/name", "token")
         assert seen == [None, "c1"]
         # The finding only exists across the page boundary, so a single-page read
         # would report clean here.
@@ -512,7 +536,7 @@ class TestTheOpenSetIsReadLiveAndWholeAndIncludesDrafts:
         one would hide a collision for as long as either side stayed a draft.
         """
         source = _SCRIPT.read_text(encoding="utf-8")
-        sweep = source[source.index("def resolve_open_additions") : source.index("def render_additions")]
+        sweep = source[source.index("def resolve_open_file_sets") : source.index("def render_additions")]
         assert "draft" not in sweep.lower()
         assert "draft" not in check._ADDITIONS_QUERY.lower()
 
@@ -529,7 +553,7 @@ class TestTheOpenSetIsReadLiveAndWholeAndIncludesDrafts:
             }
         }
         monkeypatch.setattr(check, "_post", lambda *a, **k: payload)
-        assert sorted(check.resolve_open_additions("owner/name", "token")) == [11, 12]
+        assert sorted(check.resolve_open_file_sets("owner/name", "token")) == [11, 12]
 
 
 class TestTheReportNamesBothPullRequestsAndTheRemedy:
@@ -538,7 +562,7 @@ class TestTheReportNamesBothPullRequestsAndTheRemedy:
     @staticmethod
     def _finding() -> str:
         _, additions, _ = _CLAIM_FREE_PAIRS[1]
-        return check.render_additions(check.classify_additions(additions), "strands-labs/robots")
+        return check.render_additions(check.classify_additions(_open_set(additions)), "strands-labs/robots")
 
     def test_the_finding_names_both_pull_requests_and_the_shared_file(self) -> None:
         report = self._finding()
@@ -555,17 +579,17 @@ class TestTheReportNamesBothPullRequestsAndTheRemedy:
         assert "not a merge order to decide" in self._finding()
 
     def test_a_clean_report_carries_no_remedy_section(self) -> None:
-        report = check.render_additions(check.classify_additions({11: ("a.py",)}), "owner/name")
+        report = check.render_additions(check.classify_additions({11: _creates("a.py")}), "owner/name")
         assert check.UNIQUE_ADDITIONS in report
         assert "What clears this" not in report
 
     def test_a_clean_report_states_what_it_looked_at(self) -> None:
-        report = check.render_additions(check.classify_additions({n: () for n in (11, 12, 13)}), "owner/name")
+        report = check.render_additions(check.classify_additions({n: _creates() for n in (11, 12, 13)}), "owner/name")
         assert "| open pull requests read | 3 |" in report
         assert "| pairs compared | 3 |" in report
 
     def test_one_row_per_colliding_pair(self) -> None:
-        additions = {n: ("tests/test_a.py",) for n in (11, 12, 13)}
+        additions = {n: _creates("tests/test_a.py") for n in (11, 12, 13)}
         report = check.render_additions(check.classify_additions(additions), "owner/name")
         for pair in ("#11 + #12", "#11 + #13", "#12 + #13"):
             assert pair in report
@@ -577,22 +601,20 @@ class TestTheExitStatusIsOneOnlyForTheFinding:
     @pytest.mark.parametrize(
         ("additions", "expected"),
         [
-            ({11: ("a.py",), 12: ("a.py",)}, 1),
-            ({11: ("a.py",), 12: ("b.py",)}, 0),
+            ({11: _creates("a.py"), 12: _creates("a.py")}, 1),
+            ({11: _creates("a.py"), 12: _creates("b.py")}, 0),
         ],
     )
-    def test_the_exit_status(
-        self, monkeypatch: pytest.MonkeyPatch, additions: dict[int, tuple[str, ...]], expected: int
-    ) -> None:
-        monkeypatch.setattr(check, "resolve_open_additions", lambda *a, **k: additions)
+    def test_the_exit_status(self, monkeypatch: pytest.MonkeyPatch, additions: dict[int, Any], expected: int) -> None:
+        monkeypatch.setattr(check, "resolve_open_file_sets", lambda *a, **k: additions)
         argv = ["--repo", "owner/name", "--all-open", "--token", "t"]
         assert check.main(argv) == expected
 
     def test_a_lookup_failure_exits_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def boom(*args: object, **kwargs: object) -> dict[int, tuple[str, ...]]:
+        def boom(*args: object, **kwargs: object) -> dict[int, Any]:
             raise check.ClaimSetUnreadable("the response carried no repository.")
 
-        monkeypatch.setattr(check, "resolve_open_additions", boom)
+        monkeypatch.setattr(check, "resolve_open_file_sets", boom)
         assert check.main(["--repo", "owner/name", "--all-open", "--token", "t"]) == 0
 
     @pytest.mark.parametrize(
@@ -613,7 +635,7 @@ class TestTheExitStatusIsOneOnlyForTheFinding:
         """Its caller is a workflow running where the pull requests live, and a
         sweep of the wrong repository is visible in its own report."""
         monkeypatch.setenv("GITHUB_REPOSITORY", "owner/name")
-        monkeypatch.setattr(check, "resolve_open_additions", lambda *a, **k: {})
+        monkeypatch.setattr(check, "resolve_open_file_sets", lambda *a, **k: {})
         assert check.main(["--all-open", "--token", "t"]) == 0
 
     def test_the_sweep_reads_no_claim_and_no_single_pull_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -624,7 +646,7 @@ class TestTheExitStatusIsOneOnlyForTheFinding:
 
         monkeypatch.setattr(check, "resolve_claim", forbidden)
         monkeypatch.setattr(check, "resolve_open_claims", forbidden)
-        monkeypatch.setattr(check, "resolve_open_additions", lambda *a, **k: {11: ("a.py",)})
+        monkeypatch.setattr(check, "resolve_open_file_sets", lambda *a, **k: {11: _creates("a.py")})
         assert check.main(["--repo", "owner/name", "--all-open", "--token", "t"]) == 0
 
 
