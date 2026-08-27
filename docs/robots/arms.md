@@ -35,7 +35,7 @@ sim = Robot("so100")            # SO-ARM100 (low-cost Feetech)
 | `so100` | TrossenRobotics SO-ARM100 (6-DOF, Feetech servos) | 6 | `so100_4cam`, `so100_dualcam`, `so100_follower`, `so_arm100`, `trs_so_arm100` |
 | `so101` | RobotStudio SO-101 (6-DOF, upgraded SO-100) | 6 | `robotstudio_so101`, `so101_dualcam`, `so101_follower`, `so101_tricam` |
 | `ur10e` | Universal Robots UR10e (6-DOF industrial) | 6 | - |
-| `ur5e` | Universal Robots UR5e (6-DOF industrial) | 8 | - |
+| `ur5e` | Universal Robots UR5e (6-DOF industrial) | 6 | - |
 | `vx300s` | Trossen ViperX 300s (6-DOF + gripper) | 19 | `oxe_widowx`, `trossen_vx300s`, `viper_x300s` |
 | `wx250s` | Trossen WidowX 250s (6-DOF + gripper) | 16 | `widowx_250s`, `trossen_wx250s` |
 | `xarm7` | UFactory xArm 7 (7-DOF + gripper) | 13 | `ufactory_xarm7` |

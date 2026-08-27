@@ -33,7 +33,7 @@ sim = Robot("crazyflie")        # Bitcraze Crazyflie 2 quadcopter
 | `stretch` | Hello Robot Stretch (original, mobile manipulator) | 18 | `hello_robot_stretch_original` |
 | `stretch3` | Hello Robot Stretch 3 (mobile manipulator) | 41 | `hello_robot_stretch`, `hello_robot_stretch_3` |
 | `tiago_dual` | PAL Robotics TIAGo++ Dual-Arm Mobile (26-DOF) | 26 | `tiago++`, `pal_tiago_dual` |
-| `unitree_a1` | Unitree A1 Quadruped | 16 | `a1` |
+| `unitree_a1` | Unitree A1 Quadruped | 13 | `a1` |
 | `unitree_go2` | Unitree Go2 Quadruped | 40 | `go2` |
 
 ## Featured renders
