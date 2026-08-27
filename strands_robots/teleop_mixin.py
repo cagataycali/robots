@@ -53,6 +53,9 @@ logger = logging.getLogger(__name__)
 
 # Default local control loop frequency (Hz). Matches InputPublisher.
 _TELEOP_HZ_DEFAULT = 50.0
+# Budget for joining the background teleop thread in stop_teleoperate.
+# Named so the docstring, the refusal text and the tests read one value.
+_TELEOP_JOIN_TIMEOUT_S = 3.0
 
 ActionDict = dict[str, float]
 MapFn = Callable[[ActionDict], ActionDict]
@@ -642,7 +645,29 @@ class TeleopMixin:
         }
 
     def stop_teleoperate(self) -> dict[str, Any]:
-        """Stop the local teleop loop, any mesh publishers, and disconnect devices."""
+        """Stop the local teleop loop, any mesh publishers, and disconnect devices.
+
+        The returned envelope reports the join outcome honestly. ``join()``
+        returns ``None`` whether or not the thread finished, so the liveness read
+        after it is the only thing that tells a stopped loop from one that
+        outlasted the budget. A leader whose ``get_action()`` blocks past
+        :data:`_TELEOP_JOIN_TIMEOUT_S` - a serial read on a wedged bus is the
+        ordinary case - surfaces as ``status="error"`` naming the timeout and
+        ``stopped=False`` in the payload, so a caller cannot read "success" while
+        the loop is still polling that leader and writing to the follower.
+
+        :meth:`_teleop_stats` derives its status from the session counters so a
+        dead teleop is not reported as healthy, but a session that ran cleanly
+        until its leader wedged carries healthy counters: "the loop is still
+        running" is a condition those counters cannot express, which is why the
+        join outcome is reported beside them rather than through them.
+
+        The attached devices are disconnected only once the loop has joined.
+        Tearing the bus down under a live writer is what ``G1Driver.cleanup``
+        refuses for the same reason, and the thread handle is kept when the join
+        fails so a later call re-joins that loop instead of reporting an idle
+        session.
+        """
         self._ensure_teleop_state()
 
         if not self._teleop_running and self._teleop_thread is None:
@@ -652,11 +677,36 @@ class TeleopMixin:
 
         self._teleop_running = False
         self._teleop_stop_event.set()
-        if self._teleop_thread is not None:
-            self._teleop_thread.join(timeout=3.0)
-            self._teleop_thread = None
+        thread = self._teleop_thread
+        joined = True
+        if thread is not None:
+            thread.join(timeout=_TELEOP_JOIN_TIMEOUT_S)
+            joined = not thread.is_alive()
+            if joined:
+                # Cleared only on a real join: the handle is the only route by
+                # which a later call, or a status read, can still see the loop.
+                self._teleop_thread = None
 
         self._stop_publishers()
+
+        if not joined:
+            devices = sorted(self._teleops)
+            target = self.tool_name_label(self._teleop_robot_name)
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Teleoperation did not stop within {_TELEOP_JOIN_TIMEOUT_S:.1f}s: the "
+                            f"loop is still polling {devices} and writing to {target}. The leader's "
+                            f"get_action() is most likely blocking. The devices are left connected "
+                            f"so the loop is not torn down mid-write; call stop_teleoperate() again "
+                            f"to re-join it."
+                        )
+                    },
+                    {"json": {"stopped": False, "devices": devices, "target": target}},
+                ],
+            }
 
         # Disconnect devices we connected.
         for n, att in self._teleops.items():
@@ -667,7 +717,16 @@ class TeleopMixin:
         return self._teleop_stats(blocking=False)
 
     def get_teleoperate_status(self) -> dict[str, Any]:
-        """Status of the local teleop loop (distinct from mesh get_teleop_status)."""
+        """Status of the local teleop loop (distinct from mesh get_teleop_status).
+
+        ``running`` is the session flag: :meth:`stop_teleoperate` clears it before
+        it joins. ``thread_alive`` reads the loop thread itself, so the two differ
+        for exactly as long as a loop outlives the stop that asked it to exit -
+        the window in which the follower can still be written to. Without the
+        second reading a caller polling after a stop that reported
+        ``stopped=False`` would be told ``running=False`` by this verb, which is
+        the contradiction the join outcome exists to remove.
+        """
         self._ensure_teleop_state()
         elapsed = time.monotonic() - self._teleop_start_mono if self._teleop_start_mono else 0
         hz = self._teleop_frames / elapsed if elapsed > 0 else 0
@@ -676,6 +735,7 @@ class TeleopMixin:
             "content": [
                 {
                     "text": f"Local teleop: running={self._teleop_running}, "
+                    f"thread_alive={self._teleop_thread is not None and self._teleop_thread.is_alive()}, "
                     f"frames={self._teleop_frames}, errors={self._teleop_errors}, "
                     f"slew_rejected={self._teleop_slew_rejected}, "
                     f"hz={hz:.1f}, devices={list(self._teleops)}"
@@ -683,6 +743,7 @@ class TeleopMixin:
                 {
                     "json": {
                         "running": self._teleop_running,
+                        "thread_alive": self._teleop_thread is not None and self._teleop_thread.is_alive(),
                         "frames": self._teleop_frames,
                         "errors": self._teleop_errors,
                         "slew_rejected": self._teleop_slew_rejected,
@@ -882,7 +943,9 @@ class TeleopMixin:
             with contextlib.suppress(Exception):
                 stop_pub()  # stops all publishers/receivers on the host
 
-    def _teleop_stats(self, *, blocking: bool, publish_results: list | None = None) -> dict[str, Any]:
+    def _teleop_stats(
+        self, *, blocking: bool, publish_results: list | None = None, stopped: bool = True
+    ) -> dict[str, Any]:
         elapsed = time.monotonic() - self._teleop_start_mono if self._teleop_start_mono else 0
         hz = self._teleop_frames / elapsed if elapsed > 0 else 0
         note = ""
@@ -918,6 +981,7 @@ class TeleopMixin:
             "elapsed_s": elapsed,
             "status": status,
             "blocking": blocking,
+            "stopped": stopped,
             "publish_count": len(publish_results) if publish_results else 0,
         }
         return {

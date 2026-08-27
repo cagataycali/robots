@@ -87,7 +87,7 @@ Every hardware `Robot` and `Simulation` host exposes:
 | `attach_teleop(device_or_spec, *, name=None, method=None, map_fn=None, **kwargs)` | Register an input stream (lazy - no hardware touched). `device_or_spec` is a built teleop instance **or** a type string built via `Teleoperator(**kwargs)`. |
 | `teleoperate(*, names=None, robot_name=None, hz=50.0, publish=False, block=False, duration=None)` | Run the control loop. |
 | `detach_teleop(name=None)` | Remove one (or all) attached streams. |
-| `stop_teleoperate()` | Stop the loop, any mesh publishers, and disconnect devices. |
+| `stop_teleoperate()` | Stop the loop, any mesh publishers, and disconnect devices. Reports `status="error"` with `stopped: false` when the loop outlasts its 3 s join budget - the devices are left connected rather than torn down mid-write, and a second call re-joins the same loop. |
 
 ### `attach_teleop`
 
@@ -307,6 +307,8 @@ robot.teleoperate(block=True, duration=60)   # 60 s then stop + disconnect
 robot.teleoperate()
 ...
 robot.stop_teleoperate()                     # stop loop + publishers + disconnect
+#   -> status="error" + stopped=false if the loop is still polling the leader;
+#      get_teleoperate_status()["thread_alive"] reads the loop thread itself.
 ```
 
 ## How it relates to mesh teleop
