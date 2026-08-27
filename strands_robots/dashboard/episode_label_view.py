@@ -75,7 +75,7 @@ def _capability(
         )
     unjudged = [r["episode_index"] for r in rows if r["annotatable"] and not r["quality"]]
     if unjudged:
-        return True, "%d episode(s) carry a verdict and are waiting for a quality grade" % len(unjudged)
+        return True, f"{len(unjudged)} episode(s) carry a verdict and are waiting for a quality grade"
     return True, "every episode with a verdict already carries a judge annotation"
 
 def _as_int(value: Any) -> int:

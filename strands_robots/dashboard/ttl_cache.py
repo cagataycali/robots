@@ -8,9 +8,6 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
-from typing import Generic, TypeVar
-
-V = TypeVar("V")
 
 #: Enough for a long type-ahead session (each keystroke is a key) without letting a
 #: day-long page keep every prefix ever typed.

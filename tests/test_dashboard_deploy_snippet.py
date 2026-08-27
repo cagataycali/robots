@@ -107,7 +107,7 @@ def test_hub_host_lands_in_zenoh_connect_and_env_is_setdefault():
 def test_no_hub_host_leaves_zenoh_connect_commented():
     src = render_snippet(ARM_1)["snippet"]
     assert '# os.environ.setdefault("ZENOH_CONNECT"' in src
-    live = [l for l in src.splitlines() if l.startswith('os.environ.setdefault("ZENOH_CONNECT"')]
+    live = [line for line in src.splitlines() if line.startswith('os.environ.setdefault("ZENOH_CONNECT"')]
     assert not live, "same-machine deploy must not point the peer at itself"
 
 
