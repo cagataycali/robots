@@ -1,21 +1,430 @@
-"""peer_tools: every fleet peer becomes a native AgentTool — the pure rules.
+"""Peer proxy tools of the operator dashboard (consolidated).
 
-The dashboard cannot hold Robot('so101') in-process (the child process owns the
-bus), so each peer gets a PROXY tool whose spec mirrors what the peer is and
-whose invocation maps onto the validated mesh command family. These tests pin
-the pure layer: classification, naming, specs, the invocation mapping, and the
-derived motion-gate table.
+Consolidated verbatim from: test_dashboard_peer_id_validation.py, test_dashboard_peer_origin.py, test_dashboard_peer_tools_wiring.py, test_dashboard_peer_tools.py, test_dashboard_peer_ttl_prune.py.
+Each section keeps its original tests unchanged.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from strands_robots.dashboard import agent_hitl as hitl
+from strands_robots.dashboard import mesh_bridge as mb
 from strands_robots.dashboard import peer_tools as pt
+from strands_robots.dashboard.device_manager import (
+    DeviceManager,
+    validate_peer_id,
+)
+from strands_robots.dashboard.mesh_bridge import (
+    PEER_STALE_S,
+    MeshBridge,
+    prune_peers,
+)
 
-# ── fixture peers, shaped like _peers_snapshot()'s entries ───────────────────
+# ============================================================================
+# from tests/test_dashboard_peer_id_validation.py
+# A caller-supplied peer_id is a zenoh KEY SEGMENT, not a label (Q3 corollary).
+# ============================================================================
+
+
+class TestValidatePeerId:
+    def test_none_means_generate_one_and_is_fine(self) -> None:
+        assert validate_peer_id(None) is None
+
+    @pytest.mark.parametrize(
+        "good",
+        [
+            "so101-arm-1",
+            "replay-1234",
+            "so101.real:2",
+            "A_z".replace("_", "-"),
+            "x" * 64,
+        ],
+    )
+    def test_every_id_this_codebase_generates_passes(self, good: str) -> None:
+        assert validate_peer_id(good) is None, good
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "*",  # fleet-wide wildcard
+            "**",  # multi-level wildcard
+            "so101/*",  # wildcard inside a hierarchy
+            "a/b",  # splices a key level
+            "../../../tmp/pwn",
+            "so101 arm",  # space
+            "{a:1}",  # brace DSL
+            "$now",  # dollar DSL
+            "",  # empty
+            "x" * 65,  # over-long
+        ],
+    )
+    def test_key_expression_syntax_is_refused_with_the_reason(self, bad: str) -> None:
+        reason = validate_peer_id(bad)
+        assert reason is not None, f"{bad!r} was accepted into a zenoh key"
+        assert "zenoh" in reason or "string" in reason
+
+    @pytest.mark.parametrize("nonstring", [123, {"a": 1}, ["x"], 1.5, True])
+    def test_a_non_string_is_refused_by_type_not_repred(self, nonstring: object) -> None:
+        reason = validate_peer_id(nonstring)
+        assert reason is not None
+        assert "must be a string" in reason
+
+
+class TestSpawnRefusesBeforeAnyProcessExists:
+    def test_a_wildcard_peer_id_never_reaches_popen(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        dm = DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
+
+        def boom(*a, **k):  # noqa: ANN002, ANN003
+            raise AssertionError("Popen was reached with a wildcard peer_id")
+
+        import strands_robots.dashboard.device_manager as mod
+
+        monkeypatch.setattr(mod.subprocess, "Popen", boom)
+        result = dm.spawn("so101", "sim", peer_id="*")
+        assert "error" in result
+        assert "zenoh" in result["error"]
+        assert dm.robots == {}, "a refused spawn must not register a managed entry"
+
+    def test_a_generated_id_still_spawns_normally(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        # peer_id=None takes the generated-id path: validation must not get in
+        # its way. Popen is stubbed so no child is created.
+        dm = DeviceManager(profiles_path=str(tmp_path / "profiles.json"))
+
+        class FakeProc:
+            pid = 4242
+            stdout = None
+
+            def poll(self):
+                return None
+
+        import strands_robots.dashboard.device_manager as mod
+
+        monkeypatch.setattr(mod.subprocess, "Popen", lambda *a, **k: FakeProc())
+        monkeypatch.setattr(mod.threading, "Thread", lambda *a, **k: type("T", (), {"start": lambda self: None})())
+        result = dm.spawn("so101", "sim", peer_id=None, remember=False)
+        assert result.get("pid") == 4242, result
+        assert validate_peer_id(result["peer_id"]) is None, (
+            "generated ids must satisfy the same rule callers are held to"
+        )
+
+
+# ============================================================================
+# from tests/test_dashboard_peer_origin.py
+# U15: a code-defined robot is a first-class peer.
+# ============================================================================
+
+
+def test_a_peer_we_spawned_is_managed_and_a_stranger_is_external():
+    out = mb.peer_origins(["ours", "theirs"], managed_ids=["ours"])
+    assert out == {"ours": "managed", "theirs": "external"}
+
+
+def test_every_peer_gets_a_label():
+    """An absent label reads as "unknown", which is a third state the UI would
+    have to invent copy for. There are only two answers and we always know
+    which: we either started the process or we did not."""
+    out = mb.peer_origins(["a", "b", "c"], managed_ids=[])
+    assert set(out) == {"a", "b", "c"}
+    assert set(out.values()) == {"external"}
+
+
+def test_a_child_sim_peer_inherits_its_parents_origin():
+    """ "<parent>__<robot>" lives INSIDE the parent's process, so if we started
+    the parent we started the child - the same rule prune_peers and
+    peer_is_known already use for these ids."""
+    out = mb.peer_origins(
+        ["sim-a", "sim-a__so101", "wild__so101"],
+        managed_ids=["sim-a"],
+    )
+    assert out["sim-a"] == "managed"
+    assert out["sim-a__so101"] == "managed"
+    # Not ours, and its name saying "__" does not make it ours.
+    assert out["wild__so101"] == "external"
+
+
+def test_a_half_formed_child_id_is_not_adopted():
+    """Matching peer_is_known exactly: "sim-a__" has no child half, so it must
+    not borrow the parent's protection or its origin."""
+    assert mb.peer_origins(["sim-a__"], managed_ids=["sim-a"]) == {"sim-a__": "external"}
+    assert mb.peer_origins(["__so101"], managed_ids=["sim-a"]) == {"__so101": "external"}
+
+
+def test_a_mapping_of_peers_is_accepted_like_the_snapshot_passes_it():
+    """snapshot() hands its peer dict straight in; iterating keys must be enough."""
+    peers = {"ours": {"peer_id": "ours"}, "theirs": {"peer_id": "theirs"}}
+    assert mb.peer_origins(peers, managed_ids={"ours"}) == {
+        "ours": "managed",
+        "theirs": "external",
+    }
+
+
+# --- the rail the UI actually renders from ---------------------------------
+
+
+def _bridge(peers: dict, managed: set[str]) -> mb.MeshBridge:
+    """A MeshBridge with no mesh and no session.
+
+    Deliberately __new__ + hand-filled attributes: constructing a real Mesh in a
+    test is the Q30 class of accident (a drill that reached the live fleet), and
+    snapshot() needs nothing but the peer table, the locks and the two hooks.
+    """
+    b = mb.MeshBridge.__new__(mb.MeshBridge)
+    b.peer_id = "dash"
+    b.peers = peers
+    b._peers_lock = threading.RLock()  # type: ignore[assignment]
+    b._coalesce_lock = threading.RLock()  # type: ignore[assignment]
+    b._coalescer = SimpleNamespace(forget=lambda pid: None)  # type: ignore[assignment]
+    b.protected_peer_ids = lambda: managed
+    b.peer_annotations = None
+    b.mesh_info = lambda: {}  # type: ignore[method-assign]
+    return b
+
+
+def _live(peer_id: str) -> dict:
+    """A peer entry as the mesh reports one, with a fresh heartbeat."""
+    import time
+
+    return {
+        "peer_id": peer_id,
+        "last_seen": time.time(),
+        "state": {"joints": {"shoulder_pan.pos": 1.0}},
+        "cameras": ["top"],
+    }
+
+
+def test_the_snapshot_labels_the_origin_of_every_peer():
+    bridge = _bridge({"ours": _live("ours"), "theirs": _live("theirs")}, {"ours"})
+    peers = mb.MeshBridge.snapshot(bridge)["peers"]
+    assert peers["ours"]["origin"] == "managed"
+    assert peers["theirs"]["origin"] == "external"
+
+
+def test_a_code_defined_peer_is_identical_to_a_spawned_one_except_its_origin():
+    """THE U15 ACCEPTANCE TEST.
+
+    Two peers reporting the same thing must reach the UI as the same card. The
+    dashboard renders from this snapshot, so field-level sameness here IS card
+    sameness: no telemetry dropped, no name rewritten, no capability flag that
+    would let a component quietly render an external peer as second class.
+    """
+    ours, theirs = _live("ours"), _live("theirs")
+    # Same reported content, different id and different origin - nothing else.
+    theirs["state"] = dict(ours["state"])
+    theirs["last_seen"] = ours["last_seen"]
+    bridge = _bridge({"ours": ours, "theirs": theirs}, {"ours"})
+
+    peers = mb.MeshBridge.snapshot(bridge)["peers"]
+    a, b = dict(peers["ours"]), dict(peers["theirs"])
+    assert a.pop("origin") == "managed"
+    assert b.pop("origin") == "external"
+    a.pop("peer_id"), b.pop("peer_id")
+    assert a == b, "a code-defined peer must reach the UI as the same card"
+    # And the telemetry a card draws really did survive on the external one.
+    assert b["state"]["joints"] == {"shoulder_pan.pos": 1.0}
+    assert b["cameras"] == ["top"]
+    assert b["stale"] is False
+
+
+def test_the_role_annotation_still_rides_along_next_to_the_origin():
+    """Origin is applied first; it must not shadow the measured-role fields the
+    U2 badge reads (the two enrichments are independent facts)."""
+    bridge = _bridge({"ours": _live("ours")}, {"ours"})
+    bridge.peer_annotations = lambda: {"ours": {"role": "follower", "role_volts": 12.6}}
+    peer = mb.MeshBridge.snapshot(bridge)["peers"]["ours"]
+    assert peer["origin"] == "managed"
+    assert peer["role"] == "follower" and peer["role_volts"] == 12.6
+
+
+def test_an_external_peer_can_still_be_commanded():
+    """The badge is cosmetic by design: it must not become a permission. Q7's
+    guard decides addressability, and a peer present in the mesh is known
+    whether or not we started it."""
+    peers = {"theirs": _live("theirs")}
+    assert mb.peer_is_known("theirs", peers, managed_ids=())
+
+
+# ============================================================================
+# from tests/test_dashboard_peer_tools_wiring.py
+# The proxy tools ride ONE motion gate and the agent follows the mesh.
+# ============================================================================
+
+REAL = {
+    "presence": {"kind": "robot", "hw": "so101 on /dev/cu.usbmodemX"},
+    "state": {"joints": {f"j{i}": 0.0 for i in range(6)}},
+}
+SIM = {"presence": {"kind": "robot", "robot_type": "mujoco"}, "state": {}}
+
+PEERS = {"so101-real-689": REAL, "twin-1": SIM}
+PROXY_MOTION = {"so101_real_689": frozenset({"execute", "start"})}
+PROXY_TARGETS = {"so101_real_689": "so101-real-689", "twin_1": "twin-1"}
+NO_GRANT = {"STRANDS_DASH_AGENT_PHYSICAL_MOTION": ""}
+
+
+class TestMotionIntentWithProxies:
+    def test_real_proxy_execute_gates_with_the_bound_target(self):
+        reason = hitl.motion_intent(
+            "so101_real_689",
+            {"action": "execute", "instruction": "wave"},
+            PEERS,
+            NO_GRANT,
+            extra_actions=PROXY_MOTION,
+            bound_targets=PROXY_TARGETS,
+        )
+        assert reason is not None
+        assert reason["target"] == "so101-real-689"
+        assert reason["tool"] == "so101_real_689"
+
+    def test_binding_beats_a_model_written_target(self):
+        # the model cannot aim a bound proxy at a different peer to dodge the
+        # gate... but a written target field is not part of the proxy's spec,
+        # so if one appears the EXPLICIT field wins only when present — the
+        # proxy never forwards it to the wire either way (map_invocation
+        # ignores unknown fields for status/stop and refuses unknown actions).
+        reason = hitl.motion_intent(
+            "so101_real_689",
+            {"action": "execute"},
+            PEERS,
+            NO_GRANT,
+            extra_actions=PROXY_MOTION,
+            bound_targets=PROXY_TARGETS,
+        )
+        assert reason is not None and reason["target"] == "so101-real-689"
+
+    def test_sim_proxy_never_asks(self):
+        # twin_1 is not in the derived motion table at all; even if it were,
+        # peer_is_physical says sim.
+        reason = hitl.motion_intent(
+            "twin_1",
+            {"action": "add_object", "name": "red_cube"},
+            PEERS,
+            NO_GRANT,
+            extra_actions=PROXY_MOTION,
+            bound_targets=PROXY_TARGETS,
+        )
+        assert reason is None
+
+    def test_proxy_status_and_stop_never_ask(self):
+        for verb in ("status", "stop"):
+            reason = hitl.motion_intent(
+                "so101_real_689",
+                {"action": verb},
+                PEERS,
+                NO_GRANT,
+                extra_actions=PROXY_MOTION,
+                bound_targets=PROXY_TARGETS,
+            )
+            assert reason is None, verb
+
+    def test_without_proxy_tables_behavior_is_unchanged(self):
+        # the pre-proxy contract: unknown tool name = never gated.
+        assert hitl.motion_intent("so101_real_689", {"action": "execute"}, PEERS, NO_GRANT) is None
+
+    def test_fleet_task_still_gates_exactly_as_before(self):
+        reason = hitl.motion_intent(
+            "fleet",
+            {"action": "task", "target": "so101-real-689", "instruction": "wave"},
+            PEERS,
+            NO_GRANT,
+            extra_actions=PROXY_MOTION,
+            bound_targets=PROXY_TARGETS,
+        )
+        assert reason is not None and reason["target"] == "so101-real-689"
+
+    def test_robot_mesh_stays_absent_no_double_gate(self):
+        # robot_mesh raises its OWN SDK interrupt; it must not gain a row here.
+        assert "robot_mesh" not in hitl.MOTION_ACTIONS
+        assert (
+            hitl.motion_intent(
+                "robot_mesh",
+                {"action": "tell", "target": "so101-real-689"},
+                PEERS,
+                NO_GRANT,
+                extra_actions=PROXY_MOTION,
+                bound_targets=PROXY_TARGETS,
+            )
+            is None
+        )
+
+
+class TestHookCarriesTheTables:
+    def test_hook_accepts_and_stores_proxy_tables(self):
+        hook = hitl.MotionInterruptHook(lambda: PEERS, PROXY_MOTION, PROXY_TARGETS)
+        assert hook._proxy_motion == dict(PROXY_MOTION)
+        assert hook._proxy_targets == dict(PROXY_TARGETS)
+
+    def test_hook_without_tables_still_constructs(self):
+        hook = hitl.MotionInterruptHook(lambda: PEERS)
+        assert hook._proxy_motion == {} and hook._proxy_targets == {}
+
+
+class TestBridgeWiring:
+    def test_peer_proxy_tools_uses_the_bridge_snapshot(self, monkeypatch):
+        from strands_robots.dashboard import agent_bridge as ab
+
+        class FakeBridge:
+            def snapshot(self):
+                return {"peers": PEERS}
+
+            def send_cmd(self, *a, **k):
+                return {"status": "success", "content": []}
+
+        monkeypatch.setattr(ab, "_bridge", FakeBridge())
+        tools = ab._peer_proxy_tools()
+        assert sorted(t.tool_name for t in tools) == ["so101_real_689", "twin_1"]
+
+    def test_no_bridge_means_no_proxies_not_an_error(self, monkeypatch):
+        from strands_robots.dashboard import agent_bridge as ab
+
+        monkeypatch.setattr(ab, "_bridge", None)
+        assert ab._peer_proxy_tools() == []
+
+    def test_unbuilt_agent_status_names_the_expected_robots(self, monkeypatch):
+        from strands_robots.dashboard import agent_bridge as ab
+
+        class FakeBridge:
+            def snapshot(self):
+                return {"peers": PEERS}
+
+        monkeypatch.setattr(ab, "_bridge", FakeBridge())
+        monkeypatch.setattr(ab, "_agent", None)
+        status = ab.agent_status()
+        assert status["built"] is False
+        for name in ("fleet", "robot_mesh", "so101_real_689", "twin_1"):
+            assert name in status["tools"], name
+
+    def test_fleet_signature_changes_on_join_and_leave(self):
+        sig_before = pt.fleet_signature(PEERS)
+        grown = dict(PEERS)
+        grown["new-arm"] = REAL
+        assert pt.fleet_signature(grown) != sig_before
+        shrunk = {"twin-1": SIM}
+        assert pt.fleet_signature(shrunk) != sig_before
+        assert pt.fleet_signature(dict(PEERS)) == sig_before
+
+    def test_gateway_churn_does_not_change_the_signature(self):
+        with_gw = dict(PEERS)
+        with_gw["gateway-x"] = {"presence": {"kind": "gateway"}}
+        assert pt.fleet_signature(with_gw) == pt.fleet_signature(PEERS)
+
+    def test_prompt_teaches_the_native_tools(self):
+        from strands_robots.dashboard import agent_bridge as ab
+
+        assert "native tool" in ab.DEFAULT_SYSTEM_PROMPT
+        assert "so101_real_689" in ab.DEFAULT_SYSTEM_PROMPT
+
+
+# ============================================================================
+# from tests/test_dashboard_peer_tools.py
+# peer_tools: every fleet peer becomes a native AgentTool — the pure rules.
+# ============================================================================
 
 REAL_ARM = {
     "role": "follower",
@@ -499,3 +908,99 @@ class TestStalePresence:
         arm = next(t for t in tools if t.tool_name == "so101_real_689")
         _run(_collect(arm.stream({"toolUseId": "t11", "input": {"action": "status"}}, {})))
         assert sent == ["so101-real-689"]
+
+
+# ============================================================================
+# from tests/test_dashboard_peer_ttl_prune.py
+# Dead peers must age OUT of the fleet snapshot, not linger as ghost cards.
+# ============================================================================
+
+NOW = 1_000_000.0
+TTL = 300.0
+
+
+def _peers(now: float = NOW) -> dict[str, dict]:
+    return {
+        "fresh": {"last_seen": now - 1.0},
+        "quiet": {"last_seen": now - (PEER_STALE_S + 5.0)},
+        "dead": {"last_seen": now - (TTL + 1.0)},
+    }
+
+
+def _live_peers() -> dict[str, dict]:
+    """Same shape, but anchored to the wall clock snapshot() actually reads."""
+    return _peers(time.time())
+
+
+def test_fresh_peer_stays_and_is_not_stale():
+    out = prune_peers(_peers(), NOW, TTL)
+    assert "fresh" in out
+    assert out["fresh"]["stale"] is False
+
+
+def test_quiet_but_recent_peer_stays_marked_stale():
+    out = prune_peers(_peers(), NOW, TTL)
+    assert out["quiet"]["stale"] is True
+
+
+def test_peer_older_than_ttl_disappears():
+    out = prune_peers(_peers(), NOW, TTL)
+    assert "dead" not in out
+    assert set(out) == {"fresh", "quiet"}
+
+
+def test_dead_peer_with_live_managed_process_stays():
+    out = prune_peers(_peers(), NOW, TTL, protected_ids={"dead"})
+    assert "dead" in out
+    assert out["dead"]["stale"] is True  # visible, but honestly quiet
+
+
+def test_child_sim_peer_is_protected_by_its_parent():
+    peers = {"replay-1__so101": {"last_seen": NOW - (TTL + 60.0)}}
+    assert prune_peers(peers, NOW, TTL) == {}
+    kept = prune_peers(peers, NOW, TTL, protected_ids={"replay-1"})
+    assert "replay-1__so101" in kept
+
+
+def test_ttl_zero_disables_ageing_out():
+    out = prune_peers(_peers(), NOW, 0.0)
+    assert set(out) == {"fresh", "quiet", "dead"}
+
+
+def test_missing_last_seen_counts_as_ancient():
+    out = prune_peers({"never": {}}, NOW, TTL)
+    assert out == {}
+
+
+def test_original_mapping_is_not_mutated():
+    peers = _peers()
+    prune_peers(peers, NOW, TTL)
+    assert set(peers) == {"fresh", "quiet", "dead"}
+    assert "stale" not in peers["fresh"]
+
+
+def test_bridge_snapshot_drops_dead_peers_and_forgets_them():
+    bridge = MeshBridge(peer_id="dashboard-test")
+    bridge.peers = _live_peers()
+    snap = bridge.snapshot()
+    assert "dead" not in snap["peers"]
+    assert snap["peers"]["quiet"]["stale"] is True
+    # Forgotten for good: the ghost cannot come back on the next snapshot.
+    assert "dead" not in bridge.peers
+
+
+def test_bridge_snapshot_keeps_protected_peer_and_survives_bad_hook():
+    bridge = MeshBridge(peer_id="dashboard-test")
+    bridge.peers = _live_peers()
+    bridge.protected_peer_ids = lambda: {"dead"}
+    assert "dead" in bridge.snapshot()["peers"]
+
+    bridge.peers = _live_peers()
+
+    def boom():
+        raise RuntimeError("device manager exploded")
+
+    bridge.protected_peer_ids = boom
+    snap = bridge.snapshot()  # must not raise
+    assert "dead" not in snap["peers"]
+    assert "fresh" in snap["peers"]

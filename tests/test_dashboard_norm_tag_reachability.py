@@ -39,7 +39,7 @@ def test_norm_tag_is_still_unsettable_over_the_mesh(lerobot_local: dict) -> None
             "norm_tag is now settable over the mesh, so a dashboard run CAN request a tag the "
             "checkpoint may not declare. Two things follow: RunForm must send norm_tag with its "
             "policy-fit request (the route already takes it), and the refusal must be readable on "
-            "the run form. See tests/test_dashboard_policy_fit_norm_tag.py for the rule itself."
+            "the run form. See tests/test_dashboard_policy.py for the rule itself."
         )
     assert "norm_tag" not in wire_keys, (
         "a field the wire schema drops must not appear in the run form's schema - the form would "

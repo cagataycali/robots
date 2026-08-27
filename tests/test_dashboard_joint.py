@@ -1,15 +1,77 @@
-"""A connected arm with no joints must say WHY (Q80).
+"""Joint handling of the operator dashboard (consolidated).
 
-Live on 2026-08-20 both of cagatay's arms reported `hardware connected`, kept a fresh heartbeat,
-listed cameras -- and omitted every joint from every snapshot for hours. The reason sat in each
-child's log, in words, where the fleet view never looks: one arm's serial port was held by another
-process (179 orphaned children from earlier spawns), the other board had no calibration at all.
-From outside the two are identical; their remedies are opposite.
+Consolidated verbatim from: test_dashboard_joint_silence_this_arm.py, test_dashboard_joint_silence.py, test_dashboard_joint_streams.py.
+Each section keeps its original tests unchanged.
 """
+
+from __future__ import annotations
 
 import pytest
 
 from strands_robots.dashboard import joint_silence
+from strands_robots.dashboard.joint_silence import calibration_advice
+from strands_robots.dashboard.mesh_bridge import silent_arms
+
+# ============================================================================
+# from tests/test_dashboard_joint_silence_this_arm.py
+# The "uncalibrated" remedy, narrowed to the arm that is actually failing.
+# ============================================================================
+
+DISK = {
+    "robots/earthrover_mini_plus": [],
+    "robots/so100_follower": ["follower_arm"],
+    "robots/so101_follower": ["follower", "follower_arm", "leader_arm"],
+    "robots/so_follower": ["follower", "follower_arm", "leader_arm"],
+    "teleoperators/so101_leader": ["leader", "leader_arm"],
+}
+
+
+class TestTheArmThatActuallyFailed:
+    def test_an_id_calibrated_for_the_other_side_is_named_as_a_filename_problem(self):
+        a = calibration_advice(DISK, robot_name="so101", robot_id="leader")
+        assert "robots/so101_follower/leader.json" in a, "the path lerobot wanted, in full"
+        assert "teleoperators/so101_leader/leader.json" in a, "and the one that exists"
+        assert "Do NOT recalibrate" in a, "the physical work this advice exists to prevent"
+        assert "follower, follower_arm, leader_arm" in a, "ids that would work"
+        assert "so_follower" not in a, "another robot family is noise here"
+        assert "so100" not in a
+
+    def test_a_file_that_exists_stops_the_calibration_story_entirely(self):
+        a = calibration_advice(DISK, robot_name="so101", robot_id="follower")
+        assert "EXISTS" in a and "not a missing calibration" in a
+        assert "recalibrat" not in a.lower(), "never suggest re-teaching an arm that IS calibrated"
+        assert "devices > logs" in a, "point at the real exception instead"
+
+    def test_an_id_nothing_has_calibrated_lists_the_ones_for_this_robot_only(self):
+        a = calibration_advice(DISK, robot_name="so101", robot_id="banana")
+        assert "robots/so101_follower/banana.json" in a
+        assert "follower, follower_arm, leader_arm" in a
+        assert "OTHER side" not in a, "no phantom cross-role explanation when there is none"
+
+
+class TestFallingBackInsteadOfGuessing:
+    """Each of these must reach the BROAD remedy, which is honest, rather than a narrow guess."""
+
+    def _broad(self, a: str | None) -> bool:
+        return bool(a) and "Calibration files DO exist on this machine" in a  # type: ignore[operator]
+
+    def test_an_unknown_robot_family_falls_back(self):
+        assert self._broad(calibration_advice(DISK, robot_name="koch", robot_id="follower"))
+
+    def test_no_identity_at_all_falls_back(self):
+        assert self._broad(calibration_advice(DISK))
+        assert self._broad(calibration_advice(DISK, robot_name="so101"))
+        assert self._broad(calibration_advice(DISK, robot_id="leader"))
+
+    def test_nothing_on_disk_still_says_nothing(self):
+        assert calibration_advice({}, robot_name="so101", robot_id="leader") is None
+        assert calibration_advice(None, robot_name="so101", robot_id="leader") is None
+
+
+# ============================================================================
+# from tests/test_dashboard_joint_silence.py
+# A connected arm with no joints must say WHY (Q80).
+# ============================================================================
 
 IN_USE = (
     "13:58:52 WARNING:strands_robots.mesh.core:[mesh] so101-follower: state probe 'hw_joints' "
@@ -563,3 +625,57 @@ def test_the_live_uncalibrated_line_classifies_and_the_advice_forbids_recalibrat
     remedy = v["remedy"]
     assert "teleoperators/so101_leader/leader.json" in remedy, "it must name the file that DOES exist"
     assert "NOT recalibrate" in remedy or "not recalibrate" in remedy.lower(), remedy
+
+
+# ============================================================================
+# from tests/test_dashboard_joint_streams.py
+# Q149: a peer that is present but publishing no joints must be visible in /api/health.
+# ============================================================================
+
+
+def _p(joints=(), stale=False):
+    return {"state": {"joints": {f"j{i}": 0.0 for i in range(len(joints))}}, "stale": stale}
+
+
+def test_a_streaming_fleet_says_nothing():
+    # The refused_handshakes law: a section that is always present is a section nobody reads.
+    assert silent_arms({"arm": _p(joints=range(6))}) is None
+
+
+def test_a_silent_arm_is_named_not_just_counted():
+    got = silent_arms({"arm-a": _p(joints=range(6)), "arm-b": _p()})
+    assert got == {"streaming": 1, "silent": ["arm-b"]}
+
+
+def test_the_host_process_of_a_streaming_child_is_not_a_silent_arm():
+    # lib/armHosts.ts's law, server side: a process is not an arm. The simulator parent
+    # reports no joints BY DESIGN; its child publishes them.
+    got = silent_arms({"sim": _p(), "sim__so101": _p(joints=range(6))})
+    assert got is None
+
+
+def test_a_childless_jointless_peer_IS_a_broken_arm():
+    # Evidence above structure: without a child, the same shape is an arm that should be
+    # streaming and is not - a different sentence with a different remedy.
+    got = silent_arms({"sim": _p()})
+    assert got == {"streaming": 0, "silent": ["sim"]}
+
+
+def test_a_host_process_is_counted_separately_when_something_else_is_silent():
+    got = silent_arms({"sim": _p(), "sim__so101": _p(joints=range(6)), "arm": _p()})
+    assert got == {"streaming": 1, "silent": ["arm"], "host_processes": 1}
+
+
+def test_a_stale_peers_silence_is_explained_by_its_staleness():
+    # Blaming a peer that is gone for not streaming would send the operator to look at
+    # hardware that is not there; staleness is already reported per peer.
+    got = silent_arms({"gone": _p(stale=True), "arm": _p()})
+    assert got == {"streaming": 0, "silent": ["arm"], "stale": 1}
+
+
+def test_the_live_shape_from_this_fleet():
+    # Measured from /api/fleet on 2026-08-22: two real arms, both present, both mute.
+    got = silent_arms(
+        {"so101-follower": {"state": {}, "stale": False}, "so101-leader": {"state": {"joints": {}}, "stale": False}}
+    )
+    assert got == {"streaming": 0, "silent": ["so101-follower", "so101-leader"]}
