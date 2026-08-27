@@ -25,6 +25,59 @@ from strands_robots.mesh.security import is_safe_policy_provider
 logger = logging.getLogger(__name__)
 
 
+def _stop_task_refusal(envelope: object) -> str | None:
+    """Read whether a ``stop_task`` envelope reports a stop that did not happen.
+
+    Two of the robot surfaces :class:`RobotDeviceDriver` can wrap answer a stop
+    with an affirmative "I did not stop", and they spell it differently.
+    ``G1Driver.stop_task`` reports ``status="error"`` and carries ``stopped``
+    in a ``json`` block when its control loop outlasts the join budget, while
+    ``ReachyDriver.stop_task`` reports a daemon that refused the stop through
+    ``_refuse``, whose envelope carries a ``text`` block and no ``stopped`` key
+    at all. So both signals are read: an explicit ``stopped`` flag is
+    authoritative where the driver supplies one, and ``status`` answers for the
+    envelopes that do not.
+
+    ``teleop_mixin._stop_reported_stopped`` asks the same question of a
+    ``stop_teleoperate`` envelope and is deliberately not reused: it returns
+    ``True`` for an envelope with no ``json`` block, which is right there
+    (nothing was teleoperating) and wrong here, because that is the shape a
+    refused ``stop_task`` arrives in.
+
+    Deliberately conservative, for the reason
+    ``mesh.core._peers_that_did_not_stop`` gives: only an envelope that
+    AFFIRMATIVELY reports a failure is flagged. Anything else -- a driver that
+    returns nothing, a test double, a shape this function does not recognise --
+    is left alone, because a false "did not stop" on the safety path trains
+    operators to ignore the warning.
+
+    Args:
+        envelope: Whatever the wrapped robot's ``stop_task`` returned.
+
+    Returns:
+        The reason the robot gave for not stopping, or ``None`` when the stop is
+        accounted for.
+    """
+    if not isinstance(envelope, dict):
+        return None
+    blocks = envelope.get("content")
+    texts: list[str] = []
+    for block in blocks if isinstance(blocks, list) else []:
+        if not isinstance(block, dict):
+            continue
+        payload = block.get("json")
+        if isinstance(payload, dict) and "stopped" in payload:
+            if payload["stopped"]:
+                return None
+            return str(payload.get("reason") or payload)
+        text = block.get("text")
+        if isinstance(text, str):
+            texts.append(text)
+    if envelope.get("status") == "error":
+        return "; ".join(texts) if texts else str(envelope)
+    return None
+
+
 class RobotDeviceDriver(DeviceDriver):
     """Device Connect device driver wrapping a strands-robots Robot instance."""
 
@@ -226,12 +279,29 @@ class RobotDeviceDriver(DeviceDriver):
         Security hardening: only act on emergency-stop events whose source is
         in the emergency-stop allowlist, so a spoofed event from an arbitrary
         device cannot interrupt operations.
+
+        The stop's own verdict is read rather than discarded. ``stop_task`` is
+        written to report a stop that did not happen -- ``G1Driver`` returns
+        ``status="error"`` with ``stopped=False`` precisely "so the caller
+        cannot read 'success' while the payload's own ``running=True`` says the
+        loop is still writing frames" -- and this handler was the caller that
+        read neither field. ``Mesh.emergency_stop`` grades that same verdict for
+        every peer it fans out to and logs one that did not stop at CRITICAL; a
+        stop that arrives over Device Connect rather than over the mesh is the
+        same operator request and gets the same accounting.
         """
         if not is_authorized_caller(device_id, scope="estop"):
             logger.warning("Ignoring emergencyStop from unauthorized source %s", device_id)
             return
         logger.warning("Emergency stop received from %s - stopping task", device_id)
-        self._robot.stop_task()
+        refusal = _stop_task_refusal(self._robot.stop_task())
+        if refusal is not None:
+            logger.critical(
+                "[safety] emergency stop from %s: the robot reported it did NOT stop: %s. "
+                "It may still be executing; use a hardware cutoff.",
+                device_id,
+                refusal,
+            )
 
     # ── Periodic state publishing ─────────────────────────────
 
