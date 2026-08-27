@@ -230,6 +230,30 @@ _DEFAULT_MOTOR_CONFIGS: dict[str, MotorConfig] = {
     "gripper": {"id": 6, "range": (0, 100), "resolution": 4095},
 }
 
+
+def _joints_that_did_not_answer(controller: "MotorController", positions: dict[str, float]) -> list[str]:
+    """Name the configured joints missing from a whole-arm reading.
+
+    :meth:`MotorController.read_all_positions` skips a motor whose reply did
+    not verify, so its result is a subset of ``motor_configs`` and carries no
+    record of what fell out. The gap is derived the same way
+    :meth:`MotorController._smooth_move` derives its own: compare what came
+    back against what was expected.
+
+    One helper for both whole-arm readers, so ``read_all`` and ``store_pose``
+    cannot come to disagree about what a complete reading is.
+
+    Args:
+        controller: The arm whose ``motor_configs`` defines the expected set.
+        positions: The reading returned for that arm.
+
+    Returns:
+        Sorted names of the configured joints absent from ``positions``, empty
+        when every joint answered.
+    """
+    return sorted(set(controller.motor_configs) - set(positions))
+
+
 # The degree-valued target each action reads. An action absent from this map
 # commands no joint and is never refused here.
 _TARGET_OPTION_BY_ACTION: dict[str, str] = {
@@ -1011,6 +1035,27 @@ def pose_tool(
                             for motor, pos in positions.items()
                         ]
                     )
+                    silent = _joints_that_did_not_answer(controller, positions)
+                    if silent:
+                        # Same disposition emergency_stop gives a partial result:
+                        # a reading covering part of the arm is reported as one,
+                        # naming the joints it does not cover. The positions that
+                        # did arrive are still carried -- they are what a caller
+                        # diagnosing a dead servo needs.
+                        return {
+                            "status": "error",
+                            "content": [
+                                {
+                                    "text": (
+                                        f"Read {len(positions)} of "
+                                        f"{len(controller.motor_configs)} joints; no verified "
+                                        f"reply from: {', '.join(silent)}. The positions below "
+                                        f"are the rest of the arm, not its full pose.\n{pos_text}"
+                                    )
+                                },
+                                {"json": {"positions": positions, "unread": silent}},
+                            ],
+                        }
                     return {
                         "status": "success",
                         "content": [
@@ -1035,6 +1080,29 @@ def pose_tool(
                 current_positions = controller.read_all_positions()
                 if not current_positions:
                     return {"status": "error", "content": [{"text": "Failed to read current positions"}]}
+
+                silent = _joints_that_did_not_answer(controller, current_positions)
+                if silent:
+                    # Refuse rather than report, because this one persists. A
+                    # stored pose is a named posture every later load_pose drives
+                    # towards, and validate_pose checks bounds rather than arity,
+                    # so an incomplete pose would misrepresent itself on every
+                    # load with nothing downstream able to notice. incremental_move
+                    # refuses on an unreadable position for the same reason.
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Not storing '{pose_name}': no verified reply from "
+                                    f"{', '.join(silent)}, so this would persist "
+                                    f"{len(current_positions)} of "
+                                    f"{len(controller.motor_configs)} joints under a name that "
+                                    "promises the whole arm."
+                                )
+                            }
+                        ],
+                    }
 
                 pose = pose_manager.store_pose(pose_name, current_positions, description)
 
