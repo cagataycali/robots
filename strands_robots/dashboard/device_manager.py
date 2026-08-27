@@ -704,14 +704,14 @@ class ProfileStore:
         entry = dict(payload)
         with self._lock:
             previous = dict(self._data.get(key) or {})
-        for field in self.MEASURED_FIELDS:
-            if field not in entry and field in previous:
-                entry[field] = previous[field]
-        for field in self.REMEMBERED_FIELDS:
+        for fname in self.MEASURED_FIELDS:
+            if fname not in entry and fname in previous:
+                entry[fname] = previous[fname]
+        for fname in self.REMEMBERED_FIELDS:
             # None counts as unstated here (unlike MEASURED_FIELDS): the spawn payload always
             # carries the key, so "absent" alone would never fire and the memory would still be lost.
-            if entry.get(field) is None and previous.get(field) is not None:
-                entry[field] = previous[field]
+            if entry.get(fname) is None and previous.get(fname) is not None:
+                entry[fname] = previous[fname]
         entry["name"] = name or entry.get("name") or entry.get("peer_id") or key
         entry["serial_number"] = key
         entry["saved_at"] = time.time()
@@ -1058,14 +1058,14 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
             return {"error": f"camera {name!r}: index_or_path must be an integer index or a path string"}
         if isinstance(iop, int) and iop < 0:
             return {"error": f"camera {name!r}: index_or_path {iop} - an OpenCV index is not negative"}
-        for field, lo, hi in (("fps", 1, 240), ("width", 16, 7680), ("height", 16, 4320)):
-            v = cfg.get(field)
+        for fname, lo, hi in (("fps", 1, 240), ("width", 16, 7680), ("height", 16, 4320)):
+            v = cfg.get(fname)
             if v is None:
                 continue
             if isinstance(v, bool) or not isinstance(v, int):
-                return {"error": f"camera {name!r}: {field} must be an integer, got {type(v).__name__}"}
+                return {"error": f"camera {name!r}: {fname} must be an integer, got {type(v).__name__}"}
             if not lo <= v <= hi:
-                return {"error": f"camera {name!r}: {field}={v} is outside {lo}..{hi}"}
+                return {"error": f"camera {name!r}: {fname}={v} is outside {lo}..{hi}"}
         # An UNKNOWN option is refused HERE, because the child refuses it too -- and by the time the
         # child speaks, reconfigure_cameras has already despawned the arm that was working.
         for key in camera_liveness.ANNOTATION_KEYS:

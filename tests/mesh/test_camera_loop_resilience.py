@@ -103,8 +103,7 @@ def test_camera_loop_publishes_each_tick_and_stops_on_event(monkeypatch: pytest.
     publish = MagicMock(side_effect=_stop_after(stop, 3))
     mesh = _bare_mesh(publish, stop)
 
-    with patch("strands_robots.mesh.core.Ticker", _ScriptedTicker):
-        mesh._camera_loop(10.0)
+    mesh._camera_loop(10.0)
 
     # Three ticks ran, and the third one's stop ended the loop.
     assert publish.call_count == 3
@@ -123,8 +122,7 @@ def test_camera_loop_swallows_tick_error_and_keeps_going(monkeypatch: pytest.Mon
     mesh = _bare_mesh(publish, stop)
 
     # No exception escapes the loop.
-    with patch("strands_robots.mesh.core.Ticker", _ScriptedTicker):
-        mesh._camera_loop(20.0)
+    mesh._camera_loop(20.0)
 
     # It kept publishing after the first error (resilience), then stopped.
     assert publish.call_count == 2

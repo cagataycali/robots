@@ -19,7 +19,6 @@ import inspect
 import os
 from unittest.mock import MagicMock, patch
 
-import os
 import tempfile
 
 import pytest

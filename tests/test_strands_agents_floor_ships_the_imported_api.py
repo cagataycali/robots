@@ -62,7 +62,6 @@ _STRANDS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
     ("strands.types.tools", "ToolUse"): "1.0.0",
     ("strands.types.tools", "ToolContext"): "1.5.0",
     ("strands.types._events", "ToolResultEvent"): "1.7.0",
-    ("strands", "Agent"): "1.0.0",
     # The bidirectional (voice) API. strands/experimental/bidi/ first appears in
     # 1.19.0 -- measured by bisecting the released wheels, not by reading a
     # changelog: absent in 1.18.0, present in 1.19.0. The two non-Nova model

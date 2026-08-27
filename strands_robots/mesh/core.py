@@ -22,7 +22,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from strands_robots._mesh_switch import mesh_env_request
+from strands_robots._mesh_switch import NEGATIVE, mesh_env_request
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
@@ -4409,7 +4409,7 @@ def mesh_kill_switch_engaged(env: dict[str, str] | None = None) -> bool:
     """
     if env is None:
         return mesh_disabled_by_env()
-    return env.get("STRANDS_MESH", "").strip().lower() in _MESH_KILL_SWITCH_VALUES
+    return env.get("STRANDS_MESH", "").strip().lower() in NEGATIVE
 
 
 def init_mesh(

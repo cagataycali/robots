@@ -59,7 +59,6 @@ hardening is tracked in #249.
 
 from __future__ import annotations
 
-from strands_robots.bus_access import read_observation
 import logging
 import os
 import time
