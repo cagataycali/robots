@@ -42,7 +42,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_whole_number_error, require_optional
 
 from .config import (
     ProtoMotionsConfig,
@@ -112,7 +112,9 @@ class ProtoMotionsPolicy(Policy):
         history_length: Length of the historical-actions rolling buffer that
             feeds the ``historical_processed_actions`` ONNX input. The upstream
             checkpoint uses ``1`` (single previous action). Larger values pad
-            with zeros until the buffer fills.
+            with zeros until the buffer fills. A positive whole number: the
+            value is a buffer dimension, so a fractional or boolean spelling
+            cannot be honored as the window length it reads as.
     """
 
     #: Non-VLA - the tracker is proprioceptive, no cameras.
@@ -133,8 +135,13 @@ class ProtoMotionsPolicy(Policy):
                 "ProtoMotionsPolicy requires either `onnx_path` (real weights) "
                 "or `session` (injected for tests). Neither was supplied."
             )
-        if history_length < 1:
-            raise ValueError(f"history_length must be >= 1, got {history_length}.")
+        # The shared whole-number domain runs BEFORE the ``int()`` normalisation
+        # below, for the reason ProtoMotionsConfig.__post_init__ states about its
+        # own indices: that conversion is what turns a config's
+        # ``history_length: 2.7`` into a two-frame buffer and a ``true`` into a
+        # one-frame one, each silently narrowing the window the tracker reads.
+        if error := positive_whole_number_error(history_length, "history_length", "ProtoMotionsPolicy"):
+            raise ValueError(error)
 
         self._config: ProtoMotionsConfig = (
             load_config_from_yaml(yaml_path) if yaml_path is not None else ProtoMotionsConfig()
