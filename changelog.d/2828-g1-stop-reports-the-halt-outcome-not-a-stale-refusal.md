@@ -1,18 +1,34 @@
-### Docs: g1 driver's ``stop`` verb reports the halt outcome, not a stale #358 refusal
+### Fixed: g1 driver's ``stop`` verb reports the halt outcome instead of asserting one
 
-``G1Driver.stream({"action": "stop"})`` mapped to a text envelope claiming
-"no motion path wired yet (issue #358)". That claim was stale: issue #361
-already landed the transport primitive - :class:`DDSPublisher` on
-``rt/lowcmd``, :meth:`send_action` publishing ``LowCmd_``, the 500 Hz
-control loop, and :meth:`stop_task` publishing a zero-torque frame on the
-way out. The verb was calling the wired :meth:`stop` and lying about it.
+``G1Driver.stream({"action": "stop"})`` built its envelope beside
+``await self.stop()`` and hardcoded ``status="success"``. Two things were wrong
+with the text it carried. It named issue #358 and claimed no motion path was
+wired, which is stale - #361 landed :class:`DDSPublisher` on ``rt/lowcmd``,
+:meth:`send_action`, the 500 Hz control loop and the zero-torque frame the loop
+publishes on exit. And the envelope could not report what the stop achieved,
+because ``stop`` is the protocol's shutdown hook and returns ``None``: an
+envelope written next to it can only restate the intent.
 
-Now the envelope names what the code does: "control loop halted; a running
-task publishes a zero-torque frame on exit". The ``inputSchema`` description
-for the ``stop`` action is updated to match, and
-``test_stream_stop_action_calls_stop`` pins both the new text and a guard
-against the pre-#361 refusal text sneaking back through a rebase.
+That mattered on the case :meth:`_ControlLoop.stop`'s own docstring names. It
+returns whether the thread joined, and a caller-supplied policy that outlasts
+the join budget - a remote inference call is the ordinary case - leaves the loop
+publishing frames. ``stop_task`` already reads that verdict and answers
+``status="error"`` with ``stopped=False`` and ``running=True``; ``cleanup`` and
+``stop`` were taught to read it too. The verb an agent reaches was the one
+surface left that could not say the stop had failed:
 
-No behaviour change - the wire path was already live. This is a docs and
-observability fix so an agent that reads the tool spec sees the surface it
-gets.
+```text
+policy parked past the 2.0s join budget, same driver, same wedge
+
+  stream({"action": "stop"})   status="success"   text only, loop still running
+  stop_task()                  status="error"     stopped=False, running=True
+```
+
+The verb now returns ``stop_task``'s envelope, so the verdict has one owner
+rather than two: a joined stop is still ``success`` and carries
+``stopped=True``, an unjoined one is an ``error`` naming the timeout, and a
+driver with nothing running says so instead of claiming a halt it did not
+perform. The ``inputSchema`` description promises the report the verb now
+delivers, and ``tests/drivers/test_g1_stream_stop_reports_the_halt_outcome.py``
+parks a policy past the budget to grade it - the fast path the shipped suite
+drives cannot distinguish a reported outcome from an asserted one.

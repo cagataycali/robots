@@ -349,7 +349,8 @@ class G1Driver:
                                 "description": (
                                     "sensors: return the latest cached IMU/battery/lidar; "
                                     "status: report connection and FSM; "
-                                    "stop: halt any running control loop and publish a zero-torque frame"
+                                    "stop: halt any running control loop - it publishes a zero-torque "
+                                    "frame on exit - and report whether it joined"
                                 ),
                                 "enum": ["sensors", "status", "stop"],
                                 "default": "sensors",
@@ -370,10 +371,11 @@ class G1Driver:
         """Handle one agent invocation and yield exactly one tool result.
 
         The three verbs the spec declares are all agent-safe: ``sensors`` and
-        ``status`` are read-only, and ``stop`` is a controlled stop that runs
-        :meth:`stop` (which joins any running control loop and publishes a
-        zero-torque frame on the way out - see :meth:`stop_task`).  The rich
-        motion verb set (``arm``, ``walk``, ``posture``, ``speak``,
+        ``status`` are read-only, and ``stop`` is a controlled stop that
+        delegates to :meth:`stop_task` - it joins any running control loop,
+        the loop publishes a zero-torque frame on the way out, and the
+        returned envelope reports whether the thread actually joined.  The
+        rich motion verb set (``arm``, ``walk``, ``posture``, ``speak``,
         ``lidar_snapshot``) lands in issue #358 as vendored neon tools that
         the agent gets in addition to the driver-as-tool; the transport
         primitive those verbs will call - :meth:`send_action` publishing on
@@ -403,13 +405,16 @@ class G1Driver:
                 "content": [{"json": await self.get_status()}],
             }
         else:  # "stop"
-            await self.stop()
-            envelope = {
-                "status": "success",
-                "content": [
-                    {"text": "stop: control loop halted; a running task publishes a zero-torque frame on exit"}
-                ],
-            }
+            # Report the halt outcome rather than assert one.  ``stop()`` is
+            # the protocol's shutdown hook and returns ``None``, so an
+            # envelope built beside it can only restate the intent: a policy
+            # that outlasts the join budget - a remote inference call is the
+            # ordinary case - leaves the loop writing frames while the agent
+            # reads ``success``.  ``stop_task`` performs the same halt and
+            # already decides the verdict (``stopped``, ``running`` and the
+            # timeout reason), so the verb returns that envelope rather than
+            # re-deriving it from the loop handle.
+            envelope = self.stop_task()
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

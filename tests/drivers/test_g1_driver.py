@@ -738,15 +738,17 @@ def test_stream_sensors_action_returns_the_cached_snapshots() -> None:
     assert payload["lidar_summary"] is None
 
 
-def test_stream_stop_action_calls_stop() -> None:
-    """The ``stop`` verb runs :meth:`stop` and reports the halt outcome.
+def test_stream_stop_action_reports_that_no_task_was_running() -> None:
+    """The ``stop`` verb names the state it found rather than a halt it did not perform.
 
-    The transport primitive that ``stop`` calls is wired: :meth:`stop`
-    joins any running control loop and the loop publishes a zero-torque
-    frame on the way out (see :meth:`stop_task`).  The envelope names
-    what happened rather than the pre-#361 refusal that claimed no
-    motion path was wired - a caller who reads the text sees the
-    behaviour the code has, not the behaviour it used to have.
+    The transport primitive is wired - :meth:`send_action` publishes on
+    ``rt/lowcmd`` and a running loop publishes a zero-torque frame on the
+    way out - so the pre-#361 refusal claiming no motion path exists is
+    stale.  But this driver has no loop, so "halted a control loop" would
+    be its own falsity: the verb delegates to :meth:`stop_task`, whose
+    idempotent branch names the state instead.  The loop-was-running
+    outcomes are graded in
+    ``tests/drivers/test_g1_stream_stop_reports_the_halt_outcome.py``.
     """
     driver = G1Driver(tool_name="g1", port="1.2.3.4")
 
@@ -758,7 +760,7 @@ def test_stream_stop_action_calls_stop() -> None:
     event = asyncio.run(_run())
     assert event["status"] == "success"
     text = event["content"][0]["text"]
-    assert "control loop halted" in text
+    assert "no task is running" in text
     # Guard against the pre-#361 refusal text sneaking back in a rebase:
     # the driver's stop path now maps to a running behaviour, so the
     # envelope must not claim otherwise.
