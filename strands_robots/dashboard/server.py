@@ -2037,6 +2037,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
         app.mount("/assets", _CachedStatic(directory=FRONTEND_DIST / "assets"), name="assets")
 
+        # Resolved once so the traversal check below has a canonical
+        # ancestor to compare against - .resolve() on the user path each
+        # request would race a symlink swap.
+        _DIST_ROOT = FRONTEND_DIST.resolve()
+
         @app.get("/{path:path}")
         async def spa(path: str) -> Response:
             # An unrouted /api path is a MISSING ENDPOINT, never a client-side route: answering it with
@@ -2050,8 +2055,20 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     {"error": "not found", "detail": f"no endpoint at /{path}"},
                     status_code=404,
                 )
-            candidate = FRONTEND_DIST / path
-            if path and candidate.is_file():
+            # The URL path is user-supplied and reaches the filesystem here.
+            # Without confinement, ``GET /../../etc/passwd`` resolves outside
+            # FRONTEND_DIST and FileResponse serves it - a real filesystem
+            # read on a path FastAPI happily forwards. Resolve the candidate
+            # and refuse anything whose canonical location is not a
+            # descendant of _DIST_ROOT. A missing / non-file candidate falls
+            # through to the SPA entry point exactly as before.
+            candidate = (FRONTEND_DIST / path).resolve() if path else _DIST_ROOT
+            try:
+                candidate.relative_to(_DIST_ROOT)
+                inside_dist = True
+            except ValueError:
+                inside_dist = False
+            if path and inside_dist and candidate.is_file():
                 return FileResponse(
                     candidate,
                     headers={"Cache-Control": static_cache_control(path)},
