@@ -51,9 +51,13 @@ ERR_CODES: dict[int, str] = {
     7404: "Invalid FSM id - need FSM in {500, 501, 801}",
 }
 
-#: FSM ids where arm-SDK commands are honoured. Outside this set the arm
-#: refuses to move at all - so :meth:`~strands_robots.drivers.g1.G1Driver.send_action`
-#: checks membership before writing ``rt/armsdk``.
+#: FSM ids where arm-SDK-shaped commands are honoured. Outside this set the
+#: arm refuses to move at all - so
+#: :meth:`~strands_robots.drivers.g1.G1Driver.send_action` checks membership
+#: before publishing its ``LowCmd_`` on ``rt/lowcmd``. The set is defined
+#: against the motion-switcher FSM (arm-SDK, sit, sit-down), not against a
+#: topic name; the ``rt/armsdk`` topic itself is future work for the
+#: ``g1_tools`` client (issue #358) and this driver does not write it.
 HANDSHAKE_FSMS: frozenset[int] = frozenset({500, 501, 801})
 
 #: FSM ids where locomotion velocity commands are honoured. Narrower than

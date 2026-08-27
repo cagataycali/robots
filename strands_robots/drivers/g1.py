@@ -583,8 +583,10 @@ class G1Driver:
         """Return a refusal envelope if a motion write is not safe, else ``None``.
 
         Two FSM sets are enforced separately because the G1 documents them
-        separately: :data:`HANDSHAKE_FSMS` covers arm-SDK writes (``rt/armsdk``)
-        and :data:`WALK_FSMS` is narrower - sitting (500) accepts arm gestures
+        separately: :data:`HANDSHAKE_FSMS` covers arm-SDK-shaped writes (which
+        the driver publishes on ``rt/lowcmd`` today; the ``rt/armsdk`` topic
+        is future work for the ``g1_tools`` client in issue #358) and
+        :data:`WALK_FSMS` is narrower - sitting (500) accepts arm gestures
         but not walking. ``scope`` is the caller's declared kind of write:
 
         * ``"arm"`` - test :data:`HANDSHAKE_FSMS` and phrase the refusal as
