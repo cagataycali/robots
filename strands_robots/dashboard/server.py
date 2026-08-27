@@ -2055,6 +2055,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     {"error": "not found", "detail": f"no endpoint at /{path}"},
                     status_code=404,
                 )
+
             # The URL path is user-supplied and reaches the filesystem here.
             # Without confinement, ``GET /../../etc/passwd`` resolves outside
             # FRONTEND_DIST and FileResponse serves it - a real filesystem
