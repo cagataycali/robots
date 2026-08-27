@@ -874,17 +874,22 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
       :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
       latches a wrench in, IS carried here. That wrench is documented to hold
       until the next ``apply_force`` on the same body or a ``reset()``, and a
-      scene rebuild is neither, so it is snapshotted by body name before the
-      recompile and re-latched after.
-    * ``qfrc_applied``, its joint-space sibling, is deliberately NOT carried
-      here: nothing in this package ever writes a non-zero value into it.
-      ``apply_force`` documents why it latches the per-body buffer instead (one
-      world-wide generalized-force vector has no slice that belongs to one
-      body), and no other caller touches it, so there is no value for the
-      recompile to lose and a carry here could only be exercised by writing the
-      buffer from outside the public API. A joint-force API added later must add
-      the carry with it -- ``_SceneState`` already carries this buffer on the
-      eject path, where it is free because that path snapshots joints anyway.
+      scene rebuild is neither, so :func:`_snapshot_body_wrenches` reads it by
+      body name before the recompile and :func:`_restore_body_wrenches`
+      re-latches it after.
+    * ``qfrc_applied``, its joint-space sibling, IS carried here too, by
+      :func:`_snapshot_joint_forces` and :func:`_restore_joint_forces`, keyed
+      the way :class:`_SceneState` keys joints because a rebuild renumbers dofs.
+      No public setter writes this buffer -- ``apply_force`` latches the
+      per-body row instead and documents why (one world-wide generalized-force
+      vector has no slice that belongs to one body) -- but that is not a reason
+      to leave it behind: the eject path snapshots it with the rest of the joint
+      state, and ``save_state`` checkpoints it so that a restore reinstates
+      latched forces and not only positions. Carrying it on one rebuild
+      direction and dropping it on the other left one latched torque surviving
+      ``remove_robot`` and vanishing on ``add_object``, so a hinge held at
+      0.5 N m stopped turning the moment anything entered the scene, under a
+      ``"status": "success"``.
 
     Also re-discovers per-robot joint and actuator IDs (they may have shifted
     as new bodies were inserted earlier in the body tree). Returns True on
