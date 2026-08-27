@@ -1,0 +1,188 @@
+"""The G1 driver's module docstring names the verbs that are wired today.
+
+The module-level docstring of :mod:`strands_robots.drivers.g1` describes what
+the driver does: what it subscribes, what it gates, what it publishes. A
+reader who trusts the docstring writes their code around the shapes it
+promises, so a stale line about a verb's behaviour sends them to write a
+transport layer around a driver that already has one -- or to skip the
+driver entirely as "not ready".
+
+Three of the four task/policy verbs (``run_policy``, ``stop_task``,
+``get_task_status``) publish real work on the 500 Hz control loop today;
+only ``start_task`` still returns a "not wired yet" refusal, and it does
+so precisely because the provider registry lives behind issue #358 whose
+vendoring decision is separate from harness#361. This file pins the
+docstring to that split so a caller reading the module can trust the line
+in it about which verb refuses.
+
+Two cells:
+
+1. The docstring names the wired verbs as wired. Reading its text for
+   "not wired yet" is the load-bearing check: today that phrase must
+   appear at most once in the docstring, and if it does appear it must
+   name ``start_task`` (the one verb that still refuses). A caller who
+   grep-reads the module for the "not wired yet" idiom must land on the
+   one verb it applies to, not three that have shipped since the idiom
+   was written.
+
+2. The three wired verbs return a ``status`` envelope that is not the
+   generic "not wired yet" refusal. ``run_policy`` returns
+   ``status="success"`` on a callable policy (the loop starts);
+   ``stop_task`` returns a success envelope naming ``no task is running``
+   when idle; ``get_task_status`` returns a success envelope with
+   ``running=False`` reason ``no task has been started on this driver``.
+   None of these three verbs' response paths contain the string
+   ``"not wired yet"``, which is the exact idiom the docstring must not
+   claim on their behalf.
+
+The day the ``start_task`` refusal is replaced by a provider-registry
+call, cell 1 fires and this file is replaced by one that grades the new
+reachability shape. That is the correct signal for the wiring commit.
+"""
+
+from __future__ import annotations
+
+import strands_robots.drivers.g1 as g1_module
+from strands_robots.drivers.g1 import G1Driver
+
+
+class _Callable:
+    """A callable policy that returns an empty joint dict.
+
+    ``run_policy`` accepts either a ``Policy`` or a bare callable that
+    returns a joint-name-keyed action dict. The empty dict is a valid
+    (refused-per-step) action for this test's purpose, which is admission:
+    the loop must start and be seen running, not command a real posture.
+    """
+
+    def __call__(self, _snapshot: object) -> dict[str, object]:
+        return {}
+
+
+def _make_admitted_driver() -> G1Driver:
+    """Build a driver whose gates would clear for ``run_policy`` admission.
+
+    ``run_policy`` calls :meth:`_check_motion_gates` with scope ``"motion"``
+    before starting the loop; the gates test ``_connected``,
+    ``_mode_machine``, ``_fsm_id`` (against the walk/handshake union) and
+    the battery floor. ``get_task_status`` and ``stop_task`` do not go
+    through the gates, so their success paths hold with just the
+    ``_last_task_snapshot`` slot ``None``.
+
+    The driver is left unconnected on the DDS side; the loop does not
+    actually publish because there is no publisher, and the test does not
+    wait for it to. Admission is what the docstring pin needs to observe.
+    """
+    driver = G1Driver(network_interface="lo")
+    # Bypass ``connect_eagerly`` because it opens a real DDS participant.
+    # Populate the slots ``_check_motion_gates`` reads directly so
+    # ``run_policy``'s admission can pass without touching the bus.
+    driver._connected = True
+    driver._mode_machine = 1  # any non-``None`` uint8 clears the mode-machine gate
+    driver._fsm_id = 500  # inside HANDSHAKE_FSMS | WALK_FSMS; see g1._check_motion_gates
+    driver._battery = {"pct": 90.0}
+    return driver
+
+
+def test_the_docstring_uses_the_not_wired_yet_idiom_at_most_once() -> None:
+    """The docstring must not tell three shipped verbs they are un-wired."""
+    doc = g1_module.__doc__ or ""
+    occurrences = doc.count("not wired yet")
+    assert occurrences <= 1, (
+        f"module docstring contains 'not wired yet' {occurrences} times; "
+        f"three of four task/policy verbs are wired today. The idiom must "
+        f"name at most one verb (``start_task``), because that is the one "
+        f"verb whose response still returns that string."
+    )
+
+
+def test_the_docstring_names_start_task_when_it_names_the_refusal() -> None:
+    """The single 'not wired yet' occurrence, if any, must name ``start_task``.
+
+    Reading the docstring's own words is the load-bearing check: a reader
+    scanning for the idiom must land on the one verb it applies to, so the
+    surrounding sentence must contain the verb name where the idiom lives.
+    """
+    doc = g1_module.__doc__ or ""
+    if "not wired yet" not in doc:
+        # The docstring dropped the idiom entirely; that is fine, because
+        # ``start_task``'s own refusal text still carries it (checked below).
+        return
+    # Read the sentence containing the idiom -- the ``.`` before the idiom
+    # to the ``.`` after it -- and require ``start_task`` names itself in it.
+    idx = doc.index("not wired yet")
+    left = doc.rfind(".", 0, idx)
+    right = doc.find(".", idx)
+    if left == -1:
+        left = 0
+    if right == -1:
+        right = len(doc)
+    sentence = doc[left:right]
+    assert "start_task" in sentence, (
+        f"'not wired yet' appears in the module docstring in a sentence that "
+        f"does not name ``start_task``. Sentence was:\n{sentence!r}"
+    )
+
+
+def test_run_policy_admits_a_callable_policy_and_does_not_return_not_wired_yet() -> None:
+    """``run_policy`` is wired: on a callable policy it returns success.
+
+    The gates are set up so the admission check passes; the loop starts
+    and the driver reports ``task_running=True``. Reading the response
+    payload for the ``not wired yet`` idiom refuses the docstring if this
+    verb is ever again described as returning that refusal.
+    """
+    driver = _make_admitted_driver()
+    try:
+        result = driver.run_policy(policy_object=_Callable(), duration=0.1)
+        assert result["status"] == "success", f"run_policy refused an admitted callable policy: {result}"
+        # The wired shape reports the loop is running; the refusal shape
+        # would carry a text-only envelope with 'not wired yet' in it.
+        text = str(result)
+        assert "not wired yet" not in text, f"run_policy's response contains 'not wired yet': {text}"
+    finally:
+        # Halt the loop we started so this test does not leak a thread.
+        driver.stop_task()
+
+
+def test_get_task_status_reports_no_task_when_idle_and_does_not_refuse() -> None:
+    """``get_task_status`` returns a success envelope on an idle driver."""
+    driver = G1Driver(network_interface="lo")
+    result = driver.get_task_status()
+    assert result["status"] == "success", f"get_task_status refused an idle driver: {result}"
+    text = str(result)
+    assert "not wired yet" not in text, f"get_task_status's response contains 'not wired yet': {text}"
+
+
+def test_stop_task_reports_no_task_when_idle_and_does_not_refuse() -> None:
+    """``stop_task`` returns a success envelope naming the idle state."""
+    driver = G1Driver(network_interface="lo")
+    result = driver.stop_task()
+    assert result["status"] == "success", f"stop_task refused an idle driver: {result}"
+    text = str(result)
+    assert "not wired yet" not in text, f"stop_task's response contains 'not wired yet': {text}"
+
+
+def test_start_task_still_returns_the_not_wired_yet_refusal() -> None:
+    """``start_task`` is the one verb the docstring may still name.
+
+    The provider registry lives behind issue #358 and its vendoring
+    decision is separate from harness#361. Until that lands,
+    ``start_task`` returns a named refusal pointing at issue #358 and
+    containing the ``not wired yet`` idiom -- so a caller reading the
+    module docstring for that phrase lands here.
+
+    The gates are set up to pass so the refusal seen is the
+    verb-specific one, not the FSM/battery gate wall.
+    """
+    driver = _make_admitted_driver()
+    result = driver.start_task(instruction="stand")
+    assert result["status"] == "error", f"start_task returned success unexpectedly: {result}"
+    text = str(result)
+    assert "not wired yet" in text, (
+        f"start_task's refusal no longer contains 'not wired yet': {text}. "
+        f"If this verb has been wired, the module docstring's mention of "
+        f"the idiom must move to whatever verb (if any) still carries it, "
+        f"or be removed entirely."
+    )
+    assert "#358" in text, f"start_task's refusal no longer names issue #358: {text}"

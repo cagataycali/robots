@@ -22,11 +22,16 @@ What the driver actually does:
   disjoint value ranges and must not be conflated.  Until the
   motion-switcher source is wired (harness#361 PR-C, #2765), the gate
   refuses honestly rather than silently rejecting every real frame.
-* Task and policy paths (``start_task``, ``run_policy``, ``stop_task``,
-  ``get_task_status``) return a named "not wired yet" envelope. Locomotion
-  and arm actions land here in issue #358; the driver's job in issue #354
-  is the transport, and shipping empty stubs makes the omission surface at
-  call time instead of at import time.
+* Task and policy paths: :meth:`run_policy` rolls a caller-built policy
+  on a dedicated 500 Hz thread (per-step FSM re-gate, zero-torque frame on
+  exit); :meth:`stop_task` halts that loop and reports the join outcome;
+  :meth:`get_task_status` reports the loop's snapshot or the last exit
+  reason.  :meth:`start_task` still refuses with a named message pointing
+  at issue #358 because the provider registry (Groot/ACT/Diffusion clients)
+  is not yet plumbed here - a caller with an already-built policy uses
+  :meth:`run_policy` today.  Locomotion and arm-SDK-shaped verbs land in
+  issue #358; the driver's job in issue #354 was the transport, and the
+  control loop that closes issue #361 lives here now.
 
 Nothing in this module imports ``unitree_sdk2py`` at module load. Every SDK
 touch is inside a function body, so the module can be imported on Thor, on CI,
