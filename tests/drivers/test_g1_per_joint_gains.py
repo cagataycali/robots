@@ -26,14 +26,23 @@ Layering, and why it is this way:
   them in CI, where the SDK is not installed.  ``unitree-sdk2`` is not a
   declared dependency of this project, so a contract asserted only behind
   ``skipif(not _HAS_SDK)`` is asserted by nothing in CI.
-* The wire cells, which do need the SDK to build a real ``LowCmd_``, confirm the
-  contract cells describe what actually lands on the topic.
+* The wire cells confirm the contract cells describe what actually lands on the
+  topic.  They need a ``LowCmd_``-*shaped* object to write into, which is not
+  the same as needing the SDK: the gains they read back are compared against the
+  vendor tuples stated locally below, so the oracle is those tuples rather than
+  anything the SDK computes.  They take the shape from the stub
+  :mod:`tests.drivers.test_g1_control_loop` installs, so the rule in the bullet
+  above covers them too.  A cell that recomputes an SDK value as an independent
+  oracle - the ``crc`` cells in :mod:`tests.drivers.test_g1_driver` - keeps the
+  marker instead, because a stub CRC would compare a constant against itself.
 """
 
 from __future__ import annotations
 
 import ast
 import inspect
+import sys
+import types
 from typing import Any
 
 import pytest
@@ -46,6 +55,7 @@ from strands_robots.drivers.g1 import (
     _build_lowcmd_from_action,
     _build_zero_torque_lowcmd,
 )
+from tests.drivers.test_g1_control_loop import _StubCRC, _StubLowCmd
 
 # The vendor's gain lists for this robot, transcribed from the module scope of
 # ``unitree_sdk2_python/example/g1/low_level/g1_low_level_example.py``.  Stated
@@ -117,12 +127,51 @@ VENDOR_KD: tuple[float, ...] = (
 _KNEE_SLOTS = (3, 9)
 _SLOT_NAME = {slot: name for name, slot in _G1_JOINT_INDEX.items()}
 
-try:  # pragma: no cover - environment probe
-    import unitree_sdk2py.idl.default as _sdk_default
 
-    _HAS_SDK = _sdk_default is not None
-except Exception:  # pragma: no cover - environment probe
-    _HAS_SDK = False
+@pytest.fixture
+def _stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install a ``unitree_sdk2py`` stub for the duration of one test.
+
+    ``_build_lowcmd_from_action`` and ``_build_zero_torque_lowcmd`` import
+    ``unitree_sdk2py.idl.default`` and ``unitree_sdk2py.utils.crc`` inside
+    their bodies.  Registering each name on :mod:`sys.modules` lets the wire
+    cells drive the same production lane hardware drives, on a box where the
+    SDK is not installed - which is every box ``call-test-lint`` runs on.
+
+    The stub classes come from :mod:`tests.drivers.test_g1_control_loop`
+    rather than another copy, so every suite grading this builder writes into
+    the same ``LowCmd_`` shape.  ``monkeypatch.setitem`` restores the previous
+    entries - typically absent - on teardown, per AGENTS.md > Testing Patterns
+    > Restore a sys.modules entry you remove.
+
+    Opt-in per class rather than autouse: a module-wide stub would quietly
+    make an SDK-*absent* refusal cell unreachable if one is added here later,
+    the way it would in :mod:`tests.drivers.test_g1_driver`.
+    """
+    root = types.ModuleType("unitree_sdk2py")
+    idl = types.ModuleType("unitree_sdk2py.idl")
+    default = types.ModuleType("unitree_sdk2py.idl.default")
+    unitree_hg = types.ModuleType("unitree_sdk2py.idl.unitree_hg")
+    unitree_hg_msg = types.ModuleType("unitree_sdk2py.idl.unitree_hg.msg")
+    dds_ = types.ModuleType("unitree_sdk2py.idl.unitree_hg.msg.dds_")
+    utils = types.ModuleType("unitree_sdk2py.utils")
+    crc = types.ModuleType("unitree_sdk2py.utils.crc")
+
+    default.unitree_hg_msg_dds__LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    dds_.LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    crc.CRC = _StubCRC  # type: ignore[attr-defined]
+
+    for name, mod in [
+        ("unitree_sdk2py", root),
+        ("unitree_sdk2py.idl", idl),
+        ("unitree_sdk2py.idl.default", default),
+        ("unitree_sdk2py.idl.unitree_hg", unitree_hg),
+        ("unitree_sdk2py.idl.unitree_hg.msg", unitree_hg_msg),
+        ("unitree_sdk2py.idl.unitree_hg.msg.dds_", dds_),
+        ("unitree_sdk2py.utils", utils),
+        ("unitree_sdk2py.utils.crc", crc),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
 
 
 def _slot_ids() -> list[str]:
@@ -218,7 +267,7 @@ class TestTheBuilderIndexesTheTablePerSlot:
         assert "_SDK_KD" in subscripted, "kd default is not indexed by slot"
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 class TestTheWireFrameCarriesTheSlotsOwnGains:
     """The frame that reaches ``rt/lowcmd`` carries each slot's own gains."""
 
@@ -260,7 +309,7 @@ class TestTheWireFrameCarriesTheSlotsOwnGains:
         assert motor.kd == pytest.approx(VENDOR_KD[_G1_JOINT_INDEX["left_knee"]])
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 class TestWhatTheTableDoesNotChange:
     """Over-reach guards: the table is a default, and only a default.
 
