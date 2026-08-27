@@ -223,8 +223,13 @@ def test_a_code_defined_peer_is_identical_to_a_spawned_one_except_its_origin():
 
     peers = mb.MeshBridge.snapshot(bridge)["peers"]
     a, b = dict(peers["ours"]), dict(peers["theirs"])
-    assert a.pop("origin") == "managed"
-    assert b.pop("origin") == "external"
+    # ``pop`` is a mutation; keep it out of the ``assert`` so ``python -O``
+    # (which drops assertions) does not silently skip the two rewrites the
+    # sameness check below reads from.
+    a_origin = a.pop("origin")
+    b_origin = b.pop("origin")
+    assert a_origin == "managed"
+    assert b_origin == "external"
     a.pop("peer_id"), b.pop("peer_id")
     assert a == b, "a code-defined peer must reach the UI as the same card"
     # And the telemetry a card draws really did survive on the external one.

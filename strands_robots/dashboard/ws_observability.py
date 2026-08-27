@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -82,6 +83,7 @@ def close_line(*, peer_id: str, cam: str, verdict: str, suppressed: int) -> str:
 
 
 MAX_CAP_FPS = 30.0
+
 MIN_CAP_FPS = 0.1
 
 
@@ -93,7 +95,7 @@ def fps_cap(raw: str | None) -> float | None:
         v = float(raw)
     except (TypeError, ValueError):
         return None
-    if v != v or v <= 0:  # NaN or nonsense
+    if math.isnan(v) or v <= 0:  # NaN or nonsense
         return None
     return max(MIN_CAP_FPS, min(MAX_CAP_FPS, v))
 

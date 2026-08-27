@@ -2058,20 +2058,41 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # The URL path is user-supplied and reaches the filesystem here.
             # Without confinement, ``GET /../../etc/passwd`` resolves outside
             # FRONTEND_DIST and FileResponse serves it - a real filesystem
-            # read on a path FastAPI happily forwards. Resolve the candidate
-            # and refuse anything whose canonical location is not a
-            # descendant of _DIST_ROOT. A missing / non-file candidate falls
-            # through to the SPA entry point exactly as before.
-            candidate = (FRONTEND_DIST / path).resolve() if path else _DIST_ROOT
+            # read on a path FastAPI happily forwards.
+            #
+            # Sanitize the raw string BEFORE it touches the filesystem: a
+            # segment equal to ``..``, any absolute-path leader ('/' or a
+            # Windows drive) or a NUL byte cannot describe a descendant of
+            # _DIST_ROOT and CodeQL's py/path-injection sink cannot prove that
+            # a post-resolve ``relative_to`` guard is complete. Refuse them
+            # here, then still hold the ``relative_to`` guard as belt-and-
+            # -braces against a symlink that points outside the dist tree.
+            def _looks_traversable(raw: str) -> bool:
+                if not raw:
+                    return False
+                if "\x00" in raw:
+                    return True
+                # Normalize separators once so a Windows-style leader is caught
+                # even when the ASGI layer forwarded backslashes verbatim.
+                unified = raw.replace("\\", "/")
+                if unified.startswith("/"):
+                    return True
+                # ``C:`` or any single-letter drive leader.
+                if len(unified) >= 2 and unified[1] == ":" and unified[0].isalpha():
+                    return True
+                return any(seg == ".." for seg in unified.split("/"))
+
+            safe_path = None if _looks_traversable(path) else path
+            candidate = (FRONTEND_DIST / safe_path).resolve() if safe_path else _DIST_ROOT
             try:
                 candidate.relative_to(_DIST_ROOT)
                 inside_dist = True
             except ValueError:
                 inside_dist = False
-            if path and inside_dist and candidate.is_file():
+            if safe_path and inside_dist and candidate.is_file():
                 return FileResponse(
                     candidate,
-                    headers={"Cache-Control": static_cache_control(path)},
+                    headers={"Cache-Control": static_cache_control(safe_path)},
                 )
             # An SPA route falls back to the entry point, so it is labelled like one.
             return FileResponse(
