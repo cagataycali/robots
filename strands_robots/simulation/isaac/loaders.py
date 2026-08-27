@@ -1670,6 +1670,21 @@ def _find_body_mesh(
     that decide the rank are read through :func:`_class_attrs`, so a geom that
     inherits them from a ``<default class="visual">`` is ranked as MuJoCo reads
     it rather than being taken for a collision geom.
+
+    The geom's own ``pos`` and orientation are refused when they parse to a
+    non-finite value (:func:`_refuse_non_finite_geom`), because this reader is
+    the only one that sees them. :func:`_geom_aabb` refuses the same quantities,
+    but :func:`_body_collision_aabb` calls it for the geoms MuJoCo can collide
+    and returns as soon as it has a bound - so a *visual* mesh geom beside a
+    collision primitive, which is the Menagerie convention this ranking exists
+    to prefer, is never handed to it. The nested-body ``pos`` folded into the
+    offset needs no test here: :func:`_recursive_collision_aabb` refuses it on
+    the same ``findall("body")`` traversal, so a second one would be
+    unreachable.
+
+    Raises:
+        ValueError: If a mesh geom's ``pos`` or orientation resolves to a value
+            that is not finite (:func:`_refuse_non_finite_geom`).
     """
     best: tuple[str, tuple[float, float, float], tuple[float, float, float, float], int] | None = None
     childclass = body_el.get("childclass") or childclass
@@ -1679,8 +1694,13 @@ def _find_body_mesh(
         if not mesh_name:
             continue
         gpos = _parse_xyz(attrs.get("pos"))
+        _refuse_non_finite_geom(attrs, "pos", gpos)
         pos = (offset[0] + gpos[0], offset[1] + gpos[1], offset[2] + gpos[2])
         quat = _parse_orientation(attrs, own=geom.attrib, angle_scale=angle_scale, eulerseq=eulerseq)
+        # Name the spelling the file used, so the refusal points at an attribute
+        # a reader can go and look at rather than at the resolved quaternion.
+        spelling = next((a for a in _ORIENTATION_SPELLINGS if attrs.get(a)), "quat")
+        _refuse_non_finite_geom(attrs, spelling, quat)
         rank = _mesh_geom_visual_rank(attrs)
         if rank == _MESH_VISUAL_RANK_NON_COLLIDING:
             return (mesh_name, pos, quat, rank)

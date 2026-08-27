@@ -271,15 +271,21 @@ class TestWhatIsDeliberatelyUnchanged:
         _refuse_non_finite_placement("body 't'", "pos", (1.0, 2.0, 3.0))
 
 
-class TestTheAccumulatorsGuardCoversTheMeshWalkToo:
-    """Two walks compose the same offsets, so one guard answers for both.
+class TestTheAccumulatorsGuardCoversTheMeshWalksBodyOffsets:
+    """Two walks compose the same *body* offsets, so one guard answers for both.
 
     ``_find_body_mesh`` composes a nested body's ``pos`` into the mesh offset
     exactly as ``_recursive_collision_aabb`` composes it into the bound. Both
     descend the same ``findall("body")`` traversal from the same root, so every
     body the mesh walk reads is a body the guarded accumulator also reads - a
-    second guard there would be unreachable, and it would mask the one whose
-    harm this file measures.
+    second guard for *that* quantity would be unreachable, and it would mask
+    the one whose harm this file measures.
+
+    The reason reaches the body offsets and stops there. ``_find_body_mesh``
+    also reads each mesh geom's *own* ``pos`` and orientation, which the
+    accumulator never parses, so those carry a guard of their own -
+    ``tests/simulation/isaac/test_non_finite_visual_mesh_placement_is_refused.py``
+    measures why the geom guard in ``_geom_aabb`` does not reach them.
     """
 
     def test_both_walks_descend_the_same_traversal(self) -> None:
@@ -291,12 +297,28 @@ class TestTheAccumulatorsGuardCoversTheMeshWalkToo:
             # ``ast.unparse`` normalizes string quotes, so match its spelling.
             assert "body_el.findall('body')" in loops, (name, loops)
 
-    def test_the_mesh_walk_carries_no_finiteness_test_of_its_own(self) -> None:
+    @staticmethod
+    def _guards_called_by(function: object) -> set[str]:
+        """The finiteness guards a function *calls* - the docstring names them too."""
+        tree = ast.parse(inspect.getsource(function).strip())  # type: ignore[arg-type]
+        return {
+            node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+
+    def test_the_mesh_walk_does_not_re_guard_the_body_offset(self) -> None:
+        """The quantity this file guards is tested once, in the accumulator."""
         from strands_robots.simulation.isaac import loaders
 
-        source = inspect.getsource(loaders._find_body_mesh)
-        assert "isfinite" not in source
-        assert "_refuse_non_finite" not in source
+        assert "_refuse_non_finite_body" not in self._guards_called_by(loaders._find_body_mesh)
+        assert "_refuse_non_finite_body" in self._guards_called_by(loaders._recursive_collision_aabb)
+
+    def test_the_mesh_walk_does_guard_the_geom_placement_the_accumulator_never_sees(self) -> None:
+        """A quantity only this reader parses is refused by this reader."""
+        from strands_robots.simulation.isaac import loaders
+
+        assert "_refuse_non_finite_geom" in self._guards_called_by(loaders._find_body_mesh)
+        accumulator = inspect.getsource(loaders._recursive_collision_aabb)
+        assert "_parse_orientation" not in accumulator
 
 
 def ast_element(xml: str):
