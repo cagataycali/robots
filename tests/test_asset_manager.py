@@ -149,6 +149,29 @@ class TestListAvailableRobots:
         assert listed["unitbot"]["path"] is None
 
 
+class TestListingInstalledAssetsNeverFetches:
+    """A status listing reports what is here; it does not go and get the rest.
+
+    :func:`list_available_robots` gated the resolver on
+    :func:`is_robot_asset_present`, which stops it reaching for an absent XML but
+    not for a cached XML whose meshes are missing - that passes the presence check
+    and was fetched, once per such robot, every time the listing was built.
+    """
+
+    def test_a_mesh_less_cached_asset_is_listed_without_being_fetched(self, tmp_path, monkeypatch):
+        """The row still reports the path; nothing is downloaded to produce it."""
+        robot_dir = _register_bot(tmp_path / "assets")  # XML present, no meshes
+        assert manager.is_robot_asset_present("unitbot") is True, "presence alone would not gate this"
+
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", lambda n, _i: attempts.append(n) or True)
+
+        rows = {r["name"]: r for r in manager.list_available_robots()}
+        assert attempts == [], f"building the listing downloaded {attempts}"
+        assert rows["unitbot"]["available"] is True
+        assert rows["unitbot"]["path"] == str(robot_dir / "unitbot.xml")
+
+
 class TestPathTraversalProtection:
     """Registry-sourced path components must never escape the search dirs."""
 
@@ -248,6 +271,293 @@ class TestAutoDownloadFallback:
         _invalidate_cache()
         monkeypatch.setattr(manager, "_auto_download_robot", lambda _n, _i: False)
         assert manager.resolve_model_path("unitbot") is None
+
+
+class TestDownloadCanBeDeclined:
+    """``allow_download=False`` resolves from disk and never reaches the network.
+
+    The downloading default is right for a caller about to load the model: a path
+    whose meshes are absent is useless to MuJoCo, so fetching them is the helpful
+    thing. It is wrong for a caller that *reports* on assets rather than loading
+    them - there it turns a read of what is on disk into a fetch of what is not,
+    once per robot.
+
+    Declining is defined as exactly a download that fails, so it cannot change
+    the answer for an asset already present. Both triggers are covered, because
+    guarding on :func:`is_robot_asset_present` alone stops only the first:
+    a cached XML whose meshes are missing passes that check and still fetches.
+    """
+
+    @staticmethod
+    def _recording_downloader(attempts: list[str]):
+        """A downloader that reports success without touching the network."""
+
+        def download(name: str, _info: dict) -> bool:
+            attempts.append(name)
+            return True
+
+        return download
+
+    def test_absent_xml_reports_a_miss_without_attempting(self, tmp_path, monkeypatch):
+        """First trigger: no XML anywhere. Declining gives the same None."""
+        robot_dir = _register_bot(tmp_path / "assets")
+        (robot_dir / "unitbot.xml").unlink()
+        _invalidate_cache()
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
+
+        assert manager.resolve_model_path("unitbot", allow_download=False) is None
+        assert attempts == []
+
+    def test_missing_meshes_return_the_xml_without_attempting(self, tmp_path, monkeypatch):
+        """Second trigger: XML present, meshes absent. Declining keeps the XML."""
+        robot_dir = _register_bot(tmp_path / "assets")  # registered with no meshes
+        assert manager.is_robot_asset_present("unitbot") is True, "presence alone would not gate this"
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
+
+        assert manager.resolve_model_path("unitbot", allow_download=False) == robot_dir / "unitbot.xml"
+        assert attempts == []
+
+    def test_the_downloading_default_is_unchanged(self, tmp_path, monkeypatch):
+        """Over-reach control: adding the knob must not stop the default fetching."""
+        _register_bot(tmp_path / "assets")  # no meshes -> the default reaches for them
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
+
+        manager.resolve_model_path("unitbot")
+        assert attempts == ["unitbot"], "the default must still attempt a download"
+
+    @pytest.mark.parametrize("delete_xml", [True, False], ids=["absent-xml", "missing-meshes"])
+    def test_declining_matches_a_download_that_fails(self, tmp_path, monkeypatch, delete_xml):
+        """The documented equivalence, on both triggers.
+
+        This is what makes the knob safe to add to a resolver 46 call sites
+        already use: it introduces no third outcome.
+        """
+        robot_dir = _register_bot(tmp_path / "assets")
+        if delete_xml:
+            (robot_dir / "unitbot.xml").unlink()
+            _invalidate_cache()
+
+        monkeypatch.setattr(manager, "_auto_download_robot", lambda _n, _i: False)
+        failed_download = manager.resolve_model_path("unitbot")
+        manager._MESH_CACHE.clear()
+
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
+        declined = manager.resolve_model_path("unitbot", allow_download=False)
+
+        assert declined == failed_download
+        assert attempts == []
+
+
+class TestDecliningAlsoDeclinesDiscovery:
+    """A declined resolve must not reach ``robot_descriptions`` discovery.
+
+    ``allow_download=False`` promises "no network, no ``robot_descriptions``
+    import", but the resolver's first statement is a registry lookup, and that
+    lookup falls back to :func:`strands_robots.registry.discovery.discover_robot`
+    for any name the curated registry does not know. For those names the promise
+    was broken before ``allow_download`` was ever read.
+
+    The import *is* the fetch. ``robot_descriptions`` calls ``clone_to_cache`` at
+    module scope, so importing a description module clones the upstream asset
+    repository on a cold cache - the exact side effect this keyword exists to
+    decline. Both docstrings say so in advance: ``_lookup`` is "used only by
+    download-capable resolvers" and ``discover_robot`` is "Heavy ... Call only
+    from asset-resolution paths that are allowed to download."
+
+    It costs the same on the miss path, which is what makes it more than a
+    performance note: a name discovery *cannot* resolve still clones the
+    repository and then returns ``None`` - the answer the caller would have had
+    for free.
+
+    The seam these cells drive is the fallback itself rather than
+    ``robot_descriptions``, so they grade the contract on a core install too. The
+    last cell re-asks the question of the real registry as an independent oracle.
+    """
+
+    @staticmethod
+    def _recording_discovery(consulted: list[str], entry: dict | None = None):
+        """Stand in for the discovery fallback, recording every consultation.
+
+        ``_lookup`` imports ``discover_robot`` inside its body, so patching the
+        module attribute is what the call site reads.
+        """
+
+        def discover(name: str) -> dict | None:
+            consulted.append(name)
+            return entry
+
+        return discover
+
+    def _patch_discovery(self, monkeypatch, consulted: list[str], entry: dict | None = None) -> None:
+        from strands_robots.registry import discovery
+
+        discovery.invalidate_cache()
+        monkeypatch.setattr(discovery, "discover_robot", self._recording_discovery(consulted, entry))
+
+    @staticmethod
+    def _synthesizable_asset(assets_dir: Path, name: str = "synthbot") -> dict:
+        """Put an asset on disk that only discovery can name, and return that entry.
+
+        This is the shape the real registry has: ``gen3``'s XML sits in the asset
+        cache under a directory only ``robot_descriptions`` knows the name of, so
+        a resolve that consults discovery *succeeds* while
+        :func:`is_robot_asset_present` - which reads ``get_robot`` alone - reports
+        it absent. Without the file on disk a declined resolve returns ``None``
+        because there was nothing to find, which is not the property under test.
+        """
+        robot_dir = assets_dir / name
+        robot_dir.mkdir(parents=True, exist_ok=True)
+        (robot_dir / f"{name}.xml").write_text(_MINIMAL_MJCF)
+        return {"asset": {"dir": name, "model_xml": f"{name}.xml", "scene_xml": "scene.xml"}}
+
+    # -- the declined path never consults discovery -----------------------
+
+    def test_a_non_curated_name_never_reaches_discovery(self, monkeypatch):
+        """The headline: declining the download declines the clone that finds it."""
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted)
+
+        manager.resolve_model_path("not-in-the-curated-registry", allow_download=False)
+
+        assert consulted == [], (
+            f"a declined resolve consulted discovery, whose import clones the asset repository: {consulted}"
+        )
+
+    def test_a_non_curated_name_reports_the_miss(self, tmp_path, monkeypatch):
+        """Declining answers ``None`` rather than importing to find out.
+
+        The asset is on disk under the name only discovery supplies, so the
+        declined ``None`` is the decision - against a resolve that would
+        otherwise have returned a real path.
+        """
+        entry = self._synthesizable_asset(tmp_path / "assets")
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted, entry=entry)
+        monkeypatch.setattr(manager, "_auto_download_robot", lambda _n, _i: False)
+
+        assert manager.resolve_model_path("synthbot", allow_download=False) is None
+        assert consulted == []
+
+    def test_the_miss_path_declines_too(self, monkeypatch):
+        """Discovery that would answer ``None`` is still not worth a clone."""
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted, entry=None)
+
+        assert manager.resolve_model_path("no-such-robot-anywhere", allow_download=False) is None
+        assert consulted == [], "the clone was paid for an answer that is None either way"
+
+    def test_it_answers_over_the_same_names_as_the_presence_check(self, tmp_path, monkeypatch):
+        """The documented parity with :func:`is_robot_asset_present`.
+
+        The docstring offers this as the *where* to that function's *whether*, on
+        the same terms. That holds only if the two read the same names: the
+        presence check consults ``get_robot`` alone, so a resolver that consults
+        discovery answers about robots its stated companion cannot see.
+        """
+        entry = self._synthesizable_asset(tmp_path / "assets")
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted, entry=entry)
+        monkeypatch.setattr(manager, "_auto_download_robot", lambda _n, _i: False)
+        _register_bot(tmp_path / "assets")
+
+        for name in ("unitbot", "synthbot"):
+            present = manager.is_robot_asset_present(name)
+            resolved = manager.resolve_model_path(name, allow_download=False)
+            assert present is (resolved is not None), (
+                f"{name!r}: presence says {present} and the declined resolve says "
+                f"{resolved!r} - the two do not answer over the same names"
+            )
+
+    # -- structural: the decision is forwarded, not re-derived -------------
+
+    def test_the_resolver_forwards_the_decision_to_the_lookup(self):
+        """The gate belongs to the shared lookup, and the caller must pass it on.
+
+        Reading the keyword's *value* rather than its presence: a forward of
+        ``allow_discovery=True`` spells the same keyword and restores the clone.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(manager.resolve_model_path)))
+        forwards = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_lookup"
+        ]
+        assert len(forwards) == 1, f"expected one _lookup call, found {len(forwards)}"
+        passed = {kw.arg: ast.unparse(kw.value) for kw in forwards[0].keywords if kw.arg is not None}
+        assert passed.get("allow_discovery") == "allow_download", (
+            f"resolve_model_path must hand its own allow_download to the lookup; it passes {passed!r}"
+        )
+
+    # -- over-reach controls: nothing else changes -------------------------
+
+    def test_the_downloading_default_still_consults_discovery(self, monkeypatch):
+        """The long tail still resolves for a caller about to load the model."""
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted)
+
+        manager.resolve_model_path("not-in-the-curated-registry")
+
+        assert consulted == ["not-in-the-curated-registry"]
+
+    @pytest.mark.parametrize("resolver", ["resolve_model_dir", "get_robot_info"])
+    def test_the_sibling_resolvers_still_consult_discovery(self, monkeypatch, resolver):
+        """The lookup's gate defaults open, so its other two callers are untouched."""
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted)
+
+        getattr(manager, resolver)("not-in-the-curated-registry")
+
+        assert consulted == ["not-in-the-curated-registry"]
+
+    def test_a_curated_name_is_unaffected(self, tmp_path, monkeypatch):
+        """Declining changes no answer for a name the curated registry knows."""
+        robot_dir = _register_bot(tmp_path / "assets")
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted)
+
+        assert manager.resolve_model_path("unitbot", allow_download=False) == robot_dir / "unitbot.xml"
+        assert consulted == [], "a curated hit must not reach the fallback at all"
+
+    # -- premise ----------------------------------------------------------
+
+    def test_the_lookup_records_why_discovery_needs_permission(self):
+        """The reason is the helper's own, so the gate is not a new policy."""
+        doc = " ".join((manager._lookup.__doc__ or "").split())
+        assert "download-capable resolvers" in doc
+        assert "asset download" in doc
+
+    # -- second layer: the same question, of the real registry ------------
+
+    def test_a_really_discoverable_name_is_declined(self):
+        """Independent oracle: real registry data, no stand-in.
+
+        A name the curated registry does not carry but ``robot_descriptions``
+        can synthesize is exactly the population the stand-in models. Asserting
+        no description module is imported is the reviewer-suggested check, and
+        it holds against whatever the installed ``robot_descriptions`` ships.
+        """
+        pytest.importorskip("robot_descriptions")
+        import sys
+
+        from strands_robots.registry import get_robot
+        from strands_robots.registry.discovery import list_discoverable
+
+        candidates = [name for name in sorted(list_discoverable()) if get_robot(name) is None]
+        assert candidates, "no discoverable name is outside the curated registry to test with"
+
+        name = candidates[0]
+        before = {m for m in sys.modules if m.startswith("robot_descriptions")}
+        assert manager.resolve_model_path(name, allow_download=False) is None
+        new = {m for m in sys.modules if m.startswith("robot_descriptions")} - before
+        assert new == set(), f"declining {name!r} imported description modules: {sorted(new)}"
 
 
 class TestAutoDownloadUnavailable:
