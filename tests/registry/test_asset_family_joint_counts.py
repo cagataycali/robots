@@ -49,12 +49,19 @@ Two layers, because the oracle is not available everywhere:
   the real compiled models and asserts :data:`_ASSET_FAMILIES` still describes
   them. Without it the frozen table could drift into agreeing with a wrong
   registry, which is the failure a hand-maintained copy always has. It skips
-  where the assets are absent rather than downloading them.
+  where the assets are absent rather than downloading them, which is what
+  ``allow_download=False`` in :func:`_asset_signatures` buys: this walks the
+  whole registry, so the downloading resolver fetches every asset the machine
+  does not already have.
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
+import textwrap
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -96,9 +103,68 @@ def registry() -> dict[str, Any]:
     return dict(data.get("robots", data))
 
 
+@pytest.fixture
+def host_asset_cache(monkeypatch: Any) -> None:
+    """Let the re-derivation read the machine's real asset cache.
+
+    ``tests/registry/conftest.py`` repoints ``STRANDS_ASSETS_DIR`` at a per-test
+    temp dir, so a developer's user robots cannot leak into registry assertions.
+    That isolation is right for the registry reads it was written for, and it
+    also empties the asset cache - the one input this class needs. Under it the
+    grouping is unconfirmable on every machine, and the resolver's downloading
+    default hid that by fetching the whole corpus into the temp dir instead of
+    reporting that there was nothing to read.
+
+    Restoring the host value for this class alone gives the two honest outcomes
+    the class documents: confirm the table where the assets are present, skip
+    where they are not.
+    """
+    monkeypatch.delenv("STRANDS_ASSETS_DIR", raising=False)
+
+
 def _graded_families() -> tuple[tuple[str, ...], ...]:
     """The families this file requires to agree."""
     return tuple(f for f in _ASSET_FAMILIES if f not in _UNRESOLVED_FAMILIES)
+
+
+def _asset_signatures(names: Iterable[str]) -> dict[str, tuple[Any, ...]]:
+    """Compile each asset already on disk and read its joint/actuator signature.
+
+    ``allow_download=False`` is load-bearing rather than a speed-up. This walks
+    the whole registry, and the resolver downloads any asset it cannot find, so
+    the default fetches every entry a machine does not already have - 63 of the
+    72 on a fresh checkout. Declining is equivalent to a download that fails, so
+    it cannot change the grouping on a machine that has the assets, and leaves it
+    empty on one that does not.
+
+    Args:
+        names: Registry robot names to look for on disk.
+
+    Returns:
+        The signature of every named robot whose asset is present and compiles;
+        robots whose asset is absent or unloadable are simply left out.
+    """
+    mujoco = pytest.importorskip("mujoco")
+    from strands_robots.assets.manager import resolve_model_path
+
+    signatures: dict[str, tuple[Any, ...]] = {}
+    for name in names:
+        try:
+            path = resolve_model_path(name, allow_download=False)
+        except Exception:  # pragma: no cover - a resolver failure is not this test's subject
+            continue
+        if path is None or not Path(path).exists():
+            continue
+        try:
+            model = mujoco.MjModel.from_xml_path(str(path))
+        except Exception:  # pragma: no cover - an unloadable asset is not this test's subject
+            continue
+        signatures[name] = (
+            tuple(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, i) for i in range(model.njnt)),
+            tuple(int(model.jnt_type[i]) for i in range(model.njnt)),
+            tuple(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(model.nu)),
+        )
+    return signatures
 
 
 class TestTheFamilyTableIsUsable:
@@ -184,6 +250,7 @@ class TestEveryAssetFamilyAgrees:
 class TestTheFrozenFamiliesStillMatchTheAssets:
     """Keep :data:`_ASSET_FAMILIES` honest against the compiled models."""
 
+    @pytest.mark.usefixtures("host_asset_cache")
     def test_the_families_are_what_the_assets_say_they_are(self, registry: dict[str, Any]) -> None:
         """Re-derive the grouping; the frozen table must still describe it.
 
@@ -191,26 +258,7 @@ class TestTheFrozenFamiliesStillMatchTheAssets:
         members are not all loadable here cannot be confirmed or refuted, so it
         is neither.
         """
-        mujoco = pytest.importorskip("mujoco")
-        from strands_robots.assets.manager import resolve_model_path
-
-        signatures: dict[str, tuple[Any, ...]] = {}
-        for name in registry:
-            try:
-                path = resolve_model_path(name)
-            except Exception:  # pragma: no cover - a resolver failure is not this test's subject
-                continue
-            if path is None or not Path(path).exists():
-                continue
-            try:
-                model = mujoco.MjModel.from_xml_path(str(path))
-            except Exception:  # pragma: no cover - an unloadable asset is not this test's subject
-                continue
-            signatures[name] = (
-                tuple(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, i) for i in range(model.njnt)),
-                tuple(int(model.jnt_type[i]) for i in range(model.njnt)),
-                tuple(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(model.nu)),
-            )
+        signatures = _asset_signatures(registry)
 
         if len(signatures) < 2:
             pytest.skip("registry assets unavailable, so the grouping cannot be re-derived")
@@ -232,4 +280,81 @@ class TestTheFrozenFamiliesStillMatchTheAssets:
         assert not undeclared, (
             "the assets group these robots identically but no family declares them, "
             f"so their joint counts are ungraded: {undeclared}"
+        )
+
+
+class TestTheRederivationReadsDiskOnly:
+    """Re-deriving the grouping must not fetch an asset the machine lacks.
+
+    :func:`_asset_signatures` walks all 72 registry entries, and the resolver's
+    default is to download whatever it cannot find. That put a network fetch
+    behind 63 of those entries on a fresh checkout - the case where there is no
+    grouping to re-derive in the first place - and took this file past the 120s
+    ``pytest-timeout`` budget.
+
+    Both halves are needed. The behavioural cell reads the download hook, which
+    is also silent on a machine that happens to hold every asset already; the
+    structural cell pins the reason, so a passing run cannot be an accident of
+    what is on disk.
+    """
+
+    @staticmethod
+    def _download_attempts(names: Iterable[str], monkeypatch: Any) -> list[str]:
+        """Names the walk asked the download hook to fetch."""
+        from strands_robots.assets import manager
+
+        attempted: list[str] = []
+
+        def refuse(name: str, info: dict[str, Any]) -> bool:
+            attempted.append(name)
+            return False
+
+        monkeypatch.setattr(manager, "_auto_download_robot", refuse)
+        _asset_signatures(names)
+        return attempted
+
+    def test_no_download_when_the_cache_is_empty(self, registry: dict[str, Any], monkeypatch: Any) -> None:
+        """An empty cache is a skip, not a fetch of the whole corpus.
+
+        This is the state every machine is in under the conftest's asset
+        isolation, and the one a fresh checkout is in for real: no XML anywhere,
+        so the resolver's default reaches for the network 63 times.
+        """
+        pytest.importorskip("mujoco")
+        attempted = self._download_attempts(registry, monkeypatch)
+        assert not attempted, (
+            f"re-deriving the grouping with an empty cache tried to download {len(attempted)} "
+            f"assets (first few: {sorted(attempted)[:6]}). There is no grouping to confirm "
+            "here, so it must skip - pass allow_download=False to resolve_model_path."
+        )
+
+    @pytest.mark.usefixtures("host_asset_cache")
+    def test_no_download_when_the_cache_is_partial(self, registry: dict[str, Any], monkeypatch: Any) -> None:
+        """A cached XML whose meshes are missing is the second fetch trigger.
+
+        Distinct from the empty case: ``is_robot_asset_present`` is true for
+        these, so guarding on presence alone still lets the resolver fetch -
+        including for members of a graded family.
+        """
+        pytest.importorskip("mujoco")
+        attempted = self._download_attempts(registry, monkeypatch)
+        assert not attempted, (
+            f"re-deriving the grouping against the host cache tried to download "
+            f"{len(attempted)} assets (first few: {sorted(attempted)[:6]}); a mesh-less "
+            "cached XML must be left to the caller, not fetched from a test."
+        )
+
+    def test_the_walk_asks_the_resolver_not_to_fetch(self) -> None:
+        """Non-vacuity: the zero above is a refusal, not an absence of work."""
+        tree = ast.parse(textwrap.dedent(inspect.getsource(_asset_signatures)))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "resolve_model_path"
+        ]
+        assert len(calls) == 1, f"expected exactly one resolve_model_path call, found {len(calls)}"
+        declined = {kw.arg: kw.value for kw in calls[0].keywords}.get("allow_download")
+        assert isinstance(declined, ast.Constant) and declined.value is False, (
+            "the registry walk must pass allow_download=False; without it the resolver "
+            "downloads every asset this machine does not have"
         )

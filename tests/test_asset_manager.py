@@ -149,6 +149,29 @@ class TestListAvailableRobots:
         assert listed["unitbot"]["path"] is None
 
 
+class TestListingInstalledAssetsNeverFetches:
+    """A status listing reports what is here; it does not go and get the rest.
+
+    :func:`list_available_robots` gated the resolver on
+    :func:`is_robot_asset_present`, which stops it reaching for an absent XML but
+    not for a cached XML whose meshes are missing - that passes the presence check
+    and was fetched, once per such robot, every time the listing was built.
+    """
+
+    def test_a_mesh_less_cached_asset_is_listed_without_being_fetched(self, tmp_path, monkeypatch):
+        """The row still reports the path; nothing is downloaded to produce it."""
+        robot_dir = _register_bot(tmp_path / "assets")  # XML present, no meshes
+        assert manager.is_robot_asset_present("unitbot") is True, "presence alone would not gate this"
+
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", lambda n, _i: attempts.append(n) or True)
+
+        rows = {r["name"]: r for r in manager.list_available_robots()}
+        assert attempts == [], f"building the listing downloaded {attempts}"
+        assert rows["unitbot"]["available"] is True
+        assert rows["unitbot"]["path"] == str(robot_dir / "unitbot.xml")
+
+
 class TestPathTraversalProtection:
     """Registry-sourced path components must never escape the search dirs."""
 
@@ -248,6 +271,85 @@ class TestAutoDownloadFallback:
         _invalidate_cache()
         monkeypatch.setattr(manager, "_auto_download_robot", lambda _n, _i: False)
         assert manager.resolve_model_path("unitbot") is None
+
+
+class TestDownloadCanBeDeclined:
+    """``allow_download=False`` resolves from disk and never reaches the network.
+
+    The downloading default is right for a caller about to load the model: a path
+    whose meshes are absent is useless to MuJoCo, so fetching them is the helpful
+    thing. It is wrong for a caller that *reports* on assets rather than loading
+    them - there it turns a read of what is on disk into a fetch of what is not,
+    once per robot.
+
+    Declining is defined as exactly a download that fails, so it cannot change
+    the answer for an asset already present. Both triggers are covered, because
+    guarding on :func:`is_robot_asset_present` alone stops only the first:
+    a cached XML whose meshes are missing passes that check and still fetches.
+    """
+
+    @staticmethod
+    def _recording_downloader(attempts: list[str]):
+        """A downloader that reports success without touching the network."""
+
+        def download(name: str, _info: dict) -> bool:
+            attempts.append(name)
+            return True
+
+        return download
+
+    def test_absent_xml_reports_a_miss_without_attempting(self, tmp_path, monkeypatch):
+        """First trigger: no XML anywhere. Declining gives the same None."""
+        robot_dir = _register_bot(tmp_path / "assets")
+        (robot_dir / "unitbot.xml").unlink()
+        _invalidate_cache()
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
+
+        assert manager.resolve_model_path("unitbot", allow_download=False) is None
+        assert attempts == []
+
+    def test_missing_meshes_return_the_xml_without_attempting(self, tmp_path, monkeypatch):
+        """Second trigger: XML present, meshes absent. Declining keeps the XML."""
+        robot_dir = _register_bot(tmp_path / "assets")  # registered with no meshes
+        assert manager.is_robot_asset_present("unitbot") is True, "presence alone would not gate this"
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
+
+        assert manager.resolve_model_path("unitbot", allow_download=False) == robot_dir / "unitbot.xml"
+        assert attempts == []
+
+    def test_the_downloading_default_is_unchanged(self, tmp_path, monkeypatch):
+        """Over-reach control: adding the knob must not stop the default fetching."""
+        _register_bot(tmp_path / "assets")  # no meshes -> the default reaches for them
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
+
+        manager.resolve_model_path("unitbot")
+        assert attempts == ["unitbot"], "the default must still attempt a download"
+
+    @pytest.mark.parametrize("delete_xml", [True, False], ids=["absent-xml", "missing-meshes"])
+    def test_declining_matches_a_download_that_fails(self, tmp_path, monkeypatch, delete_xml):
+        """The documented equivalence, on both triggers.
+
+        This is what makes the knob safe to add to a resolver 46 call sites
+        already use: it introduces no third outcome.
+        """
+        robot_dir = _register_bot(tmp_path / "assets")
+        if delete_xml:
+            (robot_dir / "unitbot.xml").unlink()
+            _invalidate_cache()
+
+        monkeypatch.setattr(manager, "_auto_download_robot", lambda _n, _i: False)
+        failed_download = manager.resolve_model_path("unitbot")
+        manager._MESH_CACHE.clear()
+
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
+        declined = manager.resolve_model_path("unitbot", allow_download=False)
+
+        assert declined == failed_download
+        assert attempts == []
 
 
 class TestAutoDownloadUnavailable:
