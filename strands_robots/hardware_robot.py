@@ -39,7 +39,7 @@ from strands.types.tools import ToolResult, ToolSpec, ToolUse
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
-from strands_robots.teleop_mixin import TeleopMixin
+from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.utils import (
     boolean_flag_error,
     dds_domain_id_error,
@@ -2681,7 +2681,10 @@ class Robot(TeleopMixin, AgentTool):
 
         Terminal: this latches a shutdown, releases the task executor, tears
         down the mesh and ROS bridges, and disconnects the robot -- the motors
-        bus and every camera -- so no device node stays held. There is no
+        bus and every camera -- so no device node stays held. The one exception
+        is a teleop loop that did not join: the devices are left open rather
+        than closed under a live writer, and the reason is recorded at ERROR
+        with the remedy. There is no
         ``restart``, so
         ``run_policy`` / ``start_task`` / the ``execute`` action refuse
         permanently afterwards rather than admit a rollout that would command
@@ -2696,9 +2699,15 @@ class Robot(TeleopMixin, AgentTool):
             # Stop any local teleoperation loop + disconnect attached devices
             # (TeleopMixin). Best-effort: a teleop teardown failure must not
             # block the rest of hardware cleanup.
+            # ``stop_teleoperate`` reports whether the loop actually joined, and
+            # the devices must not be closed under one that did not - see the
+            # ``_disconnect_devices`` call below. A raise leaves the outcome
+            # unknown and keeps the pre-existing warn-and-continue contract:
+            # only a positive report of a live loop defers the close.
+            teleop_stopped = True
             if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
                 try:
-                    self.stop_teleoperate()
+                    teleop_stopped = _stop_reported_stopped(self.stop_teleoperate())
                 except Exception as teleop_exc:  # noqa: BLE001
                     logger.warning(
                         "%s: stop_teleoperate() raised during cleanup: %s",
@@ -2737,7 +2746,25 @@ class Robot(TeleopMixin, AgentTool):
             # task executor, the mesh and the ROS bridge have stopped can be
             # re-opened behind this teardown -- and would then stay open for
             # the life of the process, since nothing runs after ``cleanup()``.
-            self._disconnect_devices()
+            #
+            # The teleop loop is the one command source whose shutdown is not
+            # guaranteed by the ordering: its leader's ``get_action()`` can
+            # block past the join budget, which is why ``stop_teleoperate``
+            # reports the outcome instead of assuming it. Closing under a live
+            # one is worse than deferring on both counts -- the loop's next
+            # write re-opens the port through ``send_action``'s lazy connect, so
+            # the release does not hold, and that write lands *after* the
+            # driver's ``disconnect()`` disabled torque, leaving the arm
+            # energised at a fresh command. ``G1Driver.cleanup`` declines the
+            # same teardown for the same reason.
+            if teleop_stopped:
+                self._disconnect_devices()
+            else:
+                logger.error(
+                    "%s: devices left open because the teleop loop did not stop; "
+                    "call stop_teleoperate() to re-join it, then cleanup() again",
+                    self.tool_name_str,
+                )
 
             logger.info(f"{self.tool_name_str} cleanup completed")
 

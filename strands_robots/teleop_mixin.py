@@ -998,6 +998,32 @@ class TeleopMixin:
         }
 
 
+def _stop_reported_stopped(envelope: dict[str, Any]) -> bool:
+    """Read whether a :meth:`TeleopMixin.stop_teleoperate` envelope stopped the loop.
+
+    The flag is ``stopped`` in the envelope's ``json`` block, which
+    :meth:`TeleopMixin._teleop_stats` always carries and the failed-join branch
+    sets to ``False``. Read that key rather than ``status``: the status is
+    derived from the session counters, so a session whose every frame errored
+    reports ``"error"`` after a perfectly clean join, and a caller keying on it
+    would read a healthy teardown as a live loop.
+
+    Args:
+        envelope: The envelope ``stop_teleoperate`` returned.
+
+    Returns:
+        ``True`` when the loop is known to have stopped, which includes the
+        "no active teleoperation" envelope that carries no ``json`` block at
+        all - there was nothing to stop. ``False`` only when the envelope
+        positively reports a loop that outlasted its join budget.
+    """
+    for block in envelope.get("content", []):
+        payload = block.get("json")
+        if isinstance(payload, dict) and "stopped" in payload:
+            return bool(payload["stopped"])
+    return True
+
+
 def _infer_method(teleop_type: str) -> str:
     """Map a teleoperator type string to an input-method label."""
     t = teleop_type.lower()
