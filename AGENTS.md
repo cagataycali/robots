@@ -2228,6 +2228,24 @@ Corrections from code review that apply to all future contributions:
   merge. Identical construct, opposite consequence, separated only by having
   arrived on a branch - and two rounds were spent arguing the idiom rather than
   applying the second bullet. See #1919.
+- **`py/log-injection`'s axis is the line break at interpolation time, not where
+  the value sits in the record.** Two edits look like they clear it and do not.
+  Moving the payload from `LogRecord.msg` into `args` behind a literal `%s` is
+  better logging practice on its own merits - a payload containing `%s` cannot
+  re-enter interpolation - but the break survives interpolation either way, and
+  #2852 measured the cost of assuming otherwise: `Analyze (Python)` re-opened the
+  alert at the rewritten line under a new id, so a merge-gating review thread came
+  back with it and the branch was closed rather than argued. Rendering through
+  `%r` *does* neutralize the break, and three sinks already did, which is why a
+  census of the class has to be read sink by sink: of the eight #2853 counted,
+  three could forge a record and five could not. The five were safe by the shape
+  the value arrived in - inside a list, whose `repr` escapes a `str` element, or
+  after `tolist()` - never by anything at the sink, so a container holding one
+  object with a multi-line `__repr__` walks straight through. Escape at the sink
+  (`strands_robots.policies._log_safety.sanitize_log_value`), grade the property
+  that a record cannot split rather than the record's field layout, and keep the
+  escape to `\r` and `\n`: these messages are read by a human diagnosing a
+  binding, and a broader filter corrupts the diagnosis they exist for.
 - **Dependency Review hard-fails on high/critical CVEs in new deps.** If a PR
   needs a dep with a known critical CVE, the conversation is "do we need this
   dep" not "let's bypass the check."

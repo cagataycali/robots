@@ -70,6 +70,7 @@ import math
 import re
 from typing import Any
 
+from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies.base import Policy, chunk_count_error
 from strands_robots.utils import name_list_error, require_optional
 
@@ -786,10 +787,13 @@ class CuroboPolicy(Policy):
             self._motion_planner, "update_world", None
         )
         if update_fn is None:
+            shown = sorted(world_update.keys()) if isinstance(world_update, dict) else world_update
             logger.warning(
                 "CuroboPolicy: motion_planner exposes neither update_scene() "
-                "nor update_world(); world_update=%r ignored",
-                sorted(world_update.keys()) if isinstance(world_update, dict) else world_update,
+                "nor update_world(); world_update=%s ignored",
+                # %s over the sanitized repr renders what %r rendered, with the
+                # observation-derived key names' line breaks escaped.
+                sanitize_log_value(repr(shown)),
             )
             return
         update_fn(world_update)
@@ -991,10 +995,10 @@ class CuroboPolicy(Policy):
             return [float(x) for x in state]
         except (TypeError, ValueError) as e:
             logger.warning(
-                "CuroboPolicy: failed to extract joint_state from observation.state=%r (%s); "
+                "CuroboPolicy: failed to extract joint_state from observation.state=%s (%s); "
                 "letting planner use its own retract configuration",
-                state,
-                e,
+                sanitize_log_value(repr(state)),
+                sanitize_log_value(e),
             )
             return None
 

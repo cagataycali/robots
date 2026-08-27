@@ -40,6 +40,7 @@ import math
 import os
 from typing import Any
 
+from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies.base import Policy
 from strands_robots.utils import name_list_error, tcp_port_error
 
@@ -325,10 +326,10 @@ class MoveIt2Policy(Policy):
             return [float(x) for x in state]
         except (TypeError, ValueError) as e:
             logger.warning(
-                "MoveIt2Policy: failed to extract joint_state from observation.state=%r (%s); "
+                "MoveIt2Policy: failed to extract joint_state from observation.state=%s (%s); "
                 "letting sidecar use its own state estimate",
-                state,
-                e,
+                sanitize_log_value(repr(state)),
+                sanitize_log_value(e),
             )
             return None
 

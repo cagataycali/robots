@@ -22,6 +22,7 @@ import torch
 
 from ...utils import name_list_error, positive_count_error
 from .. import Policy, align_action_values, chunk_count_error
+from .._log_safety import sanitize_log_value
 from .._state_keys import drop_velocity_siblings
 from .embodiment import (
     ZeroActionMonitor,
@@ -2458,7 +2459,7 @@ class LerobotLocalPolicy(Policy):
         # most once per policy so a long rollout is not spammed.
         self.generic_state_keys_used = True
         if not self._state_key_mismatch_warned:
-            logger.warning(msg)
+            logger.warning("%s", sanitize_log_value(msg))
             self._state_key_mismatch_warned = True
         return drop_velocity_siblings(scalar_keys)
 
@@ -2531,7 +2532,7 @@ class LerobotLocalPolicy(Policy):
                 raise ValueError("strict_keys=True: " + msg)
             self.missing_state_keys_used = True
             if not self._state_missing_keys_warned:
-                logger.warning(msg)
+                logger.warning("%s", sanitize_log_value(msg))
                 self._state_missing_keys_warned = True
         return values
 
@@ -2624,8 +2625,8 @@ class LerobotLocalPolicy(Policy):
                 "routing positionally to '%s'. The frame may feed the wrong model "
                 "input - pass camera_key_map to bind cameras explicitly (or "
                 "strict_keys=True to make this an error).",
-                k,
-                feat,
+                sanitize_log_value(k),
+                sanitize_log_value(feat),
             )
             out[feat] = v
             used_feats.add(feat)
@@ -2712,7 +2713,11 @@ class LerobotLocalPolicy(Policy):
                 batch["observation.language.tokens"] = tokens
                 if mask is not None:
                     batch["observation.language.attention_mask"] = mask
-                logger.debug("VLA tokenized instruction: '%s...' -> %s tokens", instruction[:50], tokens.shape)
+                logger.debug(
+                    "VLA tokenized instruction: '%s...' -> %s tokens",
+                    sanitize_log_value(instruction[:50]),
+                    tokens.shape,
+                )
 
         # Fill task key for models that read it directly from the batch
         # (e.g. some VLA models read "task" or "observation.task" from the
@@ -2911,8 +2916,8 @@ class LerobotLocalPolicy(Policy):
                 "Camera '%s' does not match any declared policy image key by name; "
                 "routing positionally to '%s'. Pass camera_key_map to bind cameras "
                 "explicitly and silence this warning.",
-                cam,
-                feat,
+                sanitize_log_value(cam),
+                sanitize_log_value(feat),
             )
             result[cam] = feat
             used.add(feat)
