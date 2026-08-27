@@ -53,9 +53,13 @@ from config:
 
 ## Providers
 
-Every row below is a registered provider (`create_policy("<name>")`). The table
-is kept in sync with `list_providers()` by a regression test
-(`tests/test_docs_policy_coverage.py`), so it can never silently drift.
+Every row below is a registered provider (`create_policy("<name>")`). The
+provider column is kept in sync with `list_providers()` by a regression test
+(`tests/test_docs_policy_coverage.py`), and the install-extra column with
+`[project.optional-dependencies]` by `tests/test_dependency_audit.py`,
+so neither can silently drift. VERA is the one provider with no extra to name:
+its client needs only core deps plus the git-installed `vera` package, so
+[its page](vera.md) carries the install rather than a bracket.
 
 | Provider | Class | Install extra | When to use |
 |----------|-------|---------------|-------------|
@@ -64,7 +68,7 @@ is kept in sync with `list_providers()` by a regression test
 | [`lerobot_local`](lerobot-local.md) | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, MolmoAct2, ...) |
 | [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
 | [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
-| [`vera`](vera.md) | `VeraPolicy` | `vera` | MIT VERA video-to-action (DFoT/WAN planner + Jacobian IDM) over a containerized GPU server |
+| [`vera`](vera.md) | `VeraPolicy` | _(none - git-only)_ | MIT VERA video-to-action (DFoT/WAN planner + Jacobian IDM) over a containerized GPU server |
 | [`remote`](remote.md) | `RemotePolicy` | `inference` | Offload a large policy to a GPU box: forward observations to a remote `PolicyServer` over WebSocket, get back action chunks. Edge-device inference |
 | [`curobo`](curobo.md) | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware motion planning, in-process CUDA (non-VLA) |
 | [`moveit2`](moveit2.md) | `MoveIt2Policy` | `moveit2` | MoveIt2 motion planning over a ROS 2 sidecar (ZMQ), no in-venv ROS 2 deps (non-VLA) |
