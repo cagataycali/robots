@@ -141,8 +141,13 @@ class TeleopMixin:
         if apply_fn is None and robot_name is not None:
             # Sim host with an explicit target arm: bind robot_name so the
             # receiver's send_action lands on the right robot in the world.
-            def apply_fn(host: Any, action: dict[str, float], _rn: str | None = robot_name) -> None:  # noqa: ANN401
-                host.send_action(action, robot_name=_rn)
+            def apply_fn(host: Any, action: dict[str, float], _rn: str | None = robot_name) -> Any:  # noqa: ANN401
+                # Returned rather than dropped: a sim host answers an action key
+                # it cannot resolve to an actuator with an error envelope, and
+                # ``InputReceiver._on_input`` counts that the way this host's own
+                # teleop loop counts it. Dropping it here reported every refused
+                # frame as applied.
+                return host.send_action(action, robot_name=_rn)
 
         if not hasattr(self, "_input_receivers"):
             self._input_receivers: dict[str, Any] = {}

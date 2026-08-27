@@ -309,7 +309,13 @@ class TestReceiverBehavior:
         assert recv._running is False
         assert recv._sub_name is None
 
-    def test_apply_error_counted_not_raised(self):
+    def test_a_raising_apply_is_counted_not_raised(self):
+        """The apply that *raises*. Its sibling shape - a host that refuses the
+        command in an error envelope - is graded by
+        ``test_input_receive_counts_a_host_refusal.py``; the two together are
+        what ``errors`` counts.
+        """
+
         def _boom(robot, action):
             raise RuntimeError("servo bus offline")
 

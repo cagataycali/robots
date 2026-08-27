@@ -138,6 +138,30 @@ def _input_audit_every() -> int:
     return val if val > 0 else 0
 
 
+def _refusal_text(envelope: dict[str, Any]) -> str:
+    """Read the human-readable reason out of a host's error envelope.
+
+    Reads every text block rather than indexing the first, because the shape is
+    the host's choice: a ``content`` list that is empty, or whose leading block
+    carries ``json`` instead of ``text``, must not turn a log line about a
+    refused frame into an exception on the apply path -- that would be counted a
+    second time, as the raising failure it is not.
+
+    Args:
+        envelope: A tool-result envelope whose ``status`` is ``"error"``.
+
+    Returns:
+        The joined text blocks, or ``"no reason given"`` when the envelope
+        carries none.
+    """
+    texts = [
+        block["text"]
+        for block in envelope.get("content", [])
+        if isinstance(block, dict) and isinstance(block.get("text"), str) and block["text"]
+    ]
+    return "; ".join(texts) if texts else "no reason given"
+
+
 class InputPublisher:
     """Publishes teleoperator actions to the mesh at a fixed rate.
 
@@ -434,7 +458,7 @@ class InputReceiver:
         robot: Any,
         source_peer_id: str,
         device_name: str = "leader",
-        apply_fn: Callable[[Any, dict[str, float]], None] | None = None,
+        apply_fn: Callable[[Any, dict[str, float]], Any] | None = None,
     ) -> None:
         self.mesh = mesh
         self.robot = robot
@@ -494,6 +518,17 @@ class InputReceiver:
         and ``slew_rejected`` frames (refused for commanding a joint faster
         than the per-joint slew bound) -
         plus the achieved ``hz_actual``.
+
+        ``errors`` counts a frame the *host* did not apply, in either shape it
+        reports one: an exception out of the apply, and an error envelope
+        returned from it (a hardware follower converts the former into the
+        latter by design, and a simulation follower answers that way for an
+        action key it cannot resolve). Such a frame is still counted in
+        ``frames_received`` - it was delivered and attempted - so a follower
+        that refuses everything reads as ``errors == frames_received``, the same
+        signature the local teleop loop reports. That is distinct from a
+        ``rejected`` frame, which a guard on *this* side refused and never
+        applied.
 
         ``rejected`` is the total of a breakdown that names which guard refused
         the frame, so a report does not have to recover the reason from the
@@ -734,9 +769,38 @@ class InputReceiver:
                         slew_reason,
                     )
                 return
-            self._apply_fn(self.robot, safe_action)
+            apply_result = self._apply_fn(self.robot, safe_action)
             self._last_applied = merge_slew_baseline(self._last_applied, safe_action, apply_mono)
             self._frame_count += 1
+            # A host that refuses the command says so in its own envelope
+            # instead of raising, so reading only ``except`` counted the one
+            # failure shape a host does not produce.
+            # ``HardwareRobot.send_action`` catches every exception and returns
+            # ``{"status": "error"}`` -- its docstring gives the reason, "so the
+            # teleop loop can count errors without exceptions tearing down the
+            # hot loop" -- and a simulation host answers the same way for an
+            # action key it cannot resolve to an actuator, or for a robot name
+            # that is not in the world. Both were counted as applied frames: a
+            # stream whose every frame the follower refused reported the same
+            # ``frames_received`` and the same ``errors`` as a healthy one.
+            #
+            # Counted the way the local loop counts it -- ``errors`` and
+            # ``frames_received`` both advance -- so the two paths report one
+            # leader frame identically whether it reaches the follower over the
+            # network or on this host. That is the "soft" signature
+            # ``TeleopMixin._teleop_stats`` names, and it is what makes a
+            # follower refusing every frame read as ``errors ==
+            # frames_received`` rather than as a clean session. The log budget
+            # is the one the raising path below spends, because both spend it
+            # from the same counter.
+            if isinstance(apply_result, dict) and apply_result.get("status") == "error":
+                self._error_count += 1
+                if self._error_count <= 5:
+                    logger.warning(
+                        "[mesh] input apply refused by the host from %s: %s",
+                        self.source_peer_id,
+                        _refusal_text(apply_result),
+                    )
             # M-5: sampled positive audit of the live teleop stream so a
             # successful remote actuation is not invisible to forensics.
             _audit_every = _input_audit_every()
@@ -759,12 +823,23 @@ class InputReceiver:
                 logger.warning("[mesh] input apply error: %s", exc)
 
     @staticmethod
-    def _default_apply(robot: Any, action: dict[str, float]) -> None:
-        """Default: calls robot.send_action() under the device's bus lock."""
+    def _default_apply(robot: Any, action: dict[str, float]) -> Any:
+        """Default: calls robot.send_action() under the device's bus lock.
+
+        Returns:
+            Whatever the driver's ``send_action`` returned, so
+            :meth:`_on_input` can count a host that refuses the command in an
+            envelope rather than by raising.
+            :func:`~strands_robots.bus_access.write_action` already carries that
+            verdict out ("Returns: Whatever the driver's ``send_action()``
+            returns"); dropping it here is what made it unreadable. ``None``
+            when the robot exposes no ``send_action`` at all.
+        """
         # The same lock the readers take: a write that interleaves with a
         # sync-read corrupts both halves of the exchange, and teleop moving an
         # arm while a probe reads its position is the common case.
         if hasattr(robot, "send_action"):
-            write_action(robot, action)
-        elif hasattr(robot, "robot") and hasattr(robot.robot, "send_action"):
-            write_action(robot.robot, action)
+            return write_action(robot, action)
+        if hasattr(robot, "robot") and hasattr(robot.robot, "send_action"):
+            return write_action(robot.robot, action)
+        return None
