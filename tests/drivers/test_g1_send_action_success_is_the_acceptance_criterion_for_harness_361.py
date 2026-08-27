@@ -117,7 +117,10 @@ def _healthy_driver() -> G1Driver:
     driver._connected = True
     driver._mode_machine = _HEALTHY_MODE_MACHINE
     driver._battery = dict(_HEALTHY_PACK)
-    driver._pubs = _RecordingPublisher()
+    # ``_pubs`` is typed ``DDSPublisher | None`` on the driver; the stand-in
+    # matches the .publish() shape send_action reads, which is the only
+    # surface this test needs.  Cast is narrower than a blanket ignore.
+    driver._pubs = _RecordingPublisher()  # type: ignore[assignment]
     return driver
 
 
