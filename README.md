@@ -1171,6 +1171,7 @@ touches ROS 2.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `STRANDS_MESH_BACKEND` | Mesh transport: `zenoh` (LAN), `iot` (AWS IoT Core), or `bridge` (both - Zenoh locally, IoT for the bridged topics). Case and surrounding whitespace are ignored. This selects the transport; the `[mesh-iot]` extra only installs the dependency `iot`/`bridge` need, so installing it without setting this leaves the fleet on Zenoh. An unrecognized value falls back to the default and is logged once, naming the valid values | `zenoh` |
 | `STRANDS_MESH_AUTH_MODE` | Wire auth: `mtls` or `none` (`none` needs a second factor) | `mtls` |
 | `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | Second factor required to bring up `AUTH_MODE=none` | unset |
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |

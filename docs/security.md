@@ -78,7 +78,7 @@ mTLS alone is not sufficient - pair it with an access-control list:
 
 ### Cross-network fleets (AWS IoT Core)
 
-Adding the `[mesh-iot]` extra routes traffic through AWS IoT Core (MQTT5 with mTLS), and a `BridgeTransport` keeps high-rate topics local while bridging presence, health, and safety to the cloud. When you use this path, the IoT device certificates and provisioning material become production secrets - provision them per-device, scope their IoT policies to the minimum topic set, and rotate/revoke them like any other fleet credential.
+Two steps route traffic through AWS IoT Core (MQTT5 with mTLS): the `[mesh-iot]` extra installs the dependency, and `STRANDS_MESH_BACKEND=iot` selects the transport. The extra alone changes nothing - the fleet stays on Zenoh - so set both. `STRANDS_MESH_BACKEND=bridge` selects a `BridgeTransport` instead, which keeps high-rate topics local while bridging presence, health, and safety to the cloud. When you use this path, the IoT device certificates and provisioning material become production secrets - provision them per-device, scope their IoT policies to the minimum topic set, and rotate/revoke them like any other fleet credential.
 
 Reference: `strands_robots.mesh.session`, `strands_robots.mesh._acl_config`, `strands_robots.mesh.transport.iot_transport`.
 
