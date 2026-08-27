@@ -48,5 +48,9 @@ all. The rendered text is identical either way -- and order-independent, since
 neither escape contains a raw break, so the two replacements cannot overlap -- but
 `"\r"` alone is not in that literal set, so `"\n"` goes last and the value leaving
 the helper is the result of the call the barrier recognises. A cell asserts the
-first arguments are literals, so tidying the function back into a loop fails
-rather than silently restoring the report.
+first arguments are literals, reading them off the *returned* expression rather
+than the function body, because a `.replace` whose result is discarded escapes
+nothing the caller receives -- so tidying the function back into a loop fails
+rather than silently restoring the report. That the rendered text is unchanged is
+held exhaustively over every string up to four characters drawn from `\r`, `\n`, a
+backslash and a letter, compared against the table loop the chain replaced.
