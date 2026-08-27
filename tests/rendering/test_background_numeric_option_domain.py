@@ -94,7 +94,7 @@ def _scalar_numeric_params(cls: type) -> list[tuple[str, str]]:
     Derived from the annotation rather than a hardcoded list, so a background
     that grows a tenth number is held to the same rule the hour it lands.
     """
-    tree = ast.parse(textwrap.dedent(inspect.getsource(cls.__init__)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(cls, "__init__"))))
     fn = tree.body[0]
     assert isinstance(fn, ast.FunctionDef)
     found: list[tuple[str, str]] = []
@@ -118,7 +118,7 @@ def _guarded_params(cls: type) -> set[str]:
     checked. The context argument is not a parameter name, so it is read from
     its own position and never swept in as one.
     """
-    tree = ast.parse(textwrap.dedent(inspect.getsource(cls.__init__)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(cls, "__init__"))))
     fn = tree.body[0]
     assert isinstance(fn, ast.FunctionDef)
     guarded: set[str] = set()
@@ -301,5 +301,6 @@ class TestThePremisesTheseTestsRestOn:
         rng = np.random.default_rng(7)
         means = rng.normal(size=(400, 3)) * np.array([2.0, 2.0, 0.7])
         assert np.isfinite(_fit_skybox_transform(means)).all()
-        poisoned = _fit_skybox_transform(means, **{param: float("nan")})
+        override: dict[str, Any] = {param: float("nan")}
+        poisoned = _fit_skybox_transform(means, **override)
         assert not np.isfinite(poisoned).all()

@@ -446,7 +446,7 @@ class GsplatBackground:
         # truth value is not a length, an angle or a fraction. Signed because a
         # yaw, a floor height and an up-sign are all legitimately negative; the
         # domain constrains finiteness only, so no bound is imposed here.
-        for _param, _value in (
+        for _number_param, _number in (
             ("backdrop_radius", backdrop_radius),
             ("yaw_deg", yaw_deg),
             ("radius", radius),
@@ -454,13 +454,13 @@ class GsplatBackground:
             ("min_opacity", min_opacity),
             ("floor_pct", floor_pct),
         ):
-            if text := finite_number_error(_value, _param, "GsplatBackground"):
+            if text := finite_number_error(_number, _number_param, "GsplatBackground"):
                 raise ValueError(text)
         # ``up_sign`` (``None`` = auto-detect from PCA) and ``clip_below``
         # (``None`` = drop nothing) carry a sentinel, so the domain applies to
         # the supplied number and the sentinel passes through untouched.
-        for _param, _value in (("up_sign", up_sign), ("clip_below", clip_below)):
-            if _value is not None and (text := finite_number_error(_value, _param, "GsplatBackground")):
+        for _opt_param, _opt in (("up_sign", up_sign), ("clip_below", clip_below)):
+            if _opt is not None and (text := finite_number_error(_opt, _opt_param, "GsplatBackground")):
                 raise ValueError(text)
         self._device = device
         self._explicit_transform = transform is not None
