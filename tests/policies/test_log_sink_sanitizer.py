@@ -54,6 +54,7 @@ Hence the grading here is split in three, and each cell says which kind it is:
 from __future__ import annotations
 
 import ast
+import itertools
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -155,40 +156,104 @@ def test_a_payload_that_already_reads_as_an_escape_is_left_alone() -> None:
     assert sanitize_log_value(already) == already
 
 
-def test_the_escape_is_written_as_a_literal_replace_call() -> None:
-    r"""The break characters are passed as literals, not read from a table.
+# The two spellings ``py/log-injection`` accepts as the first argument of the
+# ``.replace`` call it treats as a barrier. Stated here rather than read from the
+# module under test so these cells are an independent oracle for the rule's own
+# condition, which is:
+#
+#     this.getFunction().(DataFlow::AttrRead).getAttributeName() = "replace" and
+#     this.getArg(0).asExpr().(StringLiteral).getText() in ["\r\n", "\n"]
+_BARRIER_FIRST_ARGUMENTS = frozenset({"\r\n", "\n"})
 
-        Helper contract. Two spellings escape the break identically and only one of
-        them is recognised as a barrier by the scanner that reports these sinks:
-        ``py/log-injection``'s ``ReplaceLineBreaksSanitizer`` holds for a ``.replace``
-        call whose first argument is a *string literal* equal to ``"
-    "`` or
-        ``"
-    "``, so a loop over a table of pairs closes the defect while reading as
-        no barrier at all. That is not a property a reader can see from the rendered
-        output, which is why it is asserted here rather than left to the next person
-        who tidies the function into a loop.
+
+def _returned_replace_chain() -> list[ast.Call]:
+    """Return the ``.replace`` calls the escape's returned expression is built from.
+
+    Outermost first, walking inward through each receiver, and empty when the
+    escape does not return such a chain at all - which is the shape a loop leaves
+    behind, the returned name carrying text no call on the path produced. Anchored
+    on the ``return`` rather than on the function body because a ``.replace`` whose
+    result is discarded escapes nothing the caller receives.
     """
     module = ast.parse(Path(log_safety.__file__).read_text(encoding="utf-8"))
     function = next(
         node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "sanitize_log_value"
     )
-    literals = {
-        node.args[0].value
-        for node in ast.walk(function)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "replace"
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-        and isinstance(node.args[0].value, str)
-    }
-    recognised = literals & {"\r\n", "\n"}
-    assert recognised, (
-        "no .replace() call in sanitize_log_value passes a literal '\\r\\n' or "
-        f"'\\n' as its first argument, so the escape is not the barrier the "
-        f"scanner recognises; first arguments found: {sorted(literals)!r}"
+    returns = [node for node in ast.walk(function) if isinstance(node, ast.Return)]
+    assert len(returns) == 1, "sanitize_log_value returns from exactly one place"
+    chain: list[ast.Call] = []
+    node: ast.expr | None = returns[0].value
+    while isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "replace":
+        chain.append(node)
+        node = node.func.value
+    return chain
+
+
+def _literal_first_argument(call: ast.Call) -> str | None:
+    """Return the call's first argument when it is a string literal, else ``None``."""
+    if not call.args:
+        return None
+    first = call.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    return None
+
+
+def test_the_escape_is_written_as_a_literal_replace_call() -> None:
+    r"""The break characters are passed as literals, not read from a table.
+
+    Helper contract. Two spellings escape the break identically and only one of
+    them is recognised as a barrier by the scanner that reports these sinks:
+    ``py/log-injection``'s ``ReplaceLineBreaksSanitizer`` holds for a ``.replace``
+    call whose first argument is a *string literal* equal to ``"\r\n"`` or ``"\n"``,
+    so a loop over a table of pairs closes the defect while reading as no barrier
+    at all. That is not a property a reader can see from the rendered output, which
+    is why it is asserted here rather than left to the next person who tidies the
+    function into a loop.
+    """
+    chain = _returned_replace_chain()
+    assert chain, "the escape must return a chain of .replace calls, not a name a loop rebound"
+    literals = {_literal_first_argument(call) for call in chain}
+    assert None not in literals, (
+        "every .replace in the escape must name its break as a string literal: a spelling "
+        "read from a constant escapes the break just as well and is recognised as no barrier"
     )
+    assert literals & _BARRIER_FIRST_ARGUMENTS, (
+        f"the escape replaces {sorted(spelling for spelling in literals if spelling)!r}, none of "
+        f"which is one of the {sorted(_BARRIER_FIRST_ARGUMENTS)!r} the scanner recognises"
+    )
+
+
+def test_a_lone_carriage_return_is_not_one_of_the_barrier_spellings() -> None:
+    r"""Premise: the accepted set is those two spellings, and ``"\r"`` is not one.
+
+    Which is why the chain carries a link the barrier does not need. A payload can
+    arrive with a bare carriage return, and an escape covering only what the rule
+    reads would leave it on the wire.
+    """
+    assert _BARRIER_FIRST_ARGUMENTS == {"\r\n", "\n"}
+    assert "\r" not in _BARRIER_FIRST_ARGUMENTS
+
+
+@pytest.mark.parametrize("length", [0, 1, 2, 3, 4], ids=lambda n: f"len-{n}")
+def test_the_chain_renders_exactly_what_the_table_loop_rendered(length: int) -> None:
+    r"""Over-reach control: rewriting the escape's shape changed none of its output.
+
+    Exhaustive over every string of this length drawn from the two break
+    characters, a backslash and an ordinary letter - the alphabet that can tell the
+    two forms apart if anything can - compared against the table loop the chain
+    replaced.
+    """
+
+    def table_loop(text: str) -> str:
+        for raw, visible in (("\r", "\\r"), ("\n", "\\n")):
+            text = text.replace(raw, visible)
+        return text
+
+    for letters in itertools.product("\r\na\\", repeat=length):
+        payload = "".join(letters)
+        assert sanitize_log_value(payload) == table_loop(payload), repr(payload)
+        assert not _has_raw_break(sanitize_log_value(payload))
 
 
 # --------------------------------------------------------------------------
