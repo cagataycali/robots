@@ -16,21 +16,27 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = """You are the Strands Robots fleet operator agent, embedded in the fleet dashboard.
 
-You coordinate robots on a Zenoh mesh via robot_mesh - the SDK's native mesh tool:
-- robot_mesh(action="peers") - list every robot/sim currently online
-- robot_mesh(action="status", target="<peer_id>") - one peer's status
-- robot_mesh(action="tell", target="<peer_id>", instruction="...") - natural-language ask, waits for the reply
-- robot_mesh(action="send", target="<peer_id>", command='{"action": "execute", "instruction": "...", "policy_provider": "mock", "duration": 10}') - raw mesh command; this is how you run a policy rollout on one robot
-- robot_mesh(action="broadcast", command='{...}') - the same command to every peer
-- robot_mesh(action="subscribe"/"watch"/"inbox") - telemetry
-- robot_mesh(action="emergency_stop") - fleet-wide stop (use immediately when asked to stop); send '{"action":"stop"}' to stop one robot
+You coordinate robots on a Zenoh mesh via the fleet tool:
+- fleet(action="peers") - list every robot/sim currently online
+- fleet(action="task", target="<peer_id>", instruction="...", policy_provider="mock", duration=10) - run a task on one robot
+- fleet(action="status", target="<peer_id>") - task status
+- fleet(action="stop", target="<peer_id>") - stop one robot
+- fleet(action="stop_all") - stop everything (use immediately when asked to stop)
 
 Rules:
 - Check peers first when unsure what's online. Peer ids containing "sim" or "__" are simulations; others are real hardware.
 - Real hardware moves real motors. Be precise, prefer short durations, never guess a target.
-- To task "everyone", broadcast, or call tell/send once per online peer.
+- To task "everyone", call fleet(action="task", ...) once per online peer.
 - Report what each robot answered. Be brief.
-- robot_mesh physical actions pause for the operator's yes; a declined confirm means nothing was sent - accept the answer, never retry it.
+
+You also have robot_mesh - the SDK's native mesh tool - for everything beyond tasks:
+- robot_mesh(action="peers"/"status") - discovery
+- robot_mesh(action="tell", target=..., instruction=...) - natural-language ask, waits for the reply
+- robot_mesh(action="send", target=..., command='{"action": ...}') / broadcast - raw mesh commands
+- robot_mesh(action="subscribe"/"watch"/"inbox") - telemetry
+- robot_mesh(action="emergency_stop") - fleet-wide stop
+Its physical actions pause for the operator's yes the same way fleet task does; a declined
+confirm means nothing was sent - accept the answer, never retry it.
 
 Simulations are fully yours to build and inspect - no confirmation needed, because the verb
 is refused by real hardware before anything runs:
@@ -47,14 +53,14 @@ is refused by real hardware before anything runs:
   command='{"data_config": "<label>", "urdf_path": "/path/to/model.urdf"}' then add_robot;
   a plain mesh prop -> function="add_object" with "mesh_path".
 - In a multi-robot world, put "robot_name" in the command JSON to pick the robot.
-- Policy rollouts go through robot_mesh tell / send (sim_call refuses run_policy by design).
+- Policy rollouts stay on fleet task / tell (sim_call refuses run_policy by design).
 
 Every online robot is ALSO attached to you as its own native tool, named for its peer id
 with dashes as underscores: so101_real_689(action="status"), so101_leader(action="execute",
 instruction=..., policy_port=...), and a sim twin's tool carries the full simulation surface
 directly (twin_tool(action="add_object", name="red_cube", shape="box", ...)) - no sim_call
 envelope needed. The tool list follows the mesh: robots joining or leaving refresh it on the
-next turn. Real-arm execute/start pause for the operator's yes exactly like any robot_mesh action;
+next turn. Real-arm execute/start pause for the operator's yes exactly like fleet task;
 status/stop and every sim action run immediately. When asked what tools or robots you have,
 name these per-robot tools.
 """
@@ -301,6 +307,104 @@ def _abandon_pending() -> None:
     with _agent_lock:
         _agent = None
 
+def _make_fleet_tool() -> Any:
+    from strands import tool
+
+    @tool
+    def fleet(
+        action: str,
+        target: str = "",
+        instruction: str = "",
+        policy_provider: str = "mock",
+        duration: float = 15.0,
+        robot_name: str = "",
+    ) -> dict[str, Any]:
+        """Coordinate robots on the mesh (dashboard gateway)."""
+        if _bridge is None:
+            return {"status": "error", "content": [{"text": "mesh bridge offline"}]}
+        import json as _json
+        import time as _time
+
+        if action == "peers":
+            snap = _bridge.snapshot()
+            lines = []
+            for pid, p in sorted(snap["peers"].items()):
+                if p.get("stale"):
+                    continue
+                pres = p.get("presence") or {}
+                st = p.get("state") or {}
+                task = (st.get("task") or {})
+                cams = list((p.get("cameras") or {}).keys())
+                joints = len((st.get("joints") or {}))
+                lines.append(
+                    f"- {pid}: type={pres.get('robot_type','?')} hw_connected={pres.get('connected')} "
+                    f"cameras={cams} joints={joints} task={task.get('status','idle')} "
+                    f"instruction={task.get('instruction','')!r}"
+                )
+            text = "Online peers:\n" + "\n".join(lines) if lines else "No live peers on the mesh."
+            return {"status": "success", "content": [{"text": text}]}
+
+        if action == "task":
+            if not target or not instruction:
+                return {"status": "error", "content": [{"text": "task requires target and instruction"}]}
+            from strands_robots.dashboard.agent_hitl import consume_grant
+            from strands_robots.dashboard.agent_motion import agent_motion_allowed
+
+            snap_peers = {}
+            try:
+                snap_peers = _bridge.snapshot().get("peers") or {}
+            except Exception:  # noqa: BLE001 - an unreadable snapshot means UNKNOWN, i.e. metal
+                snap_peers = {}
+            # A human yes on the interrupt confirm deposits a one-shot grant;
+            # consuming it satisfies the backstop without weakening it.
+            approved = consume_grant(
+                "fleet", {"action": "task", "target": target, "instruction": instruction},
+            )
+            if not approved:
+                verdict = agent_motion_allowed(
+                    "task", peer=snap_peers.get(target), target=target,
+                )
+                if not verdict["allowed"]:
+                    _notify_refusal(verdict["reason"])
+                    return {"status": "error", "content": [{"text": verdict["reason"]}]}
+            cmd = {
+                "action": "execute", "instruction": instruction,
+                "policy_provider": policy_provider, "duration": float(duration),
+            }
+            if robot_name:
+                cmd["robot_name"] = robot_name
+            # Child sim peers ("<parent>__<robot>") route to the parent
+            # Simulation peer - the shared routing choke point.
+            from strands_robots.dashboard.mesh_bridge import route_task_target
+
+            target, cmd = route_task_target(target, cmd)
+            res = _bridge.send_cmd(target, cmd, timeout=float(duration) + 30.0, source="agent")
+            return {"status": "success", "content": [{"text": _json.dumps(res)[:1500]}]}
+
+        if action == "stop":
+            if not target:
+                return {"status": "error", "content": [{"text": "stop requires target"}]}
+            res = _bridge.send_cmd(target, {"action": "stop"}, timeout=10.0, source="agent")
+            return {"status": "success", "content": [{"text": _json.dumps(res)[:800]}]}
+
+        if action == "stop_all":
+            results = {}
+            for pid, p in _bridge.snapshot()["peers"].items():
+                if p.get("stale"):
+                    continue
+                results[pid] = _bridge.send_cmd(pid, {"action": "stop"}, timeout=5.0, source="agent")
+            return {"status": "success", "content": [{"text": _json.dumps(results)[:1500]}]}
+
+        if action == "status":
+            if not target:
+                return {"status": "error", "content": [{"text": "status requires target"}]}
+            res = _bridge.send_cmd(target, {"action": "status"}, timeout=10.0, source="agent")
+            return {"status": "success", "content": [{"text": _json.dumps(res)[:800]}]}
+
+        return {"status": "error", "content": [{"text": f"unknown action {action!r}. Valid: peers, task, stop, stop_all, status"}]}
+
+    return fleet
+
 def _robot_mesh_tool() -> Any:
     """The SDK's own mesh tool, if importable - the agent-native surface.
 
@@ -314,7 +418,7 @@ def _robot_mesh_tool() -> Any:
 
         return robot_mesh
     except Exception:  # noqa: BLE001 - the agent must build even if the tool cannot import
-        logger.warning("robot_mesh tool unavailable - agent runs without a mesh tool", exc_info=True)
+        logger.warning("robot_mesh tool unavailable - agent runs with fleet only", exc_info=True)
         return None
 
 def _peer_proxy_tools() -> list:
@@ -370,7 +474,7 @@ def _build_agent() -> Any:
     except Exception:  # noqa: BLE001 - a signature failure must not block the build
         _agent_fleet_sig = None
     kwargs: dict[str, Any] = {
-        "tools": [t for t in (_robot_mesh_tool(),) if t is not None]
+        "tools": [t for t in (_make_fleet_tool(), _robot_mesh_tool()) if t is not None]
         + _direct_serial_tools()
         + list(proxies),
         "system_prompt": cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT,
@@ -460,7 +564,7 @@ def agent_status() -> dict[str, Any]:
     else:
         # Not built yet: report what the build WOULD produce (pure rules on the
         # live fleet), not a hardcoded guess - the old ['fleet'] badge lied.
-        tools = ["robot_mesh"]
+        tools = ["fleet", "robot_mesh"]
         with contextlib.suppress(Exception):
             from strands_robots.dashboard.direct_serial import available_names
 
