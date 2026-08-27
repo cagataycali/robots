@@ -150,7 +150,12 @@ class TestAConcurrentWireUserWaitsForTheConnectReplay:
                 else:
                     client.get_actions_sync({"observation.state": [0.0]}, "")
                 outcome["result"] = "returned"
-            except BaseException as exc:  # noqa: BLE001 - the failure is the subject
+            except Exception as exc:  # noqa: BLE001 - the failure is the subject
+                # Not ``BaseException``: the failure under test is a
+                # ``websockets`` ``ConcurrencyError`` (a ``RuntimeError``), and a
+                # non-reraising ``BaseException`` handler is its own CodeQL alert
+                # whose review thread gates a merge - see the census in
+                # ``tests/test_codeql_query_filters.py``.
                 outcome["result"] = f"{type(exc).__name__}: {exc}"
 
         second = threading.Thread(target=drive, daemon=True)
@@ -177,7 +182,7 @@ class TestAConcurrentWireUserWaitsForTheConnectReplay:
         def drive() -> None:
             try:
                 client.reset(seed=1)
-            except BaseException as exc:  # noqa: BLE001 - the failure is the subject
+            except Exception as exc:  # noqa: BLE001 - the failure is the subject
                 errors.append(f"{type(exc).__name__}: {exc}")
 
         second = threading.Thread(target=drive, daemon=True)
