@@ -301,7 +301,7 @@
     "ur5e": {
       "description": "Universal Robots UR5e (6-DOF industrial)",
       "category": "arm",
-      "joints": 8,
+      "joints": 6,
       "asset": {
         "dir": "universal_robots_ur5e",
         "model_xml": "ur5e.xml",
@@ -994,7 +994,7 @@
     "unitree_a1": {
       "description": "Unitree A1 Quadruped",
       "category": "mobile",
-      "joints": 16,
+      "joints": 13,
       "asset": {
         "dir": "unitree_a1",
         "model_xml": "xml/a1.xml",

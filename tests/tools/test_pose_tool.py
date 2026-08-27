@@ -308,11 +308,21 @@ def test_pose_tool_unknown_action(cwd_tmp) -> None:
     assert "Unknown action" in _texts(result)
 
 
-def test_pose_tool_reset_to_home_is_ascii(cwd_tmp, fake_serial) -> None:
+def test_pose_tool_reset_to_home_is_ascii(cwd_tmp, reading_serial) -> None:
+    """The success text is ASCII - on a bus that really answered.
+
+    ``reading_serial`` rather than ``fake_serial``: ``reset_to_home`` passes
+    ``smooth=True``, and the interpolating path builds a trajectory only for the
+    motors whose current position it could read. A source that answers nothing
+    leaves every joint uncommanded, which the tool now reports as an error, so
+    the success text this asserts about would never be produced.
+    """
     result = pose_tool(action="reset_to_home", robot_id="hw_arm", port="/dev/ttyTEST")
-    assert result["status"] == "success"
+    assert result["status"] == "success", _texts(result)
     _assert_ascii(result)
     assert "home_positions" in tool_json(result)
+    # The bus was really driven: assert the packets, not just the wording.
+    assert reading_serial[0].writes, "reset_to_home wrote nothing to the bus"
 
 
 def test_module_source_is_ascii() -> None:

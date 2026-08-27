@@ -178,7 +178,12 @@ class TestARegisterFieldIsNeverSilentlyTruncated:
         assert "motor_id" in _text(result)
         assert opened == []
 
-    @pytest.mark.parametrize("motor_id", (1, 2, 6, 254))
+    # 253 replaces the 254 this case used to sweep. Both are inside the frame's
+    # ID byte, but 254 is the broadcast rather than a servo address, so it is not
+    # an addressable ID at all; 253 is the highest one a servo may hold.
+    # ``tests/tools/test_feetech_broadcast_is_not_a_reply_address.py`` grades what
+    # the broadcast may and may not be used for.
+    @pytest.mark.parametrize("motor_id", (1, 2, 6, 253))
     def test_an_addressable_motor_id_still_reaches_the_wire(self, motor_id: int, opened: list[_FakeSerial]) -> None:
         result = _call(action="feetech_position", motor_id=motor_id, position=100)
 

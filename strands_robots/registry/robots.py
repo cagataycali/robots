@@ -116,10 +116,17 @@ def get_driver(name: str) -> str | None:
 
     A pure reader, like its sibling :func:`get_hardware_type`: it reports what
     the registry says and applies no default. ``hardware.driver`` is optional and
-    absent everywhere in the package registry, because every robot here is driven
-    through lerobot. Deciding what an absent - or ``"auto"`` - declaration means
-    is :func:`~strands_robots.drivers.resolve_driver`'s job, which is also where
-    a caller's explicit choice outranks the registry.
+    most robots declare none. Where it is declared it says which of two possible
+    drivers wins: one declarer has no lerobot robot type at all, so the native
+    driver is the only one that can build it; the other has a working lerobot
+    type and prefers its native driver anyway.
+
+    An absent declaration therefore means "no preference", not "no native
+    driver" - a robot may have one registered and declare nothing, in which case
+    the default still routes to lerobot. Deciding what an absent - or ``"auto"``
+    - declaration means is
+    :func:`~strands_robots.drivers.resolve_driver`'s job, which is also where a
+    caller's explicit choice outranks the registry.
 
     Args:
         name: Robot name, alias, or data_config.

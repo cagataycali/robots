@@ -502,12 +502,25 @@ class G1Driver:
         its thread before returning - a controlled stop rather than
         abrupt frame cessation mid-policy on a robot whose FSM has just
         gone away.  Idempotent: no running task returns immediately.
+
+        A loop that outlasts the join budget is reported rather than
+        returned: this signature carries no envelope, and returning from
+        shutdown while a thread still holds the wire is exactly what the
+        log exists to say.  Unlike :meth:`cleanup` this leaves the
+        publisher open either way, so that loop still publishes its
+        zero-torque frame when the policy finally returns.
         """
         with self._task_admission:
             loop = self._loop
         if loop is not None and loop.is_running:
             logger.debug("%s.stop() halting control loop", self._tool_name)
-            loop.stop("stop_task")
+            if not loop.stop("stop_task"):
+                logger.error(
+                    "%s.stop(): control loop did not join within the stop budget "
+                    "and still holds the wire; its zero-torque frame publishes "
+                    "when the policy returns",
+                    self._tool_name,
+                )
 
     def cleanup(self) -> None:
         """Release every DDS subscriber and publisher. Idempotent.
@@ -517,17 +530,38 @@ class G1Driver:
         ``_pubs`` under a live 500 Hz thread would drop the loop into
         its ``publish`` branch and skip the zero-torque frame - the fall
         this whole path exists to prevent.
+
+        Halting is not the same as having halted.
+        :meth:`_ControlLoop.stop` reports whether the thread actually
+        joined, and a caller-supplied policy that outlasts the join
+        budget - a remote inference call is the ordinary case - leaves it
+        running.  The publisher is therefore released only once the loop
+        is provably gone: a loop that is still running keeps it, so the
+        zero-torque frame that loop publishes from its own ``finally``
+        reaches the wire instead of being dropped by
+        :meth:`_ControlLoop._emit_zero_torque`'s ``pubs is None`` return.
+        The subscribers close either way - the loop never reads them - and
+        a second ``cleanup()`` once the loop has exited releases the rest.
         """
         with self._task_admission:
             loop = self._loop
+        joined = True
         if loop is not None and loop.is_running:
-            loop.stop("stop_task")
+            joined = loop.stop("stop_task")
         if self._subs is not None:
             self._subs.close()
             self._subs = None
-        if self._pubs is not None:
-            self._pubs.close()
-            self._pubs = None
+        if joined:
+            if self._pubs is not None:
+                self._pubs.close()
+                self._pubs = None
+        else:
+            logger.error(
+                "%s.cleanup(): control loop did not join within the stop budget, "
+                "so the publisher stays open for its zero-torque frame; call "
+                "cleanup() again once the loop has exited",
+                self._tool_name,
+            )
         self._connected = False
 
     # ------------------------------------------------------------------ #

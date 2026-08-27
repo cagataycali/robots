@@ -201,7 +201,7 @@ class TestDriverResolutionPrecedence:
         )
 
     def test_no_declaration_and_no_choice_is_the_default(self) -> None:
-        assert get_driver(_ROBOT) is None, "no package robot declares a driver"
+        assert get_driver(_ROBOT) is None, f"{_ROBOT} declares no driver, so the default decides"
         assert resolve_driver(_ROBOT) == DEFAULT_DRIVER
 
     def test_a_registry_declaration_beats_the_default(self, monkeypatch: pytest.MonkeyPatch) -> None:

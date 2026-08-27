@@ -40,7 +40,7 @@ from strands.types.tools import ToolResult, ToolSpec, ToolUse
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
-from strands_robots.teleop_mixin import TeleopMixin
+from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.utils import (
     boolean_flag_error,
     dds_domain_id_error,
@@ -1230,17 +1230,36 @@ class Robot(TeleopMixin, AgentTool):
         try:
             ConfigClass = RobotConfig.get_choice_class(robot_type)
         except KeyError:
-            # A leader arm is a teleoperator, not a robot, and lerobot keeps the
-            # two in separate registries. Listing the robot types for a leader
-            # name is the retry that torque-enables the arm a human is holding,
-            # so name the kind it really is instead. ``Robot()``'s own registry
-            # guard does this for an unregistered ``*_leader`` name; a leader
-            # that IS registered -- as itself, which is the honest thing to
-            # register -- reaches this site instead.
+            # Two registries can answer better than lerobot's own listing here,
+            # and each returns a reason or ``None`` so the listing survives when
+            # neither applies.
+            #
+            # First: a robot THIS package drives natively. Its driver ships
+            # here, and lerobot's listing does not mention it, so a caller with
+            # no reason to guess ``driver="strands"`` is left at a dead end.
+            # Checked before the teleoperator arm because the two populations
+            # overlap -- ``unitree_g1`` is a lerobot teleoperator type as well
+            # as a natively driven robot -- and for a name in that overlap the
+            # native answer is the right one: someone who asked ``Robot()`` for
+            # a robot this package drives wants its driver, not an instruction
+            # to build the leader that teleoperates it.
+            from strands_robots.drivers.registry import _native_driver_refusal
+
+            if native := _native_driver_refusal(robot_type):
+                raise ValueError(native) from None
+
+            # Then: a leader arm is a teleoperator, not a robot, and lerobot
+            # keeps the two in separate registries. Listing the robot types for
+            # a leader name is the retry that torque-enables the arm a human is
+            # holding, so name the kind it really is instead. ``Robot()``'s own
+            # registry guard does this for an unregistered ``*_leader`` name; a
+            # leader that IS registered -- as itself, which is the honest thing
+            # to register -- reaches this site instead.
             from strands_robots.teleoperator import _other_lerobot_kind_refusal
 
             if other := _other_lerobot_kind_refusal(robot_type, wanted="robot"):
                 raise ValueError(other) from None
+
             available = sorted(RobotConfig.get_known_choices().keys())
             # ``from None`` -- the KeyError is an internal detail of
             # lerobot's draccus registry; suppress the chained traceback
@@ -2850,7 +2869,10 @@ class Robot(TeleopMixin, AgentTool):
 
         Terminal: this latches a shutdown, releases the task executor, tears
         down the mesh and ROS bridges, and disconnects the robot -- the motors
-        bus and every camera -- so no device node stays held. There is no
+        bus and every camera -- so no device node stays held. The one exception
+        is a teleop loop that did not join: the devices are left open rather
+        than closed under a live writer, and the reason is recorded at ERROR
+        with the remedy. There is no
         ``restart``, so
         ``run_policy`` / ``start_task`` / the ``execute`` action refuse
         permanently afterwards rather than admit a rollout that would command
@@ -2865,9 +2887,15 @@ class Robot(TeleopMixin, AgentTool):
             # Stop any local teleoperation loop + disconnect attached devices
             # (TeleopMixin). Best-effort: a teleop teardown failure must not
             # block the rest of hardware cleanup.
+            # ``stop_teleoperate`` reports whether the loop actually joined, and
+            # the devices must not be closed under one that did not - see the
+            # ``_disconnect_devices`` call below. A raise leaves the outcome
+            # unknown and keeps the pre-existing warn-and-continue contract:
+            # only a positive report of a live loop defers the close.
+            teleop_stopped = True
             if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
                 try:
-                    self.stop_teleoperate()
+                    teleop_stopped = _stop_reported_stopped(self.stop_teleoperate())
                 except Exception as teleop_exc:  # noqa: BLE001
                     logger.warning(
                         "%s: stop_teleoperate() raised during cleanup: %s",
@@ -2906,7 +2934,25 @@ class Robot(TeleopMixin, AgentTool):
             # task executor, the mesh and the ROS bridge have stopped can be
             # re-opened behind this teardown -- and would then stay open for
             # the life of the process, since nothing runs after ``cleanup()``.
-            self._disconnect_devices()
+            #
+            # The teleop loop is the one command source whose shutdown is not
+            # guaranteed by the ordering: its leader's ``get_action()`` can
+            # block past the join budget, which is why ``stop_teleoperate``
+            # reports the outcome instead of assuming it. Closing under a live
+            # one is worse than deferring on both counts -- the loop's next
+            # write re-opens the port through ``send_action``'s lazy connect, so
+            # the release does not hold, and that write lands *after* the
+            # driver's ``disconnect()`` disabled torque, leaving the arm
+            # energised at a fresh command. ``G1Driver.cleanup`` declines the
+            # same teardown for the same reason.
+            if teleop_stopped:
+                self._disconnect_devices()
+            else:
+                logger.error(
+                    "%s: devices left open because the teleop loop did not stop; "
+                    "call stop_teleoperate() to re-join it, then cleanup() again",
+                    self.tool_name_str,
+                )
 
             logger.info(f"{self.tool_name_str} cleanup completed")
 
