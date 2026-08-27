@@ -101,11 +101,14 @@ _AgileX Piper (6-DOF + gripper)_
 
 - Most arms are loadable in MuJoCo via the registry's asset block and pull from
   [robot_descriptions.py](https://github.com/robot-descriptions/robot_descriptions.py)
-  on first use. Exceptions: `hope_jr` and `omx` have no MuJoCo sim asset and require
-  physical hardware.
-- `panda`, `so100`, and `ur5e` are also supported on real hardware via LeRobot. The rest
-  are simulation-only at the moment (real-hardware support is a per-robot effort that
-  upstreams to LeRobot).
+  on first use. Exceptions: `hope_jr`, `omx` and `rebot_b601` declare no sim asset
+  and require physical hardware.
+- Real hardware through LeRobot, where the registry entry names a `lerobot_type`:
+  `hope_jr`, `koch`, `omx`, `openarm`, `rebot_b601`, `so100`, `so101`.
+- Real hardware through a native Strands driver, selected with `driver="strands"`:
+  `dynamixel_2r`, `koch`, `vx300s`, `wx250s`.
+- Every other arm is simulation-only: `Robot(name, mode="real")` refuses it and names
+  the robots that do have a path, rather than falling back to sim.
 - Joint counts include any free joints / gripper actuators - the *control* DOF is
   usually `joints - 1` for arms with grippers.
 
