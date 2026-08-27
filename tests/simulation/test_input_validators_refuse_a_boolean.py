@@ -531,6 +531,14 @@ _NOT_AN_INPUT_DOMAIN = {
     # tests/simulation/test_predicate_tolerance_sign_domain.py fails when the
     # delegation is dropped or the shared domain stops refusing a boolean.
     "_kwarg_domain_error": "coerces only a value finite_number_error accepted",
+    # Same shape one module over: the float() states the Levenberg-Marquardt
+    # floor for a value finite_number_error has already accepted, and that
+    # shared domain refuses bool and numpy.bool_ by name, so a boolean is
+    # answered with its own reason and never reaches the coercion. Pinned
+    # behaviourally rather than only claimed here:
+    # tests/simulation/test_ik_bridge_numeric_parameter_domains.py fails when
+    # the delegation is dropped or the shared domain stops refusing a boolean.
+    "_damping_error": "coerces only a value finite_number_error accepted",
 }
 
 _GUARDED_VALIDATORS = {
