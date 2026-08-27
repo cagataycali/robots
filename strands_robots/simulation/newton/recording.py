@@ -541,7 +541,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 # add_frame's 0.0 fill, which records them as a zero pose the
                 # robot is not in. Driven keys win any collision.
                 driven = {(k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v for k, v in obs.items()}
-                obs = undriven_robot_state(self, robot_name, world.robots)
+                obs = undriven_robot_state(self, (robot_name,), world.robots)
                 obs.update(driven)
                 act = {f"{robot_name}__{k}": v for k, v in action.items()}
                 rec.add_frame(

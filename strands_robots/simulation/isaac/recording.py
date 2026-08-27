@@ -624,7 +624,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 # are filled from the engine at this step rather than left to
                 # add_frame's 0.0 fill, which records them as a zero pose the
                 # robot is not in. Driven keys win any collision.
-                obs = undriven_robot_state(self, robot_name, self._robots)
+                obs = undriven_robot_state(self, (robot_name,), self._robots)
                 obs.update({f"{robot_name}__{k}": v for k, v in scalars.items()})
                 obs.update(images)
                 act = {f"{robot_name}__{k}": v for k, v in action.items()}

@@ -43,6 +43,7 @@ from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names
 from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimitivesMixin
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
 from strands_robots.simulation.models import registered, registry_entry
+from strands_robots.simulation.recording import undriven_robot_state
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
@@ -4321,6 +4322,14 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 if recording and recorder is not None:
                     merged_obs: dict[str, Any] = {}
                     merged_act: dict[str, Any] = {}
+                    # The schema declares a state column for every robot in the
+                    # scene, and ``policies`` need only name robots that exist -
+                    # not all of them. A robot this call does not drive is a
+                    # readable measurement, so its columns are filled from the
+                    # engine at this step rather than left to add_frame's 0.0
+                    # fill, which records them as a zero pose the robot is not
+                    # in. Merged first, so driven keys win any collision.
+                    merged_obs.update(undriven_robot_state(self, policies, self._robots))
                     for rname in policies:
                         if multi_robot:
                             for k, v in per_robot_obs[rname].items():

@@ -30,7 +30,7 @@ import logging
 import math
 import numbers
 import shutil
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -555,13 +555,13 @@ def _resume_schema_error(diffs: list[str]) -> str:
     )
 
 
-def undriven_robot_state(engine: Any, driven_robot: str, robot_names: Iterable[str]) -> dict[str, Any]:
+def undriven_robot_state(engine: Any, driven_robots: Collection[str], robot_names: Iterable[str]) -> dict[str, Any]:
     """Read the scalar state of every robot a recorded frame does not drive.
 
     ``start_recording`` declares ``observation.state`` over EVERY robot in the
     scene, prefixing each column with its robot's name
-    (``alice__shoulder_pan``). A single-policy rollout's recording hook supplies
-    only the driven robot's observation, so every column belonging to another
+    (``alice__shoulder_pan``). A rollout's recording hook supplies only the
+    observation of the robots it drives, so every column belonging to another
     robot is absent from the frame and
     :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame` writes it
     as ``0.0`` - under ``status="success"``, for every frame of the episode.
@@ -584,14 +584,20 @@ def undriven_robot_state(engine: Any, driven_robot: str, robot_names: Iterable[s
     robot's own columns come from. So the undriven columns are filled with the
     measurement rather than left to the ``0.0`` fill.
 
-    This is the behaviour ``run_multi_policy``'s synchronized loop already has -
-    it builds one merged observation per step covering every robot it drives and
-    hands that to ``add_frame``. This helper is that same guarantee for the
-    three single-policy hooks, so which rollout entry point recorded an episode
-    stops changing whether its state columns are measurements.
+    Every recording entry point needs this, because each one declares the
+    schema over the whole scene and then supplies a frame covering only the
+    robots it drives. That is the three single-policy hooks, whose frame
+    carries one robot, and ``run_multi_policy``'s synchronized loop, whose
+    merged frame carries the keys of its ``policies`` mapping - which
+    :meth:`~strands_robots.simulation.base.SimEngine.run_multi_policy`
+    requires to name robots in the scene but never requires to name all of
+    them. A synchronized call that drives a subset therefore leaves the rest
+    to the fill exactly as a single-policy hook does, so both go through here
+    and which rollout entry point recorded an episode does not change whether
+    its state columns are measurements.
 
     Images are deliberately not collected. A camera array is keyed by the
-    camera's own name rather than a robot's, and the recording hooks scope
+    camera's own name rather than a robot's, and the recording paths scope
     cameras through ``start_recording(cameras=...)``, so an undriven robot
     contributes no image column. Only scalars are returned, prefixed exactly as
     the hooks prefix the driven robot's.
@@ -599,19 +605,34 @@ def undriven_robot_state(engine: Any, driven_robot: str, robot_names: Iterable[s
     Args:
         engine: The simulation engine, read through its public
             ``get_observation(robot_name=..., skip_images=True)``.
-        driven_robot: The robot this frame drives; its columns are supplied by
-            the hook itself and are not re-read here.
+        driven_robots: The robots this frame drives; their columns are
+            supplied by the caller and are not re-read here. Pass ``(name,)``
+            from a single-policy hook and the ``policies`` mapping from a
+            synchronized multi-robot loop.
         robot_names: Every robot the dataset schema declares columns for.
 
     Returns:
         ``{"<robot>__<joint>": value}`` for each scalar observation of each
-        robot other than ``driven_robot``. Empty when the scene holds only the
-        driven robot, which is the single-robot case where the schema is not
-        prefixed at all.
+        robot outside ``driven_robots``. Empty when every robot in the scene
+        is driven, which includes the single-robot case where the schema is
+        not prefixed at all.
+
+    Raises:
+        TypeError: ``driven_robots`` is a bare ``str``. A string is iterable
+            per character, so it would make the skip below a substring test:
+            a robot named ``ali`` satisfies ``"ali" in "alice"`` and would be
+            skipped as though it were driven, dropping its columns to the
+            very fill this helper exists to avoid.
     """
+    if isinstance(driven_robots, str):
+        raise TypeError(
+            "undriven_robot_state: 'driven_robots' must be a collection of robot names, "
+            f"not the bare string {driven_robots!r}. Pass ({driven_robots!r},) to name one."
+        )
+    driven = frozenset(driven_robots)
     merged: dict[str, Any] = {}
     for name in robot_names:
-        if name == driven_robot:
+        if name in driven:
             continue
         try:
             observation = engine.get_observation(robot_name=name, skip_images=True)

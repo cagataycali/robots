@@ -5279,7 +5279,7 @@ class MuJoCoSimEngine(
                             # are filled from the engine at this step rather than left to
                             # add_frame's 0.0 fill, which records them as a zero pose the
                             # robot is not in. Driven keys win any collision.
-                            obs_keyed = undriven_robot_state(self, robot_name, world.robots)
+                            obs_keyed = undriven_robot_state(self, (robot_name,), world.robots)
                             obs_keyed.update(
                                 {
                                     (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
@@ -5661,6 +5661,14 @@ class MuJoCoSimEngine(
                 if recording and recorder is not None:
                     merged_obs: dict[str, Any] = {}
                     merged_act: dict[str, Any] = {}
+                    # The schema declares a state column for every robot in the
+                    # scene, and ``policies`` need only name robots that exist -
+                    # not all of them. A robot this call does not drive is a
+                    # readable measurement, so its columns are filled from the
+                    # engine at this step rather than left to add_frame's 0.0
+                    # fill, which records them as a zero pose the robot is not
+                    # in. Merged first, so driven keys win any collision.
+                    merged_obs.update(undriven_robot_state(self, policies, self._world.robots))
                     for rname in policies:
                         if multi_robot:
                             for k, v in per_robot_obs[rname].items():
