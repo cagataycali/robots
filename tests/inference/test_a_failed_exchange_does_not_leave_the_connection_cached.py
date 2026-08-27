@@ -401,3 +401,60 @@ class TestTheDiscardCoversMoreThanAnExceptionWould:
                 and node.func.attr == "_discard_connection"
             ]
             assert len(calls) == 1, method.__name__
+
+
+class TestAConcurrentCallerSurvivesADiscardByAnotherThread:
+    """The under-the-lock re-check in _get_actions_blocking reconnects when
+    another thread discarded the connection while this thread was waiting.
+
+    The race: thread A passes _ensure_connected (sees _ws non-None), then blocks
+    on self._lock. Thread B (holding the lock) times out in _request and calls
+    _discard_connection, nulling self._ws. Thread A acquires the lock and must
+    not crash on a None _ws - it must reconnect and produce a fresh result.
+    """
+
+    def test_a_concurrent_caller_reconnects_after_a_discard(self, tagged: Any) -> None:
+        """Thread A gets a fresh chunk after thread B discards the connection."""
+        policy, _server, client = tagged
+        results: dict[str, Any] = {}
+        errors: dict[str, Any] = {}
+
+        def thread_b() -> None:
+            """Time out, causing the discard."""
+            try:
+                result = client.get_actions_sync({"marker": "B-timeout"}, "")
+                results["B"] = result
+            except (TimeoutError, Exception) as exc:
+                errors["B"] = exc
+
+        def thread_a() -> None:
+            """Called after B is already waiting; arrives at the lock after B discards."""
+            time.sleep(REQUEST_TIMEOUT + 0.15)
+            try:
+                result = client.get_actions_sync({"marker": "A-after-discard"}, "")
+                results["A"] = result
+            except (TimeoutError, Exception) as exc:
+                errors["A"] = exc
+
+        # Warm the connection so _ensure_connected's fast path passes for both.
+        client.get_actions_sync({"marker": "warm"}, "")
+
+        # Park one reply so thread B times out.
+        policy.park.set()
+
+        t_b = threading.Thread(target=thread_b)
+        t_a = threading.Thread(target=thread_a)
+        t_b.start()
+        t_a.start()
+        t_b.join(timeout=5.0)
+        # Release the parked reply so the server can serve thread A's request.
+        policy.release.set()
+        t_a.join(timeout=5.0)
+
+        # Thread B timed out (expected).
+        assert "B" in errors, f"thread B should have timed out, got result: {results.get('B')}"
+        assert isinstance(errors["B"], TimeoutError)
+
+        # Thread A must NOT crash - it should reconnect and get its own chunk.
+        assert "A" not in errors, f"thread A crashed: {errors.get('A')}"
+        assert results.get("A") == [{"tag": "A-after-discard"}]
