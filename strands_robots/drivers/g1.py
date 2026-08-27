@@ -20,7 +20,7 @@ What the driver actually does:
   FSM state from the motion-switcher API) rather than :attr:`_mode_machine`
   (the uint8 hardware-layout id from ``LowState``); those two fields have
   disjoint value ranges and must not be conflated.  Until the
-  motion-switcher source is wired (harness#361 PR-C, #2765), the gate
+  motion-switcher source is wired (issue #2765), the gate
   refuses honestly rather than silently rejecting every real frame.
 * Task and policy paths (``start_task``, ``run_policy``, ``stop_task``,
   ``get_task_status``) return a named "not wired yet" envelope. Locomotion
@@ -610,8 +610,7 @@ class G1Driver:
             # frame silently reach a gate whose intersection with the echo's
             # value range is empty.
             return _refuse(
-                "FSM id unknown - motion-switcher source has not been wired "
-                "(harness#361 PR-C); see #2765 for the wire-side decision"
+                "FSM id unknown - motion-switcher source has not been wired; see issue #2765 for the wire-side decision"
             )
         if scope == "arm":
             allowed, kind = HANDSHAKE_FSMS, "arm writes"
@@ -713,7 +712,7 @@ class G1Driver:
         ``g1_tools`` motion verbs (issue #358) so the loop has something to
         command with joint-name semantics.
 
-        This driver's role for harness#361 PR-C is the **transport primitive**:
+        This driver's role is the **transport primitive**:
         a background thread that spins at 500 Hz, gates every step against the
         FSM and battery, publishes ``LowCmd_`` frames on ``rt/lowcmd``, and on
         stop or budget expiry publishes a zero-torque frame before exiting.
@@ -1232,12 +1231,15 @@ def _build_zero_torque_lowcmd(
     helper; no production path in this driver can reach the raise because
     ``G1Driver._on_lowstate`` binds ``_mode_machine`` from a uint8 IDL field.
 
-    This helper is defined but not yet wired: ``G1Driver.stop`` and
-    ``stop_task`` currently return refusal envelopes rather than publishing
-    a frame, and no other call site exists.  The 500 Hz control-loop PR
-    (harness#361 PR-C) is where the wiring lands; the helper is defined
-    here so the loop's shutdown path composes on a tested, CRC-correct
-    frame rather than one hand-rolled next to it.
+    The control loop publishes this frame on its way out:
+    :meth:`_ControlLoop._emit_zero_torque` calls it from the loop's
+    ``finally``, on every exit path except one where the wire itself just
+    refused a publish - clobbering that reason with a fresh publish error
+    is worse than not stamping a stop frame the wire cannot carry anyway.
+    That is what makes :meth:`G1Driver.stop_task` a soft *controlled* stop
+    rather than a Disable that would let the named joints fall freely.  The
+    helper stays separate from the loop so that shutdown path composes on a
+    tested, CRC-correct frame rather than one hand-rolled next to it.
     """
     try:
         from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as _default_lowcmd
