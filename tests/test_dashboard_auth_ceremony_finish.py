@@ -18,9 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from webauthn.helpers import bytes_to_base64url
 
 from strands_robots.dashboard import auth
-from webauthn.helpers import bytes_to_base64url
 
 
 class FakeRequest:

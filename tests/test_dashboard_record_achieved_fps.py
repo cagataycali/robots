@@ -24,7 +24,6 @@ from strands_robots.dashboard.record_worker import (
     achieved_fps,
     fps_verdict,
 )
-
 from tests.test_dashboard_record_worker import make_worker
 
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ refused, so always act on a stop request immediately."""
 
 _DEFAULT_VOICES = {"openai": "marin", "nova_sonic": "tiffany", "gemini": "Kore"}
 
-def _build_bidi_model(provider: str, voice: Optional[str] = None) -> Any:
+def _build_bidi_model(provider: str, voice: str | None = None) -> Any:
     provider = provider.lower()
     v = voice or _DEFAULT_VOICES.get(provider)
 
@@ -123,7 +123,7 @@ async def run_voice_session(ws: Any) -> None:
     from strands_robots.dashboard.agent_bridge import add_refusal_listener
     from strands_robots.dashboard.consent import classify_refusal
 
-    need_q: "_queue.Queue[dict]" = _queue.Queue()
+    need_q: _queue.Queue[dict] = _queue.Queue()
 
     def _on_refusal(text: str) -> None:
         need = classify_refusal(text)

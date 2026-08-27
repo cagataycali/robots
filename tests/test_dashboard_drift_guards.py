@@ -34,7 +34,7 @@ class TestCmdBytesCap:
 
 class TestSpecKeysMirror:
     def test_spec_keys_plus_exclusions_cover_train_policy_exactly(self):
-        from strands_robots.dashboard.training import SPEC_KEYS, _NOT_IN_FORM
+        from strands_robots.dashboard.training import _NOT_IN_FORM, SPEC_KEYS
         from strands_robots.tools.train_policy import train_policy
 
         params = set(inspect.signature(train_policy).parameters)

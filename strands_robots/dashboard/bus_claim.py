@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 
+
 def sibling_devices(port: str) -> list[str]:
     """A macOS serial port is two device files for one piece of hardware. /dev/cu.usbmodemX (call-up,
     non-blocking open) and /dev/tty.usbmodemX are separate paths that reach the SAME UART, so a

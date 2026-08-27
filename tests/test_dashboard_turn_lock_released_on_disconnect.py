@@ -38,7 +38,7 @@ def _fake_agent(monkeypatch):
         ab._turn_lock.release()
 
 
-def _events(q: "queue.Queue[dict]") -> list[dict]:
+def _events(q: queue.Queue[dict]) -> list[dict]:
     out = []
     while not q.empty():
         out.append(q.get_nowait())

@@ -16,7 +16,8 @@ from __future__ import annotations
 import functools
 import inspect
 import os
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 __all__ = [
     "POSE_PORT_FREE",

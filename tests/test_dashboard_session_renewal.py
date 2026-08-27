@@ -104,9 +104,10 @@ def test_every_reason_is_written_for_a_person():
 
 
 # --- the plumbing: renew_if_due, and the header the browser must be able to read ----
-import asyncio
+import asyncio  # noqa: E402
 
-from strands_robots.dashboard import auth, server as srv
+from strands_robots.dashboard import auth  # noqa: E402
+from strands_robots.dashboard import server as srv  # noqa: E402
 
 
 def test_renew_if_due_preserves_who_you_are_and_when_you_signed_in(monkeypatch):

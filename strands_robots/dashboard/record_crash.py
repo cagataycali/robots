@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+
 
 def crumb_path() -> Path:
     """Where the breadcrumb lives. Beside auth.json, so one directory holds the dashboard's state."""

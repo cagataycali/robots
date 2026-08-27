@@ -7,8 +7,6 @@ robot. Typing a sentence into the dock had neither.
 
 from __future__ import annotations
 
-import pytest
-
 from strands_robots.dashboard.agent_motion import (
     MOTION_ENV,
     agent_motion_allowed,

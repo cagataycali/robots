@@ -8,16 +8,14 @@ import os
 import tempfile
 import threading
 import time
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from collections.abc import Mapping, Sequence
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from strands_robots.dashboard import camera_liveness, record_joints
-from strands_robots.dashboard import record_crash
-from strands_robots.dashboard import disk_headroom
+from strands_robots.dashboard import camera_liveness, disk_headroom, record_crash, record_joints
 from strands_robots.dashboard.dataset_check import _as_int, record_target_verdict
 from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend
 
@@ -474,9 +472,7 @@ def build_router(
     @r.get("/upload-preflight")
     async def upload_preflight_route() -> dict[str, Any]:
         from strands_robots.dashboard.checkpoints import hf_auth_state
-        from strands_robots.dashboard.upload_preflight import upload_preflight
-
-        from strands_robots.dashboard.upload_preflight import destination
+        from strands_robots.dashboard.upload_preflight import destination, upload_preflight
 
         current = controller.session() or {}
         dataset = current.get("dataset") or current.get("repo_id")

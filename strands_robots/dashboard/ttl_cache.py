@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Callable, Generic, TypeVar
+from collections.abc import Callable
+from typing import Generic, TypeVar
 
 V = TypeVar("V")
 
@@ -15,7 +16,7 @@ V = TypeVar("V")
 #: day-long page keep every prefix ever typed.
 DEFAULT_MAX_ENTRIES = 64
 
-class TTLCache(Generic[V]):
+class TTLCache[V]:
     """Thread-safe, size-bounded, self-pruning cache of values with an age."""
 
     def __init__(

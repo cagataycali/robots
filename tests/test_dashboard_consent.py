@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from strands_robots.dashboard.consent import (
-    build_request,
     ConsentRequest,
     attach_consent,
+    build_request,
     classify_refusal,
     env_patch,
 )

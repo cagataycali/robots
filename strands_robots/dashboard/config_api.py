@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import re
+import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from strands_robots.dashboard import settings
 from strands_robots.dashboard.argv_exposure import argv_token_notice

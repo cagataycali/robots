@@ -10,14 +10,10 @@ saying so and no undo.
 from __future__ import annotations
 
 from pathlib import Path
-
 from unittest import mock
-
-import pytest
 
 from strands_robots.dashboard import training
 from strands_robots.dashboard.output_dir_check import classify_output_dir, inspect_output_dir
-
 
 # ----------------------------------------------------------------- pure verdicts
 

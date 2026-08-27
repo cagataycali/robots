@@ -19,18 +19,17 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from strands_robots.dashboard import arm_roles, config_api, consent, deploy, settings
+from strands_robots.dashboard import config_api, consent, deploy, lan_hint, settings
 from strands_robots.dashboard.build_info import build_info
-from strands_robots.dashboard.teleop_health import published_frames, teleop_health
-from strands_robots.dashboard.device_manager import DeviceManager
-from strands_robots.dashboard.mesh_bridge import MeshBridge, silent_arms, stop_outcome
-from strands_robots.dashboard import lan_hint
-from strands_robots.dashboard.refusals import RefusalTally
 from strands_robots.dashboard.churn_guard import (
     ChurnGuard,
     effective_cap,
     viewer_identity,
 )
+from strands_robots.dashboard.device_manager import DeviceManager
+from strands_robots.dashboard.mesh_bridge import MeshBridge, silent_arms, stop_outcome
+from strands_robots.dashboard.refusals import RefusalTally
+from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.ws_observability import (
     CloseLogThrottle,
     cap_note,

@@ -19,7 +19,6 @@ import pytest
 
 from strands_robots.dashboard.checkpoints import MAX_LIMIT, clamp_limit
 
-
 # --------------------------------------------------------------------------
 # Q22 - a limit is a promise to the caller
 # --------------------------------------------------------------------------

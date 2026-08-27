@@ -9,7 +9,6 @@ refusal can be phrased in at least five different ways depending on which layer 
 """
 from strands_robots.dashboard.mesh_bridge import command_succeeded, stop_outcome
 
-
 # --- command_succeeded: every way a response can say no -------------------------------------------
 
 def test_a_clean_response_is_a_success():

@@ -11,3 +11,4 @@ MUJOCO_LOG.TXT
 .coverage.*
 AGENTS.local.md
 site/
+.env

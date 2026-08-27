@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 __all__ = ["EPSILON_DEG", "MIN_SAMPLES", "WINDOW_S", "joint_positions", "prune", "motion_verdict"]
 

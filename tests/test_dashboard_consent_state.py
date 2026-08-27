@@ -1,5 +1,6 @@
 from strands_robots.dashboard import consent
 
+
 def test_every_kind_is_reported():
     """Was pinned to the three kinds of the day; a fourth (agent_physical_motion, Q80) then made the
     list wrong rather than making the omission visible. Generic now: whatever KINDS says must have a

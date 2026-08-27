@@ -14,8 +14,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from strands_robots.utils import non_negative_whole_number_error
 from strands_robots.dashboard.device_manager import DeviceManager, validate_replay
+from strands_robots.utils import non_negative_whole_number_error
 
 
 class TestValidateReplay:

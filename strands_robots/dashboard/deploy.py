@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import ipaddress
-
 import time
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from . import camera_liveness
 

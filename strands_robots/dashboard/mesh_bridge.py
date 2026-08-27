@@ -17,6 +17,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from strands_robots.dashboard import joint_silence, safety_state
+from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +54,6 @@ def prune_peers(
 # the pre-publish check here MUST agree with the transport's drop filter or a
 # command passes the check and vanishes into the documented timeout anyway.
 # cmd_bytes_cap() also refuses a garbage env value with an actionable message.
-from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
-
 MAX_CMD_BYTES = _cmd_bytes_cap()
 
 #: How many fleet actions to keep for the activity panel.

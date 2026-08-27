@@ -23,7 +23,6 @@ from types import SimpleNamespace
 
 from strands_robots.dashboard import mesh_bridge as mb
 
-
 # --- the pure labelling ----------------------------------------------------
 
 

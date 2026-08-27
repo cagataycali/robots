@@ -10,7 +10,7 @@ from __future__ import annotations
 import inspect
 
 from strands_robots.dashboard import agent_bridge, voice
-from strands_robots.dashboard.agent_motion import MOTION_ENV, agent_motion_allowed
+from strands_robots.dashboard.agent_motion import MOTION_ENV
 
 ARM = {"presence": {"hw": "so_follower"}}
 

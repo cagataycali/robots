@@ -1,7 +1,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 #: Probe verdicts, worst-to-best for the UI's sorting purposes.
 STATES = ("blocked", "absent", "vanished", "assigned", "in_use", "unreadable", "ready")

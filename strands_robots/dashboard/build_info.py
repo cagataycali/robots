@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+
 def read_commit(root: Path | str | None) -> str | None:
     """The short sha of ``root``'s checkout, or None when it cannot be read honestly."""
     if root is None:

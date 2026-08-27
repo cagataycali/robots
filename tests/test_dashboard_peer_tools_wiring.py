@@ -10,8 +10,6 @@ first build.
 
 from __future__ import annotations
 
-import pytest
-
 from strands_robots.dashboard import agent_hitl as hitl
 from strands_robots.dashboard import peer_tools as pt
 

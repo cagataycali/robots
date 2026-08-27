@@ -432,9 +432,8 @@ def export(
     base_model: str = "",
 ) -> dict[str, Any]:
     """Export the run's last checkpoint as a loadable artifact."""
-    from strands_robots.tools.train_policy import train_policy
-
     from strands_robots.dashboard.artifact_check import artifact_verdict
+    from strands_robots.tools.train_policy import train_policy
 
     res = _tool_result(train_policy(
         action="export", provider=provider, output_dir=output_dir,

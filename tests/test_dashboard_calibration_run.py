@@ -16,7 +16,6 @@ import pytest
 
 from strands_robots.dashboard import calibration_run as cr
 
-
 # ---------------------------------------------------------------------------
 # cli_args — the command must be the draccus shape, and refuse to guess
 # ---------------------------------------------------------------------------

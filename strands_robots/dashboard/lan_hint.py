@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 #: A /64 is the unit a home network is delegated, and the unit SLAAC hosts share.
 V6_NETWORK_BITS = 64

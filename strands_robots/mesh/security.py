@@ -208,6 +208,79 @@ def _input_slew_abs() -> float:
     return _env_pos_float("STRANDS_MESH_INPUT_SLEW_ABS", DEFAULT_INPUT_SLEW_ABS)
 
 
+#: Per-joint safety envelopes by the unit the RECEIVING robot declares for that
+#: joint, as ``(value_abs, slew_abs)`` in that unit. Every row states the same
+#: physical claim as the radian default - "two full turns of reach, traversable
+#: twice per second" - expressed in the unit the frame is actually written in.
+#:
+#: This exists because :data:`DEFAULT_INPUT_VALUE_ABS` (4*pi) is a RADIAN
+#: assumption, and an SO-101 does not report radians: lerobot normalises Feetech
+#: positions to DEGREES (``wrist_roll`` rests at 170) or to a -100..100 percent
+#: range, with the gripper always 0..100 percent. Against the radian bound every
+#: real frame from such an arm is refused - measured: 209 published, 176 rejected,
+#: 0 applied - so the envelope has to know which unit it is bounding.
+INPUT_ENVELOPES_BY_UNIT: dict[str, tuple[float, float]] = {
+    # 2 turns of reach; the radian default, unchanged.
+    "rad": (DEFAULT_INPUT_VALUE_ABS, DEFAULT_INPUT_SLEW_ABS),
+    # 2 turns in degrees. 720 deg/s of slew is ~12.6 rad/s, still roughly 2x the
+    # no-load speed of an STS3215 at 12V, so a human-moved leader cannot trip it.
+    "deg": (720.0, 1440.0),
+    # Normalised percent (RANGE_M100_100 / RANGE_0_100): full scale is 100, so
+    # 200 keeps the same 2x-full-scale generosity the radian row has.
+    "pct": (200.0, 400.0),
+}
+
+#: How lerobot spells the normalisation modes, mapped to the unit keys above.
+#: Kept as plain strings so this module imports nothing from lerobot: security
+#: rules must be testable without hardware libraries installed.
+NORM_MODE_UNITS: dict[str, str] = {
+    "DEGREES": "deg",
+    "RANGE_M100_100": "pct",
+    "RANGE_0_100": "pct",
+    "RADIANS": "rad",
+}
+
+
+def input_envelope_for_units(
+    units_by_key: Mapping[str, str] | None,
+) -> tuple[dict[str, float], dict[str, float], str]:
+    """Per-joint magnitude and slew bounds for the units a receiver declares.
+
+    The bound that constrains a sender must not be chosen by that sender, so the
+    unit is never read from the frame: it comes from the robot the frame is about
+    to be applied to (``bus.motors[name].norm_mode``), which no remote peer can
+    influence. A joint whose unit is unknown keeps the radian default rather than
+    the most permissive row - an unrecognised declaration must not widen anything.
+
+    Args:
+        units_by_key: Frame key (``"shoulder_pan.pos"``) to unit key
+            (``"rad"`` / ``"deg"`` / ``"pct"``). ``None`` or empty means nothing
+            was declared, so nothing is overridden.
+
+    Returns:
+        ``(value_abs_by_key, slew_abs_by_key, note)`` where the two mappings hold
+        only the keys whose unit is recognised, and *note* is a one-line human
+        summary for the log ("2 joints in deg, 1 in pct" / "no declared units").
+    """
+    if not units_by_key:
+        return {}, {}, "no declared units - radian defaults apply"
+    values: dict[str, float] = {}
+    slews: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    unknown = 0
+    for key, unit in units_by_key.items():
+        row = INPUT_ENVELOPES_BY_UNIT.get(str(unit))
+        if row is None:
+            unknown += 1
+            continue
+        values[key], slews[key] = row
+        counts[str(unit)] = counts.get(str(unit), 0) + 1
+    parts = [f"{n} joint{'s' if n != 1 else ''} in {u}" for u, n in sorted(counts.items())]
+    if unknown:
+        parts.append(f"{unknown} with an unrecognised unit (radian default kept)")
+    return values, slews, ", ".join(parts) if parts else "no recognised units"
+
+
 #: Charset for teleop input-frame keys (motor/joint names like
 #: ``"motor.pos"``, ``"shoulder_pan"``, ``"j0"``). Printable, no
 #: whitespace, no shell metacharacters, no path separators.
@@ -357,12 +430,28 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         "step",
         "reset",
         "teleop_status",
+        "teleop_publish",
         "teleop_receive",
         "teleop_stop",
         # ``resume`` clears the emergency-stop lockout; the only action
         # other than ``status`` permitted while the lockout is engaged.
         "resume",
+        # ``sim_call`` invokes one published Simulation action (add_object,
+        # add_camera, register_urdf, raycast, ...) on a SIM peer. Hardware
+        # peers refuse it in ``Mesh._dispatch`` -- the verb is structurally
+        # sim-only, which is why it needs no motion confirm anywhere.
+        "sim_call",
     }
+)
+
+#: Simulation actions ``sim_call`` refuses even though the sim tool publishes
+#: them. Each one starts a policy rollout, and the rollout surface has its own
+#: validated verb (``execute``/``start``) whose provider / HF-repo / host
+#: allowlists would be bypassed if the same capability rode in through
+#: ``sim_call``'s opaque params. One gate per capability: rollouts go through
+#: ``execute``, world/sensor/render calls go through ``sim_call``.
+SIM_CALL_BLOCKED_ACTIONS: frozenset[str] = frozenset(
+    {"run_policy", "start_policy", "replay_episode", "eval_policy"}
 )
 
 #: Device Connect native-RPC function names (e.g. the Reachy's ``nod`` /
@@ -1248,6 +1337,24 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     elif action == "step":
         out["steps"] = _coerce_int("steps", cmd.get("steps", 1), lo=1, hi=10_000, default=1)
 
+    elif action == "teleop_publish":
+        # device_name becomes a segment of the published key expression, exactly
+        # as on the receive side, so it is validated by the same rule. hz drives
+        # the publish loop's 1/hz period AND a real bus read per frame: an absurd
+        # rate is a denial of service against the arm's own state stream.
+        if "device_name" in cmd:
+            out["device_name"] = validate_mesh_identifier(cmd["device_name"], "teleop_publish.device_name")
+        if "hz" in cmd:
+            hz = cmd["hz"]
+            if isinstance(hz, bool) or not isinstance(hz, (int, float)):
+                raise ValidationError("teleop_publish.hz must be a number")
+            hz = float(hz)
+            if not (0 < hz <= 200):
+                raise ValidationError("teleop_publish.hz must be > 0 and <= 200")
+            out["hz"] = hz
+        if cmd.get("robot_name") is not None:
+            out["robot_name"] = validate_mesh_identifier(cmd["robot_name"], "teleop_publish.robot_name")
+
     elif action == "teleop_receive":
         # Both fields flow into ``r.start_teleop_receive(source, dev)``, which
         # interpolates them into the ``strands/{peer}/input/{device}`` key
@@ -1289,6 +1396,40 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
             )
         out["override_code"] = override_code
+
+    elif action == "sim_call":
+        # ``sim_action`` names one PUBLISHED Simulation action; ``sim_params``
+        # is that action's keyword arguments. Both flow into
+        # ``Simulation.__call__(action, **params)`` on the target peer, whose
+        # own dispatch validates per-action fields and refuses unpublished
+        # actions -- this layer bounds the wire shape (identifier charset,
+        # JSON-object params, encoded size) exactly as validate_device_rpc
+        # does for Device Connect natives, and closes the one hole that
+        # peer-side dispatch cannot: a rollout capability riding in through
+        # opaque params (SIM_CALL_BLOCKED_ACTIONS).
+        if not cmd.get("sim_action"):
+            raise ValidationError(
+                "sim_call requires non-empty `sim_action` (a published Simulation action, e.g. 'add_object')"
+            )
+        try:
+            sim_action, sim_params = validate_device_rpc(cmd.get("sim_action", ""), cmd.get("sim_params"))
+        except ValidationError as exc:
+            # Re-raise under this action's own name so the refusal names the
+            # field the caller actually sent (sim_action/sim_params, not
+            # device_rpc's function/params).
+            raise ValidationError(f"sim_call: {exc}") from exc
+        if sim_action in SIM_CALL_BLOCKED_ACTIONS:
+            raise ValidationError(
+                f"sim_call refuses {sim_action!r}: policy rollouts go through the "
+                "`execute`/`start` actions, whose policy_provider / HF-repo / host "
+                "allowlists must not be bypassed."
+            )
+        out["sim_action"] = sim_action
+        out["sim_params"] = sim_params
+        # robot_name disambiguates which robot in a multi-robot world a
+        # robot-scoped action targets; same rule as execute's robot_name.
+        if cmd.get("robot_name") is not None:
+            out["robot_name"] = validate_mesh_identifier(cmd["robot_name"], "sim_call.robot_name")
 
     return out
 
@@ -1361,7 +1502,26 @@ def validate_device_rpc(function: str, params: Any = None) -> tuple[str, dict[st
     return function, dict(params)
 
 
-def validate_input_frame(action: Any) -> dict[str, float]:
+def _resolve_value_abs(
+    key: str,
+    value_abs: float | None,
+    value_abs_by_key: Mapping[str, float] | None,
+) -> float:
+    """Magnitude bound for one joint: per-joint, then scalar, then env default."""
+    if value_abs_by_key:
+        per_key = value_abs_by_key.get(key)
+        if per_key is not None:
+            return float(per_key)
+    if value_abs is not None:
+        return float(value_abs)
+    return _input_value_abs()
+
+
+def validate_input_frame(
+    action: Any,
+    value_abs: float | None = None,
+    value_abs_by_key: Mapping[str, float] | None = None,
+) -> dict[str, float]:
     """Validate and sanitise a teleop input frame, returning a clean copy.
 
     A teleop input frame is the flat ``{motor_name: float}`` payload
@@ -1397,6 +1557,16 @@ def validate_input_frame(action: Any) -> dict[str, float]:
     :data:`MAX_INPUT_VALUE_ABS` snapshot of it, so an operator who narrows the
     teleop envelope takes effect without a process restart. The two agree until
     the env var is set after import, and it is the resolver that refuses.
+
+    Args:
+        action: The raw frame off the wire.
+        value_abs: Scalar magnitude bound for every key. Defaults to
+            ``STRANDS_MESH_INPUT_VALUE_ABS`` / :data:`DEFAULT_INPUT_VALUE_ABS`.
+        value_abs_by_key: Per-joint bounds, as produced by
+            :func:`input_envelope_for_units` from the receiving robot's declared
+            units. Takes precedence over *value_abs* for the keys it names,
+            because a degree-valued shoulder and a percent-valued gripper in the
+            same frame do not share one honest bound.
 
     Returns a sanitised ``dict[str, float]`` containing only validated
     entries. Raises :class:`ValidationError` on any violation.
@@ -1436,7 +1606,11 @@ def validate_input_frame(action: Any) -> dict[str, float]:
         fval = float(value)
         if not math.isfinite(fval):
             raise ValidationError(f"input frame value for {key!r} must be finite, got {fval}")
-        _value_abs = _input_value_abs()
+        # Bound precedence: the caller's per-joint bound (derived from the
+        # RECEIVING robot's declared unit), else the caller's scalar, else the
+        # env/default radian bound. A joint the receiver said nothing about is
+        # never widened by one it did.
+        _value_abs = _resolve_value_abs(key, value_abs, value_abs_by_key)
         if abs(fval) > _value_abs:
             raise ValidationError(
                 f"input frame value for {key!r} out of range: |{fval}| > {_value_abs}",
@@ -1454,6 +1628,7 @@ def input_frame_slew_violation(
     now_mono: float,
     min_interval_s: float,
     max_slew: float | None = None,
+    max_slew_by_key: Mapping[str, float] | None = None,
 ) -> str | None:
     """Report why *action* commands a joint faster than the slew bound allows.
 
@@ -1502,12 +1677,20 @@ def input_frame_slew_violation(
         deterministic regardless of key ordering even when several joints are
         equally over the bound.
     """
-    bound = _input_slew_abs() if max_slew is None else max_slew
+    default_bound = _input_slew_abs() if max_slew is None else max_slew
     if not previous:
         return None
 
+    def _bound_for(joint: str) -> float:
+        """Per-joint speed bound: a degree joint and a percent gripper differ."""
+        if max_slew_by_key:
+            per_key = max_slew_by_key.get(joint)
+            if per_key is not None:
+                return float(per_key)
+        return default_bound
+
     # (speed, displacement, interval, joint) for every joint over the bound.
-    violations: list[tuple[float, float, float, str]] = []
+    violations: list[tuple[float, float, float, str, float]] = []
     for key, value in action.items():
         entry = previous.get(key)
         if entry is None:
@@ -1520,12 +1703,15 @@ def input_frame_slew_violation(
             continue
         dt_s = max(now_mono - float(prev_mono), min_interval_s)
         speed = delta / dt_s if dt_s > 0 else math.inf
-        if speed > bound:
-            violations.append((speed, delta, dt_s, key))
+        key_bound = _bound_for(key)
+        if speed > key_bound:
+            violations.append((speed, delta, dt_s, key, key_bound))
 
     if not violations:
         return None
-    worst_speed, worst_delta, worst_dt, worst_key = max(violations, key=lambda v: (v[0], v[1], v[3]))
+    worst_speed, worst_delta, worst_dt, worst_key, bound = max(
+        violations, key=lambda v: (v[0], v[1], v[3])
+    )
     if worst_dt <= 0:
         return (
             f"input frame slew for {worst_key!r} out of range: moved {worst_delta:g} "

@@ -11,8 +11,6 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
-
 from strands_robots.dashboard import cameras as camera_facts
 from strands_robots.dashboard.device_manager import DeviceManager
 

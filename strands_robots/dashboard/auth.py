@@ -4,19 +4,19 @@ real hardware (SO-101 arms).
 
 from __future__ import annotations
 
-import logging
 import ipaddress
 import json
+import logging
 import os
 import secrets
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any
 
 import jwt  # PyJWT
 from fastapi import HTTPException
-
 from webauthn import (
     generate_authentication_options,
     generate_registration_options,
@@ -68,10 +68,10 @@ def _forced_origin() -> str:
 # --- store: one JSON file, thread-safe, hot-reloaded on mtime change -------
 
 _lock = threading.Lock()
-_cache: Dict[str, Any] = {}
-_cache_key: Optional[tuple] = None
+_cache: dict[str, Any] = {}
+_cache_key: tuple | None = None
 
-def _default_store() -> Dict[str, Any]:
+def _default_store() -> dict[str, Any]:
     return {
         "jwt_secret": secrets.token_urlsafe(48),
         "credentials": [],  # {id, public_key, sign_count, name, created}
@@ -79,9 +79,9 @@ def _default_store() -> Dict[str, Any]:
     }
 
 # Set when a store on disk could not be parsed: the backup path plus why.
-_corrupt: Optional[Dict[str, str]] = None
+_corrupt: dict[str, str] | None = None
 
-def store_corruption() -> Optional[Dict[str, str]]:
+def store_corruption() -> dict[str, str] | None:
     """The unreadable store this process rescued, if any: {'backup': path, 'reason': str}."""
     return dict(_corrupt) if _corrupt else None
 
@@ -101,7 +101,7 @@ def _preserve_corrupt(path: Path, exc: Exception) -> None:
         path, _corrupt["reason"], where or "<could not move it>",
     )
 
-def _load() -> Dict[str, Any]:
+def _load() -> dict[str, Any]:
     """Read the store, re-reading the file whenever it changes on disk."""
     global _cache, _cache_key
     path = _store_path()
@@ -124,7 +124,7 @@ def _load() -> Dict[str, Any]:
         _save_locked(store)
         return store
 
-def _save_locked(store: Dict[str, Any]) -> None:
+def _save_locked(store: dict[str, Any]) -> None:
     global _cache, _cache_key
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,7 +140,7 @@ def _save_locked(store: Dict[str, Any]) -> None:
     except OSError:
         _cache_key = None
 
-def _save(store: Dict[str, Any]) -> None:
+def _save(store: dict[str, Any]) -> None:
     with _lock:
         _save_locked(store)
 
@@ -150,13 +150,13 @@ def _jwt_secret() -> str:
 def has_credentials() -> bool:
     return len(_load().get("credentials", [])) > 0
 
-def list_credentials() -> List[Dict[str, Any]]:
+def list_credentials() -> list[dict[str, Any]]:
     return [
         {"id": c["id"], "name": c.get("name", "passkey"), "created": c.get("created")}
         for c in _load().get("credentials", [])
     ]
 
-def delete_credential(cred_id: str) -> Dict[str, Any]:
+def delete_credential(cred_id: str) -> dict[str, Any]:
     """Revoke a passkey. Refuses to remove the LAST one (would re-open the
     dashboard to anyone via the setup flow)."""
     store = _load()
@@ -197,12 +197,12 @@ def _headers(request_or_ws: Any) -> Any:
 #: machine is the operator, and local dev must never depend on remote config.
 _LOOPBACK_RP_IDS = frozenset({"localhost", "127.0.0.1", "::1"})
 
-def known_rp_ids(store: Optional[dict] = None) -> set:
+def known_rp_ids(store: dict | None = None) -> set:
     """Every rp_id this deployment has PROVEN it uses."""
     s = store if store is not None else _load()
     return {c["rp_id"] for c in s.get("credentials", []) if c.get("rp_id")}
 
-def rp_id_verdict(host_rp_id: str, forced: str = "", known: Optional[set] = None) -> tuple:
+def rp_id_verdict(host_rp_id: str, forced: str = "", known: set | None = None) -> tuple:
     """Decide the rp_id for a ceremony: ``(rp_id, reason)``, or ``(None, reason)``."""
     # Loopback outranks even the pin, and that ordering is deliberate: a browser at
     # http://localhost:8090 CANNOT use 'robots.cagatay.my' as an rp_id -- the spec requires the
@@ -257,7 +257,7 @@ def _rpid_error(rp_id: str) -> HTTPException:
 
 logger = logging.getLogger(__name__)
 
-_challenges: Dict[str, Dict[str, Any]] = {}
+_challenges: dict[str, dict[str, Any]] = {}
 _chal_lock = threading.Lock()
 _CHAL_TTL = 300.0
 
@@ -268,7 +268,7 @@ _CHAL_MAX = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX", "512"))
 # operator's pending login.
 _CHAL_MAX_PER_IP = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX_PER_IP", "16"))
 
-def _evict_oldest(where: Dict[str, Dict[str, Any]], keep: int, ip: Optional[str] = None) -> int:
+def _evict_oldest(where: dict[str, dict[str, Any]], keep: int, ip: str | None = None) -> int:
     """Drop the oldest entries (optionally only one ip's) until ``keep`` remain."""
     pool = [(v["t"], k) for k, v in where.items() if ip is None or v.get("ip") == ip]
     dropped = 0
@@ -278,7 +278,7 @@ def _evict_oldest(where: Dict[str, Dict[str, Any]], keep: int, ip: Optional[str]
     return dropped
 
 def _stash_challenge(
-    kind: str, challenge: bytes, extra: Optional[dict] = None, ip: Optional[str] = None,
+    kind: str, challenge: bytes, extra: dict | None = None, ip: str | None = None,
 ) -> str:
     cid = secrets.token_urlsafe(16)
     now = time.time()
@@ -299,7 +299,7 @@ def _stash_challenge(
         }
     return cid
 
-def _client_ip(request_or_ws: Any) -> Optional[str]:
+def _client_ip(request_or_ws: Any) -> str | None:
     """Best-effort client identity for the per-ip cap only -- NEVER for trust."""
     try:
         h = _headers(request_or_ws)
@@ -311,7 +311,7 @@ def _client_ip(request_or_ws: Any) -> Optional[str]:
     except Exception:
         return None
 
-def _pop_challenge(cid: str, kind: str) -> Dict[str, Any]:
+def _pop_challenge(cid: str, kind: str) -> dict[str, Any]:
     with _chal_lock:
         rec = _challenges.pop(cid, None)
     if not rec or rec["kind"] != kind:
@@ -353,7 +353,7 @@ def renewal_verdict(
     now: float,
     ttl: int | None = None,
     max_age: int | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Should this session be handed a fresh token?"""
     ttl = _token_ttl() if ttl is None else ttl
     max_age = _session_max_age() if max_age is None else max_age
@@ -389,7 +389,7 @@ def renewal_verdict(
         return {"renew": False, "reason": "renewal would not extend this session", "exp": int(exp), "iat0": int(iat0)}
     return {"renew": True, "reason": "past half-life, extended", "exp": new_exp, "iat0": int(iat0)}
 
-def verify_token(token: str) -> Dict[str, Any]:
+def verify_token(token: str) -> dict[str, Any]:
     try:
         return jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
@@ -397,7 +397,7 @@ def verify_token(token: str) -> Dict[str, Any]:
     except jwt.PyJWTError:
         raise HTTPException(401, "invalid session")
 
-def renew_if_due(token: str, now: float | None = None) -> Optional[str]:
+def renew_if_due(token: str, now: float | None = None) -> str | None:
     if not token:
         return None
     try:
@@ -436,7 +436,7 @@ def handoff_ttl() -> int:
 
 def handoff_verdict(
     claims: Mapping[str, Any] | None, now: float, ttl: int | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """May this session be copied into a short-lived URL token, and until when?
     The handoff never outlives the session it came from."""
     ttl = handoff_ttl() if ttl is None else ttl
@@ -450,7 +450,7 @@ def handoff_verdict(
         return {"ok": False, "reason": "session already expired - sign in again"}
     return {"ok": True, "exp": int(min(now + ttl, exp))}
 
-def issue_handoff(claims: Mapping[str, Any], now: float | None = None) -> Dict[str, Any]:
+def issue_handoff(claims: Mapping[str, Any], now: float | None = None) -> dict[str, Any]:
     """Mint the short-lived token handoff_verdict() approved, carrying the session's
     identity (sub/name/iat0) so renewal caps survive the copy."""
     now = time.time() if now is None else now
@@ -466,7 +466,7 @@ def issue_handoff(claims: Mapping[str, Any], now: float | None = None) -> Dict[s
     )
     return {"token": token, "exp": verdict["exp"], "expires_in": max(0, int(verdict["exp"] - now))}
 
-def client_is_loopback(client_host: Optional[str]) -> bool:
+def client_is_loopback(client_host: str | None) -> bool:
     """True when the connecting client is this machine. Used so that
     auth-disabled means LOCAL-ONLY rather than open to the network."""
     if not client_host:
@@ -478,7 +478,7 @@ def client_is_loopback(client_host: Optional[str]) -> bool:
 
 # --- WebAuthn ceremonies ------------------------------------------------------
 
-def begin_registration(request: Any, label: str = "passkey", bootstrap: str = "") -> Dict[str, Any]:
+def begin_registration(request: Any, label: str = "passkey", bootstrap: str = "") -> dict[str, Any]:
     """Start a passkey enrollment. The FIRST enrollment seals the dashboard;
     later ones require a valid session (enforced by the route)."""
     store = _load()
@@ -531,7 +531,7 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
     cid = _stash_challenge("reg", opts.challenge, {"label": label, "rp_id": rp_id}, ip=_client_ip(request))
     return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
 
-def finish_registration(request: Any, challenge_id: str, credential: dict) -> Dict[str, Any]:
+def finish_registration(request: Any, challenge_id: str, credential: dict) -> dict[str, Any]:
     rec = _pop_challenge(challenge_id, "reg")
     verification = verify_registration_response(
         credential=credential,
@@ -557,7 +557,7 @@ def finish_registration(request: Any, challenge_id: str, credential: dict) -> Di
     token = issue_token(cred_id, name=rec["extra"].get("label", "passkey"))
     return {"ok": True, "token": token, "credential_id": cred_id}
 
-def begin_authentication(request: Any) -> Dict[str, Any]:
+def begin_authentication(request: Any) -> dict[str, Any]:
     store = _load()
     if not store.get("credentials"):
         raise HTTPException(400, "no credentials enrolled - setup required")
@@ -576,7 +576,7 @@ def begin_authentication(request: Any) -> Dict[str, Any]:
     cid = _stash_challenge("auth", opts.challenge, {"rp_id": rp_id}, ip=_client_ip(request))
     return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
 
-def finish_authentication(request: Any, challenge_id: str, credential: dict) -> Dict[str, Any]:
+def finish_authentication(request: Any, challenge_id: str, credential: dict) -> dict[str, Any]:
     rec = _pop_challenge(challenge_id, "auth")
     store = _load()
     cred_id = credential.get("id") or credential.get("rawId")
@@ -602,9 +602,9 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
     token = issue_token(cred_id, name=match.get("name", "passkey"))
     return {"ok": True, "token": token, "credential_id": cred_id}
 
-def status(request: Any = None) -> Dict[str, Any]:
+def status(request: Any = None) -> dict[str, Any]:
     store = _load()
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "enabled": auth_enabled(),
         "setup_required": len(store.get("credentials", [])) == 0,
         "credentials": list_credentials(),

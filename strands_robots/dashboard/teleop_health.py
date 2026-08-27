@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 __all__ = ["diagnose_receiver", "envelope_refusal", "published_frames", "teleop_health"]
 

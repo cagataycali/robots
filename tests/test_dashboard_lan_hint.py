@@ -49,8 +49,8 @@ def test_unknown_renders_nothing_and_local_without_an_address_admits_it():
 
 
 # --- the endpoint: whose address is it, really? -----------------------------------
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 
 @pytest.fixture

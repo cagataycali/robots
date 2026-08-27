@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+
 def label_view(
     document: Mapping[str, Any] | None,
     *,
@@ -55,8 +56,8 @@ def _capability(
     """Whether ANY episode here can be annotated, and the sentence explaining it."""
     if sidecar_error:
         return False, (
-            "this dataset has an episode_labels.json that could not be read (%s), so existing labels "
-            "cannot be shown and new ones would overwrite a file we do not understand" % sidecar_error
+            f"this dataset has an episode_labels.json that could not be read ({sidecar_error}), so existing labels "
+            "cannot be shown and new ones would overwrite a file we do not understand"
         )
     if document is None:
         return False, (

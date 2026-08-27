@@ -11,23 +11,21 @@ import math
 import os
 import re
 import subprocess
-
-from strands_robots.dashboard import bus_claim
 import sys
 import threading
-import uuid
 import time
+import uuid
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from strands_robots.dashboard import bus_claim
+
 from ..utils import non_negative_whole_number_error
-from . import arm_roles
-from . import camera_liveness
+from . import arm_roles, camera_liveness, joint_silence
 from . import cameras as camera_facts
-from . import joint_silence
 
 logger = logging.getLogger(__name__)
 
@@ -744,10 +742,10 @@ def autospawn_veto(env: Mapping[str, str]) -> str | None:
         return None
     test_marker = env.get("PYTEST_CURRENT_TEST") or env.get("PYTEST_VERSION")
     if test_marker:
+        marker = str(test_marker).split("::")[0]
         return (
-            "this process is a pytest run (%s): a test must never take a real serial port. "
+            f"this process is a pytest run ({marker}): a test must never take a real serial port. "
             "Set STRANDS_DASHBOARD_AUTOSPAWN=1 if you truly mean to spawn hardware from a test."
-            % str(test_marker).split("::")[0]
         )
     if str(env.get("STRANDS_MESH", "")).strip().lower() in ("0", "false", "no", "off"):
         return "STRANDS_MESH is off (the hard kill switch): a robot child must not be started"

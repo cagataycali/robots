@@ -323,7 +323,6 @@ def _make_fleet_tool() -> Any:
         if _bridge is None:
             return {"status": "error", "content": [{"text": "mesh bridge offline"}]}
         import json as _json
-        import time as _time
 
         if action == "peers":
             snap = _bridge.snapshot()
@@ -335,7 +334,7 @@ def _make_fleet_tool() -> Any:
                 st = p.get("state") or {}
                 task = (st.get("task") or {})
                 cams = list((p.get("cameras") or {}).keys())
-                joints = len((st.get("joints") or {}))
+                joints = len(st.get("joints") or {})
                 lines.append(
                     f"- {pid}: type={pres.get('robot_type','?')} hw_connected={pres.get('connected')} "
                     f"cameras={cams} joints={joints} task={task.get('status','idle')} "
@@ -591,7 +590,7 @@ class TurnCancelled(Exception):
 class WSStreamHandler:
     """Strands callback handler -> thread-safe queue of UI events."""
 
-    def __init__(self, q: "queue.Queue[dict]", cancel: "threading.Event | None" = None) -> None:
+    def __init__(self, q: queue.Queue[dict], cancel: threading.Event | None = None) -> None:
         self.q = q
         self.cancel = cancel
         self._tool_ids: set[str] = set()
@@ -651,8 +650,8 @@ def _is_history_poisoned(exc: Exception) -> bool:
 
 def run_turn_blocking(
     prompt: str,
-    q: "queue.Queue[dict]",
-    cancel: "threading.Event | None" = None,
+    q: queue.Queue[dict],
+    cancel: threading.Event | None = None,
 ) -> None:
     """Run one agent turn in a worker thread, streaming events into q. ``cancel`` is set by the
     websocket handler when its client goes away.
@@ -666,8 +665,8 @@ def run_turn_blocking(
 def resume_interrupt_blocking(
     interrupt_id: str,
     response: Any,
-    q: "queue.Queue[dict]",
-    cancel: "threading.Event | None" = None,
+    q: queue.Queue[dict],
+    cancel: threading.Event | None = None,
 ) -> None:
     """Answer a pending motion confirm and continue the SAME turn."""
     pending = pending_interrupt()
@@ -683,8 +682,8 @@ def resume_interrupt_blocking(
 
 def _run_agent_input(
     agent_input: Any,
-    q: "queue.Queue[dict]",
-    cancel: "threading.Event | None" = None,
+    q: queue.Queue[dict],
+    cancel: threading.Event | None = None,
 ) -> None:
     acquired = False
     try:

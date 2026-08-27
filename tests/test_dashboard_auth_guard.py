@@ -347,8 +347,8 @@ def test_wildcard_beside_a_named_origin_keeps_only_the_named_one(monkeypatch):
 # users get a 401 loop and a login form that can never succeed — the Aug-19 iOS wedge's shape, from
 # one rename. Both directions are cheap to pin from the source, so they are pinned here.
 
-import re as _re
-from pathlib import Path as _Path
+import re as _re  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
 
 _ROUTE_RE = _re.compile(r'@(\w+)\.(get|post|put|patch|delete|websocket)\(\s*["\']([^"\']+)["\']')
 _PREFIX_RE = _re.compile(r'(\w+)\s*=\s*APIRouter\(\s*prefix\s*=\s*["\']([^"\']*)["\']')

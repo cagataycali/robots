@@ -316,9 +316,9 @@ def test_resolve_mesh_env_is_pure_and_ordered():
 # ── Q122: the address in the snippet must be reachable from the machine that RUNS it ──
 # Added as a section (this file already had tests that all still matter). The snippet is copied onto
 # an edge device, so "the host the browser used" is an answer to a different question.
-import pytest
+import pytest  # noqa: E402
 
-from strands_robots.dashboard.deploy import hub_host_from_reached
+from strands_robots.dashboard.deploy import hub_host_from_reached  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -378,9 +378,9 @@ def test_the_snippet_carries_the_reason_and_never_a_rejected_address():
     assert "NOTE:" in text and "tunnel or reverse proxy" in text
     # "no ZENOH_CONNECT" means no ACTIVE one: the commented <dashboard-host> example is the whole
     # point of the fallback branch, and it contains the same string.
-    active = [l for l in text.splitlines() if "ZENOH_CONNECT" in l and not l.lstrip().startswith("#")]
+    active = [line for line in text.splitlines() if "ZENOH_CONNECT" in line and not line.lstrip().startswith("#")]
     assert active == [], f"nothing may SET the hub when the address was rejected: {active}"
-    assert any("<dashboard-host>" in l for l in text.splitlines()), "the example line still guides"
+    assert any("<dashboard-host>" in line for line in text.splitlines()), "the example line still guides"
 
     lan = render_snippet(ARM_1, hub_host="192.168.1.151", mesh_env={}, hub_port=7447)["snippet"]
     assert 'ZENOH_CONNECT", "tcp/192.168.1.151:7447"' in lan

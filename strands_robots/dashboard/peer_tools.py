@@ -25,8 +25,9 @@ from __future__ import annotations
 import json
 import keyword
 import re
+from collections.abc import AsyncGenerator, Callable, Mapping
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Mapping
+from typing import Any
 
 # ── classification ──────────────────────────────────────────────────────────
 

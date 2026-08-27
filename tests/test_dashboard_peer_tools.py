@@ -13,8 +13,6 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
-
 from strands_robots.dashboard import peer_tools as pt
 
 # ── fixture peers, shaped like _peers_snapshot()'s entries ───────────────────

@@ -15,7 +15,8 @@ verdict names what was measured, and says which measurement it lacked when it la
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 #: Same threshold the fleet cards grey out on (mesh_bridge.PEER_STALE_S), imported lazily so this
 #: module stays importable without the bridge (it is pure, and its tests want it that way).

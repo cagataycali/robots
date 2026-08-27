@@ -21,7 +21,6 @@ import pytest
 from strands_robots.dashboard import arm_roles as ar
 from strands_robots.dashboard import device_manager as dm
 
-
 # ------------------------------------------------------------ classification
 
 

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from strands_robots.dashboard.episode_label_view import label_view
 from strands_robots.dashboard.server import create_app
 
+
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
     """This machine has an enrolled passkey + a live settings token, so an un-isolated route test

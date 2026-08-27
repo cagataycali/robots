@@ -58,7 +58,6 @@ def test_camera_socket_logs_its_verdict_after_the_client_hangs_up(monkeypatch, c
     from fastapi.testclient import TestClient
 
     from strands_robots.dashboard import server as srv
-
     from strands_robots.dashboard import settings
 
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))

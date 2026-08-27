@@ -92,8 +92,7 @@ class TestTheListingCarriesIt:
         d = root / repo
         (d / "meta").mkdir(parents=True)
         (d / "meta" / "info.json").write_text(
-            '{"codebase_version": "v3.0", "total_episodes": %d, "total_frames": %d, "fps": 30}'
-            % (episodes, episodes * 100)
+            f'{{"codebase_version": "v3.0", "total_episodes": {episodes}, "total_frames": {episodes * 100}, "fps": 30}}'
         )
         if with_data:
             chunk = d / "data" / "chunk-000"

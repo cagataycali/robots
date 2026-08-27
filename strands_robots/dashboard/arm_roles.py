@@ -1,8 +1,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from statistics import median
-from typing import Any, Mapping
+from typing import Any
 
 # : Above this, the bus is on the 12V supply → follower.
 FOLLOWER_MIN_V = 9.0
