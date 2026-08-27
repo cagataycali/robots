@@ -29,13 +29,18 @@ def _apply() -> None:
         if priv is not None:
             _lpip.NoTrainLpips = priv
 
-    # _valid_img: removed from the public module in modern torchmetrics - provide
-    # a faithful reimplementation (range/shape check used by the LPIPS metric).
+    # _valid_img: removed from the public module in modern torchmetrics - mirror
+    # the surviving implementation in torchmetrics.functional.image.lpips, the one
+    # the metric itself calls. Its two branches are deliberately asymmetric:
+    # normalize=True bounds both ends of [0, 1], while normalize=False bounds only
+    # the LOWER end of [-1, 1]. Bounding the upper end here too would refuse a
+    # tensor the real check accepts, and _lpips_update turns a False into a
+    # ValueError - so a decoded frame that overshoots 1.0 by a float step would
+    # fail an eval that the unshimmed torchmetrics runs.
     if not hasattr(_lpip, "_valid_img"):
 
         def _valid_img(img, normalize: bool):  # noqa: ANN001
-
-            value_check = img.min() >= 0.0 and img.max() <= 1.0 if normalize else img.min() >= -1.0 and img.max() <= 1.0
+            value_check = img.min() >= 0.0 and img.max() <= 1.0 if normalize else img.min() >= -1.0
             return img.ndim == 4 and img.shape[1] == 3 and bool(value_check)
 
         _lpip._valid_img = _valid_img

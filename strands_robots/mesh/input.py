@@ -74,6 +74,19 @@ _MAX_LOGGED_LOOP_ERRORS = 5
 INPUT_MAX_HZ_DEFAULT = 100.0
 
 
+#: How many refused frames of ONE cause are logged before that cause goes quiet.
+#: Spent per cause rather than per receiver: a cause that keeps refusing must not
+#: silence the FIRST refusal of a different one, because the log line is the only
+#: place a refusal states which value it refused and against which bound.
+_REFUSAL_LOG_BUDGET = 5
+
+#: The refusal causes that share the ``rejected`` total, in the order
+#: :meth:`InputReceiver._on_input` checks them. Each is reported as
+#: ``rejected_<cause>`` in :attr:`InputReceiver.stats` and spends its own share of
+#: :data:`_REFUSAL_LOG_BUDGET`.
+_REJECTION_CAUSES: tuple[str, ...] = ("lockout", "freshness", "invalid")
+
+
 def _input_max_hz() -> float:
     """Resolve ``STRANDS_MESH_INPUT_MAX_HZ`` (lazy, restart-free).
 
@@ -256,30 +269,31 @@ class InputPublisher:
     def _publish_loop(self) -> None:
         """Read the leader device and publish one input frame per tick.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker` (BUGS.md Q69). This
-        loop was the ONLY one that already did deadline arithmetic -- it measured
-        its own body with ``perf_counter`` and slept ``period - elapsed`` -- so the
-        arithmetic is not what was wrong with it: the remaining ~145ms came from
-        the ``_stop_event.wait(sleep_time)`` that arithmetic fed. The ticker owns
-        both halves now, so the subtraction is not duplicated in two places that
-        can disagree.
-
-        THIS CORRECTS A CONCLUSION I RECORDED EARLIER: teleop_publish at hz=10 was
-        measured achieving ~4.1Hz and I attributed it to the cost of one
-        bus-locked serial read per frame. 1/(0.1 + 0.145) = 4.08Hz, and a Feetech
-        position read is single-digit milliseconds -- the pacing penalty accounts
-        for essentially all of it. teleop_health reported that number honestly and
-        the honest number was blamed on the wrong thing.
+        Paced by :class:`~strands_robots.mesh.pacing.Ticker`. This loop is one of
+        two that already did the deadline arithmetic by hand -- it measured its own
+        body with ``perf_counter`` and waited ``period - elapsed`` -- so unlike the
+        state, camera and sensor loops it was already achieving its requested rate
+        where the wait itself is honest. Two things change. The subtraction now has
+        ONE owner instead of being duplicated in every loop that needs it, so two
+        copies cannot drift; and the wait it fed is gone, which matters on a host
+        that inflates ``Event.wait`` (see the module docstring) -- there this loop
+        ran at ``1 / (period + penalty)`` no matter how good its arithmetic was.
         """
         # ``hz`` is validated in __init__, so the division is safe.
         period = 1.0 / float(self.hz)
-        ticker = Ticker(period, self._stop_event)
-        try:
+        with Ticker(period, self._stop_event) as ticker:
             self._publish_ticks(ticker)
-        finally:
-            ticker.close()
 
     def _publish_ticks(self, ticker: Ticker) -> None:
+        """Run the publish loop until stopped, pacing on ``ticker``.
+
+        Split out so :meth:`_publish_loop` owns the ticker's lifetime in a
+        ``finally``: the selector and its self-pipe must be released even when a
+        frame read raises out of the loop.
+
+        Args:
+            ticker: The ticker to pace on, owned by the caller.
+        """
         while self._running and not self._stop_event.is_set():
             try:
                 action = self.teleoperator.get_action()
@@ -456,6 +470,10 @@ class InputReceiver:
         self._last_seq = -1
         self._drops = 0
         self._rejected = 0
+        # Per-cause breakdown of ``_rejected``. Every cause that shares the total
+        # keeps its own count, so a report can say WHICH guard refused the stream
+        # and each cause spends its own log budget.
+        self._rejected_by_cause: dict[str, int] = dict.fromkeys(_REJECTION_CAUSES, 0)
         self._rate_dropped = 0
         self._slew_rejected = 0
         self._last_rate_gate_mono = 0.0
@@ -493,11 +511,20 @@ class InputReceiver:
         """Live receive counters: the ``source`` peer and device, whether the
         subscription is ``running``, ``frames_received``, ``errors``, and the
         loss/back-pressure breakdown - out-of-order ``drops``, ``rejected``
-        frames (E-stop lockout, replay-freshness, or ACL checks), and
-        ``rate_dropped`` frames (shed to hold the apply-rate cap), and
-        ``slew_rejected`` frames (refused for commanding a joint faster
+        frames, and ``rate_dropped`` frames (shed to hold the apply-rate cap),
+        and ``slew_rejected`` frames (refused for commanding a joint faster
         than the per-joint slew bound) -
         plus the achieved ``hz_actual``.
+
+        ``rejected`` is the total of a breakdown that names which guard refused
+        the frame, so a report does not have to recover the reason from the
+        log: ``rejected_lockout`` (arrived during an E-stop lockout),
+        ``rejected_freshness`` (the frame's ``t`` is missing, non-numeric, stale
+        or too far in the future - the replay defence), and ``rejected_invalid``
+        (``validate_input_frame`` refused the frame's shape or a value: too many
+        keys, an illegal key, or a value that is non-scalar, non-numeric,
+        non-finite or past the magnitude bound). ``rejected`` always equals
+        their sum.
         """
         elapsed = time.monotonic() - self._start_mono if self._start_mono else 0
         return {
@@ -508,6 +535,9 @@ class InputReceiver:
             "errors": self._error_count,
             "drops": self._drops,
             "rejected": self._rejected,
+            # Derived from the declared causes, so a cause added to the
+            # vocabulary is reported without a second list to update here.
+            **{f"rejected_{cause}": n for cause, n in self._rejected_by_cause.items()},
             "rate_dropped": self._rate_dropped,
             "slew_rejected": self._slew_rejected,
             "hz_actual": self._frame_count / elapsed if elapsed > 0 else 0,
@@ -562,6 +592,29 @@ class InputReceiver:
         )
         return self.stats
 
+    def _refuse(self, cause: str, message: str, *args: Any) -> None:
+        """Count one refused frame under ``cause`` and log the first few of it.
+
+        The one place refusals on this path are accounted for. ``cause`` is a
+        member of :data:`_REJECTION_CAUSES`; the frame is counted under it and in
+        the ``rejected`` total, and :data:`_REFUSAL_LOG_BUDGET` is spent per
+        cause. Reasons this path refuses a frame outnumber the counters that
+        carried them, so a stream refused for one reason used to exhaust the
+        shared budget and leave the next reason -- stated nowhere else -- unlogged.
+
+        Args:
+            cause: Which guard refused the frame. Must be in
+                :data:`_REJECTION_CAUSES`; an unknown cause raises ``KeyError``
+                rather than being counted under a name no report enumerates.
+            message: ``logger.warning`` format string for this refusal.
+            *args: Interpolated into ``message`` only if the budget allows.
+        """
+        seen = self._rejected_by_cause[cause] + 1
+        self._rejected_by_cause[cause] = seen
+        self._rejected = getattr(self, "_rejected", 0) + 1
+        if seen <= _REFUSAL_LOG_BUDGET:
+            logger.warning(message, *args)
+
     def _on_input(self, topic: str, data: dict[str, Any]) -> None:
         if not self._running:
             return
@@ -576,12 +629,11 @@ class InputReceiver:
         # via the ``rejected`` stat and a rate-limited warning.
         lockout = getattr(self.mesh, "_estop_lockout", None)
         if lockout is not None and lockout.is_set():
-            self._rejected = getattr(self, "_rejected", 0) + 1
-            if self._rejected <= 5:
-                logger.warning(
-                    "[mesh] input frame rejected during E-stop lockout from %s",
-                    self.source_peer_id,
-                )
+            self._refuse(
+                "lockout",
+                "[mesh] input frame rejected during E-stop lockout from %s",
+                self.source_peer_id,
+            )
             return
 
         # Cross-session teleop replay defence. The CMD path got
@@ -590,7 +642,7 @@ class InputReceiver:
         # eavesdrops a teleop stream can store frames and replay them hours/days
         # later (different session/ZID, stale timestamps) and the follower
         # repeats the captured motion -- the rate cap (100Hz) and value bound
-        # (4pi) still pass because the replayed frames are legitimate-shaped.
+        # still pass because the replayed frames are legitimate-shaped.
         # Every frame already carries a wall-clock ``t`` (set by
         # InputPublisher._publish_loop), so we just have to CHECK it. We reuse
         # the same freshness/forward-skew env knobs as the resume/e-stop replay
@@ -607,22 +659,20 @@ class InputReceiver:
 
         _frame_t = data.get("t")
         if not isinstance(_frame_t, (int, float)) or isinstance(_frame_t, bool):
-            self._rejected = getattr(self, "_rejected", 0) + 1
-            if self._rejected <= 5:
-                logger.warning(
-                    "[mesh] input frame rejected (missing/invalid timestamp) from %s",
-                    self.source_peer_id,
-                )
+            self._refuse(
+                "freshness",
+                "[mesh] input frame rejected (missing/invalid timestamp) from %s",
+                self.source_peer_id,
+            )
             return
         _age = time.time() - float(_frame_t)
         if _age > _resume_freshness_window_s() or _age < -_resume_forward_skew_s():
-            self._rejected = getattr(self, "_rejected", 0) + 1
-            if self._rejected <= 5:
-                logger.warning(
-                    "[mesh] input frame rejected (stale/future t=%.1fs) from %s",
-                    _age,
-                    self.source_peer_id,
-                )
+            self._refuse(
+                "freshness",
+                "[mesh] input frame rejected (stale/future t=%.1fs) from %s",
+                _age,
+                self.source_peer_id,
+            )
             return
 
         try:
@@ -666,13 +716,12 @@ class InputReceiver:
                     action, value_abs_by_key=self._value_abs_by_key
                 )
             except ValidationError as verr:
-                self._rejected = getattr(self, "_rejected", 0) + 1
-                if self._rejected <= 5:
-                    logger.warning(
-                        "[mesh] input frame rejected from %s: %s",
-                        self.source_peer_id,
-                        verr,
-                    )
+                self._refuse(
+                    "invalid",
+                    "[mesh] input frame rejected from %s: %s",
+                    self.source_peer_id,
+                    verr,
+                )
                 return
             # Per-joint slew bound. The guards above bound each frame in
             # isolation - who sent it, how fresh it is, how densely frames
@@ -749,10 +798,10 @@ class InputReceiver:
 
     @staticmethod
     def _default_apply(robot: Any, action: dict[str, float]) -> None:
-        """Default: calls robot.send_action()."""
-        # Under the same lock the readers take: a write that interleaves
-        # with a sync-read corrupts both halves of the exchange, and teleop
-        # moving an arm while a probe reads its position is the common case.
+        """Default: calls robot.send_action() under the device's bus lock."""
+        # The same lock the readers take: a write that interleaves with a
+        # sync-read corrupts both halves of the exchange, and teleop moving an
+        # arm while a probe reads its position is the common case.
         if hasattr(robot, "send_action"):
             write_action(robot, action)
         elif hasattr(robot, "robot") and hasattr(robot.robot, "send_action"):

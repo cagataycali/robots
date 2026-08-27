@@ -49,7 +49,9 @@ import time
 from typing import Any
 
 from strands import tool
+from strands.types.tools import ToolContext
 
+from strands_robots.tools._command_gate import gate_command
 from strands_robots.tools._numeric_options import numeric_option_error
 from strands_robots.utils import tcp_port_error
 
@@ -105,7 +107,7 @@ def _transport_port_error(port: int, param: str, context: str) -> str | None:
     """
     if port > _TRANSPORT_MAX_PORT:
         return (
-            f"{context}: port {port!r} is a legal TCP port that the rosbridge WebSocket "
+            f"{context}: {param} {port!r} is a legal TCP port that the rosbridge WebSocket "
             f"transport cannot address (it addresses 1-{_TRANSPORT_MAX_PORT}; autobahn's "
             "URL builder excludes the top of the range)"
         )
@@ -297,7 +299,7 @@ def _service_call(ros: Any, service: str, srv_type: str, fields: dict[str, Any],
     return _rosapi_call(ros, service, srv_type, fields, timeout)
 
 
-@tool
+@tool(context=True)
 def use_rosbridge(
     action: str,
     host: str = "localhost",
@@ -309,6 +311,7 @@ def use_rosbridge(
     timeout: float = 5.0,
     count: int = 1,
     rate: float = 10.0,
+    tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Universal rosbridge tool - ROS over a WebSocket, no ROS install needed.
 
@@ -334,6 +337,8 @@ def use_rosbridge(
         rate: Publish rate in Hz. A positive finite number - the inter-message
             period is ``1 / rate``, so ``0``, a negative value, ``nan`` and
             ``inf`` all leave the burst unthrottled rather than paced.
+        tool_context: Injected agent context, used to ask an operator before a
+            ``publish`` or ``service_call`` reaches a safety-critical command surface.
 
     Returns:
         A Strands tool result dict ``{"status": ..., "content": [{"text": ...}]}``.
@@ -376,6 +381,19 @@ def use_rosbridge(
 
     if not _backend.available():
         return _err(_INSTALL_HINT)
+
+    # The operator gate is consulted here - after the backend probe, so a bridge
+    # that cannot be reached never prompts, and before the WebSocket is dialed, so
+    # a human deciding does not hold the connection lock and no publisher is
+    # advertised on a refusal. Both verbs that carry a command are covered; the
+    # read-only actions are never gated. Both branches require a type, so the
+    # condition mirrors theirs and an incomplete call is reported without asking
+    # an operator about it.
+    for kind, target in (("publish", topic), ("service_call", service)):
+        if action == kind and target and type:
+            refusal = gate_command(kind, target, tool_context, tool="use_rosbridge")
+            if refusal is not None:
+                return _err(refusal)
 
     try:
         with _backend.lock:

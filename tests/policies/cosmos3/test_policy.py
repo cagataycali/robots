@@ -135,6 +135,30 @@ def test_get_actions_sync_wrapper():
     assert len(out) == 32
 
 
+def test_service_backend_surfaces_raw_chunk_and_server_video_on_last_rollout():
+    """Service mode surfaces the raw [T, D] chunk (and the server's optional
+    rollout video) on last_rollout, matching the diffusers backend (#2512).
+    Pins the parity so callers and the live integration test can assert on the
+    un-unpacked chunk rather than reconstructing it from per-step dicts.
+    """
+
+    class VideoClient(FakeClient):
+        def infer(self, observation):
+            self.last_obs = observation
+            return {"action": self._action, "video": "rollout.mp4"}
+
+    action = _droid_chunk()
+    p = Cosmos3Policy(embodiment="droid", client=VideoClient(action))
+    assert p.last_rollout is None  # None until the first inference
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    p.get_actions_sync(_obs_with_state_and_images(), "go")
+    assert p.last_rollout is not None
+    chunk = np.asarray(p.last_rollout["action"])
+    assert chunk.ndim == 2 and chunk.shape == action.shape
+    np.testing.assert_array_equal(chunk, action)
+    assert p.last_rollout["video"] == "rollout.mp4"
+
+
 def test_unpack_1d_action_promoted():
     p = _make_droid_policy()
     steps = p._unpack_actions(np.zeros(8, dtype=np.float32))
@@ -489,6 +513,36 @@ def test_trailing_state_key_used_as_gripper_fallback():
         [0.1 * i for i in range(7)],
         rtol=1e-6,
     )
+
+
+def test_undeclared_state_keys_infer_joint_positions_not_velocities():
+    """With no set_robot_state_keys, the ordering is inferred from the observation.
+
+    Every sim backend writes a velocity companion beside each joint position, so
+    the observation's insertion order alternates ``[pos, vel, pos, vel, ...]``.
+    Read as the state vector it would put a velocity in every other slot of the
+    7-joint request and truncate joints 5-7 away, with the request reported as
+    sent. The inferred ordering is position-only.
+    """
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)  # no set_robot_state_keys
+    img = np.zeros((360, 640, 3), dtype=np.uint8)
+    obs = {
+        "observation/wrist_image_left": img,
+        "observation/exterior_image_1_left": img,
+        "observation/exterior_image_2_left": img,
+    }
+    for i in range(1, 8):  # joint1..joint7 + additive .vel companions
+        obs[f"joint{i}"] = round(0.1 * i, 3)
+        obs[f"joint{i}.vel"] = -100.0 - i  # sentinel: unmistakably a velocity
+    obs["finger_joint1"] = 0.04
+    obs["finger_joint1.vel"] = -900.0
+
+    asyncio.run(p.get_actions(obs, "go"))
+    joints = client.last_obs["observation/joint_position"][0]
+    np.testing.assert_allclose(joints, [0.1 * i for i in range(1, 8)], rtol=1e-6)
+    assert not [v for v in joints if v < -50.0], f"velocities reached the request: {joints}"
+    assert client.last_obs["observation/gripper_position"][0, 0] == pytest.approx(0.04)
 
 
 def test_degenerate_embodiment_without_cameras_still_requires_a_frame(monkeypatch):

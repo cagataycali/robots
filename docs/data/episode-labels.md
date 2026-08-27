@@ -37,6 +37,18 @@ filter without rewriting a single parquet shard. The file is schema-versioned
 (`schema_version: 1`); a version this build does not know is refused on read
 rather than misread. Writes are two-phase (temp file + atomic rename).
 
+Reading is the boundary for a sidecar this build did not write, so the same
+refusal reaches the records: a verdict-bearing field outside its domain, or a
+block that cannot state the thing it exists to state, is reported against the
+file and the episode rather than reinterpreted. That is where the harm lands -
+a `success` spelled `"false"` is truthy, so a deterministically *failed*
+episode would clear `require_success=True`, and a `quality` outside the
+vocabulary reached `filter_episodes` as `tuple.index(x): x not in tuple` and
+`measure_agreement` as a silently understated agreement figure. The descriptive
+fields (`steps`, `cumulative_reward`, `seed`, `note`, `model`, `labeled_at`,
+`success_opinion`) are carried through untouched: nothing branches on them, so
+a surprising value there is a record to read rather than a verdict to refuse.
+
 ```json
 {
   "schema_version": 1,
@@ -63,13 +75,15 @@ rather than misread. Writes are two-phase (temp file + atomic rename).
 }
 ```
 
-Field domains:
+Field domains. Each holds in both directions - the writer refuses a value
+outside it, and so does the reader, so a sidecar another writer produced is
+held to the same domains as one this build wrote:
 
 | field | domain |
 |---|---|
 | `episode_index` | a non-negative whole number, on the shared domain every surface applies. Holds in each spelling the index arrives in: the `episode` argument of `deterministic_verdict` / `annotate_episode` and the judge tools, an `episodes[i]["episode"]` entry handed to `record_deterministic_verdicts`, and a key of `measure_agreement`'s holdout mapping. A value outside it selects a *different* episode rather than failing slowly - `True` is `1` to an index - so it is refused and named |
 | `quality` | `low` / `medium` / `high` (ordered; filters compare rank). An *execution* grade, orthogonal to the outcome - see below |
-| `failure_mode` | `null` or one of `jerky_motion`, `near_miss`, `camera_occlusion`, `wrong_but_lucky`, `drift`, `collision`, `incomplete`, `other` |
+| `failure_mode` | `null` or one of `jerky_motion`, `near_miss`, `camera_occlusion`, `wrong_but_lucky`, `drift`, `collision`, `incomplete`, `other`. Holds in each spelling the tag arrives in: the `failure_mode` argument of `annotate_episode`, a `judge.failure_mode` a reader loads from the sidecar, and a holdout entry's `failure_mode` handed to `measure_agreement`. The judge's tag is confined to the vocabulary at both ends, so a tag outside it can never equal one - it would be counted as a disagreement and understate the calibration rather than measure it |
 | `success_opinion` | `null` (no opinion) or a boolean |
 | `disputes_verdict` | derived: opinion present and different from the deterministic `success` |
 | `model` | free-form provenance (`"human"`, a model id, an endpoint) |
@@ -114,6 +128,19 @@ works, no cloud dependency required):
   measured as 84 px of travel in one camera and 22 px in the other, with
   the verdict lost on the weaker view alone - PR #2486 review), so
   sampling one canonical camera would drop verdicts the interleave keeps.
+  The state is always reported as a vector, however narrow: LeRobot stores a
+  one-component state as a scalar column rather than a one-element list, and
+  both are read as the vector `meta/info.json` declares, so a single-DOF
+  recording (a gripper, a linear stage, a pan unit) samples like any other.
+  An episode whose frames are not all readable is refused rather than
+  summarised: both statistics are computed over consecutive frames, so a data
+  shard lost to a truncated download would make the surviving rows read as
+  consecutive across a gap and the summary would measure that gap instead of
+  the robot (on a uniform ramp, losing one middle shard of three took
+  `max_state_delta` from 0.010 to 0.070 and `rms_state_jerk` from 0.000 to
+  6123.7). The refusal names every unreadable shard. `load_episode` reads the
+  episode metadata rather than the frames, so it still describes such an
+  episode - including its true length.
 - `read_predicate_verdict` - the authoritative deterministic verdict.
 - `write_label` - the annotation; structurally unable to touch the verdict.
 

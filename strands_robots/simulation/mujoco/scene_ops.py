@@ -42,8 +42,14 @@ from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco, filter_mujoco_attach_noise, mj_name_to_id
-from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
-from strands_robots.utils import coerce_rgba, entity_name_error, finite_vector_error, pose_vector_error
+from strands_robots.simulation.mujoco.spec_builder import _SIZE_LAYOUT, SpecBuilder
+from strands_robots.utils import (
+    coerce_rgba,
+    entity_name_error,
+    finite_vector_error,
+    orientation_quaternion_error,
+    pose_vector_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +281,71 @@ def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]
     return servos, other
 
 
+def joint_rate_drive_map(model: Any, mj: Any) -> dict[int, int]:
+    """Map each joint whose actuator commands a *rate* in the joint's own units.
+
+    The velocity counterpart of :func:`joint_drive_map`, which answers the same
+    question for a pose. A *rate drive* is an actuator whose ``ctrl`` IS the
+    joint's velocity, so a velocity a caller writes into ``qvel`` is a value the
+    drive is simultaneously commanding somewhere else -- and the next step
+    resolves that disagreement in the drive's favour.
+
+    The three terms mirror :func:`joint_drive_map`'s, read off the same compiled
+    fields (measured against every MuJoCo actuator shortcut, only ``<velocity>``
+    clears all of them):
+
+    * ``biastype == mjBIAS_AFFINE`` - the bias is computed from the joint's own
+      state. Necessary and not sufficient: ``<position kp>`` and
+      ``<intvelocity kp>`` are affine-bias too.
+    * ``biasprm[1] == 0`` and ``biasprm[2] < 0`` - slot 1 is ``-kp`` (position
+      feedback) and slot 2 is ``-kv`` (velocity feedback), so a rate command is
+      the one with feedback on the rate and none on the pose. ``<velocity kv>``
+      compiles to ``biasprm = [0, 0, -kv]``; ``<position kp>`` to
+      ``[0, -kp, 0]``, which this excludes.
+    * ``dyntype == mjDYN_NONE`` - ``ctrl`` reaches the force law directly.
+      ``<intvelocity>`` also reads ``ctrl`` as a rate, but integrates it into a
+      *pose* target behind an ``act`` state, so the joint's velocity is not what
+      it commands and it is excluded here.
+    * the transmission is the joint itself, resolved through
+      :func:`actuator_joint_id`. A tendon velocity drive is disqualified for the
+      same two reasons a tendon servo is: ``ctrl`` is in the tendon's units
+      rather than the joint's, and one ``ctrl`` drives several joints at once.
+
+    Stock assets reach this path: Menagerie's ``pal_tiago`` ships a
+    ``tiago_velocity.xml`` whose arm is driven by 9 ``<velocity>`` actuators
+    (``pal_tiago_dual`` 18), and any caller MJCF loaded through
+    ``replace_scene_mjcf`` / ``patch_scene_mjcf`` may carry one.
+
+    Args:
+        model: The compiled ``MjModel``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        ``{joint id: actuator id}`` for every joint some actuator commands a
+        rate on. A joint driven by anything else -- a position servo, a torque
+        motor, a stateful drive, a tendon -- appears nowhere, because its
+        ``ctrl`` is not a velocity in the joint's units and so cannot disagree
+        with one. Where several rate drives target one joint the last in model
+        order is reported.
+    """
+    rate_drives: dict[int, int] = {}
+    affine = int(mj.mjtBias.mjBIAS_AFFINE)
+    stateless = int(mj.mjtDyn.mjDYN_NONE)
+    for act_id in range(int(model.nu)):
+        target = actuator_joint_id(model, act_id, mj)
+        if target < 0:
+            continue
+        commands_a_rate = (
+            int(model.actuator_biastype[act_id]) == affine
+            and float(model.actuator_biasprm[act_id, 1]) == 0.0
+            and float(model.actuator_biasprm[act_id, 2]) < 0.0
+            and int(model.actuator_dyntype[act_id]) == stateless
+        )
+        if commands_a_rate:
+            rate_drives[target] = act_id
+    return rate_drives
+
+
 def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
     """Return every joint id actuator ``act_id`` drives.
 
@@ -283,11 +354,13 @@ def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int
     it has one ``ctrl`` slot to seed from one joint's position. It reports
     ``-1`` for a tendon, because a tendon is not a joint.
 
-    A joint can still be driven *through* that tendon, though: a fixed tendon
-    that wraps joints couples them to one ``ctrl``, which is the standard MJCF
-    gripper idiom. So a caller asking "is this joint already driven" - rather
-    than "which joint is this actuator's target" - must resolve the tendon's
-    wrap list too, or it reads an actuated joint as free. That distinction is
+    A joint can still be driven *through* that tendon, though: a tendon couples
+    several joints to one ``ctrl``, which is the standard MJCF gripper and
+    tendon-driven-hand idiom. So a caller asking "is this joint already driven" -
+    rather than "which joint is this actuator's target" - must resolve the
+    tendon's wrap list too, or it reads an actuated joint as free. Which joints
+    that list names is :func:`tendon_joint_ids`' rule, and it covers a spatial
+    tendon's site route as well as a fixed tendon's joint entries. That distinction is
     the whole reason this is a second function and not a flag on the first: the
     two questions have different answers for the same actuator, and collapsing
     them would make one of the two call sites wrong.
@@ -339,10 +412,10 @@ def actuator_target_body_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]
       id is a *reference* frame the force is measured against, not another part
       the actuator moves.
     * ``mjTRN_BODY`` -- that body.
-    * ``mjTRN_TENDON`` -- the bodies of the joints the tendon wraps, via
-      :func:`tendon_joint_ids`, so the tendon rule stays owned in one place. A
-      purely spatial tendon wraps sites rather than joints and so contributes
-      nothing, matching what that function reports.
+    * ``mjTRN_TENDON`` -- the bodies of the joints the tendon drives, via
+      :func:`tendon_joint_ids`, so the tendon rule stays owned in one place.
+      That covers a spatial tendon too: the joints its site route spans are the
+      ones between the links it moves, so their bodies are those links.
 
     Args:
         model: The compiled ``MjModel``.
@@ -382,15 +455,85 @@ def actuator_target_body_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]
     return frozenset()
 
 
+def _joints_spanning(model: Any, bodies: list[int]) -> frozenset[int]:
+    """Return the joints on the kinematic paths ``bodies`` span.
+
+    Moving a joint changes the distance between two bodies exactly when it lies
+    on the path between them, which is the path from each body up to their
+    deepest common ancestor: above that ancestor the two bodies move together,
+    so a joint there leaves every distance among them unchanged. That makes this
+    set the joints a *length*-driven coupling reaches, and no others.
+
+    Args:
+        model: The compiled ``MjModel``.
+        bodies: Body ids the route touches, in any order; duplicates are fine.
+
+    Returns:
+        The spanned joint ids, empty when the route never leaves one body.
+    """
+
+    def walk_to_world(body: int) -> list[int]:
+        """Bodies from ``body`` up to the world, nearest first, world excluded."""
+        walk: list[int] = []
+        while body > 0:
+            walk.append(body)
+            body = int(model.body_parentid[body])
+        return walk
+
+    walks = {body: walk_to_world(body) for body in set(bodies)}
+    if not walks:
+        return frozenset()
+    one = next(iter(walks.values()))
+    shared = set(one)
+    for walk in walks.values():
+        shared &= set(walk)
+    # Every shared body lies on ``one``, which is ordered nearest-first, so the
+    # deepest of them is the one appearing earliest. With no shared ancestor the
+    # bodies hang off the world separately and every joint on both walks counts.
+    deepest = min(shared, key=one.index) if shared else 0
+    spanned: set[int] = set()
+    for walk in walks.values():
+        for body in walk:
+            if body == deepest:
+                break
+            adr = int(model.body_jntadr[body])
+            num = int(model.body_jntnum[body])
+            if adr >= 0:
+                spanned.update(range(adr, adr + num))
+    return frozenset(spanned)
+
+
 def tendon_joint_ids(model: Any, tendon_id: int, mj: Any) -> frozenset[int]:
-    """Return the joint ids wired into tendon ``tendon_id`` by its wrap list.
+    """Return the joint ids tendon ``tendon_id`` drives.
 
     A tendon's wrap entries live in one flat table shared by every tendon, so a
-    reader has to slice its own span (``tendon_adr`` / ``tendon_num``) and keep
-    only the ``mjWRAP_JOINT`` entries - site and pulley wraps carry ids from
-    other spaces. Walking that table is the part both "which actuator drives
-    this joint" and "which joints does this actuator drive" need, so it lives
-    here once rather than in each direction.
+    reader has to slice its own span (``tendon_adr`` / ``tendon_num``). Two kinds
+    of entry there identify a driven joint, and which kind a tendon carries is
+    decided by how MJCF spells it:
+
+    * ``mjWRAP_JOINT`` -- a ``<fixed>`` tendon's length is a weighted sum of the
+      joint coordinates it lists, so it drives each of them directly and the id
+      is already a joint id.
+    * ``mjWRAP_SITE`` and ``mjWRAP_SPHERE`` / ``mjWRAP_CYLINDER`` -- a
+      ``<spatial>`` tendon's length is the distance along a route, so what it
+      drives is every joint BETWEEN the bodies that route touches
+      (:func:`_joints_spanning`). Sites are the points it is anchored to and
+      wrap geoms are obstacles it bends around, but both are carried by a body
+      and moving either changes the length, so both are ends of the span: with a
+      wrap geom on a body outside the sites' own span, MuJoCo moves a joint that
+      the sites alone do not reach. None of those ids is a joint id, so reading
+      the joint wraps alone reports a spatial tendon as driving nothing whatever
+      it is wired to - and the standard tendon-driven hand is actuated entirely
+      this way, one cable per finger routed over sites on the links it closes.
+      ``mjWRAP_PULLEY`` carries a divisor rather than an id and contributes
+      nothing.
+
+    The two rules are unioned rather than selected between, so a tendon carrying
+    both kinds of entry needs no separate case here.
+
+    Walking that table is the part both "which actuator drives this joint" and
+    "which joints does this actuator drive" need, so it lives here once rather
+    than in each direction.
 
     Args:
         model: The compiled ``MjModel``.
@@ -398,14 +541,28 @@ def tendon_joint_ids(model: Any, tendon_id: int, mj: Any) -> frozenset[int]:
         mj: The ``mujoco`` module.
 
     Returns:
-        The wrapped joint ids, empty when the tendon wraps no joint.
+        The driven joint ids, empty when the tendon reaches no joint - a route
+        whose sites all sit on one body, which no joint can lengthen.
     """
     if tendon_id < 0 or tendon_id >= int(model.ntendon):
         return frozenset()
     wrap_joint = int(mj.mjtWrap.mjWRAP_JOINT)
+    wrap_site = int(mj.mjtWrap.mjWRAP_SITE)
+    wrap_geom = {int(mj.mjtWrap.mjWRAP_SPHERE), int(mj.mjtWrap.mjWRAP_CYLINDER)}
     adr = int(model.tendon_adr[tendon_id])
     num = int(model.tendon_num[tendon_id])
-    return frozenset(int(model.wrap_objid[w]) for w in range(adr, adr + num) if int(model.wrap_type[w]) == wrap_joint)
+    wrapped: set[int] = set()
+    route: list[int] = []
+    for w in range(adr, adr + num):
+        kind = int(model.wrap_type[w])
+        objid = int(model.wrap_objid[w])
+        if kind == wrap_joint:
+            wrapped.add(objid)
+        elif kind == wrap_site:
+            route.append(int(model.site_bodyid[objid]))
+        elif kind in wrap_geom:
+            route.append(int(model.geom_bodyid[objid]))
+    return frozenset(wrapped) | _joints_spanning(model, route)
 
 
 def robot_owned_actuator_ids(model: Any, robot: SimRobot, mj: Any) -> list[int]:
@@ -1543,7 +1700,23 @@ def reposition_body_in_scene(
 # The two namespaces are kept apart in the key because MuJoCo's joint and body
 # names are independent: a joint may be named exactly like some body, so a
 # single flat string key could collide.
-_JointKey = tuple[str, str]
+#
+# Any other unnamed joint takes the three-element form
+# ``("body_joint", body_name, ordinal)``: the body alone does not single it out
+# because a body may carry several joints, but the position among them does.
+# See :func:`_joint_key`.
+_JointKey = tuple[str, str] | tuple[str, str, int]
+
+# An actuator is keyed the same way, for the same reason. A named actuator takes
+# the two-element form ``("actuator", name)``.
+#
+# An unnamed actuator takes the four-element form
+# ``("target", trntype, target_name, ordinal)``: its transmission target names
+# it, and the ordinal disambiguates the several actuators that may share one
+# target. The transmission type belongs in the key because ``mjTRN_JOINT`` and
+# ``mjTRN_JOINTINPARENT`` are different transmissions on the same joint id.
+# See :func:`_actuator_key`.
+_ActuatorKey = tuple[str, str] | tuple[str, int, str, int]
 
 
 @dataclass(frozen=True)
@@ -1564,9 +1737,10 @@ class _SceneState:
     Attributes:
         joints: ``key -> (qpos, qvel, qfrc_applied)`` slices, each at the width
             its joint type uses (free 7/6/6, ball 4/3/3, hinge or slide 1/1/1).
-        actuators: ``actuator name -> (ctrl, act)``. ``ctrl`` is the servo
-            setpoint holding a robot's pose; ``act`` is the internal activation
-            of a stateful actuator, its effective command.
+        actuators: ``key -> (ctrl, act)``. ``ctrl`` is the servo setpoint
+            holding a robot's pose; ``act`` is the internal activation of a
+            stateful actuator, its effective command. Keyed by
+            :func:`_actuator_key`, so an unnamed actuator is carried too.
         body_wrenches: ``body name -> [fx, fy, fz, tx, ty, tz]``, the external
             wrench :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
             latches in a body's own ``xfrc_applied`` row. ``qfrc_applied``
@@ -1579,7 +1753,7 @@ class _SceneState:
     """
 
     joints: dict[_JointKey, tuple[list[float], list[float], list[float]]]
-    actuators: dict[str, tuple[float, list[float]]]
+    actuators: dict[_ActuatorKey, tuple[float, list[float]]]
     body_wrenches: dict[str, list[float]]
     time: float
 
@@ -1594,20 +1768,133 @@ def _joint_state_widths(jtype: int, mj: Any) -> tuple[int, int]:
 
 
 def _joint_key(model: Any, jid: int, mj: Any) -> _JointKey | None:
-    """Identify joint ``jid`` by name, or by its owning body when it has none.
+    """Identify joint ``jid`` by name, or through its owning body when it has none.
 
-    Returns ``None`` for a joint no namespace can name -- an unnamed non-free
-    joint (its body may carry several, so the body does not single it out), or
-    an unnamed free joint on an unnamed body. Such a joint cannot be matched
-    across a rebuild, so it is reported rather than guessed at.
+    Three key forms, in order of preference:
+
+    ``("joint", name)``
+        The joint carries a name, which is the handle a rebuild preserves.
+    ``("body", body_name)``
+        An unnamed free joint. The compiler refuses a free joint alongside any
+        other joint on the same body, so the body names it unambiguously.
+    ``("body_joint", body_name, ordinal)``
+        Any other unnamed joint, identified by its position among the joints of
+        its body. MuJoCo stores a body's joints contiguously from
+        ``body_jntadr`` in declaration order, so ``ordinal`` singles out one
+        joint of a body that carries several. An unnamed ``<joint>`` is the
+        ordinary MJCF spelling -- a door hinge or a drawer slide is rarely
+        named -- so dropping these would reset them on every rebuild.
+
+    Returns:
+        The key, or ``None`` when neither the joint nor its body carries a
+        name. Nothing then identifies it across a rebuild, so it is reported
+        rather than guessed at.
     """
     name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid)
     if name:
         return ("joint", name)
-    if int(model.jnt_type[jid]) != mj.mjtJoint.mjJNT_FREE:
+    body_id = int(model.jnt_bodyid[jid])
+    body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id)
+    if not body_name:
         return None
-    body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.jnt_bodyid[jid]))
-    return ("body", body_name) if body_name else None
+    if int(model.jnt_type[jid]) == mj.mjtJoint.mjJNT_FREE:
+        return ("body", body_name)
+    return ("body_joint", body_name, jid - int(model.body_jntadr[body_id]))
+
+
+def _actuator_target_kind(trntype: int, mj: Any) -> Any | None:
+    """The ``mjtObj`` an actuator's ``trnid[0]`` indexes, for ``trntype``.
+
+    Each transmission points at a different kind of element, and MJCF names
+    every one of them (an actuator references its target by name, so the target
+    is never anonymous). ``None`` for a transmission this mapping does not
+    know: a future ``mjtTrn`` member is reported rather than resolved against
+    the wrong table.
+    """
+    trn = mj.mjtTrn
+    obj = mj.mjtObj
+    return {
+        int(trn.mjTRN_JOINT): obj.mjOBJ_JOINT,
+        int(trn.mjTRN_JOINTINPARENT): obj.mjOBJ_JOINT,
+        int(trn.mjTRN_SLIDERCRANK): obj.mjOBJ_SITE,
+        int(trn.mjTRN_TENDON): obj.mjOBJ_TENDON,
+        int(trn.mjTRN_SITE): obj.mjOBJ_SITE,
+        int(trn.mjTRN_BODY): obj.mjOBJ_BODY,
+    }.get(trntype)
+
+
+def _actuator_key(model: Any, aid: int, mj: Any) -> _ActuatorKey | None:
+    """Identify actuator ``aid`` by name, or through its transmission target.
+
+    Two key forms, in order of preference:
+
+    ``("actuator", name)``
+        The actuator carries a name, which is the handle a rebuild preserves.
+    ``("target", trntype, target_name, ordinal)``
+        An unnamed actuator, identified by what it drives and by its position
+        among the actuators driving the same target through the same
+        transmission. Several actuators may share one target -- a position and
+        a velocity servo on one hinge is the ordinary spelling -- so the target
+        alone does not single one out, but the target plus that ordinal does.
+        MuJoCo stores actuators in declaration order and an eject removes a
+        robot's actuators wholesale, so the surviving order (and therefore the
+        ordinal) is preserved. The transmission type is part of the key because
+        ``mjTRN_JOINT`` and ``mjTRN_JOINTINPARENT`` are different transmissions
+        that can name the same joint id.
+
+    An unnamed ``<actuator>`` child is the ordinary MJCF spelling: of the 235
+    actuator-bearing models in the MuJoCo Menagerie tree, 7 leave every one of
+    theirs unnamed (``ufactory_lite6``, ``google_robot``, ``iit_softfoot``), so
+    dropping these would reset a whole arm's setpoints on every rebuild.
+
+    Returns:
+        The key, or ``None`` when the transmission is one this mapping does not
+        know. Nothing then identifies the actuator across a rebuild, so it is
+        reported rather than guessed at.
+    """
+    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid)
+    if name:
+        return ("actuator", name)
+    trntype = int(model.actuator_trntype[aid])
+    kind = _actuator_target_kind(trntype, mj)
+    if kind is None:
+        return None
+    target_id = int(model.actuator_trnid[aid][0])
+    target_name = mj.mj_id2name(model, kind, target_id)
+    if not target_name:
+        return None
+    ordinal = sum(
+        1
+        for other in range(aid)
+        if int(model.actuator_trntype[other]) == trntype and int(model.actuator_trnid[other][0]) == target_id
+    )
+    return ("target", trntype, str(target_name), ordinal)
+
+
+def _resolve_actuator_key(model: Any, key: _ActuatorKey, mj: Any) -> int:
+    """Resolve an :data:`_ActuatorKey` to an actuator id in ``model``, or ``-1``."""
+    if len(key) == 4:
+        _, trntype, target_name, ordinal = key
+        kind = _actuator_target_kind(int(trntype), mj)
+        if kind is None:
+            return -1
+        target_id = mj_name_to_id(model, kind, str(target_name))
+        if target_id < 0:
+            # The target is gone, so what the actuator drove no longer exists.
+            return -1
+        seen = 0
+        for aid in range(int(model.nu)):
+            if int(model.actuator_trntype[aid]) != trntype or int(model.actuator_trnid[aid][0]) != target_id:
+                continue
+            if seen == ordinal:
+                # An actuator that gained a name is carried by its own
+                # ``("actuator", name)`` key, so this handle must not claim it.
+                return -1 if mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid) else aid
+            seen += 1
+        # The target survives but no longer drives an actuator at that position.
+        return -1
+    _, name = key
+    return mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, str(name))
 
 
 def _snapshot_scene_state(world: SimWorld) -> _SceneState:
@@ -1627,7 +1914,7 @@ def _snapshot_scene_state(world: SimWorld) -> _SceneState:
         key = _joint_key(model, jid, mj)
         if key is None:
             logger.debug(
-                "snapshot_scene_state: joint id %d has no name and no single owning body, state not carried over",
+                "snapshot_scene_state: neither joint id %d nor its body carries a name, state not carried over",
                 jid,
             )
             continue
@@ -1640,18 +1927,20 @@ def _snapshot_scene_state(world: SimWorld) -> _SceneState:
             [float(x) for x in data.qfrc_applied[dof_adr : dof_adr + dof_w]],
         )
 
-    actuators: dict[str, tuple[float, list[float]]] = {}
+    actuators: dict[_ActuatorKey, tuple[float, list[float]]] = {}
     for aid in range(int(model.nu)):
-        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid)
-        if not name:
-            # No namespace names it, and its transmission target may drive
-            # several actuators, so it cannot be matched across the rebuild.
-            logger.debug("snapshot_scene_state: actuator id %d has no name, ctrl/act not carried over", aid)
+        akey = _actuator_key(model, aid, mj)
+        if akey is None:
+            logger.debug(
+                "snapshot_scene_state: actuator id %d drives through a transmission this build "
+                "cannot key, ctrl/act not carried over",
+                aid,
+            )
             continue
         act_adr = int(model.actuator_actadr[aid])
         act_num = int(model.actuator_actnum[aid])
         act_vals = [float(x) for x in data.act[act_adr : act_adr + act_num]] if act_adr >= 0 else []
-        actuators[name] = (float(data.ctrl[aid]), act_vals)
+        actuators[akey] = (float(data.ctrl[aid]), act_vals)
 
     return _SceneState(
         joints=joints,
@@ -1706,8 +1995,8 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
             data.qfrc_applied[dof_adr + i] = v
         restored += 1
 
-    for name, (ctrl_val, act_vals) in snapshot.actuators.items():
-        aid = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, name)
+    for akey, (ctrl_val, act_vals) in snapshot.actuators.items():
+        aid = _resolve_actuator_key(model, akey, mj)
         if aid < 0:
             continue  # actuator belonged to the ejected robot
         data.ctrl[aid] = ctrl_val
@@ -1719,7 +2008,7 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
             if act_vals or act_num:
                 logger.warning(
                     "_restore_scene_state: act width mismatch for actuator %r (%d!=%d), skipping activation",
-                    name,
+                    akey,
                     len(act_vals),
                     act_num,
                 )
@@ -1734,6 +2023,16 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
 
 def _resolve_joint_key(model: Any, key: _JointKey, mj: Any) -> int:
     """Resolve a :data:`_JointKey` to a joint id in ``model``, or ``-1``."""
+    if len(key) == 3:
+        _, body_name, ordinal = key
+        bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+        if bid < 0 or ordinal >= int(model.body_jntnum[bid]):
+            # The body is gone, or no longer carries a joint at that position.
+            return -1
+        jid = int(model.body_jntadr[bid]) + ordinal
+        # A joint that gained a name is carried by its own ``("joint", name)``
+        # key, so this handle must not also claim it.
+        return -1 if mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid) else jid
     kind, name = key
     if kind == "joint":
         return mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, name)
@@ -2216,9 +2515,16 @@ def _rgba_field_domain(kind: str, field: str, value: Any) -> tuple[Any, str | No
 # :func:`~strands_robots.utils.coerce_rgba` defines for every backend. ``size``
 # is the one field whose count is shape-dependent, so only its components are
 # checked here and the count is left to ``_validate_size``, which knows the shape.
+#
+# A ``quat`` carries one rule beyond its width, and it arrives from the same
+# shared domain every ``orientation=`` parameter uses
+# (:func:`~strands_robots.utils.orientation_quaternion_error`): a norm that
+# rounds to zero describes no rotation, and the spec-attribute door these ops
+# write through accepts it where MuJoCo's XML door refuses it outright ("zero
+# quaternion is not allowed").
 _OP_FIELD_DOMAINS: dict[str, Callable[[str, str, Any], tuple[Any, str | None]]] = {
     "pos": lambda kind, field, value: (value, pose_vector_error(kind, field, value, 3)),
-    "quat": lambda kind, field, value: (value, pose_vector_error(kind, field, value, 4)),
+    "quat": lambda kind, field, value: (value, orientation_quaternion_error(kind, field, value)),
     "rgba": _rgba_field_domain,
     "size": lambda kind, field, value: (value, finite_vector_error(kind, field, value)),
 }
@@ -2268,6 +2574,47 @@ def _normalized_op_vector_fields(kind: str, op: Mapping[str, Any]) -> tuple[dict
             return None, msg
         normalized[field] = value
     return normalized, None
+
+
+# The shapes ``add_geom`` cannot honour, however well-formed the op is. A mesh
+# geom takes its extent from a mesh asset, and this op's key set
+# (:data:`_PATCH_OP_KEYS`) has no key that could name one - so a mesh geom it
+# adds carries no meshid, and MuJoCo refuses it at the batch's recompile with
+# ``mesh geom '<name>' (id = N) must have valid meshid``. That refusal is rolled
+# back like any other now that the recompile goes through
+# :func:`_recompile_preserving_state` inside the batch's try/except, but it is
+# still not actionable: it names a MuJoCo id rather than the op the caller
+# wrote. Refusing the value at the door is what lets the message name the op,
+# and it keeps the atomicity ``patch_scene_mjcf`` documents true for every op it
+# accepts without leaning on the compiler to describe a caller's mistake.
+_UNSUPPORTED_GEOM_SHAPES = frozenset({"mesh"})
+
+
+def _geom_shape_error(shape: Any) -> str | None:
+    """Reject an ``add_geom`` ``type`` this op cannot compile, before it mutates.
+
+    Only the shapes in :data:`_UNSUPPORTED_GEOM_SHAPES` are handled here. A
+    shape outside the vocabulary altogether is left to
+    :func:`~strands_robots.simulation.mujoco.spec_builder._geom_type`, whose own
+    message already names it and which raises inside the op loop, where the
+    rollback applies.
+
+    Args:
+        shape: The caller-supplied ``type`` value.
+
+    Returns:
+        A message naming the refused value and the surface that does support it,
+        or ``None`` when the shape is one this op may attempt.
+    """
+    if shape not in _UNSUPPORTED_GEOM_SHAPES:
+        return None
+    accepted = ", ".join(sorted(set(_SIZE_LAYOUT) - _UNSUPPORTED_GEOM_SHAPES))
+    return (
+        f"add_geom: 'type' cannot be {shape!r} - this op has no key that names a mesh asset, "
+        "so the geom it would add has no mesh to take its extent from and MuJoCo refuses the "
+        'whole scene at recompile. Add a mesh with add_object(shape="mesh", mesh_path=...), '
+        f"which registers the asset alongside the body. Accepted 'type' values: {accepted}."
+    )
 
 
 def _find_body(spec: Any, name: str, new_bodies: dict[str, Any]) -> Any:
@@ -2349,6 +2696,8 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
             raise ValueError(f"add_geom: body '{body_name}' not found")
 
         shape = op.get("type", "box")
+        if (shape_err := _geom_shape_error(shape)) is not None:
+            raise ValueError(shape_err)
         from strands_robots.simulation.mujoco.spec_builder import (
             _geom_type,
             _normalize_size,
@@ -2439,16 +2788,26 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
     anything else is rejected, because an unread key would leave the op running
     on its fallback default (see :func:`_unknown_op_keys_error`). Every numeric
     field an op writes is held to its domain in :data:`_OP_FIELD_DOMAINS` - a
-    ``pos`` of exactly 3 finite components, a ``quat`` of 4, a ``rgba`` of 3
+    ``pos`` of exactly 3 finite components, a ``quat`` of 4 whose norm does not
+    round to zero, a ``rgba`` of 3
     (RGB, completed with an opaque alpha) or 4 - because MuJoCo bakes a
     ``nan``/``inf`` component into the model without complaint, and reports a
     width mismatch on the attribute writes by dumping a C++ overload table that
-    names neither the op nor the field.
+    names neither the op nor the field. ``add_geom``'s ``type`` is held to the
+    same standard: ``"mesh"`` is refused by :func:`_geom_shape_error` rather than
+    attempted, because this op cannot name the asset such a geom needs and
+    MuJoCo's own refusal for it lands past the rollback below.
 
     The list is applied atomically: if any op raises, the whole patch is
     rejected and the world is left in its original state. After all ops
-    succeed, ``spec.recompile(model, data)`` is called once, so joint
-    qpos/qvel for unchanged joints are preserved automatically.
+    succeed the batch is recompiled once, through the same
+    :func:`_recompile_preserving_state` every other scene mutation uses, so joint
+    qpos/qvel for unchanged joints are preserved automatically and so is the rest
+    of the state that helper carries -- notably a latched ``apply_force`` wrench,
+    which ``spec.recompile`` returns zeroed. That recompile is inside the
+    rollback too: a batch whose ops all apply and whose compiled model the
+    compiler then refuses leaves the pre-patch spec live, so the refusal costs
+    exactly the batch that was refused rather than every later mutation.
 
     Returns the number of ops applied (same as ``len(ops)`` on success).
     """
@@ -2477,16 +2836,29 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
         world._backend_state["spec"] = backup_spec
         raise ValueError(f"patch op #{applied + 1} failed: {err}") from err
 
-    # One recompile for the whole batch - preserves qpos/qvel for unchanged joints.
-    with filter_mujoco_attach_noise():
-        new_model, new_data = spec.recompile(world._model, world._data)
-    install_compiled_model(world, new_model, new_data)
+    # One recompile for the whole batch, through the same helper every other
+    # scene mutation uses. Hand-rolled here, this path kept none of what that
+    # helper preserves: it re-latches the applied-force buffers ``spec.recompile``
+    # carries no part of, defines every buffer entry the positional transfer
+    # leaves untouched, re-discovers per-robot joint and actuator ids, and runs
+    # the forward pass. A latched ``apply_force`` wrench is documented to hold
+    # until the next ``apply_force`` on that body or a ``reset()``, and a patch
+    # is neither, yet a bare recompile zeroed it -- so a crate held against
+    # gravity fell out of the sky on the first step after any successful patch,
+    # under a "status": "success".
+    #
+    # The call sits inside the rollback's scope, mirroring
+    # :func:`inject_robot_into_scene`: the ops all landed in the spec but the
+    # model they produced was refused, so the entire batch is sitting in the live
+    # spec while the caller is about to be told the patch failed. That spec is
+    # what every later mutation recompiles from, so the refusal was permanent
+    # rather than per-call -- a subsequent unrelated ``add_object`` failed too,
+    # naming the leftover element from a batch the caller was told had failed.
+    # Put the pre-patch spec back, then let the compiler's reason travel.
+    try:
+        _recompile_preserving_state(world, spec, raise_on_refusal=True)
+    except (ValueError, RuntimeError):
+        world._backend_state["spec"] = backup_spec
+        raise
 
-    # Forward pass so new bodies' xpos / xquat / cam_xmat are populated for
-    # the very next render() or get_body_state() call. Same reasoning as
-    # replace_scene_mjcf.
-    mj = _ensure_mujoco()
-    mj.mj_forward(world._model, world._data)
-
-    _sync_cached_xml(world, spec)
     return applied

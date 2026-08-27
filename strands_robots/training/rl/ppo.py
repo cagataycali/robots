@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.training.base import TrainSpec
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_count_error, require_optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import torch
@@ -174,13 +174,29 @@ class PpoTrainer(BaseRLAlgo):
         # trains bit-identically to an unclipped one while every reported loss is
         # nan, and a negative half-width inverts the bounds into a constant.
         problems.extend(self._clip_range_problems(spec))
-        if spec.total_timesteps <= 0:
-            problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
-        if spec.rollout_steps <= 0:
-            problems.append(f"rollout_steps must be > 0, got {spec.rollout_steps}")
+        # total_timesteps and rollout_steps are the two caller-supplied factors of
+        # this loop's own bound, max(1, total_timesteps // (rollout_steps *
+        # num_envs)). The max() clamp means a local <= 0 test cannot bound them:
+        # it reads True, a fraction below one iteration, nan and inf as a single
+        # iteration under a successful run.
+        problems.extend(self._rl_run_size_problems(spec))
+        # num_envs is the third factor and is NOT part of that shared domain: this
+        # backend parallelizes, so any count >= 1 is usable here while the
+        # single-env FastSAC requires exactly 1. Only this backend can state it.
         if spec.num_envs < 1:
             problems.append(f"num_envs must be >= 1, got {spec.num_envs}")
-        if spec.num_mini_batches <= 0 or spec.rollout_steps % spec.num_mini_batches != 0:
+        # num_mini_batches splits the rollout batch, so this is a relation BETWEEN
+        # two counts and can only be asked once rollout_steps is one: a str reaches
+        # ``%`` as string formatting (TypeError, out of a method documented to
+        # return problems) and an integral float satisfies the relation vacuously.
+        # It consults the same domain rather than relying on the gate above having
+        # run, so it holds wherever in this preflight it sits - and asking it only
+        # of a count keeps the message about divisibility rather than reporting a
+        # non-count as indivisible.
+        if spec.num_mini_batches <= 0 or (
+            positive_count_error(spec.rollout_steps, "rollout_steps", self.provider_name) is None
+            and spec.rollout_steps % spec.num_mini_batches != 0
+        ):
             problems.append(
                 f"rollout_steps ({spec.rollout_steps}) must be divisible by num_mini_batches ({spec.num_mini_batches})"
             )

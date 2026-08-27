@@ -49,6 +49,7 @@ import pytest
 import strands_robots
 from strands_robots.dataset_recorder import DatasetRecorder
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
+from strands_robots.mesh.ackermann_robot import AckermannRosRobot
 from strands_robots.mesh.core import Mesh
 from strands_robots.mesh.input import InputPublisher, InputReceiver
 from strands_robots.mesh.ros_bridge import RosBridgedRobot
@@ -71,10 +72,11 @@ EXPECTED_REPR_CLASSES = frozenset(
     {
         "dataset_recorder::DatasetRecorder",
         "hardware_rtps_bridge::HardwareRtpsBridge",
+        "mesh/_mobile_base::MobileBaseRobot",
+        "mesh/ackermann_robot::AckermannRosRobot",
         "mesh/core::Mesh",
         "mesh/input::InputPublisher",
         "mesh/input::InputReceiver",
-        "mesh/ros_bridge::RosBridgedRobot",
         "mesh/rosbridge_robot::RosbridgeRobot",
         "mesh/rtps_robot::RtpsRobot",
         "mesh/session::PeerInfo",
@@ -219,6 +221,12 @@ REFUSALS: list[tuple[type, type[Exception], Any, str]] = [
         "node_name",
     ),
     (RtpsRobot, ValueError, lambda: RtpsRobot(node_name="bad name!", cmd_vel_topic="/cmd_vel"), "node_name"),
+    (
+        AckermannRosRobot,
+        ValueError,
+        lambda: AckermannRosRobot(node_name="bad name!", servo_topic="/ctrl_pkg/servo_msg"),
+        "node_name",
+    ),
     (HardwareRtpsBridge, ValueError, lambda: HardwareRtpsBridge(None, domain_id=99999), "_robot_name"),
     (
         InputPublisher,

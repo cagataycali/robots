@@ -23,14 +23,19 @@ from the dataset rate on the invariant that "the recorded control frequency IS
 the dataset fps" - so the same episode also replays at the wrong speed
 (round-tripped to 0.0000 rad at matching rates, 0.0317 rad at the defaults).
 
-The disagreement has two orderings and both are refused. A rollout started
-against an open recording is refused at every rollout entry point; a recording
-opened against a rollout already in flight is refused by ``start_recording``.
-``start_policy`` makes the second ordering reachable by design - it submits the
-rollout to an executor and returns while it continues - and on the same colliding
-defaults it saved 81 frames captured 0.0200s apart and declared them 0.0333s
-apart: a 2.6667s episode for a 1.62s capture, with ``start_policy``,
-``start_recording`` and ``stop_recording`` all reporting success.
+The disagreement has three orderings and all three are refused. A rollout
+started against an open recording is refused at every rollout entry point; a
+recording opened against a rollout already in flight is refused by
+``start_recording``. ``start_policy`` makes the second ordering reachable by
+design - it submits the rollout to an executor and returns while it continues -
+and on the same colliding defaults it saved 81 frames captured 0.0200s apart and
+declared them 0.0333s apart: a 2.6667s episode for a 1.62s capture, with
+``start_policy``, ``start_recording`` and ``stop_recording`` all reporting
+success. The third ordering is a single call that supplies both rates and opens
+the recording itself - the ``run_policy`` tool - where neither rate can be read
+off live state because nothing is open yet; it is refused by
+``requested_rate_mismatch_reason`` and covered in
+``tests/tools/test_run_policy_rate_agreement_preflight.py``.
 
 Refused rather than warned, matching the sibling rate guard in the same module:
 ``_verify_resume_schema`` already refuses an ``fps`` that disagrees with the
@@ -58,6 +63,7 @@ from strands_robots.simulation.recording import (  # noqa: E402
     dataset_rate_mismatch_reason,
     rate_mismatch_explanation,
     recorder_dataset_fps,
+    requested_rate_mismatch_reason,
     rollout_rate_mismatch_error,
     rollout_rate_mismatch_reason,
 )
@@ -609,21 +615,28 @@ class TestTheRolloutRateGuardHelperIsRobust:
     ("fps", "rate"),
     [(30, 50.0), (50, 30.0), (30, 30.0), (50, 50.0), (25, 25.0), (30, 33.3), (60, 50.0)],
 )
-def test_both_orderings_reach_the_same_verdict_and_explanation(fps, rate):
-    """One disagreement, so the two orderings may not disagree about it.
+def test_every_ordering_reaches_the_same_verdict_and_explanation(fps, rate):
+    """One disagreement, so its orderings may not disagree about it.
 
-    Whichever call came first, the frames and the timestamps come from the same
-    two rates - so a caller who reverses the order of two calls must not be told
-    the pair is acceptable in one direction and not the other, nor be given two
-    different accounts of the distortion.
+    Whichever call came first - and whether either had happened yet - the frames
+    and the timestamps come from the same two rates. So a caller who reverses the
+    order of two calls, or supplies both rates at once, must not be told the pair
+    is acceptable in one direction and not the other, nor be given a different
+    account of the distortion in each.
     """
-    forward = dataset_rate_mismatch_reason("run_policy", _FakeRecorder(fps), rate)
-    inverse = rollout_rate_mismatch_reason("start_recording", fps, {"arm": rate})
-    assert (forward is None) == (inverse is None), f"the two orderings disagree for fps={fps!r} capture rate={rate!r}"
-    if forward is not None and inverse is not None:
-        shared = rate_mismatch_explanation(fps, rate)
-        assert shared in forward
-        assert shared in inverse
+    verdicts = {
+        "rollout against an open recording": dataset_rate_mismatch_reason("run_policy", _FakeRecorder(fps), rate),
+        "recording against a running rollout": rollout_rate_mismatch_reason("start_recording", fps, {"arm": rate}),
+        "both rates in one call": requested_rate_mismatch_reason("run_policy", fps, rate),
+    }
+    refused = {name for name, reason in verdicts.items() if reason is not None}
+    assert refused in (set(), set(verdicts)), (
+        f"the orderings disagree for fps={fps!r} capture rate={rate!r}: only {sorted(refused)} refused it"
+    )
+    shared = rate_mismatch_explanation(fps, rate)
+    for name, reason in verdicts.items():
+        if reason is not None:
+            assert shared in reason, f"{name} gives its own account of the distortion"
 
 
 _START_RECORDING_BACKENDS = (

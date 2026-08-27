@@ -223,6 +223,9 @@ class TestTheFixIsPlatformCorrect:
     does not exist for their machine - and while they chased it, the real cause
     kept its cover. This pins both halves: Linux keeps the packages, darwin gets
     a cause it can actually act on.
+
+    ``platform=`` is injected rather than read from the host, so both halves are
+    graded on every runner - nothing here skips on a Linux CI box.
     """
 
     def test_linux_keeps_the_package_advice(self):
@@ -235,6 +238,17 @@ class TestTheFixIsPlatformCorrect:
         assert "apt-get" not in text, "there is no apt on macOS"
         assert "CGL" in text, "name the API that actually renders there"
         assert "launchd" in text, "the daemon-with-no-window-server case is the common one"
+
+    def test_macos_names_the_lost_context_case_no_install_can_fix(self):
+        """A context that worked and then vanished is not a missing install.
+
+        The two macOS causes need opposite actions: no window-server session is
+        fixed by where the process is started from, a context that worked
+        EARLIER in this same process is fixed by starting a fresh one. Naming
+        only the first sends the second case chasing a session it already had.
+        """
+        text = rendering.no_gl_context_message(platform="darwin")
+        assert "EARLIER" in text and "fresh process" in text
 
     def test_both_platforms_stay_within_the_shared_contract(self):
         for plat in ("linux", "darwin", "win32"):
@@ -252,6 +266,15 @@ class TestTheFixIsPlatformCorrect:
         """A context that worked and then vanished is not a missing install."""
         text = rendering.no_gl_context_message(platform="darwin")
         assert "EARLIER" in text and "fresh process" in text
+    def test_the_running_platform_is_the_default(self):
+        """Every consumer calls the helper with no ``platform=``.
+
+        The injected argument exists for the tests; the shipped call sites pass
+        nothing, so the default has to be the host actually reading the message.
+        """
+        import sys
+
+        assert rendering.no_gl_context_message() == rendering.no_gl_context_message(platform=sys.platform)
 
     def test_every_consumer_goes_through_the_helper(self):
         """No consumer may keep its own hardcoded sentence and drift."""

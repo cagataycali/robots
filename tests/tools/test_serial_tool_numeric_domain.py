@@ -56,6 +56,13 @@ import serial
 # reached through this one alias.
 import strands_robots.tools.serial_tool as serial_mod
 
+# ``Goal_Position`` and ``Goal_Velocity`` are sign-magnitude on the STS/SMS
+# series (lerobot: ``STS_SMS_SERIES_ENCODINGS_TABLE`` declares bit 15 for both),
+# so the largest magnitude either carries is not the two-byte maximum. Stated
+# here rather than read off the module so this guard grades the bound itself.
+DIRECTION_BIT = 15
+MAX_MAGNITUDE = (1 << DIRECTION_BIT) - 1
+
 # One value per rejection reason.
 BAD_COUNTS = (0, -1, -100, 2.7, True, "8", None, [8])
 BAD_TIMEOUTS = (-1, -0.5, float("nan"), float("inf"), True, "1.0", None, [1.0])
@@ -152,7 +159,11 @@ class TestARegisterFieldIsNeverSilentlyTruncated:
         assert f"Position {position} " in _text(result)
         assert f"{position / 4095 * 360:.1f} deg" in _text(result)
 
-    @pytest.mark.parametrize("velocity", (0, 100, 65535))
+    # 32767 replaces the 65535 this case used to assert. Both put their own two
+    # bytes on the wire, but ``Goal_Velocity`` is sign-magnitude: 65535 sets bit
+    # 15, so the servo reads it as full speed in the *opposite* direction, which
+    # is precisely the masking-into-another-command this class refuses.
+    @pytest.mark.parametrize("velocity", (0, 100, 32767))
     def test_the_reported_velocity_is_the_velocity_on_the_wire(self, velocity: int, opened: list[_FakeSerial]) -> None:
         result = _call(action="feetech_velocity", motor_id=1, velocity=velocity)
 
@@ -304,11 +315,16 @@ class TestTheOptionTablesCannotDriftApart:
         consumed = {option for options in serial_mod._OPTIONS_BY_ACTION.values() for option in options}
         assert set(serial_mod._REGISTER_FIELDS) <= consumed
 
-    @pytest.mark.parametrize("field", ("motor_id", "position", "velocity"))
+    @pytest.mark.parametrize("field", tuple(serial_mod._REGISTER_FIELDS))
     def test_every_register_bound_is_a_value_the_field_can_hold(self, field: str) -> None:
         low, high, why = serial_mod._REGISTER_FIELDS[field]
         assert 0 <= low <= high
-        # ``position`` / ``velocity`` are written as two bytes and ``motor_id``
-        # as one, so no bound may exceed what its field encodes.
-        assert high <= (0xFF if field == "motor_id" else 0xFFFF)
+        # ``motor_id`` is the frame's single ID byte. The other two are
+        # sign-magnitude two-byte registers, so the ceiling that keeps a command
+        # meaning what it says is the largest magnitude leaving the direction bit
+        # clear - not the two-byte maximum, which the servo reads as the opposite
+        # direction. ``position`` sits well inside it at 4095, which is why its
+        # 12-bit bound was already safe.
+        limit = 0xFF if field == "motor_id" else MAX_MAGNITUDE
+        assert high <= limit
         assert why

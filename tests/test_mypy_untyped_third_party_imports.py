@@ -11,6 +11,23 @@ whole lint gate goes red - even though nothing in first-party code changed.
 turned every ``import pyarrow.parquet`` into a hard mypy failure across the
 repo. These tests pin the override so a future dependency bump (or an
 accidental removal of the override) is caught here instead of in CI.
+
+A vendor SDK that cannot be installed at all is the same failure with a
+different cause. ``unitree_sdk2py`` is the Unitree G1's DDS SDK: it is not
+published on PyPI, it is installed from a source checkout on the robot, and it
+therefore cannot be declared as a dependency or an extra. The G1 DDS layer
+imports it inside function bodies so that a machine without it can still build
+the driver and run every test against a mocked bus - but a lazy import is still
+an import to mypy, so the module needs the same override, and its absence reads
+as ``import-not-found`` rather than ``import-untyped``.
+
+The two tests per package divide the work deliberately. One reads
+``pyproject.toml`` and names the missing entry, which is fast and precise. The
+other runs the project's own mypy over exactly the first-party importers, so a
+mismatch between the override list and what those modules actually import is
+caught even when each looks individually reasonable - and it is indifferent to
+how the override is spelled, since a single ``pkg.*`` pattern already covers the
+top-level module.
 """
 
 from __future__ import annotations
@@ -30,6 +47,13 @@ _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _PYARROW_IMPORTERS = (
     "strands_robots/dataset_recorder.py",
     "strands_robots/verify_dataset.py",
+)
+
+# First-party modules that import the Unitree DDS SDK (unitree_sdk2py), which is
+# not on PyPI and so is absent from every CI and developer environment.
+_UNITREE_IMPORTERS = (
+    "strands_robots/tools/g1/_g1_common.py",
+    "strands_robots/tools/g1/_dds_engine.py",
 )
 
 
@@ -80,6 +104,48 @@ def test_mypy_clean_on_pyarrow_importing_modules():
         if "pyarrow" in line and ("import-untyped" in line or "import-not-found" in line)
     ]
     assert not offending, "mypy reported unsilenced pyarrow import errors:\n" + "\n".join(offending)
+
+
+def test_unitree_sdk_is_declared_untyped_in_mypy_overrides():
+    """unitree_sdk2py cannot be installed, so it must stay in the untyped-imports override.
+
+    Matched by prefix rather than against an exact pair of entries: a single
+    ``unitree_sdk2py.*`` pattern already covers the top-level module, so
+    demanding both spellings would fail a correct override.
+    """
+    covered = _ignore_missing_imports_modules()
+    assert any(m == "unitree_sdk2py" or m.startswith("unitree_sdk2py.") for m in covered), (
+        "the G1 DDS layer under strands_robots/tools/g1 imports unitree_sdk2py, "
+        "which ships no types and is not installable; it needs an "
+        "ignore_missing_imports mypy override and no entry covers it"
+    )
+
+
+def test_mypy_clean_on_unitree_importing_modules():
+    """mypy on the G1 DDS layer must not report import-* errors.
+
+    The SDK is imported inside function bodies so that importing the package
+    never touches it, but mypy resolves the import anyway - so a missing
+    override fails the lint gate on precisely the machines where the SDK could
+    not have been installed, which is all of them.
+    """
+    if shutil.which("mypy") is None and not _mypy_importable():
+        pytest.skip("mypy not installed in this environment")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "mypy", *_UNITREE_IMPORTERS],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    offending = [
+        line
+        for line in output.splitlines()
+        if "unitree_sdk2py" in line and ("import-untyped" in line or "import-not-found" in line)
+    ]
+    assert not offending, "mypy reported unsilenced unitree_sdk2py import errors:\n" + "\n".join(offending)
 
 
 def _mypy_importable() -> bool:

@@ -25,6 +25,7 @@ pipeline, so a real-model run supplies its sampler through ``motion_agent=``.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -161,16 +162,61 @@ class KimodoConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> KimodoConfig:
-        """Build a config from a plain dict (drops unknown keys with a warning)."""
+        """Build a config from a plain dict.
+
+        Only recognised keys are consumed; unknown keys are ignored for forward
+        compatibility, and no warning is emitted for a dropped key - the policy
+        :mod:`strands_robots.policies.motionbricks.config` and
+        :mod:`strands_robots.policies.wbc.config` state for their own
+        ``from_dict``.
+
+        Args:
+            data: Mapping of field name to value. Keys that are not fields of
+                this class are dropped.
+
+        Returns:
+            The config, validated by :meth:`__post_init__`.
+        """
         known = {f.name for f in cls.__dataclass_fields__.values()}
         kwargs = {k: v for k, v in data.items() if k in known}
         return cls(**kwargs)
 
     @classmethod
     def from_json(cls, path: str | Path) -> KimodoConfig:
-        """Load a config from a JSON file on disk."""
-        import json
+        """Load a config from a JSON file on disk.
 
-        p = Path(path)
-        with p.open("r", encoding="utf-8") as f:
-            return cls.from_dict(json.load(f))
+        A file that cannot supply fields is reported by name rather than
+        reaching :meth:`from_dict`, which is the reporting the sibling
+        policy-config file loaders in
+        :mod:`strands_robots.policies.motionbricks.config` and
+        :mod:`strands_robots.policies.wbc.config` already give. ``~`` in
+        ``path`` is expanded.
+
+        The extension is deliberately not checked, unlike those two loaders: a
+        JSON object stored under any name loads here today, and refusing one
+        would stop a payload that currently works. Every refusal below names an
+        input that already fails.
+
+        Args:
+            path: Path to a file holding a JSON object of config fields.
+
+        Returns:
+            The config, validated by :meth:`__post_init__`.
+
+        Raises:
+            FileNotFoundError: If ``path`` does not name a file.
+            ValueError: If the file is not valid JSON, or holds a JSON value
+                that is not an object. A value inside the object keeps the
+                domain :meth:`__post_init__` applies to it, so the loader adds
+                no second domain of its own.
+        """
+        p = Path(path).expanduser()
+        if not p.is_file():
+            raise FileNotFoundError(f"KimodoConfig file not found: {p}")
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"KimodoConfig file {p} is not valid JSON: {e}") from e
+        if not isinstance(data, dict):
+            raise ValueError(f"KimodoConfig file {p} must contain a mapping, got {type(data).__name__}")
+        return cls.from_dict(data)

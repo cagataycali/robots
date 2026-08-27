@@ -1,0 +1,116 @@
+"""Shared motion envelope for the Reachy Mini hardware layer.
+
+The Reachy Mini has no arms and no gait. What it does have is a 6-DOF Stewart
+head on a rotating body, and the two are mechanically coupled: the head's
+platform is carried by the body, so the head cannot be yawed arbitrarily far
+away from whichever way the body is facing. The limits are therefore not a
+matter of taste, and they are not all of one kind:
+
+* Per-axis bounds are the platform's own travel. Pitch and roll are the
+  Stewart legs' short axes; yaw is unbounded in the sense that the head can
+  face any direction, so its bound is the full turn.
+* The head-body yaw delta is a *coupling* limit between two values. Neither
+  value alone is out of range when the pair is: a head at +60 and a body at
+  -60 are each individually legal and together ask for a 120-degree twist the
+  neck cannot make.
+
+Kept in one module because two consumers need the same answer:
+:class:`~strands_robots.drivers.reachy.ReachyDriver` (the ``mode="real"``
+seam driver) and the agent ``@tool``s that will sit on the same daemon. A
+second copy would let the two disagree about the same robot, which is exactly
+the failure the existing Device Connect driver's ``look`` RPC and this one must
+not have between them.
+
+Refusal, not clamping. A clamp silently substitutes a value the caller did not
+ask for, and ``AGENTS.md`` forbids exactly that ("no silent defaults"); for a
+robot it is worse than a refusal, because the call reports success while the
+head goes somewhere else. :func:`envelope_error` therefore *names the limit it
+refused against* so the caller learns the envelope from the refusal rather than
+from documentation.
+
+This module imports nothing from the driver and nothing from a transport, so it
+is importable and testable on a machine with no Reachy and no daemon.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from strands_robots.utils import finite_number_error
+
+#: Per-axis travel, in degrees, as a symmetric bound: a value ``v`` is in range
+#: when ``abs(v) <= MOTION_ENVELOPE_DEG[axis]``. Keyed by the name the driver
+#: uses in an action dict so a refusal can quote the caller's own spelling.
+MOTION_ENVELOPE_DEG: dict[str, float] = {
+    "head_pitch": 40.0,
+    "head_roll": 40.0,
+    "head_yaw": 180.0,
+    "body_yaw": 160.0,
+}
+
+#: Largest angle, in degrees, the head may be yawed away from the body. This is
+#: a bound on ``head_yaw - body_yaw``, not on either one.
+HEAD_BODY_YAW_DELTA_LIMIT_DEG: float = 65.0
+
+#: The two keys :data:`HEAD_BODY_YAW_DELTA_LIMIT_DEG` couples. Named so a reader
+#: of the pairwise check does not have to infer which pair is meant.
+_YAW_PAIR: tuple[str, str] = ("head_yaw", "body_yaw")
+
+
+def envelope_error(values: dict[str, Any], context: str) -> str | None:
+    """Report why ``values`` cannot be commanded, or ``None`` when they can.
+
+    Three checks, in this order, because each depends on the previous one
+    having passed:
+
+    1. Each bounded axis that is present carries a finite number. A ``nan``
+       cannot be compared against a bound at all - ``abs(nan) <= 40`` is
+       ``False``, so an unordered value would be refused with a message about
+       travel rather than about being unusable. Delegated to
+       :func:`~strands_robots.utils.finite_number_error` so this envelope and
+       the Device Connect driver's movement RPCs accept the same numbers, which
+       also rules out ``bool`` (``True`` would otherwise read as 1 degree).
+    2. That axis is within its own travel.
+    3. If both members of :data:`_YAW_PAIR` are present, their difference is
+       within :data:`HEAD_BODY_YAW_DELTA_LIMIT_DEG`. Checked last because it is
+       only meaningful once both values are known to be finite and individually
+       legal - otherwise a caller would be told about a coupling when the real
+       problem is one value.
+
+    A key this envelope does not know is ignored entirely - not bounded and not
+    even checked for finiteness. The driver's action dict also carries antenna
+    positions and other pass-through values, and refusing a name this module has
+    no bound for would make adding an actuator a change to a safety helper.
+    Finiteness for those values belongs to whoever puts them on the wire; the
+    driver runs the same shared domain over its whole action dict before calling
+    this.
+
+    Args:
+        values: Axis name to caller-supplied value. Only the keys named in
+            :data:`MOTION_ENVELOPE_DEG` are bounded; others are ignored.
+        context: Calling surface to quote in the reason, so a caller can tell
+            which of several verbs refused.
+
+    Returns:
+        A reason naming the limit that refused, or ``None`` when every value in
+        ``values`` can be honored.
+    """
+    for axis, limit in MOTION_ENVELOPE_DEG.items():
+        if axis not in values:
+            continue
+        if (reason := finite_number_error(values[axis], axis, context)) is not None:
+            return reason
+        value = float(values[axis])
+        if abs(value) > limit:
+            return f"{context}: {axis} {value:g} deg is outside the envelope +/-{limit:g} deg"
+
+    head_key, body_key = _YAW_PAIR
+    if head_key in values and body_key in values:
+        delta = float(values[head_key]) - float(values[body_key])
+        if abs(delta) > HEAD_BODY_YAW_DELTA_LIMIT_DEG:
+            return (
+                f"{context}: {head_key} {float(values[head_key]):g} deg and {body_key} "
+                f"{float(values[body_key]):g} deg differ by {delta:g} deg, which exceeds the "
+                f"head-body coupling limit of {HEAD_BODY_YAW_DELTA_LIMIT_DEG:g} deg"
+            )
+    return None

@@ -62,6 +62,28 @@ instrumentation agrees - no ``resume`` test reached the home.
 
 ``tests_integ/`` deliberately records real datasets and may want the shared
 home, so the scan is scoped to ``tests/``.
+
+Naming a root is necessary and not sufficient. The rule above reads the keyword
+and not the value it carries, so ``root="/tmp/ds"`` satisfies it while
+reproducing verbatim the failure this module exists to prevent: a fixed absolute
+path is shared between every test that names it and with every other process on
+the machine, so the verdict still depends on what the host already holds. That
+is not hypothetical - ``tests/test_dataset_recorder.py`` named ``/tmp/ds`` and
+the test failed on any host where that directory existed, with the same
+``FileExistsError`` from the same ``_prepare_dataset_target`` inspection, for a
+test whose subject is codec normalisation and which writes nothing. Pointing the
+same call at a fresh directory turned it green with no other change.
+
+So the second rule reads the value, and it refuses exactly one shape: a ``root``
+given as a string literal. The boundary is deliberate. A literal cannot be
+per-test unique, which is decidable from the syntax alone with no false
+positives; whereas ``root=root`` with ``root`` bound from ``tmp_path`` earlier in
+the function is the idiomatic form 101 of the 194 recording calls use, and
+telling that apart from a shared local would need dataflow this module has no
+business doing. ``root=None`` is left alone for a different reason: it means
+"resolve the shared home", which is a question about the home rather than about
+the call site, and the modules that pass it are the ones whose subject is that
+resolution.
 """
 
 from __future__ import annotations
@@ -129,6 +151,27 @@ def _names_a_repo_id(call: ast.Call, *, direct: bool) -> bool:
     if direct and call.args:
         return True
     return any(kw.arg == "repo_id" for kw in call.keywords)
+
+
+def _sole_call(source: str) -> ast.Call:
+    """The one call expression in ``source``, for the exemplars below."""
+    statement = ast.parse(source).body[0]
+    assert isinstance(statement, ast.Expr), source
+    call = statement.value
+    assert isinstance(call, ast.Call), source
+    return call
+
+
+def _literal_root(call: ast.Call) -> str | None:
+    """The ``root`` this call names, if it names one as a string literal.
+
+    Returns the literal so the failure message can quote the path a reader has
+    to go and find, rather than only the line it is on.
+    """
+    for keyword in call.keywords:
+        if keyword.arg == "root" and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+            return keyword.value.value
+    return None
 
 
 def _recording_calls(path: Path) -> list[tuple[ast.Call, bool, set[str]]]:
@@ -209,3 +252,42 @@ def test_the_scan_still_reads_a_positional_repo_id() -> None:
         "no direct recording call in test_dataset_recorder.py is seen to pass a "
         "positional repo_id, so the rule now rests on the keyword form alone"
     )
+
+
+def test_a_named_root_is_not_a_fixed_absolute_path() -> None:
+    """A unit test's dataset directory is unique to the test, not just non-default.
+
+    The rule above requires a root; this one requires it to be the test's own. A
+    string literal is shared by construction - with every other test naming it and
+    with every process on the host - so it carries the same exposure as the shared
+    cache the module is named for.
+    """
+    offenders = [
+        f"{path.relative_to(_TESTS_ROOT)}:{call.lineno}: root={literal!r}"
+        for path, calls in _scan().items()
+        for call, direct, _keywords in calls
+        if _names_a_repo_id(call, direct=direct) and (literal := _literal_root(call)) is not None
+    ]
+    assert not offenders, (
+        "these recording calls name a root as a fixed absolute path, so it is "
+        "shared with every other test that names it and with every process on "
+        "the host, and the verdict depends on what is already there - pass "
+        "root=str(tmp_path / 'dataset'):\n" + "\n".join(offenders)
+    )
+
+
+def test_the_literal_root_rule_reads_the_value_and_not_the_keyword() -> None:
+    """Non-vacuity, on constructed calls rather than on the corpus.
+
+    With the offenders fixed the corpus can no longer exercise a rejection, so a
+    rule graded only against it would pass by having nothing to look at. These
+    two exemplars are the shapes the rule has to separate, and the accepted one
+    also pins that the rule does not simply refuse every root.
+    """
+    refused = _sole_call('DatasetRecorder.create("user/data", root="/tmp/ds")')
+    accepted = _sole_call('DatasetRecorder.create("user/data", root=str(tmp_path / "ds"))')
+
+    assert _literal_root(refused) == "/tmp/ds"
+    assert _literal_root(accepted) is None
+    # Both are recording calls, so the rule is separating them on the value.
+    assert _is_entry_call(refused) and _is_entry_call(accepted)

@@ -90,7 +90,9 @@ no-op until then.
   "png", ...}}`) as MuJoCo, so the shared `PolicyRunner` video pipeline works
   without modification.
 - `add_camera(name, position, target, fov=60, width, height, parent_body=None)`
-  registers named cameras, matching the MuJoCo signature. `render(camera_name=...)`
+  registers named cameras. That order is the same on every backend - Isaac
+  included - so a positional call means one thing whichever
+  `create_simulation(backend=...)` produced the `sim`. `render(camera_name=...)`
   returns the named view; multiple cameras coexist and `get_observation()`
   returns one RGB frame per camera keyed by name. A `parent_body` (a body label
   from `list_bodies`) mounts the camera ON that body so a wrist camera tracks

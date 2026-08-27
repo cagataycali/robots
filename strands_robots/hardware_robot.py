@@ -37,6 +37,8 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
+from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
+from strands_robots.bus_access import read_observation, write_action
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
@@ -1023,7 +1025,7 @@ class Robot(TeleopMixin, AgentTool):
                     }
                 ],
             }
-        observation = self.robot.get_observation()
+        observation = read_observation(self.robot)
         self._publish_ros_telemetry(observation, skip_images=skip_images)
         return {
             "status": "success",
@@ -1158,6 +1160,18 @@ class Robot(TeleopMixin, AgentTool):
         rather than as a delayed connection failure with no kwarg in
         sight.
 
+        The mirror-image mistake -- a required field that no forwarded kwarg
+        supplied -- is refused here too, naming the parameter the caller
+        supplies rather than letting the dataclass report
+        ``SOFollowerRobotConfig.__init__() missing 1 required positional
+        argument: 'port'``. A missing port additionally names this host's
+        servo-bus candidates and their USB serial numbers, because a port path
+        is a position on the bus while the serial number is what survives a
+        replug -- see :func:`strands_robots._serial_discovery.scan_serial_devices`.
+        The scan answers a missing ``port`` only: naming serial devices for a
+        missing ``remote_ip`` would point a network robot's caller at the wrong
+        bus entirely.
+
         Each entry of ``cameras`` follows the same contract, resolved against
         the fields of lerobot's ``OpenCVCameraConfig`` -- see
         :func:`_build_camera_config`.
@@ -1172,7 +1186,9 @@ class Robot(TeleopMixin, AgentTool):
             ValueError: If a kwarg is unknown to both the cross-robot allowlist
                 and the resolved dataclass, if a ``cameras`` entry is malformed,
                 if ``max_relative_target`` is not a limit the driver can honor,
-                or if the resolved config class refuses the assembled values.
+                if the resolved dataclass declares a required field that no
+                forwarded kwarg supplied, or if the resolved config class
+                refuses the assembled values.
             TypeError: If lerobot resolves ``robot_type`` to a non-dataclass
                 config class, which would make kwarg filtering unsafe.
         """
@@ -1214,6 +1230,17 @@ class Robot(TeleopMixin, AgentTool):
         try:
             ConfigClass = RobotConfig.get_choice_class(robot_type)
         except KeyError:
+            # A leader arm is a teleoperator, not a robot, and lerobot keeps the
+            # two in separate registries. Listing the robot types for a leader
+            # name is the retry that torque-enables the arm a human is holding,
+            # so name the kind it really is instead. ``Robot()``'s own registry
+            # guard does this for an unregistered ``*_leader`` name; a leader
+            # that IS registered -- as itself, which is the honest thing to
+            # register -- reaches this site instead.
+            from strands_robots.teleoperator import _other_lerobot_kind_refusal
+
+            if other := _other_lerobot_kind_refusal(robot_type, wanted="robot"):
+                raise ValueError(other) from None
             available = sorted(RobotConfig.get_known_choices().keys())
             # ``from None`` -- the KeyError is an internal detail of
             # lerobot's draccus registry; suppress the chained traceback
@@ -1331,6 +1358,46 @@ class Robot(TeleopMixin, AgentTool):
                 config_data["max_relative_target"], robot_type
             )
 
+        # A required field no forwarded kwarg satisfied is the commonest caller
+        # mistake on this path -- 8 of lerobot's serial robot types declare
+        # ``port`` with no default -- and letting the dataclass raise reports it
+        # as ``SOFollowerRobotConfig.__init__() missing 1 required positional
+        # argument: 'port'``: a lerobot internal, naming neither the parameter
+        # the caller supplies nor the devices this host has. The unknown-kwarg
+        # gate above already refuses the mirror-image mistake (a typo like
+        # ``prot=``) by naming the accepted fields, so the two halves of "the
+        # caller got a kwarg wrong" are reported the same way. Detected here
+        # rather than from the exception because the answer is on the bus, and
+        # by the time the dataclass raises nobody is looking at it: the same
+        # values would reach the same dataclass either way, so this changes
+        # which sentence a refused call gets, not which calls are refused.
+        missing_required = [
+            field.name
+            for field in dataclasses.fields(ConfigClass)
+            if field.default is dataclasses.MISSING
+            and field.default_factory is dataclasses.MISSING
+            and field.name not in config_data
+        ]
+        if missing_required:
+            remedy = ", ".join(f"{name}=..." for name in missing_required)
+            hint = (
+                f"missing required parameter(s) {missing_required}, which the caller supplies -- e.g. "
+                f"Robot({self.tool_name_str!r}, mode='real', {remedy})."
+            )
+            # Only a port-shaped parameter is answered by a serial scan. Naming
+            # this host's serial devices for a missing ``remote_ip`` would point
+            # a network robot's caller at the wrong bus entirely.
+            if any(name == "port" or name.endswith("_port") for name in missing_required):
+                hint += (
+                    f" {describe_serial_candidates(scan_serial_devices())}"
+                    " A port path is a position on the bus, not an identity: it can change when the device is"
+                    " replugged, while the usb id does not."
+                )
+            raise ValueError(
+                f"Failed to construct {ConfigClass.__name__} for robot type {robot_type!r}: "
+                f"{hint} Config: {config_data}"
+            )
+
         try:
             return ConfigClass(**config_data)
         except (TypeError, ValueError) as e:
@@ -1424,7 +1491,13 @@ class Robot(TeleopMixin, AgentTool):
         devices from being closed, which is the failure mode lerobot's single
         unguarded disconnect loop has.
         """
-        bus = getattr(self.robot, "bus", None)
+        # ``getattr`` on ``self``, not on ``self.robot``: this also runs on
+        # the partial-construction path, where ``__init__`` raised in the very
+        # statement that assigns ``self.robot`` and so the attribute does not
+        # exist at all. Guarding the inner attribute cannot help there.
+        # ``_shutdown_ros_bridge`` already reads its own handle this way.
+        robot = getattr(self, "robot", None)
+        bus = getattr(robot, "bus", None)
         try:
             if bus is not None and getattr(bus, "is_connected", False):
                 # disable_torque=False: this runs only where the driver's own
@@ -1439,7 +1512,7 @@ class Robot(TeleopMixin, AgentTool):
         # lerobot builds ``cameras`` with ``make_cameras_from_configs``, whose
         # contract is ``dict[str, Camera]``; anything else is not a camera set
         # this rollback can walk.
-        cameras = getattr(self.robot, "cameras", None)
+        cameras = getattr(robot, "cameras", None)
         for name, camera in cameras.items() if isinstance(cameras, Mapping) else ():
             try:
                 # A camera that failed to open already released its own
@@ -1473,8 +1546,14 @@ class Robot(TeleopMixin, AgentTool):
         gripper; closing the port underneath it skips both and leaves the arm
         energised at its last commanded position.
         """
-        disconnect = getattr(self.robot, "disconnect", None)
-        if callable(disconnect) and getattr(self.robot, "is_connected", False):
+        # ``getattr`` on ``self``, not on ``self.robot``: this also runs on
+        # the partial-construction path, where ``__init__`` raised in the very
+        # statement that assigns ``self.robot`` and so the attribute does not
+        # exist at all. Guarding the inner attribute cannot help there.
+        # ``_shutdown_ros_bridge`` already reads its own handle this way.
+        robot = getattr(self, "robot", None)
+        disconnect = getattr(robot, "disconnect", None)
+        if callable(disconnect) and getattr(robot, "is_connected", False):
             try:
                 disconnect()
                 return
@@ -1566,7 +1645,7 @@ class Robot(TeleopMixin, AgentTool):
         """Initialize policy with robot state keys."""
         try:
             # Get robot state keys from observation
-            test_obs = await asyncio.to_thread(self.robot.get_observation)
+            test_obs = await asyncio.to_thread(read_observation, self.robot)
 
             # Filter out camera keys to get robot state keys
             camera_keys = []
@@ -1737,7 +1816,7 @@ class Robot(TeleopMixin, AgentTool):
                 and not self._shutdown_event.is_set()
             ):
                 # Get observation from robot
-                observation = await asyncio.to_thread(self.robot.get_observation)
+                observation = await asyncio.to_thread(read_observation, self.robot)
 
                 # Mirror the live observation on ROS 2 (no-op unless the bridge
                 # is enabled). Best-effort: never blocks or breaks the loop.
@@ -1770,7 +1849,7 @@ class Robot(TeleopMixin, AgentTool):
                         break
                     if n_steps is not None and self._task_state.step_count >= n_steps:
                         break
-                    await asyncio.to_thread(self.robot.send_action, action_dict)
+                    await asyncio.to_thread(write_action, self.robot, action_dict)
                     self._task_state.step_count += 1
                     # Per-step mesh telemetry: publish_step had consumers
                     # (robot_mesh watch, dashboards) but no producers. Rate-
@@ -2842,17 +2921,64 @@ class Robot(TeleopMixin, AgentTool):
             pass  # Ignore errors in destructor
 
     async def get_status(self) -> dict[str, Any]:
-        """Get robot status including connection and task state."""
+        """Report the device's measured state plus this robot's task state.
+
+        Two fields answer different questions about cameras, and the pair is
+        what makes an unhealthy device attributable:
+
+        * ``cameras`` enumerates the camera names the device is *configured*
+          for - which image streams exist at all.
+        * ``cameras_connected`` maps each live camera to its own
+          ``is_connected`` reading - which of those streams are actually up.
+
+        ``is_connected`` on a lerobot arm is ``bus and all(cameras)``, so a
+        single dropped camera pulls it to ``False`` without naming which of the
+        N+1 facts fell. Reported beside the per-camera readings, a ``False``
+        becomes attributable: a camera reading ``False`` is the culprit, and
+        every camera reading ``True`` leaves the motor bus as the one by
+        elimination.
+
+        Best-effort per camera, mirroring the observation path: a camera whose
+        ``is_connected`` probe raises is omitted from ``cameras_connected``
+        rather than failing the whole probe, so a name present in ``cameras``
+        and absent from ``cameras_connected`` is one whose state could not be
+        read. A device exposing no live camera objects reports an empty map.
+
+        Returns:
+            Status dict of measured facts. An unexpected failure anywhere in
+            the probe degrades to ``{"robot_name", "error", "is_connected":
+            False, "task_status": "error"}`` rather than propagating, so a
+            supervising agent reads a verdict instead of taking an exception.
+        """
         try:
             # Get robot connection status
             is_connected = self.robot.is_connected if hasattr(self.robot, "is_connected") else False
             is_calibrated = self.robot.is_calibrated if hasattr(self.robot, "is_calibrated") else True
 
-            # Get camera status
+            # The configured enumeration: which image streams the device was
+            # asked for. Says nothing about whether any of them came up.
             camera_status = []
             if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
                 for name in self.robot.config.cameras.keys():
                     camera_status.append(name)
+
+            # The measured reading, one entry per live camera. The camera
+            # objects hang off the device beside the config, and each carries
+            # the ``is_connected`` that the device's own aggregate is built
+            # from - so reading them here is what turns an aggregate ``False``
+            # into a named culprit instead of a set to guess from.
+            cameras_connected: dict[str, bool] = {}
+            live_cameras = getattr(self.robot, "cameras", None)
+            if isinstance(live_cameras, dict):
+                for name, camera in live_cameras.items():
+                    try:
+                        cameras_connected[name] = bool(camera.is_connected)
+                    except Exception as e:  # noqa: BLE001 - a camera that cannot answer is omitted, not fatal
+                        # Breadth is the camera backend's, not ours: the default
+                        # OpenCV camera answers through ``cv2.VideoCapture``, and
+                        # ``cv2.error`` subclasses ``Exception`` directly, so any
+                        # narrower tuple would let the shipped camera through.
+                        logger.debug("camera %r on %s could not report is_connected: %s", name, self.tool_name_str, e)
 
             # Build status dict
             status_data = {
@@ -2867,6 +2993,7 @@ class Robot(TeleopMixin, AgentTool):
                 # connected and usable but that camera is not, with the
                 # operating system's or driver's own words as the reason.
                 "degraded_cameras": dict(getattr(self, "_degraded_cameras", {}) or {}),
+                "cameras_connected": cameras_connected,
                 "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
                 "ros2_transport": getattr(self, "_ros2_transport", "rclpy")
                 if getattr(self, "_ros_bridge", None) is not None
@@ -2901,7 +3028,9 @@ class Robot(TeleopMixin, AgentTool):
 
         Synchronous so it can be driven from the :class:`TeleopMixin` teleop
         loop thread. Ensures the underlying lerobot robot is connected, then
-        delegates to ``self.robot.send_action``. ``robot_name`` is accepted
+        delegates through :func:`strands_robots.bus_access.write_action`, so a
+        teleop or ROS 2 command shares the bus with the mesh's readers instead of
+        racing them. ``robot_name`` is accepted
         for parity with the multi-robot simulation host but ignored here - a
         hardware ``Robot`` wraps exactly one device.
 
@@ -2923,7 +3052,7 @@ class Robot(TeleopMixin, AgentTool):
                 except Exception:
                     self._close_open_devices()
                     raise
-            self.robot.send_action(action)
+            write_action(self.robot, action)
             return {"status": "success", "content": [{"text": "ok"}]}
         except Exception as e:  # noqa: BLE001 - surface as status, never kill the loop
             logger.error("%s send_action failed: %s", self.tool_name_str, e)

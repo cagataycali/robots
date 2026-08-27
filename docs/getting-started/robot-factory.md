@@ -29,6 +29,7 @@ robot = Robot("so100", mode="auto")  # probes USB, falls back to sim
 | `peer_id` | str | `None` | Stable mesh peer id. Auto-generated if omitted. |
 | `orientation` | list | `None` | Robot base orientation `[w, x, y, z]` in sim world. Ignored when `mode="real"` (reported at debug level). |
 | `keyframe` | str \| int | `None` | Spawn in a model `<keyframe>` pose (name or index) instead of the zero configuration. Ignored when `mode="real"` (reported at debug level). |
+| `driver` | str | `"auto"` | Which implementation drives a real robot: `"auto"` / `"lerobot"` / `"strands"`. `"auto"` honours the robot's registry `hardware.driver` and otherwise builds the lerobot driver. Checked in every mode; only `mode="real"` acts on it (sim reports it as ignored at debug level). See [Choosing a driver](#choosing-a-driver). |
 | `**kwargs` | | | Forwarded to the backend or driver constructor as given. A name it does not recognize is ignored, not refused, so check the spelling against the forwardable list below. |
 
 ## Name resolution
@@ -75,6 +76,86 @@ opened - a non-finite limit would otherwise disable the clamp with no signal, an
 one inverts it into a fixed-magnitude step that ignores the policy. An `int` limit is
 normalized to `float` so it reaches the motors. Omit the parameter (or pass `None`) to leave
 the clamp disabled.
+
+## Choosing a driver
+
+`mode="real"` builds a driver. By default that is the lerobot one - it constructs a lerobot
+`RobotConfig` and wraps a lerobot driver, which is what most robots in the shipped registry
+use. A robot that lerobot cannot model declares a native driver instead; `list_native_drivers()`
+reports which robots those are.
+
+`driver=` selects a different one:
+
+| Value | Builds |
+|-------|--------|
+| `"auto"` (default) | The robot's registry `hardware.driver` if it declares one, else the lerobot driver. |
+| `"lerobot"` | The lerobot driver, explicitly. |
+| `"strands"` | The native driver registered for this robot. |
+
+A native driver is for a robot lerobot's arm/serial shape cannot model - a humanoid with its
+own state machine, a rover reporting GPS, a base publishing a point cloud. It is a separate
+class satisfying `strands_robots.drivers.HardwareDriver`, registered against a robot name:
+
+```python
+from strands_robots.drivers import register_native_driver
+
+register_native_driver("unitree_g1", G1Driver)
+
+robot = Robot("unitree_g1", mode="real", driver="strands", port="192.168.123.161")
+```
+
+`register_native_driver` refuses a class that does not satisfy the contract and names the
+members it is missing, so a half-built driver fails at the line that registers it rather
+than on the first agent call. `port=` stays polymorphic - a serial path, an IP address or a
+URL - because only the driver knows how to read it.
+
+Asking for a driver that is not there is refused, never quietly substituted:
+
+```python
+>>> Robot("so101", mode="real", driver="strands")
+ValueError: No native driver is registered for 'so101', so driver='strands' cannot build
+it. Robots with a native driver: reachy_mini, unitree_g1. Either use driver='lerobot'
+(today's default, which builds it through lerobot) or register one with
+strands_robots.drivers.register_native_driver().
+```
+
+A robot may also declare its driver in the registry, so a caller needs no `driver=` at all:
+
+```json
+"unitree_g1":  {"hardware": {"lerobot_type": "unitree_g1", "driver": "strands"}}
+"reachy_mini": {"hardware": {"driver": "strands"}}
+```
+
+`lerobot_type` is independent of `driver`. The G1 declares one because lerobot also
+has a class for it, so `driver="lerobot"` remains a usable fallback. The Reachy Mini
+declares none: lerobot has no robot type for it, so the native driver is the only way
+to reach it and `driver="lerobot"` is refused by name.
+
+A native driver reports what it cannot reach rather than raising. The Reachy Mini's
+daemon transport is a standard-library-only module in the core distribution, so
+nothing an extra installs decides whether it loads - but if it cannot be imported at
+all, on a broken install or behind a shadowing module, the driver still builds,
+registers and answers `get_status`, and every surface that would touch the daemon
+returns a reason naming the module and the error instead:
+
+```python
+>>> Robot("reachy_mini", mode="real").connect_eagerly()
+"cannot import strands_robots.device_connect.reachy_transport: No module named
+'strands_robots.device_connect.reachy_transport'"
+```
+
+The reason stops at what it can establish. It prescribes no `pip install`, because no
+install supplies a module that ships in the core distribution, and a remedy that
+cannot help is worse than none - the same rule
+[`require_optional`](https://github.com/strands-labs/robots/blob/main/strands_robots/utils.py) applies when it is told a module
+arrives from a system package rather than an index.
+
+The same reason arrives as `connect_error` in `get_status`, so a mesh peer for a Mini
+whose transport will not load is still constructible and still reports why it is not
+connected.
+
+`hardware.driver` is optional and validated when the registry loads: a value that is not a
+driver name is refused there, naming the robot, rather than being read as "no preference".
 
 ## Mesh
 

@@ -1056,25 +1056,47 @@ class TestRealModeConfigDiscovery:
         appears. We assert on that absence; if a future refactor undoes
         the ordering swap (e.g. moves the mesh init back to its original
         spot), this test fails.
+
+        This cell is the narrow pin for the mesh attributes specifically. The
+        same claim for every attribute teardown reads is graded in
+        ``tests/test_hardware_cleanup_survives_a_failed_robot_init.py``, which
+        derives the attribute set instead of naming one.
         """
+        import gc
         from unittest.mock import patch
 
         from strands_robots.hardware_robot import Robot as HwRobot
 
-        with caplog.at_level("ERROR", logger="strands_robots.hardware_robot"):
+        def attempt() -> None:
+            # Catch here rather than with ``pytest.raises`` around the
+            # construction: the exception's traceback keeps the half-built
+            # instance alive, so ``__del__`` -- the path that reaches
+            # ``cleanup()`` -- does not run while that traceback is. Returning
+            # drops the frame chain, and the collection below then forces the
+            # finalizer, so the assertion reads a log that has been written.
             with patch.object(HwRobot, "_initialize_robot", side_effect=RuntimeError("boom")):
-                with pytest.raises(RuntimeError, match="boom"):
+                try:
                     HwRobot(tool_name="x", robot="so101_follower")
+                except RuntimeError:
+                    return
+            raise AssertionError("the patched bring-up did not raise")
+
+        with caplog.at_level("ERROR", logger="strands_robots.hardware_robot"):
+            attempt()
+            gc.collect()
 
         # Pre-fix code logged either of:
         #   "Cleanup error for x: 'Robot' object has no attribute 'mesh'"
         # depending on whether peer_id or mesh was probed first. The fix
         # eliminates BOTH because both attrs are now initialised before
         # _initialize_robot runs.
+        # ``cleanup()`` logs ``f"Cleanup error for {name}: {e}"``, which
+        # interpolates ``str(e)`` -- the message alone. Selecting on the
+        # exception *type* name therefore never matched anything, so this list
+        # was empty whatever the code did. Select on the text the record
+        # actually carries.
         offenders = [
-            r.message
-            for r in caplog.records
-            if "AttributeError" in r.message and "mesh" in r.message and "Cleanup error" in r.message
+            r.message for r in caplog.records if "Cleanup error" in r.message and "no attribute 'mesh'" in r.message
         ]
         assert not offenders, (
             f"cleanup() logged AttributeError for missing 'mesh': {offenders}. "

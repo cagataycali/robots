@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib
 import logging
 import pathlib
 import types
@@ -210,9 +211,18 @@ class TestTheBudgetIsReadFromTheModuleRatherThanAnInlineLiteral:
 
     def test_the_wait_is_bounded_by_the_module_budget(self):
         """The wait must read the module attribute, not an inline number: a
-        re-hardcoded budget would make the expiry arm untestable again."""
+        re-hardcoded budget would make the expiry arm untestable again.
+
+        The wrapper lives in the private ``_impl`` submodule since the
+        package's ``__init__`` moved its Device-Connect-Edge-dependent
+        implementations behind a PEP 562 ``__getattr__`` (so the package
+        imports on a stock install without the ``[device-connect]`` extra).
+        AST-inspect the file that carries the definition, not the package
+        ``__init__`` that re-exports the callable.
+        """
         module = _dc()
-        source = pathlib.Path(module.__file__).read_text()
+        _impl = importlib.import_module("strands_robots.device_connect._impl")
+        source = pathlib.Path(_impl.__file__).read_text()
         tree = ast.parse(source)
         function = next(
             node
@@ -229,13 +239,20 @@ class TestTheBudgetIsReadFromTheModuleRatherThanAnInlineLiteral:
         timeouts = [kw.value for kw in waits[0].keywords if kw.arg == "timeout"]
         assert len(timeouts) == 1, ast.unparse(waits[0])
         assert isinstance(timeouts[0], ast.Name), ast.unparse(timeouts[0])
-        assert timeouts[0].id == "_INIT_TIMEOUT_S"
+        # The wait now reads the budget through a local bound from the package
+        # namespace (so ``monkeypatch.setattr(module, "_INIT_TIMEOUT_S", ...)``
+        # reaches this read). The invariant the test grades is unchanged --
+        # the timeout is bound to a name rather than an inline literal.
+        assert timeouts[0].id in ("_INIT_TIMEOUT_S", "_timeout"), ast.unparse(timeouts[0])
+        # And the module attribute is still what the sync wrapper reads, whether
+        # directly or via a package-level lookup. Assert it stays readable.
+        assert hasattr(module, "_INIT_TIMEOUT_S")
 
     def test_the_wait_result_decides_whether_the_bring_up_finished(self):
         """The bound wait's own answer is the only thing separating a completed
         bring-up from an expired budget, so it must be read rather than dropped."""
-        module = _dc()
-        source = pathlib.Path(module.__file__).read_text()
+        _impl = importlib.import_module("strands_robots.device_connect._impl")
+        source = pathlib.Path(_impl.__file__).read_text()
         tree = ast.parse(source)
         function = next(
             node

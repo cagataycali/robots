@@ -111,6 +111,30 @@ def get_hardware_type(name: str) -> str | None:
     return None
 
 
+def get_driver(name: str) -> str | None:
+    """Get the driver a robot declares, verbatim, or ``None`` if it declares none.
+
+    A pure reader, like its sibling :func:`get_hardware_type`: it reports what
+    the registry says and applies no default. ``hardware.driver`` is optional and
+    absent everywhere in the package registry, because every robot here is driven
+    through lerobot. Deciding what an absent - or ``"auto"`` - declaration means
+    is :func:`~strands_robots.drivers.resolve_driver`'s job, which is also where
+    a caller's explicit choice outranks the registry.
+
+    Args:
+        name: Robot name, alias, or data_config.
+
+    Returns:
+        The declared driver name, or ``None`` when the robot declares no driver
+        (or is not registered at all).
+    """
+    info = get_robot(name)
+    if info and "hardware" in info:
+        declared: str | None = info["hardware"].get("driver")
+        return declared
+    return None
+
+
 def list_robots(mode: str = "all") -> list[dict[str, Any]]:
     """List available robots, optionally filtered.
 

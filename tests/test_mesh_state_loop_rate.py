@@ -1,10 +1,11 @@
 """The state loop must publish at STATE_HZ on THIS machine, not at 40% of it.
 
-BUGS.md Q69: the mesh's publish loops paced themselves with
-``self._stop_event.wait(period)``, and in a process tree descended from a daemon
-(or launchd agent, or a supervising loop) every such wait is inflated by ~145ms
-on macOS. STATE_HZ is 10, so the state stream ran at ~4Hz and every counter
-reported 4Hz as the rate the robot managed.
+The mesh's publish loops paced themselves with ``self._stop_event.wait(period)``.
+That is a delay where a rate needs a deadline: the time ``_read_state`` spends on
+the bus was added to the period instead of subtracted from it, so the loop ran at
+``1 / (period + read)`` and every counter reported that as the rate the robot
+managed. On a host that also inflates ``Event.wait`` (see
+:mod:`strands_robots.mesh.pacing`) the two costs stack.
 
 This test measures the loop's ACHIEVED rate through the real ``Mesh._state_loop``
 with the transport mocked, and calibrates its floor against the machine it is
@@ -13,8 +14,8 @@ to pass in a terminal. That calibration is the whole point: the regression it
 guards against is invisible in an interactive shell and severe under a daemon.
 
 The session is mocked exactly the way tests/mesh/test_mesh.py mocks it, so no
-real zenoh session is ever built here - Q30's law (a test that cannot prove
-transport isolation must refuse to run) applies to anything that touches a Mesh.
+real zenoh session is ever built here: a test that cannot prove transport
+isolation must not run at all, and that applies to anything touching a Mesh.
 """
 
 from __future__ import annotations
@@ -103,7 +104,7 @@ class TestTheCameraLoopHitsItsNominalRate:
         achieved = len(frames) / elapsed
         assert achieved > 21.0, (
             f"camera loop achieved {achieved:.1f}fps asking for 30 "
-            f"(sleep penalty here {sleep_penalty_s() * 1000:.0f}ms) - see BUGS.md Q69"
+            f"(sleep penalty here {sleep_penalty_s() * 1000:.0f}ms) - see mesh.pacing"
         )
 
     def test_a_dropped_deadline_does_not_publish_a_burst_of_near_identical_frames(self) -> None:
@@ -151,7 +152,7 @@ class TestTheStateLoopHitsItsNominalRate:
         assert achieved >= floor, (
             f"state loop achieved {achieved:.1f}Hz against STATE_HZ={STATE_HZ} "
             f"(sleep penalty on this machine: {penalty * 1000:.0f}ms). Below {floor:.1f}Hz means the loop is "
-            "paced by an inflated blocking wait again - see BUGS.md Q69."
+            "paced by an inflated blocking wait again - see mesh.pacing."
         )
 
         if penalty >= 0.01:
@@ -237,8 +238,8 @@ def test_the_converted_loop_no_longer_paces_on_the_stop_event(attr: str) -> None
     if doc:
         source = source.replace(doc, "")
     assert "_stop_event.wait(" not in source, (
-        f"Mesh.{attr} is pacing on _stop_event.wait again - that wait is inflated ~145ms in a "
-        "daemon-descended process tree (BUGS.md Q69); use mesh.pacing.Ticker"
+        f"Mesh.{attr} is pacing on _stop_event.wait again - that wait adds the tick's work to "
+        "the period, and is inflated further in a daemon-descended tree; use mesh.pacing.Ticker"
     )
     assert "Ticker(" in source, f"Mesh.{attr} should pace on a Ticker"
 
@@ -264,9 +265,7 @@ def test_every_sensor_loop_paces_through_the_shared_ticker_generator(loop: str) 
     func = getattr(mesh_sensors.SensorLoopsMixin, loop)
     source = inspect.getsource(func)
     assert "self._paced(" in source, f"{loop} does not pace through SensorLoopsMixin._paced"
-    assert "_stop_event.wait(" not in source, (
-        f"{loop} paces on the inflated Event.wait again - see BUGS.md Q69"
-    )
+    assert "_stop_event.wait(" not in source, f"{loop} paces on the inflated Event.wait again - see mesh.pacing"
 
 
 def test_only_the_shared_generator_owns_a_ticker_in_the_sensors_module() -> None:
@@ -288,25 +287,24 @@ def test_only_the_shared_generator_owns_a_ticker_in_the_sensors_module() -> None
 
 
 def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
-    """The inventory check: Q69 is only cured if NO pacer was missed.
+    """The inventory check: this is only cured if NO pacer was missed.
 
-    This scans for the SHAPE, because two spellings have already slipped past a
-    narrower check. First the teleop apply loop, found only after converting the
-    other eleven: its event is ``_teleop_stop_event``, so it did not match the
-    grep my inventory came from. Then - one iteration after this test was
-    written to stop exactly that - the dashboard's record loop
-    (``dashboard/record_worker.py``), which pairs a third name with the keyword
-    form: ``while not self._stop_evt.wait(timeout=period)``. The regex was the
-    hole, not the walk: rglob had been reading that file all along.
+    This scans for the SHAPE rather than for one spelling, because a spelling has
+    already slipped past a narrower check: the teleop apply loop was found only
+    after the other eleven had been converted, because its event is named
+    ``_teleop_stop_event`` and the grep the inventory came from looked for
+    ``_stop_event``. A pacer missed while its siblings are fixed is harder to
+    notice than all of them being slow, since the stream that is still late looks
+    like the one sensor that is genuinely slow.
 
-    So the shape is now "``.wait(...)`` on an attribute whose name looks like a
-    stop flag", in any statement position, with or without ``timeout=``. That
-    record loop is also why this matters beyond telemetry: its rate is written
-    into a dataset as the declared fps and trained on (BUGS.md Q70).
+    So the shape is "``.wait(...)`` on an attribute whose name reads as a stop
+    flag", in any statement position, with or without ``timeout=``. The keyword
+    form is included because a walk over the files is not enough on its own - the
+    regex is the part that misses things, not the ``rglob``.
 
     Waits that are NOT pacing (a shutdown join, a settle window) are allowed:
-    they run once, so a 145ms inflation costs 145ms rather than 60% of a stream.
-    They are listed explicitly, so adding one is a deliberate act.
+    they run once, so the cost is paid once rather than on every tick of a
+    stream. They are listed explicitly, so adding one is a deliberate act.
     """
     import re
     from pathlib import Path
@@ -330,9 +328,7 @@ def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
     # Any statement position (`while not ...`, `if ...`, bare), any attribute
     # whose name reads as a stop flag (_stop_event, _teleop_stop_event,
     # _stop_evt, _shutdown_event), keyword form included.
-    pattern = re.compile(
-        r"self\._[a-z_0-9]*(?:stop|shutdown|halt)[a-z_0-9]*\.wait\(\s*(?:timeout\s*=\s*)?([^)]*)\)"
-    )
+    pattern = re.compile(r"self\._[a-z_0-9]*(?:stop|shutdown|halt)[a-z_0-9]*\.wait\(\s*(?:timeout\s*=\s*)?([^)]*)\)")
     offenders: list[str] = []
     for path in sorted(root.rglob("*.py")):
         if path.name == "pacing.py":
@@ -352,6 +348,6 @@ def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
                 continue
             offenders.append(f"{rel}:{lineno}: {line.strip()}")
     assert not offenders, (
-        "these waits pace a loop and carry the ~145ms daemon-tree penalty (BUGS.md Q69); "
+        "these waits pace a loop, so the tick's work is added to its period; "
         f"pace them with mesh.pacing.Ticker or add them to `allowed` with a reason: {offenders}"
     )

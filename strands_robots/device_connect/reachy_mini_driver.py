@@ -24,6 +24,7 @@ from strands_robots.device_connect.reachy_transport import (
     identity_pose,
     rpy_to_pose,
 )
+from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
 from strands_robots.utils import finite_number_error, tcp_port_error
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,59 @@ logger = logging.getLogger(__name__)
 # path, so restrict them to a safe charset to prevent path traversal and
 # query/parameter injection into the daemon API.
 _MOVE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _key_prefix_error(value: Any, param: str, cls_name: str) -> str | None:
+    """Structured rejection when a Zenoh key prefix cannot address one robot.
+
+    The prefix is interpolated verbatim into the three key expressions the
+    Wireless variant lives on -- ``<prefix>/joint_positions`` and
+    ``<prefix>/imu_data`` in :meth:`ZenohLink.start`, and ``<prefix>/command``
+    in :meth:`ZenohLink.send_cmd` -- and nothing downstream narrows it. Two
+    unusable shapes reach the wire from there, and they fail in opposite
+    directions:
+
+    * Zenoh reads ``*`` and ``**`` as key-expression wildcards, and accepts
+      them on a *publisher* key as readily as on a subscriber one. So a
+      wildcard prefix widens ``<prefix>/command`` from one robot's inbox into a
+      match-any key: a single :meth:`ReachyMiniDriver.look` is delivered to
+      every Reachy Mini subscribed beneath the pattern, and the reciprocal
+      subscriptions fold every robot's joint and IMU frames into the one
+      driver's ``_latest_joints`` / ``_latest_imu``. Nothing reports this --
+      the widened call succeeds.
+    * The shapes Zenoh refuses outright (an empty segment, a stray ``?``) are
+      not refused here either. They surface from inside the transport at
+      :meth:`ZenohLink.start`, after :meth:`ReachyMiniDriver.connect` has
+      already probed the daemon and logged a connection, rather than from the
+      constructor call that named them.
+
+    So the accepted domain is "a ``/``-joined sequence of mesh identifiers":
+    each segment goes through the shared
+    :func:`~strands_robots.mesh.security.validate_mesh_identifier`, whose own
+    docstring gives the reason -- it exists because an unvalidated key-
+    expression segment "silently widens a point-to-point subscription into a
+    match-any one". A multi-segment prefix stays legitimate, so namespacing two
+    Minis apart as ``reachy_mini/robot_a`` and ``reachy_mini/robot_b`` is
+    unaffected; it is the wildcard that is refused, not the ``/``.
+
+    Args:
+        value: Candidate prefix, as the caller supplied it.
+        param: Parameter name, used in the message.
+        cls_name: Constructing class, used as the message prefix.
+
+    Returns:
+        The rejection message, or ``None`` when every segment can address a
+        single robot.
+    """
+    label = f"{cls_name}.{param}"
+    if not isinstance(value, str):
+        return f"{label} must be a string (got {type(value).__name__})"
+    for segment in value.split("/"):
+        try:
+            validate_mesh_identifier(segment, f"{label} segment {segment!r}")
+        except ValidationError as exc:
+            return str(exc)
+    return None
 
 
 def _motion_domain_error(rpc_name: str, values: dict[str, Any]) -> dict[str, str] | None:
@@ -94,12 +148,18 @@ class ReachyMiniDriver(DeviceDriver):
 
         Args:
             host: Hostname or IP of the Reachy Mini daemon.
-            prefix: Zenoh key prefix used by the Wireless variant.
+            prefix: Zenoh key prefix used by the Wireless variant. Must be a
+                ``/``-joined sequence of mesh identifiers -- a Zenoh wildcard
+                (``*`` / ``**``) would widen the command key to every Mini
+                beneath the pattern. ``reachy_mini/robot_a`` is accepted;
+                ``reachy_mini/*`` is not.
             api_port: TCP port the daemon serves its REST API and WebSocket on.
                 Must name a port: an ``int`` in ``[1, 65535]``.
 
         Raises:
-            ValueError: If ``api_port`` cannot address a TCP port.
+            ValueError: If ``api_port`` cannot address a TCP port, or if
+                ``prefix`` cannot address a single robot's key expressions
+                (see :func:`_key_prefix_error`).
         """
         # Refused here rather than at first use, and before any base-class state
         # is allocated. This port is interpolated verbatim into both the daemon
@@ -110,6 +170,13 @@ class ReachyMiniDriver(DeviceDriver):
         # daemon down. Naming the port is the only point a caller can act on.
         if (port_error := tcp_port_error(api_port, "api_port", type(self).__name__)) is not None:
             raise ValueError(port_error)
+        # Refused alongside the port, and for the same reason: this value is
+        # interpolated verbatim into the Wireless variant's three key
+        # expressions, one of which actuates the robot. A wildcard is a valid
+        # Zenoh key, so it is not refused downstream at all - it just widens
+        # the command key to every Mini beneath the pattern.
+        if (prefix_error := _key_prefix_error(prefix, "prefix", type(self).__name__)) is not None:
+            raise ValueError(prefix_error)
         super().__init__()
         self._host = host
         self._prefix = prefix
@@ -481,14 +548,57 @@ class ReachyMiniDriver(DeviceDriver):
 
     @rpc()
     async def getDaemonStatus(self) -> dict[str, Any]:
-        """Get daemon status, motor state, and control frequency."""
+        """Report the daemon's status payload under this driver's own verdict.
+
+        The payload's keys are merged into the envelope so a caller reads
+        ``motors_on`` / ``freq`` at the top level, and ``status`` is re-asserted
+        afterwards. Merged last, a daemon reply carrying a ``status`` field of
+        its own replaced this envelope's verdict: a healthy call answered
+        ``status="idle"``, and a daemon reporting its own fault answered
+        ``status="error"`` for an RPC that reached it and succeeded. The
+        presence path resolves the same collision the same way, by spreading
+        the foreign mapping first so the locally decided keys win - see
+        :meth:`strands_robots.mesh.sensors.SensorLoopsMixin._stamp_local_keys`.
+
+        A daemon that was not reached is reported rather than merged.
+        :func:`~strands_robots.device_connect.reachy_transport.api` answers
+        every HTTP and connection failure with ``{"error": ...}`` instead of
+        raising, so the unreachable daemon this RPC exists to detect came back
+        as ``status="success"`` with the reason merged in beside it. The native
+        driver reads this same endpoint and refuses that shape - see
+        :meth:`strands_robots.drivers.reachy.ReachyDriver.connect_eagerly`.
+        The error envelope is used rather than the ``RuntimeError``
+        :meth:`_stop_motion_impl` raises, because that one guards a stop, where
+        a caller acting on a false success stops nothing; this one answers a
+        question, and its callers already branch on ``status``.
+
+        A body that decodes to something other than a JSON object is reported
+        for the same reason: spreading it raises ``TypeError`` out of a method
+        whose whole contract is the envelope.
+
+        Returns:
+            ``{**payload, "status": "success"}`` when the daemon answered with
+            a JSON object, otherwise ``{"status": "error", "reason": ...}``
+            naming the daemon that was not reached or the body that could not
+            be merged.
+        """
         result = await asyncio.to_thread(
             api,
             self._host,
             self._api_port,
             "/api/daemon/status",
         )
-        return {"status": "success", **result}
+        if not isinstance(result, dict):
+            return {
+                "status": "error",
+                "reason": f"daemon status is not a JSON object: {type(result).__name__}",
+            }
+        if (error := result.get("error")) is not None:
+            return {
+                "status": "error",
+                "reason": f"daemon unreachable ({self._host}:{self._api_port}): {error}",
+            }
+        return {**result, "status": "success"}
 
     # ── Events ────────────────────────────────────────────────
 

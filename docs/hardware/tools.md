@@ -82,13 +82,21 @@ bytes of the outgoing packet, so an out-of-range value was never rejected on the
 wire - it was truncated into a different, reachable command while the success
 message quoted the value the caller supplied. `position=70000` put 4464 on the
 wire and `position=-1` put 65535, the largest the two-byte field holds. Each
-field is therefore bounded before the port is opened:
+field is therefore bounded before the port is opened.
+
+Two of those registers are bounded by more than their byte width. `Goal_Position`
+and `Goal_Velocity` are sign-magnitude on the STS/SMS series - bit 15 carries the
+direction - so a magnitude reaching that bit is not truncated but *reinterpreted*:
+`velocity=65535` put those exact two bytes on the wire and the servo ran full
+speed in the opposite direction, and `velocity=32768` read as magnitude zero,
+stopping a servo the caller had just asked to run. `position` was already inside
+that limit at 4095; `velocity` now is too.
 
 | Option | Accepted | Why the bound is where it is |
 |--------|----------|------------------------------|
 | `motor_id` | integer in `[1, 254]` | the frame carries the ID in one byte, and `255` is the header value |
 | `position` | integer in `[0, 4095]` | `Goal_Position` is a 12-bit register - the same full scale the reported angle divides by |
-| `velocity` | integer in `[0, 65535]` | `Goal_Velocity` is written as two bytes |
+| `velocity` | integer in `[0, 32767]` | `Goal_Velocity` is sign-magnitude with bit 15 the direction bit, so a larger magnitude commands the opposite direction |
 | `baudrate` | positive integer | pyserial coerces rather than checks, so `2.7` opens the port at 2 baud |
 | `read_bytes` | positive integer | pyserial's read loop is `while len(read) < size`, so a non-positive size returns no bytes and looks like a timeout |
 | `timeout` | finite number >= 0 | `0` is pyserial's non-blocking mode (return what is buffered); `nan` waits no time at all and `inf` overflows the deadline |

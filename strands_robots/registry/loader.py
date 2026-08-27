@@ -123,9 +123,29 @@ def _validate(name: str, data: dict) -> None:
 
 
 def _validate_robots(data: dict) -> None:
-    """Ensure no two robots share the same alias."""
+    """Ensure no two robots share the same alias, and that declared drivers exist.
+
+    Raises:
+        ValueError: On a duplicate alias, an alias colliding with a canonical
+            robot name, or a ``hardware.driver`` outside
+            :data:`~strands_robots.drivers.base.DRIVER_CHOICES`.
+    """
+    # Imported lazily for the same reason as :func:`_user_registry_mtime` above:
+    # the driver seam reads the registry, so importing it at module scope would
+    # close an import cycle. A driver name is validated here rather than where it
+    # is read, because every reader - the factory, a tool, a driver package -
+    # would otherwise have to re-check it, and the one that forgets accepts a
+    # typo as "no preference" and quietly builds the default driver.
+    from strands_robots.drivers.base import DRIVER_CHOICES
+
     seen_aliases: dict[str, str] = {}
     for robot_name, info in data.get("robots", {}).items():
+        declared_driver = info.get("hardware", {}).get("driver")
+        if declared_driver is not None and declared_driver not in DRIVER_CHOICES:
+            raise ValueError(
+                f"Robot '{robot_name}' declares hardware.driver={declared_driver!r}, "
+                f"which is not a driver. Valid drivers: {', '.join(DRIVER_CHOICES)}."
+            )
         for alias in info.get("aliases", []):
             if alias in seen_aliases:
                 raise ValueError(

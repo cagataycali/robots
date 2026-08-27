@@ -117,6 +117,31 @@ def test_tools_are_named_per_instance() -> None:
     assert names == {"drive_turtlesim", "stop_turtlesim", "get_pose_turtlesim"}
 
 
+def test_drive_and_stop_tools_are_always_paired() -> None:
+    """Anything an agent can drive, it can stop through the same tool surface.
+
+    Before the mobile-base port this bridge exposed ``drive_<node>`` with no
+    ``stop_<node>``: the only way to halt was to infer ``drive(0, 0)``, which is
+    not discoverable from the tool list an agent is given. ``stop`` is now
+    emitted by the shared base for every robot, so the gap cannot reopen for one
+    transport while the others have it.
+    """
+    for robot in (_turtle(), _nav_turtle(), RosBridgedRobot("tb", "/cmd_vel", "/odom")):
+        names = {t.tool_name for t in robot.tools}
+        suffix = robot.tool_suffix
+        assert f"drive_{suffix}" in names
+        assert f"stop_{suffix}" in names
+
+
+def test_stop_tool_publishes_a_single_zero_twist(rec: _Recorder) -> None:
+    stop_tool: Any = next(t for t in _turtle().tools if t.tool_name == "stop_turtlesim")
+    stop_tool()
+    (call,) = rec.calls
+    assert call["action"] == "publish"
+    assert call["fields"] == {"linear": {"x": 0.0}, "angular": {"z": 0.0}}
+    assert call["count"] == 1
+
+
 def test_tools_include_scan_only_when_configured() -> None:
     with_scan = RosBridgedRobot("tb", "/cmd_vel", "/odom", scan_topic="/scan")
     names = {t.tool_name for t in with_scan.tools}

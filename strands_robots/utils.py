@@ -794,7 +794,8 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     * The media knobs that count frames or pixels - the recorders' ``fps``,
       ``width``, ``height`` and in-memory frame cap, the
       ``run_policy(video=...)`` dict fields, and the
-      :func:`~strands_robots.rendering.encode_clip` playback rate.
+      :func:`~strands_robots.rendering.encode_clip` playback rate and
+      macro-block rounding.
     * The physics steps one applied action is held for - the ``n_substeps`` of
       every backend's
       :meth:`~strands_robots.simulation.base.SimEngine.send_action`.
@@ -823,7 +824,8 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     owns such a ceiling: :func:`coerce_zmq_timeout_ms` composes this guard and
     then applies :data:`MAX_ZMQ_TIMEOUT_MS`, because a ZMQ send/receive timeout
     is stored as a C ``int`` and this domain accepts ``2**31``.
-    Its callers are ``fps``, ``width``, ``height``, ``max_frames``, the mesh
+    Its callers are ``fps``, ``width``, ``height``, ``max_frames``,
+    ``encode_clip``'s ``macro_block_size``, the mesh
     robots' ``drive(count=...)``, ``send_action(n_substeps=)`` and the ZMQ
     clients' ``timeout_ms``. Two of those
     repeat work that nothing bounds: ``drive`` repeats an actuation command, so
@@ -1185,6 +1187,61 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return f"{context}: {param} must be a non-negative integer, got {_refusal_repr(value)}."
+    return None
+
+
+def step_cadence_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable cadence in training steps.
+
+    Shared domain for a periodic-action interval a training run is paced by -
+    :attr:`~strands_robots.training.base.TrainSpec.save_freq`, the checkpoint
+    cadence every post-tuning backend forwards to its own trainer. A cadence is
+    consumed as the modulus of a ``step % cadence`` test, so only a true ``int``
+    can be honored, and its callers sit in different layers (the
+    ``lerobot_train`` tool builds an argv token from one; the
+    :class:`~strands_robots.training.base.Trainer` backends assign one into a
+    typed config, a Hydra override, or a serialized hyperparameter), which is
+    why the domain lives here rather than beside one of them: the same cadence
+    cannot be refused by the tool and accepted by the trainer that wraps the
+    identical pipeline.
+
+    **A non-positive cadence is a capability, not an unusable value, so this
+    domain has no floor.** LeRobot documents it and implements it -
+    ``should_save_checkpoint`` is ``(save_freq > 0 and step % save_freq == 0) or
+    step == total_steps``, whose docstring reads "a non-positive ``save_freq``
+    disables periodic saving (only the final checkpoint is written)". ``0`` and a
+    negative therefore select a mode, exactly as they do for
+    :func:`non_negative_count_error`'s ``min_frames``, and only the *type* is
+    graded here. That also makes this a distinct domain from
+    :func:`positive_count_error` and :func:`non_negative_count_error`, which
+    share this type rule but each impose a floor the mode would trip.
+
+    Every other spelling of the number is unusable, and in a way no consumer
+    reports: a ``float`` passes the ``> 0`` test and then never satisfies
+    ``step % cadence == 0`` for an integral step, so a fractional cadence
+    silently becomes the disabled mode; a non-finite one does the same; a ``str``
+    raises ``TypeError`` out of the comparison itself, inside the training loop;
+    and ``bool`` is refused explicitly because as an ``int`` subclass it passes a
+    bare type test while ``True`` is a modulus of one - a full checkpoint every
+    single step.
+
+    Args:
+        value: The caller-supplied cadence.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it - the
+            public method name, the tool name, or a backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`.
+
+    Returns:
+        An error message, or ``None`` when the value is a usable cadence.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return (
+            f"{context}: {param} must be an integer number of steps, got {_refusal_repr(value)}. "
+            "A fractional, non-finite, boolean or non-numeric cadence cannot be honored - it is "
+            "used as the modulus of a step % cadence test; pass a whole number of steps, or a "
+            "non-positive one to disable periodic saving."
+        )
     return None
 
 
@@ -1565,6 +1622,40 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     return None
 
 
+def camera_schema_key(name: str) -> str:
+    """The LeRobot dataset feature name a scene camera is recorded under.
+
+    A simulation namespaces a robot's own cameras with ``/`` (``arm0/wrist``),
+    but a LeRobot feature name cannot contain ``/`` - it is reserved for
+    nested-feature addressing - so the separator collapses to ``__`` for the
+    dataset schema (``arm0__wrist``).
+
+    That collapse is the only reason a recorded column name can differ from the
+    camera name that produced it, so the rule lives here rather than beside any
+    one of the surfaces that need it: every backend's ``start_recording``
+    declaring the schema, the guard that refuses a scene whose cameras do not
+    have distinct keys
+    (:func:`~strands_robots.simulation.recording.camera_schema_key_collision_error`),
+    and :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`
+    renaming an observed frame onto its declared column. All three have to agree
+    on one mapping for a frame to reach the column declared for it, and a second
+    spelling of the rule is a second thing to keep in step.
+
+    The mapping is NOT injective: two distinct camera names can share one key
+    (``arm0/wrist`` and ``arm0__wrist`` both give ``arm0__wrist``), which is
+    what the collision guard exists to refuse. It IS idempotent, so applying it
+    to a key returns that key - which is why a caller may name a camera in
+    either form.
+
+    Args:
+        name: A scene camera name, raw (``arm0/wrist``) or already schema-safe.
+
+    Returns:
+        The dataset feature name, without the ``observation.images.`` prefix.
+    """
+    return name.replace("/", "__")
+
+
 #: Why a boolean is refused as a vector component. Worded for what a vector
 #: actually carries - a coordinate, a geom extent, a friction coefficient, a
 #: colour channel - rather than the radians / rad/s / newtons of the joint
@@ -1930,7 +2021,10 @@ def coerce_pose_vector(
         param_name: Parameter name, used in error text.
         vec: The caller's value, or ``None`` when the parameter was omitted.
         expected_len: Component count the target buffer defines (3 for a
-            position, 4 for a wxyz quaternion).
+            position). An orientation is not validated through here directly:
+            four components are necessary but not sufficient for a rotation,
+            so wxyz callers use
+            :func:`coerce_orientation_quaternion`, which adds the norm rule.
 
     Returns:
         ``(None, None)`` when ``vec`` is ``None`` (omitted - the caller applies
@@ -1948,6 +2042,117 @@ def coerce_pose_vector(
     if err is not None:
         return None, err
     return floats, None
+
+
+#: The smallest quaternion norm this library reads as a rotation.
+#:
+#: A wxyz value below it cannot be turned into one. MuJoCo refuses the all-zero
+#: quaternion through its XML door outright ("XML Error: zero quaternion is not
+#: allowed"), but the spec-attribute and ``qpos`` doors this package writes
+#: through accept it, and a norm it does consider too small to normalize it
+#: stores verbatim - measured on mujoco 3.12.0, ``quat="1e-9 0 0 0"`` compiles
+#: to ``body_quat = [1e-9, 0, 0, 0]`` while ``quat="2 0 0 0"`` is normalized to
+#: identity. Either way the rotation the caller asked for is not the rotation
+#: the model carries, so the value is refused at the door instead.
+#:
+#: The bound is the one ``move_to`` has always applied; it moved here unchanged
+#: so every orientation entry point shares it.
+MIN_QUATERNION_NORM = 1e-8
+
+
+def _quaternion_direction_error(method: str, param_name: str, floats: list[float]) -> str | None:
+    """The one rule a quaternion adds over a position, shared by both wrappers.
+
+    ``floats`` has already been read and validated by :func:`_read_pose_vector`,
+    so this examines four plain ``float`` values rather than anything of the
+    caller's.
+
+    Args:
+        method: Calling method or op name, used in error text.
+        param_name: Parameter or field name, used in error text.
+        floats: The four wxyz components.
+
+    Returns:
+        A message when the components have no direction to recover, else ``None``.
+    """
+    norm = math.sqrt(sum(component * component for component in floats))
+    if norm < MIN_QUATERNION_NORM:
+        return f"{method}: '{param_name}' quaternion has ~zero norm; pass a valid [w, x, y, z]."
+    return None
+
+
+def coerce_orientation_quaternion(method: str, param_name: str, quat: Any) -> tuple[list[float] | None, str | None]:
+    """Validate an optional wxyz orientation and normalize it to plain floats.
+
+    Single definition of the library's orientation contract, shared by every
+    entry point that writes a wxyz quaternion so their accepted domains cannot
+    diverge. It is :func:`coerce_pose_vector` with ``expected_len=4`` plus the
+    one rule a quaternion adds over a position: four finite components are not
+    enough, because they can still fail to describe a rotation.
+
+    A quaternion is a DIRECTION with a magnitude the target buffers ignore, so
+    any non-unit value is fine - ``[0, 2, 0, 0]`` and ``[0, 1, 0, 0]`` are the
+    same half turn, and every consumer either normalizes or is scale-invariant.
+    A norm below :data:`MIN_QUATERNION_NORM` has no direction to recover,
+    though, and nothing downstream reports that: MuJoCo substitutes identity for
+    an all-zero body quaternion and reports success, so the rotation the caller
+    requested is silently replaced by no rotation at all. ``move_object`` then
+    echoes the requested quaternion back in its success text while
+    ``get_body_state`` reports identity - one call, two answers, neither of them
+    flagged.
+
+    Args:
+        method: Calling method name, used in error text.
+        param_name: Parameter name, used in error text.
+        quat: The caller's wxyz value, or ``None`` when the parameter was
+            omitted.
+
+    Returns:
+        ``(None, None)`` when ``quat`` is ``None`` (omitted - the caller applies
+        its own default), ``(floats, None)`` for four finite components whose
+        norm is a usable direction, or ``(None, error_message)`` otherwise.
+    """
+    if quat is None:
+        return None, None
+    # One read, through the guard's own, for the reason :func:`pose_vector_error`
+    # defers to it: the floats the direction check examines are the ones the
+    # component checks read, and reading them here cannot run the caller's code.
+    floats, err = _read_pose_vector(method, param_name, quat, 4)
+    if err is not None:
+        return None, err
+    if (direction_err := _quaternion_direction_error(method, param_name, floats)) is not None:
+        return None, direction_err
+    return floats, None
+
+
+def orientation_quaternion_error(method: str, param_name: str, quat: Any) -> str | None:
+    """Return an error message if ``quat`` is not a usable wxyz orientation.
+
+    Error-only wrapper over :func:`coerce_orientation_quaternion`, for the
+    callers that hold a value to the orientation domain without taking the
+    normalized floats back - the structured scene ops, which pass the caller's
+    value straight to the spec write.
+
+    It pairs with :func:`coerce_orientation_quaternion` the way
+    :func:`pose_vector_error` pairs with :func:`coerce_pose_vector`, and differs
+    from it in the same one respect: ``None`` is REFUSED here rather than read as
+    an omission. An op dict is not a keyword argument - a key that is PRESENT
+    carries a supplied value - so reading ``{"op": ..., "quat": None}`` as "no
+    orientation asked for" would apply identity under a success result.
+
+    Args:
+        method: Calling method or op name, used in error text.
+        param_name: Parameter or field name, used in error text.
+        quat: The caller's wxyz value, or ``None`` when omitted.
+
+    Returns:
+        ``None`` when ``quat`` is acceptable (including omitted), else the
+        message naming the method, the parameter and what is wrong.
+    """
+    floats, err = _read_pose_vector(method, param_name, quat, 4)
+    if err is not None:
+        return err
+    return _quaternion_direction_error(method, param_name, floats)
 
 
 #: The component counts a 4-component RGBA row can be built from. Alpha is the

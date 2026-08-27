@@ -38,6 +38,7 @@ have and what you want to do:
 | **`use_rtps`** tool | participant / **act as a robot** | pure `cyclonedds` (pip) | **no** | Join a graph as a DDS peer and publish topics a real stack consumes; works on macOS/CI/Jetson, all distros |
 | **`use_rosbridge`** tool + **`RosbridgeRobot`** | ROS1 / remote robots over a rosbridge WebSocket | pure-pip `roslibpy` | **no** | Drive ROS1 robots (e.g. the NASA Curiosity Gazebo sim) or any remote rosbridge robot from a machine with no ROS install - see [rosbridge integration](rosbridge-integration.md) |
 | **`RosBridgedRobot`** | a ROS 2 robot as a strands `Robot` | `use_ros` | yes | `drive()`/`get_pose()` a `cmd_vel`/odom base with the same `Agent(tools=[robot])` UX as sim/hardware |
+| **`AckermannRosRobot`** | an Ackermann ROS 2 car as a strands `Robot` | `use_ros` | yes | `drive()`/`get_scan()` a steering-geometry car (AWS DeepRacer servo stack) with bicycle-model conversion and an automatic enable handshake |
 | **`SimEngine(ros2_bridge=True)`** | the **simulation as a ROS node** | `rclpy` | yes | Publish a running MuJoCo sim's `joint_states` + camera `image_raw` so rviz/nav2/agents can subscribe |
 | **`Robot(ros2_bridge=True)`** | a **real robot as a ROS node** (full duplex) | `rclpy` | yes | Publish a physical arm's live `joint_states` + camera `image_raw` so rviz/nav2/agents subscribe to the hardware, **and** subscribe to `joint_command` to drive the arm - symmetric to the sim bridge, plus an inbound command path the sim does not need |
 
@@ -165,7 +166,13 @@ An option the requested action never reads is not second-guessed:
 
 A robot is driven through three different verbs - `publish` to a topic,
 `service_call` to a service and `action_send_goal` to an action server - so the
-gate is keyed on the surface **name** and consulted from all three. An agent
+gate is keyed on the surface **name** and consulted from all three. It is also
+consulted from every **transport** that reaches the graph, not just this one:
+`use_rtps` publishes over raw RTPS and `use_rosbridge` over a WebSocket, and a
+`Twist` on `/cmd_vel` moves the same base whichever of the three wrote it. The
+blocklist and the approval decision therefore have a single owner
+(`strands_robots.tools._command_gate`) rather than a copy per tool, so a surface
+refused on one transport cannot be sent on another under a different tool name. An agent
 asked to "drive forward" reaches for whichever verb fits the interface it found
 on the graph, so gating `publish` alone would leave `/navigate_to_pose` (a ROS 2
 action) and `/emergency_stop` (usually a `std_srvs/srv/Trigger` service)
@@ -173,15 +180,18 @@ unenforceable. These surfaces are blocked by default:
 
 | Surface | Usually reached by |
 |---------|--------------------|
-| `/cmd_vel`, `/cmd_vel_unstamped` | `publish` |
+| `/cmd_vel`, `/cmd_vel_unstamped`, `/manual_drive` | `publish` |
 | `/joint_command`, `/joint_trajectory`, `/joint_trajectory_controller/joint_trajectory` | `publish` |
 | `/emergency_stop`, `/e_stop` | `service_call`, sometimes `publish` |
 | `/motor_enable`, `/enable_motor`, `/disable_motor` | `service_call` |
+| `/vehicle_state`, `/enable_state` | `service_call` |
 | `/navigate_to_pose`, `/follow_path` | `action_send_goal` |
 
 Matching is on the final path segment, so a namespaced form
-(`/my_robot/cmd_vel`, `/fleet/robot1/emergency_stop`) is caught while a lookalike
-(`/cmd_vel_evil`, `/joint_trajectory_status`) is not. The name is compared in the
+(`/my_robot/cmd_vel`, `/fleet/robot1/emergency_stop`, and the DeepRacer's
+`/webserver_pkg/manual_drive`, `/ctrl_pkg/vehicle_state`,
+`/ctrl_pkg/enable_state`) is caught while a lookalike (`/cmd_vel_evil`,
+`/joint_trajectory_status`) is not. The name is compared in the
 form rclpy resolves it to, so the unrooted `cmd_vel` and the trailing-separator
 `/cmd_vel/` are the same surface as `/cmd_vel`. Case is deliberately **not**
 folded: ROS 2 graph names are case-sensitive, so `/CMD_VEL` is a genuinely
@@ -231,6 +241,65 @@ Reading is never gated: `echo`, `info` and the `list_*` queries work on a blocke
 surface, so telemetry stays available to the agent. The gate also runs *after* the
 action's required arguments are validated, so an operator is never asked to
 approve a call that could not have run.
+
+## Ackermann robots (AWS DeepRacer)
+
+Differential-drive bases take `geometry_msgs/msg/Twist`; Ackermann cars do
+not. The AWS DeepRacer's stock stack subscribes to normalized servo pairs
+(`deepracer_interfaces_pkg/msg/ServoCtrlMsg`, `angle`/`throttle` in [-1, 1])
+and acts on them only after a two-step manual-mode service handshake
+(`/ctrl_pkg/vehicle_state` with `state=1`, then `/ctrl_pkg/enable_state` with
+`is_active=true`). `AckermannRosRobot` absorbs both differences:
+
+    from strands_robots.mesh import AckermannRosRobot
+
+    car = AckermannRosRobot.from_deepracer(node_name="deepracer")
+    car.drive(linear=0.5, angular=1.0, duration=2.0)
+    car.get_scan()
+
+`drive()` keeps the same `(linear, angular)` contract as `RosBridgedRobot` -
+a bicycle model (`atan(wheelbase * angular / linear)`, clamped to the steering
+limit) converts to servo values internally. The handshake declared in
+`init_services` runs once, automatically, before the first command; a failed
+handshake aborts the drive. Timed and multi-message commands are always
+followed by a zero servo message - even when the publish fails - so a timed
+drive cannot leave the car with a live throttle, and a halt that itself fails is
+reported: the call returns an error naming the throttle that may still be live
+instead of the drive's success, so the agent's next action is `stop()`. A bare
+single-shot `drive()`
+(no `duration`) latches like any raw servo command until `stop()`. Commands
+are clamped to `max_speed`; holds longer
+than `max_duration` are rejected loudly rather than silently truncated. The
+`linear`/`angular`/`duration`/`count` values themselves are checked against the
+same shared domains the differential-drive bridges use, so an unusable value is
+refused with identical text on every transport. The
+stock platform publishes no odometry, so there is deliberately no
+`get_pose`.
+
+Like `RosBridgedRobot`, the bridge inherits the [command
+gate](#safety-critical-command-surfaces-need-operator-approval): the servo topic
+(`/manual_drive`) and both mode services (`/vehicle_state`, `/enable_state`) are
+blocklisted surfaces, so every command this bridge sends is gated.
+
+| Method / tool | Reaches | Gated |
+|---------------|---------|-------|
+| `drive()` / `drive_<node>` | `publish` to the servo topic (plus the handshake on the first call) | yes |
+| `stop()` / `stop_<node>` | `publish` to the servo topic | yes - the gate is keyed on the surface, not the payload |
+| `enable()` | `service_call` to both mode services | yes |
+| `get_scan()` / `get_scan_<node>` | `echo` | never gated |
+
+The `drive_<node>` and `stop_<node>` agent tools forward the operator context, so
+an agent driving the car prompts rather than failing closed. A programmatic
+`car.drive(...)` / `car.stop()` has no operator to prompt, so pre-approve the
+three surfaces for a headless run (bare names cover the namespaced DeepRacer
+spellings):
+
+```bash
+export STRANDS_ROS2_COMMAND_ALLOW=/manual_drive,/vehicle_state,/enable_state
+```
+
+See `examples/ros2/deepracer_agent.py`.
+
 
 ## Sim bridge: publish a simulation on a ROS 2 domain
 
@@ -433,6 +502,62 @@ unattended deployment that must always be able to halt should pre-approve its
 | `get_pose()` | echo `odom_topic` | never gated |
 | `get_scan()` | echo `scan_topic` | error when no `scan_topic` configured; never gated |
 | `.tools` | - | per-instance named agent tools; the command tools are `@tool(context=True)` so the gate can prompt |
+
+### The shared mobile-base contract
+
+`RosBridgedRobot` is a thin subclass of `MobileBaseRobot`, which owns the drive
+contract, the safety semantics and the `tools` property for **every** mobile
+robot in `strands_robots.mesh`. A robot class supplies only what actually
+varies: a `Transport` (how bytes move) and, when the platform is not
+differential-drive, a `_cmd_fields` override (what the command message looks
+like).
+
+Everything below therefore holds identically for any transport:
+
+- Non-finite `linear` / `angular` / `duration` are refused. `nan` passes
+  silently through a `min`/`max` clamp, so it has to be caught before clamping.
+  The accepted domain is the shared one used by every other numeric knob in the
+  package, so a velocity and a control-loop frequency agree on what a usable
+  number is - a NumPy scalar from a policy action is accepted, a `bool` is not.
+- `count` is the publish horizon when no `duration` is given, and must be a
+  positive whole number. `count=0` would otherwise publish nothing and report
+  success - a drive the caller believes happened. A `count` a call never reads
+  (because `duration` supersedes it) is not refused.
+- `duration` must be positive and finite, and within `max_duration` when the
+  platform sets one. An over-long hold is refused, never silently truncated -
+  and refused *before* any side effect, so an invalid request cannot be what
+  arms a vehicle.
+- Velocities are clamped to `max_linear` / `max_angular` when set. Left unset
+  they mean "this platform declares no limit", not zero.
+- Every timed or multi-message non-zero command is followed by a single zero
+  command, through `try`/`finally`, **even when the publish raised**. A timed
+  drive cannot leave a robot with a live velocity.
+- A bare single-shot `drive()` latches until `stop()`, exactly like a raw
+  `cmd_vel` publish. This is stated in the agent-facing tool description rather
+  than hidden.
+- `stop()` reaches the transport tool's command gate exactly as `drive()` does.
+  The gate is keyed on the *surface*, and zero means "stationary" on a `Twist`
+  but commands motion to the zero pose on a joint-command topic, so a
+  payload-shaped carve-out could not be written correctly. What the halt does not
+  depend on is the enable handshake or the speed limits: an emergency stop must
+  not require a working service graph.
+- Command tools are declared `@tool(context=True)` by the base and forward the
+  injected operator context to the transport, which hands it to its own tool. A
+  transport whose tool gates its command surface therefore prompts rather than
+  failing closed. All three graph tools gate their command surface today, so no
+  shipped transport is exempt - the rule is keyed on the tool rather than on a
+  list so that a future ungated one is handled, not because an exemption exists.
+  Because the tools are declared once, this holds for every transport rather
+  than being wired per bridge.
+- `init_services` declares an ordered enable/arm handshake that runs once before
+  the first command. It does not latch on failure, so a retry re-runs it. It
+  requires a transport that can call services, and is refused at construction on
+  one that cannot.
+
+Capabilities are reported, not assumed: `get_pose` appears only with an
+`odom_topic`, `get_scan` only with a `scan_topic`, `navigate` only with a
+`nav_action`, so an agent is never handed a tool that can only answer "not
+configured". `robot.supports("service_call")` asks the transport directly.
 
 See `examples/ros2/turtlebot_demo.py` for an end-to-end agent driving a turtle
 in `turtlesim` through the mesh bridge.

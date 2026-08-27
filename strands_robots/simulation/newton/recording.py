@@ -29,10 +29,12 @@ from typing import TYPE_CHECKING, Any
 from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
+    camera_schema_key_collision_error,
     dataset_recording_option_error,
     dataset_recording_posture_error,
+    undriven_robot_state,
 )
-from strands_robots.utils import name_list_error
+from strands_robots.utils import camera_schema_key, name_list_error
 
 if TYPE_CHECKING:
     from strands_robots.simulation.models import SimWorld
@@ -79,7 +81,15 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         Declares the dataset schema from the live scene - joint names from every
         robot (namespaced ``robot__joint`` when more than one robot is present,
         matching the MuJoCo backend) and the named cameras registered on
-        ``world.cameras`` (with their real render resolutions). Per-step frames
+        ``world.cameras`` (with their real render resolutions). In a multi-robot scene every robot's state columns are
+        declared, and a single-policy rollout fills the ones it does not
+        drive from the engine at each step, so a declared
+        ``observation.state`` column is a measurement rather than a zero
+        the robot is not at
+        (:func:`~strands_robots.simulation.recording.undriven_robot_state`).
+        The matching *action* columns are a separate question - no command
+        was issued to a robot this rollout does not drive - and are
+        unchanged. Per-step frames
         are then captured by the ``on_frame`` hook
         (:meth:`_make_run_policy_hook`) during ``run_policy``.
 
@@ -142,7 +152,11 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 ``run_policy(dataset_cameras=...)`` behaves identically on both
                 engines. Names may be given in either the raw camera name or the
                 schema-safe form (``/`` collapsed to ``__``); an unknown name
-                fails loudly, listing the available cameras.
+                fails loudly, listing the available cameras. Two scene cameras whose
+                names collapse onto one dataset column (``arm0/wrist`` and
+                ``arm0__wrist``) are refused before any dataset is created,
+                because the column would be named after whichever of them lost
+                it.
 
         Returns:
             Standard status dict. ``status="error"`` when no world exists, the
@@ -216,6 +230,22 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                     }
                 ],
             }
+
+        # A dataset column is named by camera_schema_key, which collapses a
+        # camera's "/" namespace separator to "__" because a LeRobot feature name
+        # cannot contain "/". That mapping is not injective, so two scene cameras
+        # can name one column - and the three ways of asking then disagree: every
+        # camera is refused downstream as a repeated camera_keys entry, both
+        # spellings requested silently drops one, and one spelling succeeds with
+        # the column named after whichever camera lost. The ambiguity belongs to
+        # the scene rather than to one way of recording it, so it is refused once
+        # here. Reading the scene's cameras is an engine call, so this sits after
+        # the dataset-stack probe (whose block is reachable on an install with no
+        # engine at all, and diagnoses the missing extra without one) and ahead of
+        # any session state or dataset target - a refusal leaves nothing set and
+        # nothing on disk.
+        if error := camera_schema_key_collision_error("start_recording", list(self._world.cameras)):
+            return error
 
         world = self._world
         world._backend_state["recording"] = True
@@ -429,7 +459,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         camera_dims: dict[str, tuple[int, int]] = {}
         recording_cameras: list[tuple[str, str, int, int]] = []
         for cam_name, cam in world.cameras.items():
-            safe_name = cam_name.replace("/", "__")
+            safe_name = camera_schema_key(cam_name)
             width = int(getattr(cam, "width", self.default_width))
             height = int(getattr(cam, "height", self.default_height))
             camera_keys.append(safe_name)
@@ -504,7 +534,15 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             if multi_robot:
                 import numpy as np
 
-                obs = {(k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v for k, v in obs.items()}
+                # The schema declares a state column for every robot in the
+                # scene, and this frame carries only the driven robot's. An
+                # undriven robot's columns are a readable measurement, so they
+                # are filled from the engine at this step rather than left to
+                # add_frame's 0.0 fill, which records them as a zero pose the
+                # robot is not in. Driven keys win any collision.
+                driven = {(k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v for k, v in obs.items()}
+                obs = undriven_robot_state(self, robot_name, world.robots)
+                obs.update(driven)
                 act = {f"{robot_name}__{k}": v for k, v in action.items()}
                 rec.add_frame(
                     observation=obs,

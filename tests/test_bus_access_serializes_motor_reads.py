@@ -1,4 +1,4 @@
-"""One reader at a time on the motor bus (Q26: joint telemetry was empty).
+"""One reader at a time on the motor bus: without it, joint telemetry is empty.
 
 A real arm reported ``connected: true`` and streamed no joints at all, because
 four threads in one process (state probe, camera publisher at 5Hz, sensors
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent import futures
 
 from strands_robots.bus_access import bus_lock, read_observation, write_action
 
@@ -69,26 +70,19 @@ class RefusingBusRobot:
 
 
 def _run_all(fns: list) -> list[BaseException]:
-    """Run callables in parallel threads, collecting whatever they raise."""
-    errors: list[BaseException] = []
-    lock = threading.Lock()
+    """Run callables in parallel threads, collecting whatever they raise.
 
-    def wrap(fn):
-        def inner():
-            try:
-                fn()
-            except BaseException as exc:  # noqa: BLE001 - collected for the test
-                with lock:
-                    errors.append(exc)
-
-        return inner
-
-    threads = [threading.Thread(target=wrap(fn)) for fn in fns]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=10)
-    return errors
+    Delegated to ``ThreadPoolExecutor`` rather than marshalled by hand:
+    ``Future.exception()`` already reports whatever the worker raised,
+    ``BaseException`` included, so collecting them needs no ``except`` clause
+    of its own. ``max_workers`` is the whole set because a callable left
+    queued for a free worker never overlaps the others, and overlap is the
+    condition under test.
+    """
+    with futures.ThreadPoolExecutor(max_workers=len(fns)) as pool:
+        submitted = [pool.submit(fn) for fn in fns]
+    # The context manager joined every worker, so no future is still pending.
+    return [exc for fut in submitted if (exc := fut.exception()) is not None]
 
 
 def test_the_live_bug_reproduces_without_the_lock():
@@ -117,9 +111,7 @@ def test_a_write_never_interleaves_with_a_read():
     """Teleop moving the arm while a probe reads its position."""
     robot = RefusingBusRobot()
 
-    errors = _run_all(
-        [lambda: read_observation(robot), lambda: write_action(robot, {"elbow_flex.pos": 3.0})] * 3
-    )
+    errors = _run_all([lambda: read_observation(robot), lambda: write_action(robot, {"elbow_flex.pos": 3.0})] * 3)
 
     assert errors == []
     assert robot.refusals == 0
@@ -166,6 +158,8 @@ def test_a_failed_read_releases_the_bus():
         try:
             read_observation(robot)
         except ConnectionError:
+            # The point of the loop: the driver raises and the lock must still be
+            # released, so the failure itself is what this test wants.
             pass
 
     # The lock is free: a plain acquire must succeed immediately.
@@ -178,8 +172,10 @@ def test_a_reader_holding_the_lock_can_read_again():
     robot = RefusingBusRobot()
 
     with bus_lock(robot):
-        # Same thread, nested: this deadlocks with a plain Lock.
-        assert read_observation(robot) == {"shoulder_pan.pos": 1.0, "elbow_flex.pos": 2.0}
+        # Same thread, nested: this deadlocks with a plain Lock. Hoisted out of
+        # the assert so ``python -O`` cannot skip the read this test is about.
+        nested = read_observation(robot)
+    assert nested == {"shoulder_pan.pos": 1.0, "elbow_flex.pos": 2.0}
 
 
 def test_a_device_that_refuses_attributes_still_gets_serialised():
@@ -195,11 +191,14 @@ def test_a_device_that_refuses_attributes_still_gets_serialised():
     first = bus_lock(device)
     assert isinstance(first, type(threading.RLock()))
     assert bus_lock(device) is first
-    assert read_observation(device) == {"a": 1.0}
+    observed = read_observation(device)
+    assert observed == {"a": 1.0}
 
 
 def test_the_observation_is_returned_untouched():
     """The lock is the only thing added: no reshaping, no swallowing."""
     robot = RefusingBusRobot()
-    assert read_observation(robot) == {"shoulder_pan.pos": 1.0, "elbow_flex.pos": 2.0}
-    assert write_action(robot, {"elbow_flex.pos": 9.0}) == {"elbow_flex.pos": 9.0}
+    observed = read_observation(robot)
+    written = write_action(robot, {"elbow_flex.pos": 9.0})
+    assert observed == {"shoulder_pan.pos": 1.0, "elbow_flex.pos": 2.0}
+    assert written == {"elbow_flex.pos": 9.0}

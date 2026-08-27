@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import non_negative_whole_number_error, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +221,16 @@ class ProtoMotionsConfig:
             steps.
         action_ema_alpha: Optional exponential-moving-average smoothing on the
             joint target output (``1.0`` = passthrough, upstream default).
+        onnx_in_names: Input tensor names in the order the exported session
+            declares them, so the session's ``get_inputs()`` order can be
+            validated against this tuple at load.
+        onnx_out_names: Output tensor names requested from the session. Outputs
+            are paired to these names rather than by position, so a config that
+            declares the checkpoint's outputs in a different order still reads
+            the right tensor.
+        metadata: Free-form provenance carried alongside the config, populated
+            from a sidecar's own ``metadata`` key. Never read by the control
+            path.
     """
 
     joint_names: tuple[str, ...] = GTP_G1_JOINT_NAMES
@@ -254,6 +264,45 @@ class ProtoMotionsConfig:
     )
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Refuse a body index that cannot address :attr:`body_names`.
+
+        The two indices are the only fields this config resolves a body NAME
+        from, and an index that misses is not a value the control path can
+        report: :attr:`anchor_body_name` and :attr:`root_body_name` index a
+        tuple, so a negative index silently names a real but different link,
+        and the tracker then anchors on it consistently -
+        :attr:`~strands_robots.policies.base.Policy.required_bodies` declares
+        that link, the runtime supplies its quaternion, and the future-reference
+        window reads the same row. Every stage agrees, and every stage is wrong.
+
+        Each index goes through the shared whole-number domain BEFORE the
+        ``int()`` normalisation, not after: that conversion is what laundered a
+        yaml ``anchor_body_index: true`` into row 1 (``head``) and a ``2.7``
+        into row 2 (``left_hip_pitch_link``).
+
+        Raises:
+            ValueError: If either body index is not a non-negative whole number,
+                or is not a row of :attr:`body_names`.
+        """
+        num_bodies = len(self.body_names)
+        for name in ("anchor_body_index", "root_body_index"):
+            raw = getattr(self, name)
+            if error := non_negative_whole_number_error(raw, name, "ProtoMotionsConfig"):
+                raise ValueError(error)
+            index = int(raw)
+            if index >= num_bodies:
+                raise ValueError(
+                    f"ProtoMotionsConfig.{name} must be a row of body_names "
+                    f"(0..{num_bodies - 1}), got {index} for {num_bodies} bodies. "
+                    "The index is an offset into body_names, so one that misses "
+                    "cannot resolve the body it names."
+                )
+            # Normalise to a plain int (frozen -> object.__setattr__) so an
+            # integral float the domain admits is stored as the row number the
+            # observation lookup and the future-reference slice both index with.
+            object.__setattr__(self, name, index)
+
     # ------------------------------------------------------------------
     # Derived properties - computed on read, never stored, so a frozen
     # dataclass with a single source of truth for each field stays that way.
@@ -283,9 +332,9 @@ class ProtoMotionsConfig:
         :attr:`~strands_robots.policies.base.Policy.required_bodies` and the
         observation lookup reading one source of truth.
 
-        Raises:
-            IndexError: If :attr:`anchor_body_index` is out of range for
-                :attr:`body_names`.
+        Always resolves: :meth:`__post_init__` refuses an
+        :attr:`anchor_body_index` that is not a row of :attr:`body_names`, so
+        the lookup here cannot miss.
         """
         return self.body_names[self.anchor_body_index]
 
@@ -293,9 +342,8 @@ class ProtoMotionsConfig:
     def root_body_name(self) -> str:
         """Name of the root (floating-base) body - ``pelvis`` on the G1.
 
-        Raises:
-            IndexError: If :attr:`root_body_index` is out of range for
-                :attr:`body_names`.
+        Always resolves: :meth:`__post_init__` refuses a
+        :attr:`root_body_index` that is not a row of :attr:`body_names`.
         """
         return self.body_names[self.root_body_index]
 
@@ -318,17 +366,36 @@ def load_config_from_yaml(path: str | Path) -> ProtoMotionsConfig:
     fall back to the dataclass defaults (which are themselves pinned to the
     shipped weights, so a missing block is not an error).
 
+    An empty sidecar is the limit of "fields absent from the yaml", so it
+    yields the all-defaults config exactly as ``{}`` does - the two spell the
+    same information. ``~`` in ``path`` is expanded, the file is read as a
+    file, and a payload that is not a mapping is reported by name rather than
+    reaching the field lookups below: the reporting the sibling policy-config
+    file loaders in :mod:`strands_robots.policies.kimodo.config`,
+    :mod:`strands_robots.policies.motionbricks.config` and
+    :mod:`strands_robots.policies.wbc.config` already give.
+
+    The extension is deliberately not checked, unlike the two loaders that do:
+    a yaml document stored under any name loads here today, and refusing one
+    would stop a payload that currently works.
+
     Args:
-        path: Path to the yaml file.
+        path: Path to the yaml file. ``~`` is expanded.
 
     Returns:
         A :class:`ProtoMotionsConfig` - validated for consistent dimensions.
 
     Raises:
-        FileNotFoundError: If ``path`` does not exist.
+        FileNotFoundError: If ``path`` does not name a file (a directory does
+            not, so it is refused here rather than at the read).
         ImportError: If ``pyyaml`` is not installed.
-        ValueError: If the yaml contains an inconsistent dimension (e.g.
-            ``stiffness`` length != number of joints).
+        ValueError: If the file is not valid YAML, or holds a YAML value that
+            is not a mapping, or contains an inconsistent dimension: a
+            ``stiffness`` or ``damping`` length that is not the joint count, or
+            an ``anchor_body_index`` / ``root_body_index`` that is not a row of
+            ``body_names`` (refused by
+            :meth:`ProtoMotionsConfig.__post_init__`, so a config built by hand
+            reports the same value the same way).
     """
     yaml = require_optional(
         "yaml",
@@ -337,19 +404,33 @@ def load_config_from_yaml(path: str | Path) -> ProtoMotionsConfig:
         purpose="reading the unified_pipeline.yaml checkpoint sidecar",
     )
 
-    path = Path(path)
-    if not path.exists():
+    path = Path(path).expanduser()
+    if not path.is_file():
         raise FileNotFoundError(f"ProtoMotions yaml not found: {path}")
-
-    with open(path) as f:
-        data = yaml.safe_load(f)  # type: ignore[attr-defined]
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))  # type: ignore[attr-defined]
+    except yaml.YAMLError as e:  # type: ignore[attr-defined]
+        raise ValueError(f"ProtoMotions yaml {path} is not valid YAML: {e}") from e
+    if data is None:
+        # An empty sidecar (and a comments-only one) carries the same
+        # information as ``{}``: every field absent. ``{}`` already returns the
+        # all-defaults config, which is what this function documents absent
+        # fields to mean, so the two spellings resolve to the same config
+        # rather than one of them dead-ending on ``None.get``.
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError(f"ProtoMotions yaml {path} must contain a mapping, got {type(data).__name__}")
 
     joint_names = tuple(data.get("joint_names", GTP_G1_JOINT_NAMES))
     body_names = tuple(data.get("body_names", GTP_G1_BODY_NAMES))
 
     robot = data.get("robot", {})
-    anchor_idx = int(robot.get("anchor_body_index", GTP_G1_ANCHOR_BODY_INDEX))
-    root_idx = int(robot.get("root_body_index", GTP_G1_ROOT_BODY_INDEX))
+    # Handed through raw, not through int(): ProtoMotionsConfig.__post_init__ is
+    # the single owner of what a body index may be, and coercing here first is
+    # what turned a yaml ``anchor_body_index: true`` into row 1 before the
+    # domain could see it.
+    anchor_idx = robot.get("anchor_body_index", GTP_G1_ANCHOR_BODY_INDEX)
+    root_idx = robot.get("root_body_index", GTP_G1_ROOT_BODY_INDEX)
 
     control = data.get("control", {})
     stiffness = tuple(control.get("stiffness", data.get("default_joint_stiffness", _G1_STIFFNESS)))

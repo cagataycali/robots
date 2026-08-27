@@ -35,6 +35,7 @@ from strands_robots.training._validate import (
 )
 from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
+from tests.training._spec_field_reads import reads_spec_field
 
 # Every backend that discounts a return with the field.
 RL_BACKENDS = ("ppo", "fast_sac")
@@ -227,11 +228,14 @@ def _training_modules() -> list[pathlib.Path]:
 
 
 def _reads_the_discount_factor(source: str) -> bool:
-    """Does *source* read ``spec.gamma``?"""
-    return any(
-        isinstance(node, ast.Attribute) and node.attr == "gamma" and getattr(node.value, "id", None) == "spec"
-        for node in ast.walk(ast.parse(source))
-    )
+    """Does *source* read ``spec.gamma``, by name or through a forwarding table?
+
+    Delegated to the shared rule so this guard and its siblings cannot disagree
+    about what counts as a read - a transport-only provider reads every field it
+    forwards through ``getattr(spec, field)`` and names none of them in an
+    attribute access.
+    """
+    return reads_spec_field(source, ("gamma",))
 
 
 def _calls_the_gate(source: str) -> bool:

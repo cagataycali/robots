@@ -60,7 +60,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import SimEngine, close_match_hint, reject_setup_kwargs
-from strands_robots.simulation.ik import hint_matches_name
+from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
@@ -109,10 +109,12 @@ from strands_robots.simulation.mujoco.spec_builder import (
     material_spec_error,
 )
 from strands_robots.simulation.policy_runner import CooperativeStop
+from strands_robots.simulation.recording import undriven_robot_state
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
+    coerce_orientation_quaternion,
     coerce_pose_vector,
     entity_name_error,
     finite_vector_error,
@@ -298,12 +300,6 @@ def _resolve_policy_stop_timeout(policy_stop_timeout: float | None, default: flo
 # default and the per-robot mapping fallback cannot drift apart.
 _DEFAULT_ACTION_HORIZON = 8
 
-# Hint words for the best-guess gripper/EEF mount ``list_bodies`` advertises.
-# Matched on word boundaries by
-# :func:`~strands_robots.simulation.ik.hint_matches_name` - the same rule
-# :func:`~strands_robots.simulation.ik.discover_ee_frame` applies - so the short
-# hint "ee" cannot fire inside "knee" or "wheel".
-_GRIPPER_BODY_HINTS = ("gripper", "hand", "ee", "tool")
 
 # The ``create_world`` parameters a LIVE world can still adopt, paired with the
 # published action that applies each one in place without discarding the scene.
@@ -1677,6 +1673,17 @@ class MuJoCoSimEngine(
         model source". The bare model-source message is kept only when no
         ``name`` was supplied at all.
 
+        A model source that is SUPPLIED but empty (``urdf_path=""`` /
+        ``data_config=""``) is refused naming THAT parameter, rather than read
+        as omitted. Read by truthiness the two were indistinguishable, so an
+        empty path fell through to the name lookup and got the message above -
+        close-match suggestions for a name the caller never asked to resolve,
+        and advice to pass the very kwarg they had passed - byte-identical to
+        what supplying no source at all returns. One whitespace character away
+        (``urdf_path=" "``) the diagnosis was already correct ("File not
+        found"), which is the shape an empty value gets now too.
+        :meth:`register_urdf` refuses an empty ``urdf_path`` the same way.
+
         ``position`` (3 elements) and ``orientation`` (4-element wxyz quaternion)
         are validated up front: a wrong-length, non-numeric, or non-finite
         (nan/inf) vector returns an actionable ``{"status": "error"}`` and
@@ -1729,7 +1736,7 @@ class MuJoCoSimEngine(
         position, e = coerce_pose_vector("add_robot", "position", position, 3)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        orientation, e = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        orientation, e = coerce_orientation_quaternion("add_robot", "orientation", orientation)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
 
@@ -1762,6 +1769,36 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
+
+        # A model source the caller SUPPLIED but left empty is not one they
+        # omitted. The resolution below reads both by truthiness, so `""` was
+        # indistinguishable from `None`: the deprecated name-as-registry-key
+        # fallback ran for a call that had asked for a file, and the refusal
+        # then diagnosed the NAME - offering close-match suggestions for a
+        # name the caller never asked to resolve, and advising them to "pass
+        # data_config=<registered model> or urdf_path=<file>", the kwarg they
+        # had just passed. Name the empty parameter instead. This is the rule
+        # `name` states two paragraphs up ("another falsy value would take the
+        # same branch and report success under a label that was never asked
+        # for"), the rule `position`/`orientation` state below (`is None`
+        # means omitted, an `or` would read an empty vector as omitted), the
+        # rule :meth:`register_urdf` already applies to this same parameter,
+        # and the rule the Newton (`urdf_path is not None`) and Isaac
+        # (`usd_path is None`) backends already read their model source by.
+        for param, supplied in (("urdf_path", urdf_path), ("data_config", data_config)):
+            if supplied is not None and not supplied:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"add_robot: '{param}' must be a non-empty string. "
+                                f"Pass a model source, or omit {param}= to resolve the "
+                                f"model from the registry instead."
+                            )
+                        }
+                    ],
+                }
 
         # Resolution precedence:
         #   1. explicit `urdf_path` (anything on disk).
@@ -2905,14 +2942,19 @@ class MuJoCoSimEngine(
             "rangefinder, framequat, ...)"
         )
         base["methods"]["get_energy"] = "() -> dict  # kinetic + potential energy of the system"
-        base["methods"]["get_mass_matrix"] = "() -> dict  # joint-space inertia matrix M(q)"
+        base["methods"]["get_mass_matrix"] = (
+            "() -> dict  # joint-space inertia matrix M(q); json carries the "
+            "DOF-indexed diagonal plus dof_joint_names naming each entry's joint"
+        )
         base["methods"]["inverse_dynamics"] = (
             "() -> dict  # gravity + Coriolis/bias compensation torques for the "
             "current pose (mj_inverse at zero desired acceleration)"
         )
         base["methods"]["get_jacobian"] = (
             "(body_name=None, site_name=None, geom_name=None) -> dict  # "
-            "translational + rotational Jacobian of a body/site/geom for IK/control"
+            "translational + rotational Jacobian of a body/site/geom for IK/control; "
+            "columns are whole-model DOFs, and json carries dof_joint_names naming "
+            "the joint that owns each column"
         )
         base["methods"]["get_total_mass"] = "() -> dict  # total mass of the model"
         base["methods"]["get_ground_height"] = (
@@ -2926,7 +2968,8 @@ class MuJoCoSimEngine(
         )
         base["methods"]["multi_raycast"] = (
             "(origin: list[float], directions: list[list[float]], "
-            "exclude_body=-1) -> dict  # batch raycast from one origin (e.g. a lidar fan); "
+            "exclude_body=-1, include_static=True) -> dict  # batch raycast from one origin "
+            "(e.g. a lidar fan); "
             "all-or-nothing - a direction it cannot cast refuses the batch instead of "
             "reporting that bearing as a miss"
         )
@@ -3294,8 +3337,10 @@ class MuJoCoSimEngine(
             ``bodies`` is the ordered list of body names; the ``text`` block
             mirrors it for human display. When ``robot_name`` is given the
             json also carries ``"gripper_body"`` -- the best-guess gripper/
-            end-effector mount (a body one of whose *name components* is
-            ``gripper``, ``hand``, ``ee``, or ``tool``), or ``null`` if none
+            end-effector mount (a body one of whose *name components* is one of
+            :data:`~strands_robots.simulation.ik.GRIPPER_BODY_HINTS`, the set
+            every backend reads: ``gripper``, ``hand``, ``jaw``, ``ee`` or
+            ``tool``), or ``null`` if none
             matches. Hints match components rather than bare substrings, so a
             short hint cannot fire inside an unrelated word: a ``knee`` or a
             drive ``wheel`` is not an end-effector because ``ee`` occurs in its
@@ -3334,7 +3379,7 @@ class MuJoCoSimEngine(
             gripper_body: str | None = None
             for name in bodies:
                 short = name.rsplit("/", 1)[-1]
-                if any(hint_matches_name(hint, short) for hint in _GRIPPER_BODY_HINTS):
+                if any(hint_matches_name(hint, short) for hint in GRIPPER_BODY_HINTS):
                     gripper_body = name
                     break
             json_payload["gripper_body"] = gripper_body
@@ -3411,7 +3456,7 @@ class MuJoCoSimEngine(
                 ``"ellipsoid"``, ``"plane"``, or ``"mesh"``.
             position: World position ``[x, y, z]`` of the body origin (default
                 origin).
-            orientation: wxyz quaternion (default identity).
+            orientation: wxyz quaternion (default identity). Any non-unit value is fine -- the magnitude is ignored -- but one whose norm rounds to zero describes no rotation and is refused rather than silently applied as identity (:func:`~strands_robots.utils.coerce_orientation_quaternion`).
             size: Full extents in meters per the per-shape table above. Defaults
                 to ``[0.05, 0.05, 0.05]`` (a 5 cm box) when omitted. Must carry
                 every component the shape consumes -- 3 for ``box`` /
@@ -3551,7 +3596,7 @@ class MuJoCoSimEngine(
         position, e = coerce_pose_vector("add_object", "position", position, 3)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        orientation, e = coerce_pose_vector("add_object", "orientation", orientation, 4)
+        orientation, e = coerce_orientation_quaternion("add_object", "orientation", orientation)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
         if size is not None and (e := finite_vector_error("add_object", "size", size)) is not None:
@@ -3761,7 +3806,10 @@ class MuJoCoSimEngine(
           other joints' state), just like ``add_object`` / ``remove_object``.
 
         ``position`` must be a 3-element vector and ``orientation`` a 4-element
-        wxyz quaternion; each must contain only finite real numbers. The vector
+        wxyz quaternion whose norm does not round to zero; each must contain only
+        finite real numbers. A zero quaternion describes no rotation, and MuJoCo
+        substitutes identity for one without complaint, so the success text would
+        echo an orientation the body does not have. The vector
         itself may be a list, a tuple or a NumPy array (pose arithmetic produces
         arrays), and its elements may be NumPy scalars. A wrong-length,
         non-numeric, or nan/inf pose is rejected up front rather than raising a
@@ -3794,7 +3842,7 @@ class MuJoCoSimEngine(
         position, perr = coerce_pose_vector("move_object", "position", position, 3)
         if perr is not None:
             return {"status": "error", "content": [{"text": perr}]}
-        orientation, oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
+        orientation, oerr = coerce_orientation_quaternion("move_object", "orientation", orientation)
         if oerr is not None:
             return {"status": "error", "content": [{"text": oerr}]}
 
@@ -5224,10 +5272,19 @@ class MuJoCoSimEngine(
                         # the schema. Camera values (ndarray) keep their (already
                         # namespaced) names - dataset_recorder normalizes '/'->'__'.
                         if len(world.robots) > 1:
-                            obs_keyed = {
-                                (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
-                                for k, v in observation.items()
-                            }
+                            # The schema declares a state column for every robot in the
+                            # scene, and this frame carries only the driven robot's. An
+                            # undriven robot's columns are a readable measurement, so they
+                            # are filled from the engine at this step rather than left to
+                            # add_frame's 0.0 fill, which records them as a zero pose the
+                            # robot is not in. Driven keys win any collision.
+                            obs_keyed = undriven_robot_state(self, robot_name, world.robots)
+                            obs_keyed.update(
+                                {
+                                    (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
+                                    for k, v in observation.items()
+                                }
+                            )
                             act_keyed = {f"{robot_name}__{k}": v for k, v in action.items()}
                             rec.add_frame(
                                 observation=obs_keyed,
@@ -5704,6 +5761,21 @@ class MuJoCoSimEngine(
     # and must not be reported as "unknown" by the router.
     _ROUTER_PASSTHROUGH = {"action"}
 
+    # Actions whose payload folds the flat video keys the schema publishes
+    # (``output_path``/``fps``/``camera_name``) into the structured ``video``
+    # dict their signatures take. :meth:`_fold_flat_video_keys` owns the rule;
+    # both the router and the acceptance-mirror guard read it rather than
+    # restating it, which is what let the mirror model four actions where the
+    # router accepted one.
+    _VIDEO_FOLDING_ACTIONS: frozenset[str] = frozenset(
+        {"run_policy", "start_policy", "eval_policy", "evaluate_benchmark"}
+    )
+
+    # The flat video keys ``run_policy`` accepts at the boundary even when the
+    # fold could not consume them. Named so the mirror can track the asymmetry
+    # instead of guessing at it; #2663 asks whether it should exist at all.
+    _RUN_POLICY_RESIDUAL_VIDEO_KEYS: frozenset[str] = frozenset({"output_path", "fps", "camera_name"})
+
     # Vector params with the component counts the target buffer can honor (for
     # dimension validation before numpy/MuJoCo sees them). 3 = xyz unless noted.
     # A param with several honorable counts lists them all, so the router never
@@ -5721,6 +5793,46 @@ class MuJoCoSimEngine(
         "orientation": (4,),  # quaternion (w,x,y,z)
         "color": (3, 4),  # rgb (opaque alpha) or rgba
     }
+
+    @classmethod
+    def _fold_flat_video_keys(cls, action: str, payload: dict[str, Any]) -> None:
+        """Fold the flat video keys into a structured ``video`` dict, in place.
+
+        The rollout and eval actions take ``video=`` as a dict, while the schema
+        publishes the flat spellings a model can emit (``output_path``, ``fps``,
+        ``camera_name``). This consumes the flat keys it can honor and leaves the
+        rest in *payload* for the router's unknown-key check.
+
+        Runs before validation, so a key removed here is never reported as
+        unknown. That makes this the single owner of "which flat video key is
+        legitimate for which action": :meth:`_validate_and_build_kwargs` and the
+        acceptance-mirror guard both read it instead of restating the rule.
+        Restating it is what let the mirror model the three flat keys as accepted
+        for all four folding actions while the router accepted a bare
+        ``camera_name`` on ``run_policy`` alone - so an example naming the video
+        camera for an eval rollout passed the mirror and was refused at runtime,
+        which is the dropped-envelope no-op the mirror exists to prevent.
+
+        ``camera_name`` is only folded when paired with a path, because the name
+        is shared with :meth:`render` and there is nothing to attach it to
+        otherwise. A payload that already carries ``video`` is left untouched:
+        the explicit dict wins.
+
+        Args:
+            action: The dispatched action name.
+            payload: Alias-rewritten parameters, mutated in place.
+        """
+        if action not in cls._VIDEO_FOLDING_ACTIONS or "video" in payload:
+            return
+        flat: dict[str, Any] = {}
+        if "output_path" in payload:
+            flat["path"] = payload.pop("output_path")
+        if "fps" in payload:
+            flat["fps"] = payload.pop("fps")
+        if flat.get("path") and "camera_name" in payload:
+            flat["camera"] = payload.pop("camera_name")
+        if flat.get("path"):
+            payload["video"] = flat
 
     def _validate_and_build_kwargs(
         self,
@@ -5761,11 +5873,13 @@ class MuJoCoSimEngine(
         method_param_names = set(named_params)
         accepted_field_names = method_param_names | set(self._FIELD_ALIASES.keys()) | self._ROUTER_PASSTHROUGH
 
-        # run_policy folds flat video keys into a structured `video` dict; those
-        # flat keys are legitimate at the router boundary even though run_policy
-        # itself takes `video=`.
+        # ``run_policy`` also accepts the flat video keys the fold could NOT
+        # consume: a bare ``camera_name`` with no path to attach it to, or a flat
+        # key sent alongside an explicit ``video=``. Only that residue reaches
+        # here, because :meth:`_fold_flat_video_keys` already removed the rest.
+        # Its three sibling folding actions refuse the same residue (see #2663).
         if action == "run_policy":
-            accepted_field_names |= {"output_path", "fps", "camera_name"}
+            accepted_field_names |= self._RUN_POLICY_RESIDUAL_VIDEO_KEYS
 
         # name/robot_name are aliased in both directions in the legacy router;
         # allow either here so we don't flag the alias as unknown.
@@ -5777,13 +5891,22 @@ class MuJoCoSimEngine(
         # 1) Unknown kwargs (skipped for **kwargs methods which legitimately passthrough)
         unknown = [] if method_has_var_keyword else [k for k in remapped if k not in accepted_field_names]
         if unknown:
+            # Name the offending key by the spelling the caller wrote, the same
+            # rule the ``Valid:`` list beside it already uses. ``remapped`` holds
+            # post-rewrite names, so an alias whose target is not a parameter of
+            # THIS action (``torque_vec`` -> ``torque`` on any action but
+            # ``apply_force``) would otherwise be reported under a key the
+            # payload never carried - the canonical-name refusal this helper
+            # exists to prevent, surviving in the one branch that read the loop
+            # variable directly.
+            reported_unknown = _reported_param_name(unknown[0], self._FIELD_ALIASES, received)
             valid_sorted = sorted(
                 _reported_param_name(param, self._FIELD_ALIASES, received) for param in method_param_names - {"action"}
             )
             return None, {
                 "status": "error",
                 "content": [
-                    {"text": (f"Unknown parameter '{unknown[0]}' for action '{action}'. Valid: {valid_sorted}")}
+                    {"text": (f"Unknown parameter '{reported_unknown}' for action '{action}'. Valid: {valid_sorted}")}
                 ],
             }
 
@@ -5937,19 +6060,10 @@ class MuJoCoSimEngine(
             if field_key in remapped and param_key not in remapped:
                 remapped[param_key] = remapped.pop(field_key)
 
-        # Fold flat video keys into `video` dict for the rollout/eval actions.
-        if action in ("run_policy", "start_policy", "eval_policy", "evaluate_benchmark") and "video" not in remapped:
-            _video_flat: dict[str, Any] = {}
-            if "output_path" in remapped:
-                _video_flat["path"] = remapped.pop("output_path")
-            if "fps" in remapped:
-                _video_flat["fps"] = remapped.pop("fps")
-            # camera_name is shared with render(); only treat as video camera
-            # when paired with an output path.
-            if _video_flat.get("path") and "camera_name" in remapped:
-                _video_flat["camera"] = remapped.pop("camera_name")
-            if _video_flat.get("path"):
-                remapped["video"] = _video_flat
+        # Fold the flat video keys the schema publishes into the structured
+        # `video` dict the rollout/eval signatures take. Runs BEFORE validation,
+        # so a key it consumes is never reported as unknown.
+        self._fold_flat_video_keys(action, remapped)
 
         kwargs, err = self._validate_and_build_kwargs(action, method_name, sig, remapped, d)
         if err is not None:

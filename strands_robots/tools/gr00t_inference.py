@@ -309,7 +309,20 @@ def _scratch_roots() -> set[str]:
 
 
 def _with_resolved(paths: tuple[str, ...]) -> set[str]:
-    """Each path plus the path its symlinks resolve to -- both are blocked."""
+    """Return each protected path AND the path its symlinks resolve to.
+
+    The blocklist names a path, but docker mounts the directory that path
+    resolves to, so a protected directory reachable under two names has to be
+    blocked under both. A host that reaches a protected directory through a
+    symlink whose target escapes the blocklist is the case this covers: macOS
+    ships ``/etc -> /private/etc``, and a Linux server with a separate data
+    volume may ship ``/home -> /mnt/home``. Resolving only the candidate mount
+    (#384 item 2) refuses the symlink spelling and admits the target spelling,
+    which is the same directory.
+
+    A path that is not a symlink contributes one entry, so on a host whose
+    protected paths are all real directories the returned set is the blocklist.
+    """
     out: set[str] = set()
     for raw in paths:
         out.add(os.path.normpath(raw))

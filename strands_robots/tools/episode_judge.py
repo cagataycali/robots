@@ -30,6 +30,7 @@ import json
 import logging
 import math
 import statistics
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -94,13 +95,53 @@ def _read_info(root: Path) -> dict[str, Any]:
         return {}
 
 
+def _state_vector(value: Any) -> list[float] | None:
+    """One frame's ``observation.state`` column value as a vector of floats.
+
+    LeRobot stores a feature of shape ``[1]`` unwrapped: the parquet column
+    holds a scalar float where a wider state holds a list. Both spell the
+    vector ``meta/info.json`` declares - a single-DOF recording declares
+    ``shape [1]`` and one joint name - so a scalar is read as the one-element
+    vector it is. Iterating it instead is a ``TypeError``, which is not in the
+    envelope this module promises for a dataset it cannot read; and the
+    recording is a healthy one, so there is nothing to report either.
+
+    Args:
+        value: One frame's raw column value, or ``None`` when the dataset
+            carries no ``observation.state`` column.
+
+    Returns:
+        The frame's state as a list of floats, or ``None`` when ``value`` is.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Iterable) and not isinstance(value, str | bytes):
+        return [float(component) for component in value]
+    return [float(value)]
+
+
 def _episode_frame_rows(root: Path, episode: int) -> list[dict[str, Any]]:
     """Read one episode's frame rows from ``data/**/*.parquet`` (pure pyarrow).
 
     Returns rows sorted by ``frame_index``, each with ``frame_index``,
-    ``timestamp`` and ``state`` (the flattened ``observation.state`` vector).
-    Raises ValueError when the dataset has no data parquet or the episode has
-    no frames.
+    ``timestamp`` and ``state`` (the flattened ``observation.state`` vector,
+    read through :func:`_state_vector` so a single-DOF recording's scalar
+    column is the one-element vector its metadata declares).
+
+    The returned series is the whole episode or nothing. An unreadable shard
+    is refused rather than skipped: the caller's product is a motion summary
+    over consecutive frames, so dropping a shard makes the surviving rows read
+    as consecutive when they are not, and ``max_state_delta`` /
+    ``rms_state_jerk`` then measure the gap instead of the robot.
+    :func:`strands_robots.dataset_recorder.read_dataset_episode_indices`
+    tolerates the same damage because naming the damaged files *is* its
+    product; it reports them in ``unreadable_files`` and documents its totals
+    as a lower bound. Here there is no field to carry that caveat into a
+    statistic, so the read is refused.
+
+    Raises:
+        ValueError: If the dataset has no data parquet, if any data shard is
+            unreadable, or if the episode has no frames.
     """
     try:
         import pyarrow.parquet as pq
@@ -115,13 +156,14 @@ def _episode_frame_rows(root: Path, episode: int) -> list[dict[str, Any]]:
         )
 
     rows: list[dict[str, Any]] = []
+    unreadable: list[str] = []
     for pf in parquet_files:
         try:
             table = pq.read_table(pf)
-        except (ValueError, OSError):
-            # A corrupt shard loses its own frames only; the readable rest of
-            # the dataset still answers for this episode (mirrors
-            # read_dataset_episode_indices).
+        except (ValueError, OSError) as e:
+            # Record the damage; the refusal below reports every damaged shard
+            # at once rather than only the first one a reader tripped over.
+            unreadable.append(f"{pf.relative_to(root)}: {e}")
             continue
         columns = table.column_names
         if "episode_index" not in columns:
@@ -135,9 +177,16 @@ def _episode_frame_rows(root: Path, episode: int) -> list[dict[str, Any]]:
                 {
                     "frame_index": int(data.get("frame_index", [i])[i]),
                     "timestamp": float(data["timestamp"][i]) if "timestamp" in data else None,
-                    "state": [float(v) for v in state] if state is not None else None,
+                    "state": _state_vector(state),
                 }
             )
+    if unreadable:
+        raise ValueError(
+            f"Episode {episode} cannot be sampled: {len(unreadable)} of {len(parquet_files)} data "
+            f"shard(s) under {root} are unreadable, so the frame series would have a hole in it "
+            "and the motion summary would measure the gap rather than the robot. Repair or "
+            "re-download the dataset. " + "; ".join(unreadable)
+        )
     if not rows:
         raise ValueError(f"Episode {episode} has no frames in {root}.")
     rows.sort(key=lambda r: r["frame_index"])

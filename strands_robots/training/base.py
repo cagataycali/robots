@@ -105,7 +105,20 @@ class TrainSpec:
             without updating a weight and ``inf`` writes a checkpoint of
             ``NaN``, neither of which any backend can report, so both are
             refused by :meth:`Trainer.validate` before a run starts.
-        save_freq: Checkpoint cadence in steps.
+        save_freq: Checkpoint cadence in steps (lerobot ``--save_freq`` /
+            ``cfg.save_freq``, GR00T ``--save_steps``, Cosmos
+            ``checkpoint.save_iter``). A whole number: it is consumed as the
+            modulus of a ``step % save_freq`` test, so ``True`` is a cadence of
+            one that checkpoints every step, a fractional or non-finite value
+            never satisfies the test and silently disables periodic saving, and
+            a string raises out of the comparison inside the training loop -
+            none of which any backend reports, which is why a backend that
+            reads it MUST check it through
+            :meth:`Trainer._checkpoint_cadence_problems` rather than forward it.
+            A non-positive value is a capability rather than an unusable one: it
+            disables periodic saving so only the final checkpoint is written
+            (lerobot's ``should_save_checkpoint``), and the backends' own
+            ``eval_steps`` fallback is written for that case.
         num_gpus: GPUs on this node. ``>1`` runs the backend under torch's
             in-process ``elastic_launch`` (the engine behind ``torchrun``).
             A positive integer; a non-positive, fractional, non-finite or
@@ -332,6 +345,70 @@ class Trainer(ABC):
 
         return run_size_problems(spec, context=self.provider_name)
 
+    def _rl_run_size_problems(self, spec: TrainSpec) -> list[str]:
+        """Run-size preflight shared by every RL backend, the peer of the above.
+
+        Returns problems for :attr:`RLTrainSpec.total_timesteps` /
+        :attr:`RLTrainSpec.rollout_steps` - the two caller-supplied factors of
+        the training-loop bound every RL backend derives,
+        ``max(1, total_timesteps // (rollout_steps * num_envs))`` iterated as
+        ``range(...)`` - against the same shared positive-count domain
+        :meth:`_run_size_problems` uses for the supervised pair.
+
+        This exists as a second gate rather than as part of that one because the
+        two field sets are disjoint: per :class:`TrainSpec` a backend ignores the
+        fields it does not support, so an RL trainer must not be refused for a
+        ``steps`` it never reads, and a supervised backend must not be refused
+        for a ``total_timesteps`` it never reads. The *domain* is shared; only the
+        fields differ.
+
+        A :meth:`validate` implementation that sizes its loop from either field
+        MUST call this instead of comparing the value itself. The local ``<= 0``
+        test is weaker here than for the supervised pair, because the bound is
+        derived: the ``max(1, ...)`` clamp reads ``True``, a fraction below one
+        iteration, ``nan`` and ``inf`` as a **single iteration** and the run then
+        reports success and writes a checkpoint, so the run the caller asked for
+        is simply not the one that happened. See
+        :func:`~strands_robots.training._validate.rl_run_size_problems` for the
+        measured table.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import rl_run_size_problems
+
+        return rl_run_size_problems(spec, context=self.provider_name)
+
+    def _rl_replay_problems(self, spec: TrainSpec) -> list[str]:
+        """Replay-loop count preflight for the off-policy (FastSAC) backend.
+
+        Returns problems for :attr:`RLTrainSpec.buffer_size` /
+        :attr:`RLTrainSpec.batch_size` / :attr:`RLTrainSpec.gradient_steps` - the
+        three caller-supplied counts of a SAC replay loop (the buffer capacity,
+        the transitions sampled per gradient step, and the updates per iteration)
+        - against the same shared positive-count domain the run-size and
+        launch-topology gates use.
+
+        A :meth:`validate` that reads any of the three MUST call this instead of
+        comparing the value itself. Each is consumed directly as a count (a
+        tensor capacity, a sample size, a ``range()`` bound), so a local
+        ``<= 0`` test is weaker: it reads ``True`` as a degenerate one-slot
+        buffer / batch of one (a run that learns nothing and reports success),
+        lets a fraction or non-finite value raise deep inside ``setup`` or the
+        update loop, and raises ``TypeError`` itself on a string or ``None``. See
+        :func:`~strands_robots.training._validate.rl_replay_problems` for the
+        measured table.
+
+        Only FastSAC reads these fields; PPO sizes its minibatches from
+        ``num_mini_batches`` and never reads them, so it must not report on them.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import rl_replay_problems
+
+        return rl_replay_problems(spec, context=self.provider_name)
+
     def _learning_rate_problems(self, spec: TrainSpec) -> list[str]:
         """Learning-rate preflight shared by EVERY backend.
 
@@ -409,6 +486,36 @@ class Trainer(ABC):
         from strands_robots.training._validate import seed_problems
 
         return seed_problems(spec, context=self.provider_name)
+
+    def _checkpoint_cadence_problems(self, spec: TrainSpec) -> list[str]:
+        """Checkpoint-cadence preflight shared by every backend that reads it.
+
+        Returns a problem when :attr:`TrainSpec.save_freq` is not a whole number
+        of steps, against the one shared step-cadence domain the
+        ``lerobot_train`` tool holds the same field to. A :meth:`validate`
+        implementation that reads the field MUST call this rather than forward
+        the value: every destination requires a genuine ``int`` and none of them
+        says so. LeRobot in-process hands it straight to lerobot's
+        ``should_save_checkpoint`` (``save_freq > 0 and step % save_freq == 0``),
+        where ``True`` is a modulus of one and checkpoints every step while a
+        fractional or non-finite cadence silently becomes the *disabled* mode
+        and a string raises ``TypeError`` from inside the training loop; the
+        argv, Hydra and hyperparameter routes each fail differently, or not at
+        all, after the run has started. Only the type is graded - a non-positive
+        cadence is the documented "disable periodic saving" mode.
+
+        A backend that does not read the field MUST NOT call this: per
+        :class:`TrainSpec`, a backend ignores the fields it does not support, so
+        reporting on one it never reads would be a false rejection. That is why
+        this is a separate gate from :meth:`_learning_rate_problems`, which
+        every backend does call.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import checkpoint_cadence_problems
+
+        return checkpoint_cadence_problems(spec, context=self.provider_name)
 
     def _validation_episodes_problems(self, spec: TrainSpec) -> list[str]:
         """Held-out-validation preflight shared by every backend that reads it.

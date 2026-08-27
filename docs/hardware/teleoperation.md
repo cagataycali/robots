@@ -87,7 +87,7 @@ Every hardware `Robot` and `Simulation` host exposes:
 | `attach_teleop(device_or_spec, *, name=None, method=None, map_fn=None, **kwargs)` | Register an input stream (lazy - no hardware touched). `device_or_spec` is a built teleop instance **or** a type string built via `Teleoperator(**kwargs)`. |
 | `teleoperate(*, names=None, robot_name=None, hz=50.0, publish=False, block=False, duration=None)` | Run the control loop. |
 | `detach_teleop(name=None)` | Remove one (or all) attached streams. |
-| `stop_teleoperate()` | Stop the loop, any mesh publishers, and disconnect devices. |
+| `stop_teleoperate()` | Stop the loop, any mesh publishers, and disconnect devices. Reports `status="error"` with `stopped: false` when the loop outlasts its 3 s join budget - the devices are left connected rather than torn down mid-write, and a second call re-joins the same loop. |
 
 ### `attach_teleop`
 
@@ -249,9 +249,26 @@ robot.teleoperate(names=["arm", "base"])           # both stream into send_actio
 
 ### Bimanual leader → follower
 
+A bimanual device is two arms, so each side carries its own config object -
+there is no single `port` covering both. The registered follower name is
+`bi_so_follower`, and both `BiSOFollowerConfig` and `BiSOLeaderConfig` require a
+`left_arm_config` / `right_arm_config` pair.
+
 ```python
-bi = Robot("bi_so", mode="real", left_port="/dev/ttyACM0", right_port="/dev/ttyACM1")
-bi.attach_teleop("bi_so_leader", left_port="/dev/ttyACM2", right_port="/dev/ttyACM3")
+from lerobot.robots.so_follower import SOFollowerConfig
+from lerobot.teleoperators.so_leader import SOLeaderConfig
+
+bi = Robot(
+    "bi_so_follower",
+    mode="real",
+    left_arm_config=SOFollowerConfig(port="/dev/ttyACM0"),
+    right_arm_config=SOFollowerConfig(port="/dev/ttyACM1"),
+)
+bi.attach_teleop(
+    "bi_so_leader",
+    left_arm_config=SOLeaderConfig(port="/dev/ttyACM2"),
+    right_arm_config=SOLeaderConfig(port="/dev/ttyACM3"),
+)
 bi.teleoperate()
 ```
 
@@ -290,6 +307,8 @@ robot.teleoperate(block=True, duration=60)   # 60 s then stop + disconnect
 robot.teleoperate()
 ...
 robot.stop_teleoperate()                     # stop loop + publishers + disconnect
+#   -> status="error" + stopped=false if the loop is still polling the leader;
+#      get_teleoperate_status()["thread_alive"] reads the loop thread itself.
 ```
 
 ## How it relates to mesh teleop

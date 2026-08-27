@@ -480,6 +480,13 @@ _REPLAY_EPISODE_SURFACES = {
     # shared rule, and DeviceManager.replay forwards to it.
     ("strands_robots/dashboard/device_manager.py", "validate_replay"),
     ("strands_robots/dashboard/device_manager.py", "replay"),
+    # The transform surfaces (``derive_variant_seed``, each backend's
+    # ``transform_frames``) apply the same shared guard but are deliberately
+    # NOT pinned here: they only receive an already-resolved index as a
+    # determinism-key input and carry no repo_id/root/dataset locator, so they
+    # resolve nothing against a dataset - see ``_resolves_against_a_dataset``.
+    # Their validation is pinned by
+    # ``tests/transforms/test_frame_surface_episode_domain.py`` instead.
 }
 
 # NOTE (merge of upstream #2540): this file used to carry an _OUT_OF_SCOPE_EPISODE_SURFACES

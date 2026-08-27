@@ -14,13 +14,20 @@ snapshot, the hardware camera publisher (which calls ``get_observation()`` at
 ``STRANDS_MESH_CAMERA_HZ``, and lerobot's ``get_observation()`` reads the MOTORS
 before it grabs any frame), the sensors probe, and the IoT camera offload -- and
 teleop writes to it besides. Nobody was serialising them, so on real hardware
-the reads collided continuously and every joint feature in the dashboard drew
-nothing: no joint bars, no history traces, no motion detection. The SDK's three
-retries did not help, because all three landed inside the same collision.
+the reads collided continuously and every joint consumer drew nothing: no
+positions in the fleet snapshot, no history traces, no motion detection. The
+SDK's three retries did not help: all three landed inside the same collision.
+
+A policy rollout is a participant too, and the asymmetry matters: the caller
+that loses a collision is the one NOT holding the lock. With the mesh converted
+and ``hardware_robot`` not, a mesh reader took the lock and always won while the
+rollout took nothing and always lost -- one refused read ended the whole rollout,
+reported as a policy fault for a run that never commanded the arm once, while
+the reader beside it logged nothing at all.
 
 The lock lives on the DEVICE, not on any one caller, because that is what is
-actually being shared: the mesh modules, the teleop rail and the dashboard all
-hold different wrappers around the same lerobot robot. It is an ``RLock`` so a
+actually being shared: the mesh modules, the teleop rail and any application on
+top of them all hold different wrappers around the same lerobot robot. It is an ``RLock`` so a
 caller that already holds it can read again without deadlocking (lerobot's own
 ``get_observation()`` is free to call back into a locked read).
 
@@ -33,6 +40,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -54,6 +62,22 @@ _fallback_lock = threading.RLock()
 _log = logging.getLogger(__name__)
 
 
+def _cached_lock(device: Any) -> threading.RLock | None:
+    """The lock already cached on ``device``, or ``None`` on first use.
+
+    One typed read of an untyped ``getattr``: the attribute is named for this
+    module, so nothing but a lock created here is ever stored under it.
+
+    Args:
+        device: The object whose bus lock is being looked up.
+
+    Returns:
+        The cached lock, or ``None`` when the device has not been locked yet.
+    """
+    lock: threading.RLock | None = getattr(device, _LOCK_ATTR, None)
+    return lock
+
+
 def bus_lock(device: Any) -> threading.RLock:
     """Return the one lock guarding ``device``'s bus, creating it on first use.
 
@@ -65,15 +89,15 @@ def bus_lock(device: Any) -> threading.RLock:
         The device's lock. Every caller passing the same device gets the same
         lock object, including callers in other modules.
     """
-    existing = getattr(device, _LOCK_ATTR, None)
+    existing = _cached_lock(device)
     if existing is not None:
-        return existing  # type: ignore[return-value]
+        return existing
 
     with _registry_guard:
         # Re-read inside the guard: another thread may have just created it.
-        existing = getattr(device, _LOCK_ATTR, None)
+        existing = _cached_lock(device)
         if existing is not None:
-            return existing  # type: ignore[return-value]
+            return existing
         lock = threading.RLock()
         try:
             setattr(device, _LOCK_ATTR, lock)
@@ -145,11 +169,10 @@ def _num_read_retries(device: Any) -> int | None:
 def read_joints(device: Any) -> Any:
     """Read ONLY the joint positions, so a broken camera cannot hide them.
 
-    MEASURED 2026-08-20 on cagatay's fleet: ``so101-arm-1`` published ZERO joints
-    for eleven hours while its card looked healthy and non-stale. One line at
-    startup explained it -- ``state probe 'hw_joints' failed ...
-    RuntimeError('OpenCVCamera(1) read failed')`` -- and then the log went quiet
-    ("further failures logged at debug").
+    Measured on real hardware: an arm published ZERO joints for eleven hours
+    while its mesh presence stayed healthy and non-stale. One line at startup
+    explained it -- ``state probe 'hw_joints' failed ...
+    RuntimeError('OpenCVCamera(1) read failed')`` -- and then the log went quiet.
 
     The cause is in lerobot's ``get_observation()``: it sync-reads the motors
     FIRST, then loops over the cameras calling ``read_latest()``. A camera that
@@ -172,6 +195,9 @@ def read_joints(device: Any) -> Any:
         A mapping of ``"<motor>.pos"`` -> position, shaped exactly like the joint
         half of ``get_observation()`` so callers need no new branch. On the
         fallback path, whatever ``get_observation()`` returns (frames included).
+        A driver is taken to have no readable motor bus - and so takes that
+        fallback - both when it exposes no ``bus.sync_read`` and when that call
+        answers with something other than a mapping.
 
     Raises:
         Exception: Anything the driver raises, unchanged.
@@ -193,8 +219,17 @@ def read_joints(device: Any) -> Any:
 
     with bus_lock(device):
         raw = _read_recovering_a_stale_flag(device, bus, _sync_read)
-    if not isinstance(raw, dict):
-        return raw
+    if not isinstance(raw, Mapping):
+        # A ``bus`` that answers ``sync_read`` with something other than a
+        # mapping is not a motor bus this function can read: a wrapper, a proxy,
+        # or a driver using that attribute name for something else entirely.
+        # Returning it would hand back a value this function documents as a
+        # mapping and every joints consumer iterates, so the caller would fail
+        # on ``.items()`` one frame later with nothing naming the cause. Fall
+        # back to the full observation, which is already the answer given to a
+        # driver that exposes no bus at all -- the bus is being detected here,
+        # not trusted, and the same rule decides both halves of that detection.
+        return read_observation(device)
     # ``.pos`` is lerobot's own suffix (see SOFollower.get_observation) and the
     # shape the rest of this codebase already parses.
     return {f"{motor}.pos": value for motor, value in raw.items()}
@@ -343,3 +378,62 @@ def recovery_count(device: Any, bus: Any = None) -> int:
         bus = getattr(device, "bus", None)
     with _RECOVERIES_LOCK:
         return _RECOVERIES.get(_recovery_key(device, bus), 0)
+
+def _answers_a_joint_read(device: Any) -> bool:
+    """Whether :func:`read_joints` has a route to ``device``'s joint positions.
+
+    Derived from :func:`read_joints`'s own branch rather than restated: it reads
+    ``bus.sync_read`` when the device exposes one and falls back to
+    ``get_observation``, so a device carrying either can be read and a device
+    carrying neither cannot. Keeping the admission rule and the reader in one
+    module is what stops a caller admitting a device the reader then raises on,
+    or refusing one it could have read.
+
+    Args:
+        device: The candidate to test. Neither attribute is called.
+
+    Returns:
+        ``True`` when ``device`` exposes a ``bus`` with ``sync_read``, or a
+        ``get_observation``.
+    """
+    bus = getattr(device, "bus", None)
+    if bus is not None and hasattr(bus, "sync_read"):
+        return True
+    return hasattr(device, "get_observation")
+
+
+def joint_read_source(robot: Any) -> Any | None:
+    """The device to read ``robot``'s joint positions from, or ``None``.
+
+    A robot reaches its motors one of two ways. A lerobot robot is a *wrapper*:
+    :class:`strands_robots.hardware_robot.Robot` holds the device that owns the
+    bus under ``robot``, and the wrapper itself answers no read at all. A native
+    driver owns its bus directly, so it *is* the device.
+
+    Resolving only the first shape is what left the second publishing no joint
+    telemetry: a driver satisfying every member of
+    :data:`~strands_robots.drivers.DRIVER_SURFACE` reported its IMU, its lidar
+    summary and its motor temperatures - each read straight off the driver with a
+    ``getattr`` default - while ``joints`` was absent from the state topic,
+    because joints were the one section reached only through the inner device.
+    :func:`read_joints` could already read such a driver unchanged; nothing
+    handed it to it.
+
+    An inner device is still preferred whenever one is present, so a wrapper is
+    never read in place of the device it wraps.
+
+    Args:
+        robot: The object a telemetry consumer was handed - a lerobot wrapper, a
+            native driver, or anything else shaped like a driver.
+
+    Returns:
+        The inner device when ``robot`` has one that can answer a joint read;
+        ``robot`` itself when it has no inner device and can answer one; ``None``
+        when no joint read is possible, which callers report as "no joints" and
+        not as a failure.
+    """
+    device = getattr(robot, "robot", None)
+    if device is None:
+        # No inner device: a native driver owns its telemetry directly.
+        device = robot
+    return device if _answers_a_joint_read(device) else None

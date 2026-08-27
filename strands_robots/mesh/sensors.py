@@ -47,6 +47,91 @@ from strands_robots.mesh.session import (
 logger = logging.getLogger(__name__)
 
 
+# A sensor payload is a plain record on the wire, so the values in it have to be
+# ones ``json.dumps`` accepts. ``_JSONABLE_MAX_DEPTH`` bounds how far down this
+# module will go looking for them.
+#
+# Past the bound the value is handed to the encoder unchanged. That is
+# deliberate: a sensor record is shallow (a mapping of names to scalars and short
+# vectors), so a structure deeper than this is not a reading but a pathological
+# payload - a cycle, or a nested object graph. Those are exactly the payloads
+# :func:`strands_robots.mesh.session._report_unencodable_payload` exists to
+# report at ERROR, and recursing into them here would turn a reported failure
+# into one absorbed by the reader's own handler.
+_JSONABLE_MAX_DEPTH = 8
+
+
+def _jsonable(value: Any, _depth: int = 0) -> Any:
+    """Coerce *value* into something ``json.dumps`` accepts, or leave it alone.
+
+    Every sensor topic is published as JSON
+    (:func:`strands_robots.mesh.session._put_zenoh_directly` encodes the payload
+    before it reaches the wire), and a payload the encoder refuses is not a
+    transient failure: it fails identically on every tick, so the topic never
+    publishes at all. A sensor pipeline reports its readings as numpy - a lidar
+    summary's bounding box is whatever ``ndarray.min(axis=0)`` returned, an IMU's
+    orientation is a ``float32`` - and none of those are JSON values.
+
+    So this coerces the two things that are readings expressed in a foreign
+    numeric type, and nothing else:
+
+    - anything exposing ``tolist()`` (a numpy array or scalar, a torch tensor)
+      becomes the equivalent Python list or number;
+    - lists, tuples and sets are rebuilt with their contents coerced, and
+      mappings with their keys coerced too, because a ``float32`` is no more
+      encodable as a key than as a value.
+
+    Anything else is returned unchanged rather than coerced to a string or
+    dropped. A payload carrying an object that is genuinely not a reading cannot
+    be repaired by guessing, and silently substituting something for it would
+    publish a record that misreports what the sensor said. Handing it to the
+    encoder untouched is what lets the transport report it by name.
+
+    Args:
+        value: A payload, or any value inside one.
+        _depth: Recursion depth, bounded by :data:`_JSONABLE_MAX_DEPTH`.
+
+    Returns:
+        The coerced value; the original object when there is nothing to coerce.
+    """
+    if _depth >= _JSONABLE_MAX_DEPTH:
+        return value
+    if isinstance(value, dict):
+        return {_jsonable(k, _depth + 1): _jsonable(v, _depth + 1) for k, v in value.items()}
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        return tolist()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        # Named as concrete types rather than as ``Sequence``, because a ``str``
+        # is a sequence and rebuilding one would take a name apart into
+        # characters. A tuple has no JSON spelling of its own - ``json.dumps``
+        # already renders one as an array - so rebuilding every sequence as a
+        # list keeps the encoded form identical while coercing the contents.
+        return [_jsonable(item, _depth + 1) for item in value]
+    return value
+
+
+def _coerce_record(payload: dict[str, Any]) -> None:
+    """Coerce every entry of *payload* in place, so its declared type is kept.
+
+    The readers build a payload and return it under a ``dict[str, Any] | None``
+    signature. Rebuilding it through :func:`_jsonable` would return that
+    function's ``Any``, so the coercion is applied entry by entry here instead
+    and each reader keeps returning the object it built.
+
+    Only the top level is rewritten: :func:`_jsonable` never mutates, it returns
+    a new container, so a nested value the robot still owns - ``_read_health``
+    stores the provider's ``_temps`` mapping by reference - is replaced in the
+    payload rather than edited underneath the robot.
+
+    Args:
+        payload: The outgoing record, modified in place.
+    """
+    for key in list(payload):
+        value = _jsonable(payload.pop(key))
+        payload[_jsonable(key)] = value
+
+
 def _quat_wxyz_from_rotmat(mat: Any) -> list[float]:
     """Rotation matrix -> unit quaternion, scalar-first ``[w, x, y, z]``.
 
@@ -166,14 +251,13 @@ class SensorLoopsMixin:
         """Yield once per ``period`` seconds until the host stops.
 
         Every sensor loop in this mixin used to end with
-        ``if self._stop_event.wait(period): break``. Measured (BUGS.md Q69): in a
-        process tree descended from a daemon or launchd agent that wait is
-        inflated by ~145ms, so a 10Hz pose stream ran at ~4Hz and a 1Hz health
-        stream at ~0.87Hz -- while every consumer read the achieved rate as the
+        ``if self._stop_event.wait(period): break``. That wait is a delay where a
+        rate needs a deadline: the time a read spends on a bus or in a driver was
+        added to the period rather than subtracted from it, so the loop ran at
+        ``1 / (period + read)`` while every consumer read the achieved rate as the
         sensor's own limit. :class:`~strands_robots.mesh.pacing.Ticker` paces on
-        the selector timer instead, which carries no such penalty, treats the
-        period as a DEADLINE (so the time a read spends on a bus or a driver is
-        subtracted rather than added) and still notices a stop within 10ms.
+        the selector timer instead, which treats the period as a deadline and
+        still notices a stop within 10ms.
 
         Written as one generator rather than seven conversions on purpose: these
         loops differ only in what they read, so the pacing belongs in a single
@@ -181,18 +265,19 @@ class SensorLoopsMixin:
         even when the body raises -- cannot be got right in six loops and wrong in
         the seventh.
 
+        Args:
+            period: Seconds per tick, forwarded to the ticker (which refuses a
+                non-positive or non-finite value).
+
         Yields:
             Once per tick. The ticker is closed when the caller's ``for`` ends,
             breaks, or unwinds on an exception.
         """
-        ticker = Ticker(period, self._stop_event)
-        try:
+        with Ticker(period, self._stop_event) as ticker:
             while self._running:
                 yield
                 if ticker.wait():
                     break
-        finally:
-            ticker.close()
 
     # Pose
 
@@ -213,6 +298,40 @@ class SensorLoopsMixin:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: pose tick error: %s", self.peer_id, exc)
 
+    def _stamp_local_keys(self, record: dict[str, Any], **local: Any) -> dict[str, Any]:
+        """Re-assert the keys this process decides, after a provider payload merged in.
+
+        A sensor reader seeds a record, merges the robot's provider mapping over
+        it and publishes the result to a topic it builds itself. Merged last, a
+        provider mapping carrying one of those seeded names replaces the local
+        reading -- so a record can be published to ``strands/{peer_id}/...``
+        while naming a different peer inside, and a hand record can be published
+        under one hand's name while naming another.
+
+        The presence path already resolves this collision the other way:
+        :meth:`strands_robots.mesh.session.PeerInfo.to_dict` spreads the peer's
+        own payload *first* so the four keys that process decided win. This is
+        the same precedence for the sensor records, applied after the merge
+        rather than by ordering a single literal, because a reader merges from
+        several provider attributes in turn.
+
+        ``t`` is deliberately not re-asserted. It is a stamp rather than a
+        locally computed duration, and a provider that stamps a reading when it
+        decoded it is reporting something truer than the moment the loop got
+        round to publishing it.
+
+        Args:
+            record: The outgoing record, modified in place.
+            **local: Further keys this reader decided, such as the ``hand`` a
+                hand record is published under.
+
+        Returns:
+            The same ``record``, for use as an expression.
+        """
+        record["peer_id"] = self.peer_id
+        record.update(local)
+        return record
+
     def _read_pose(self) -> dict[str, Any] | None:
         r = self.robot
         pose: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
@@ -223,8 +342,10 @@ class SensorLoopsMixin:
             if pose_data is not None:
                 if isinstance(pose_data, dict):
                     pose.update(pose_data)
+                    self._stamp_local_keys(pose)
                     pose.setdefault("source", "provider")
                     pose.setdefault("frame", "map")
+                    _coerce_record(pose)
                     return pose
                 elif hasattr(pose_data, "shape") and getattr(pose_data, "shape", None) == (4, 4):
                     import numpy as np
@@ -237,6 +358,7 @@ class SensorLoopsMixin:
                     pose["quat"] = _quat_wxyz_from_rotmat(mat)
                     pose["source"] = "provider"
                     pose["frame"] = "map"
+                    _coerce_record(pose)
                     return pose
         except Exception:  # noqa: BLE001
             pass
@@ -246,8 +368,10 @@ class SensorLoopsMixin:
             slam_pose = getattr(r, "_slam_pose", None)
             if slam_pose is not None and isinstance(slam_pose, dict):
                 pose.update(slam_pose)
+                self._stamp_local_keys(pose)
                 pose.setdefault("source", "slam")
                 pose.setdefault("frame", "map")
+                _coerce_record(pose)
                 return pose
         except Exception:  # noqa: BLE001
             pass
@@ -257,8 +381,10 @@ class SensorLoopsMixin:
             odom_pose = getattr(r, "_odom_pose", None)
             if odom_pose is not None and isinstance(odom_pose, dict):
                 pose.update(odom_pose)
+                self._stamp_local_keys(pose)
                 pose.setdefault("source", "odom")
                 pose.setdefault("frame", "odom")
+                _coerce_record(pose)
                 return pose
         except Exception:  # noqa: BLE001
             pass
@@ -347,6 +473,7 @@ class SensorLoopsMixin:
         except (OSError, ValueError):
             pass
 
+        _coerce_record(health)
         return health if has_data else None
 
     # IMU
@@ -376,6 +503,8 @@ class SensorLoopsMixin:
             imu_data = getattr(r, "_imu", None)
             if imu_data is not None and isinstance(imu_data, dict):
                 imu.update(imu_data)
+                self._stamp_local_keys(imu)
+                _coerce_record(imu)
                 return imu
         except Exception:  # noqa: BLE001
             pass
@@ -396,6 +525,7 @@ class SensorLoopsMixin:
                         elif key == "accelerometer":
                             imu["accel"] = val[:3] if len(val) >= 3 else val
                 if "rpy" in imu or "gyro" in imu or "accel" in imu:
+                    _coerce_record(imu)
                     return imu
         except Exception:  # noqa: BLE001
             pass
@@ -428,7 +558,9 @@ class SensorLoopsMixin:
             if odom_data is not None and isinstance(odom_data, dict):
                 odom: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 odom.update(odom_data)
+                self._stamp_local_keys(odom)
                 odom.setdefault("frame", "odom")
+                _coerce_record(odom)
                 return odom
         except Exception:  # noqa: BLE001
             pass
@@ -474,6 +606,8 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 summary: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 summary.update(data)
+                self._stamp_local_keys(summary)
+                _coerce_record(summary)
                 return summary
         except Exception:  # noqa: BLE001
             pass
@@ -486,6 +620,8 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 state: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 state.update(data)
+                self._stamp_local_keys(state)
+                _coerce_record(state)
                 return state
         except Exception:  # noqa: BLE001
             pass
@@ -521,7 +657,9 @@ class SensorLoopsMixin:
                     if isinstance(data, dict):
                         state = {"peer_id": self.peer_id, "hand": name, "t": time.time()}
                         state.update(data)
+                        self._stamp_local_keys(state, hand=name)
                         result[name] = state
+                _coerce_record(result)
                 return result if result else None
         except Exception:  # noqa: BLE001
             pass
@@ -553,6 +691,8 @@ class SensorLoopsMixin:
             if data is not None and isinstance(data, dict):
                 info: dict[str, Any] = {"peer_id": self.peer_id, "t": time.time()}
                 info.update(data)
+                self._stamp_local_keys(info)
+                _coerce_record(info)
                 return info
         except Exception:  # noqa: BLE001
             pass
@@ -566,9 +706,44 @@ class SensorLoopsMixin:
         severity: str = "warning",
         payload: dict[str, Any] | None = None,
     ) -> None:
-        """Publish a safety event to the mesh AND write to audit log."""
+        """Publish a safety event to the mesh AND write to the audit log.
+
+        The payload is coerced once through :func:`_coerce_record` and the same
+        coerced mapping is handed to both halves, which is what makes the two
+        halves report one event instead of two different ones.
+        :func:`strands_robots.mesh.session._report_unencodable_payload` records
+        why that matters: on a payload the JSON encoder refuses, the audit half
+        writes a ``sig="SERIALISE_FAILED"`` poison record and logs at ERROR,
+        while the wire half publishes nothing at all - and the failure is not
+        transient, so no later tick recovers it. A reading expressed in a
+        foreign numeric type is exactly what a safety payload carries (the joint
+        value that tripped a limit, the distance that closed), and every other
+        record this mixin sends to the wire is coerced before it goes.
+
+        Coerced into a copy rather than in place, so the caller keeps the mapping
+        they passed unedited - the same reason :func:`_coerce_record` replaces a
+        nested container instead of editing the provider's own.
+
+        A value that is genuinely not a reading is still passed through
+        untouched rather than stringified, so the transport still reports it by
+        name: repairing an unrepresentable object by guessing would publish a
+        record that misstates what happened.
+
+        Args:
+            event_type: Short, lowercase event identifier (e.g. ``"estop"``).
+            severity: The real severity. It reaches the audit record only - the
+                wire copy is uniformly ``"info"`` (issue #272) - so the audit
+                record is the only surviving copy, and this parameter wins over
+                a ``payload`` field of the same name rather than being replaced
+                by it. A ``payload`` entry named ``severity`` is not a second
+                channel for this argument; it is discarded from the audit copy.
+            payload: Event-specific fields, or ``None`` for an event with none.
+        """
         if not self._running:
             return
+
+        record: dict[str, Any] = dict(payload) if payload is not None else {}
+        _coerce_record(record)
 
         event: dict[str, Any] = {
             "peer_id": self.peer_id,
@@ -578,7 +753,7 @@ class SensorLoopsMixin:
             # content-channel oracle for the rejection reason. The real
             # severity is preserved only in the local audit record below.
             "severity": "info",
-            "payload": payload or {},
+            "payload": record,
             "t": time.time(),
         }
 
@@ -588,7 +763,12 @@ class SensorLoopsMixin:
             log_safety_event(
                 event_type=event_type,
                 peer_id=self.peer_id,
-                payload={"severity": severity, **(payload or {})},
+                # ``severity`` last: the parameter is the documented channel for the
+                # real severity, so an event-specific field that happens to be named
+                # ``severity`` must not replace it. Same precedence as
+                # ``session.PeerInfo.to_dict``, which spreads the peer's own payload
+                # first so the keys that process decided win a name collision.
+                payload={**record, "severity": severity},
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("[mesh] %s: audit log write failed: %s", self.peer_id, exc)

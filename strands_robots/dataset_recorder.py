@@ -35,6 +35,7 @@ import numpy as np
 
 from strands_robots.utils import (
     boolean_flag_error,
+    camera_schema_key,
     lerobot_version,
     name_list_error,
     non_negative_whole_number_error,
@@ -1571,7 +1572,7 @@ class DatasetRecorder:
         # cannot contain "/" (reserved for nested-feature addressing).
         frame_cam_keys = {k for k in list(frame.keys()) if k.startswith("observation.images.")}
         for cam_key in frame_cam_keys:
-            normalized = cam_key.replace("/", "__")
+            normalized = camera_schema_key(cam_key)
             if normalized != cam_key and normalized in declared_cam_keys:
                 frame[normalized] = frame.pop(cam_key)
 

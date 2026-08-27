@@ -131,6 +131,45 @@ directory that is not a repository). So the honest change here is scope, not a
 new heuristic: this mode reports what it measured -- shared paths -- and names
 the composition class it cannot describe. See #2561.
 
+A module a test names is not a coupling it declined to write down
+-----------------------------------------------------------------
+The paragraph above is about a population the grader never names. A test that
+reaches into a module *by name* is the opposite case, and it produced the same
+outcome: ``main`` went red at ``828f80eb`` from #2762 and #2774 with the pairwise
+path intersection not merely unhelpful but ``[]``. #2762 added
+``tests/drivers/test_reachy_transport_guards_are_reachable.py``, whose fixture
+evicts ``"strands_robots.device_connect"`` from ``sys.modules`` and patches
+``"strands_robots.device_connect.reachy_transport.api"`` by string; #2774 rewrote
+``strands_robots/device_connect/__init__.py`` to resolve its names lazily. Six of
+that file's nine tests failed on the composition, five of them standalone, and
+neither branch changed a single path the other did (#2791, #2795).
+
+So there is a second relation here, over the same two path sets and one further
+input: the dotted module names a pull request's *test* diff writes as string
+literals, resolved to the module files they name -- every prefix, because
+importing ``a.b.c`` executes ``a/b/__init__.py``, which is where the #2774 edit
+was. Measured over 2676 co-open pairs drawn from 400 pull requests
+(#2309-#2792):
+
+- the path relation selects 104 pairs;
+- this one selects 25, of which 9 are not already reported;
+- the walked-root widening rejected above selected 11 of 36.
+
+That is 0.34% of the population against the rejected relation's 31%, and unlike
+it these nine name couplings a reader can act on: #2774 + #2762 is the
+composition above; #2767 + #2762 and #2767 + #2750 are three driver branches
+contending for ``strands_robots/drivers/__init__.py``'s registration table, which
+is the file behind the *other* test ``main`` was red in; #2546 + #2545 pairs a
+branch removing an export from ``strands_robots/mesh/__init__.py`` with one whose
+test names that package. The difference from the rejected widening is not the
+threshold but the input: a literal is written by the test author and says exactly
+which module is reached, where a walked root is inferred from a glob and says
+only that some file under it might be.
+
+What stays out of reach is unchanged, and is still the walk. A population
+resolved by ``rglob`` names nothing, so it shares neither a path nor a literal
+with the siblings it grades, and the report says so unconditionally.
+
 Prose is reported but does not block
 ------------------------------------
 An overlap confined to ``.md`` / ``.rst`` / ``.txt`` cannot change what the test
@@ -192,6 +231,7 @@ import dataclasses
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -265,6 +305,36 @@ def changed_paths(start: str, end: str, repo: Path | None = None) -> frozenset[s
     return frozenset(line for line in output.splitlines() if line)
 
 
+def diff_entries(start: str, end: str, repo: Path | None = None) -> tuple[tuple[str, str], ...]:
+    """Return ``(path, patch)`` for every test module changed between two commits.
+
+    The single-branch mode's source for :func:`module_literals`, giving it the
+    same ``(path, patch)`` shape the sweep builds from the API payload, so one
+    extractor serves both. Scoped to :data:`TEST_ROOTS` in the pathspec rather
+    than filtered afterwards: the diff of a whole tree is large and none of the
+    rest is read.
+
+    ``--no-renames`` for the reason :func:`changed_paths` gives, and because a
+    rename reported as a delete plus an add puts the added side's lines in the
+    patch, which is where a literal is.
+    """
+    output = _git("diff", "--no-renames", f"{start}..{end}", "--", *TEST_ROOTS, repo=repo)
+    collected: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in output.splitlines():
+        if line.startswith("diff --git "):
+            # 'diff --git a/<path> b/<path>'. The b-side is the post-image, which
+            # is the side an added line belongs to.
+            _, _, remainder = line.partition(" b/")
+            current = remainder or None
+            if current is not None:
+                collected.setdefault(current, [])
+            continue
+        if current is not None:
+            collected[current].append(line)
+    return tuple((path, "\n".join(body)) for path, body in sorted(collected.items()))
+
+
 def is_prose(path: str) -> bool:
     """Whether a path is documentation, and so reported without blocking."""
     return Path(path).suffix.lower() in PROSE_SUFFIXES
@@ -286,6 +356,96 @@ def partition_overlap(paths: Iterable[str]) -> tuple[tuple[str, ...], tuple[str,
 def overlapping_paths(pr_paths: Iterable[str], base_paths: Iterable[str]) -> tuple[str, ...]:
     """Return the sorted paths edited both by the pull request and by its base."""
     return tuple(sorted(frozenset(pr_paths) & frozenset(base_paths)))
+
+
+#: The import root a dotted module literal must start with to be resolved here.
+#: Repo-specific on purpose, like the incident this file is named for: a relation
+#: that resolved *any* dotted string would report a stdlib or third-party name
+#: that no pull request in this repository can change.
+PACKAGE_ROOT = "strands_robots"
+
+#: Roots whose ``.py`` files are read for module literals. A test is the only
+#: population that reaches into a module by name for a reason the path relation
+#: cannot see -- production code that needs another module imports it, and an
+#: import is a path the diff already carries.
+TEST_ROOTS = ("tests/", "tests_integ/")
+
+#: How many dotted segments a literal must resolve to before its prefix counts.
+#: Two, so ``strands_robots.mesh`` resolves and the bare root does not. Measured
+#: over 2676 co-open pairs from 400 pull requests (#2309-#2792): resolving the
+#: bare root as well adds four findings, every one of them a pair with #2486,
+#: whose edit to ``strands_robots/__init__.py`` every literal in the tree names
+#: by its first segment. That is the shallowest coupling expressible and it is
+#: the one a reader can least act on, so the root is excluded.
+MIN_NAMED_MODULE_SEGMENTS = 2
+
+#: A dotted module path that is the *entire* contents of a string literal. Whole
+#: contents rather than a substring: ``"strands_robots.mesh.core"`` is a name
+#: handed to ``importlib`` or ``monkeypatch.setattr``, while the same characters
+#: inside a sentence are prose about a module, not a reach into one.
+_MODULE_LITERAL = re.compile(
+    r"""(?P<quote>['"])(?P<name>""" + PACKAGE_ROOT + r"""(?:\.[A-Za-z_][A-Za-z0-9_]*)+)(?P=quote)"""
+)
+
+
+def is_test_module(path: str) -> bool:
+    """Whether a path is a test module, and so read for module literals."""
+    return path.endswith(".py") and path.startswith(TEST_ROOTS)
+
+
+def added_lines(patch: str) -> tuple[str, ...]:
+    """Return the added lines of a unified diff, without their ``+`` marker.
+
+    Added lines only, and so the same ``M..head`` framing every other relation
+    here uses: the question is what this pull request introduces, not what the
+    file already said. ``+++`` is a header rather than content, and dropping it
+    also keeps a path out of the literal set.
+    """
+    return tuple(line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
+
+
+def module_literals(entries: Iterable[tuple[str, str]]) -> frozenset[str]:
+    """Return the dotted module names a pull request's test diff names as strings.
+
+    ``entries`` is ``(path, patch)`` for every file the pull request touches, in
+    whichever form the calling mode can reach: the API's ``patch`` field for the
+    sweep, ``git diff`` for the single-branch check. One extractor over one input
+    shape is what keeps the two modes from disagreeing about what a literal is,
+    the same reason both already share the path-set helpers.
+    """
+    found: set[str] = set()
+    for path, patch in entries:
+        if not is_test_module(path):
+            continue
+        for line in added_lines(patch):
+            found.update(match.group("name") for match in _MODULE_LITERAL.finditer(line))
+    return frozenset(found)
+
+
+def named_module_paths(names: Iterable[str]) -> frozenset[str]:
+    """Return the module files a set of dotted literals names, prefixes included.
+
+    Every prefix, because importing ``a.b.c`` executes ``a/b/__init__.py`` as
+    well: the coupling that broke ``main`` at ``828f80eb`` was #2762's test
+    naming ``strands_robots.device_connect.reachy_transport.api`` against #2774's
+    edit to ``strands_robots/device_connect/__init__.py``, a prefix two segments
+    shorter than the literal. Both spellings of a module are emitted -- a
+    dotted name does not say whether it is a module or a package, and a path
+    neither branch touches cannot match anything.
+    """
+    found: set[str] = set()
+    for name in names:
+        segments = name.split(".")
+        for depth in range(MIN_NAMED_MODULE_SEGMENTS, len(segments) + 1):
+            stem = "/".join(segments[:depth])
+            found.add(f"{stem}.py")
+            found.add(f"{stem}/__init__.py")
+    return frozenset(found)
+
+
+def named_module_overlaps(literals: Iterable[str], paths: Iterable[str]) -> tuple[str, ...]:
+    """Return the sorted module files named by ``literals`` and changed in ``paths``."""
+    return tuple(sorted(named_module_paths(literals) & frozenset(paths)))
 
 
 API_ROOT = "https://api.github.com"
@@ -337,6 +497,11 @@ class OpenPullRequest:
     ceilings: the base side has no paginated equivalent and keeps
     ``_COMPARE_FILE_CAP``.
 
+    ``literals`` comes from the ``patch`` field of the same entries ``edits`` is
+    built from, so it costs no additional request: the endpoint already carries
+    it. A pull request touching no test module has an empty set, which excludes
+    it from the named-module relation and from nothing else.
+
     ``landed_since`` is ``None`` when that side could not be read. It is an input
     to the stale-base mode only, so an unreadable one excludes the pull request
     from that mode while leaving it in the pairwise comparison -- which matters:
@@ -350,6 +515,7 @@ class OpenPullRequest:
     merge_base: str
     behind_by: int
     edits: frozenset[str]
+    literals: frozenset[str]
     landed_since: frozenset[str] | None
 
 
@@ -475,8 +641,29 @@ def compare_fork_point(repo: str, base: str, head: str, token: str) -> tuple[str
     return merge_base_sha, behind_by
 
 
-def pull_request_paths(repo: str, number: int, token: str) -> frozenset[str]:
-    """Return the paths pull request ``number`` edits, from the paginated endpoint.
+def literals_from_entries(entries: Iterable[object]) -> frozenset[str]:
+    """Return the module literals a file-list payload's test diffs name.
+
+    Reads ``patch`` beside ``filename`` from the entries ``paths_from_entries``
+    already consumes. An entry carries no ``patch`` when the endpoint suppressed
+    it -- a binary file, or one past the per-file diff cap -- and a missing diff
+    contributes nothing rather than raising: this relation is additive, and a
+    pull request whose patches are unreadable is still fully evaluated by the
+    path relation, so failing here would cost a finding to gain nothing.
+    """
+    pairs: list[tuple[str, str]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("filename")
+        patch = entry.get("patch")
+        if isinstance(name, str) and isinstance(patch, str):
+            pairs.append((name, patch))
+    return module_literals(pairs)
+
+
+def pull_request_file_entries(repo: str, number: int, token: str) -> list[object]:
+    """Return every file-list entry for pull request ``number``, paginated.
 
     Below the compare cap this is the same set ``base...head`` reports -- measured
     on this repository at 7, 10 and 153 files (#1035, #1722, #1667), identical
@@ -487,6 +674,11 @@ def pull_request_paths(repo: str, number: int, token: str) -> frozenset[str]:
     Reaching that ceiling is reported like a capped compare, for the same reason:
     the endpoint stops there without saying so, and a silently short path set is
     how a missed overlap is manufactured.
+
+    Returned whole rather than reduced to paths, because two relations read them:
+    ``paths_from_entries`` takes ``filename``, ``literals_from_entries`` takes
+    ``patch``. One fetch feeding both is what keeps the named-module relation free
+    of additional requests.
     """
     collected: list[object] = []
     for page in range(1, _PULL_FILE_CAP // _PULL_FILE_PAGE + 1):
@@ -495,12 +687,21 @@ def pull_request_paths(repo: str, number: int, token: str) -> frozenset[str]:
         rows = payload if isinstance(payload, list) else []
         collected.extend(rows)
         if len(rows) < _PULL_FILE_PAGE:
-            return paths_from_entries(collected)
+            return collected
     raise ApiError(
         f"{API_ROOT}/repos/{repo}/pulls/{number}/files: the file list reached the "
         + f"{_PULL_FILE_CAP}-entry ceiling, so the path set is incomplete and an overlap "
         + "computed from it could be a false negative"
     )
+
+
+def pull_request_paths(repo: str, number: int, token: str) -> frozenset[str]:
+    """Return the paths pull request ``number`` edits.
+
+    Kept as the path-only accessor over :func:`pull_request_file_entries` so a
+    caller that needs one set is not handed the raw payload.
+    """
+    return paths_from_entries(pull_request_file_entries(repo, number, token))
 
 
 def collect_open_pull_requests(
@@ -521,7 +722,9 @@ def collect_open_pull_requests(
     for number, head_sha in resolve_open_pull_requests(repo, token):
         try:
             fork_point, behind_by = compare_fork_point(repo, base_ref, head_sha, token)
-            edits = pull_request_paths(repo, number, token)
+            entries = pull_request_file_entries(repo, number, token)
+            edits = paths_from_entries(entries)
+            literals = literals_from_entries(entries)
         except lookup_failures as error:
             unevaluated.append((number, f"not evaluated in either mode - own path set unreadable: {error}"))
             continue
@@ -538,6 +741,7 @@ def collect_open_pull_requests(
                 merge_base=fork_point,
                 behind_by=behind_by,
                 edits=edits,
+                literals=literals,
                 landed_since=landed_since,
             )
         )
@@ -554,6 +758,52 @@ def pair_overlaps(
         blocking, prose = partition_overlap(overlapping_paths(left.edits, right.edits))
         if blocking or prose:
             found.append((left.number, right.number, blocking, prose))
+    return found
+
+
+def named_module_pair_overlaps(
+    pull_requests: Iterable[OpenPullRequest],
+) -> list[tuple[int, int, tuple[str, ...]]]:
+    """Return ``(left, right, modules)`` for every pair coupled by a named module.
+
+    The path relation asks whether two branches edited the same file. This one
+    asks whether one branch's test *names* a module the other changed, which is a
+    coupling with no shared path at all: ``main`` went red at ``828f80eb`` from
+    #2762 and #2774, whose changed-path sets intersect to nothing.
+
+    Both directions, because the relation is not symmetric -- one side supplies
+    the literal and the other the edit -- and a pair is a finding whichever way
+    round that falls.
+    """
+    ordered = sorted(pull_requests, key=lambda row: row.number)
+    found: list[tuple[int, int, tuple[str, ...]]] = []
+    for left, right in itertools.combinations(ordered, 2):
+        modules = sorted(
+            frozenset(named_module_overlaps(left.literals, right.edits))
+            | frozenset(named_module_overlaps(right.literals, left.edits))
+        )
+        if modules:
+            found.append((left.number, right.number, tuple(modules)))
+    return found
+
+
+def named_module_stale_overlaps(
+    pull_requests: Iterable[OpenPullRequest],
+) -> list[tuple[int, int, tuple[str, ...]]]:
+    """Return ``(number, behind_by, modules)`` for every named module the base moved.
+
+    The named-module relation with the base branch substituted for a sibling's
+    head, mirroring :func:`stale_base_overlaps`. Only one direction is available
+    and only one is wanted: the base's own tests are already in the tree the
+    branch will be merged into.
+    """
+    found: list[tuple[int, int, tuple[str, ...]]] = []
+    for row in sorted(pull_requests, key=lambda row: row.number):
+        if row.landed_since is None or row.behind_by == 0:
+            continue
+        modules = named_module_overlaps(row.literals, row.landed_since)
+        if modules:
+            found.append((row.number, row.behind_by, modules))
     return found
 
 
@@ -584,6 +834,8 @@ def render_sweep(
     pull_requests: Sequence[OpenPullRequest],
     pairs: Sequence[tuple[int, int, tuple[str, ...], tuple[str, ...]]],
     stale: Sequence[tuple[int, int, tuple[str, ...], tuple[str, ...]]],
+    named_pairs: Sequence[tuple[int, int, tuple[str, ...]]],
+    named_stale: Sequence[tuple[int, int, tuple[str, ...]]],
     unevaluated: Sequence[tuple[int, str]],
 ) -> str:
     """Render the sweep report.
@@ -605,10 +857,11 @@ def render_sweep(
     prose_pairs = [row for row in pairs if not row[2]]
     blocking_stale = [row for row in stale if row[2]]
 
-    if not blocking_pairs and not blocking_stale:
+    if not blocking_pairs and not blocking_stale and not named_pairs and not named_stale:
         clean = (
-            "No pair in the open set shares a changed path, and no pull request shares one "
-            + "with what has landed on its base. Nothing here needs a merge-order decision."
+            "No pair in the open set shares a changed path, no pull request shares one "
+            + "with what has landed on its base, and no test names a module a sibling or the "
+            + "base changed. Nothing here needs a merge-order decision."
         )
         lines.append(clean)
         lines.append("")
@@ -646,6 +899,42 @@ def render_sweep(
             rendered = ", ".join(f"`{path}`" for path in paths)
             lines.append(f"| #{number} | {behind_by} | {rendered} |")
         lines.append("")
+    if named_pairs:
+        named_heading = f"### Pairs coupled by a module one of them names ({len(named_pairs)})"
+        named_why = (
+            "Neither pull request edits a path the other does, so the section above cannot "
+            + "report them. One of them has a test that reaches into the module below by name - "
+            + "through `importlib`, a `sys.modules` key or a string `monkeypatch` target - and "
+            + "the other changed that module's file. The name is the coupling, and a name is not "
+            + "a path. This is the relation `main` needed at `828f80eb`."
+        )
+        lines.append(named_heading)
+        lines.append("")
+        lines.append(named_why)
+        lines.append("")
+        lines.append("| pull requests | module(s) one names and the other changed |")
+        lines.append("|---|---|")
+        for left, right, modules in named_pairs:
+            rendered = ", ".join(f"`{module}`" for module in modules)
+            lines.append(f"| #{left} + #{right} | {rendered} |")
+        lines.append("")
+    if named_stale:
+        named_stale_heading = f"### Pull requests whose base changed a module their tests name ({len(named_stale)})"
+        named_stale_why = (
+            "Same relation, with the base branch in place of a sibling. The branch edits none "
+            + "of these files, so no path-based check reports it, and its own tests reach into "
+            + "them by name."
+        )
+        lines.append(named_stale_heading)
+        lines.append("")
+        lines.append(named_stale_why)
+        lines.append("")
+        lines.append(f"| pull request | behind `{base_ref}` by | module(s) its tests name |")
+        lines.append("|---|---|---|")
+        for number, behind_by, modules in named_stale:
+            rendered = ", ".join(f"`{module}`" for module in modules)
+            lines.append(f"| #{number} | {behind_by} | {rendered} |")
+        lines.append("")
     if prose_pairs:
         prose_heading = (
             f"Also sharing a path, not reported ({len(prose_pairs)} prose-only pair(s)) - prose "
@@ -680,9 +969,10 @@ def render_sweep(
     # populated one. A reader who sees no rows is entitled to know which
     # compositions the relations above were never able to describe.
     limits = (
-        "**What no relation above covers:** each one intersects changed *paths*. A test that "
-        + "resolves its population from a filesystem walk grades files it never names, so it "
-        + "shares no path with the siblings it grades and no row above can describe that "
+        "**What no relation above covers:** a test that resolves its population from a "
+        + "filesystem walk grades files it never names. The named-module relation reaches a "
+        + "coupling a test writes down; a walk writes nothing down, so it still shares no path "
+        + "and no name with the siblings it grades, and no row above can describe that "
         + "composition. Widening the path set to the walked root was measured and rejected as "
         + "unselective; only composing the branches and running the grader settles those, and "
         + "that needs a checkout this mode does not have. See #2561."
@@ -712,17 +1002,25 @@ def _run_sweep(repo: str, base_ref: str, token: str) -> int:
 
     pairs = pair_overlaps(pull_requests)
     stale = stale_base_overlaps(pull_requests)
+    named_pairs = named_module_pair_overlaps(pull_requests)
+    named_stale = named_module_stale_overlaps(pull_requests)
     _emit(
         render_sweep(
             repo=repo,
             base_ref=base_ref,
             pull_requests=pull_requests,
             pairs=pairs,
+            named_pairs=named_pairs,
+            named_stale=named_stale,
             stale=stale,
             unevaluated=unevaluated,
         )
     )
-    return 1 if any(row[2] for row in pairs) or any(row[2] for row in stale) else 0
+    # A named-module finding blocks on the same footing as a shared path: both say
+    # the composition has never been compiled, and this one resolves only to '.py'
+    # module files, so there is no prose half to suppress.
+    blocking = any(row[2] for row in pairs) or any(row[2] for row in stale) or bool(named_pairs) or bool(named_stale)
+    return 1 if blocking else 0
 
 
 def render_report(
@@ -731,6 +1029,7 @@ def render_report(
     merge_base_sha: str,
     blocking: Sequence[str],
     prose: Sequence[str],
+    named: Sequence[str],
     base_change_count: int,
 ) -> str:
     """Render the Markdown report written to stdout and the CI job summary.
@@ -744,7 +1043,7 @@ def render_report(
     """
     lines = ["## Merge-base overlap check", ""]
 
-    if not blocking and not prose:
+    if not blocking and not prose and not named:
         no_overlap = (
             f"No overlap. This branch edits nothing that `{base_ref}` has changed since "
             + f"the two diverged at `{merge_base_sha[:8]}` "
@@ -780,8 +1079,34 @@ def render_report(
         lines.append("")
         lines.append(remedy)
 
-    if prose:
+    if named:
         if blocking:
+            lines.append("")
+        named_heading = (
+            f"This branch's tests name **{len(named)}** module(s) that `{base_ref}` has "
+            + f"changed since the two diverged at `{merge_base_sha[:8]}`, and that this branch "
+            + "does not edit:"
+        )
+        named_why = (
+            "A path-based comparison cannot see this: the coupling is the name, written into a "
+            + "test as an `importlib` argument, a `sys.modules` key or a string `monkeypatch` "
+            + "target. The checks on this branch resolved those names against the older module."
+        )
+        named_remedy = (
+            f"**To clear this:** merge `{base_ref}` into this branch and push, having first run "
+            + "the tests that name the modules above. This is the relation `main` needed at "
+            + "`828f80eb`, where two branches with no shared path composed red."
+        )
+        lines.append(named_heading)
+        lines.append("")
+        lines += [f"- `{module}`" for module in named]
+        lines.append("")
+        lines.append(named_why)
+        lines.append("")
+        lines.append(named_remedy)
+
+    if prose:
+        if blocking or named:
             lines.append("")
         prose_heading = (
             f"Also overlapping, not blocking ({len(prose)} documentation path(s)) - "
@@ -855,6 +1180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         fork_point = merge_base(base, head, repo=repo)
         pr_paths = changed_paths(fork_point, head, repo=repo)
         base_paths = changed_paths(fork_point, base, repo=repo)
+        literals = module_literals(diff_entries(fork_point, head, repo=repo))
     except GitError as error:
         # Loud and non-zero: a check that cannot compute its answer must not
         # report the reassuring one.
@@ -862,11 +1188,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     blocking, prose = partition_overlap(overlapping_paths(pr_paths, base_paths))
+    # Reported separately from 'blocking' rather than folded into it: the two are
+    # different relations with different remedial reading, and a module named but
+    # not edited is not something the branch "also changed".
+    named = tuple(module for module in named_module_overlaps(literals, base_paths) if module not in blocking)
     report = render_report(
         base_ref=args.base_ref,
         merge_base_sha=fork_point,
         blocking=blocking,
         prose=prose,
+        named=named,
         base_change_count=len(base_paths),
     )
 
@@ -883,8 +1214,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             + "branch diverged; the checks on this branch never compiled the two together."
         )
         print(annotation)
+    for module in named:
+        annotation = (
+            f"::error file={module}::{module} was changed on {args.base_ref} after this branch "
+            + "diverged, and a test on this branch names it as a string; the checks here "
+            + "resolved that name against the older module."
+        )
+        print(annotation)
 
-    return 1 if blocking else 0
+    return 1 if blocking or named else 0
 
 
 if __name__ == "__main__":

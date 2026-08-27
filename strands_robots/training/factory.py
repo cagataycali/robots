@@ -107,10 +107,17 @@ def import_trainer_class(provider: str) -> type[Trainer]:
         The :class:`Trainer` subclass, not an instance.
 
     Raises:
-        ValueError: If no trainer can be resolved for the provider. The message
+        ValueError: If no trainer can be resolved for the provider - not in
+            the runtime registry, no ``trainer`` block in policies.json and no
+            ``strands_robots.training.<provider>`` module exists. The message
             names the providers this resolver can serve, which is the same set
             :func:`list_trainers` advertises.
-        ImportError: If the declared module can't be imported.
+        ImportError: If a module that DOES exist can't be imported: the
+            declared policies.json module, or the auto-discovered provider
+            module whose own dependency is missing. "Your dependency is
+            missing" is a different problem than "no such trainer", so it
+            surfaces instead of collapsing into the ValueError's "available
+            trainers" list and sending the caller to the wrong one.
     """
     # 1. Runtime registry (register_trainer), alias first.
     resolved = _runtime_aliases.get(provider, provider)
@@ -125,8 +132,18 @@ def import_trainer_class(provider: str) -> type[Trainer]:
         return cls
 
     # Auto-discovery fallback: strands_robots.training.<provider>
+    module_name = f"strands_robots.training.{provider}"
     try:
-        mod = importlib.import_module(f"strands_robots.training.{provider}")
+        mod = importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            # The provider module exists but something IT imports is absent -
+            # a missing backend dependency, not an unregistered provider.
+            # Re-raise so the caller is sent to the right problem.
+            raise
+        # No strands_robots.training.<provider> module; fall through to the
+        # ValueError below so the caller gets the full "available trainers" list.
+    else:
         class_name = f"{provider.capitalize()}Trainer"
         if hasattr(mod, class_name):
             cls = getattr(mod, class_name)
@@ -135,10 +152,6 @@ def import_trainer_class(provider: str) -> type[Trainer]:
             attr = getattr(mod, attr_name)
             if isinstance(attr, type) and issubclass(attr, Trainer) and attr is not Trainer:
                 return attr
-    except ImportError:
-        # No strands_robots.training.<provider> module; fall through to the
-        # ValueError below so the caller gets the full "available trainers" list.
-        pass
 
     raise ValueError(f"No trainer registered for provider '{provider}'. Available trainers: {list_trainers()}")
 

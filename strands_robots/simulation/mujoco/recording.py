@@ -15,10 +15,11 @@ from strands_robots.simulation.models import registry_entry
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
+    camera_schema_key_collision_error,
     dataset_recording_option_error,
     dataset_recording_posture_error,
 )
-from strands_robots.utils import name_list_error
+from strands_robots.utils import camera_schema_key, name_list_error
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,17 @@ class RecordingMixin(DatasetRecordingMixin):
         whose open-loop action chunk drains across many steps from a single
         ``get_actions`` call - the recorded frames advance with the robot
         rather than freezing on the chunk-start observation.
+
+        Multi-robot schema: the dataset declares state and action columns for
+        EVERY robot in the scene, prefixed with the robot's name
+        (``alice__shoulder_pan``). A single-policy rollout drives one of them,
+        and the state columns of the others are filled from the engine at each
+        step - so a declared ``observation.state`` column is a measurement,
+        never a zero pose the robot is not in
+        (:func:`~strands_robots.simulation.recording.undriven_robot_state`).
+        Their *action* columns are a separate question: no command was issued
+        to a robot this rollout does not drive, so no value is truthful, and
+        they are unchanged.
 
         Args:
             repo_id: HuggingFace dataset id (``owner/name``) or a local path. The
@@ -150,7 +162,11 @@ class RecordingMixin(DatasetRecordingMixin):
                 ``cameras=["camera1", "camera2", "camera3"]`` for a 3-camera
                 SmolVLA dataset) and keep the stray ``default`` view out of the
                 schema. Names may be raw (``arm0/wrist_cam``) or schema-safe
-                (``arm0__wrist_cam``); an unknown name fails loudly.
+                (``arm0__wrist_cam``); an unknown name fails loudly. Two scene cameras whose
+                names collapse onto one dataset column (``arm0/wrist`` and
+                ``arm0__wrist``) are refused before any dataset is created,
+                because the column would be named after whichever of them lost
+                it.
 
         Raises:
             Friendly error when ``lerobot`` is not installed, directing the
@@ -226,6 +242,26 @@ class RecordingMixin(DatasetRecordingMixin):
                     }
                 ],
             }
+
+        # A dataset column is named by camera_schema_key, which collapses a
+        # camera's "/" namespace separator to "__" because a LeRobot feature name
+        # cannot contain "/". That mapping is not injective, so two scene cameras
+        # can name one column - and the three ways of asking then disagree: every
+        # camera is refused downstream as a repeated camera_keys entry, both
+        # spellings requested silently drops one, and one spelling succeeds with
+        # the column named after whichever camera lost. The ambiguity belongs to
+        # the scene rather than to one way of recording it, so it is refused once
+        # here. Reading the scene's cameras is an engine call, so this sits after
+        # the dataset-stack probe (whose block is reachable on an install with no
+        # engine at all, and diagnoses the missing extra without one) and ahead of
+        # any session state or dataset target - a refusal leaves nothing set and
+        # nothing on disk.
+        _mj = _ensure_mujoco()
+        if error := camera_schema_key_collision_error(
+            "start_recording",
+            [_mj.mj_id2name(self._world._model, _mj.mjtObj.mjOBJ_CAMERA, _i) for _i in range(self._world._model.ncam)],
+        ):
+            return error
 
         self._world._backend_state["recording"] = True
         self._world._backend_state["trajectory"] = []
@@ -340,7 +376,7 @@ class RecordingMixin(DatasetRecordingMixin):
                 # nested-feature addressing). When a robot injects a
                 # namespaced camera (e.g. ``arm0/wrist_cam``), collapse
                 # the separator to ``__`` for the dataset schema.
-                safe_name = cam_name.replace("/", "__")
+                safe_name = camera_schema_key(cam_name)
                 raw_to_safe[cam_name] = safe_name
                 camera_keys.append(safe_name)
                 cam_info = registry_entry(self._world.cameras, cam_name) or registry_entry(

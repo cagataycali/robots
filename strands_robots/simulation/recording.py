@@ -27,12 +27,19 @@ enforceable protocol.
 """
 
 import logging
+import math
+import numbers
 import shutil
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import boolean_flag_error, positive_whole_number_error
+from strands_robots.utils import (
+    boolean_flag_error,
+    camera_schema_key,
+    is_boolean,
+    positive_whole_number_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +126,77 @@ def dataset_recording_posture_error(method: str, param: str, value: Any) -> dict
     if text := boolean_flag_error(value, param, method):
         return {"status": "error", "content": [{"text": text}]}
     return None
+
+
+def camera_schema_key_collision_error(method: str, camera_names: Iterable[str]) -> dict[str, Any] | None:
+    """Error envelope when two scene cameras share one dataset feature name.
+
+    A dataset column is named by :func:`~strands_robots.utils.camera_schema_key`,
+    which collapses a camera's ``/`` namespace separator to ``__``. That mapping
+    is not injective, so ``arm0/wrist`` and ``arm0__wrist`` are two cameras in
+    the scene and one column in the dataset. Nothing downstream can tell which
+    of them a column was declared for, and the three ways of asking each fail
+    differently:
+
+    * recording every camera declares the key twice, which
+      :meth:`~strands_robots.dataset_recorder.DatasetRecorder.create` refuses as
+      a repeated ``camera_keys`` entry - a true refusal, but it reads as the
+      caller having named one camera twice rather than as two cameras sharing a
+      name;
+    * ``cameras=`` naming both drops one without saying so (the requested names
+      are distinct, so they pass :func:`~strands_robots.utils.name_list_error`,
+      and only their keys collide) and the surviving column carries the other
+      camera's frames. When the two render at different sizes the mismatch
+      surfaces as the FIRST ``add_frame`` being rejected, after
+      ``overwrite=True`` has already wiped the dataset being replaced;
+    * ``cameras=`` naming one of them succeeds, but which camera lands under the
+      key depends on the spelling used - the same
+      ``observation.images.arm0__wrist`` column is the robot's wrist view when
+      asked for as ``arm0/wrist`` and the other camera when asked for as
+      ``arm0__wrist``.
+
+    So the ambiguity belongs to the scene, not to one way of recording it, and
+    it is refused once here - before any dataset is created, resumed or wiped -
+    rather than in each of the three. This is the same rule
+    :func:`~strands_robots.utils.name_list_error` applies to a literally
+    repeated name, read through the collapse: two entries naming one column
+    declare fewer columns than were asked for.
+
+    Args:
+        method: The public method name, used to prefix the message.
+        camera_names: The scene's camera names, in the backend's own order.
+            Blank names are ignored - a backend skips an unnamed camera when it
+            declares the schema, so they are not columns and cannot collide.
+
+    Returns:
+        A tool-style error envelope, or ``None`` when every name has a distinct
+        key.
+    """
+    groups: dict[str, list[str]] = {}
+    for name in camera_names:
+        if not name:
+            continue
+        groups.setdefault(camera_schema_key(name), []).append(name)
+    collisions = {key: members for key, members in sorted(groups.items()) if len(members) > 1}
+    if not collisions:
+        return None
+    described = "; ".join(f"{key!r} <- {sorted(members)}" for key, members in collisions.items())
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{method}: these scene cameras do not have distinct dataset feature names: "
+                    f"{described}. A LeRobot feature name cannot contain '/' (it addresses nested "
+                    "features), so a camera's namespace separator is recorded as '__' - which makes "
+                    "these names one column. Whichever camera won it, the column would be named "
+                    "after the other one, and if they render at different sizes the first frame is "
+                    "rejected and the episode is lost. Rename one of them (add_camera(name=...)) so "
+                    "the names still differ once '/' becomes '__', then record again."
+                )
+            }
+        ],
+    }
 
 
 def recorder_dataset_fps(recorder: Any) -> int | None:
@@ -370,6 +448,97 @@ def rollout_rate_mismatch_error(method: str, fps: Any, rates: Mapping[str, float
     return {"status": "error", "content": [{"text": reason}]}
 
 
+def requested_rate_mismatch_reason(method: str, fps: Any, control_frequency: Any, fps_param: str = "fps") -> str | None:
+    """Explain why one call's own two rates cannot describe the same episode.
+
+    The third ordering of the disagreement its two siblings cover, and the only
+    one in which neither rate can be read off live state:
+    :func:`dataset_rate_mismatch_reason` reads the frame rate from an open
+    recorder, and :func:`rollout_rate_mismatch_reason` reads the capture rate
+    from a rollout already in flight, so neither can be asked before either
+    exists. A caller that supplies *both* rates in one call and opens the
+    recording itself has them in hand while nothing is open yet - and must be
+    answered then, because that call is also the one that destroys the target.
+
+    Its caller is :func:`~strands_robots.tools.run_policy.run_policy`, which
+    starts its recording with ``overwrite=True`` before the episode loop. Each
+    rate there is already checked on its own domain - ``control_frequency`` by
+    the tool's own guard, ``dataset_fps`` by ``start_recording`` ahead of the
+    target - but their *equality* was left to the rollout entry point, which the
+    tool reaches only inside the loop. Measured against an existing dataset of
+    one episode / five frames, ``dataset_fps=30`` with
+    ``control_frequency=50.0`` wiped it to ``total_episodes=0, total_frames=0``
+    and then reported ``0/2 episodes ok`` - the caller lost the dataset and
+    recorded nothing, for a pair of arguments neither of which was wrong on its
+    own.
+
+    No envelope twin is shipped alongside this reason (unlike its two siblings):
+    the one caller reports through a structured-error helper of its own, so an
+    envelope form here would be dead code.
+
+    Args:
+        method: Public surface name, used to prefix the error message.
+        fps: Caller-supplied dataset frame rate. A value outside the writable
+            domain returns ``None`` here so it is reported as the parameter
+            error it is by :func:`dataset_recording_option_error`, exactly as in
+            :func:`rollout_rate_mismatch_reason`.
+        control_frequency: Rate the rollout will capture frames at. A value
+            outside the positive-finite domain likewise returns ``None``, left
+            to the caller's own ``control_frequency`` guard. Both rates are
+            classified on ``numbers.Real``, the same predicate those two domains
+            use, so every spelling they accept is judged here too.
+        fps_param: How the caller spells the frame-rate argument, so the advised
+            remedy is one the caller can type. Defaults to ``fps``, the name
+            every backend's ``start_recording`` uses.
+
+    Returns:
+        The reason text naming both rates, the distortion and the remedies, or
+        ``None`` when the rates agree or either is outside its own domain.
+    """
+    # Unlike its two siblings, this guard is asked BEFORE either rate has been
+    # through its own domain - that is the point of it - so it classifies raw
+    # caller input, and it must accept every spelling those domains accept or it
+    # silently declines to judge a pair they will both honor. Hence
+    # ``numbers.Real``, exactly as ``positive_whole_number_error`` and
+    # ``positive_finite_number_error`` use: ``numpy.int64`` and ``numpy.float32``
+    # are neither ``int`` nor ``float`` subclasses, so an ``isinstance(int |
+    # float)`` narrowing here would have passed a colliding pair read out of a
+    # config straight through. The boolean question goes to the shared predicate
+    # (``bool`` IS a ``numbers.Real``, so it would otherwise be compared as
+    # 1 Hz).
+    if is_boolean(fps) or not isinstance(fps, numbers.Real):
+        return None
+    if is_boolean(control_frequency) or not isinstance(control_frequency, numbers.Real):
+        return None
+    try:
+        declared = float(fps)
+        rate = float(control_frequency)
+    except (OverflowError, TypeError, ValueError):
+        # An ``int`` beyond the float64 range cannot be compared with anything;
+        # its own domain refuses it with a reason of its own.
+        return None
+
+    if declared <= 0 or not declared.is_integer():
+        return None
+    fps_int = int(declared)
+    if rate <= 0 or not math.isfinite(rate):
+        return None
+
+    if abs(rate - fps_int) < 1e-9:
+        return None
+
+    remedy = f"pass control_frequency={fps_int}"
+    if rate.is_integer():
+        # ``fps`` must be a positive whole number, so only an integral capture
+        # rate is one the recording could be opened at instead.
+        remedy += f", or record at the rollout's rate ({fps_param}={int(rate)})"
+    return (
+        f"{method}: this call would open a recording declaring {fps_int} fps for a rollout "
+        f"capturing at control_frequency={rate:g} Hz. {rate_mismatch_explanation(fps_int, rate)} "
+        f"Align the two rates: {remedy}."
+    )
+
+
 def _resume_schema_error(diffs: list[str]) -> str:
     """Format the resume-refusal message from the collected schema differences.
 
@@ -384,6 +553,93 @@ def _resume_schema_error(diffs: list[str]) -> str:
         "Use overwrite=True for a fresh dataset, or restore the original scene. Differences:\n  - "
         + "\n  - ".join(diffs)
     )
+
+
+def undriven_robot_state(engine: Any, driven_robot: str, robot_names: Iterable[str]) -> dict[str, Any]:
+    """Read the scalar state of every robot a recorded frame does not drive.
+
+    ``start_recording`` declares ``observation.state`` over EVERY robot in the
+    scene, prefixing each column with its robot's name
+    (``alice__shoulder_pan``). A single-policy rollout's recording hook supplies
+    only the driven robot's observation, so every column belonging to another
+    robot is absent from the frame and
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame` writes it
+    as ``0.0`` - under ``status="success"``, for every frame of the episode.
+
+    That zero is not a missing value the consumer can detect. It is recorded in
+    the same column, with the same dtype, as a measurement: a policy trained on
+    the dataset reads ``observation.state`` and learns the other robot is
+    permanently at its zero pose, and anything replaying or analysing the
+    episode reads the same. The disagreement is unbounded - the undriven robot
+    keeps whatever pose it was placed in, and contact with the driven robot can
+    move it further during the episode.
+
+    Unlike the *action* columns of the same frame, there is nothing to decide
+    here. An action column asks what command was issued, and no command was
+    issued to a robot this rollout does not drive (#1715 works through why no
+    substitute is truthful). A state column asks where the robot is, the robot
+    is in the scene, and its joint positions are readable at that instant from
+    the same engine, at the same step, through the same
+    :meth:`~strands_robots.simulation.base.SimEngine.get_observation` the driven
+    robot's own columns come from. So the undriven columns are filled with the
+    measurement rather than left to the ``0.0`` fill.
+
+    This is the behaviour ``run_multi_policy``'s synchronized loop already has -
+    it builds one merged observation per step covering every robot it drives and
+    hands that to ``add_frame``. This helper is that same guarantee for the
+    three single-policy hooks, so which rollout entry point recorded an episode
+    stops changing whether its state columns are measurements.
+
+    Images are deliberately not collected. A camera array is keyed by the
+    camera's own name rather than a robot's, and the recording hooks scope
+    cameras through ``start_recording(cameras=...)``, so an undriven robot
+    contributes no image column. Only scalars are returned, prefixed exactly as
+    the hooks prefix the driven robot's.
+
+    Args:
+        engine: The simulation engine, read through its public
+            ``get_observation(robot_name=..., skip_images=True)``.
+        driven_robot: The robot this frame drives; its columns are supplied by
+            the hook itself and are not re-read here.
+        robot_names: Every robot the dataset schema declares columns for.
+
+    Returns:
+        ``{"<robot>__<joint>": value}`` for each scalar observation of each
+        robot other than ``driven_robot``. Empty when the scene holds only the
+        driven robot, which is the single-robot case where the schema is not
+        prefixed at all.
+    """
+    merged: dict[str, Any] = {}
+    for name in robot_names:
+        if name == driven_robot:
+            continue
+        try:
+            observation = engine.get_observation(robot_name=name, skip_images=True)
+        except (AttributeError, KeyError, RuntimeError, ValueError):
+            # ``engine`` is duck-typed - every backend's own engine reaches here,
+            # and a state read it cannot serve must degrade to the recorder's
+            # fill rather than end the episode. The driven robot's columns are
+            # the rollout's primary product: losing a whole episode of them to a
+            # bystander's read failure is strictly worse than the fill this
+            # helper exists to avoid, so the failure is reported and the frame
+            # still lands. ``AttributeError`` is in the set deliberately - an
+            # engine that has not built (or has torn down) the state buffers a
+            # per-robot read needs surfaces exactly that way.
+            logger.warning(
+                "recording: could not read state for robot %r this step; its declared "
+                "observation.state columns fall back to the recorder's fill for this frame.",
+                name,
+            )
+            continue
+        if not isinstance(observation, Mapping):
+            continue
+        for key, value in observation.items():
+            # Mirror the hooks' own split: a non-scalar value is a camera array,
+            # which is not a per-robot column.
+            if hasattr(value, "shape"):
+                continue
+            merged[f"{name}__{key}"] = value
+    return merged
 
 
 class DatasetRecordingMixin:
@@ -650,11 +906,14 @@ class DatasetRecordingMixin:
                     {
                         "text": (
                             "stop_recording captured no frames - dataset would be empty "
-                            "(0 frames). Frames are written only by run_policy(...) while "
-                            "recording is active (its on_frame hook calls add_frame). "
-                            "eval_policy / evaluate / replay_episode and bare step loops do "
-                            "NOT feed the recorder. To record a dataset: start_recording -> "
-                            "run_policy (once per episode) -> stop_recording."
+                            "(0 frames). run_policy(...) feeds the recorder on its own: it "
+                            "installs the per-step on_frame hook that calls add_frame. "
+                            "eval_policy / evaluate_benchmark take an on_frame hook, so they "
+                            "record only when the caller passes one that calls add_frame. "
+                            "replay_episode, teleoperate and bare step loops have no such "
+                            "hook and cannot feed the recorder. To record a dataset: "
+                            "start_recording -> run_policy (once per episode) -> "
+                            "stop_recording."
                         )
                     }
                 ],

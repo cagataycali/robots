@@ -104,9 +104,16 @@ def encode_clip(
             but the domain applies to both containers so that one call does not
             become valid by changing the output extension. A NumPy real is
             accepted and converted for the writer.
-        macro_block_size: libx264 macro-block rounding; ``1`` preserves the
-            exact frame size (the recorders' convention), ``8``/``16`` lets
-            ffmpeg pad to codec-friendly sizes. Ignored for GIF.
+        macro_block_size: libx264 macro-block rounding, a positive whole number
+            of pixels on the same shared media domain as ``fps`` (see
+            :func:`~strands_robots.utils.positive_whole_number_error`); ``1``
+            preserves the exact frame size (the recorders' convention),
+            ``8``/``16`` lets ffmpeg pad to codec-friendly sizes. Read only by
+            the MP4 writer, since GIF has no macro blocks, but the domain
+            applies to both containers for the same reason ``quality``'s does.
+            A NumPy integer or an integral float is accepted and converted for
+            the writer, whose own ``isinstance(..., int)`` gate would otherwise
+            refuse a block size this function has already accepted.
 
     Returns:
         The output path.
@@ -114,10 +121,11 @@ def encode_clip(
     Raises:
         ImportError: if ``imageio`` (and, for MP4, ``imageio-ffmpeg``) is not
             installed.
-        ValueError: if ``frames`` is empty, if ``fps`` is not a positive whole
-            number, or if ``quality`` is not a finite number in ``[1, 10]`` --
-            each would silently produce a corrupt, wrongly-timed or
-            wrongly-encoded artifact rather than the requested clip.
+        ValueError: if ``frames`` is empty, if ``fps`` or ``macro_block_size``
+            is not a positive whole number, or if ``quality`` is not a finite
+            number in ``[1, 10]`` -- each would silently produce a corrupt,
+            wrongly-timed or wrongly-encoded artifact rather than the requested
+            clip.
         RuntimeError: if the encoder wrote no clip despite accepting the
             frames (for example a ``macro_block_size`` that rounds the frame
             size to dimensions libx264 refuses), so the returned path always
@@ -128,6 +136,14 @@ def encode_clip(
     if text := positive_whole_number_error(fps, "fps", "encode_clip"):
         raise ValueError(text)
     if text := _clip_quality_error(quality):
+        raise ValueError(text)
+    # The rounding step is the third encoder knob and shares ``fps``'s domain:
+    # a block size of ``0`` or ``-4`` has no rounding to apply, and ``ffmpeg``
+    # is only asked to pad by a whole number of pixels. Guarded here rather
+    # than left to the writer, which enforces it with a bare
+    # ``assert isinstance(macro_block_size, int)`` that ``python -O`` strips -
+    # the same reason ``quality`` is not left to the writer's own assert.
+    if text := positive_whole_number_error(macro_block_size, "macro_block_size", "encode_clip"):
         raise ValueError(text)
     require_optional(
         "imageio",
@@ -151,7 +167,17 @@ def encode_clip(
         # writer gates the knob on ``isinstance(quality, (float, int))``, which
         # a NumPy scalar such as ``np.int64(8)`` or ``np.float32(8.0)`` fails
         # even though it names a quality this function has already accepted.
-        writer = imageio.get_writer(str(out), fps=int(fps), quality=float(quality), macro_block_size=macro_block_size)
+        # ``int(macro_block_size)`` is load-bearing for the same reason as the
+        # ``float(quality)`` beside it: the writer gates the knob on
+        # ``isinstance(macro_block_size, int)``, which a NumPy ``np.int64(8)``
+        # or an integral ``8.0`` fails even though each names a block size this
+        # function has already accepted.
+        writer = imageio.get_writer(
+            str(out),
+            fps=int(fps),
+            quality=float(quality),
+            macro_block_size=int(macro_block_size),
+        )
         try:
             for frame in frame_list:
                 writer.append_data(frame)

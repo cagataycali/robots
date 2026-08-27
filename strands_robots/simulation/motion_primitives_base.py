@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 
 from strands_robots.registry.robots import get_robot
-from strands_robots.utils import coerce_pose_vector
+from strands_robots.utils import coerce_orientation_quaternion, coerce_pose_vector
 
 # Name hints (lowercased substring match on the gripper DOF's name) used to
 # resolve the gripper when the robot registry carries no gripper metadata for
@@ -178,19 +178,9 @@ class MotionPrimitivesCore:
         if pos_err is not None:
             return None, None, 0, None, _err(pos_err)
         assert position is not None  # non-None input yields a non-None result
-        orientation, quat_err = coerce_pose_vector("move_to", "orientation", orientation, 4)
+        orientation, quat_err = coerce_orientation_quaternion("move_to", "orientation", orientation)
         if quat_err is not None:
             return None, None, 0, None, _err(quat_err)
-        if orientation is not None:
-            quat_norm = float(np.linalg.norm(np.asarray(orientation, dtype=np.float64)))
-            if quat_norm < 1e-8:
-                return (
-                    None,
-                    None,
-                    0,
-                    None,
-                    _err("move_to: 'orientation' quaternion has ~zero norm; pass a valid [w, x, y, z]."),
-                )
         if not _is_finite_real(tol) or float(tol) <= 0.0:
             return None, None, 0, None, _err(f"move_to: 'tol' must be a positive number of meters, got {tol!r}.")
         if orientation_tol is not None and orientation is None:

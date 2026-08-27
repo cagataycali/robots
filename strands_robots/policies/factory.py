@@ -4,6 +4,7 @@ import logging
 import os
 from collections.abc import Callable, Mapping
 
+from strands_robots import refusal_codes
 from strands_robots.policies.base import Policy
 from strands_robots.registry import (
     import_policy_class,
@@ -63,10 +64,29 @@ def list_aliases() -> dict[str, str]:
     :func:`create_policy` accepts a provider's declared aliases and
     shorthands as readily as its canonical name, but
     :func:`list_providers` reports the canonical names from the JSON
-    registry. Together the two surfaces enumerate every spelling
-    :func:`create_policy` accepts::
+    registry. Together the two surfaces enumerate every spelling the
+    registries hold::
 
-        accepted = set(list_providers()) | set(list_aliases())
+        registered = set(list_providers()) | set(list_aliases())
+
+    That is every *registered* spelling, not every spelling
+    :func:`create_policy` resolves.
+    :func:`~strands_robots.registry.policies.import_policy_class` falls back
+    to auto-discovery, so a module under ``strands_robots.policies`` that
+    exports a :class:`~strands_robots.policies.base.Policy` subclass resolves
+    under its own module name with no registry entry. Two ship, and neither is
+    a registry provider because each wraps a policy the caller already holds
+    rather than building one from config:
+
+    * ``composite``
+      (:class:`~strands_robots.policies.composite.CompositePolicy`) builds
+      through this factory -- ``create_policy("composite", lower=..., upper=...)``
+      -- and is the one spelling ``registered`` above omits.
+    * ``persistent``
+      (:class:`~strands_robots.policies.persistent.PersistentPolicy`) resolves
+      but cannot be built here: its first parameter is named ``provider``,
+      which :func:`create_policy` has already bound, so it is constructed
+      directly.
 
     Covers both registries, matching the union :func:`list_providers`
     reports: aliases declared in ``policies.json`` and aliases passed to
@@ -81,7 +101,34 @@ def list_aliases() -> dict[str, str]:
 
 
 class UntrustedRemoteCodeError(RuntimeError):
-    """Raised when a HF model requires trust_remote_code but the user has not opted in."""
+    """Raised when a HF model requires trust_remote_code but the user has not opted in.
+
+    Carries a stable machine-readable :attr:`code`
+    (:data:`~strands_robots.refusal_codes.TRUST_REMOTE_CODE_REQUIRED`) and the
+    :attr:`subject` provider, so a consumer offering the operator the opt-in
+    classifies on identity instead of matching the message text. The message
+    is unchanged by this. See :mod:`strands_robots.refusal_codes`.
+
+    Args:
+        message: The operator-facing reason, unchanged by the code.
+        code: A member of :data:`~strands_robots.refusal_codes.REFUSAL_CODES`.
+        subject: The policy provider the gate refused.
+
+    Attributes:
+        code: The stable identifier for this refusal, or ``None``.
+        subject: The policy provider the gate refused, or ``None``.
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        code: str | None = None,
+        subject: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.subject = subject
 
 
 # Providers whose HuggingFace model loading path calls ``trust_remote_code=True``.
@@ -117,7 +164,9 @@ def _check_trust_remote_code(provider: str) -> None:
         f"from the model repository.\n\n"
         f"Only load models from organisations you trust.\n\n"
         f"To acknowledge this risk and proceed, set the environment variable:\n"
-        f"    export STRANDS_TRUST_REMOTE_CODE=1\n"
+        f"    export STRANDS_TRUST_REMOTE_CODE=1\n",
+        code=refusal_codes.TRUST_REMOTE_CODE_REQUIRED,
+        subject=provider,
     )
 
 
@@ -294,9 +343,11 @@ def policy_provider_error(provider: str, **kwargs) -> str | None:
 
     Probes the SAME resolution path :func:`create_policy` uses, without
     instantiating anything, so every spelling that provider accepts -- a
-    registered name, a HuggingFace model ID, a ``zmq://`` / ``ws://`` URL, a
-    ``host:port`` pair -- resolves here too. Only a name no spelling can reach
-    yields a reason.
+    registered name, a HuggingFace model ID, a ``zmq://`` / ``ws://`` URL --
+    resolves here too. Only a name no spelling can reach yields a reason. A
+    scheme-less ``host:port`` is not among them: no shipped provider declares a
+    scheme-less ``url_patterns`` entry, so such a string is resolvable only as a
+    checkpoint id and this preflight reports no reason for it.
 
     This is the agent-tool companion to :func:`preflight_policy`, which
     deliberately swallows resolution failures on the stated grounds that

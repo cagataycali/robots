@@ -462,7 +462,10 @@
         "reachy",
         "reachy-mini",
         "reachymini"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "ability_hand": {
       "description": "PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)",
@@ -787,7 +790,8 @@
         "robot_descriptions_module": "g1_mj_description"
       },
       "hardware": {
-        "lerobot_type": "unitree_g1"
+        "lerobot_type": "unitree_g1",
+        "driver": "strands"
       },
       "legacy_urdf": "unitree_g1/g1.urdf",
       "aliases": [

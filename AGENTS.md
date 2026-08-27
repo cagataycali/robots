@@ -145,6 +145,12 @@ hatch run format            # ruff check --fix, ruff format
     would close the class in one line and would also break the one test that
     legitimately asserts the documented default, which is why the rule lives at
     the call site. `tests_integ/` records real datasets and is out of scope.
+    Naming *a* root is not enough: a fixed absolute path such as `root="/tmp/ds"`
+    is not the shared cache and is shared all the same, with every other test
+    that names it and with every process on the host, so the guard reads the
+    value and refuses a `root` given as a string literal - a shape that cannot
+    be per-test unique. `root=root` with `root` bound from `tmp_path` is the
+    idiomatic form and is accepted.
     Pinned by tests/test_recording_root_is_not_the_shared_cache.py.
 
 16. **An example attests the records it shows, not the whole audit log** -
@@ -185,6 +191,51 @@ hatch run format            # ruff check --fix, ruff format
     leg into a composite transport hides this by construction, so the raw path
     has to be pinned structurally. Pinned by
     tests/mesh/test_zenoh_transport_bypasses_backend_routing.py.
+
+18. **A new bridge is un-gated until its surfaces are named, and refused until
+    it forwards the context** - `use_ros`'s operator-approval gate is keyed on
+    the graph name of the surface a command targets, so it knows nothing about
+    a transport added later: a bridge whose topics and services match no
+    `_command_gate.COMMAND_BLOCKLIST` entry sends LLM-initiated motion with no
+    prompt, no allowlist check and no audit row, and its tests stay green
+    because a bridge suite patches the module's `use_ros` symbol at the
+    boundary the gate lives behind. The two halves are one change and neither
+    ships alone: naming the surfaces without threading `tool_context` through
+    every `use_ros` call and declaring the command tools `@tool(context=True)`
+    converts the silent bypass into a fail-closed refusal of the whole command
+    surface, `stop` included, and threading the context without naming the
+    surfaces changes nothing at all. Spell blocklist entries bare - matching is
+    on the final path segment, so one `/manual_drive` entry covers every
+    namespaced instance - and state the posture where an operator sizes a
+    pre-approval (`docs/ros2-integration.md`, `docs/security.md`, the example),
+    because `STRANDS_ROS2_COMMAND_ALLOW` is what makes a headless run work and
+    it cannot be discovered from a refusal that has not happened yet. Pinned by
+    tests/mesh/test_ackermann_command_gate.py, whose inventory of bridges owing
+    a gate suite is derived from the tree, so the next transport is graded on
+    arrival rather than at the review that happens to look.
+19. **A backend may add a parameter but must never permute one it shares** -
+    `create_simulation(backend=...)` makes the same `sim` variable a different
+    class, and nothing in the type system relates two backends' signatures for a
+    method both implement: `add_camera` is on no ABC at all and `randomize` is
+    on `SimEngine` only as a `**kwargs` sink whose docstring hands the signature
+    to the backend. So a permutation is invisible to every gate and to Python.
+    Isaac declared `add_camera(..., width, height, fov, ...)` where MuJoCo and
+    Newton declare `(..., fov, width, height, ...)`, so
+    `add_camera("wrist", pos, target, 100, 200, 90)` asked for a 200x90 view at
+    fov 100 on two backends and a 100x200 view at fov 90 on the third - every
+    value valid under either reading, so nothing refused it and the caller found
+    out from the pixels. Newton's `randomize` had the same shape, listing the
+    three ranges in reverse. Adding a parameter is fine and shifts no shared
+    name's *relative* order (Isaac's `mjcf_path`/`usd_path`, Newton's `source`,
+    MuJoCo's `randomize_positions`); reordering one is what makes a positional
+    call ambiguous. State the shared order where a reader will copy it - the
+    signature line in `docs/simulation/newton.md` and the call in
+    `docs/simulation/domain-randomization.md` are both graded against the
+    signatures - and note that this rule is deliberately weaker than index
+    parity, which a mid-signature insertion still breaks. Pinned by
+    tests/simulation/test_backend_shared_parameter_order.py, whose backend
+    inventory is derived from the table `create_simulation` resolves, so a
+    fourth backend is held to the rule the hour it lands.
 
 ## PR Workflow
 
@@ -246,6 +297,40 @@ hatch run format            # ruff check --fix, ruff format
    is why it belongs at step 1 and not at review. If a competing implementation is
    wanted on purpose, exactly one should claim the close and the other should
    cross-reference (`per #N`, `towards #N`) instead.
+
+   **The claim is not the only key.** 249 of the last 300 pull requests (#2345
+   through #2708) link no issue at all, so for most of the traffic the query above
+   has nothing to collide on - and three of the five duplicate pairs in the window
+   #2345 through #2767 were claim-free: #2388/#2389, #2707/#2708 and #2766/#2767.
+   Once your branch is pushed and the pull request is open, ask the second
+   question:
+
+   ```
+   python3 scripts/check_duplicate_claim.py --repo strands-labs/robots --all-open
+   ```
+
+   It reports only pairs that **create the same thing**, which over the 2002 pairs
+   that were open at the same instant selected 3 - and all three were duplicates.
+   For almost every path that means creating the same path. The exception is a
+   changelog fragment, which is named `<number>-<slug>.md`: two branches describing
+   one change write one slug under two numbers, so they are paired on the slug and
+   the number is dropped. That is not a loose key - across the 350 pull requests in
+   that window which add a fragment there are **350 distinct slugs**, and the only
+   two used twice are the two duplicate pairs above that reused one.
+
+   Two branches *editing* one file is a different question with a different remedy
+   (a merge order, possibly one composition run), and
+   `scripts/check_merge_base_overlap.py --github-repo <owner/name> --all-open`
+   owns it; that relation selects 127 of the same 2002. The two keys are
+   complementary rather than nested: no issue-keyed pair shares an added path, and
+   no claim-free pair claims an issue.
+
+   This one cannot be asked before you start, and not for want of trying: a path
+   set is a property of a pushed branch, so there is nothing to read at intake. It
+   caps the review cost of a collision rather than preventing the work, which is
+   why it belongs here and `--issue` belongs above. It still arrives early enough
+   to matter - both claim-free pairs opened inside the same ~35-minute window every
+   other observed collision shares, 14m 41s and 29m 26s apart.
 2. Make changes, run `hatch run format && hatch run lint && hatch run test`
 3. Record the change as a news fragment: `changelog.d/<pr-number>-<slug>.md`
    (see [`changelog.d/README.md`](changelog.d/README.md)). **Never append to
@@ -258,6 +343,44 @@ hatch run format            # ruff check --fix, ruff format
    This is enforced by `.github/workflows/changelog-fragment.yml`: the rule was
    documented in two places and enforced by nothing until #1784, and a pull
    request reached `APPROVED` / `SUCCESS` / `CLEAN` having appended to the log.
+
+   **The fragment lands before a review can arrive, because its own filename
+   forces a second push.** The name is `<number>-<slug>.md` where `<number>` is
+   the pull request's, and that number does not exist until the pull request is
+   open - so for the 249 of the last 300 pull requests that claim no issue,
+   the fragment is necessarily a *second* commit onto an already-open branch.
+   `dismiss_stale_reviews_on_push` does not care that the pushed file is a
+   changelog entry, so whether that push is free depends only on whether an
+   approval has already landed. Four pull requests, one hour, same author, same
+   fragment-as-second-commit shape:
+
+   | pull request | opened | fragment pushed | approval | outcome |
+   |---|---|---|---|---|
+   | #2800 | 21:16:19 | 21:16:56 (+37s) | 21:20:23 | survived |
+   | #2802 | 21:47:47 | 21:48:54 (+67s) | 21:56:13 | survived |
+   | #2801 | 21:22:49 | 21:55:53 (+33m) | 21:27:54 | **dismissed** |
+   | #2799 | 20:46:12 | 21:47:22 (+61m) | 20:53:27, 21:31:17 | **dismissed twice** |
+
+   The ordering is the whole variable: the two that pushed the fragment inside
+   the first two minutes kept the approval that arrived afterwards, and the two
+   that pushed it after an approval had landed paid a re-approval round each -
+   #2799 twice, on a one-line documentation link fix, which is three rounds
+   spent on nothing a reviewer had asked for. Review latency is what sizes the
+   window, and here it is minutes: those two approvals arrived 3m27s and 7m19s
+   after the fragment.
+
+   So push the fragment **immediately** after opening, before requesting review
+   - or open the pull request as a draft, add it, and only then mark it ready,
+   which removes the race rather than winning it. Where the change does claim an
+   issue, use the *issue* number: that one is known at intake, so the fragment
+   ships inside the first push and there is no second push to time at all.
+
+   This is the same cost the paragraph above attributes to `CHANGELOG.md`
+   conflicts, arriving by a different route - the fragment convention removed
+   the conflict and left the extra push - so it is worth stating separately.
+   Do not reach for `--amend --force-with-lease` to fold the fragment into the
+   first commit once review has started: that destroys the review trail, and on
+   #2799 the two force-pushes are exactly what dismissed the two approvals.
 4. All tests must pass, lint must be clean
 5. Open PR from your fork, address all review comments
 
@@ -291,16 +414,54 @@ hatch run format            # ruff check --fix, ruff format
    - Thread's last non-bot comment is **yours** -> do not reply. You have
      already said it. If there is code to push, push it; the push is the
      message.
-   - Thread is **`isResolved` or `isOutdated`** -> do not reply. Resolution is
-     terminal. Reopening it to restate a landed fix reads as noise, not
-     diligence.
+   - Thread is **`isResolved`** -> do not reply. Resolution is terminal, whoever
+     performed it. Reopening it to restate a landed fix reads as noise, not
+     diligence. `isOutdated` is **not** terminal, measured: it describes the diff
+     rather than the conversation, and a thread keeps accepting comments after it
+     flips - #2577's took two more after `d04a8969` moved its lines. It is also
+     `false` on threads that *are* answered, when the fix adds lines elsewhere
+     (#2480, still `false` after `e83cf51` fixed it). Decide an outdated thread on
+     authorship like any other, or a reviewer's new demand on a moved line is
+     filed as settled.
    - Last comment is **someone else's** and your existing replies do not answer
      it -> reply once, then resolve.
+   - Thread you have **answered** and nobody has resolved -> resolve it, and still
+     do not reply. The three bullets above decide whether to *speak*, and none of
+     them reaches the thread's other terminal state.
+     `required_review_thread_resolution` is a branch ruleset rule, so a thread you
+     have answered goes on gating the merge until it is resolved, and no reviewer
+     can clear that for you. #2682 measured the cost: a cycle read #2680 as waiting
+     on a reviewer and stopped, when the fix had landed in `0fd0f4e3`, the reply was
+     posted, CI was green, and the only thing outstanding was the resolve.
 
    The authorship check is the cheap one, and it would have prevented ten of
    those twelve comments on its own: no semantic comparison, just the author of
    the last comment. Both `isResolved` and the comment authors are already in
    the context payload - they were fetched and not read.
+
+   **Ask for the verdict rather than re-deriving it.** "Fetched and not read" is
+   the whole failure, and it recurred after this rule was written: #2511 took
+   four author replies to one question and #2577 took two, with every field
+   needed to refuse them present in the payload each time. Re-deriving one
+   boolean from a payload that also contains a reviewer's question addressed to
+   you is the part that does not survive a context rebuild, so ask a command:
+
+   ```
+   python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --pr <N>
+   python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
+   ```
+
+   `settled` is not work. `awaiting-the-author` is a reply, `answered` is the
+   resolve that answer still owes, and **both** exit 1 - so the sweep answers
+   "which of my open pull requests actually need me" in one read. It did not
+   always, and the gap was in the reassuring direction: #2682 measured
+   `nothing-owed` and exit 0 over #2680, at the same head where
+   `check_merge_blockers.py` read `unresolved-threads` owed by the author.
+
+   The report also names the commit each thread was written against beside the
+   pull request's head, which is what tells "already fixed at `<oid>`" apart from
+   "not yet fixed" without re-deriving the fix (#2520). It reports and does not
+   gate: what an author should do next is not something a branch can turn green.
 
    What makes this worth writing down is that the previous rule was *satisfied*
    by all twelve. "Address all review comments", and "reply when a thread asks
@@ -729,8 +890,8 @@ hatch run format            # ruff check --fix, ruff format
      resolving supplies one. That leaves `REVIEW_REQUIRED` itself carrying two
      remedies - a first approval, or a second account when the only approval
      came from the pusher - which is the split
-     `scripts/check_last_push_approval.py --all-open` reports and which no
-     single field distinguishes either.
+     `scripts/check_last_push_approval.py --repo <owner/name> --all-open`
+     reports and which no single field distinguishes either.
 
      `isOutdated: true` on an unresolved thread is the common form, and it is a
      prompt rather than reassurance: the diff moved on, so the request has
@@ -749,10 +910,12 @@ hatch run format            # ruff check --fix, ruff format
      `require_last_push_approval` then disqualifies the pushing account from
      re-supplying it, turning a one-approval merge into one that needs a second
      reviewer.
-   - *And that the head it names is the branch's tip.* A pull request has two
-     answers to "what is the head commit" and they can disagree for hours.
-     `headRefOid` is the value the pull request *records*; the tip of the branch
-     in the head repository is the value that exists. GitHub normally reconciles
+   - *And that the head it names is the branch's tip.* A pull request has three
+     answers to "what is the head commit" and they can disagree for hours. Two
+     of them are the API's, and are the pair this bullet compares: `headRefOid`
+     is the value the pull request *records*; the tip of the branch in the head
+     repository is the value that exists. The third is the commit your clone is
+     actually on, which is the next bullet. GitHub normally reconciles
      them within a second of a push, and when it does not, nothing on the pull
      request says so - because every gate this step tells you to poll resolves
      the head *through the pull request's own view of it*, so they all agree
@@ -836,6 +999,65 @@ hatch run format            # ruff check --fix, ruff format
 
      It agreed with `git ls-remote` on all 10 open pull requests, so it needs no
      clone. Pinned by tests/test_pr_head_is_current.py. See #2538.
+   - *And that the tree you are deriving from is that tip.* The third answer is
+     `refs/pull/N/head`, and it is the one every checkout reaches for and the
+     only one with no signal at all. It is a mirror ref GitHub refreshes on its
+     own schedule, so it trails a push to the fork branch. Measured on #2678:
+
+     ```
+     git fetch origin pull/2678/head   ->  33f8bcf4   one commit behind
+     pullRequest { headRefOid }        ->  0b070a05   the tip
+     git merge-base --is-ancestor 33f8bcf4 0b070a05   ->  true, a pure lag
+     ```
+
+     What that costs is not a wasted fetch. The run believed it *had* checked out
+     the branch, grepped the symbol its review thread named, found it genuinely
+     unused on that tree, and derived a correct fix for source that no longer
+     existed. Only `git push` refusing as non-fast-forward surfaced the drift -
+     after the work. A fix touching a different file would have pushed cleanly.
+
+     And the answer was worse than a duplicate, which is why re-reading the
+     thread against the tip is not optional. The thread was a CodeQL "unused
+     global `_RATE_TAG`". Against the stale tree the fix is deletion and the
+     suite agrees - 18 passed, `ruff` clean. Against the tip the same finding
+     means the opposite: the constant was unused because the behavioural tests
+     spelled its value out at each call site, so nothing tied the joint under
+     measurement to the tag the parametrized sweep graded, and the fix is to
+     wire it up. Deletion would have passed CI while removing the invariant the
+     symbol carried. **An unused symbol in a test file is often a missing call
+     site rather than dead code, and the two fixes are indistinguishable by test
+     outcome.**
+
+     So resolve the head from the API and fetch the branch *by name*. Never
+     `refs/pull/N/head`, and re-fetching that ref can return the same stale
+     commit again:
+
+     ```
+     git fetch https://github.com/$HEAD_REPO.git $HEAD_REF
+     git rev-parse FETCH_HEAD      # must equal headRefOid from the API
+     ```
+
+     That assertion is the cheap part and catches the whole class: if
+     `FETCH_HEAD != headRefOid`, no fix derived on the local tree is
+     trustworthy. Or run the check, which resolves the head repository's ref
+     itself and exits 1 on a stale tree, so it can sit in front of the work:
+
+     ```
+     python3 scripts/check_checkout_is_pr_head.py --repo <owner/name> --pr <N>
+     ```
+
+     It compares by **ancestry, not equality**: a clone sitting at its own
+     unpushed commit contains the tip and reads `ahead`, which is the ordinary
+     state between a commit and its push and is not a finding. A tip missing
+     from the local object database is `stale-checkout` rather than
+     indeterminate - a clone that never fetched a commit cannot contain it.
+     Pinned by tests/test_checkout_is_pr_head.py. See #2520, which records four
+     instances: #2511 (one thread, four author replies), #2566 and #2577 (two
+     runs deriving one fix, the duplicate discarded only because a plain push
+     was refused) and #2678 above. That refusal is load-bearing by accident -
+     `git pull --rebase` then push lands an empty-diff commit on top, and
+     `--amend --force-with-lease` deletes the commit that already answered the
+     thread.
    And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
    the **required** contexts' own conclusions and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
@@ -985,10 +1207,21 @@ hatch run format            # ruff check --fix, ruff format
    unresolved thread or a failing check (the author), a missing approval (any
    reviewer), an approval only its own pusher supplied (a different reviewer,
    per #1905), a required check absent because a fork run is held at
-   `action_required` (a maintainer), a check still running (nobody), or no
-   unsatisfied rule at all, which is the #2574 case and the one worth saying out
-   loud. A conflict or a draft is reported as *gating*: the rules behind it
-   cannot be assessed, so an approval there is necessary but not sufficient.
+   `action_required` (a maintainer), a check still running (nobody), a
+   mergeability GitHub has not finished computing (nobody, until a re-read), or
+   no unsatisfied rule at all, which is the #2574 case and the one worth saying
+   out loud. A conflict, a draft, or an uncomputed mergeability is reported as
+   *gating*: the rules behind it cannot be assessed, so an approval there is
+   necessary but not sufficient.
+
+   That last one is why the sweep is worth re-reading rather than trusting once.
+   `mergeable` is `bool | None`, and a merge into `main` invalidates the cached
+   value for **every** open pull request -- so a sweep run just after a merge is
+   exactly when the null appears, which is also when a health pass is most likely
+   to run. #1035 was measured reading `pusher-only-approval` (owed by a reviewer)
+   while it was in fact `CONFLICTING`/`DIRTY`, and an otherwise-satisfied pull
+   request in the same state read `no-unsatisfied-rule`, whose printed remedy is
+   to attempt the merge. Both are now `merge-state-unknown`. See #2585.
 
    It composes `check_last_push_approval.py` rather than restating it, so what
    counts as a current approval has one owner. Neither script gates a merge.
@@ -1444,6 +1677,7 @@ Corrections from code review that apply to all future contributions:
 - **Lock ALL model/data mutations** - MuJoCo `model`/`data` are not thread-safe. Any method that writes `qpos`, `qvel`, `ctrl`, `qfrc_applied`, `body_mass`, `geom_friction`, or calls `mj_step`/`mj_forward`/`mj_resetData` MUST hold `self._lock`.
 - **Guard scene mutations during policy** - Use `_require_no_running_policy()` before any action that recompiles or replaces the model/data objects.
 - **Lock a read that copies model/data out too** - the rule above is stated for writes, but a read that copies mjData into another buffer races a concurrent `mj_step` exactly as a write does, and the corrupt half is the copy. `Renderer.update_scene` copies `xpos`/`xquat`/`xmat` and the geom poses, and `Renderer.render` dereferences `data.contact`, so every method that drives that pair must hold `self._lock` across it and `.copy()` the frame inside, leaving only the encoding unlocked. The blanket dispatch lock is not that guarantee: it covers the tool surface only, so a direct Python call, a recorder daemon, or a `PolicyRunner` worker holds nothing. `render` and `get_frame` serialised this read and `render_depth` did not - identical operations on the same buffers, and with a policy worker stepping on its own thread 3 of 60 depth reads landed inside a physics step while 0 of 60 RGB reads did. Where the read lives in a private helper, lock the public facade across the delegation instead (`get_observation` -> `_get_sim_observation`) and pin *that*, rather than exempting the helper. `Pinned by` `tests/simulation/mujoco/test_frame_readers_serialize_the_mjdata_read.py`, which derives the graded set from the module's AST so a reader added later is held to the rule, and `tests/simulation/mujoco/test_concurrency_lock_audit.py` for the read-only physics queries.
+- **A shared-device lock is only a guarantee where every caller takes it** - a lock on a device serialises the callers that go THROUGH it, and says nothing about one that reaches the device directly. `strands_robots/bus_access.py` puts one `RLock` on a lerobot robot so the serial motor bus is one conversation; the mesh modules were converted and `hardware_robot.py` was not, so it serialised the mesh's readers against each other and not against a policy rollout, while one process holds both. A second lock nearby is not the same guarantee: `hardware_robot`'s `_task_admission` admits one rollout at a time, which is admission control over *tasks*, and the two locks do not know about each other. The failure is asymmetric - the caller that loses is the one holding nothing - so the unconverted side is the side that breaks: a mesh reader kept reading while one refused read ended the rollout, blamed on the policy for a run that never commanded the arm. So when a lock is introduced for a shared resource, convert every caller in the same change, and pin it with a rule over the source rather than one test per call site. `Pinned by` `tests/test_hardware_bus_is_shared_with_the_mesh.py::TestNoCallerDrivesAHeldDeviceOutsideBusAccess`, which derives the guarded operations from what `bus_access` itself drives and grades every module that holds a device, so it needs no list of exempt files.
 - **Document the concurrency contract** - If a method is safe to call concurrently, say so. If not, say so.
 
 ### Error Handling Contracts
@@ -1454,6 +1688,7 @@ Corrections from code review that apply to all future contributions:
 ### API Consistency
 - **Don't export private functions** - `_`-prefixed names must never appear in `__all__`. A star-import skips underscore names *unless* `__all__` lists them, so an entry there is the sole reason `from <pkg> import *` binds one: `strands_robots/mesh/__init__.py` listed `_LOCAL_ROBOTS` (the in-process registry dict) and `_LOCAL_ROBOTS_LOCK` under the comment "exposed for test patching only", and that reason does not hold - `__all__` has no bearing on the attribute access both registry-touching test files actually use, one of which already reached `strands_robots.mesh.core` where the two are defined. What such an entry usually is load-bearing for is silencing `F401` on an import whose only purpose is to place the name on the package namespace, which is what ruff's own remedy text ("consider removing, adding to `__all__`, or using a redundant alias") describes - so drop the import along with the entry, and export a public accessor instead. Pinned by `tests/test_all_exports_are_statically_defined.py::TestNoExportIsPrivate`, which grades this over the same population as the definedness half.
 - **Match docstrings to semantics** - If the docstring says "single-shot" but the code is "latched", one of them must change. Always verify by reading the underlying library docs.
+- **A `Raises:` block names every refusal the function itself makes** - it is the only place a caller learns which `except` clause to write, so a refusal added later must be added to it. `build_lerobot_command` documented `ValueError` alone and 28 days later gained a preflight raising `RuntimeError` for a lerobot without the DAgger rollout entry point (#1614 against a block written in #732), so a caller who wrote exactly the handler the docstring licensed took an escaped exception. Only the forward direction is a rule: a documented class raised by a helper the function delegates to is legitimate and common (80 surfaces do it), and a class raised *and caught* in one function must not be documented at all. Pinned by `tests/test_raises_docstring_completeness.py`, which grades module-level functions as well as methods - the surface above is not a method, so the `Args:` guard's population would not have seen it.
 - **Forward all advertised kwargs** - If `tool_spec.json` exposes a parameter, the dispatch chain must forward it all the way through. Silent drops are bugs.
 - **Centralize import checks at init** - Prefer checking optional deps once in `__init__` over scattered `_ensure_X()` guards. Consumers catch issues at init time.
 
@@ -1699,6 +1934,32 @@ which side the enum is on.
   and by the render path's `cameras` resolution, which has read the same kind of selector
   `is None` all along - an empty camera selection there resolves to no camera rather than
   to every one.
+### A model source is read by absence when absence selects another resolution path
+- **The selector rule above allows a scalar path to be read by truthiness "because empty
+  and absent genuinely coincide there - the value is derived either way". That holds where
+  absence derives the SAME kind of value.** `examples/wbc/motionbricks_g1_mujoco.py`
+  declares `--scene-xml` with a `""` default and derives the scene from `--result-dir`, so
+  `""` IS its sentinel there and truthiness is correct. It does not hold where absence
+  selects a DIFFERENT RESOLUTION PATH: then the two spellings do not pick the same value
+  by another route, they pick a different thing to blame when the call fails.
+- **`add_robot`'s model source is that case.** Absent means "resolve from `data_config`, or
+  from the instance label via the deprecated registry short form"; supplied means "load
+  this file". Read by truthiness, `urdf_path=""` took the absent branch, so the refusal
+  diagnosed the NAME - close-match suggestions for a name the caller never asked to
+  resolve, and "Or pass data_config=<registered model> or urdf_path=<file>" to a caller who
+  had just passed exactly that. It was byte-identical to what supplying no source returns.
+- **The tell is the REPORT, not the value.** Both spellings error either way, so nothing
+  loads a wrong model; what diverges is which parameter the caller is sent to fix. One
+  whitespace character away (`urdf_path=" "`) the diagnosis was already correct ("File not
+  found"), which is the shape to match - refuse the empty value, not the unusable one.
+- **Check the whole family, and note that most of it was already right.** Newton reads
+  `urdf_path is not None`, Isaac reads `usd_path is None`, and `register_urdf` refuses an
+  empty `urdf_path` by name in both backends that expose it; MuJoCo's `add_robot` was the
+  one site reading the source by truthiness. Refuse behind any existing precedence (the
+  name-collision report still wins) so no settled message moves.
+- Pinned by `tests/simulation/mujoco/test_add_robot_unknown_model_message.py`, whose
+  controls pin the boundary (whitespace stays a path), the untouched short forms (`name=""`
+  still derives a label, an omitted source still diagnoses the name) and the precedence.
 ### A resolution knob is validated before the work it sizes
 - **Check the knob that sizes an expensive result before producing the result.** A
   resolution is caller input like any other, and the numeric domains
@@ -1752,6 +2013,8 @@ which side the enum is on.
 
 ### Module-Level Side Effects
 - **If you must run code at import time, comment WHY it can't be lazy.** `MUJOCO_GL` is the canonical example: MuJoCo locks the GL backend at first `import mujoco`, so the env var must be set before any downstream import chain triggers it.
+- **An import-time env default must name a value that works where the code runs.** The same `MUJOCO_GL` example has a second half: because the backend is locked at first `import mujoco`, a *module-scope* default is what a headless host is left with when the operator exported nothing, while one inside a test function runs too late to select anything. MuJoCo's windowed backends (`cgl`, `glfw`) cannot render without a window server, and `glfw` fails worse than `cgl`: `cgl` is refused at import with a message naming the variable; `glfw` is accepted, and the render probe then warns that rendering is unavailable and names the missing `DISPLAY` but not the `MUJOCO_GL` value that asked for a window, after which camera observations are skipped and the caller's *failure* is whatever it was doing with those frames - a camera recording reports it as a dataset feature mismatch several frames away. Write `os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")` - a bare `"egl"` is not in MuJoCo's valid set on Darwin, so it trades one platform for the other.
+- Pinned by `tests/test_examples_mujoco_gl.py::test_no_module_scope_windowed_gl_default`, which is AST-scoped to module level so a backend name that is the value *under test* (a `monkeypatch.setenv`, or an assertion about what the resolver did) is out of scope by construction rather than by exemption.
 - **Cheap-guard optional imports** - `if importlib.util.find_spec("mujoco") is not None:` before doing `from strands_robots.simulation.mujoco.backend import _configure_gl_backend`. Users without the `[sim-mujoco]` extra shouldn't pay an import-attempt cost on every `import strands_robots`.
 
 ### Public API Hygiene
@@ -1762,7 +2025,7 @@ which side the enum is on.
 
 ### Env Vars
 - **Warn on unrecognized values** - `STRANDS_ROBOT_MODE=foo` (typo) must `logger.warning(...)`, not silently fall through. Silent typo'd env vars surprise users hours later.
-- **The report belongs to the resolver that runs first** - a variable read by two resolvers is reported by whichever one an unknown value actually reaches. `STRANDS_MESH_BACKEND` had a report in `mesh.transport.factory._select_backend` and none in `mesh.session._backend_choice`, and the second is the gate the first sits behind: an unknown value resolves to `zenoh` there, so the factory is never consulted and its report cannot fire for the input class it names. A typo therefore produced a plain Zenoh session indistinguishable from an explicit `zenoh`, on a variable `mesh.iot.provision` writes into an operator's environment file. Give the vocabulary one owner and delegate to it, rather than a second inline copy that reports differently; and if that owner sits on a per-message path, key the report by the offending value so it is emitted once per distinct typo instead of once per published sample. Pinned by `tests/mesh/test_session_backend_select.py::TestAnUnknownBackendIsReported`.
+- **The report belongs to the resolver that runs first** - a variable read by two resolvers is reported by whichever one an unknown value actually reaches. `STRANDS_MESH_BACKEND` had a report in `mesh.transport.factory._select_backend` and none in `mesh.session._backend_choice`, and the second is the gate the first sits behind: an unknown value resolves to `zenoh` there, so the factory is never consulted and its report cannot fire for the input class it names. A typo therefore produced a plain Zenoh session indistinguishable from an explicit `zenoh`, on a variable `mesh.iot.provision` writes into an operator's environment file. Give the vocabulary one owner and delegate to it, rather than a second inline copy that reports differently; and if that owner sits on a per-message path, key the report by the offending value so it is emitted once per distinct typo instead of once per published sample. **Two readers owning *disjoint halves* of one vocabulary is the same hazard with no copy to find, and neither reader can fix it alone.** `STRANDS_MESH`'s affirmative spellings were read by the `Robot` factory and its kill-switch spellings by `mesh.core.mesh_disabled_by_env`, and each correctly treats the other's words as not its business -- so neither had the standing to call a third value a mistake, and `STRANDS_MESH=off` silently constructed the mesh it was meant to kill, against an explicit `mesh=True`. A warning added at either site would have to re-list the other's vocabulary to avoid crying wolf on it, which rebuilds the split; the owner has to hold *both* halves and answer a tristate, because "said nothing" is a third outcome and collapsing it into either bool makes one reader wrong. Pinned by `tests/mesh/test_mesh_env_vocabulary_has_one_owner.py`, including an AST guard that neither reader reads the variable itself -- re-splitting it fails no behavioural test. Pinned by `tests/mesh/test_session_backend_select.py::TestAnUnknownBackendIsReported`.
 - **Document every env var in README.md** - if you introduce a new `STRANDS_*` variable, add it to the Configuration section in the same PR. The list is the single source of truth for users.
 - **A kill switch is honoured by every path that can start the thing it kills** - and by exactly one predicate. `STRANDS_MESH=false` is documented in README as overriding even an explicit `mesh=True`, but it was resolved by an inline `os.getenv` inside `init_mesh`, and `robot_mesh._gateway_mesh` builds its robot-less coordinator `Mesh` without going through `init_mesh`. So an operator who asked for no mesh still got a real Zenoh session, a `gateway-*` peer advertised to the fleet, and the nine threads `Mesh.start` spawns - cached until `atexit`, because the switch had no reach there. The second-order cost is test isolation: `tests/conftest.py` sets the same variable to keep the suite off Zenoh, so the escape put nine publishing threads inside unrelated tests and one of them failed on a `/health` payload it never provoked. When a flag means "do not start X", give it one predicate and call it at every construction site of X; a second inline spelling is how the first site gets forgotten. Pinned by `tests/mesh/test_gateway_mesh_kill_switch.py`.
 - **Currently tracked**: `STRANDS_ROBOT_MODE`, `STRANDS_TRUST_REMOTE_CODE`, `MUJOCO_GL`.
@@ -1789,7 +2052,10 @@ which side the enum is on.
 
 ### Testing Patterns
 - **Use `monkeypatch.setenv`, never `os.environ[...] = ...`** - direct mutation leaks if the test raises before `finally`, and `del os.environ[...]` can `KeyError` under parallel runs. The pytest fixture handles teardown atomically.
+- **Restore a `sys.modules` entry you remove** - a removal does not undo an import, it *orphans* every reference already bound to that module: the next `import X` re-executes the package and returns a *different* object, so a sibling test module's `monkeypatch.setattr(X, "attr", double)` installs the double where nothing will look and the real package is used instead. `monkeypatch.setitem(sys.modules, name, None)` makes `import name` raise `ImportError` *and* restores. A bare `sys.modules.pop("boto3", None)` in one camera-offload test left the IoT fan-out tests building a real client and attempting signed AWS requests, dormant only because they happened to sort ahead of the pop. Purging a module nothing patches, to force a re-import, stays legal - `tests/test_sys_modules_removal_leaves_no_orphan.py` grades the difference from the tree.
+- **Import a tool from its own submodule, never off the tools package** - `strands_robots.tools` maps each tool name to the `@tool` object inside the submodule of the *same* name, so `from strands_robots.tools import pose_tool` resolves to whichever of the two this process bound first: CPython's `_handle_fromlist` imports the submodule only when the attribute is *absent*, and here the lookup triggers the package `__getattr__`, which succeeds, so the name binds to the tool object and the submodule is never imported. A source that binds a name that way and then reads it as a module - `ur.__file__`, `pose_mod.pose_tool`, any of the module's private names - therefore passes or fails on the import order of the whole process rather than on the behaviour it is about, and surfaces as an `AttributeError` naming the read rather than the import that decided it. Write `import strands_robots.tools.pose_tool as pose_mod` or `from strands_robots.tools.pose_tool import pose_tool`, which cannot resolve to anything else. `tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py` derives both halves of the rule - which names are ambiguous, and which attributes only a module can answer - so a tool added to the mapping and a call site added to any scanned tree are graded on arrival.
 - **Happy-path tests, not just error-paths** - if you have `test_factory_raises_on_bad_xml`, you also need `test_factory_returns_working_sim` gated behind `pytest.importorskip("mujoco")`. Steps physics, asserts state, destroys cleanly.
+- **Never read a tool name off `strands_robots.tools`** - the package maps each exported name to the `@tool` object inside the submodule of the *same* name and caches it in the package `__dict__`, so `from strands_robots.tools import pose_tool` binds either the tool or the module depending on what the process imported first: cold it is the tool, and after any import of the submodule it is the module. That read is also the only spelling that writes the *tool* into the slot, which is what makes the module-alias form used widely here as a monkeypatch target (`import strands_robots.tools.use_rosbridge as rb_mod`) resolve to the tool instead - `rb_mod.roslibpy` then raises `AttributeError` naming the tool class rather than an import order. Both directions shipped, each passing in the selection it was written against: two tests read the name and used the result as a module (`'DecoratedFunctionTool' object has no attribute '__file__'`), two examples read it and used the result as a tool (`module ... has no attribute '__wrapped__'`). Write `import strands_robots.tools.<name> as <name>_mod` when the module object is wanted and `from strands_robots.tools.<name> import <name>` when the tool is wanted; both read the submodule, so no import order changes them. Pinned by `tests/tools/test_lazy_tool_name_imports_are_unambiguous.py`.
 - **Pin every reviewed fix with a regression test** - every behavioral fix in this PR (warning on bad env var, rejecting `cameras=` in sim, default `mode="sim"`, etc.) has a dedicated test. "Trust me, the diff fixes it" is not a review-pass condition.
 - **`importlib.reload` for module-state tests** - if a test modifies module-level state (env vars read at import time), reload the module inside the test and restore in teardown.
 

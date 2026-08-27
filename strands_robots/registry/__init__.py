@@ -51,6 +51,7 @@ from .policies import (
 from .robots import (
     LIST_ROBOTS_MODES,
     format_robot_table,
+    get_driver,
     get_hardware_type,
     get_robot,
     has_hardware,
@@ -73,6 +74,7 @@ __all__ = [
     "get_robot",
     "has_sim",
     "has_hardware",
+    "get_driver",
     "get_hardware_type",
     "list_robots",
     "LIST_ROBOTS_MODES",

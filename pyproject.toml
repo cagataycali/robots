@@ -285,6 +285,23 @@ molmoact2 = [
     "strands-robots[lerobot]",
     "lerobot[molmoact2]>=0.6.1,<0.7.0",
 ]
+# SmolVLA transformers-native VLA (e.g. lerobot/smolvla_base). The SmolVLAPolicy
+# ships in lerobot >= 0.6 and is a first-class `lerobot_local` policy type
+# (`resolution.py` lists it; `policy.py` imports `transformers` for its
+# tokenizer). Like [molmoact2], defer to lerobot's own [smolvla] extra for the
+# aux-dep pins rather than hand-mirroring them here (which drifts when lerobot
+# bumps them). lerobot[smolvla] pulls lerobot[transformers-dep] (>=5.4.0,<5.6.0)
+# -- the SAME specifier [molmoact2] resolves, so there is one transformers pin
+# across [all] -- plus num2words (SmolVLA's SmolVLM backbone processor,
+# transformers/models/smolvlm/processing_smolvlm.py, imports it) and
+# lerobot[accelerate-dep]. None of these arrive through the base
+# strands-robots[lerobot] extra (lerobot[feetech,dataset]), so without this a
+# `strands-robots[lerobot]` install running SmolVLA fails at first use. The base
+# strands-robots[lerobot] pin (>=0.6.1,<0.7.0) already fixes the lerobot floor.
+smolvla = [
+    "strands-robots[lerobot]",
+    "lerobot[smolvla]>=0.6.1,<0.7.0",
+]
 sim = [
     # 1.23.0 is the oldest release that ships a description module for every
     # robot the built-in registry names, not merely the oldest that imports.
@@ -541,6 +558,7 @@ all = [
     "strands-robots[kimodo]",
     "strands-robots[protomotions]",
     "strands-robots[molmoact2]",
+    "strands-robots[smolvla]",
     "strands-robots[ollama]",
     "strands-robots[inference]",
     "strands-robots[rosbridge]",
@@ -609,6 +627,7 @@ conflicts = [
     [{ extra = "vera-sim" }, { extra = "lerobot" }],
     [{ extra = "vera-sim" }, { extra = "lerobot-async" }],
     [{ extra = "vera-sim" }, { extra = "molmoact2" }],
+    [{ extra = "vera-sim" }, { extra = "smolvla" }],
     [{ extra = "vera-sim" }, { extra = "all" }],
     [{ extra = "vera-sim" }, { extra = "benchmark-libero" }],
 ]
@@ -722,7 +741,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*"]
+module = ["lerobot.*", "gr00t.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge

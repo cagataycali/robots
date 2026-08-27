@@ -369,15 +369,14 @@ class HardwareRtpsBridge(RosTelemetryBase):
         each tick. ``take`` (not ``read``) so each command is delivered once.
 
         Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than
-        ``self._stop.wait(period)``: that wait is inflated ~137ms in a process
-        tree descended from a daemon (BUGS.md Q69), which at the 0.02s default
-        turns a 50Hz command poll into ~6.4Hz - an inbound actuation request
-        would sit in the reader for ~156ms before anyone looked. Nothing here
-        reported that: the loop has no rate counter, and ``take`` returning a
-        batch makes a late poll look like a busy one.
+        ``self._stop.wait(period)``. That wait is a delay, so the time spent
+        delivering a batch of commands was added to the poll period instead of
+        being subtracted from it -- at the 0.02s default an inbound actuation
+        request sat unread in the reader for longer than the 50Hz the period
+        asks for. Nothing here reported that: the loop keeps no rate counter,
+        and ``take`` returning a batch makes a late poll look like a busy one.
         """
-        ticker = Ticker(self._poll_period, self._stop)
-        try:
+        with Ticker(self._poll_period, self._stop) as ticker:
             while not self._stop.is_set():
                 try:
                     for sample in self._command_reader.take(N=10):
@@ -386,8 +385,7 @@ class HardwareRtpsBridge(RosTelemetryBase):
                     logger.debug("HardwareRtpsBridge: command poll raised", exc_info=True)
                 if ticker.wait():
                     break
-        finally:
-            ticker.close()
+
 
     def _start_poll(self) -> None:
         if self._poll_thread is not None and self._poll_thread.is_alive():

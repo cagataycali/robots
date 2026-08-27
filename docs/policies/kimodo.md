@@ -156,8 +156,29 @@ KimodoPolicy(config={"diffusion_steps": 25})           # a plain dict
 
 Precedence is per-field override > `config` field > the default in the table. A
 merged value is re-validated by `KimodoConfig`, so `diffusion_steps=0` is
-refused whichever way it arrives. There is no `**kwargs`: a misspelled knob
-raises `TypeError` at construction instead of being silently ignored.
+refused whichever way it arrives.
+
+A misspelled knob is refused by the two keyword forms and dropped by the dict
+form. Neither `KimodoPolicy` nor `KimodoConfig` takes `**kwargs`, so
+`KimodoPolicy(diffusion_stpes=25)` raises `TypeError` at construction. A
+`config` dict is read by `KimodoConfig.from_dict`, which drops keys that are not
+fields for forward compatibility - the policy the MotionBricks and WBC configs
+state for their own `from_dict` - so `KimodoPolicy(config={"diffusion_stpes":
+25})` builds with the default 100 and emits no warning. Pass the knob as a
+keyword, or build a `KimodoConfig` first, if a typo should be refused.
+
+### Loading a config from a file
+
+```python
+KimodoPolicy(config=KimodoConfig.from_json("~/kimodo.json"))
+```
+
+`from_json` expands `~` and names the file in every refusal: a path that is not
+a file raises `FileNotFoundError`, and a file that is not valid JSON or that
+holds a JSON value other than an object raises `ValueError` naming the file and
+what it found instead. Keys inside the object follow the drop policy above, and
+values keep the domains in the table. The extension is not checked, so a JSON
+object stored under any name loads.
 
 ## When the sampler runs again
 
@@ -231,6 +252,15 @@ reported as a successful rollout.
 wider pose gaps (opposing poses eased over more frames), lower it toward 1 to
 keep segment boundaries crisp. It is bounded below at 1, matching the domain the
 sampler enforces on its own transition length.
+
+Every channel absorbs its share of the offset the same way, so easing changes
+where a segment starts and not how it moves. Root position and joint angles take
+one offset scaled by the frame's weight. The root's orientation takes the
+rotational form of exactly that: the offset is the rotation carrying the
+segment's own start orientation onto the pose last commanded, and each eased
+frame is its own orientation turned by the weighted share of it. A motion that
+turns therefore keeps its turn rate through the transition, and a seam whose
+orientations already agree leaves the root alone.
 
 Note the difference in kind from the sampler's native multi-prompt path: Kimodo
 conditions the *diffusion* of the next segment on the previous segment's last

@@ -135,6 +135,7 @@ from strands_robots.utils import (
     non_negative_count_error,
     positive_count_error,
     positive_finite_number_error,
+    step_cadence_error,
 )
 
 if TYPE_CHECKING:
@@ -225,6 +226,160 @@ def run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
     problems: list[str] = []
     for param, value in (("steps", spec.steps), ("global_batch_size", spec.global_batch_size)):
         error = positive_count_error(value, param, context)
+        if error is not None:
+            problems.append(error)
+    return problems
+
+
+def rl_run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return run-size problems for a reinforcement-learning :class:`TrainSpec`.
+
+    The RL peer of :func:`run_size_problems`. The supervised backends size a run
+    from ``steps`` / ``global_batch_size``; the RL trainers size theirs from
+    ``total_timesteps`` / ``rollout_steps``, the two caller-supplied factors of
+    the one loop bound both of them derive::
+
+        steps_per_iter = rollout_steps * num_envs
+        num_iters = max(1, total_timesteps // steps_per_iter)
+        for it in range(num_iters):  # collect, update
+
+    Because that bound is *derived* rather than read straight off the spec, a
+    bare ``value <= 0`` test on either factor is weaker here than the same test
+    would be on a field consumed directly: the ``max(1, ...)`` clamp turns every
+    value that survives the comparison but cannot divide into a **silent single
+    iteration** instead of an error. Measured on both trainers over a 16-step
+    run with ``rollout_steps=4``, before this gate existed:
+
+    =========================  =========  ===========  ====================
+    ``total_timesteps``        verdict    iterations   reported
+    =========================  =========  ===========  ====================
+    ``16`` (control)           success    4            ``latest_step=16``
+    ``True``                   success    **1**        ``latest_step=4``
+    ``0.5``                    success    **1**        ``latest_step=4``
+    ``nan``                    success    **1**        ``latest_step=4``
+    ``inf``                    success    **1**        ``latest_step=4``
+    ``100.5``                  TypeError  --           from ``range()``
+    ``"16"`` / ``None``        TypeError  --           from ``validate``
+    =========================  =========  ===========  ====================
+
+    ``inf`` lands in the silent column rather than the raising one because
+    ``inf // 4`` is ``nan`` and ``max(1, nan)`` is ``1`` - ``nan`` compares false
+    against everything. So four of the five values that pass a ``<= 0`` test
+    report ``status="success"``, write a checkpoint, and announce
+    ``"1 iterations x 4 steps complete"`` for a run the caller asked to be tens
+    of thousands of steps long. The one value that does raise
+    (``100.5 // 4 == 25.0``, a float ``range()`` bound) raises only after
+    ``setup`` has built the environment, the networks, the optimizers and - for
+    FastSAC - the replay buffer, which is the cost a read-only preflight exists
+    to precede. A string or ``None`` raises out of the comparison itself, from a
+    :meth:`Trainer.validate` documented to *return* problems.
+
+    ``rollout_steps`` fails the same three ways through the other factor, and its
+    silent case is worse than a short run because it changes the *shape* of the
+    run rather than its length: ``True`` makes ``steps_per_iter`` one, so FastSAC
+    ran 16 single-step iterations instead of 4 of 4 (reported as success), and
+    PPO normalized advantages over a length-one batch - the standard deviation of
+    one sample is ``nan`` - and failed inside torch's ``Normal`` constraint with
+    a message naming neither the field nor the run.
+
+    Only a positive integer can be honored, so both factors are checked against
+    the one shared :func:`~strands_robots.utils.positive_count_error` domain: the
+    same domain :func:`run_size_problems` uses for the supervised pair, and the
+    domain whose own contract is that its values are consumed directly as
+    ``range()`` bounds.
+
+    ``num_envs``, the third factor of ``steps_per_iter``, is deliberately not
+    here. Its accepted set differs between the backends - PPO parallelizes and
+    accepts any count ``>= 1``, while the MuJoCo-backed FastSAC is single-env and
+    requires exactly ``1`` - so it is not one shared domain, and each backend
+    keeps the rule only it can state.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per unusable factor; empty when both are usable counts.
+    """
+    problems: list[str] = []
+    for param in ("total_timesteps", "rollout_steps"):
+        error = positive_count_error(getattr(spec, param, 1), param, context)
+        if error is not None:
+            problems.append(error)
+    return problems
+
+
+def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return replay-loop problems for a FastSAC :class:`RLTrainSpec`.
+
+    The three caller-supplied counts of an off-policy SAC run's replay loop:
+
+    * ``buffer_size`` - the replay buffer's capacity, a tensor dimension built
+      in :meth:`~strands_robots.training.rl.fast_sac.FastSacTrainer.setup`.
+    * ``batch_size`` - the transitions sampled per gradient step, passed to
+      ``ReplayBuffer.sample``.
+    * ``gradient_steps`` - the SAC updates run per iteration, a ``range()`` bound.
+
+    Each is consumed directly as a count - a capacity, a sample size, a
+    ``range()`` bound - so the same strict-``int``
+    :func:`~strands_robots.utils.positive_count_error` domain applies that
+    :func:`run_size_problems` uses, and for the same reason: a value that is not
+    a positive ``int`` cannot be a tensor dimension or a ``range()`` argument and
+    raises ``TypeError`` there rather than being coerced.
+
+    A local ``value <= 0`` test is weaker than that domain, and both of its
+    failure modes were measured on the MuJoCo reach env before this gate existed
+    (an otherwise-valid run, one field mutated):
+
+    =====================  ==========  =========================================
+    value                  verdict     what happened
+    =====================  ==========  =========================================
+    ``buffer_size=True``   success     a one-slot buffer that never reaches
+                                       ``learning_starts``, so **zero** gradient
+                                       updates ran, yet the run reported success
+                                       and "10 iterations x 4 steps complete"
+    ``buffer_size=0.5``    IndexError  ``int(0.5) == 0``: a zero-capacity buffer,
+                                       raised from ``ReplayBuffer.add`` after setup
+    ``batch_size=0.5``     TypeError   raised from ``torch.randint`` in
+                                       ``ReplayBuffer.sample`` after setup
+    ``batch_size=True``    TypeError   the same, from a batch of ``True``
+    ``gradient_steps=0.5`` TypeError   raised from ``range()`` in the update loop
+    ``"256"`` / ``None``   TypeError   raised from the ``<= 0`` comparison itself,
+                                       out of a ``validate`` documented to return
+    =====================  ==========  =========================================
+
+    So a ``bool`` reads as a silent degenerate size - the ``buffer_size`` case
+    runs a whole training loop that learns nothing and reports success - a
+    fraction or a non-finite value passes the comparison and raises deep inside
+    the update loop after the environment, the networks, the optimizers and the
+    replay buffer have been built (the cost a read-only preflight exists to
+    precede), and a string or ``None`` raises out of the comparison itself, from
+    a :meth:`~strands_robots.training.base.Trainer.validate` documented to
+    *return* its problems.
+
+    Only FastSAC reads these three fields; PPO sizes its minibatches from
+    ``num_mini_batches`` and never reads them, so a backend that ignores them
+    must not report on them - which is why this is a gate scoped to the field
+    rather than part of :func:`validate_train_inputs`.
+
+    ``learning_starts`` and ``tau`` stay in the backend's own ``validate``: the
+    first is one side of a relation (``>= batch_size``) rather than a bare count,
+    the second a coefficient in ``(0, 1]`` rather than a count, so neither shares
+    this domain.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`.
+
+    Returns:
+        One problem per unusable count; empty when all three are usable counts.
+    """
+    problems: list[str] = []
+    for param in ("buffer_size", "batch_size", "gradient_steps"):
+        error = positive_count_error(getattr(spec, param, 1), param, context)
         if error is not None:
             problems.append(error)
     return problems
@@ -383,6 +538,69 @@ def seed_problems(spec: TrainSpec, *, context: str) -> list[str]:
     if spec.seed is None:
         return []
     error = non_negative_count_error(spec.seed, "seed", context)
+    return [] if error is None else [error]
+
+
+def checkpoint_cadence_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return checkpoint-cadence problems for a :class:`TrainSpec`.
+
+    ``save_freq`` is how often a run writes a checkpoint, and the four backends
+    that read it deliver the value to a destination that requires a genuine
+    ``int`` - by four different routes, each of which mis-handles every other
+    spelling differently and none of which reports it:
+
+    * LeRobot in-process assigns it to ``cfg.save_freq``, which reaches
+      lerobot's own ``should_save_checkpoint(step, save_freq, total_steps)`` -
+      ``(save_freq > 0 and step % save_freq == 0) or step == total_steps``. No
+      parser stands between the spec and that expression, so ``True`` is a
+      modulus of one and writes a **full checkpoint every single step** (9999
+      of them in a 10 000-step run that asked for 9), a fractional or
+      non-finite cadence never satisfies ``step % cadence == 0`` for an
+      integral step and so silently becomes the *disabled* mode, and a ``str``
+      raises ``TypeError`` out of the comparison - inside the training loop,
+      after the dataset and the model are loaded.
+    * LeRobot's argv-parity path renders ``--save_freq={value}``, which lerobot
+      decodes into the same ``int`` field with draccus: ``True``, ``2.7``,
+      ``5000.0``, ``nan`` and ``inf`` all raise ``DecodingError`` there.
+    * GR00T renders ``--save_steps={value}`` and Cosmos a
+      ``checkpoint.save_iter={value}`` Hydra override, where an unusable value
+      fails - if at all - inside the launched run.
+    * SageMaker forwards it as a hyperparameter string via ``json.dumps``, so
+      ``nan`` and ``inf`` travel as ``NaN`` / ``Infinity``, which only a
+      permissive JSON decoder accepts.
+
+    The two LeRobot routes disagree about the *same* spec, which is what makes a
+    shared gate the only fix that holds: a ``"5000"`` renders the perfectly
+    decodable token ``--save_freq=5000`` and raises ``TypeError`` in-process,
+    while ``2.7`` is refused on the argv path and silently disables periodic
+    saving in-process. One spec has to mean one run whichever path the backend
+    takes - the rule :attr:`TrainSpec.extra` already states for its own values -
+    so the cadence is checked against the one shared
+    :func:`~strands_robots.utils.step_cadence_error` domain, which the
+    ``lerobot_train`` tool holds the same field to when it builds the argv
+    itself.
+
+    Only the *type* is graded. A non-positive cadence is a documented
+    capability - lerobot's ``should_save_checkpoint`` reads "a non-positive
+    ``save_freq`` disables periodic saving (only the final checkpoint is
+    written)" - and the ``eval_steps`` fallback in the LeRobot backend
+    (``spec.save_freq if spec.save_freq > 0 else spec.steps``) is written for
+    exactly that case, so ``0`` and a negative are first-class here. Whether a
+    given backend's own trainer accepts the disabled mode is a per-backend
+    question, like the per-backend seed ceiling :func:`seed_problems` leaves
+    open, and separate from the type checked here.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single problem when ``save_freq`` is not a whole number of steps;
+        empty otherwise.
+    """
+    error = step_cadence_error(spec.save_freq, "save_freq", context)
     return [] if error is None else [error]
 
 

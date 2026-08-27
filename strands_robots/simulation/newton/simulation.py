@@ -39,7 +39,7 @@ import numpy as np
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import SimEngine, reject_setup_kwargs
-from strands_robots.simulation.ik import hint_matches_name
+from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
 from strands_robots.simulation.model_registry import (
     list_available_models,
     resolve_model,
@@ -68,6 +68,7 @@ from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     camera_fov_error,
+    coerce_orientation_quaternion,
     coerce_pose_vector,
     coerce_rgba,
     coerce_size_vector,
@@ -94,13 +95,6 @@ logger = logging.getLogger(__name__)
 # example cadence and keeps position-servo arms tracking their targets.
 _DEFAULT_TIMESTEP = 1.0 / 600.0
 
-# Hint words for the best-guess gripper/EEF mount ``list_bodies`` advertises.
-# Newton adds "jaw" (its own MJCF vocabulary) to the MuJoCo backend's set.
-# Matched on word boundaries by
-# :func:`~strands_robots.simulation.ik.hint_matches_name` - the same rule
-# :func:`~strands_robots.simulation.ik.discover_ee_frame` applies - so the short
-# hint "ee" cannot fire inside "knee" or "wheel".
-_GRIPPER_BODY_HINTS = ("gripper", "hand", "jaw", "ee", "tool")
 
 # Valid ``add_robot(source=...)`` selectors. ``None``/``"registry"`` resolve
 # the curated registry + MJCF asset manager (the same path the MuJoCo backend
@@ -615,7 +609,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("add_robot", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("add_robot", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         if name in self._world.robots:
@@ -779,7 +773,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``"cylinder"``, or ``"mesh"``. ``"mesh"`` requires
                 ``mesh_path``.
             position: World position ``[x, y, z]`` (default origin).
-            orientation: wxyz quaternion (default identity).
+            orientation: wxyz quaternion (default identity). Any non-unit value is fine -- the magnitude is ignored -- but one whose norm rounds to zero describes no rotation and is refused rather than silently applied as identity (:func:`~strands_robots.utils.coerce_orientation_quaternion`).
             size: Half-extents (box) or ``[radius, ...]`` (others). For
                 ``shape="mesh"`` this is the per-axis scale applied to the
                 loaded geometry (default ``[1, 1, 1]`` -- the mesh's own units).
@@ -846,7 +840,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("add_object", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("add_object", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("add_object", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         # Same shared domain for the colour, whose accepted counts the 4-component
@@ -1009,7 +1003,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         position, _perr = coerce_pose_vector("move_object", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        orientation, _oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
+        orientation, _oerr = coerce_orientation_quaternion("move_object", "orientation", orientation)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         with self._lock:
@@ -2142,7 +2136,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         path (``so_arm100/.../Moving_Jaw``); the ``json`` block returns the
         full labels and, when ``robot_name`` is given, a best-guess
         ``gripper_body`` one of whose trailing segment's *name components* is
-        ``gripper``, ``hand``, ``jaw``, ``ee``, or ``tool``. Hints match
+        one of :data:`~strands_robots.simulation.ik.GRIPPER_BODY_HINTS`, the set
+        every backend reads: ``gripper``, ``hand``, ``jaw``, ``ee`` or ``tool``.
+        Hints match
         components rather than bare substrings, so a short hint cannot fire
         inside an unrelated word: a ``knee`` or a drive ``wheel`` is not an
         end-effector because ``ee`` occurs in its name.
@@ -2180,7 +2176,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             gripper_body: str | None = None
             for name in bodies:
                 short = _short_joint_name(name)
-                if any(hint_matches_name(hint, short) for hint in _GRIPPER_BODY_HINTS):
+                if any(hint_matches_name(hint, short) for hint in GRIPPER_BODY_HINTS):
                     gripper_body = name
                     break
             json_payload["gripper_body"] = gripper_body

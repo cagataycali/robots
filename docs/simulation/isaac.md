@@ -94,7 +94,8 @@ Known collateral (observed with isaacsim 6.0.0.1 and 6.0.1.0):
 - **Exit code 134 after successful work.** Isaac Sim has a known atexit
   segfault that makes otherwise-clean scripts exit 134 *after* completing
   successfully. The drivers in this repo guard with `os._exit(...)` after
-  SimulationApp teardown (see `examples/libero/run_isaac.py`); user scripts
+  SimulationApp teardown (see the `isaac` subcommand epilogue in
+  `examples/libero/run.py`); user scripts
   that boot SimulationApp should do the same.
 
 ## Usage
@@ -192,18 +193,76 @@ open a window.
 - **Robots** - `add_robot` (procedural builders, or USD via `usd_path=`, or
   URDF), `remove_robot`, `list_robots`, `robot_joint_names`, `send_action`,
   `get_observation`.
-- **Objects** - `add_object` (`cuboid` / `sphere` / `cylinder` / `capsule`,
-  dynamic or static), `remove_object`.
+- **Objects** - `add_object` (`cuboid` / `sphere` / `cylinder` / `capsule` /
+  `mesh`, dynamic or static), `remove_object`. A `shape="mesh"` add takes a
+  `mesh_path` to an STL/OBJ/MSH asset (converted to USD once and cached under
+  `$STRANDS_BASE_DIR/asset_cache/usd_meshes/`, content-addressed) or to a
+  USD file (referenced directly). The asset defines the extent - `size` is
+  ignored for a mesh, the MuJoCo read of that parameter (the Newton backend
+  consumes it as a scale instead; see
+  [#2300](https://github.com/strands-labs/robots/issues/2300)) - and
+  collision uses the mesh's **convex hull**, also the MuJoCo contract, with
+  the same caveat for concave assets: the hull fills every cavity. A missing
+  file, an unconvertible format, or an asset declaring a vertex coordinate
+  that is not finite is refused up front, never realized as a
+  fallback primitive.
 - **Cameras & rendering** - `add_camera` (look-at, FOV), `render` (RGB + depth).
   World-fixed only: `parent_body` (a body-mounted wrist camera, supported on
   mujoco/newton) is refused here with an error naming those backends, because
   camera prims are parented to the stage camera scope rather than to an
   articulation link.
 - **Loaders** - `load_urdf` / `load_mjcf` / `load_usd` resolve to a
-  `ProceduralRobot` dataclass.
+  `ProceduralRobot` dataclass. Both XML loaders report each link's pose in its
+  parent's frame. `load_mjcf` reads the rotation from whichever of MJCF's five
+  spellings the body uses - `quat`, `euler`, `axisangle`, `xyaxes` or `zaxis` -
+  under the model-global `<compiler angle>` and `<compiler eulerseq>`. The
+  reported orientation is always a unit quaternion, the one MuJoCo's compiler
+  stores: a non-unit spelling such as `quat="1 -1 0 0"` (the idiomatic quarter
+  turn) is reported as the quarter turn it means, not as the components as
+  written, which applied as a rotation would scale the frame by `|q|^2` as well
+  as turning it. `load_urdf` reads both halves from the `<origin>` of the joint
+  that reaches the link, since URDF places a link on that joint rather than on
+  the `<link>` element: `xyz` into `position` and `rpy` - fixed-axis
+  roll-pitch-yaw, always radians - into `orientation`. A root link, reached by no
+  joint, keeps the identity pose. A joint's axis comes from `<axis xyz>`, and
+  each format's own default applies when the element states no vector the
+  parser can read: a URDF joint that omits the optional `<axis>` acts about
+  **+X**, an MJCF `<joint>` that omits `axis` about **+Z**. Both are valid
+  axes, so a joint read under the other format's default would be reported
+  acting in the perpendicular plane with the load still reporting success. Both
+  of MJCF's spellings of a free joint are read - the dedicated `<freejoint>`
+  element and `<joint type="free">`, which MuJoCo compiles to the same joint -
+  so a floating base is reported rather than absent. `<freejoint>` is how every
+  shipped quadruped and humanoid states its base, and it resolves no default
+  class, because MJCF has no `<default><freejoint>` block: a `<default><joint>`
+  class reaches the `type="free"` spelling only, exactly as MuJoCo applies it.
+  Either spelling is reported with `joint_type="fixed"`, since `JointDef` has no
+  6-DOF spelling, so a floating base is visible in `joints` without being
+  counted as an actuated DOF by `num_joints`.
 
 Because the joint-name and observation contract matches the MuJoCo backend,
 policies and observation mappings transfer unchanged between backends.
+
+LIBERO scenes get the same treatment for their *visuals*: `load_scene`
+renders each task object with its real mesh (bowls, plates - the assets a
+pixel-conditioned policy was trained on) while keeping the validated
+collision-AABB box as the invisible physics proxy, so switching backends does
+not also switch what the cameras see. That box covers both MJCF spellings of a
+capsule or cylinder - `pos` plus `size="radius half-length"`, and `fromto` plus
+`size="radius"`, where the two endpoints carry the placement and the axis
+extent - so a `fromto` bar is proxied by its full length at its midpoint rather
+than by a ball of its radius at the body origin. An object whose mesh cannot be resolved
+keeps a visible box proxy, and the `load_scene` report then carries an
+explicit caveat that pixel-conditioned policy scores on that scene are not
+comparable across backends; when every object renders its mesh, the caveat
+disappears. A mesh asset that is declared but missing on disk fails the scene
+load loudly - never a silent box - and so does one declaring a vertex
+coordinate that is not finite: `min`/`max` order a NaN as neither smaller nor
+larger than anything, so the collision AABB measured from such an asset is the
+box of the vertices that *are* finite, numerically indistinguishable from a
+mesh that declared only those, while an infinite coordinate makes the proxy
+unbounded. MuJoCo refuses the same asset (`vertex coordinate N is not
+finite`), so the scene loader does too rather than sizing a proxy around it.
 
 The accepted *input* domain matches too, so a call one backend refuses is
 refused by all three. For the setup methods that means the pose vectors, an

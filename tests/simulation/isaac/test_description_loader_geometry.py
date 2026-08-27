@@ -18,9 +18,12 @@ Focus areas (verified against the shipped loader behavior):
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from strands_robots.simulation.isaac.loaders import (
+    _URDF_DEFAULT_JOINT_AXIS,
     SceneObject,
     load_mjcf,
     load_mjcf_scene_objects,
@@ -93,8 +96,10 @@ class TestSceneObjectExtraction:
         assert table.is_static is True
         assert table.size == pytest.approx((1.0, 0.6, 0.82))
         assert table.position == pytest.approx((1.0, 0.0, 0.01))
-        # The body-level quat is preserved as [w, x, y, z].
-        assert table.quat == pytest.approx((0.707, 0.0, 0.0, 0.707))
+        # The body-level quat is reported as [w, x, y, z], normalized the way
+        # MuJoCo's compiler normalizes it: the fixture's rounded 0.707 spelling
+        # of a quarter turn is reported as the quarter turn it means.
+        assert table.quat == pytest.approx((math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5)))
         # The body-frame AABB-centre offset is recorded (#1820): pose
         # appliers recompose the prim pose from a NEW body pose as
         # ``body_pos + R(body_quat) @ offset``, which is unrecoverable
@@ -134,8 +139,12 @@ class TestSceneObjectExtraction:
         assert objs["cap"].size == pytest.approx((0.2, 0.2, 0.6))
         # ellipsoid uses its three semi-axes directly.
         assert objs["elli"].size == pytest.approx((0.2, 0.4, 0.6))
-        # a single-size cylinder degrades to a radius-cube.
-        assert objs["cyl1"].size == pytest.approx((0.1, 0.1, 0.1))
+        # A cylinder carrying one size component is not a shape MuJoCo compiles
+        # ("size 1 must be positive in geom") -- that spelling only means
+        # something alongside ``fromto``, which supplies the axis extent. With no
+        # ``fromto`` there is no segment to measure, so the loader leaves the
+        # caller's fallback rather than inventing a radius-sized cube.
+        assert objs["cyl1"].size == pytest.approx((0.05, 0.05, 0.05))
 
     def test_malformed_scene_and_missing_worldbody_fail_loud(self, tmp_path):
         with pytest.raises(FileNotFoundError):
@@ -333,11 +342,17 @@ class TestParseFallbacks:
     parsers behind every loader. Bad input (wrong arity, non-numeric tokens)
     must fall back to the documented default rather than raise mid-parse, so a
     slightly-off description file still yields a usable kinematic structure.
+
+    The default is the *reading format's* own, not the parser's: a URDF joint
+    axis defaults to +X where an MJCF one defaults to +Z. Which default each
+    loader lands on is graded against MuJoCo in
+    ``test_joint_axis_format_default.py``; this class only pins that malformed
+    input degrades rather than raising.
     """
 
-    def test_axis_wrong_arity_and_non_numeric_fall_back_to_z(self, tmp_path):
+    def test_axis_wrong_arity_and_non_numeric_fall_back_to_the_urdf_default(self, tmp_path):
         # A 2-component axis (wrong arity) and a non-numeric axis both fall
-        # back to the +Z default rather than raising.
+        # back to URDF's own default axis rather than raising.
         urdf = (
             '<robot name="r">'
             '<link name="a"/><link name="b"/><link name="c"/>'
@@ -349,8 +364,8 @@ class TestParseFallbacks:
         )
         robot = load_urdf(_write(tmp_path, "axis.urdf", urdf))
         axes = {j.name: j.axis for j in robot.joints}
-        assert axes["short"] == pytest.approx((0.0, 0.0, 1.0))
-        assert axes["bad"] == pytest.approx((0.0, 0.0, 1.0))
+        assert axes["short"] == pytest.approx(_URDF_DEFAULT_JOINT_AXIS)
+        assert axes["bad"] == pytest.approx(_URDF_DEFAULT_JOINT_AXIS)
 
     def test_position_wrong_arity_and_non_numeric_fall_back_to_origin(self, tmp_path):
         # MJCF body pos with too few components / non-numeric tokens both
@@ -501,3 +516,133 @@ class TestSceneObjectGeomFallbacks:
         objs = {o.name: o for o in load_mjcf_scene_objects(_write(tmp_path, "d.xml", scene))}
         for name in ("badsize", "shortbox", "nosizesphere", "shortelli", "nosizecyl", "meshonly"):
             assert objs[name].size == pytest.approx((0.05, 0.05, 0.05)), name
+
+
+class TestMjcfFromToLinkExtent:
+    """A ``fromto`` link's extent comes from its endpoints, not the size default.
+
+    MJCF spells a capsule / cylinder two ways: ``pos`` + ``size="radius
+    half-length"`` along the geom's local z, or ``fromto`` + ``size="radius"``
+    with the endpoints carrying the axis extent. Both compile. Read as ``size``
+    alone, the second spelling reports whatever the radius-only branch pads the
+    half-length to (0.05 m) however long the segment is, so a 0.40 m link is
+    published as a 0.10 m stub - the same loss ``_geom_aabb`` consults
+    ``_parse_fromto`` first to avoid on the scene-object side of this module.
+
+    ``load_mjcf`` is exported and documented (``docs/simulation/isaac.md``) and
+    the ``ProceduralRobot`` it returns *is* its product, so a link extent it
+    reports wrongly is the value a caller builds an articulation from.
+    """
+
+    @staticmethod
+    def _shapes(tmp_path, name: str, mjcf: str) -> dict:
+        robot = load_mjcf(_write(tmp_path, name, mjcf))
+        return {b.name: (b.shape, b.shape_size) for b in robot.bodies}
+
+    def test_a_fromto_capsule_link_reports_the_endpoint_half_length(self, tmp_path):
+        # The spelling a robosuite-compiled scene and the Menagerie humanoids
+        # use: the endpoints span 0.40 m, so the half-length is 0.20 m.
+        mjcf = """<mujoco><worldbody>
+          <body name="thigh"><joint name="j" type="hinge"/>
+            <geom type="capsule" fromto="0 0 0 0 0 0.4" size="0.03"/></body>
+        </worldbody></mujoco>"""
+        shape, size = self._shapes(tmp_path, "fromto.xml", mjcf)["thigh"]
+        if shape != "capsule" or abs(size[-1] - 0.20) > 1e-12:
+            raise AssertionError(
+                f"'thigh' spells a 0.40 m capsule with fromto and the loader reported "
+                f"({shape}, {size}) - the endpoints were not read, so the link is published "
+                f"with the 0.05 m default half-length instead of 0.20 m"
+            )
+        assert size == pytest.approx((0.03, 0.20))
+
+    @pytest.mark.parametrize(
+        ("gtype", "fromto", "expected_half"),
+        [
+            ("capsule", "0 0 0 0 0 0.4", 0.20),  # along z, the common case
+            ("cylinder", "0 0 0 0.6 0 0", 0.30),  # along x - a rotated axis
+            ("capsule", "0 0 0 0.3 0.4 0", 0.25),  # 3-4-5 diagonal
+            ("capsule", "-0.1 0 0 0.1 0 0", 0.10),  # straddling the origin
+        ],
+    )
+    def test_the_half_length_is_half_the_segment_for_every_axis(self, tmp_path, gtype, fromto, expected_half):
+        mjcf = f"""<mujoco><worldbody>
+          <body name="link"><geom type="{gtype}" fromto="{fromto}" size="0.02"/></body>
+        </worldbody></mujoco>"""
+        got = self._shapes(tmp_path, f"{gtype}_{expected_half}.xml", mjcf)["link"]
+        assert got[0] == gtype
+        assert got[1] == pytest.approx((0.02, expected_half))
+
+    def test_a_fromto_geom_without_a_size_keeps_the_default_radius(self, tmp_path):
+        # ``size`` carries only the radius for this spelling, so an absent one
+        # leaves the radius at the documented default - but the length is in
+        # the endpoints either way and must still be reported.
+        mjcf = """<mujoco><worldbody>
+          <body name="link"><geom type="capsule" fromto="0 0 0 0 0 1.0"/></body>
+        </worldbody></mujoco>"""
+        assert self._shapes(tmp_path, "noradius.xml", mjcf)["link"][1] == pytest.approx((0.05, 0.5))
+
+    def test_the_pos_and_size_spelling_is_unchanged(self, tmp_path):
+        # The half of the contract that already worked: passes on both trees,
+        # so it fails if the fromto branch is made unconditional.
+        mjcf = """<mujoco><worldbody>
+          <body name="a"><geom type="capsule" pos="0 0 0.2" size="0.03 0.2"/></body>
+          <body name="b"><geom type="cylinder" size="0.04 0.15"/></body>
+          <body name="c"><geom type="cylinder" size="0.03"/></body>
+        </worldbody></mujoco>"""
+        shapes = self._shapes(tmp_path, "possize.xml", mjcf)
+        assert shapes["a"] == ("capsule", (0.03, 0.2))
+        assert shapes["b"] == ("cylinder", (0.04, 0.15))
+        # One size and no fromto still pads the half-length to the default.
+        assert shapes["c"] == ("cylinder", (0.03, 0.05))
+
+    def test_a_degenerate_fromto_keeps_the_size_reading(self, tmp_path):
+        # MuJoCo refuses coincident endpoints ("fromto points too close"), so
+        # there is no length to report; a zero-length link would be worse than
+        # the default, and the radius reading must survive.
+        mjcf = """<mujoco><worldbody>
+          <body name="link"><geom type="capsule" fromto="0.1 0.2 0.3 0.1 0.2 0.3" size="0.03"/></body>
+        </worldbody></mujoco>"""
+        assert self._shapes(tmp_path, "degenerate.xml", mjcf)["link"][1] == pytest.approx((0.03, 0.05))
+
+    def test_a_malformed_fromto_keeps_the_size_reading(self, tmp_path):
+        # Not six numbers -> MuJoCo refuses the file outright, so there is no
+        # shape to approximate and the size reading is left alone.
+        mjcf = """<mujoco><worldbody>
+          <body name="short"><geom type="capsule" fromto="0 0 0 0 0" size="0.03 0.4"/></body>
+          <body name="words"><geom type="capsule" fromto="a b c d e f" size="0.03 0.4"/></body>
+        </worldbody></mujoco>"""
+        shapes = self._shapes(tmp_path, "malformed.xml", mjcf)
+        assert shapes["short"][1] == pytest.approx((0.03, 0.4))
+        assert shapes["words"][1] == pytest.approx((0.03, 0.4))
+
+    def test_fromto_on_a_box_keeps_the_default_box(self, tmp_path):
+        # ``fromto`` on a box or ellipsoid squares the cross-section and needs
+        # the rotated-box bound, which this module deliberately does not
+        # compute (the same exclusion ``_geom_aabb`` documents). Reading the
+        # segment here would assert an approximation nothing derived.
+        mjcf = """<mujoco><worldbody>
+          <body name="bx"><geom type="box" fromto="0 0 0 0 0 0.5" size="0.02 0.03"/></body>
+          <body name="el"><geom type="ellipsoid" fromto="0 0 0 0 0 0.5" size="0.02 0.03"/></body>
+        </worldbody></mujoco>"""
+        shapes = self._shapes(tmp_path, "boxfromto.xml", mjcf)
+        assert shapes["bx"] == ("box", (0.05, 0.05, 0.05))
+        assert shapes["el"] == ("box", (0.05, 0.05, 0.05))
+
+    def test_both_fromto_consumers_read_the_length_through_one_helper(self):
+        # The scene-object AABB and the robot link extent are the two places a
+        # fromto segment's length is needed. Re-deriving it in either is how
+        # they would drift; a shared helper is what keeps one answer.
+        import inspect
+
+        from strands_robots.simulation.isaac import loaders as mod
+
+        for fn in (mod._extract_mjcf_shape, mod._segment_aabb):
+            src = inspect.getsource(fn)
+            assert "_segment_length(" in src, f"{fn.__name__} does not read the length through the shared helper"
+            assert "sum(d * d" not in src, f"{fn.__name__} re-derives the segment length instead of sharing it"
+
+        # The helper keeps the exact expression ``_segment_aabb`` used before it
+        # was extracted: ``d * d`` and ``x ** 2`` disagree in the last ULP, so
+        # spelling it differently would move the scene-object AABBs this shares
+        # with (measured: 2 of 8000 random segments).
+        assert "sum(d * d" in inspect.getsource(mod._segment_length)

@@ -194,6 +194,32 @@ off-policy SAC fields (`buffer_size`, `batch_size`, `learning_starts`,
 `gradient_steps`, `tau`, `autotune_alpha`, `init_alpha`, `alpha_lr`,
 `target_entropy`), plus the universal `output_dir` / `learning_rate` / `seed`.
 
+`total_timesteps` and `rollout_steps` must each be a positive integer, checked by
+`validate()` on both backends against the same shared domain the supervised
+backends use for `steps` / `global_batch_size`. They are the two caller-supplied
+factors of the one loop bound each backend derives -
+`num_iters = max(1, total_timesteps // (rollout_steps * num_envs))`, iterated as
+`range(num_iters)` - and because the bound is *derived* through that `max(1, ...)`
+clamp, a value that is merely "not non-positive" is not enough. Over a 16-step run
+with `rollout_steps=4`, `True`, `0.5`, `nan` and `inf` each used to report
+`status="success"` after exactly **one** iteration, writing a checkpoint and
+announcing `"1 iterations x 4 steps complete"` for a run asked to be tens of
+thousands of steps long (`inf // 4` is `nan`, and `max(1, nan)` is `1` - `nan`
+compares false against everything). A fraction that does divide -
+`100.5 // 4 == 25.0` - instead raised a bare `TypeError` out of `range()` after
+the environment, the networks, the optimizers and (FastSAC) the replay buffer had
+been built, and a string or `None` raised out of the comparison itself, from a
+preflight documented to *return* problems. `rollout_steps=True` was worse than a
+short run because it changes the run's shape rather than its length: it makes
+`steps_per_iter` one, so FastSAC ran 16 single-step iterations instead of 4 of 4,
+and PPO normalized advantages over a length-one batch - whose standard deviation
+is `nan` - and failed inside torch's `Normal` constraint.
+
+`num_envs`, the third factor of `steps_per_iter`, is checked by each backend
+separately rather than against that shared domain, because the accepted sets
+differ: PPO parallelizes and accepts any count `>= 1`, while the MuJoCo-backed
+FastSAC is single-env and requires exactly `1`.
+
 `gamma` must be a finite number in the closed interval `[0, 1]`, checked by
 `validate()` on both backends. It is the one coefficient both of them read (PPO
 discounts the GAE recursion with it, FastSAC its target-Q bootstrap) and a

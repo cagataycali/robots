@@ -20,14 +20,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import strands_robots.tools._command_gate as gate_mod
 import strands_robots.tools.use_ros as ros_mod
-from strands_robots.tools.use_ros import (
-    _approve_response,
-    _canonical_command_name,
-    _gate_command,
-    _is_command_blocked,
-    use_ros,
+from strands_robots.tools._command_gate import (
+    approve_response,
+    canonical_command_name,
+    command_block_message,
+    gate_command,
 )
+from strands_robots.tools.use_ros import _gate_command, use_ros
 
 # The verbs that carry a command to a robot, with the parameter naming the
 # surface and the module-level helper each one reaches once the gate allows it.
@@ -68,7 +69,7 @@ class TestCommandBlocklist:
         ],
     )
     def test_safety_critical_surfaces_blocked(self, name: str) -> None:
-        err = _is_command_blocked("publish", name)
+        err = command_block_message("publish", name)
         assert err is not None
         assert "blocked" in err
 
@@ -83,14 +84,14 @@ class TestCommandBlocklist:
     )
     def test_namespaced_surfaces_blocked(self, name: str) -> None:
         """Namespace-prefixed forms of blocked surfaces must also be caught."""
-        assert _is_command_blocked("publish", name) is not None
+        assert command_block_message("publish", name) is not None
 
     @pytest.mark.parametrize(
         "name",
         ["/my_custom_topic", "/robot/status", "/diagnostics", "/tf", "/rosout"],
     )
     def test_non_blocked_surfaces_pass(self, name: str) -> None:
-        assert _is_command_blocked("publish", name) is None
+        assert command_block_message("publish", name) is None
 
     @pytest.mark.parametrize(
         "name",
@@ -105,15 +106,15 @@ class TestCommandBlocklist:
     )
     def test_substring_does_not_match(self, name: str) -> None:
         """Blocklist must be exact final-segment match, not substring."""
-        assert _is_command_blocked("publish", name) is None
+        assert command_block_message("publish", name) is None
 
     def test_multi_segment_blocklist_entry(self) -> None:
         """/joint_trajectory_controller/joint_trajectory is in the default list."""
-        assert _is_command_blocked("publish", "/joint_trajectory_controller/joint_trajectory") is not None
+        assert command_block_message("publish", "/joint_trajectory_controller/joint_trajectory") is not None
 
     def test_message_names_the_verb_that_was_attempted(self) -> None:
         """The operator needs to know which verb reached the surface."""
-        assert "service_call" in (_is_command_blocked("service_call", "/emergency_stop") or "")
+        assert "service_call" in (command_block_message("service_call", "/emergency_stop") or "")
 
 
 class TestCanonicalNameSpellings:
@@ -138,7 +139,7 @@ class TestCanonicalNameSpellings:
         ],
     )
     def test_unrooted_and_trailing_separator_spellings_are_blocked(self, name: str) -> None:
-        assert _is_command_blocked("publish", name) is not None, f"{name!r} reached the robot ungated"
+        assert command_block_message("publish", name) is not None, f"{name!r} reached the robot ungated"
 
     @pytest.mark.parametrize("name", ["/CMD_VEL", "/Cmd_Vel", "/EMERGENCY_STOP"])
     def test_case_is_preserved_because_graph_names_are_case_sensitive(self, name: str) -> None:
@@ -147,7 +148,7 @@ class TestCanonicalNameSpellings:
         No ``/cmd_vel`` subscriber receives ``/CMD_VEL``, so case-folding would
         refuse a legitimate surface without closing a path to the robot.
         """
-        assert _is_command_blocked("publish", name) is None
+        assert command_block_message("publish", name) is None
 
     @pytest.mark.parametrize(
         ("spelling", "expected"),
@@ -160,7 +161,7 @@ class TestCanonicalNameSpellings:
         ],
     )
     def test_canonical_form(self, spelling: str, expected: str) -> None:
-        assert _canonical_command_name(spelling) == expected
+        assert canonical_command_name(spelling) == expected
 
     def test_allowlist_accepts_an_unrooted_spelling(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An operator allowlisting ``cmd_vel`` means the same surface as ``/cmd_vel``."""
@@ -256,11 +257,11 @@ class TestGateCommand:
 
     @pytest.mark.parametrize("response", ["y", "Y", "yes", "YES", "approve", "Approved"])
     def test_approve_response_affirmative(self, response: str) -> None:
-        assert _approve_response(response) is True
+        assert approve_response(response) is True
 
     @pytest.mark.parametrize("response", ["n", "no", "nope", "", 42, None])
     def test_approve_response_negative(self, response: object) -> None:
-        assert _approve_response(response) is False
+        assert approve_response(response) is False
 
 
 class TestEveryCommandVerbConsultsTheGate:
@@ -425,15 +426,18 @@ def test_the_blocklist_is_documented_where_operators_look() -> None:
     """Every blocklisted surface and both env vars appear in the ROS 2 docs."""
     docs = Path(__file__).resolve().parents[1] / "docs" / "ros2-integration.md"
     text = docs.read_text(encoding="utf-8")
-    for entry in ros_mod._DEFAULT_COMMAND_BLOCKLIST:
+    for entry in gate_mod.COMMAND_BLOCKLIST:
         assert entry in text, f"{entry} is blocked but undocumented"
     assert "STRANDS_ROS2_COMMAND_ALLOW" in text
 
 
-# Files an operator reads to decide what to pre-approve before a headless run.
-# The README Configuration table is the single source of truth for env vars, so a
-# wrong contract there is the one that gets scaffolded from.
-_OPERATOR_FACING_DOCS: tuple[str, ...] = (
+# Files that document the pre-approval variable itself, and so have to describe
+# its reach correctly. The README Configuration table is the single source of
+# truth for env vars, so a wrong contract there is the one that gets scaffolded
+# from. Every entry is required to name the variable by
+# ``test_the_sweep_reaches_every_operator_facing_surface``, which is what keeps
+# this list from going stale into a vacuous sweep.
+_ALLOWLIST_DOCS: tuple[str, ...] = (
     "README.md",
     "docs/ros2-integration.md",
     "docs/security.md",
@@ -461,7 +465,7 @@ def _readme_allow_row() -> str:
     """Return the README Configuration row documenting the pre-approval variable."""
     readme = (_repo_root() / "README.md").read_text(encoding="utf-8")
     for line in readme.splitlines():
-        if line.startswith("|") and f"`{ros_mod._COMMAND_ALLOW_ENV}`" in line:
+        if line.startswith("|") and f"`{gate_mod.COMMAND_ALLOW_ENV}`" in line:
             return line
     return ""
 
@@ -498,17 +502,17 @@ def _surfaces_documenting_the_allowlist() -> list[tuple[str, str]]:
         ``(surface_label, text)`` pairs, text lowercased for phrase matching.
     """
     surfaces: list[tuple[str, str]] = []
-    for name in _OPERATOR_FACING_DOCS:
+    for name in _ALLOWLIST_DOCS:
         lines = [
             line
             for line in (_repo_root() / name).read_text(encoding="utf-8").splitlines()
-            if ros_mod._COMMAND_ALLOW_ENV in line
+            if gate_mod.COMMAND_ALLOW_ENV in line
         ]
         if lines:
             surfaces.append((name, "\n".join(lines).lower()))
-    gate_doc = inspect.getdoc(_gate_command) or ""
-    if ros_mod._COMMAND_ALLOW_ENV in gate_doc:
-        surfaces.append(("_gate_command docstring", gate_doc.lower()))
+    gate_doc = inspect.getdoc(gate_command) or ""
+    if gate_mod.COMMAND_ALLOW_ENV in gate_doc:
+        surfaces.append(("gate_command docstring", gate_doc.lower()))
     return surfaces
 
 
@@ -525,26 +529,51 @@ def _measured_allowlist_reach() -> tuple[str, list[str]]:
         entry un-gated without naming them.
     """
     siblings = ["/robot_a/cmd_vel", "/robot_b/cmd_vel", "/mobile_base/cmd_vel"]
-    previous = os.environ.get(ros_mod._COMMAND_ALLOW_ENV)
+    previous = os.environ.get(gate_mod.COMMAND_ALLOW_ENV)
     previous_bypass = os.environ.get("BYPASS_TOOL_CONSENT")
-    os.environ[ros_mod._COMMAND_ALLOW_ENV] = "/cmd_vel"
+    os.environ[gate_mod.COMMAND_ALLOW_ENV] = "/cmd_vel"
     os.environ.pop("BYPASS_TOOL_CONSENT", None)
     try:
         extra = [name for name in siblings if _gate_command("publish", name, None) is None]
     finally:
         if previous is None:
-            os.environ.pop(ros_mod._COMMAND_ALLOW_ENV, None)
+            os.environ.pop(gate_mod.COMMAND_ALLOW_ENV, None)
         else:
-            os.environ[ros_mod._COMMAND_ALLOW_ENV] = previous
+            os.environ[gate_mod.COMMAND_ALLOW_ENV] = previous
         if previous_bypass is not None:
             os.environ["BYPASS_TOOL_CONSENT"] = previous_bypass
     return ("base" if extra else "exact"), extra
 
 
+def _command_surface_docs() -> list[str]:
+    """Every prose page that makes claims about a surface the gate blocks.
+
+    Derived rather than listed, because the set an exemption can be written into
+    is not the set that documents the pre-approval variable. A per-transport
+    integration page shows an operator how to drive ``cmd_vel`` and describes
+    what that costs, without ever naming ``STRANDS_ROS2_COMMAND_ALLOW`` - so it
+    can claim the halt is ungated while sitting outside :data:`_ALLOWLIST_DOCS`,
+    and that is where the claim this scan exists to refuse was actually written.
+
+    A page qualifies when it names one of the blocklisted surfaces by its final
+    path segment, which is the same rule the gate matches on (see
+    :func:`~strands_robots.tools._command_gate.match_blocklist`): a page that
+    talks about a surface the gate blocks is a page whose gating claims an
+    operator will act on.
+
+    Returns:
+        Repository-relative paths, sorted, with ``README.md`` first.
+    """
+    root = _repo_root()
+    bare = {entry.rsplit("/", 1)[-1] for entry in gate_mod.COMMAND_BLOCKLIST}
+    pages = ["README.md"] + sorted(str(path.relative_to(root)) for path in (root / "docs").rglob("*.md"))
+    return [name for name in pages if any(surface in (root / name).read_text(encoding="utf-8") for surface in bare)]
+
+
 def _documented_halt_exemptions() -> list[tuple[str, int, str]]:
     """Every operator-facing clause asserting the halt is exempt from the gate."""
     found: list[tuple[str, int, str]] = []
-    for name in _OPERATOR_FACING_DOCS:
+    for name in _command_surface_docs():
         text = (_repo_root() / name).read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), 1):
             for clause in re.split(r"(?<=[.;])\s+|\s*\|\s*", line):
@@ -567,6 +596,13 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
     The documented claims are graded against the running gate rather than banned
     outright, so a gate that one day does exempt a payload makes the claim
     permissible instead of failing here.
+
+    The pages scanned are derived (:func:`_command_surface_docs`) rather than
+    listed. A hardcoded list of three pages was what let the hazard through: the
+    per-transport integration page for the rosbridge bridge documented its halt
+    as "never gated" in three places - a bullet and two comments in a runnable
+    example - and was outside every page the scan looked at, because it never
+    names the pre-approval variable that list is keyed on.
     """
 
     calls: dict[str, list[tuple[Any, ...]]]
@@ -574,7 +610,7 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
     @pytest.fixture(autouse=True)
     def _hermetic(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
-        monkeypatch.delenv(ros_mod._COMMAND_ALLOW_ENV, raising=False)
+        monkeypatch.delenv(gate_mod.COMMAND_ALLOW_ENV, raising=False)
         monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
         self.calls = {"_publish": [], "_action_send_goal": []}
 
@@ -633,7 +669,7 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
         """The docs and the gate must agree on whether the halt is exempt."""
         row = _readme_allow_row()
         assert row, (
-            f"no README Configuration row documents {ros_mod._COMMAND_ALLOW_ENV}; a clean sweep would prove nothing"
+            f"no README Configuration row documents {gate_mod.COMMAND_ALLOW_ENV}; a clean sweep would prove nothing"
         )
         claims = _documented_halt_exemptions()
         measured = "exempt" if not self._halt_is_gated() else "gated"
@@ -643,6 +679,34 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
             f"the gate treats a zero-velocity halt to a blocklisted surface as {measured}, "
             f"but the operator-facing documentation describes it as {documented}.\n"
             f"clauses claiming an exemption:\n{detail}"
+        )
+
+    def test_the_scan_reaches_every_page_that_documents_a_blocked_surface(self) -> None:
+        """Non-vacuity: the derived set must be wider than the allowlist pages.
+
+        The scan is only worth running over the pages an exemption can be
+        written into. Two properties make that true and are asserted rather than
+        assumed: every page that documents the pre-approval variable is in the
+        set (it necessarily names a surface too), and the per-transport
+        integration pages - which document driving a blocked surface without
+        naming the variable - are in it as well. Those are exactly the pages a
+        variable-keyed list cannot reach.
+        """
+        scanned = set(_command_surface_docs())
+        assert set(_ALLOWLIST_DOCS) <= scanned, (
+            f"pages documenting {gate_mod.COMMAND_ALLOW_ENV} are missing from the scan: "
+            f"{sorted(set(_ALLOWLIST_DOCS) - scanned)}"
+        )
+        transport_pages = {
+            "docs/ros2-integration.md",
+            "docs/rosbridge-integration.md",
+            "docs/rtps-integration.md",
+        }
+        assert transport_pages <= scanned, (
+            f"transport integration pages outside the scan: {sorted(transport_pages - scanned)}"
+        )
+        assert scanned - set(_ALLOWLIST_DOCS), (
+            "the derived set is no wider than the allowlist pages, so deriving it buys nothing"
         )
 
     def test_the_documented_read_exemption_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -667,7 +731,7 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
         assert example, f"the row no longer shows a pre-approval example: {row}"
         surfaces = example.group(1)
         assert "/cmd_vel" in surfaces, f"the example stopped naming the halt surface: {surfaces}"
-        monkeypatch.setenv(ros_mod._COMMAND_ALLOW_ENV, surfaces)
+        monkeypatch.setenv(gate_mod.COMMAND_ALLOW_ENV, surfaces)
 
         ctx = MagicMock()
         result = self._publish_twist(self._halt_fields(), ctx)
@@ -705,7 +769,7 @@ class TestTheDocumentedAllowlistReachIsTheRealReach:
     @pytest.fixture(autouse=True)
     def _hermetic(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
-        monkeypatch.delenv(ros_mod._COMMAND_ALLOW_ENV, raising=False)
+        monkeypatch.delenv(gate_mod.COMMAND_ALLOW_ENV, raising=False)
 
     def test_every_surface_documenting_the_variable_states_its_real_reach(self) -> None:
         """The headline, graded in both directions against the running gate.
@@ -728,7 +792,7 @@ class TestTheDocumentedAllowlistReachIsTheRealReach:
             if reach == "exact" and states_reach:
                 offenders.append(f"{label} (claims a namespaced reach the gate no longer grants)")
         assert not offenders, (
-            f"a single {ros_mod._COMMAND_ALLOW_ENV}=/cmd_vel entry pre-approves {extra} - surfaces it "
+            f"a single {gate_mod.COMMAND_ALLOW_ENV}=/cmd_vel entry pre-approves {extra} - surfaces it "
             f"never names - so the gate's reach is {reach!r}, which these do not state: {offenders}"
         )
 
@@ -744,7 +808,7 @@ class TestTheDocumentedAllowlistReachIsTheRealReach:
         Naming the namespace is what keeps a fleet-wide pre-approval from being
         the only option, so it is pinned here rather than left to prose.
         """
-        monkeypatch.setenv(ros_mod._COMMAND_ALLOW_ENV, "/robot_a/cmd_vel")
+        monkeypatch.setenv(gate_mod.COMMAND_ALLOW_ENV, "/robot_a/cmd_vel")
         assert _gate_command("publish", "/robot_a/cmd_vel", None) is None
         for other in ("/robot_b/cmd_vel", "/cmd_vel"):
             result = _gate_command("publish", other, None)
@@ -755,7 +819,7 @@ class TestTheDocumentedAllowlistReachIsTheRealReach:
     def test_the_sweep_reaches_every_operator_facing_surface(self) -> None:
         """Non-vacuity: a doc reflow that hides the variable must fail loudly."""
         labels = [label for label, _ in _surfaces_documenting_the_allowlist()]
-        assert set(_OPERATOR_FACING_DOCS) <= set(labels), (
-            f"only {labels} document {ros_mod._COMMAND_ALLOW_ENV}; a clean sweep would prove nothing"
+        assert set(_ALLOWLIST_DOCS) <= set(labels), (
+            f"only {labels} document {gate_mod.COMMAND_ALLOW_ENV}; a clean sweep would prove nothing"
         )
-        assert "_gate_command docstring" in labels, "the gate helper stopped naming the variable it reads"
+        assert "gate_command docstring" in labels, "the gate helper stopped naming the variable it reads"

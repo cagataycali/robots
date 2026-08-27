@@ -334,6 +334,7 @@ class SagemakerTrainer(Trainer):
 
         # --- shared numeric domains of every field this provider serializes ---
         problems.extend(self._run_size_problems(spec))
+        problems.extend(self._checkpoint_cadence_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
         problems.extend(self._launch_topology_problems(spec))
         problems.extend(self._seed_problems(spec))

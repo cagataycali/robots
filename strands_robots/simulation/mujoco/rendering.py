@@ -48,19 +48,29 @@ _DEFAULT_MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MB
 def no_gl_context_message(*, depth: bool = False, platform: str | None = None) -> str:
     """The one sentence every renderer consumer says when there is no GL context.
 
-    The advice used to be a Linux package install on every host,
-    which is nonsense on the Mac this dashboard runs on: macOS has neither EGL
-    nor OSMesa (MuJoCo renders through CGL there), so the reader is sent to
-    install a package that does not exist for their machine, and the real cause
-    keeps its cover. Kept for Linux, where it is exactly right.
+    The advice was a Linux package install on every host. macOS has neither EGL
+    nor OSMesa - MuJoCo renders through CGL there - so on a Mac the reader was
+    sent to install a package that does not exist for their machine while the
+    real cause kept its cover: a CGL context needs a window-server session,
+    which a process started by launchd, cron or a bare ssh login does not have.
+    The Linux advice is kept, because on Linux it is exactly right.
+
+    Args:
+        depth: ``True`` when the caller is the depth renderer, so the sentence
+            names depth rendering rather than rendering.
+        platform: Platform to answer for, spelled as ``sys.platform`` spells it.
+            Defaults to the running platform; a caller passes it explicitly to
+            answer for a host it is not running on.
+
+    Returns:
+        One stripped sentence naming the failure and a fix that exists on
+        ``platform``.
     """
     import sys as _sys
 
     system = platform or _sys.platform
     head = (
-        "Depth rendering unavailable (no OpenGL context). "
-        if depth
-        else "Rendering unavailable (no OpenGL context). "
+        "Depth rendering unavailable (no OpenGL context). " if depth else "Rendering unavailable (no OpenGL context). "
     )
     if system == "darwin":
         return head + (
@@ -71,9 +81,7 @@ def no_gl_context_message(*, depth: bool = False, platform: str | None = None) -
             "worked EARLIER in this same process, the context was lost rather than "
             "missing, and a fresh process is the fix."
         )
-    return head + (
-        "Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
-    )
+    return head + ("Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev")
 
 
 def _is_pixel_count(value: Any) -> bool:
@@ -1102,11 +1110,7 @@ class RenderingMixin:
             if renderer is None:
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": no_gl_context_message()
-                        }
-                    ],
+                    "content": [{"text": no_gl_context_message()}],
                 }
             # strict camera validation - no silent fallback to default.
             # Special 'default' / 'free' tokens route to the free camera; any
@@ -1250,11 +1254,7 @@ class RenderingMixin:
             if renderer is None:
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": no_gl_context_message(depth=True)
-                        }
-                    ],
+                    "content": [{"text": no_gl_context_message(depth=True)}],
                 }
             # Reading mjData (update_scene copies xpos/xquat/xmat/geom poses)
             # races a concurrent mj_step from a policy worker or the step()
@@ -2215,9 +2215,12 @@ class RenderingMixin:
                         continue
                     if arr is None:
                         if isinstance(r, dict) and r.get("status") == "error":
+                            # The narrowest superset the read can raise: a
+                            # missing key, an empty content list, and a
+                            # non-subscriptable content or block.
                             try:
                                 _refusals[cam] = str(r["content"][0]["text"])
-                            except Exception:  # noqa: BLE001 - defensive
+                            except (IndexError, KeyError, TypeError):
                                 _refusals[cam] = "render returned an error result with no text"
                         continue
                     # arr.std(axis=0) is per-column std-dev; .mean()

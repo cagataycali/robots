@@ -31,6 +31,7 @@ from strands.types.tools import ToolContext
 from strands_robots.tools._hitl_audit import log_operator_response
 from strands_robots.utils import (
     positive_count_error,
+    step_cadence_error,
     validation_split_error,
     validation_split_fraction,
 )
@@ -417,6 +418,45 @@ def _torch_device_error(device: Any) -> str | None:
     return None
 
 
+def _save_freq_error(value: Any) -> str | None:
+    """Error text for a ``save_freq`` lerobot cannot decode, or ``None``.
+
+    ``save_freq`` is interpolated into ``--save_freq=`` - and, when a validation
+    split is requested, into ``--eval_steps=`` as well - in the argv of a
+    DETACHED process, so one unusable value spoils two flags and neither refusal
+    reaches the caller: the tool reports a started run with a PID and a log path,
+    and only the training log records that lerobot could not parse it. That is
+    the same reason the run-size numerics and ``device`` in the same argv are
+    refused up front, and ``save_freq`` is the last token beside them carried
+    through unchecked.
+
+    lerobot declares the field as a plain ``int``, so its parser decodes the
+    token with ``int(...)`` and refuses every other spelling of the number -
+    ``2.7`` and ``5000.0`` alike, and ``True``/``inf``/``nan`` as written. That
+    is the same requirement :class:`~strands_robots.training.base.TrainSpec`'s
+    ``save_freq`` carries into the trainer backends, which reach the identical
+    lerobot field in-process, so the domain itself belongs to neither surface:
+    this delegates to :func:`~strands_robots.utils.step_cadence_error`, the one
+    owner both consult, rather than carrying a second copy of the rule. What
+    stays here is the reason the check happens *at this point in this tool* -
+    the detached argv above.
+
+    Only the *type* is graded, and the shared owner says why: lerobot documents a
+    non-positive ``save_freq`` as "disables periodic saving", so ``0`` and a
+    negative are a capability, and the ``--eval_steps=`` fallback beside this
+    guard is written for exactly that case.
+
+    Args:
+        value: The caller-supplied checkpoint cadence. ``None`` never reaches
+            this guard - it means "omit the flag" and is filtered by the caller.
+
+    Returns:
+        An error message naming the tool and the parameter, or ``None`` when the
+        value is a cadence lerobot can decode.
+    """
+    return step_cadence_error(value, "save_freq", "lerobot_train")
+
+
 def build_train_command(
     dataset_root: str,
     policy_type: str = "act",
@@ -456,13 +496,18 @@ def build_train_command(
     requires a positive integer. Passing ``None`` for either omits the flag and
     leaves lerobot's own default in place.
 
+    ``save_freq`` is checked against the same ``int`` requirement by
+    :func:`_save_freq_error`, without a floor: lerobot documents a non-positive
+    cadence as "disables periodic saving".
+
     Raises:
         ValueError: if ``lora`` and ``train_expert_only`` are both set (both
             freeze the VLM and are mutually exclusive), if ``train_expert_only``
             is requested for a non-expert policy, if ``num_gpus < 1``, or if a
             supplied ``steps`` / ``batch_size`` - or, under ``lora``, a supplied
             ``lora_r`` / ``lora_alpha`` - is not a positive integer, or if a
-            fresh run's ``device`` is not a device string torch can parse.
+            fresh run's ``device`` is not a device string torch can parse or its
+            ``save_freq`` is not a whole number of steps.
     """
     if lora and train_expert_only:
         raise ValueError(
@@ -517,6 +562,14 @@ def build_train_command(
     device_error = _torch_device_error(device)
     if device_error:
         raise ValueError(device_error)
+
+    # The checkpoint cadence, checked in the same place and for the same reason:
+    # a resumed run carries no --save_freq either. ``None`` means "omit the flag
+    # and keep lerobot's default", so only a supplied value is checked.
+    if save_freq is not None:
+        save_freq_error = _save_freq_error(save_freq)
+        if save_freq_error:
+            raise ValueError(save_freq_error)
 
     # Fresh-run flags.
     cmd.extend(
@@ -705,7 +758,11 @@ def lerobot_train(
         job_name: Run name used in the default output_dir and lerobot logs.
         steps: Number of training steps.
         batch_size: Training batch size.
-        save_freq: Checkpoint save frequency in steps.
+        save_freq: Checkpoint save frequency in steps. A whole number; a
+            non-positive value disables periodic saving (only the final
+            checkpoint is written), and a fractional, non-finite, boolean or
+            non-numeric cadence is refused before the run starts because
+            lerobot decodes the flag into an ``int`` field.
         device: Torch device type, optionally with an index (cuda, cuda:0,
             cpu, mps). Refused before launch if torch cannot parse it; only
             the spelling is graded, so naming a device this machine does not

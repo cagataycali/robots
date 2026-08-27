@@ -75,6 +75,28 @@ matches one of them: their frames interleave into one episode whose single
 declared rate cannot describe both, so there is no `fps` to pass instead. Stop
 all but one, or restart them at a common `control_frequency`.
 
+The `run_policy` tool owns both rates at once - it takes `dataset_fps` and
+`control_frequency` as its own arguments and drives the whole
+`start_recording` -> rollout -> `stop_recording` cycle - so it settles the pair
+up front, before it opens anything. That matters because it opens its recording
+with `overwrite=True`: left to the per-episode rollout, the disagreement was
+reported only after any dataset already at `dataset_root` had been replaced with
+an empty one, and after every episode had failed with the same message.
+
+```python
+run_policy(simulation=sim, robot_name="so100", n_episodes=2,
+           control_frequency=50.0, dataset_fps=30,      # cannot both hold
+           dataset_root="/tmp/my_dataset")
+# -> "run_policy: this call would open a recording declaring 30 fps for a
+#     rollout capturing at control_frequency=50 Hz. [...] Align the two rates:
+#     pass control_frequency=30, or record at the rollout's rate
+#     (dataset_fps=50)."
+# The dataset already at /tmp/my_dataset is untouched.
+```
+
+`dataset_fps` is ignored when `dataset_root` is omitted (the recording-less
+smoke-test mode), so a rollout with no recording runs at any rate.
+
 ## Selecting which cameras to record
 
 By default every camera in the scene is recorded into the dataset - including
@@ -114,6 +136,16 @@ a key the scene can no longer render (for example after `replace_scene_mjcf`,
 which swaps the compiled scene but leaves the camera registry untouched) is
 absent from the observation rather than filled in with the
 overview, so a column is never quietly populated from the wrong camera.
+
+That guarantee needs the scene's cameras to have distinct column names, and the
+`/` -> `__` collapse is not injective: `arm0/wrist` and `arm0__wrist` are two
+cameras and one column. `start_recording` refuses such a scene up front, naming
+both cameras and the key they share, before any dataset is created, resumed or
+wiped - rename one of them (`add_camera(name=...)`) so the names still differ
+once `/` becomes `__`. Scoping with `cameras=` is not a way around it: whichever
+of the pair won the column, the column would be named after the other one, and
+if the two render at different sizes the first frame is rejected and the episode
+is lost.
 
 `cameras=` is a list of **distinct** camera names, and every surface that accepts
 one - `start_recording`, `render_all`, and the plain-MP4
@@ -348,20 +380,45 @@ strands-robots verify-dataset /path/to/dataset --no-check-videos  # skip the per
 ```
 
 `verify-dataset` reuses the same pure-pyarrow `read_dataset_episode_indices`
-helper (no `lerobot` import) and flags four failure modes: the mega-episode
+helper (no `lerobot` import) and flags five failure modes: the mega-episode
 (fewer distinct episodes than `--expected`), `meta/info.json` `total_episodes` /
 `total_frames` drifting from the parquet ground truth (caught even without
-`--expected`), any episode below `--min-frames` (default 1), and - unless
+`--expected`), any episode below `--min-frames` (default 1), - unless
 `--no-check-videos` is passed - any per-episode video file that is missing or
-empty on disk. The last check is the video-modality sibling of the
+empty on disk, and - unless `--no-check-stats` is passed - a dead control
+column. The video check is the video-modality sibling of the
 mega-episode class: a dataset can carry the right episode count yet have no
 pixels because the recorder's video encoder failed or the MP4 streams were
 never written. It resolves each camera's MP4 from `meta/info.json`'s
 `video_path` template and the episode parquet's `videos/<key>/chunk_index` /
 `file_index` columns, and reports the count it checked in
 `video_files_checked`. The programmatic form is
-`strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True)`,
+`strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True, check_stats=True)`,
 which returns the same report dict.
+
+The dead-control-column check is the proprioceptive sibling: correct counts and
+pixels, but the `action` (or `observation.state`) column was written as all
+zeros because the writer's keys never resolved to the declared columns. It reads
+the per-episode `min`/`max` stats LeRobot v3 writes inline, so it needs no video
+decode and no `data/` scan.
+
+A multi-robot recording is graded one level finer, per robot. `start_recording`
+gives every robot its own state/action columns and namespaces each declared name
+with the robot's instance name (`alice__shoulder_pan`), so a resolution failure
+that affects one robot alone leaves that robot's whole block of columns zero
+while the other robot's columns carry real measurements. The vector as a whole
+therefore still varies, and a whole-vector test reports `[PASS]`. The check
+splits the vector into the per-robot blocks `meta/info.json` declares and flags
+any block that is wholly zero, naming the robot:
+
+```
+feature 'observation.state' is identically zero for every 'bob' column across
+episode 0 (20 frame(s)) - dead control column block
+```
+
+A zero *subset* of one robot's block is left alone - a gripper parked at zero for
+a whole episode is a measurement, not a writer fault - and a dataset that
+declares no column names is graded by the whole-vector rule exactly as before.
 
 `--expected` and `--min-frames` are both non-negative integers, and each has a
 meaningful `0`: `--expected 0` asks that a dataset be empty, and `--min-frames 0`

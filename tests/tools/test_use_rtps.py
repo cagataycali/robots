@@ -128,6 +128,13 @@ def test_types_lists_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
 # publish (the headline "act as a robot" path) ------------------------------
 
 
+# A topic that is not a safety-critical command surface. The tests below exercise
+# publish plumbing; aiming them at a drive topic would route them through the
+# operator gate in :mod:`strands_robots.tools._command_gate`, which is a different
+# subject with its own suite.
+_PLUMBING_TOPIC = "/demo/twist"
+
+
 def test_publish_builds_and_writes_count(fake_backend: _FakeWriter, monkeypatch: pytest.MonkeyPatch) -> None:
     import strands_robots.rtps.idl as idl_mod
 
@@ -136,13 +143,13 @@ def test_publish_builds_and_writes_count(fake_backend: _FakeWriter, monkeypatch:
 
     result = use_rtps(
         action="publish",
-        topic="/turtle1/cmd_vel",
+        topic=_PLUMBING_TOPIC,
         type="geometry_msgs/msg/Twist",
         fields={"linear": {"x": 2.0}, "angular": {"z": 1.5}},
         count=3,
     )
     assert result["status"] == "success"
-    assert "published 3 message(s) to /turtle1/cmd_vel" in _texts(result)
+    assert f"published 3 message(s) to {_PLUMBING_TOPIC}" in _texts(result)
     assert len(fake_backend.written) == 3
     # Nested field dict was built into real dataclass instances, types intact.
     sent = fake_backend.written[0]
@@ -156,7 +163,7 @@ def test_publish_unknown_field_is_structured_error(fake_backend: _FakeWriter, mo
     monkeypatch.setattr(idl_mod, "get_type", lambda t: _FlatTwist)
     result = use_rtps(
         action="publish",
-        topic="/cmd_vel",
+        topic=_PLUMBING_TOPIC,
         type="geometry_msgs/msg/Twist",
         fields={"bogus": 1.0},
     )

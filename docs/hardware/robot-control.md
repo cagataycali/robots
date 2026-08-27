@@ -137,6 +137,14 @@ robot.stop_teleop()   # stop all sessions
 | Policy execution | `run_policy()` / `start_policy()` | `start_task()` / `execute` action |
 | Rollout horizon | `duration` **or** `n_steps` (`n_steps` supersedes it) | `duration` **and** `n_steps` (ANDed, so `duration` always bounds it) |
 
+## Not only lerobot
+
+`HardwareRobot` is the driver `Robot(name, mode="real")` builds by default, and it is
+lerobot-shaped throughout. A robot lerobot does not model is built through the same factory
+with `driver="strands"`, against the contract
+`strands_robots.drivers.HardwareDriver` - which `HardwareRobot` itself satisfies. See
+[Choosing a driver](../getting-started/robot-factory.md#choosing-a-driver).
+
 ## See also
 
 - [Hardware tools](tools.md) - calibrate / camera / teleop helpers.
