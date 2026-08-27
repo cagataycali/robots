@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,19 +22,25 @@ from strands_robots.policies.wbc import WBCConfig
 
 
 class TestDimensionFailFast:
-    """__post_init__ rejects sub-minimal dimensions with an actionable message."""
+    """__post_init__ rejects sub-minimal dimensions with an actionable message.
 
-    def test_num_actions_below_one_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match=r"num_actions must be >= 1"):
-            WBCConfig(policy_path="p.onnx", num_actions=0)
+    Widened from three fields to all five when the dimensions moved onto the
+    shared count domain: ``command_dim`` and ``n_obs_joints`` were refused at
+    zero only as a side effect of their own floor and relation, so neither had
+    a cell of its own here. The message is the shared domain's, which names the
+    field - a zero is not a small count, it is not a count at all.
+    """
 
-    def test_obs_history_len_below_one_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match=r"obs_history_len must be >= 1"):
-            WBCConfig(policy_path="p.onnx", obs_history_len=0)
-
-    def test_single_obs_dim_below_one_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match=r"single_obs_dim must be >= 1"):
-            WBCConfig(policy_path="p.onnx", single_obs_dim=0)
+    @pytest.mark.parametrize(
+        "dimension_name",
+        ["num_actions", "obs_history_len", "single_obs_dim", "command_dim", "n_obs_joints"],
+    )
+    def test_a_dimension_of_zero_is_rejected(self, dimension_name: str) -> None:
+        # Typed Any: the dataclass mixes field types, so a homogeneous splat is
+        # an [arg-type] against whichever field mypy resolves the mapping to.
+        override: dict[str, Any] = {dimension_name: 0}
+        with pytest.raises(ValueError, match=rf"{dimension_name} must be a positive integer"):
+            WBCConfig(policy_path="p.onnx", **override)
 
 
 class TestFromFileErrorPaths:

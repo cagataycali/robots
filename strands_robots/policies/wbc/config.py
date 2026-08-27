@@ -22,6 +22,7 @@ from typing import Any
 
 from strands_robots.utils import (
     finite_number_error,
+    positive_count_error,
     positive_finite_number_error,
     require_optional,
     sequence_length,
@@ -151,9 +152,12 @@ class WBCConfig:
             (upstream ``rpy_cmd = [0, 0, 0]``). Overridable per call via the
             ``target_orientation`` kwarg.
         single_obs_dim: Width of one observation frame (before history
-            stacking). Default 86 (upstream GEAR-SONIC).
+            stacking). Default 86 (upstream GEAR-SONIC). A positive integer:
+            it is an ``np.zeros`` width, so an integral float raises there
+            rather than being coerced.
         obs_history_len: Number of frames stacked into the network input.
-            Default 6 (upstream num_obs = 86 * 6 = 516).
+            Default 6 (upstream num_obs = 86 * 6 = 516). A positive integer:
+            it is the history ``deque``'s maxlen and a ``range()`` bound.
         num_actions: Number of controllable joints (legs + waist). Default 15.
         command_dim: Width of the command sub-vector at the head of the
             observation. Default 7 (velocity[3] + height[1] + rpy[3]).
@@ -188,12 +192,29 @@ class WBCConfig:
         # Dimensions first, then values: a wrong length is the likelier root
         # cause (a config paired with the wrong checkpoint) and naming it first
         # keeps its message the one a mismatched pair reports.
-        if self.num_actions < 1:
-            raise ValueError(f"WBCConfig.num_actions must be >= 1, got {self.num_actions}")
-        if self.obs_history_len < 1:
-            raise ValueError(f"WBCConfig.obs_history_len must be >= 1, got {self.obs_history_len}")
-        if self.single_obs_dim < 1:
-            raise ValueError(f"WBCConfig.single_obs_dim must be >= 1, got {self.single_obs_dim}")
+        #
+        # Every dimension goes through the shared count domain rather than a bare
+        # ``< 1`` test, because each is consumed as a ``deque`` maxlen, a
+        # ``range()`` bound, a slice index or an ``np.zeros`` width - the uses
+        # positive_count_error documents itself for, where an integral float
+        # raises rather than being coerced. A bare comparison cannot decide
+        # integer-ness, and both ways it fails are reachable from a config file:
+        # ``bool`` is an ``int`` subclass, so ``True`` passed ``obs_history_len
+        # < 1`` and ObservationHistory then stacked ONE frame into an 86-wide
+        # network input where the checkpoint expects 516 - no error, just the
+        # wrong observation; and ``nan`` is below nothing, so it passed every one
+        # of these tests and surfaced as a bare numpy ``TypeError`` from the
+        # observation builder after the ONNX sessions had loaded and the rollout
+        # had started - the mid-rollout failure the value checks below exist to
+        # convert into a construction-time message naming the field.
+        for dimension_name in ("num_actions", "obs_history_len", "single_obs_dim", "command_dim", "n_obs_joints"):
+            if error := positive_count_error(getattr(self, dimension_name), dimension_name, "WBCConfig"):
+                raise ValueError(error)
+        # The per-field floor and the cross-field relation, reached only with
+        # values the loop above accepted, so each is asked of a positive integer.
+        # The ``>= 1`` floors the three widths used to carry are exactly what the
+        # shared domain decides, so they are gone rather than restated; the
+        # command floor is 3, which it does not decide, so only that is kept.
         if self.command_dim < 3:
             # Need at least [vx, vy, omega].
             raise ValueError(f"WBCConfig.command_dim must be >= 3 (vx, vy, omega), got {self.command_dim}")
