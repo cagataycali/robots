@@ -1877,7 +1877,9 @@ class DeviceManager:
         """
         import json as _json
 
-        bad = validate_replay(repo_id, episode, root, speed)
+        # Keyword-explicit so the forward is legible as one: this is the only
+        # call in the method that submits `episode` to the shared rule.
+        bad = validate_replay(repo_id, episode=episode, root=root, speed=speed)
         if bad:
             return bad
         # Now that the shared rule is the judge, an accepted `episode` may be a float or a numpy

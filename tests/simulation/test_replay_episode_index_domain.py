@@ -473,6 +473,13 @@ _REPLAY_EPISODE_SURFACES = {
     # not a different contract, so these are graded like the bare parameter.
     ("strands_robots/episode_labels.py", "record_deterministic_verdicts"),
     ("strands_robots/episode_labels.py", "measure_agreement"),
+    # The dashboard's replay surfaces resolve the same quantity from an
+    # operator's click: ``episode`` arrives beside a ``repo_id``/``root``
+    # locator and selects which recorded trajectory the spawned sim sends to
+    # the actuators. ``validate_replay`` applies the shared rule and
+    # ``DeviceManager.replay`` forwards to it before any process is started.
+    ("strands_robots/dashboard/device_manager.py", "validate_replay"),
+    ("strands_robots/dashboard/device_manager.py", "replay"),
     # The transform surfaces (``derive_variant_seed``, each backend's
     # ``transform_frames``) apply the same shared guard but are deliberately
     # NOT pinned here: they only receive an already-resolved index as a
@@ -591,6 +598,31 @@ def _public_episode_surfaces(source: str) -> list[ast.FunctionDef | ast.AsyncFun
     return found
 
 
+# A forward is only a forward when the *callee* is a surface that validates.
+# Matching the whole unparsed call for the substring "replay" credited any call
+# that merely mentions one: ``DeviceManager.replay``'s duplicate-job lookup
+# ``self._running_job("replay", repo_id=repo_id, episode=episode)`` satisfied
+# the grading on its own, so that surface graded PASS with its
+# ``validate_replay`` call deleted. Read the callee name instead.
+_FORWARD_TARGET = re.compile(r"^(validate_replay|replay|replay_episode|load_lerobot_episode)$")
+
+
+def _callee_name(call: ast.Call) -> str:
+    """The bare name being called, for ``f(...)`` and ``obj.f(...)`` alike."""
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return getattr(call.func, "id", "")
+
+
+def _forwards_the_index_verbatim(call: ast.Call) -> bool:
+    """True when this call hands ``episode`` on, unchanged, to a validating surface."""
+    if not _FORWARD_TARGET.match(_callee_name(call)):
+        return False
+    return any(
+        kw.arg == "episode" and isinstance(kw.value, ast.Name) and kw.value.id == "episode" for kw in call.keywords
+    )
+
+
 def _validates_or_forwards(node: ast.AST) -> bool:
     """True when the surface applies the shared rule or forwards verbatim."""
     for call in ast.walk(node):
@@ -600,7 +632,7 @@ def _validates_or_forwards(node: ast.AST) -> bool:
         if "non_negative_whole_number_error" in src and "episode" in src:
             return True
         # Forwarding verbatim to a surface that does validate.
-        if ("replay" in src or "load_lerobot_episode" in src) and "episode=episode" in src:
+        if _forwards_the_index_verbatim(call):
             return True
     return False
 
@@ -625,6 +657,25 @@ class TestNoEpisodeIndexSurfaceDrifts:
         planted = ast.parse("def replay(self, repo_id, episode=0):\n    return load_lerobot_episode(repo_id, 0)\n")
         node = planted.body[0]
         assert not _validates_or_forwards(node)
+
+    def test_a_call_that_merely_mentions_a_forward_target_is_not_a_forward(self):
+        """The grading reads the callee, not the text of the whole call.
+
+        The forward branch used to match any call whose unparsed source
+        contained ``"replay"`` and ``"episode=episode"``. ``DeviceManager``'s
+        duplicate-job lookup is both - it passes the job kind as the *string*
+        ``"replay"`` and the index as a filter - so pinning that surface graded
+        it against a call that validates nothing: with its ``validate_replay``
+        line deleted the surface still reported PASS. Reading the callee name
+        instead is what makes the pin load-bearing.
+        """
+        planted = ast.parse(
+            "def replay(self, repo_id, episode=0):\n"
+            '    if self._running_job("replay", repo_id=repo_id, episode=episode):\n'
+            '        return {"error": "already running"}\n'
+            "    return self._spawn(repo_id, episode)\n"
+        )
+        assert not _validates_or_forwards(planted.body[0])
 
     def test_discovery_finds_an_index_that_arrives_inside_a_collection(self):
         """A collection-valued spelling is the same surface, so it is discovered.
