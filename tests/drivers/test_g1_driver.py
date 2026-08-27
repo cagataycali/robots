@@ -9,6 +9,7 @@ that is a class problem, not a robotics problem.
 from __future__ import annotations
 
 import asyncio
+import sys
 import types
 from typing import Any
 
@@ -31,6 +32,7 @@ from strands_robots.tools.g1 import (
 )
 from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from tests.drivers.test_g1_control_loop import _StubCRC, _StubLowCmd
 
 # =========================================================================
 # The seam - Protocol conformance and factory wiring.                     #
@@ -885,9 +887,20 @@ def test_connect_eagerly_reports_reason_without_sdk() -> None:
 # Every test builds a driver that has already passed the gates and installs
 # a recording publisher in ``_pubs``.  The point is the wire capture: which
 # ``motor_cmd`` slots the driver filled, and with which values.  A missing
-# SDK short-circuits the whole class (the driver refuses with the SDK's own
-# reason before it would build a LowCmd_) so a skip-marker keeps the suite
-# green on machines without the SDK.
+# SDK short-circuits the driver (it refuses with the SDK's own reason before
+# it would build a LowCmd_), so these cells need a LowCmd_-shaped object to
+# write into.  They take one from the stub :mod:`tests.drivers.test_g1_control_loop`
+# installs rather than a skip-marker: ``unitree-sdk2`` is not a declared
+# dependency of this project, so a contract asserted only behind
+# ``skipif(not _HAS_SDK)`` is asserted by nothing in ``call-test-lint`` - the
+# rule :mod:`tests.drivers.test_g1_per_joint_gains` states for the same
+# builder.  The two cells that recompute the SDK's own CRC as an independent
+# oracle keep the marker: a stub CRC would compare a constant against itself.
+#
+# The fixture is opt-in per cell rather than autouse because this module also
+# pins the SDK-*absent* refusals (``test_ensure_dds_reports_missing_sdk``,
+# ``test_connect_eagerly_reports_reason_without_sdk``), which a module-wide
+# stub would quietly make unreachable.
 
 
 _HAS_SDK: bool
@@ -946,7 +959,49 @@ def _gated_driver() -> tuple[G1Driver, _RecordingPublisher]:
     return driver, pub
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.fixture
+def _stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install a ``unitree_sdk2py`` stub for the duration of one test.
+
+    ``_build_lowcmd_from_action`` imports ``unitree_sdk2py.idl.default`` and
+    ``unitree_sdk2py.utils.crc`` inside its body, and ``send_action`` imports
+    ``unitree_sdk2py.idl.unitree_hg.msg.dds_``.  Registering each on
+    :mod:`sys.modules` lets the cells below drive the same production lane
+    hardware drives, on a box where the SDK is not installed.
+
+    The stub classes come from :mod:`tests.drivers.test_g1_control_loop`
+    rather than a fifth copy, so every suite that grades this builder writes
+    into the same ``LowCmd_`` shape.  ``monkeypatch.setitem`` restores the
+    previous entries - typically absent - on teardown, per AGENTS.md >
+    Testing Patterns > Restore a sys.modules entry you remove.
+    """
+    root = types.ModuleType("unitree_sdk2py")
+    idl = types.ModuleType("unitree_sdk2py.idl")
+    default = types.ModuleType("unitree_sdk2py.idl.default")
+    unitree_hg = types.ModuleType("unitree_sdk2py.idl.unitree_hg")
+    unitree_hg_msg = types.ModuleType("unitree_sdk2py.idl.unitree_hg.msg")
+    dds_ = types.ModuleType("unitree_sdk2py.idl.unitree_hg.msg.dds_")
+    utils = types.ModuleType("unitree_sdk2py.utils")
+    crc = types.ModuleType("unitree_sdk2py.utils.crc")
+
+    default.unitree_hg_msg_dds__LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    dds_.LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    crc.CRC = _StubCRC  # type: ignore[attr-defined]
+
+    for name, mod in [
+        ("unitree_sdk2py", root),
+        ("unitree_sdk2py.idl", idl),
+        ("unitree_sdk2py.idl.default", default),
+        ("unitree_sdk2py.idl.unitree_hg", unitree_hg),
+        ("unitree_sdk2py.idl.unitree_hg.msg", unitree_hg_msg),
+        ("unitree_sdk2py.idl.unitree_hg.msg.dds_", dds_),
+        ("unitree_sdk2py.utils", utils),
+        ("unitree_sdk2py.utils.crc", crc),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
+
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_writes_to_lowcmd_topic_when_gates_pass() -> None:
     """A gated action publishes exactly one frame to ``rt/lowcmd``.
 
@@ -966,7 +1021,7 @@ def test_send_action_writes_to_lowcmd_topic_when_gates_pass() -> None:
     assert isinstance(message, LowCmd_)
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_fills_the_named_slot_and_leaves_the_rest_alone() -> None:
     """A caller who names one joint sets exactly one slot's ``q``.
 
@@ -990,7 +1045,7 @@ def test_send_action_fills_the_named_slot_and_leaves_the_rest_alone() -> None:
         assert motor.q == pytest.approx(0.0)
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_applies_default_gains_for_scalar_targets() -> None:
     """A scalar target lands that slot's reference gains on the wire.
 
@@ -1021,7 +1076,7 @@ def test_send_action_applies_default_gains_for_scalar_targets() -> None:
     assert m.tau == pytest.approx(0.0)
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_accepts_per_joint_gains_and_feedforward() -> None:
     """A dict target lands every field the caller supplied.
 
@@ -1047,7 +1102,7 @@ def test_send_action_accepts_per_joint_gains_and_feedforward() -> None:
     assert m.tau == pytest.approx(0.05)
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_refuses_unknown_joint_name() -> None:
     """An unknown joint name refuses the whole action - no partial writes.
 
@@ -1063,7 +1118,7 @@ def test_send_action_refuses_unknown_joint_name() -> None:
     assert pub.writes == []  # no partial writes
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_refuses_per_joint_dict_missing_q() -> None:
     """A per-joint dict without ``q`` is refused; no default target is invented.
 
@@ -1077,7 +1132,7 @@ def test_send_action_refuses_per_joint_dict_missing_q() -> None:
     assert pub.writes == []
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_refuses_unknown_per_joint_key() -> None:
     """An unknown inner key refuses the action - same reason as an unknown joint name.
 
@@ -1092,7 +1147,7 @@ def test_send_action_refuses_unknown_per_joint_key() -> None:
     assert pub.writes == []
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_refuses_non_numeric_target() -> None:
     """A non-numeric target is refused with the joint name in the reason."""
     driver, pub = _gated_driver()
@@ -1103,7 +1158,7 @@ def test_send_action_refuses_non_numeric_target() -> None:
     assert pub.writes == []
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_refuses_empty_action() -> None:
     """An empty action dict is refused - "nothing to command" is not a write."""
     driver, pub = _gated_driver()
@@ -1113,7 +1168,7 @@ def test_send_action_refuses_empty_action() -> None:
     assert pub.writes == []
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_surfaces_publisher_error() -> None:
     """A publisher that returns a reason surfaces that reason in the envelope.
 
@@ -1128,7 +1183,7 @@ def test_send_action_surfaces_publisher_error() -> None:
     assert "bus is down" in result["content"][0]["text"]
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_refuses_when_pubs_is_missing() -> None:
     """A gated driver whose ``_pubs`` was never set refuses with a named reason.
 
@@ -1147,7 +1202,7 @@ def test_send_action_refuses_when_pubs_is_missing() -> None:
     assert "publisher not initialised" in result["content"][0]["text"]
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_returns_success_envelope_with_joints_and_topic() -> None:
     """The success envelope carries the topic and every joint it commanded.
 
@@ -1188,7 +1243,7 @@ def test_send_action_still_refuses_before_fsm_gate_regardless_of_wire() -> None:
 # =========================================================================
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_build_lowcmd_scalar_and_dict_land_on_the_same_slot() -> None:
     """Scalar and dict forms land ``q`` on the same slot for the same joint.
 
@@ -1208,7 +1263,7 @@ def test_build_lowcmd_scalar_and_dict_land_on_the_same_slot() -> None:
     assert cmd_scalar.motor_cmd[slot].q == pytest.approx(cmd_dict.motor_cmd[slot].q)
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_build_lowcmd_from_action_rejects_non_dict_input() -> None:
     """A non-dict action is refused with the type it actually was."""
     from strands_robots.drivers.g1 import _build_lowcmd_from_action
@@ -1220,7 +1275,7 @@ def test_build_lowcmd_from_action_rejects_non_dict_input() -> None:
     assert "list" in err
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_build_zero_torque_lowcmd_zeroes_every_motor_field() -> None:
     """Every motor in the zero-torque envelope has kp=kd=tau=q=dq=0.
 
@@ -1272,7 +1327,7 @@ def test_build_lowcmd_sets_a_matching_crc_the_firmware_will_accept() -> None:
     assert cmd.crc != 0
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_build_lowcmd_echoes_mode_machine_and_pins_mode_pr_to_zero() -> None:
     """``mode_machine`` mirrors ``LowState``; ``mode_pr`` stays PR.
 
@@ -1290,7 +1345,7 @@ def test_build_lowcmd_echoes_mode_machine_and_pins_mode_pr_to_zero() -> None:
     assert cmd.mode_pr == 0
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_build_lowcmd_enables_the_touched_slot_and_leaves_the_rest_disabled() -> None:
     """Only commanded slots carry ``motor.mode = 1``; the others stay 0.
 
@@ -1352,7 +1407,34 @@ def test_build_zero_torque_stamps_crc_and_enables_every_named_slot() -> None:
         )
 
 
-@pytest.mark.skipif(not _HAS_SDK, reason="unitree_sdk2py not installed")
+@pytest.mark.usefixtures("_stub_unitree_sdk")
+def test_build_zero_torque_enables_every_named_slot_and_leaves_the_tail() -> None:
+    """The stop frame's Enable bound, graded without the SDK.
+
+    The cell above grades this too, but only where ``unitree_sdk2py`` is
+    installed, because it recomputes the SDK's own CRC as an independent
+    oracle.  The Enable bound is not a CRC question: a stop frame whose
+    named slots carry ``mode = 0`` is a wire-side no-op and the arm falls
+    freely, and that is decidable against any ``LowCmd_``-shaped object.
+    Graded here so ``call-test-lint`` refuses the regression rather than
+    only a box that happens to carry the SDK.
+    """
+    from strands_robots.drivers.g1 import _G1_NAMED_JOINTS, _build_zero_torque_lowcmd
+
+    cmd, err = _build_zero_torque_lowcmd(mode_machine=7)
+    assert err is None and cmd is not None
+    assert cmd.mode_machine == 7
+    assert cmd.mode_pr == 0
+    for i in range(_G1_NAMED_JOINTS):
+        assert cmd.motor_cmd[i].mode == 1, f"named slot {i} is not Enable on the stop frame"
+    for i in range(_G1_NAMED_JOINTS, len(cmd.motor_cmd)):
+        assert cmd.motor_cmd[i].mode == 0, (
+            f"reserved slot {i} was enabled; the SDK reference bounds "
+            f"Enable by G1_NUM_MOTOR (29), not by the array width"
+        )
+
+
+@pytest.mark.usefixtures("_stub_unitree_sdk")
 def test_send_action_echoes_cached_mode_machine_not_fsm_id() -> None:
     """``send_action`` echoes ``_mode_machine`` (uint8) onto the wire, not ``_fsm_id``.
 
