@@ -26,10 +26,17 @@ the networks, the optimizers and the replay buffer had been built - and ``"256"`
 Only FastSAC reads these three fields. PPO sizes its minibatches from
 ``num_mini_batches`` and never reads them, so it must stay quiet about them, as
 must every supervised backend; :class:`TestABackendThatDoesNotReadThemStaysQuiet`
-pins that. ``learning_starts`` and ``tau`` are deliberately outside this domain -
-the first is one side of a relation (``>= batch_size``), the second a coefficient
-in ``(0, 1]`` - and :class:`TestTauAndLearningStartsAreNotInThisDomain` pins that
-scope line rather than leaving it to prose.
+pins that. ``learning_starts`` and ``tau`` are outside this gate's field set, and
+:class:`TestTauAndLearningStartsAreNotInThisDomain` pins that scope line rather
+than leaving it to prose. ``tau`` is a coefficient in ``(0, 1]`` and so shares no
+part of this domain. ``learning_starts`` is one side of a relation
+(``>= batch_size``) and *does* share the domain: FastSAC asks it of the same
+strict-``int`` rule as the relation's other operand, in its own ``validate``
+rather than through this gate, because PPO reads neither field. That is graded in
+``tests/training/test_learning_starts_count_domain.py``, which measured the cost
+of leaving it to the relation alone - a non-finite value compares False against
+every ``int``, so the relation passed and the run took zero gradient steps while
+reporting success, the same outcome ``buffer_size=True`` produces above.
 
 Every domain test here reaches the real ``validate`` entry point, so it covers
 the wiring as well as the domain.
@@ -253,11 +260,16 @@ class TestTheCountsAreConsumedDirectlyAsCounts:
 
 
 class TestTauAndLearningStartsAreNotInThisDomain:
-    """The scope line, pinned: two SAC fields are checked, but not as counts.
+    """The scope line, pinned: two SAC fields this gate does not carry.
 
-    ``tau`` is a coefficient in ``(0, 1]`` and ``learning_starts`` is one side of
-    a relation (``>= batch_size``), so neither is one of the shared counts. The
-    gate must stay silent about them, and FastSAC must still refuse them itself.
+    Neither is one of the three replay counts, so the gate must stay silent about
+    both and FastSAC must still refuse them itself. What that refusal rests on
+    differs: ``tau`` is a coefficient in ``(0, 1]`` and shares no part of the
+    count domain, while ``learning_starts`` is one side of a relation
+    (``>= batch_size``) whose *other* operand is already asked of the shared
+    count rule - so FastSAC asks it of that rule too, in its own ``validate``.
+    ``tests/training/test_learning_starts_count_domain.py`` grades that; here the
+    claim is only that this gate reports nothing about either field.
     """
 
     @pytest.mark.parametrize("field", ["tau", "learning_starts"])
