@@ -44,6 +44,7 @@ value, the one that means "everybody".
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -269,12 +270,11 @@ class TestTheVendorSdkDrawsTheSameLine:
         assert scservo_def.BROADCAST_ID == BUS_BROADCAST_ID
 
     def test_the_sdk_refuses_the_broadcast_for_reply_expecting_operations(self) -> None:
-        pytest.importorskip("scservo_sdk")
-        import inspect
-
-        from scservo_sdk import protocol_packet_handler
-
-        source = inspect.getsource(protocol_packet_handler)
+        # Reached through importorskip rather than a static import: the SDK ships no
+        # py.typed marker, so naming it in an import statement is a mypy
+        # ``import-untyped`` error on an install that has it.
+        handler = pytest.importorskip("scservo_sdk.protocol_packet_handler")
+        source = inspect.getsource(handler)
         # ping, a single read and a single write each bail out before addressing
         # the frame when the caller named an id at or above the broadcast.
         assert source.count("if scs_id >= BROADCAST_ID:") >= 3
