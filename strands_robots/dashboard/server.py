@@ -12,7 +12,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -73,7 +73,7 @@ class TokenAuthMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
 
-    def _renewing(self, scope, send, dash_auth, presented):
+    def _renewing(self, scope: dict[str, Any], send: Any, dash_auth: Any, presented: str) -> Any:
         if scope.get("type") != "http":
             return send
         try:
@@ -84,7 +84,7 @@ class TokenAuthMiddleware:
         if not fresh:
             return send
 
-        async def _send(message):
+        async def _send(message: dict[str, Any]) -> None:
             if message.get("type") == "http.response.start":
                 headers = list(message.get("headers") or [])
                 names = {k.lower() for k, _ in headers}
@@ -135,13 +135,13 @@ class TokenAuthMiddleware:
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers") or []}
         auth = headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
-            return auth[7:].strip()
+            return cast(str, auth[7:].strip())
         if headers.get("x-dashboard-token"):
-            return headers["x-dashboard-token"].strip()
+            return cast(str, headers["x-dashboard-token"].strip())
         # Browsers cannot set headers on a WebSocket handshake, so the query
         # string is the only channel there.
         query = parse_qs(scope.get("query_string", b"").decode())
-        return (query.get("token") or [""])[0].strip()
+        return cast(str, (query.get("token") or [""])[0].strip())
 
     @staticmethod
     def _cross_origin_refused(scope: dict[str, Any]) -> bool:
@@ -511,7 +511,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def fleet() -> dict[str, Any]:
         # Roles ride along inside snapshot() (bridge.peer_annotations), so this
         # route and the WS stream cannot disagree about which arm is the leader.
-        return app.state.bridge.snapshot()
+        return cast("dict[str, Any]", app.state.bridge.snapshot())
 
     # ------------------------------------------------------------------
     # WebAuthn passkey auth (see dashboard/auth.py)
@@ -551,7 +551,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         mod = _require_auth_module()
         out = mod.status(request)
         out["authenticated"] = mod.session_is_valid(_session_presented(request))
-        return out
+        return cast("dict[str, Any]", out)
 
     @app.post("/api/auth/register/begin")
     async def auth_register_begin(request: Request) -> dict[str, Any]:
@@ -559,10 +559,13 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         body = await request.json() if await request.body() else {}
         if mod.has_credentials() and not mod.session_is_valid(_session_presented(request)):
             raise HTTPException(401, "enrolling another passkey requires a signed-in session")
-        return mod.begin_registration(
-            request,
-            label=str(body.get("label") or "passkey")[:64],
-            bootstrap=str(body.get("bootstrap") or ""),
+        return cast(
+            "dict[str, Any]",
+            mod.begin_registration(
+                request,
+                label=str(body.get("label") or "passkey")[:64],
+                bootstrap=str(body.get("bootstrap") or ""),
+            ),
         )
 
     @app.post("/api/auth/register/finish")
@@ -572,17 +575,23 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         first_time = not mod.has_credentials()
         if not first_time and not mod.session_is_valid(_session_presented(request)):
             raise HTTPException(401, "enrolling another passkey requires a signed-in session")
-        return mod.finish_registration(request, body.get("challenge_id", ""), body.get("credential") or {})
+        return cast(
+            "dict[str, Any]",
+            mod.finish_registration(request, body.get("challenge_id", ""), body.get("credential") or {}),
+        )
 
     @app.post("/api/auth/login/begin")
     async def auth_login_begin(request: Request) -> dict[str, Any]:
-        return _require_auth_module().begin_authentication(request)
+        return cast("dict[str, Any]", _require_auth_module().begin_authentication(request))
 
     @app.post("/api/auth/login/finish")
     async def auth_login_finish(request: Request) -> dict[str, Any]:
         mod = _require_auth_module()
         body = await request.json()
-        return mod.finish_authentication(request, body.get("challenge_id", ""), body.get("credential") or {})
+        return cast(
+            "dict[str, Any]",
+            mod.finish_authentication(request, body.get("challenge_id", ""), body.get("credential") or {}),
+        )
 
     @app.get("/api/auth/credentials")
     async def auth_credentials() -> dict[str, Any]:
@@ -591,7 +600,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.delete("/api/auth/credentials/{cred_id}")
     async def auth_credential_delete(cred_id: str) -> dict[str, Any]:
-        return _require_auth_module().delete_credential(cred_id)
+        return cast("dict[str, Any]", _require_auth_module().delete_credential(cred_id))
 
     @app.post("/api/auth/handoff")
     async def auth_handoff(request: Request) -> dict[str, Any]:
@@ -614,7 +623,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # Open-loopback mode: the LAN page opens without a token too — say so
             # instead of minting a credential nobody needs in a URL.
             return {"token": None, "why": "auth is not enabled here - the local address opens without a token"}
-        return mod.issue_handoff(mod.verify_token(presented))
+        return cast("dict[str, Any]", mod.issue_handoff(mod.verify_token(presented)))
 
     @app.get("/api/robots/registry")
     async def registry() -> dict[str, Any]:
@@ -771,7 +780,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # each other's files. 409 names the session already holding it.
         if result.get("already_running"):
             raise HTTPException(409, result)
-        return result
+        return cast("dict[str, Any]", result)
 
     @app.post("/api/replay")
     async def replay_episode(body: dict[str, Any]) -> dict[str, Any]:
@@ -797,7 +806,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         # the peer whose card is already showing it.
         if result.get("already_running"):
             raise HTTPException(409, result)
-        return result
+        return cast("dict[str, Any]", result)
 
     @app.get("/api/training/trainers")
     async def training_trainers() -> dict[str, Any]:
@@ -1216,7 +1225,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             detail=result.get("status", result.get("error", "?")),
             ok=result.get("status") == "ok",
         )
-        return result
+        return cast("dict[str, Any]", result)
 
     # ------------------------------------------------------------------
     # Configuration
@@ -1270,7 +1279,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         try:  # the mesh caches its parsed allowlist per value, so re-read it
             from strands_robots.mesh import security as _mesh_security
 
-            _mesh_security.hf_repo_allowlist()
+            _mesh_security._hf_repo_allowlist()
         except Exception:  # noqa: BLE001 - a cache warm-up must not fail a grant
             logger.debug("consent: allowlist warm-up failed", exc_info=True)
         app.state.bridge.record_activity(
@@ -1354,7 +1363,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/mesh/config")
     async def get_mesh_config() -> dict[str, Any]:
-        return app.state.bridge.mesh_info()
+        return cast("dict[str, Any]", app.state.bridge.mesh_info())
 
     @app.post("/api/mesh/config")
     async def post_mesh_config(body: dict[str, Any]) -> dict[str, Any]:
@@ -1538,7 +1547,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # It answered 200 with an error body, so a caller checking the status
             # code alone saw a successful spawn.
             raise HTTPException(422, result)
-        return result
+        return cast("dict[str, Any]", result)
 
     @app.get("/api/devices/profiles")
     async def device_profiles() -> dict[str, Any]:
@@ -1586,7 +1595,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             target=peer_id,
             ok="error" not in result,
         )
-        return result
+        return cast("dict[str, Any]", result)
 
     @app.post("/api/devices/{peer_id}/cameras")
     async def reconfigure_cameras(peer_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -1626,7 +1635,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             + (f" -> {result['error']}" if result.get("error") else ""),
             ok="error" not in result,
         )
-        return result
+        return cast("dict[str, Any]", result)
 
     @app.get("/api/devices/logs/{peer_id}")
     async def device_logs(peer_id: str) -> dict[str, Any]:
@@ -1642,7 +1651,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                     "managed_peers": managed,
                 },
             )
-        return out
+        return cast("dict[str, Any]", out)
 
     @app.post("/api/robots/{peer_id}/twin")
     async def toggle_twin(peer_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1954,7 +1963,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         try:
             while True:
                 message = await ws.receive()
-                turn, reply = parse_chat_frame(message)
+                turn, reply = parse_chat_frame(cast("dict[str, Any]", message))
                 if reply is not None:
                     await ws.send_text(json.dumps(reply))
                     continue
@@ -1973,8 +1982,8 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 cancel = _threading.Event()
                 if isinstance(turn, dict):
                     # A yes/no on the pending motion confirm: resume the parked turn.
-                    args = (turn["interrupt_id"], turn["response"], q, cancel)
-                    worker = resume_interrupt_blocking
+                    args: tuple[Any, ...] = (turn["interrupt_id"], turn["response"], q, cancel)
+                    worker: Any = resume_interrupt_blocking
                 else:
                     args = (turn, q, cancel)
                     worker = run_turn_blocking
