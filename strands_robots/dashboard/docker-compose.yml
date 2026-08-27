@@ -1,0 +1,27 @@
+# strands-robots dashboard — run from repo root:
+#   docker compose -f strands_robots/dashboard/docker-compose.yml up -d
+services:
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: strands_robots/dashboard/Dockerfile
+    container_name: strands-robots-dashboard
+    network_mode: host              # zenoh multicast scouting + hub on :7447
+    devices:
+      - /dev/bus/usb:/dev/bus/usb   # USB cameras + servo buses (Linux hosts)
+    device_cgroup_rules:
+      - 'c 81:* rmw'                # video4linux
+      - 'c 166:* rmw'               # ttyACM (servo buses)
+      - 'c 188:* rmw'               # ttyUSB
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface   # calibration + models
+      - ./datasets:/data/datasets
+    environment:
+      - STRANDS_MESH_LOCAL_DEV=${STRANDS_MESH_LOCAL_DEV:-1}   # dev; mount TLS certs for prod
+      - VOICE_PROVIDER=${VOICE_PROVIDER:-openai}
+      - OPENAI_API_KEY
+      - AWS_REGION
+      - AWS_BEARER_TOKEN_BEDROCK
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+    restart: unless-stopped

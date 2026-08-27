@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-_COMMANDS = ("doctor", "verify-dataset")
+_COMMANDS = ("doctor", "verify-dataset", "dashboard", "dev")
 
 
 def main() -> None:
@@ -31,6 +31,14 @@ def main() -> None:
         from strands_robots.verify_dataset import main as verify_main
 
         sys.exit(verify_main())
+    elif cmd == "dashboard":
+        from strands_robots.dashboard.cli import main as dashboard_main
+
+        dashboard_main()
+    elif cmd == "dev":
+        from strands_robots.dashboard.dev import main as dev_main
+
+        sys.exit(dev_main())
     else:
         print(f"Unknown command: {cmd}")
         print(f"Available commands: {', '.join(_COMMANDS)}")

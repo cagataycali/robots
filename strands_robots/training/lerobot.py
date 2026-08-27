@@ -1432,6 +1432,19 @@ class LerobotTrainer(Trainer):
             reward_cfg = make_reward_model_config(rtype, **reward_kwargs)
         except TypeError as e:
             raise ValueError(f"reward_model type '{rtype}' rejected field(s) {sorted(reward_kwargs)}: {e}") from e
+        except ImportError as e:
+            # An optional extra the reward type needs is not installed. lerobot's
+            # own message already names the package and the install command, so the
+            # job here is to keep it and add the two things it cannot know: WHICH
+            # reward type asked, and that the spec is not the problem. validate()
+            # cannot see this either - it deliberately imports no optional backend,
+            # so a missing extra is invisible until construction.
+            raise ValueError(
+                f"reward_model type '{rtype}' could not be constructed: a package it needs is "
+                f"not installed on this host ({e}). The spec itself is fine - validate() does "
+                f"not import optional backends, so it cannot see a missing extra. Install the "
+                f"package named above, or choose a reward type whose dependencies are present."
+            ) from e
         except OSError as e:
             # A reward config may derive a field from a pretrained asset inside
             # its own __post_init__ (robometer reads its backbone's config and
