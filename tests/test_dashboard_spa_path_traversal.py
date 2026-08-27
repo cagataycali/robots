@@ -75,7 +75,7 @@ def _fake_dist(tmp_path, monkeypatch):
 def _client() -> TestClient:
     # follow_redirects=False so a 307/308 does not swap the assertion target;
     # the SPA route answers directly.
-    return TestClient(srv.create_app(bridge=_StubBridge()), follow_redirects=False)
+    return TestClient(srv.create_app(bridge=_StubBridge()), follow_redirects=False)  # type: ignore[arg-type]
 
 
 class TestTheSpaCatchallConfinesUserPathsToItsDistDirectory:
