@@ -21,6 +21,17 @@ opposite direction, and ``velocity=32768`` read as magnitude zero -- stopping a
 servo the caller had just asked to run -- both reported as success quoting the
 number supplied.
 
+``motor_id`` takes more than the byte width to bound for a different reason: two
+of the 256 values the byte holds do not address a servo at all. ``0xFF`` is the
+frame header, and ``0xFE`` is the bus broadcast -- a frame carrying it is read by
+every servo on the bus. Each action here that takes ``motor_id`` addresses one
+servo and expects its reply, so a broadcast is not a wider version of the request
+but a different one: ``feetech_position`` drove every joint of the arm to the same
+angle while reporting ``Feetech Motor 254 -> Position ...`` as though it had moved
+one, and ``feetech_ping`` made every servo answer at once, colliding on the
+half-duplex bus. Broadcasting is still reachable through ``send``, which writes
+the bytes it is given and claims to address nothing.
+
 ``baudrate`` and ``read_bytes`` are coerced rather than checked by pyserial
 (``2.7`` becomes 2 baud, and a non-positive ``read_bytes`` reads nothing and
 reports success, which is indistinguishable from a timed-out read on a healthy
@@ -58,13 +69,30 @@ _DIRECTION_BIT = 15
 # Largest magnitude either register carries with ``_DIRECTION_BIT`` still clear.
 _MAX_MAGNITUDE = (1 << _DIRECTION_BIT) - 1
 
+# Largest *unicast* ID, which is the ceiling rather than the byte's maximum: 0xFE
+# is the bus broadcast and 0xFF is the frame header, so neither names one servo.
+# The vendor SDK draws the same line -- ``scservo_sdk`` returns ``COMM_NOT_AVAILABLE``
+# for ``scs_id >= BROADCAST_ID`` on a ping, on a single read and on a single write,
+# and reserves the broadcast for SYNC_READ / SYNC_WRITE, which this module has no
+# action for. ``strands_robots.drivers.feetech`` states it as ``MAX_UNICAST_ID``;
+# the value is restated here rather than imported because importing it executes
+# ``drivers/__init__``, which registers every driver and pulls in numpy -- 1097
+# modules and 1.8 s for one integer, on a tool the package loads lazily. A test
+# pins the two values together so they cannot drift apart.
+_MAX_UNICAST_MOTOR_ID = 0xFD
+
 # Inclusive bounds and the reason for each ceiling, keyed by the parameter that
 # carries the field. The floor and the type are delegated to the shared count
 # domains so an off-type or negative value is reported in the words every other
 # surface uses; only the ceiling is decided here, because it is a property of
 # the packet field this module encodes into.
 _REGISTER_FIELDS: dict[str, tuple[int, int, str]] = {
-    "motor_id": (1, 254, "the packet carries the ID in one byte, and 255 is the frame header"),
+    "motor_id": (
+        1,
+        _MAX_UNICAST_MOTOR_ID,
+        "0xFE is the bus broadcast, so a frame carrying it is read by every servo "
+        "rather than the one this message names, and 0xFF is the frame header",
+    ),
     "position": (
         0,
         4095,
@@ -211,7 +239,8 @@ def serial_tool(
             pyserial's non-blocking mode (return what is already buffered)
         data: String data to send
         hex_data: Hex string data to send (e.g., "FF FF 01 04 03 00 64 92")
-        motor_id: Motor ID for Feetech commands; an integer in [1, 254]
+        motor_id: Motor ID for Feetech commands; an integer in [1, 253]. 254 is the
+            bus broadcast and 255 the frame header, so neither addresses one servo
         position: Target position for Feetech motors; an integer in [0, 4095]
         velocity: Target velocity for Feetech motors; an integer in [0, 65535]
         read_bytes: Number of bytes to read; a positive integer

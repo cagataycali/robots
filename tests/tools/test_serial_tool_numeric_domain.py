@@ -178,7 +178,9 @@ class TestARegisterFieldIsNeverSilentlyTruncated:
         assert "motor_id" in _text(result)
         assert opened == []
 
-    @pytest.mark.parametrize("motor_id", (1, 2, 6, 254))
+    # 254 is the bus broadcast, not an address - it moved to
+    # test_feetech_motor_id_excludes_the_broadcast.py, which owns that case.
+    @pytest.mark.parametrize("motor_id", (1, 2, 6, 253))
     def test_an_addressable_motor_id_still_reaches_the_wire(self, motor_id: int, opened: list[_FakeSerial]) -> None:
         result = _call(action="feetech_position", motor_id=motor_id, position=100)
 
