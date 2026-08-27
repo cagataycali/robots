@@ -11,8 +11,8 @@ guard past a gate the vendor cannot open, so a caller who read the tests
 green over ``send_action`` had no way to tell that on hardware the battery
 guard never fires.
 
-Two contracts are pinned as literals so a change to either fires this file,
-not a distant one:
+Three contracts are pinned as literals so a change to any of them fires this
+file, not a distant one:
 
 - On a fully-healthy driver except for ``_fsm_id`` (``_connected=True``,
   ``_mode_machine`` from a real ``rt/lowstate`` decode, ``_battery`` from a
@@ -23,9 +23,21 @@ not a distant one:
 - ``_fsm_id`` has exactly one assignment in ``strands_robots.drivers.g1`` and
   it is the ``None`` initialiser. The check is an :mod:`ast` walk over the
   shipped source, so a comment that mentions ``self._fsm_id = 500`` in a
-  docstring is not counted as a write. The single site's snippet is asserted
-  to contain ``None`` so a non-``None`` default that silently opened the gate
-  is graded.
+  docstring is not counted as a write. The assigned value is graded as an
+  ``ast`` node rather than by substring, because the snippet carries the type
+  annotation ``int | None`` and so still reads ``None`` under a mutation like
+  ``self._fsm_id: int | None = 501`` -- which is exactly the silent gate-open
+  the contract has to refuse.
+- The FSM check precedes the battery-floor comparison inside
+  ``_check_motion_gates``. The reachability contract above reads whichever
+  gate fires first, so that order is what makes it a statement about the
+  battery floor. Pinning it separately means a reordering fails a test whose
+  name says "ordering" rather than only the reachability test, whose message
+  would otherwise report ``FSM id unknown`` for a change that was about the
+  order. Whether FSM-before-battery is the right order is a separate
+  question: the gate justifies it with "the caller has already been told the
+  FSM if the FSM is the reason", which holds for the FSM-value refusal and
+  not for the FSM-unknown branch that fires today.
 
 The day a real motion-switcher decoder writes ``_fsm_id``, both assertions
 fire -- correctly, because on the same day the battery floor becomes

@@ -10,8 +10,8 @@ verb surface. The battery floor is the guard the caller is asked to think
 about (a constructor parameter, named in :meth:`get_status`), so its
 unreachability is the case worth pinning.
 
-Two contracts are stated here as literals so a change to either fires this
-file, not a distant one:
+Three contracts are stated here as literals so a change to any of them
+fires this file, not a distant one:
 
 1. On a fully-healthy driver *except* for ``_fsm_id``, ``send_action`` -- the
    verb an agent reaches -- refuses with ``FSM id unknown``, not with a
@@ -26,14 +26,23 @@ file, not a distant one:
    replaced by one that grades the new reachability instead of the current
    unreachability.
 
-Deliberately out of scope: whether the ordering (FSM before battery) is the
-right ordering. :meth:`_check_motion_gates`'s docstring names it as a
-deliberate choice -- the caller has already been told the FSM if the FSM is
-the reason -- and this test would still pass under either ordering, because
-today the FSM gate is the one that fires. What this test grades is that the
-current arrangement leaves the battery floor unreachable at all, so the day
-the FSM gate opens the battery floor is graded on its next call, not
-discovered by a caller.
+3. The FSM check precedes the battery-floor check inside
+   :meth:`_check_motion_gates`. Contract (1) reads whichever gate fires
+   first, so the ordering is load-bearing for it: moving the battery check
+   ahead of the FSM check makes (1) fail with
+   ``assert 'FSM id unknown' in 'battery 1.0% is under floor 15.0%'`` -- a
+   failure that names reachability for a change that was about ordering.
+   Stating the ordering directly means such a change fires a cell whose
+   name and message say so.
+
+Whether FSM-before-battery is the *right* ordering is a separate question
+this file does not answer. :meth:`_check_motion_gates` justifies it with
+"the caller has already been told the FSM if the FSM is the reason", which
+holds for the FSM-*value* refusal (``FSM 500 refuses arm writes``) and not
+for the FSM-*unknown* branch that fires on every driver today -- there the
+FSM is precisely what the caller was not told. A maintainer who reorders it
+should expect (1)'s expectation to flip, because the battery floor becomes
+the reachable guard, and this file is where that new reachability belongs.
 """
 
 from __future__ import annotations
@@ -74,6 +83,21 @@ def _pack(pct: float) -> dict[str, float | bool | int]:
     }
 
 
+def _gate_ast() -> ast.FunctionDef:
+    """Return :meth:`G1Driver._check_motion_gates` from the shipped source.
+
+    Read through :mod:`ast` rather than by string search so a docstring that
+    mentions either check does not read as the check itself.
+    """
+    tree = ast.parse(inspect.getsource(g1_module))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "G1Driver":
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef) and child.name == "_check_motion_gates":
+                    return child
+    raise AssertionError("G1Driver._check_motion_gates not found")
+
+
 def test_send_action_refuses_with_fsm_unknown_not_battery_on_a_healthy_otherwise_driver() -> None:
     """The battery-floor guard is unreachable through :meth:`send_action`.
 
@@ -108,8 +132,10 @@ def test_send_action_refuses_with_fsm_unknown_not_battery_on_a_healthy_otherwise
     assert result["status"] == "error"
     text = result["content"][0]["text"]
     # The refusal names the un-wired FSM source, not the battery. Both parts
-    # are stated: an ordering mistake that put the battery check first would
-    # trip the ``"battery" not in text`` assertion.
+    # are stated: an ordering mistake that put the battery check first trips
+    # the ``"FSM id unknown"`` assertion first, and the ``"battery" not in
+    # text`` one as well. The ordering contract below names that cause, so
+    # such a change fails a cell about ordering and not only this one.
     assert "FSM id unknown" in text
     assert "motion-switcher" in text
     assert "battery" not in text
@@ -197,4 +223,42 @@ def test_fsm_id_has_exactly_one_assignment_in_the_driver_module() -> None:
         "the FSM gate stays shut and the battery-floor reachability contract "
         "in this file remains graded. A non-``None`` default would open the "
         "gate silently."
+    )
+
+
+def test_the_fsm_check_precedes_the_battery_floor_in_the_gate() -> None:
+    """The gate tests ``_fsm_id`` before it compares the pack to the floor.
+
+    The reachability contract above reads whichever gate fires first, so this
+    ordering is what makes it a statement about the battery floor rather than
+    about whichever guard happened to be reached first. Pinning it here means
+    a reordering fails a cell whose name says "ordering", instead of only
+    failing the reachability cell with a message about ``FSM id unknown``.
+
+    Line numbers come from the parsed function, so the two checks are
+    identified by what they compare rather than by their wording.
+    """
+    gate = _gate_ast()
+    fsm_checks = [
+        node.lineno
+        for node in ast.walk(gate)
+        if isinstance(node, ast.If) and "self._fsm_id is None" in ast.unparse(node.test)
+    ]
+    floor_checks = [
+        node.lineno
+        for node in ast.walk(gate)
+        if isinstance(node, ast.If) and "self._battery_floor_pct" in ast.unparse(node.test)
+    ]
+    assert len(fsm_checks) == 1, f"expected one ``self._fsm_id is None`` test, found {fsm_checks}"
+    assert len(floor_checks) == 1, (
+        f"expected one comparison against ``self._battery_floor_pct``, found {floor_checks}. "
+        "Two of them leave the order the caller meets ambiguous, and that order is what "
+        "the reachability contract in this file reads."
+    )
+    assert fsm_checks[0] < floor_checks[0], (
+        f"the battery floor is compared at line {floor_checks[0]}, ahead of the "
+        f"``_fsm_id`` check at line {fsm_checks[0]}. The reachability contract in this "
+        "file states that a driver with an un-wired FSM and a critical pack is refused "
+        "for the FSM; with the floor checked first it is refused for the pack instead. "
+        "If that reordering is intended, this file records the new reachability."
     )
