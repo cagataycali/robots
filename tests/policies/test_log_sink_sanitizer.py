@@ -62,6 +62,7 @@ from typing import Any
 import pytest
 
 import strands_robots.policies as policies_pkg
+import strands_robots.policies._log_safety as log_safety
 from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies.curobo.policy import CuroboPolicy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
@@ -152,6 +153,42 @@ def test_a_payload_that_already_reads_as_an_escape_is_left_alone() -> None:
     were escaped incidentally render byte-identically after this change."""
     already = "['shoulder\\npan', 'gripper']"
     assert sanitize_log_value(already) == already
+
+
+def test_the_escape_is_written_as_a_literal_replace_call() -> None:
+    r"""The break characters are passed as literals, not read from a table.
+
+        Helper contract. Two spellings escape the break identically and only one of
+        them is recognised as a barrier by the scanner that reports these sinks:
+        ``py/log-injection``'s ``ReplaceLineBreaksSanitizer`` holds for a ``.replace``
+        call whose first argument is a *string literal* equal to ``"
+    "`` or
+        ``"
+    "``, so a loop over a table of pairs closes the defect while reading as
+        no barrier at all. That is not a property a reader can see from the rendered
+        output, which is why it is asserted here rather than left to the next person
+        who tidies the function into a loop.
+    """
+    module = ast.parse(Path(log_safety.__file__).read_text(encoding="utf-8"))
+    function = next(
+        node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "sanitize_log_value"
+    )
+    literals = {
+        node.args[0].value
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    recognised = literals & {"\r\n", "\n"}
+    assert recognised, (
+        "no .replace() call in sanitize_log_value passes a literal '\\r\\n' or "
+        f"'\\n' as its first argument, so the escape is not the barrier the "
+        f"scanner recognises; first arguments found: {sorted(literals)!r}"
+    )
 
 
 # --------------------------------------------------------------------------

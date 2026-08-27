@@ -32,14 +32,6 @@ byte the observation offered and a key whose name genuinely contains a newline
 is diagnosable rather than silently reflowed.
 """
 
-# The two characters that can start a new record. A ``\r\n`` pair needs no entry
-# of its own: escaping each half independently already renders it as ``\r\n``,
-# in order, which is what a reader has to see to know which pair was on the wire.
-_LINE_BREAKS: tuple[tuple[str, str], ...] = (
-    ("\r", "\\r"),
-    ("\n", "\\n"),
-)
-
 
 def sanitize_log_value(value: object) -> str:
     r"""Return ``value`` rendered for a log line with its line breaks escaped.
@@ -60,6 +52,16 @@ def sanitize_log_value(value: object) -> str:
         The rendered value, guaranteed to contain no ``\r`` or ``\n``.
     """
     text = value if isinstance(value, str) else str(value)
-    for raw, escaped in _LINE_BREAKS:
-        text = text.replace(raw, escaped)
-    return text
+    # Chained calls with literal arguments, not a loop over a table of pairs: the
+    # spelling is what carries the claim. The py/log-injection barrier in CodeQL's
+    # Python pack (``ReplaceLineBreaksSanitizer``) holds only for a ``.replace``
+    # call whose first argument is a string literal equal to ``"\r\n"`` or
+    # ``"\n"``, so a name read from a constant escapes the break just as well and
+    # is recognised as no barrier at all - which is how an escape can close the
+    # defect and still leave the rule reporting every sink that uses it.
+    #
+    # The rendered text is order-independent (neither escape contains a raw break,
+    # so the two replacements cannot overlap). The order here is chosen because
+    # ``"\r"`` alone is not in that literal set: putting ``"\n"`` last makes the
+    # value leaving this function the result of the call the barrier recognises.
+    return text.replace("\r", "\\r").replace("\n", "\\n")

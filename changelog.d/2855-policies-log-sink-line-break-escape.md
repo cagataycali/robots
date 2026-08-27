@@ -35,3 +35,18 @@ which renders the same bytes `%r` rendered. `tokens.shape` at the tokenizer sink
 is deliberately left unwrapped: it is a shape the policy computed, not anything
 the observation supplied, and wrapping it would state a provenance it does not
 have.
+
+The escape is written as two chained `.replace()` calls with literal arguments
+rather than a loop over a table of pairs, and the spelling is load-bearing rather
+than a style choice. `py/log-injection`'s barrier in CodeQL's Python pack
+(`ReplaceLineBreaksSanitizer` in
+`semmle/python/security/dataflow/LogInjectionCustomizations.qll`) holds only for a
+`.replace` call whose first argument is a *string literal* equal to `"\r\n"` or
+`"\n"`; a name read from a constant satisfies neither conjunct, so a table-driven
+loop escapes the break exactly as well while being recognised as no barrier at
+all. The rendered text is identical either way -- and order-independent, since
+neither escape contains a raw break, so the two replacements cannot overlap -- but
+`"\r"` alone is not in that literal set, so `"\n"` goes last and the value leaving
+the helper is the result of the call the barrier recognises. A cell asserts the
+first arguments are literals, so tidying the function back into a loop fails
+rather than silently restoring the report.
