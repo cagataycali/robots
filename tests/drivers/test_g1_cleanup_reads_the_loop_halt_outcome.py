@@ -23,14 +23,62 @@ cost about two seconds each.
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
+import types
 from typing import Any
 
 import pytest
 
 import strands_robots.drivers.g1 as g1_mod
-from tests.drivers.test_g1_control_loop import _ControlLoop, _RecordingPublisher
+from tests.drivers.test_g1_control_loop import (
+    _ControlLoop,
+    _RecordingPublisher,
+    _StubCRC,
+    _StubLowCmd,
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install a ``unitree_sdk2py`` stub for the duration of one test.
+
+    The loop's write path and its zero-torque ``finally`` both call
+    ``from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_`` inside
+    the function body.  On a CI box without the SDK installed that import
+    is an :class:`ImportError` the callers explicitly swallow, so the wire
+    frames these cells count never leave the loop.  The stub matches the
+    one :mod:`tests.drivers.test_g1_control_loop` installs for the same
+    reason - imported alongside the reused fake ``_RecordingPublisher`` so
+    both files run the same production lane.  ``monkeypatch.setitem``
+    restores the previous entries on teardown.
+    """
+    root = types.ModuleType("unitree_sdk2py")
+    idl = types.ModuleType("unitree_sdk2py.idl")
+    default = types.ModuleType("unitree_sdk2py.idl.default")
+    unitree_hg = types.ModuleType("unitree_sdk2py.idl.unitree_hg")
+    unitree_hg_msg = types.ModuleType("unitree_sdk2py.idl.unitree_hg.msg")
+    dds_ = types.ModuleType("unitree_sdk2py.idl.unitree_hg.msg.dds_")
+    utils = types.ModuleType("unitree_sdk2py.utils")
+    crc = types.ModuleType("unitree_sdk2py.utils.crc")
+
+    default.unitree_hg_msg_dds__LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    dds_.LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    crc.CRC = _StubCRC  # type: ignore[attr-defined]
+
+    for name, mod in [
+        ("unitree_sdk2py", root),
+        ("unitree_sdk2py.idl", idl),
+        ("unitree_sdk2py.idl.default", default),
+        ("unitree_sdk2py.idl.unitree_hg", unitree_hg),
+        ("unitree_sdk2py.idl.unitree_hg.msg", unitree_hg_msg),
+        ("unitree_sdk2py.idl.unitree_hg.msg.dds_", dds_),
+        ("unitree_sdk2py.utils", utils),
+        ("unitree_sdk2py.utils.crc", crc),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
 
 #: The joint every fixture commands.  Its commanded gain is the discriminator:
 #: the zero-torque frame is the one that asks for zero stiffness.
