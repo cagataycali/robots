@@ -19,6 +19,7 @@ from device_connect_edge.types import DeviceIdentity, DeviceStatus
 
 from strands_robots.device_connect._authz import authz_error, is_authorized_caller
 from strands_robots.mesh.security import is_safe_policy_provider
+from strands_robots.teleop_mixin import _stop_reported_stopped
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,20 @@ class SimulationDeviceDriver(DeviceDriver):
     async def onEmergencyStop(self, device_id: str, event_name: str, payload: dict[str, Any]) -> None:
         """React to emergencyStop from an authorized safety controller.
 
+        Halts EVERY motion source the simulation has, not only its policies. A
+        ``Simulation`` mixes in :class:`~strands_robots.teleop_mixin.TeleopMixin`,
+        so a leader arm can be driving it from a thread the ``policy_running``
+        flag says nothing about; stopping policies alone left that loop polling
+        ``get_action()`` and applying the result through ``send_action`` after an
+        operator's emergency stop, with the handler reporting the halt.
+
+        Both stops are attempted even if one fails, and a source that did not
+        stop is logged at CRITICAL naming it -- the accounting
+        ``reachy_mini_driver.onEmergencyStop`` gives its two stop actions, and
+        that ``robot_driver.onEmergencyStop`` gives the stop verdict it reads.
+        A stop that arrives here rather than over the mesh is the same operator
+        request, so it gets the same accounting.
+
         Security hardening: only act on emergency-stop events whose source is
         in the emergency-stop allowlist, so a spoofed event from an arbitrary
         device cannot interrupt operations.
@@ -211,11 +226,50 @@ class SimulationDeviceDriver(DeviceDriver):
         if not is_authorized_caller(device_id, scope="estop"):
             logger.warning("Ignoring emergencyStop from unauthorized source %s", device_id)
             return
-        print(f"[estop] Emergency stop received from {device_id} - stopping all policies", flush=True)
-        world = getattr(self._sim, "_world", None)
-        if world:
-            for robot in world.robots.values():
-                robot.policy_running = False
+        logger.warning("Emergency stop received from %s - halting every motion source", device_id)
+        # Attempt EVERY motion source even if one fails, and surface a failure
+        # loudly rather than behind a false ack -- the same shape
+        # ``reachy_mini_driver.onEmergencyStop`` uses for its two stop actions.
+        failures: list[str] = []
+        # Policies first: this is a flag write that cannot block, so the cheap
+        # kill lands even if the bounded teleop join below outlasts its budget.
+        try:
+            world = getattr(self._sim, "_world", None)
+            if world:
+                for robot in world.robots.values():
+                    robot.policy_running = False
+        # Recovery path: catch broadly. A scene teardown racing this handler can
+        # leave ``robots`` mid-mutation, and a safety handler must still attempt
+        # the teleop stop below rather than crash out.
+        except Exception as exc:  # noqa: BLE001 - attempt-every-source e-stop recovery
+            failures.append(f"policies: {exc}")
+        # Teleoperation is the simulation's OTHER motion source. A ``Simulation``
+        # mixes in ``TeleopMixin``, so a leader arm can be driving it, and the
+        # policy flag says nothing about that loop: it polls ``get_action()`` and
+        # applies the result through ``send_action`` on its own thread. The
+        # simulation's own ``cleanup`` stops it for exactly this reason, under
+        # this same guard, so an emergency stop cannot leave it out.
+        if getattr(self._sim, "_teleop_running", False) or getattr(self._sim, "_teleops", None):
+            try:
+                envelope = self._sim.stop_teleoperate()
+                # Read ``stopped`` rather than ``status``: ``_teleop_stats``
+                # derives the status from the session counters, so a session
+                # whose frames errored reports "error" after a clean join.
+                # ``_stop_reported_stopped`` owns that distinction and is the
+                # right reader HERE, where the envelope really is a
+                # ``stop_teleoperate`` one -- ``robot_driver`` deliberately does
+                # not reuse it because it grades a ``stop_task`` envelope.
+                if not _stop_reported_stopped(envelope):
+                    reason = " ".join(block["text"] for block in envelope.get("content", []) if "text" in block)
+                    failures.append(f"teleoperation: {reason}")
+            except Exception as exc:  # noqa: BLE001 - attempt-every-source e-stop recovery
+                failures.append(f"stop_teleoperate: {exc}")
+        if failures:
+            logger.critical(
+                "Emergency stop from %s did NOT fully complete: %s",
+                device_id,
+                "; ".join(failures),
+            )
 
     # ── Periodic state publishing ─────────────────────────────
 
