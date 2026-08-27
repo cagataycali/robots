@@ -335,7 +335,20 @@ class TeleopMixin:
         """Detach a specific teleoperator, or all when ``name`` is None.
 
         Stops the local loop first if it's running and would be left with no
-        devices. Disconnects each detached device if it was connected.
+        devices, and refuses the detach outright when that loop does not stop.
+        Disconnects each detached device if it was connected.
+
+        The order is the contract, not an implementation detail.
+        :meth:`_teleop_loop` indexes ``self._teleops[n]`` on every tick and this
+        method removes entries from it, so a detach that would leave the loop
+        with nothing to drive has to join it before touching a device. Stopping
+        afterwards disconnected the leader the loop was parked reading from and
+        still answered ``status="success"`` - the teardown-under-a-live-writer
+        that :meth:`stop_teleoperate` declines for itself: called alone on that
+        same state it answers ``status="error"`` with ``stopped: False`` and
+        leaves the devices connected, saying so. Joining first also repairs that
+        refusal's own diagnosis, which reported ``devices: []`` because the
+        entries had already been popped out from under it.
 
         Args:
             name: Which attached stream to detach. ``None`` = every attached
@@ -344,7 +357,11 @@ class TeleopMixin:
                 stream is refused rather than widened to the whole set.
 
         Returns:
-            Status dict; error when ``name`` names no attached teleoperator.
+            Status dict; error when ``name`` names no attached teleoperator, and
+            error carrying ``detached: []`` when the loop this detach would leave
+            with nothing to drive did not stop. Nothing is detached in that case,
+            so the devices stay attached and connected and a later call re-joins
+            the same loop rather than reporting an idle session.
         """
         self._ensure_teleop_state()
 
@@ -352,11 +369,35 @@ class TeleopMixin:
         # read by membership: ``None`` is the documented "detach every attached
         # device", and any other value names one. Read by truthiness, ``""`` took
         # the all-devices branch, so a detach aimed at a single stream removed the
-        # whole set - and, with a session running, ended it, because the branch
-        # below stops the loop once nothing is left to drive. An empty name is not
-        # a spelling of "all"; it names no attached device, so it now reaches the
+        # whole set - and, with a session running, ended it, because the loop is
+        # stopped once nothing is left to drive it. An empty name is not a
+        # spelling of "all"; it names no attached device, so it reaches the
         # not-found refusal below.
         names = list(self._teleops) if name is None else [name]
+
+        # Join the loop before removing anything it reads. The condition tests the
+        # thread handle as well as the session flag because ``stop_teleoperate``
+        # clears the flag *before* it joins and keeps the handle when the join
+        # fails: after a failed stop - the state its own message tells the operator
+        # to call it again from - the flag alone reports an idle session while that
+        # loop is still polling its leader and writing to the follower.
+        attached = [n for n in names if n in self._teleops]
+        if (self._teleop_running or self._teleop_thread is not None) and not (set(self._teleops) - set(attached)):
+            envelope = self.stop_teleoperate()
+            # Read the outcome through the shared helper rather than ``status``:
+            # the status is derived from the session counters, so a session whose
+            # every frame errored reports ``"error"`` after a perfectly clean
+            # join, and keying on it would refuse a detach that is safe.
+            if not _stop_reported_stopped(envelope):
+                reason = " ".join(block["text"] for block in envelope.get("content", []) if "text" in block)
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": f"Nothing was detached: the teleop loop is still writing. {reason}"},
+                        {"json": {"detached": [], "stopped": False}},
+                    ],
+                }
+
         detached = []
         for n in names:
             att = self._teleops.pop(n, None)
@@ -369,9 +410,6 @@ class TeleopMixin:
             except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
                 logger.warning("[teleop] disconnect of %r failed: %s", n, exc)
             detached.append(n)
-
-        if not self._teleops and self._teleop_running:
-            self.stop_teleoperate()
 
         if not detached:
             return {"status": "error", "content": [{"text": f"No teleop named {name!r}."}]}

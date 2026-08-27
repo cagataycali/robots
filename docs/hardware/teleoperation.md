@@ -86,7 +86,7 @@ Every hardware `Robot` and `Simulation` host exposes:
 |--------|------|
 | `attach_teleop(device_or_spec, *, name=None, method=None, map_fn=None, **kwargs)` | Register an input stream (lazy - no hardware touched). `device_or_spec` is a built teleop instance **or** a type string built via `Teleoperator(**kwargs)`. |
 | `teleoperate(*, names=None, robot_name=None, hz=50.0, publish=False, block=False, duration=None)` | Run the control loop. |
-| `detach_teleop(name=None)` | Remove one (or all) attached streams. |
+| `detach_teleop(name=None)` | Remove one (or all) attached streams. Stops the loop before touching a device when the detach would leave it with nothing to drive, and refuses with `detached: []` if that loop does not stop. |
 | `stop_teleoperate()` | Stop the loop, any mesh publishers, and disconnect devices. Reports `status="error"` with `stopped: false` when the loop outlasts its 3 s join budget - the devices are left connected rather than torn down mid-write, and a second call re-joins the same loop. |
 
 ### `attach_teleop`
@@ -169,6 +169,13 @@ the bound for those.
   `No teleop named ''.` and leaves every stream attached. That matters mid-
   session: `detach_teleop` stops the loop once nothing is left to drive, so a
   detach widened to all streams would also end a running session.
+- **Order** - when the detach would leave the loop with nothing to drive, the
+  loop is joined *before* any device is disconnected. `_teleop_loop` reads
+  `self._teleops[name]` on every tick, so removing an entry under a live loop
+  tears down the leader it is parked reading from. If that join fails the whole
+  detach is refused: `status="error"` with `detached: []`, every stream left
+  attached and connected, and the reason forwarded from `stop_teleoperate` - call
+  it again to re-join the same loop.
 
 ## Action-key compatibility
 

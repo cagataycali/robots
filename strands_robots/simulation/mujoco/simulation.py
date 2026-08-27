@@ -3187,8 +3187,9 @@ class MuJoCoSimEngine(
         )
         base["methods"]["detach_teleop"] = (
             "(name: str | None = None) -> dict  # detach one teleoperator by "
-            "name, or all when name is None; disconnects each and stops the loop "
-            "if it would be left with no devices. The inverse of attach_teleop"
+            "name, or all when name is None; stops the loop first if it would be "
+            "left with no devices, then disconnects each. Refuses with "
+            "detached: [] if that loop does not stop. The inverse of attach_teleop"
         )
 
         # Live interactive viewer. describe() teaches how to build a scene, drive
