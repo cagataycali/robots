@@ -1,0 +1,3 @@
+### Fixed
+
+- **policies/lerobot_local**: the state-key-mismatch warning now emits its message through the ``%s`` format sink (``logger.warning("%s", msg)``) rather than substituting the untrusted content into the format string. The observed warning text is byte-identical -- the ``args`` tuple carries the same payload the ``msg`` argument did -- but the observation-derived key names now live outside the log-format taint sink, so CodeQL's ``py/log-injection`` grades the call site clean without changing what a rollout's operator sees in a warning. Graded on the two shapes at the ``LogRecord`` level (``msg == "%s"``, ``args == (payload,)``) plus an over-reach control that pins the rendered message still names both the configured and observed keys.

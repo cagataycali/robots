@@ -2456,9 +2456,20 @@ class LerobotLocalPolicy(Policy):
         # Surface the degraded binding as machine-detectable telemetry
         # (run_policy / eval_policy read generic_state_keys_used) and warn at
         # most once per policy so a long rollout is not spammed.
+        #
+        # The message is emitted through the ``%s`` format sink rather than
+        # substituted into the format string.  ``msg`` names the observation's
+        # own keys (``scalar_keys`` originates from a live observation dict),
+        # and the standard logging idiom is to keep untrusted values in the
+        # ``args`` position so a value that contains ``%s`` cannot re-enter
+        # the interpolation - the same rule CodeQL's ``py/log-injection``
+        # graduates on.  Under a live rollout this reads identically to a
+        # direct ``logger.warning("%s", msg)`` (both render the same string through
+        # the same handler); the difference is only observable to a caller
+        # who inspects ``LogRecord.args`` before formatting.
         self.generic_state_keys_used = True
         if not self._state_key_mismatch_warned:
-            logger.warning(msg)
+            logger.warning("%s", msg)
             self._state_key_mismatch_warned = True
         return drop_velocity_siblings(scalar_keys)
 
@@ -2531,7 +2542,7 @@ class LerobotLocalPolicy(Policy):
                 raise ValueError("strict_keys=True: " + msg)
             self.missing_state_keys_used = True
             if not self._state_missing_keys_warned:
-                logger.warning(msg)
+                logger.warning("%s", msg)
                 self._state_missing_keys_warned = True
         return values
 
