@@ -12,11 +12,11 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 VOICE_PROMPT = """You are the Strands Robots fleet voice operator. You control real robots and
-simulations on a mesh via the fleet tool. Keep spoken replies SHORT - one or
+simulations on a mesh via the robot_mesh tool. Keep spoken replies SHORT - one or
 two sentences. Confirm before actuating real hardware (peer ids without 'sim'
-in them). fleet(action='peers') shows who's online; fleet(action='task',
-target=..., instruction=..., duration=...) runs a task;
-fleet(action='stop_all') stops everything - use it immediately when asked to
+in them). robot_mesh(action='peers') shows who's online; robot_mesh(action='tell',
+target=..., instruction=...) runs a task;
+robot_mesh(action='emergency_stop') stops everything - use it immediately when asked to
 stop.
 Starting a task on a REAL robot may be refused because this dashboard does not
 let an agent start physical motion on its own. That refusal is final for you:
@@ -81,14 +81,14 @@ def build_voice_agent(provider: str | None = None, voice: str | None = None) -> 
     from strands.experimental.bidi import BidiAgent
     from strands.experimental.bidi.tools import stop_conversation
 
-    from strands_robots.dashboard.agent_bridge import _make_fleet_tool
+    from strands_robots.dashboard.agent_bridge import _robot_mesh_tool
 
     provider = provider or os.getenv("VOICE_PROVIDER", "openai")
     voice = voice or os.getenv("VOICE_NAME") or None
     model = _build_bidi_model(provider, voice)
     return BidiAgent(
         model=model,
-        tools=[_make_fleet_tool(), stop_conversation],
+        tools=[t for t in (_robot_mesh_tool(), stop_conversation) if t is not None],
         system_prompt=os.getenv("DASHBOARD_VOICE_PROMPT", VOICE_PROMPT),
     )
 
