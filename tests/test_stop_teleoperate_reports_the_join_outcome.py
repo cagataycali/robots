@@ -138,13 +138,18 @@ def wedged(monkeypatch: pytest.MonkeyPatch):
 class TestThePremise:
     """What the graded behaviour rests on."""
 
-    def test_a_timed_join_cannot_report_whether_the_thread_finished(self) -> None:
-        """``join(timeout=)`` returns None either way, so liveness is the only route."""
+    def test_a_timed_join_can_return_with_the_thread_still_alive(self) -> None:
+        """A timed join carries no verdict, so liveness is the only route.
+
+        ``Thread.join`` is annotated ``-> None`` and mypy refuses to read a value
+        from it, so the type checker already states that half; what a test can add
+        is the other one - the call returns normally while the thread runs on.
+        """
         blocked = threading.Event()
         thread = threading.Thread(target=lambda: blocked.wait(20.0), daemon=True)
         thread.start()
         try:
-            assert thread.join(timeout=0.05) is None
+            thread.join(timeout=0.05)
             assert thread.is_alive() is True, "the probe thread was supposed to outlast the join"
         finally:
             blocked.set()
