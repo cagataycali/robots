@@ -311,16 +311,36 @@ def resolve_model_path(
     return Path(candidates[0])
 
 
-def resolve_model_dir(name: str) -> Path | None:
+def resolve_model_dir(name: str, *, allow_download: bool = True) -> Path | None:
     """Resolve a robot name to its asset directory (containing XML + meshes).
+
+    This resolver reads the filesystem. It returns a directory that already
+    exists on a search path and never downloads the asset itself, so the only
+    call here that can reach the network is the registry lookup: :func:`_lookup`
+    falls back to ``robot_descriptions`` discovery for a name the curated
+    registry does not know, and that import *is* the fetch.
+
+    That left this resolver holding the side effect without the capability.
+    ``discover_robot`` is documented "Call only from asset-resolution paths that
+    are allowed to download", and this path downloads nothing, yet its caller had
+    no way to decline the clone the way :func:`resolve_model_path`'s caller can.
+    ``allow_download=False`` closes that gap and makes this a pure filesystem
+    lookup - no network, no ``robot_descriptions`` import.
+
+    The default stays open, so the long tail still resolves for a caller about to
+    load a model. Declining costs the answer only for a robot that discovery
+    alone can name; a curated robot never reaches the fallback either way.
 
     Args:
         name: Robot name (canonical or alias).
+        allow_download: When False, answer from the curated registry alone
+            rather than letting the discovery fallback clone the upstream asset
+            repository.
 
     Returns:
         Path to the robot's asset directory, or None if not found.
     """
-    info = _lookup(name)
+    info = _lookup(name, allow_discovery=allow_download)
     if not info or "asset" not in info:
         return None
 

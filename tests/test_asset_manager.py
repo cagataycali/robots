@@ -666,3 +666,185 @@ class TestResolveModelDirEdges:
             lambda _name: {"asset": {"dir": "ghostbot", "model_xml": "ghost.xml"}},
         )
         assert manager.resolve_model_dir("ghost") is None
+
+
+class TestTheDirectoryResolverCanDeclineTheSameFetch:
+    """The directory resolver holds the side effect without the capability.
+
+    :func:`~strands_robots.assets.manager.resolve_model_dir` reads the
+    filesystem: it returns a directory that already exists on a search path and
+    never downloads the asset. Its first statement is the shared registry
+    lookup, though, which falls back to ``robot_descriptions`` discovery for any
+    name the curated registry does not know - and that import *is* the fetch,
+    because ``robot_descriptions`` calls ``clone_to_cache`` at module scope.
+
+    So the resolver that cannot download was the one whose caller could not
+    decline a download. ``discover_robot`` is documented "Call only from
+    asset-resolution paths that are allowed to download"; this path is not one.
+    Its sibling :func:`resolve_model_path` has offered ``allow_download`` since
+    the fetch was first made declinable, and it hands that keyword to the lookup.
+
+    The default stays open, so ``test_the_sibling_resolvers_still_consult_discovery``
+    above - the control that pinned these callers as untouched - keeps passing.
+    """
+
+    @staticmethod
+    def _recording_discovery(consulted: list[str], entry: dict | None = None):
+        """Stand in for the discovery fallback, recording every consultation."""
+
+        def discover(name: str) -> dict | None:
+            consulted.append(name)
+            return entry
+
+        return discover
+
+    def _patch_discovery(self, monkeypatch, consulted: list[str], entry: dict | None = None) -> None:
+        from strands_robots.registry import discovery
+
+        discovery.invalidate_cache()
+        monkeypatch.setattr(discovery, "discover_robot", self._recording_discovery(consulted, entry))
+
+    # -- premise: the resolver has no capability to justify the side effect --
+
+    def test_the_directory_resolver_downloads_nothing(self, tmp_path, monkeypatch):
+        """It never reaches the downloader, while its sibling does.
+
+        This is what makes the unavoidable clone a defect rather than a cost of
+        doing business: the fetch it could not decline is one it cannot use.
+        """
+        robot_dir = _register_bot(tmp_path / "assets")
+        (robot_dir / "unitbot.xml").unlink()  # absent asset: the downloading trigger
+        _invalidate_cache()
+        attempts: list[str] = []
+        monkeypatch.setattr(manager, "_auto_download_robot", lambda n, _i: attempts.append(n) or False)
+
+        # The directory is still here; only the model XML is gone. The resolver
+        # answers from the filesystem and takes no side effect for the absence.
+        assert manager.resolve_model_dir("unitbot") == robot_dir
+        assert attempts == [], "resolve_model_dir must not download; it only reads the filesystem"
+
+        manager.resolve_model_path("unitbot")
+        assert attempts == ["unitbot"], "resolve_model_path is the download-capable sibling"
+
+    # -- regression --------------------------------------------------------
+
+    def test_declining_skips_the_discovery_fallback(self, monkeypatch):
+        """``allow_download=False`` answers from the curated registry alone."""
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted)
+
+        assert manager.resolve_model_dir("not-in-the-curated-registry", allow_download=False) is None
+        assert consulted == [], f"a declined directory resolve reached discovery: {consulted!r}"
+
+    def test_the_resolver_hands_its_own_flag_to_the_lookup(self):
+        """Read the keyword's value, not its presence.
+
+        Forwarding ``allow_discovery=True`` spells the same keyword and restores
+        the clone, so a scan for the name alone would pass on the defect.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(manager.resolve_model_dir)))
+        forwards = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_lookup"
+        ]
+        assert len(forwards) == 1, f"expected one _lookup call, found {len(forwards)}"
+        passed = {kw.arg: ast.unparse(kw.value) for kw in forwards[0].keywords if kw.arg is not None}
+        assert passed.get("allow_discovery") == "allow_download", (
+            f"resolve_model_dir must hand its own allow_download to the lookup; it passes {passed!r}"
+        )
+
+    # -- over-reach controls: nothing else changes -------------------------
+
+    def test_the_default_still_consults_discovery(self, monkeypatch):
+        """The long tail still resolves for a caller about to load a model."""
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted)
+
+        manager.resolve_model_dir("not-in-the-curated-registry")
+
+        assert consulted == ["not-in-the-curated-registry"]
+
+    def test_a_curated_name_is_unaffected(self, tmp_path, monkeypatch):
+        """Declining changes no answer for a name the curated registry knows."""
+        robot_dir = _register_bot(tmp_path / "assets")
+        consulted: list[str] = []
+        self._patch_discovery(monkeypatch, consulted)
+
+        assert manager.resolve_model_dir("unitbot", allow_download=False) == robot_dir
+        assert consulted == [], "a curated hit must not reach the fallback at all"
+
+    # -- second layer: the same question, of the real registry ------------
+
+    def test_a_really_discoverable_name_is_declined(self):
+        """Independent oracle: real registry data, no stand-in."""
+        pytest.importorskip("robot_descriptions")
+        import sys
+
+        from strands_robots.registry import get_robot
+        from strands_robots.registry.discovery import list_discoverable
+
+        candidates = [name for name in sorted(list_discoverable()) if get_robot(name) is None]
+        assert candidates, "no discoverable name is outside the curated registry to test with"
+
+        name = candidates[0]
+        before = {m for m in sys.modules if m.startswith("robot_descriptions")}
+        assert manager.resolve_model_dir(name, allow_download=False) is None
+        new = {m for m in sys.modules if m.startswith("robot_descriptions")} - before
+        assert new == set(), f"declining {name!r} imported description modules: {sorted(new)}"
+
+    # -- the consumer -----------------------------------------------------
+
+    def test_the_curobo_helper_reaches_the_resolver_that_can_download(self):
+        """The example's docstring promises a download; only one resolver does one.
+
+        It reported that this helper "triggers the same auto-download the MuJoCo
+        path uses" while calling the resolver measured above to download nothing,
+        so on a cold cache it returned no URDF and sent the reader back to the
+        manual flag its own docstring says it removed.
+        """
+        import ast
+
+        source = Path("examples/so101_curobo/planner.py").read_text()
+        helper = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "_so101_cache_urdf"
+        )
+        called = {
+            node.func.id for node in ast.walk(helper) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "resolve_model_path" in called, (
+            "the helper documents an auto-download, so it must reach the resolver that performs one"
+        )
+        declined = [
+            node
+            for node in ast.walk(helper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "resolve_model_dir"
+            and any(kw.arg == "allow_download" and kw.value.value is False for kw in node.keywords)
+        ]
+        assert declined, "the best-effort probe must decline the network rather than clone a corpus"
+
+    def test_the_xml_parent_is_not_the_asset_directory(self, tmp_path):
+        """Why the helper re-resolves instead of taking the model XML's parent.
+
+        A robot may nest its model XML in a subdirectory, and several shipped
+        ones do, so the parent of a resolved XML is not the asset directory for
+        them - a shortcut that would have looked right on the robots that do not.
+        """
+        assets = tmp_path / "assets"
+        (assets / "nestbot" / "xml").mkdir(parents=True, exist_ok=True)
+        robot_dir = _register_bot(assets, name="nestbot", xml_name="xml/nestbot.xml")
+
+        path = manager.resolve_model_path("nestbot", allow_download=False)
+        directory = manager.resolve_model_dir("nestbot", allow_download=False)
+
+        assert path == robot_dir / "xml" / "nestbot.xml"
+        assert directory == robot_dir
+        assert path.parent != directory, "a nested XML's parent is not the asset directory"
