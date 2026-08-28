@@ -32,7 +32,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import finite_vector_error, name_list_error, require_optional
+from strands_robots.utils import (
+    finite_vector_error,
+    name_list_error,
+    positive_finite_number_error,
+    require_optional,
+)
 
 from . import observation as obs_builder
 from ._session import MicroduckSession
@@ -88,6 +93,36 @@ _DEFAULT_COMMAND_WIDTH = 13
 _COMMAND_COMPONENTS = {"twist": 3, "head_pose": 4, "body_pose": 6}
 
 
+def _action_scale_error(value: Any, source: str) -> str | None:
+    """Return why ``value`` cannot be an action scale, or ``None`` if it can.
+
+    ``action_scale`` is the only path from the network's raw output to the joint
+    targets - ``motor_target = default_pose + raw_action * action_scale`` - so a
+    value that is not a positive finite number does not fail, it silently
+    changes what the policy commands. A scale of ``0`` (or ``False``, an ``int``
+    subclass) makes every target exactly ``default_pose``: the network's
+    decision is discarded and the biped holds its nominal stance while the
+    rollout reports success. A non-finite scale makes all fourteen targets
+    ``nan``. Neither is checked downstream - :func:`observation.decode_action`
+    runs per tick inside :meth:`MicroduckPolicy.get_actions`, so a non-real
+    value surfaced as a bare ``TypeError`` from its own ``float()`` only after
+    the session had loaded and the rollout had started.
+
+    The scale reaches the decode two ways - the constructor kwarg and the ONNX
+    ``action_scale`` metadata - and both consult this one domain, so a scale a
+    caller is refused cannot arrive through the file instead. ``source`` names
+    which route the value came from so the refusal points at the thing to fix.
+
+    Args:
+        value: The candidate scale, from a caller or from ONNX metadata.
+        source: Human-readable route, e.g. ``"constructor"``.
+
+    Returns:
+        The refusal text, or ``None`` when ``value`` is usable.
+    """
+    return positive_finite_number_error(value, "action_scale", f"MicroduckPolicy ({source})")
+
+
 class MicroduckPolicy(Policy):
     """ONNX locomotion policy for the Pollen Microduck 14-DOF biped.
 
@@ -103,9 +138,14 @@ class MicroduckPolicy(Policy):
             ``command_names`` metadata; defaults to all-zero (stand in place).
             Per-tick overrides arrive via ``get_actions(command=...)`` or the
             well-known ``target_velocity`` kwarg (writes the twist block).
-        joint_names / default_pose / action_scale / command_names: Explicit
-            config overrides. When omitted, read from the ONNX metadata on first
-            inference. Explicit values always win.
+        joint_names / default_pose / command_names: Explicit config overrides.
+            When omitted, read from the ONNX metadata on first inference.
+            Explicit values always win.
+        action_scale: Scale applied to the raw ONNX output before it becomes a
+            joint-position offset. Must be a positive finite number: a scale of
+            ``0`` discards the network's decision and holds ``default_pose``,
+            and a non-finite one makes every target ``nan``. When omitted, read
+            from the ONNX ``action_scale`` metadata and held to the same domain.
     """
 
     #: Proprioceptive locomotion - no cameras.
@@ -139,6 +179,8 @@ class MicroduckPolicy(Policy):
         self._default_pose: NDArray[np.float32] | None = (
             np.asarray(default_pose, dtype=np.float32) if default_pose is not None else None
         )
+        if action_scale is not None and (error := _action_scale_error(action_scale, "constructor")):
+            raise ValueError(error)
         self._action_scale: float | None = float(action_scale) if action_scale is not None else None
         self._command_names: list[str] | None = list(command_names) if command_names else None
         self._configured = False
@@ -321,7 +363,14 @@ class MicroduckPolicy(Policy):
                 else np.array(MICRODUCK_DEFAULT_POSE, dtype=np.float32)
             )
         if self._action_scale is None:
-            self._action_scale = float(meta.get("action_scale", 1.0))
+            declared = meta.get("action_scale", 1.0)
+            try:
+                parsed = float(declared)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"MicroduckPolicy: ONNX metadata action_scale={declared!r} is not a number.") from exc
+            if error := _action_scale_error(parsed, "ONNX metadata"):
+                raise ValueError(error)
+            self._action_scale = parsed
         if self._command_names is None:
             cn = meta.get("command_names")
             self._command_names = [s.strip() for s in cn.split(",")] if cn else None

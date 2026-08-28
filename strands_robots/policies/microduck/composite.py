@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
+from strands_robots.utils import positive_finite_number_error
 
 from .policy import MicroduckPolicy
 
@@ -32,7 +33,11 @@ class MicroduckPolicyBundle(Policy):
         policies: Mapping of skill name -> :class:`MicroduckPolicy`.
         active: The initially selected skill name. Defaults to the first key.
         switch_on_velocity: If set, auto-switch between ``move_key`` and
-            ``idle_key`` by ``|twist|`` against this threshold each tick.
+            ``idle_key`` by ``|twist|`` against this threshold each tick. Must
+            be a positive finite number - the gate compares a magnitude, so a
+            threshold of ``0`` or below can never select ``idle_key`` and a
+            non-finite one can never select ``move_key``. Pass ``None`` (the
+            default) to leave the gate off.
         move_key / idle_key: Skill names for the velocity gate (default
             ``"walk"`` / ``"stand"`` when those keys exist).
     """
@@ -62,6 +67,10 @@ class MicroduckPolicyBundle(Policy):
             raise ValueError(
                 f"MicroduckPolicyBundle: active skill {self._active!r} is not one of {list(self._policies)}."
             )
+        if switch_on_velocity is not None and (
+            error := positive_finite_number_error(switch_on_velocity, "switch_on_velocity", "MicroduckPolicyBundle")
+        ):
+            raise ValueError(error)
         self._switch_on_velocity = float(switch_on_velocity) if switch_on_velocity is not None else None
         self._move_key = move_key
         self._idle_key = idle_key

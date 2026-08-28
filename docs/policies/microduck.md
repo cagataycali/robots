@@ -86,6 +86,14 @@ never hardcoded, and unused command slots stay present and zero (the
 dead-weight rule) so one observation layout serves every skill. Actions decode
 as `motor_target = DEFAULT_POSE + action * action_scale`.
 
+`action_scale` is the only path from the network's output to the joint targets,
+so it must be a positive finite number. A scale of `0` would make every target
+exactly `DEFAULT_POSE` — the network's decision discarded and the biped holding
+its nominal stance while the rollout reports success — and a non-finite one
+would make all fourteen targets `nan`. Both routes to the decode are held to
+that domain: an explicit `action_scale=` and the value read from the ONNX
+`action_scale` metadata.
+
 ## Commanding motion
 
 The command vector defaults to all-zero (stand in place). Steer with the
@@ -116,6 +124,11 @@ bundle = MicroduckPolicyBundle(
 ```
 
 Select explicitly with `get_actions(..., select="walk")` or `bundle.switch(...)`.
+
+`switch_on_velocity` must be a positive finite number. The gate compares a
+magnitude, so a threshold of `0` or below could never select the idle skill and
+a non-finite one could never select the move skill. Omit it (the default) to
+leave the gate off and switch only explicitly.
 
 ## Byte-compatibility
 
