@@ -185,8 +185,10 @@ def check_mujoco_gl() -> str:
     rather than restated here.
     """
     from strands_robots.simulation.mujoco.backend import (
+        _MUJOCO_GL_OFFSCREEN_LIBRARIES,
         _is_headless,
         _mujoco_gl_disables_rendering,
+        _mujoco_gl_loadable_offscreen_values,
         _mujoco_gl_offscreen_values,
         _mujoco_gl_valid_values,
         _mujoco_gl_value,
@@ -201,13 +203,43 @@ def check_mujoco_gl() -> str:
     # What to recommend has to be valid here: on a platform whose only backend
     # draws through the window server there is no offscreen value to offer, and
     # naming one would send the reader after a value MuJoCo refuses.
-    offscreen_here = sorted(_mujoco_gl_offscreen_values())
+    #
+    # Valid is not the same as reachable. Each offscreen backend loads a system
+    # library, so on a host missing them every offscreen value MuJoCo accepts is
+    # one no export can render through, and the remedy is the library rather than
+    # a different variable. Both sets are kept, to tell "this platform has no
+    # offscreen backend" apart from "this host is missing their libraries".
+    accepted_offscreen = sorted(_mujoco_gl_offscreen_values())
+    offscreen_here = sorted(_mujoco_gl_loadable_offscreen_values())
+    absent_libraries = [
+        library
+        for value, library in _MUJOCO_GL_OFFSCREEN_LIBRARIES
+        if value in accepted_offscreen and value not in offscreen_here
+    ]
+
+    def _no_offscreen_remedy(platform_has_none: str) -> str:
+        """The remedy when no offscreen backend is reachable.
+
+        Args:
+            platform_has_none: What to say when the platform accepts none of them,
+                which is a property of the platform rather than of this host.
+
+        Returns:
+            The library advice when the platform accepts offscreen backends and
+            none of their libraries loads here, ``platform_has_none`` otherwise.
+        """
+        if accepted_offscreen:
+            return (
+                f"install an offscreen GL library ({', '.join(absent_libraries)}) - "
+                "no exported value can render without one"
+            )
+        return platform_has_none
 
     if _mujoco_gl_disables_rendering(value):
         fix = (
             f"export MUJOCO_GL={offscreen_here[0]}  # or unset it for the platform default"
             if offscreen_here
-            else "unset MUJOCO_GL  # the platform's own backend renders through its window server"
+            else _no_offscreen_remedy("unset MUJOCO_GL  # the platform's own backend renders through its window server")
         )
         return _fail(f"{shown} disables MuJoCo's GL context, so nothing can render", fix=fix)
 
@@ -227,7 +259,9 @@ def check_mujoco_gl() -> str:
         note = (
             f"Set MUJOCO_GL={' or '.join(offscreen_here)} for headless"
             if offscreen_here
-            else f"{platform.system()} has no offscreen MuJoCo backend, so a window server is required"
+            else _no_offscreen_remedy(
+                f"{platform.system()} has no offscreen MuJoCo backend, so a window server is required"
+            )
         )
         return _warn(f"{shown} (needs display)", note=note)
 
@@ -235,12 +269,21 @@ def check_mujoco_gl() -> str:
         if platform.system() == "Linux":
             return _pass("MUJOCO_GL unset (display detected, glfw will work)")
         return _pass(f"MUJOCO_GL unset ({platform.system()} renders through its native backend)")
-    # ``_is_headless`` is only ever true on Linux, so the remedy below is reached
-    # on the one platform where those two backends exist.
-    return _fail(
-        "MUJOCO_GL not set and no display detected",
-        fix="export MUJOCO_GL=egl  # or osmesa; add to ~/.bashrc",
-    )
+    # ``_is_headless`` is only ever true on Linux, the one platform where those two
+    # backends exist - so what remains to decide is which of them this host can
+    # actually load.
+    if not offscreen_here:
+        return _fail(
+            "MUJOCO_GL not set and no display detected",
+            fix=_no_offscreen_remedy(
+                f"{platform.system()} has no offscreen MuJoCo backend, so a window server is required"
+            ),
+        )
+    # The command has to stay runnable, so any second choice goes in the comment.
+    alternatives = " or ".join(offscreen_here[1:])
+    fix = f"export MUJOCO_GL={offscreen_here[0]}  # "
+    fix += f"or {alternatives}; add to ~/.bashrc" if alternatives else "add to ~/.bashrc"
+    return _fail("MUJOCO_GL not set and no display detected", fix=fix)
 
 
 def check_lerobot() -> str:
