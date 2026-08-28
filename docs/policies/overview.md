@@ -77,6 +77,7 @@ its client needs only core deps plus the git-installed `vera` package, so
 | [`motionbricks`](motionbricks.md) | `MotionBricksPolicy` | `motionbricks` | Generative kinematic Unitree G1 motion (style-driven: walk/stealth_walk/...), in-process torch (non-VLA) |
 | [`kimodo`](kimodo.md) | `KimodoPolicy` | `kimodo` | Text-to-motion diffusion for the Unitree G1 (free-form prompt -> kinematic qpos), in-process torch (non-VLA) |
 | [`protomotions`](protomotions.md) | `ProtoMotionsPolicy` | `protomotions` | ProtoMotions Generalist Tracking Policy: tracks a reference motion clip on the Unitree G1, in-process ONNX (non-VLA) |
+| [`microduck`](microduck.md) | `MicroduckPolicy` | `microduck` | Pollen Microduck 14-DOF open biped locomotion (walk/stand), in-process ONNX with the normaliser fused into the graph (non-VLA) |
 
 ## Policy ABC
 

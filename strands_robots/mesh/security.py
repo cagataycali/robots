@@ -326,6 +326,10 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "gtp",
         "gtp_g1",
         "protomotions_g1",
+        # MicroduckPolicy / MicroduckPolicyBundle
+        "microduck",
+        "microduck_walk",
+        "microduck_stand",
         # RemotePolicy
         "remote",
     }
