@@ -309,6 +309,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     orientation: list[float] | None = None,
     keyframe: str | int | None = None,
     driver: str = "auto",
+    mesh_backend: str | None = None,
     **kwargs: Any,
 ) -> Simulation | HardwareRobot | HardwareDriver:
     """Create a robot - returns a Simulation or HardwareRobot instance.
@@ -561,6 +562,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 peer_id=peer_id,
                 peer_type="sim",
                 mesh=mesh,
+                mesh_backend=mesh_backend,
             )
             if sim_mesh is not None:
                 sim.mesh = sim_mesh
@@ -651,7 +653,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         # Both drivers are robots on the fleet, so both get the same two
         # attachments. Reached after the branch rather than inside it: a driver
         # that is built but never put on the mesh is a robot no peer can see.
-        _attach_mesh(hw, canonical, peer_id, mesh)
+        _attach_mesh(hw, canonical, peer_id, mesh, mesh_backend)
         _attach_device_connect(hw, canonical, mode, peer_id)
         return hw
 
@@ -659,7 +661,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         raise ValueError(f"Invalid mode {mode!r}. Choose 'sim', 'real', or 'auto' (case-insensitive).")
 
 
-def _attach_mesh(instance: Any, canonical: str, peer_id: str | None, mesh: bool) -> None:
+def _attach_mesh(instance: Any, canonical: str, peer_id: str | None, mesh: bool, mesh_backend: str | None = None) -> None:
     """Attach a Zenoh mesh so a real robot auto-discovers its peers.
 
     Takes ``Any`` for the same reason :func:`_attach_device_connect` does: it
@@ -677,6 +679,9 @@ def _attach_mesh(instance: Any, canonical: str, peer_id: str | None, mesh: bool)
         peer_id: Requested peer identifier, or ``None`` to let the mesh choose.
         mesh: The mesh opt-in, already resolved - the caller has folded the
             ``STRANDS_MESH`` default into it, so ``None`` cannot arrive here.
+        mesh_backend: Optional transport backend override, forwarded to
+            :func:`~strands_robots.mesh.init_mesh`. Defaults to ``None`` (env
+            var resolution).
     """
     try:
         from strands_robots.mesh import init_mesh
@@ -686,6 +691,7 @@ def _attach_mesh(instance: Any, canonical: str, peer_id: str | None, mesh: bool)
             peer_id=peer_id,
             peer_type="robot",
             mesh=mesh,
+            mesh_backend=mesh_backend,
         )
         if hw_mesh is not None:
             instance.mesh = hw_mesh

@@ -4238,12 +4238,32 @@ def init_mesh(
     peer_id: str | None = None,
     peer_type: str = "robot",
     mesh: bool = True,
+    mesh_backend: str | None = None,
 ) -> Mesh | None:
     """Construct and start a Mesh for the given robot.
 
     Returns None when mesh is disabled. ``STRANDS_MESH=false`` is a hard kill
     switch and an explicit ``mesh=False`` both disable mesh; the env var only
     forces mesh OFF, never ON (so an explicit opt-out is always honoured).
+
+    Args:
+        robot: The robot / simulation / driver to attach to the mesh.
+        peer_id: Explicit peer identifier. When ``None`` (the default) one is
+            derived from ``robot.tool_name_str`` plus a random suffix.
+        peer_type: One of ``"robot"``, ``"sim"``, ``"agent"``.
+        mesh: Enable the mesh. See the ``STRANDS_MESH`` docstring for how this
+            interacts with the env var kill switch.
+        mesh_backend: Transport backend for this mesh. Overrides
+            ``STRANDS_MESH_BACKEND`` for the duration of this construction.
+            One of :data:`~strands_robots.mesh._backend_select.BACKENDS`
+            (``"zenoh"``, ``"iot"``, ``"bridge"``). When ``None`` (the
+            default) the env-var default resolution is unchanged - callers
+            who set the env var see today's behaviour byte-for-byte, so
+            adding this argument does not shift any existing deployment.
+            An unknown value raises :class:`ValueError` at push time,
+            *before* any transport work is attempted, so a caller mistake is
+            named at the call site rather than silently degrading to Zenoh
+            the way an env-var typo does.
     """
     # STRANDS_MESH=false is a hard kill switch: it disables mesh regardless of
     # the ``mesh`` argument. An explicit ``mesh=False`` always wins too -- the
@@ -4273,8 +4293,24 @@ def init_mesh(
             "(no /, +, # - these break MQTT topic structure and AWS Thing-name rules)."
         )
 
-    instance = Mesh(robot, peer_id=peer_id, peer_type=peer_type)
-    instance.start()
+    # Install the constructor-arg backend override, if the caller asked for
+    # one, for the duration of ``Mesh.start()`` -- long enough for the two
+    # readers (``session._backend_choice`` and ``transport.factory.get_transport``)
+    # to see the same choice, short enough that it does not leak into unrelated
+    # mesh operations that follow. ``push_backend_override(None)`` is a
+    # documented no-op, so an unset argument keeps 100% back-compat with the
+    # env-var-only resolution used before this arg existed.
+    from strands_robots.mesh._backend_select import (
+        pop_backend_override,
+        push_backend_override,
+    )
+
+    override_token = push_backend_override(mesh_backend)
+    try:
+        instance = Mesh(robot, peer_id=peer_id, peer_type=peer_type)
+        instance.start()
+    finally:
+        pop_backend_override(override_token)
 
     # Auto-wire IoT enrichments when the active transport supports them.
     # Both calls are no-ops when STRANDS_MESH_BACKEND=zenoh (the default),
