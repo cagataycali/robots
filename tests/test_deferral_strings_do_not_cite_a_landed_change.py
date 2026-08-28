@@ -77,8 +77,15 @@ _DEFERRAL = re.compile(r"not wired|not yet|unwired|pending|until .{0,40}\blands?
 _MINIMUM_LANDED_NUMBERS = 500
 
 
-def _landed_pull_request_numbers() -> frozenset[int]:
-    """Numbers this repository's own history records as landed pull requests."""
+def _landed_pull_request_numbers_or_skip() -> frozenset[int]:
+    """Numbers this repository's own history records as landed pull requests.
+
+    Every path out of this helper is explicit - a return or a raise - so the
+    caller's binding is unconditional and ``completed`` is never live only on
+    the success path.  ``pytest.skip.Exception`` is raised rather than
+    :func:`pytest.skip` called for the same reason, which is the idiom
+    ``tests/test_optional_dependency_skips_bind_their_names.py`` prescribes.
+    """
     try:
         completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
             ["git", "log", "--format=%s"],  # noqa: S607 - git resolved from PATH by design
@@ -89,9 +96,9 @@ def _landed_pull_request_numbers() -> frozenset[int]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - no git on PATH
-        pytest.skip(f"git history unavailable, so landed numbers cannot be resolved: {exc}")
+        raise pytest.skip.Exception(f"git history unavailable, so landed numbers cannot be resolved: {exc}") from exc
     if completed.returncode != 0:  # pragma: no cover - not a git checkout
-        pytest.skip("git log failed, so landed numbers cannot be resolved")
+        raise pytest.skip.Exception("git log failed, so landed numbers cannot be resolved")
     return frozenset(int(match.group(1)) for match in _LANDED_SUBJECT.finditer(completed.stdout))
 
 
@@ -118,7 +125,7 @@ def _offenders(landed: frozenset[int]) -> list[str]:
 
 def test_the_landed_number_oracle_is_populated() -> None:
     """Non-vacuity: a shallow clone must fail here rather than pass the rule."""
-    landed = _landed_pull_request_numbers()
+    landed = _landed_pull_request_numbers_or_skip()
     assert len(landed) >= _MINIMUM_LANDED_NUMBERS, (
         f"only {len(landed)} landed pull-request numbers found in git history; the rule below "
         "would be vacuous. A shallow clone cannot grade this contract - CI checks out with "
@@ -139,7 +146,7 @@ def test_the_scanned_population_is_not_empty() -> None:
 
 def test_no_deferral_cites_a_change_this_repository_landed() -> None:
     """A string promising future work must not point at work already shipped."""
-    offenders = _offenders(_landed_pull_request_numbers())
+    offenders = _offenders(_landed_pull_request_numbers_or_skip())
     assert not offenders, (
         "A caller-reachable string defers a capability and cites a change this repository has "
         "already merged. The reader follows it, finds a landed change about another subsystem, "
