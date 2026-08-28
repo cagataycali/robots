@@ -19,8 +19,9 @@ pip install "strands-robots[protomotions]"
 ```
 
 That pulls `onnxruntime` (runs the graph), `pyyaml` (reads the
-`unified_pipeline.yaml` sidecar) and `huggingface_hub` (fetches a checkpoint from
-a model id). Weights are not bundled. Building a reference clip from `qpos` with
+`unified_pipeline.yaml` sidecar) and `huggingface_hub` — which you call yourself
+to fetch the checkpoint, because `onnx_path` and `yaml_path` take local files and
+this policy resolves no model id. Weights are not bundled. Building a reference clip from `qpos` with
 [`qpos_to_motion_data`](#bridging-a-qpos-clip) additionally needs MuJoCo, which
 ships in `strands-robots[sim-mujoco]`.
 

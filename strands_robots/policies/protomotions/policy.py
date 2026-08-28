@@ -59,6 +59,12 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["ProtoMotionsPolicy", "ProtoMotionsSession"]
 
+#: Canonical GTP checkpoint on HuggingFace. Nothing in this package downloads
+#: it - ``onnx_path``/``yaml_path`` take local files - so this is quoted in the
+#: not-found remedy rather than being resolved for the caller.
+_GTP_G1_HF_REPO = "cagataydev/protomotions-gtp-unitree-g1"
+_GTP_G1_ONNX_FILENAME = "unified_pipeline.onnx"
+
 
 @runtime_checkable
 class ProtoMotionsSession(Protocol):
@@ -422,9 +428,17 @@ class ProtoMotionsPolicy(Policy):
         )
 
         if not onnx_path.exists():
+            # ``onnx_path`` takes a local file, and nothing here resolves a
+            # model id (unlike WBCPolicy, which downloads its checkpoint). The
+            # old wording read "Download from <repo> on HuggingFace", which is
+            # circular for the caller who passed that repo id: it names the
+            # argument back instead of the step that produces a local path.
             raise FileNotFoundError(
-                f"ONNX artifact not found: {onnx_path}. Download from "
-                f"cagataydev/protomotions-gtp-unitree-g1 on HuggingFace."
+                f"ONNX artifact not found: {onnx_path}. This parameter takes a local file, "
+                f"and this policy does not download one. Fetch the checkpoint first:\n"
+                f'  python -c "from huggingface_hub import hf_hub_download; '
+                f"print(hf_hub_download('{_GTP_G1_HF_REPO}', '{_GTP_G1_ONNX_FILENAME}'))\"\n"
+                f"then pass the path it prints as onnx_path."
             )
 
         sess = ort.InferenceSession(  # type: ignore[attr-defined]
