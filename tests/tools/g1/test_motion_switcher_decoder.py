@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.tools.g1._motion_switcher as _motion_switcher
 from strands_robots.tools.g1._motion_switcher import (
     FSMReading,
     decode_fsm_id,
@@ -384,3 +385,191 @@ class TestModuleImportsWithoutTheSDK:
             f"{sorted(after - before)}; the SDK must be lazy-loaded only "
             "inside _load_motion_switcher_client"
         )
+
+
+class TestTheSdkSeamNamesTheModuleTheSdkShips:
+    """The lazy-import seam resolves to a module ``unitree_sdk2py`` has.
+
+    :func:`_load_motion_switcher_client` is the only function in the module
+    that names an SDK path, and no other cell in this file calls it -- every
+    other cell hands :func:`read_fsm_id` an already-open client or calls
+    :func:`decode_fsm_id` directly. That is the right shape for grading the
+    decode, and it means the *path* is graded by nothing: a seam naming a
+    module the SDK does not ship stays green through this whole file and
+    raises ``ModuleNotFoundError`` the first time a caller opens a real
+    client.
+
+    ``MotionSwitcherClient`` ships at
+    ``unitree_sdk2py.comm.motion_switcher.motion_switcher_client``. It sits
+    under ``comm/`` rather than ``g1/`` because the motion switcher is shared
+    across platforms -- the SDK's ``example/g1``, ``example/h1``,
+    ``example/h1_2``, ``example/go2``, ``example/b2`` and ``example/b2w``
+    low-level examples all import it from that one place, and ``g1/`` holds
+    only ``arm``, ``audio`` and ``loco``.
+
+    Two layers, because the SDK is not installable in CI:
+
+    1. :meth:`test_the_seam_resolves_against_a_stand_in_sdk_at_the_real_path`
+       builds the package tree at the real path in ``sys.modules`` and asserts
+       the seam finds the class there. No SDK needed, so this is the layer
+       that grades the path on every install.
+    2. :meth:`test_the_seam_resolves_against_the_real_sdk` calls the seam for
+       real when ``unitree_sdk2py`` happens to be importable (a hardware host,
+       never CI). It skips otherwise, so it adds a hardware check without
+       making the file depend on one.
+    """
+
+    def test_the_constant_names_the_shared_comm_package(self) -> None:
+        """The path constant names ``comm.motion_switcher``, not ``g1``.
+
+        Stated as a literal so a re-guess at the package lands here with a
+        message naming both spellings, rather than in a traceback on a robot.
+        """
+        assert _motion_switcher._SDK_MODULE == ("unitree_sdk2py.comm.motion_switcher.motion_switcher_client"), (
+            "the motion switcher ships under comm/, shared across platforms; "
+            f"the seam names {_motion_switcher._SDK_MODULE!r}"
+        )
+        assert "unitree_sdk2py.g1.motion_switcher" not in _motion_switcher._SDK_MODULE, (
+            "unitree_sdk2py/g1/ holds only arm, audio and loco -- there is no g1.motion_switcher package to import"
+        )
+
+    def test_the_seam_resolves_against_a_stand_in_sdk_at_the_real_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The seam finds the class when the SDK tree is at the real path.
+
+        The stand-in is registered at
+        ``unitree_sdk2py.comm.motion_switcher.motion_switcher_client`` only.
+        A seam looking anywhere else raises ``ModuleNotFoundError``, which is
+        exactly the failure a real host produces -- so this cell reproduces the
+        hardware failure with no hardware and no SDK.
+        """
+        import sys
+        import types
+
+        sentinel = type("MotionSwitcherClient", (), {})
+
+        leaf = types.ModuleType("unitree_sdk2py.comm.motion_switcher.motion_switcher_client")
+        leaf.MotionSwitcherClient = sentinel  # type: ignore[attr-defined]
+        # Every level of the tree, with ``__path__`` so the intermediate names
+        # are packages rather than plain modules.
+        packages = {
+            "unitree_sdk2py": types.ModuleType("unitree_sdk2py"),
+            "unitree_sdk2py.comm": types.ModuleType("unitree_sdk2py.comm"),
+            "unitree_sdk2py.comm.motion_switcher": types.ModuleType("unitree_sdk2py.comm.motion_switcher"),
+        }
+        for name, module in packages.items():
+            module.__path__ = []  # type: ignore[attr-defined]
+            monkeypatch.setitem(sys.modules, name, module)
+        monkeypatch.setitem(
+            sys.modules,
+            "unitree_sdk2py.comm.motion_switcher.motion_switcher_client",
+            leaf,
+        )
+        # ``import a.b.c`` reads the parent attribute, so wire each level.
+        packages["unitree_sdk2py"].comm = packages["unitree_sdk2py.comm"]  # type: ignore[attr-defined]
+        packages["unitree_sdk2py.comm"].motion_switcher = packages[  # type: ignore[attr-defined]
+            "unitree_sdk2py.comm.motion_switcher"
+        ]
+        packages["unitree_sdk2py.comm.motion_switcher"].motion_switcher_client = leaf  # type: ignore[attr-defined]
+
+        assert _motion_switcher._load_motion_switcher_client() is sentinel
+
+    def test_the_seam_resolves_against_the_real_sdk(self) -> None:
+        """On a host with the SDK, the seam returns a real class.
+
+        Skipped where ``unitree_sdk2py`` is absent -- which is every CI run,
+        so this cell is the hardware-side half and the stand-in cell above is
+        the one that holds everywhere.
+        """
+        pytest.importorskip(
+            "unitree_sdk2py.comm.motion_switcher.motion_switcher_client",
+            reason="the Unitree SDK is not installed on this host",
+        )
+        client_class = _motion_switcher._load_motion_switcher_client()
+        assert isinstance(client_class, type)
+        assert client_class.__name__ == "MotionSwitcherClient"
+        assert callable(getattr(client_class, "CheckMode", None)), (
+            "the class the seam resolves must carry the CheckMode method decode_fsm_id decodes"
+        )
+
+
+class TestAValueWhoseLengthCannotBeReadIsRefusedNotRaised:
+    """The shape refusal reports a 0-d array rather than raising from it.
+
+    :func:`decode_fsm_id` refuses a return that is not a ``(status, result)``
+    pair, and its message names the length it received. Reading that length
+    with ``hasattr(value, "__len__")`` followed by ``len(value)`` is unsafe for
+    a value class this library receives routinely: a 0-d numpy array
+    (``np.array(0.5)``, the result of a reduction such as ``np.mean(...)``) and
+    a 0-d torch tensor both *declare* ``__len__`` and then raise from it, so the
+    probe passes and the ``len()`` call escapes with a bare ``len() of unsized
+    object`` -- out of the one function whose whole purpose is to answer an
+    unusable input with a message.
+
+    :func:`strands_robots.utils.sequence_length` is the single owner of that
+    rule and reports ``None`` for a 0-d array and for a plain scalar alike;
+    ``tests/test_unsized_value_is_refused_not_raised.py`` pins every surface in
+    the package through it. These cells pin the two ends of the behaviour here:
+    the 0-d value is refused with a message, and a value that genuinely has a
+    readable length still reports it.
+    """
+
+    def test_a_zero_dimensional_array_is_refused_with_a_message(self) -> None:
+        """A 0-d numpy array reports as a refusal, not a ``TypeError``.
+
+        The pre-fix spelling raised ``TypeError: len() of unsized object`` here
+        -- from inside the refusal path, past the caller that was promised a
+        :class:`FSMReading`.
+        """
+        numpy = pytest.importorskip("numpy")
+
+        reading = decode_fsm_id(numpy.array(0.5))
+
+        assert reading.fsm_id is None
+        assert reading.refusal is not None
+        assert "must be a (status, result) tuple" in reading.refusal
+        assert "ndarray" in reading.refusal, (
+            f"the refusal names the type it received so the caller can see what was handed in; got {reading.refusal!r}"
+        )
+
+    def test_a_zero_dimensional_tensor_is_refused_with_a_message(self) -> None:
+        """A 0-d torch tensor takes the same branch, for the same reason."""
+        torch = pytest.importorskip("torch")
+
+        reading = decode_fsm_id(torch.tensor(0.5))
+
+        assert reading.fsm_id is None
+        assert reading.refusal is not None
+        assert "must be a (status, result) tuple" in reading.refusal
+
+    @pytest.mark.parametrize(
+        ("value", "expected_length"),
+        [
+            ((0, {"name": ""}, "extra"), "3"),
+            ((0,), "1"),
+            ((), "0"),
+        ],
+        ids=["three-element-tuple", "one-element-tuple", "empty-tuple"],
+    )
+    def test_a_readable_length_is_still_reported(self, value: Any, expected_length: str) -> None:
+        """A value with a readable length still names it in the refusal.
+
+        The over-reach guard for the cells above: routing the probe through
+        :func:`~strands_robots.utils.sequence_length` must not turn every
+        length into ``?``.
+        """
+        reading = decode_fsm_id(value)
+
+        assert reading.refusal is not None
+        assert f"of length {expected_length}" in reading.refusal
+
+    def test_a_value_with_no_length_at_all_still_reports_a_question_mark(self) -> None:
+        """A plain scalar carries no length and says so.
+
+        This one passed before the fix too -- a ``float`` has no ``__len__``, so
+        the ``hasattr`` probe declined it correctly. It is here as the control
+        that the ``?`` branch is still reachable.
+        """
+        reading = decode_fsm_id(0.5)
+
+        assert reading.refusal is not None
+        assert "got float of length ?" in reading.refusal

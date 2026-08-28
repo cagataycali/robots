@@ -11,20 +11,32 @@ names this decoder as the FSM producer's home. This module is the *checkable*
 half of that answer: it owns the read-side of the API, decodes the FSM id from
 ``MotionSwitcherClient.CheckMode()`` in exactly one place, and refuses a shape
 the SDK does not name rather than guessing. Wiring the decoder onto the driver
-is a separate step -- see #2765 -- because the pin at
-``tests/drivers/test_g1_battery_floor_is_gated_behind_the_unwired_fsm.py``
-asserts ``_fsm_id`` has one writer today and must be replaced in the same PR
-that adds the second one.
+is a separate step -- see #2765. A pin in the driver's test tree asserts that
+``_fsm_id`` has exactly one assignment today (the ``None`` initialiser in
+``G1Driver.__init__``) and that a healthy driver still refuses with ``FSM id
+unknown``; both flip on the day a second writer lands, so the wire and that
+pin's replacement belong in one change.
 
 What the SDK reports.  ``MotionSwitcherClient.CheckMode`` returns
 ``(status, result)``: ``status`` is a Unitree response code (``0`` is OK,
 ``ERR_CODES`` render the rest) and ``result`` is a dict whose ``name`` key
 carries the current motion mode as a string -- ``""`` when no mode is
 selected, otherwise a mode label such as ``"ai"`` or ``"normal"``. The
-FSM id itself is an integer under the ``form`` key when a mode is active;
-the mode label alone does not identify the FSM state the gate reads. Both
-are surfaced here so a caller sees the reason a decode declined rather
-than only the outcome.
+mode label alone does not identify the FSM state the gate reads, so this
+decoder also reads an integer FSM id from the ``form`` key.
+
+``form`` is *not* evidenced by the SDK. ``CheckMode`` returns
+``json.loads(data)`` straight from the robot, so the Python package cannot
+tell us which keys that payload carries, and the string ``"form"`` appears
+nowhere in ``unitree_sdk2py``: every SDK example reads ``result['name']``
+and nothing else (the G1 low-level example loops
+``while result['name']: self.msc.ReleaseMode()``). Which key carries the
+FSM id is therefore one of the wire-format questions #2765 tracks, and
+answering it needs a robot. Until then this decoder refuses an active mode
+whose payload has no integer ``form`` rather than defaulting -- so a wrong
+guess here surfaces as a named refusal, never as an FSM id the gate might
+open on. Both values are surfaced so a caller sees the reason a decode
+declined rather than only the outcome.
 
 Wire-side invariants this decoder enforces.
 
@@ -56,6 +68,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from strands_robots.tools.g1._g1_common import decode_code
+from strands_robots.utils import sequence_length
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +78,16 @@ logger = logging.getLogger(__name__)
 # in every caller.
 _RESULT_NAME_KEY = "name"
 _RESULT_FORM_KEY = "form"
+
+# ``MotionSwitcherClient`` lives under ``comm/``, not ``g1/``: the motion
+# switcher is shared across every Unitree platform (the SDK's own
+# ``example/g1``, ``example/h1`` and ``example/go2`` low-level examples all
+# import it from the same place), so the package is not robot-scoped. Named
+# here so the path is a reviewable constant rather than a string buried in a
+# call: a seam naming a module the SDK does not ship raises
+# ``ModuleNotFoundError`` the first time a caller opens a real client, and the
+# decode tests all hand in an already-open client so none of them reaches it.
+_SDK_MODULE = "unitree_sdk2py.comm.motion_switcher.motion_switcher_client"
 
 
 @dataclass(frozen=True)
@@ -102,7 +125,7 @@ def _load_motion_switcher_client() -> Any:
     mocks the returned class rather than the module attribute, so no test
     depends on the SDK's presence.
     """
-    module = importlib.import_module("unitree_sdk2py.g1.motion_switcher.motion_switcher_client")
+    module = importlib.import_module(_SDK_MODULE)
     return module.MotionSwitcherClient
 
 
@@ -134,7 +157,7 @@ def decode_fsm_id(check_mode_return: Any) -> FSMReading:
             refusal=(
                 "CheckMode() return must be a (status, result) tuple; "
                 f"got {type(check_mode_return).__name__} of length "
-                f"{len(check_mode_return) if hasattr(check_mode_return, '__len__') else '?'}"
+                f"{sequence_length(check_mode_return) if sequence_length(check_mode_return) is not None else '?'}"
             ),
         )
     status, result = check_mode_return
