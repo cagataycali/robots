@@ -68,8 +68,8 @@ def _bundle(
     Args:
         episodic_skills: Passed through to the constructor. When ``None``, the
             episodic path is entirely off - :meth:`trigger` refuses, the timer
-            never runs, and the shape of the previous velocity-gated bundle is
-            unchanged.
+            never runs, :meth:`reset` leaves the active skill alone, and the
+            shape of the previous velocity-gated bundle is unchanged.
         default_skill: The skill the bundle reverts to when an episode ends.
             ``None`` uses the initially active skill.
         active: Initial active skill. Defaults to ``walk`` so the auto-return
@@ -291,6 +291,24 @@ class TestTheVelocityGateAndEpisodicBehaviorDoNotFightEachOther:
 class TestResetClearsTheEpisodicFSM:
     """``reset`` is the per-rollout seam; it must not leave the timer armed."""
 
+    def test_an_episodic_bundle_normalises_the_active_skill_with_no_episode_running(self) -> None:
+        """Declaring an episodic skill is what makes ``reset`` normalise ``active``.
+
+        The runtime calls this between episodes, so a bundle that can kick starts
+        every episode from ``default_skill`` whether or not the previous episode
+        ended mid-behaviour. Gating the normalisation on a *running* episode
+        instead would leave the two cases disagreeing for no reason a caller can
+        see.
+        """
+        bundle = _bundle(
+            episodic_skills={KICK_LEFT: KICK_DURATION_S},
+            default_skill=DEFAULT_IDLE,
+        )
+        bundle.switch(DEFAULT_MOVE)
+        assert bundle.episodic_active is None
+        bundle.reset()
+        assert bundle.active == DEFAULT_IDLE
+
     def test_reset_mid_episode_clears_the_episode_and_returns_to_default(self) -> None:
         bundle = _bundle(
             episodic_skills={KICK_LEFT: KICK_DURATION_S},
@@ -301,3 +319,51 @@ class TestResetClearsTheEpisodicFSM:
         bundle.reset()
         assert bundle.episodic_active is None
         assert bundle.active == DEFAULT_MOVE
+
+
+class TestABundleWithNoEpisodicSkillsIsUntouched:
+    """The compatibility claim: declaring no episodic skill changes nothing.
+
+    ``reset`` is the seam where that claim is easiest to break, because the
+    episodic FSM and the active skill are cleared together and only one of them
+    belongs to the new feature. The rollout calls ``policy.reset(seed=...)``
+    once per episode, so a bundle that normalised the active skill regardless of
+    whether it declared an episodic behaviour would discard an explicit
+    :meth:`switch` at every episode boundary of a multi-episode run - a caller
+    who never asked for a timer would find episode two running a skill they had
+    switched away from, with nothing reported.
+    """
+
+    def test_a_switched_skill_survives_a_reset_when_no_episodic_skill_is_declared(self) -> None:
+        bundle = _bundle(active=DEFAULT_MOVE)
+        bundle.switch(DEFAULT_IDLE)
+        bundle.reset()
+        assert bundle.active == DEFAULT_IDLE
+
+    def test_the_velocity_gate_does_not_change_that(self) -> None:
+        """The gate reads ``active``; it must not be handed a reverted one."""
+        bundle = MicroduckPolicyBundle(
+            {DEFAULT_MOVE: _policy(), DEFAULT_IDLE: _policy()},
+            active=DEFAULT_MOVE,
+            switch_on_velocity=0.1,
+        )
+        bundle.set_control_frequency(CONTROL_HZ)
+        bundle.switch(DEFAULT_IDLE)
+        bundle.reset(seed=7)
+        assert bundle.active == DEFAULT_IDLE
+
+    def test_reset_still_reaches_every_child(self) -> None:
+        """The gate must scope the episodic block, not the child reset.
+
+        ``MicroduckPolicy.reset`` clears ``_last_action``, so a child that has
+        run carries one until the bundle forwards the reset. Asserting only that
+        the next tick returns actions is too weak - it does that either way,
+        because ``_ensure_config`` rebuilds lazily.
+        """
+        walk = _policy()
+        bundle = MicroduckPolicyBundle({DEFAULT_MOVE: walk, DEFAULT_IDLE: _policy()}, active=DEFAULT_MOVE)
+        bundle.set_control_frequency(CONTROL_HZ)
+        _tick(bundle)
+        assert walk._last_action is not None
+        bundle.reset(seed=7)
+        assert walk._last_action is None

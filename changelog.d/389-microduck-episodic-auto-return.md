@@ -25,3 +25,11 @@ bundle asked to run an episodic behavior without being told its clock refuses
 loudly rather than assuming 50Hz. A running episode inhibits the velocity gate
 so a walk command mid-kick does not preempt the episodic skill, and `reset`
 clears the FSM before the next rollout.
+
+That `reset` normalisation is scoped to a bundle that declares episodic
+skills. A bundle that declares none is left exactly as it was: the active
+skill is the caller's to choose there, `switch` is the only thing that moves
+it, and the rollout calls `policy.reset(seed=...)` once per episode -- so
+normalising regardless of whether an episodic behavior was ever declared
+would have discarded an explicit `switch` at every episode boundary of a
+multi-episode run, with nothing reported.

@@ -111,9 +111,10 @@ class MicroduckPolicyBundle(Policy):
         self._idle_key = idle_key
         # Episodic-behavior FSM state (mirrors Pollen `infer_policy.py`).
         # A caller who omits ``episodic_skills`` gets exactly the previous
-        # velocity-gated bundle: :meth:`trigger` refuses, no timer runs, and
-        # ``get_actions`` never decrements anything. So an ONNX bundle that
-        # never means to kick pays no cost per tick and cannot revert unexpectedly.
+        # velocity-gated bundle: :meth:`trigger` refuses, no timer runs,
+        # ``get_actions`` never decrements anything, and :meth:`reset` leaves
+        # the active skill alone. So an ONNX bundle that never means to kick
+        # pays no cost per tick and cannot revert unexpectedly.
         self._episodic_durations: dict[str, float] = {}
         if episodic_skills is not None:
             unknown = [name for name in episodic_skills if name not in self._policies]
@@ -220,12 +221,25 @@ class MicroduckPolicyBundle(Policy):
             pol.set_control_frequency(hz)
 
     def reset(self, seed: int | None = None) -> None:
-        """Reset every held skill's per-episode state and clear the episodic timer."""
+        """Reset every held skill's per-episode state and clear the episodic timer.
+
+        A bundle that declares episodic skills also normalises the active
+        skill here: an episode may be mid-flight, and the runtime calls this
+        between episodes, so leaving a half-run kick selected would start the
+        next episode inside a behaviour whose timer has been cleared.
+
+        A bundle that declares none is left exactly as it was. The active
+        skill is the caller's to choose there - ``switch`` is the only way it
+        moves - and this seam is called once per episode by the rollout, so
+        normalising unconditionally would silently discard that choice at
+        every episode boundary of a multi-episode run.
+        """
         for pol in self._policies.values():
             pol.reset(seed)
-        self._episodic_active = None
-        self._episodic_time_left = 0.0
-        self._active = self._default_skill
+        if self._episodic_durations:
+            self._episodic_active = None
+            self._episodic_time_left = 0.0
+            self._active = self._default_skill
 
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
