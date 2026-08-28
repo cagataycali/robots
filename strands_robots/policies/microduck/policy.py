@@ -32,7 +32,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error, require_optional
+from strands_robots.utils import finite_vector_error, name_list_error, require_optional
 
 from . import observation as obs_builder
 from ._session import MicroduckSession
@@ -228,6 +228,35 @@ class MicroduckPolicy(Policy):
         )
 
         raw_action = self.infer_raw(vector)
+        # The graph's own output width is the third width contract in this class,
+        # and it was the one not checked: ``default_pose`` is held to
+        # ``len(joint_names)`` in ``_ensure_config`` and a ``command`` override to
+        # the width ``command_names`` declares in ``_apply_command_kwargs``. This
+        # one differs from both in being fed BACK - ``last_action`` is this array,
+        # so the observation the graph is handed on the NEXT tick is only
+        # ``48 + len(command)`` wide while this holds. A width that happens to
+        # broadcast against ``default_pose`` (1) therefore decoded silently and
+        # then changed the observation width from tick 2 onward, reporting a full
+        # action dict throughout; any other width raised
+        # ``operands could not be broadcast together`` from inside numpy's decode,
+        # naming neither this policy nor the graph. Refuse here, where both the
+        # expected width and its source are still in hand.
+        if raw_action.shape[0] != len(self._joint_names):
+            raise ValueError(
+                f"{type(self).__name__}: the ONNX graph returned {raw_action.shape[0]} action "
+                f"value(s) but there are {len(self._joint_names)} joints "
+                f"(from joint_names). The action feeds both the joint targets and "
+                f"the next tick's last_action observation block, so a width other "
+                f"than the joint count cannot be used."
+            )
+        # A non-finite component is refused for the same reason the sibling
+        # scene-construction guards refuse one: it is written straight out (here to
+        # every joint target) AND fed back into the next observation, so the
+        # rollout reports success while commanding nan and poisoning the vector the
+        # graph sees next. ``EmpiricalNormalization`` is baked into the graph, so
+        # nothing downstream sanitises it.
+        if error := finite_vector_error(f"{type(self).__name__}.get_actions", "the ONNX action", raw_action):
+            raise ValueError(error)
         self._last_action = raw_action.copy()
 
         motor_target = obs_builder.decode_action(
