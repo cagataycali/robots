@@ -92,6 +92,12 @@ _DEFAULT_COMMAND_WIDTH = 13
 #: ONNX ``command_names`` metadata (dead-weight rule: slots stay present+zero).
 _COMMAND_COMPONENTS = {"twist": 3, "head_pose": 4, "body_pose": 6}
 
+#: Observation components that are NOT the command block: ``base_ang_vel`` (3)
+#: and ``projected_gravity`` (3). The rest of the fixed part is three per-joint
+#: blocks (``joint_pos``, ``joint_vel``, ``last_action``), so the full non-command
+#: width is ``_BASE_OBS_WIDTH + 3 * len(joint_names)`` - 48 for the 14-DOF biped.
+_BASE_OBS_WIDTH = 6
+
 
 def _action_scale_error(value: Any, source: str) -> str | None:
     """Return why ``value`` cannot be an action scale, or ``None`` if it can.
@@ -414,10 +420,55 @@ class MicroduckPolicy(Policy):
         return cmd.copy()
 
     def _command_width(self) -> int:
-        """Command vector width - summed from ``command_names``, else the 13-D default."""
+        """Command vector width the graph will accept.
+
+        The graph's own declared input width is the authority when it declares
+        one: it is a hard constraint, and ``command_names`` is not a width. The
+        metadata names which command slots a skill READS, and Pollen's reference
+        runner emits ONE unified 13-component command for every skill in a
+        bundle, leaving the slots a skill ignores present and zero (the
+        dead-weight rule this module's observation builder documents). Seven of
+        the nine shipped Pollen exports declare a narrower ``command_names``
+        than their graph consumes - ``roulade`` declares ``twist`` (3) against
+        an ``obs`` input of 61 - so summing the names built a 51-wide vector for
+        a 61-wide graph and onnxruntime refused it with ``Got: 51 Expected:
+        61``, making those seven policies unrunnable.
+
+        Falls back to the ``command_names`` sum, then the 13-D default, when the
+        session declares no usable width (an injected stub, or a graph with a
+        dynamic first-axis symbol rather than an integer).
+        """
+        declared = self._declared_command_width()
+        if declared is not None:
+            return declared
         if not self._command_names:
             return _DEFAULT_COMMAND_WIDTH
         return sum(_COMMAND_COMPONENTS.get(name, 0) for name in self._command_names)
+
+    def _declared_command_width(self) -> int | None:
+        """Command width implied by the graph's declared ``obs`` input, else ``None``.
+
+        Returns ``None`` rather than raising whenever the width cannot be read as
+        a positive integer - no declared shape, a dynamic-axis symbol, a shape
+        that does not exceed the fixed blocks - so an injected stub keeps the
+        ``command_names`` behaviour instead of being held to a shape it never
+        declared.
+        """
+        if self._joint_names is None:
+            return None
+        get_inputs = getattr(self._session, "get_inputs", None)
+        if not callable(get_inputs):
+            return None
+        try:
+            shape = list(get_inputs()[0].shape)
+            total = shape[-1]
+        except Exception:  # noqa: BLE001 - a stub need not declare a shape
+            return None
+        if not isinstance(total, int) or isinstance(total, bool):
+            return None
+        fixed = _BASE_OBS_WIDTH + 3 * len(self._joint_names)
+        width = total - fixed
+        return width if width > 0 else None
 
     def _read_metadata(self) -> dict[str, str]:
         """Best-effort read of the ONNX ``custom_metadata_map`` (empty if absent)."""
