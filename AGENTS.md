@@ -1222,7 +1222,10 @@ hatch run format            # ruff check --fix, ruff format
    unresolved thread or a failing check (the author), a missing approval (any
    reviewer), an approval only its own pusher supplied (a different reviewer,
    per #1905), a required check absent because a fork run is held at
-   `action_required` (a maintainer), a check still running (nobody), a
+   `action_required` (a maintainer, by approving each run), a required check
+   absent because the head carries no check suite at all (also a maintainer,
+   but by closing and reopening: there is no held run to approve and no
+   suite to re-run), a check still running (nobody), a
    mergeability GitHub has not finished computing (nobody, until a re-read), or
    no unsatisfied rule at all, which is the #2574 case and the one worth saying
    out loud. A conflict, a draft, or an uncomputed mergeability is reported as

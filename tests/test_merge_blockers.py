@@ -26,6 +26,7 @@ of AGENTS.md.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 from pathlib import Path
@@ -271,15 +272,135 @@ def test_a_check_that_did_not_fail_is_not_a_blocker(conclusion: str) -> None:
     assert outcomes(mod.evaluate(state(check_conclusions={REQUIRED: conclusion}), MAIN)) == [mod.NO_UNSATISFIED_RULE]
 
 
-def test_an_absent_required_check_names_the_held_fork_run() -> None:
-    """A fork run held at ``action_required`` reads the same as never having run.
+def test_an_unread_census_still_names_the_held_fork_run_it_cannot_rule_out() -> None:
+    """Without the census the two states are genuinely indistinguishable.
 
-    #1722 carried nine such runs, and three passes over #1905 described it as a
+    #1722 carried nine held runs, and three passes over #1905 described it as a
     missing run rather than a held one. The remedy differs: authorisation, not a
-    push, and it consumes no approval.
+    push, and it consumes no approval. That ambiguity is what the census below
+    resolves -- so with no census read this keeps naming the held run it cannot
+    rule out, and says the observation was not made rather than picking one.
     """
     blockers = mod.evaluate(state(check_conclusions={}), MAIN)
+    assert blockers[0].outcome == mod.REQUIRED_CHECK_ABSENT
     assert "action_required" in blockers[0].detail
+    assert "was not read" in blockers[0].detail
+
+
+# --------------------------------------------------------------------------
+# The head's check-suite census, which is what separates a held fork run from
+# a head that never had a run created. Measured shapes: #2907 carried two
+# suites at ``conclusion: action_required`` while eleven had concluded, every
+# commit on ``main`` carries suites with none held, and the #1987 shape (a head
+# written through the API under the Actions token) carries none at all.
+# --------------------------------------------------------------------------
+
+HELD_CENSUS = ("action_required", "success", "action_required", None)
+
+
+def test_a_held_fork_run_is_separated_from_a_head_with_no_run() -> None:
+    """One field decides it, so the two outcomes must not be the same name."""
+    held = mod.evaluate(state(check_conclusions={}, check_suite_conclusions=HELD_CENSUS), MAIN)[0]
+    none = mod.evaluate(state(check_conclusions={}, check_suite_conclusions=()), MAIN)[0]
+    assert held.outcome == mod.REQUIRED_CHECK_ABSENT
+    assert none.outcome == mod.CHECK_SUITE_ABSENT
+    assert held.outcome != none.outcome
+    # Both are still a maintainer's move; it is the printed action that differs.
+    assert held.owed_by == none.owed_by == mod.MAINTAINER
+
+
+def test_neither_remedy_is_printed_for_the_state_it_cannot_clear() -> None:
+    """The whole defect: one outcome printed a remedy wrong for half its cases.
+
+    Approving names an authorisation that does not exist on a head with no run,
+    and closing/reopening re-queues nothing on a run that is already held. Each
+    detail is asserted not to carry the other's move, because a reader following
+    the wrong one gets a no-op that reads like a completed remedy.
+    """
+    held = mod.evaluate(state(check_conclusions={}, check_suite_conclusions=HELD_CENSUS), MAIN)[0]
+    none = mod.evaluate(state(check_conclusions={}, check_suite_conclusions=()), MAIN)[0]
+
+    assert "approve" in held.detail.lower()
+    assert "reopen" not in held.detail.lower()
+
+    assert "reopen" in none.detail.lower()
+    assert "personal access token" in none.detail
+    assert "approve" not in none.detail.lower().replace("to approve", "")
+
+
+def test_the_held_remedy_names_the_conclusion_field_rather_than_the_status() -> None:
+    """``action_required`` is a conclusion here, and the status reads completed.
+
+    A held run reports ``status: "completed"``, so a client-side scan comparing
+    the status field matches none of them -- measured on #2907, where the field
+    matched zero and the conclusion matched two. The remedy has to say which
+    field to read or it sends the reader to the one that answers nothing.
+    """
+    detail = mod.evaluate(state(check_conclusions={}, check_suite_conclusions=HELD_CENSUS), MAIN)[0].detail
+    assert "head_sha" in detail
+    assert "conclusion" in detail
+    assert "status" in detail
+    assert "2 check suites" in detail
+
+
+def test_suites_present_and_none_held_is_where_never_started_is_honest() -> None:
+    """The residual case keeps the older description, which is true only here.
+
+    This is every commit on ``main``: suites exist, none is held, and the
+    required check has genuinely not reported yet. Naming a held run here would
+    be the same error in the opposite direction.
+    """
+    blocker = mod.evaluate(state(check_conclusions={}, check_suite_conclusions=("success", "success")), MAIN)[0]
+    assert blocker.outcome == mod.REQUIRED_CHECK_ABSENT
+    assert "has not started" in blocker.detail
+    assert "approve" not in blocker.detail.lower()
+    assert "reopen" not in blocker.detail.lower()
+
+
+def test_a_suite_still_running_is_not_counted_as_held() -> None:
+    """``None`` is "in progress", which nobody can approve."""
+    blocker = mod.evaluate(state(check_conclusions={}, check_suite_conclusions=(None, "success")), MAIN)[0]
+    assert blocker.outcome == mod.REQUIRED_CHECK_ABSENT
+    assert "has not started" in blocker.detail
+
+
+def test_a_reporting_required_check_is_unaffected_by_a_held_sibling_suite() -> None:
+    """#2907 today: two suites held, and the required context reports anyway.
+
+    The census only decides the wording of an *absent* required check, so a head
+    that carries held suites for other workflows is still read from the required
+    context itself.
+    """
+    running = state(check_conclusions={REQUIRED: None}, check_suite_conclusions=HELD_CENSUS)
+    assert outcomes(mod.evaluate(running, MAIN)) == [mod.REQUIRED_CHECK_PENDING]
+
+
+def test_every_outcome_the_report_can_emit_has_an_owner() -> None:
+    """A new outcome with no owner would print an empty next action.
+
+    Derived by dataflow rather than by spelling: the outcomes are whatever
+    constant is handed to ``Blocker`` as its name, so an outcome added later is
+    held to this the hour it lands. A spelling rule cannot do this job -- it
+    misses the single-word ``draft`` and, loosened to admit it, matches the
+    single-word owner ``nobody``, which is a table *value* and would report a
+    violation that is not one. ``_OWED_BY`` is the whole point of the report, so
+    a name missing from it is a blocker nobody is told to clear.
+    """
+    source = _SCRIPT.read_text(encoding="utf-8")
+    emitted = {
+        node.args[0].id
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Blocker"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+    }
+    assert len(emitted) > 5, f"the outcome scan found only {sorted(emitted)}; it has gone blind"
+    values = {getattr(mod, name) for name in emitted}
+    assert mod.CHECK_SUITE_ABSENT in values
+    unowned = values - set(mod._OWED_BY)
+    assert not unowned, f"outcomes the report can emit with no owner: {sorted(unowned)}"
 
 
 # --------------------------------------------------------------------------
@@ -522,6 +643,84 @@ def _fake_urlopen(payload: Any) -> Any:
         return _FakeResponse(payload)
 
     return opener
+
+
+# --------------------------------------------------------------------------
+# Check-suite parsing.
+# --------------------------------------------------------------------------
+
+
+def test_the_census_keeps_each_suite_conclusion_including_the_unfinished(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shape measured on #2907: some held, some concluded, one running."""
+    monkeypatch.setattr(
+        mod.urllib.request,
+        "urlopen",
+        _fake_urlopen(
+            {
+                "total_count": 3,
+                "check_suites": [
+                    {"conclusion": "action_required"},
+                    {"conclusion": "success"},
+                    {"conclusion": None},
+                ],
+            }
+        ),
+    )
+    assert mod.resolve_check_suites("o/r", "abc", "t") == ("action_required", "success", None)
+
+
+def test_the_resolved_state_carries_the_census_it_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The census has to reach ``evaluate``, not merely be resolvable.
+
+    Every other case here is graded on a fixture, and a fixture cannot see a
+    resolver that is never called. The split is decided by this one field, so
+    populating it is part of the fix rather than plumbing: without the wiring
+    the field keeps its ``None`` default and every held fork run reports the
+    older ambiguous wording again.
+    """
+    monkeypatch.setattr(
+        mod,
+        "_get",
+        lambda url, token: {
+            "head": {"sha": "abc12345"},
+            "base": {"ref": "main"},
+            "draft": False,
+            "mergeable": True,
+            "mergeable_state": "blocked",
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_reviews", lambda *a: [])
+    monkeypatch.setattr(mod, "resolve_unresolved_threads", lambda *a: 0)
+    monkeypatch.setattr(mod, "resolve_check_conclusions", lambda *a: {})
+    monkeypatch.setattr(mod, "resolve_check_suites", lambda *a: ("action_required", "success"))
+    monkeypatch.setattr(mod, "resolve_pusher", lambda *a: "the-author")
+
+    resolved = mod.resolve_state("o/r", 1, "t")
+
+    assert resolved.check_suite_conclusions == ("action_required", "success")
+    # And it lands where the split reads it.
+    assert mod.evaluate(resolved, MAIN)[0].outcome == mod.REQUIRED_CHECK_ABSENT
+    assert "approve" in mod.evaluate(resolved, MAIN)[0].detail.lower()
+
+
+def test_a_head_with_no_suite_reads_as_an_empty_census_not_a_missing_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``()`` is the positive observation the second outcome is derived from.
+
+    Returning ``None`` here would collapse it back into "not read", which is the
+    ambiguity this census exists to remove.
+    """
+    monkeypatch.setattr(
+        mod.urllib.request,
+        "urlopen",
+        _fake_urlopen({"total_count": 0, "check_suites": []}),
+    )
+    census = mod.resolve_check_suites("o/r", "abc", "t")
+    assert census == ()
+    assert census is not None
 
 
 # --------------------------------------------------------------------------
