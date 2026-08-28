@@ -22,10 +22,9 @@ This file adds the positive-outcome cell as an :func:`pytest.mark.xfail` with
 one:
 
 1. Today it xfails, and the recorded reason is exactly the shipped refusal
-   text: ``FSM id unknown - motion-switcher source has not been wired
-   (harness#361 PR-C); see #2765 for the wire-side decision``. So the file
-   is not adding a red cell to CI; it is adding a documented deferral that
-   CI grades.
+   text: ``FSM id unknown - motion-switcher source has not been wired;
+   see issue #2765 for the wire-side decision``. So the file is not adding
+   a red cell to CI; it is adding a documented deferral that CI grades.
 
 2. The day a motion-switcher decoder gives ``_fsm_id`` a producer, this
    cell passes -- and because ``strict=True`` an xfail that passes is a
@@ -197,8 +196,8 @@ def _healthy_driver() -> G1Driver:
         "harness#361 acceptance criterion: send_action returns success on a "
         "connected driver with a decoded LowState_ and a healthy pack.  Today "
         "the driver refuses with 'FSM id unknown - motion-switcher source "
-        "has not been wired (harness#361 PR-C); see #2765 for the wire-side "
-        "decision'.  When a motion-switcher decoder gives _fsm_id a producer, "
+        "has not been wired; see issue #2765 for the wire-side decision'.  "
+        "When a motion-switcher decoder gives _fsm_id a producer, "
         "this cell passes and (strict=True) fires an XPASS failure so the "
         "author of that change deletes the marker in the same commit."
     ),
@@ -329,3 +328,50 @@ def test_the_publisher_is_populated_and_the_driver_is_otherwise_healthy() -> Non
     assert "not connected" not in text
     assert "mode_machine unknown" not in text
     assert "battery" not in text
+
+
+
+def test_the_xfail_reason_quotes_the_shipped_refusal_verbatim() -> None:
+    """The xfail marker's ``reason`` cites the refusal text; hold the citation.
+
+    The marker on
+    :func:`test_send_action_returns_success_on_a_healthy_driver_that_has_a_decoded_lowstate`
+    documents the deferral by quoting the shipped refusal.  Pytest treats the
+    ``reason`` as descriptive prose - it never asserts the text - so a drift
+    between the quoted refusal and the one the driver actually returns is
+    invisible until a reader compares them by hand.  The precedent for grading
+    this drift is :func:`test_deferrals_do_not_cite_a_landed_change` (PR
+    :issue:`#2872`), which pins the same class of citation drift on the
+    driver docstrings; this cell extends the same guard to the test file's
+    own xfail reason so a wording change on either side breaks a cell rather
+    than remaining silent.
+
+    The measurement is direct: read the marker's ``reason`` off the test
+    object, read the refusal off the driver, and require the refusal text to
+    appear verbatim inside the reason string.  ``in`` (rather than equality)
+    is deliberate: the reason wraps the quoted refusal in surrounding prose,
+    so an equality check would fail on the prose while the citation stayed
+    correct.  On the wired-FSM day the refusal is gone and this cell fails
+    alongside the XPASS - both halves of the deferral turn over in the same
+    commit, exactly like the ``strict=True`` marker itself.
+    """
+    marker = next(
+        m
+        for m in test_send_action_returns_success_on_a_healthy_driver_that_has_a_decoded_lowstate.pytestmark
+        if m.name == "xfail"
+    )
+    reason = marker.kwargs["reason"]
+
+    driver = _healthy_driver()
+    refusal = driver.send_action({"left_shoulder_pitch": 0.0})
+    assert refusal["status"] == "error"
+    refusal_text = refusal["content"][0]["text"]
+
+    assert refusal_text in reason, (
+        "The xfail reason no longer quotes the shipped refusal verbatim. "
+        f"Refusal is: {refusal_text!r}. Reason is: {reason!r}. "
+        "Update the reason string to match, or (if the refusal is gone) "
+        "the wired-FSM day has arrived and this file's marker is due for "
+        "removal alongside its cells."
+    )
+
