@@ -132,9 +132,9 @@ class TestThePoseAndSeedAreWhatTheSolverReads:
         seed[0] = 0.25
         pose = _target_pose([0.4, 0.0, 0.4])
         _solve(bridge, pose, seed)
-        assert bridge._posture_task.target is not None
-        assert np.asarray(bridge._posture_task.target)[0] == pytest.approx(0.25)
-        assert bridge._frame_task.target is not None
+        assert bridge._posture_task.target is not None  # type: ignore[attr-defined]
+        assert np.asarray(bridge._posture_task.target)[0] == pytest.approx(0.25)  # type: ignore[attr-defined]
+        assert bridge._frame_task.target is not None  # type: ignore[attr-defined]
 
     def test_the_shared_domain_refuses_a_flat_non_finite_vector(self) -> None:
         clean = finite_vector_error("solve", "q_init", _seed())
