@@ -125,6 +125,13 @@ bundle = MicroduckPolicyBundle(
 
 Select explicitly with `get_actions(..., select="walk")` or `bundle.switch(...)`.
 
+An explicit selection is not undone by the gate: it arbitrates *between*
+`move_key` and `idle_key`, and leaves any other skill alone until a gate key is
+selected again. That matters most for `alpha_sitstand`, whose `twist[0]` is a
+posture flag (`1` sit, `0` stand) rather than a velocity — both of its commands
+have a magnitude the gate would otherwise read as a walk or an idle request, so
+neither would have reached the skill that was asked for.
+
 `switch_on_velocity` must be a positive finite number. The gate compares a
 magnitude, so a threshold of `0` or below could never select the idle skill and
 a non-finite one could never select the move skill. Omit it (the default) to

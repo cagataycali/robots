@@ -149,8 +149,28 @@ class MicroduckPolicyBundle(Policy):
         return await self._policies[self._active].get_actions(observation_dict, instruction, **kwargs)
 
     def _auto_switch(self, target_velocity: Any) -> None:
-        """Gate move<->idle by twist magnitude, when both keys exist."""
+        """Arbitrate between ``move_key`` and ``idle_key`` by twist magnitude.
+
+        The gate selects BETWEEN those two skills. It does not select INTO them
+        from a third one, so an explicit :meth:`switch` (or ``select=``) to a
+        skill outside the pair is not undone by the next tick that carries a
+        ``target_velocity``.
+
+        Every other skill the provider ships reads the same twist slots for
+        something that is not a velocity, which is why the pair is the gate's
+        whole domain. ``alpha_sitstand`` is the sharpest case: ``twist[0]`` is a
+        posture flag there (``1`` sit, ``0`` stand, the same policy sitting,
+        holding and standing back up), so both of its commands have a magnitude
+        the gate would read as a walk request or an idle one - the sit routing to
+        ``move_key`` at 1.0 and the stand to ``idle_key`` at 0.0. Neither ever
+        reached the skill that was asked for. Pollen's ``infer_policy.py`` draws
+        the same boundary in ``_update_policy_session``, which returns early for
+        each of its non-pair modes ("Don't switch while sitting") before it looks
+        at the magnitude.
+        """
         if self._move_key not in self._policies or self._idle_key not in self._policies:
+            return
+        if self._active not in (self._move_key, self._idle_key):
             return
         if target_velocity is None or self._switch_on_velocity is None:
             return
