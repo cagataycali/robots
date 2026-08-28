@@ -35,6 +35,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
+from ..utils import finite_number_error, positive_count_error, positive_finite_number_error
+
 if TYPE_CHECKING:
     import mujoco
 
@@ -56,6 +58,39 @@ _DEFAULT_NO_BACKEND_MSG = (
     "(e.g. 'daqp' or 'quadprog'). Install the sim extra: "
     "uv pip install 'strands-robots[sim-mujoco]'."
 )
+
+
+def _damping_error(value: Any, context: str) -> str | None:
+    """Error text when ``value`` is not a usable Levenberg-Marquardt damping.
+
+    ``damping`` is added to the diagonal of the QP's cost matrix by
+    ``mink.solve_ik``. It must be a finite number ``>= 0``: ``0.0`` is the
+    undamped least-squares solve and is legal, a negative value makes the
+    matrix indefinite (``qpsolvers`` refuses it mid-solve with "matrix P is not
+    positive definite"), and a non-finite value poisons the matrix so the solve
+    returns an all-NaN configuration rather than raising.
+
+    The finiteness half is the shared
+    :func:`~strands_robots.utils.finite_number_error` domain, so a bool, a
+    string and a non-finite number are refused with the library's wording; only
+    the floor is stated here, because it is the QP's rule rather than a
+    property of the number.
+
+    Args:
+        value: The caller-supplied damping.
+        context: The class name to name in the message.
+
+    Returns:
+        The error text, or ``None`` when ``value`` can be honored.
+    """
+    if text := finite_number_error(value, "damping", context):
+        return text
+    if float(value) < 0.0:
+        return (
+            f"{context}: damping must be >= 0 (0.0 is the undamped solve); a negative value makes the "
+            f"QP cost matrix indefinite, got {value!r}."
+        )
+    return None
 
 
 def resolve_qp_solver(
@@ -117,22 +152,38 @@ class MinkIKBridge:
             Cartesian task tracks (e.g. ``"hand"`` for a Franka/Panda).
         ee_frame_type: ``"body"`` (default), ``"site"``, or ``"geom"`` - the
             ``mink.FrameTask`` frame type for ``ee_frame_name``.
-        position_cost: Cartesian position task weight.
+        position_cost: Cartesian position task weight. A finite number;
+            ``mink`` refuses a negative one by name at task construction, and a
+            non-finite one poisoned the QP so the solve returned an all-NaN
+            configuration.
         orientation_cost: Cartesian orientation task weight (``0.0`` yields a
             position-only solve - important for arms with fewer than 6 DOF).
+            A finite number, on the same terms as ``position_cost``.
         posture_cost: Posture (joint-regularizer) task weight - keeps the solve
             near the current configuration so it stays smooth and avoids
-            flipping between IK branches.
+            flipping between IK branches. A finite number, on the same terms as
+            ``position_cost``.
         solver: ``qpsolvers`` backend name passed to ``mink.solve_ik``.
             ``None`` (default) auto-selects an installed backend - preferring
             ``"daqp"`` (what ``mink`` pins), then ``"quadprog"``, then whatever
             ``qpsolvers.available_solvers`` reports. Pass an explicit name to
             force one.
-        damping: Levenberg-Marquardt damping for ``solve_ik``.
-        max_iters: Max differential-IK iterations per target pose.
-        dt: Integration timestep for each IK iteration (s).
-        pos_threshold: Convergence threshold on position error (m).
-        ori_threshold: Convergence threshold on orientation error (rad).
+        damping: Levenberg-Marquardt damping for ``solve_ik``. A finite number
+            ``>= 0`` (``0.0`` is the undamped solve).
+        max_iters: Max differential-IK iterations per target pose. A positive
+            whole number: it bounds the ``range`` :meth:`solve` iterates over,
+            so ``0`` ran the solver zero times and handed back ``q_init``
+            unchanged as though it had solved.
+        dt: Integration timestep for each IK iteration (s). A positive finite
+            number: ``0.0`` and a non-finite value both produced an all-NaN
+            configuration.
+        pos_threshold: Convergence threshold on position error (m). A finite
+            number: an infinite threshold is met by every residual, so it made
+            the *first* iteration count as converged. A threshold no residual
+            can reach (zero or negative) is left accepted - it means "never
+            break early", which runs the full ``max_iters`` budget.
+        ori_threshold: Convergence threshold on orientation error (rad), on the
+            same terms as ``pos_threshold``.
         commanded_dofs: Velocity-space (``nv``) indices of the ONLY degrees of
             freedom the caller can command, or ``None`` (default) to leave the
             whole model free. ``mink`` optimizes over every DOF in ``model``,
@@ -148,6 +199,14 @@ class MinkIKBridge:
     Raises:
         ImportError: If ``mink``/``mujoco`` are not importable (with an
             actionable install hint).
+        ValueError: If any numeric knob cannot be honored - a ``max_iters``
+            that is not a positive whole number, a ``dt`` that is not a
+            positive finite number, a non-finite convergence threshold, a
+            ``damping`` that is not a finite number ``>= 0``, or a non-finite
+            task cost. Each is applied rather than forwarded, so an
+            unusable value produced a plausible-looking configuration instead
+            of an error; the refusal happens before the QP backend is resolved
+            and before any task is built.
         ValueError: If ``commanded_dofs`` is empty or names an index outside
             ``range(model.nv)`` - a solve that may move nothing, or a mask
             built against a different model, is a caller bug rather than a
@@ -181,6 +240,42 @@ class MinkIKBridge:
             import mink
         except ImportError as e:
             raise ImportError(self._INSTALL_HINT) from e
+
+        # Every numeric knob is checked here, before the QP backend is resolved,
+        # before the DOF mask reads the model, before the Configuration and the
+        # two tasks are constructed and before the ready log line. Each one is
+        # *applied* rather than forwarded - the iteration count bounds a
+        # ``range``, the timestep integrates a velocity, the damping and the
+        # costs weight a QP - so an unusable value produces a plausible-looking
+        # configuration instead of an error. See the per-parameter notes in the
+        # class docstring for what each unchecked value did.
+        label = type(self).__name__
+        for _cost_param, _cost in (
+            ("position_cost", position_cost),
+            ("orientation_cost", orientation_cost),
+            ("posture_cost", posture_cost),
+        ):
+            # ``mink`` already refuses a negative cost by name at task
+            # construction, so only the kind is checked here; ``0.0`` stays
+            # legal because an ``orientation_cost`` of zero is the documented
+            # position-only solve.
+            if text := finite_number_error(_cost, _cost_param, label):
+                raise ValueError(text)
+        if text := _damping_error(damping, label):
+            raise ValueError(text)
+        if text := positive_count_error(max_iters, "max_iters", label):
+            raise ValueError(text)
+        if text := positive_finite_number_error(dt, "dt", label):
+            raise ValueError(text)
+        for _threshold_param, _threshold in (("pos_threshold", pos_threshold), ("ori_threshold", ori_threshold)):
+            # Finiteness only, not a positive floor: a threshold no residual can
+            # meet (zero, or a negative distance) means "never break early", so
+            # the loop runs its whole budget - the conservative direction, and
+            # the idiom the solve-loop suites use to exercise it. An *infinite*
+            # threshold is the damaging one, because every residual satisfies it
+            # and the first iteration counts as converged.
+            if text := finite_number_error(_threshold, _threshold_param, label):
+                raise ValueError(text)
 
         self._mink = mink
         self.model = model

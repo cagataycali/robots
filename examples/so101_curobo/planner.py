@@ -67,18 +67,32 @@ def _so101_cache_urdf() -> tuple[str | None, str]:
 
     Returns ``(urdf_path, asset_path)``; ``urdf_path`` is ``None`` when the
     cache / package isn't available (so callers keep their existing
-    "raise an actionable error" behaviour). ``resolve_model_dir`` triggers the
-    same auto-download the MuJoCo path uses, so a clean box with internet
-    populates the cache here too.
+    "raise an actionable error" behaviour). The directory probe declines the
+    network, because a best-effort helper should not clone an asset repository
+    to answer a question about the local cache. When the cache is cold,
+    ``resolve_model_path`` performs the same auto-download the MuJoCo path uses
+    and the directory is re-resolved from the registry, so a clean box with
+    internet populates the cache here too.
     """
     try:
         import glob
 
-        from strands_robots.assets import resolve_model_dir  # type: ignore[import-not-found]
+        from strands_robots.assets import (  # type: ignore[import-not-found]
+            resolve_model_dir,
+            resolve_model_path,
+        )
     except Exception:  # noqa: BLE001
         return None, ""
     try:
-        model_dir = resolve_model_dir("so101")
+        # The common case is the box the MuJoCo demo already ran on, so ask the
+        # filesystem first and take no side effect for an answer already here.
+        model_dir = resolve_model_dir("so101", allow_download=False)
+        if not model_dir:
+            # Cold cache: this is the call that downloads. Re-resolve the
+            # directory afterwards rather than taking the XML's parent, because
+            # several robots nest their model XML in a subdirectory.
+            if resolve_model_path("so101") is not None:
+                model_dir = resolve_model_dir("so101")
     except Exception:  # noqa: BLE001
         return None, ""
     if not model_dir:
