@@ -80,6 +80,13 @@ mTLS alone is not sufficient - pair it with an access-control list:
 
 Two steps route traffic through AWS IoT Core (MQTT5 with mTLS): the `[mesh-iot]` extra installs the dependency, and `STRANDS_MESH_BACKEND=iot` selects the transport. The extra alone changes nothing - the fleet stays on Zenoh - so set both. `STRANDS_MESH_BACKEND=bridge` selects a `BridgeTransport` instead, which keeps high-rate topics local while bridging presence, health, and safety to the cloud. When you use this path, the IoT device certificates and provisioning material become production secrets - provision them per-device, scope their IoT policies to the minimum topic set, and rotate/revoke them like any other fleet credential.
 
+Both `iot` and `bridge` construct that transport with no arguments, so four environment variables are the whole of its configuration - `ProvisionedThing.env_vars()` hands the first three back after provisioning. With either required variable unset, `connect()` logs at ERROR and returns `False`: the mesh stays off rather than crash the host, so the symptom is a peer that never appears on the fleet.
+
+- `STRANDS_IOT_THING_NAME` - required. The AWS IoT Thing name, sent as the MQTT `client_id`, so it must match both the certificate's CN and the Thing your IoT policy authorises through `${iot:Connection.Thing.ThingName}`. The trust model ties it to the `Mesh` peer id, because a peer publishes under `strands/{peer}/...`.
+- `STRANDS_IOT_ENDPOINT` - required. The account's ATS endpoint, e.g. `a2acz9p1ge6619-ats.iot.us-west-2.amazonaws.com`.
+- `STRANDS_IOT_CERT_DIR` - optional; defaults to `~/.strands_robots/iot`. The directory holding `{thing}.cert.pem`, `{thing}.private.key`, and `AmazonRootCA1.pem` - the production secrets named above. A missing file is reported by path.
+- `STRANDS_IOT_CA_FILE` - optional; defaults to `AmazonRootCA1.pem` inside `STRANDS_IOT_CERT_DIR`. Overrides the root CA path.
+
 Reference: `strands_robots.mesh.session`, `strands_robots.mesh._acl_config`, `strands_robots.mesh.transport.iot_transport`.
 
 ## Operator approval for fleet-wide actions
