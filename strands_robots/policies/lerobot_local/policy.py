@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from ...utils import name_list_error, positive_count_error
+from ...utils import name_list_error, positive_count_error, positive_finite_number_error
 from .. import Policy, align_action_values, chunk_count_error
 from .._log_safety import sanitize_log_value
 from .._state_keys import drop_velocity_siblings
@@ -363,8 +363,10 @@ class LerobotLocalPolicy(Policy):
             :attr:`~strands_robots.policies.base.Policy.execution_horizon`
             resolves, so it must be a positive whole number. ``None`` (the
             default) adopts the model config value, else 10.
-        rtc_max_guidance_weight: Maximum guidance weight for RTC correction.
-            Defaults to model config value or 10.0.
+        rtc_max_guidance_weight: Ceiling on the RTC guidance weight, written
+            onto the checkpoint's own ``rtc_config`` because that is where
+            lerobot reads it. Must be a positive finite number. ``None`` (the
+            default) adopts the model config value, else 10.0.
         camera_key_map: Optional explicit mapping of robot/sim camera name
             (e.g. "top") to the policy's declared image feature key
             (e.g. "observation.images.top"). When omitted, cameras are
@@ -563,6 +565,22 @@ class LerobotLocalPolicy(Policy):
             if error:
                 raise ValueError(error)
         self._rtc_execution_horizon = rtc_execution_horizon
+        # lerobot clamps the RTC guidance weight with
+        # ``torch.minimum(guidance_weight, max_guidance_weight)`` and also feeds
+        # it to ``nan_to_num(..., posinf=max_guidance_weight)``, so the ceiling
+        # has to be a positive finite number: an ``inf`` clamps nothing, a
+        # ``nan`` makes every clamped weight ``nan``, and a ``0`` or a negative
+        # value pins the correction to a ceiling lerobot's own
+        # ``RTCConfig.__post_init__`` refuses outright ("max_guidance_weight
+        # must be positive"). That constructor cannot see this value - the
+        # override is written onto an already-built config in ``_init_rtc`` -
+        # so the domain is asked here instead. ``None`` is the documented
+        # "adopt the model's value" request rather than a weight, so only a
+        # supplied one is checked, exactly as for the horizon above.
+        if rtc_max_guidance_weight is not None:
+            error = positive_finite_number_error(rtc_max_guidance_weight, "rtc_max_guidance_weight", "lerobot_local")
+            if error:
+                raise ValueError(error)
         self._rtc_max_guidance_weight = rtc_max_guidance_weight
         self._rtc_prev_chunk: torch.Tensor | None = None
         # Absolute-coordinate copy of the leftover tail, populated ONLY for
@@ -1508,6 +1526,17 @@ class LerobotLocalPolicy(Policy):
             if error:
                 raise ValueError(error)
 
+        # The RTC guidance ceiling, on the same reasoning as the horizon above:
+        # it is honored whenever RTC is active, which the model config decides,
+        # so it cannot be scoped to an embodiment either. Checked for a supplied
+        # value only - ``None`` asks for the checkpoint's own ceiling.
+        if policy_config.get("rtc_max_guidance_weight") is not None:
+            error = positive_finite_number_error(
+                policy_config["rtc_max_guidance_weight"], "rtc_max_guidance_weight", "lerobot_local"
+            )
+            if error:
+                raise ValueError(error)
+
         # The instruction's token budget, on the same reasoning: it is honored
         # for every configuration that tokenizes at all, so it cannot be scoped
         # to an embodiment either, and checking it here refuses it before the
@@ -1739,6 +1768,21 @@ class LerobotLocalPolicy(Policy):
             self._rtc_execution_horizon = getattr(rtc_config, "execution_horizon", 10)
         if self._rtc_max_guidance_weight is None:
             self._rtc_max_guidance_weight = getattr(rtc_config, "max_guidance_weight", 10.0)
+        else:
+            # Written onto the config, because that is the only place lerobot
+            # reads it: ``RTCInferenceMixin`` takes the ceiling from
+            # ``self.rtc_config.max_guidance_weight``, and the RTC kwarg
+            # contract (``ActionSelectKwargs``) carries only ``inference_delay``,
+            # ``prev_chunk_left_over`` and ``execution_horizon``. Kept only on
+            # this policy - as it was - the caller's ceiling reached the INFO
+            # line below and nothing else, so a checkpoint tuned with a ``2.0``
+            # ceiling ran the model's own ``10.0``. The horizon needs no
+            # equivalent write: it IS a kwarg, and ``_predict_with_rtc``
+            # forwards it per call.
+            # narrow for mypy: the enable branches above only reach here with a
+            # non-None rtc_config, as the comment on the default block states.
+            assert rtc_config is not None
+            rtc_config.max_guidance_weight = self._rtc_max_guidance_weight
 
         logger.info(
             "RTC enabled for '%s': execution_horizon=%d, max_guidance_weight=%.1f",
