@@ -59,7 +59,7 @@ def _make_stub_motion_agent():
         def sample(self, prompt, num_frames, diffusion_steps, guidance_scale, seed):
             qpos = np.zeros((num_frames, 7 + 29), dtype=np.float32)
             qpos[:, 2] = 0.75  # standing z
-            qpos[:, 6] = 1.0   # quat w
+            qpos[:, 6] = 1.0  # quat w
             t = np.linspace(0.0, 4.0 * np.pi, num_frames, dtype=np.float32)
             # left/right shoulder pitch — indices matched to KIMODO_G1_JOINTS
             qpos[:, 7 + 15] = 0.5 * np.sin(t)
@@ -70,42 +70,38 @@ def _make_stub_motion_agent():
 
 
 def _verify_parquet_truth(dataset_root: Path, n_episodes: int) -> None:
-    """Parquet-truth verification — matches the autonomous harness contract."""
-    import pyarrow.parquet as pq
+    """Parquet-truth verification, via the library's canonical checker.
+
+    Delegates the dataset integrity check to
+    :func:`strands_robots.verify_dataset.verify_dataset` instead of re-reading
+    the parquet here. Opening a single ``chunk-000/file-000.parquet`` by name
+    reports a false failure as soon as a recording outgrows LeRobot's
+    ``DEFAULT_DATA_FILE_SIZE_IN_MB`` (100 MB) and spills into
+    ``file-001.parquet``: the first file then holds only the leading episodes,
+    so a healthy twenty-episode run reads back as a truncated one. The
+    canonical checker globs every chunk and file, and additionally verifies the
+    per-episode MP4 tracks and flags an all-zero control column - two
+    corruptions a count-only check cannot see.
+
+    The head-cam feature assertion stays here. That both cameras are declared
+    is this script's own contract rather than a property every LeRobot dataset
+    has to satisfy.
+    """
+    from strands_robots.verify_dataset import verify_dataset
+
+    report = verify_dataset(dataset_root, expected=n_episodes)
+    if report["status"] != "success":
+        raise SystemExit("parquet truth FAIL: " + "; ".join(report["problems"]))
 
     info = json.loads((dataset_root / "meta" / "info.json").read_text())
-    total_episodes = info.get("total_episodes")
-    if total_episodes != n_episodes:
-        raise SystemExit(
-            f"parquet truth FAIL: info.total_episodes={total_episodes}, expected {n_episodes}"
-        )
-
-    ep_tab = pq.read_table(
-        dataset_root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
-    )
-    if ep_tab.num_rows != n_episodes:
-        raise SystemExit(
-            f"parquet truth FAIL: meta/episodes rows={ep_tab.num_rows}, expected {n_episodes}"
-        )
-
-    data_tab = pq.read_table(
-        dataset_root / "data" / "chunk-000" / "file-000.parquet"
-    )
-    ep_col = data_tab.column("episode_index").to_pylist()
-    unique = sorted(set(ep_col))
-    if unique != list(range(n_episodes)):
-        raise SystemExit(
-            f"parquet truth FAIL: unique episode_index={unique}, expected {list(range(n_episodes))}"
-        )
-
     features = list(info.get("features", {}).keys())
     for expected in ("observation.images.head", "observation.images.front"):
         if expected not in features:
             raise SystemExit(f"parquet truth FAIL: missing feature {expected}")
 
     print(
-        f"✓ parquet truth PASS: {total_episodes} eps, "
-        f"{info.get('total_frames')} frames, features={features}"
+        f"\u2713 parquet truth PASS: {report['total_episodes']} eps, "
+        f"{report['total_frames']} frames, features={features}"
     )
 
 
@@ -115,8 +111,9 @@ def main() -> int:
     parser.add_argument("--n-episodes", type=_positive_int, default=3)
     parser.add_argument("--n-steps", type=_positive_int, default=100)
     parser.add_argument("--control-hz", type=_positive_int, default=25)
-    parser.add_argument("--num-frames", type=_positive_int, default=180,
-                        help="Kimodo motion length in native frames (<=196)")
+    parser.add_argument(
+        "--num-frames", type=_positive_int, default=180, help="Kimodo motion length in native frames (<=196)"
+    )
     parser.add_argument(
         "--stub",
         action="store_true",
@@ -193,8 +190,7 @@ def main() -> int:
         control_frequency=args.control_hz,
         n_episodes=args.n_episodes,
         reset_between=True,
-        video={"path": str(args.out.parent / "kimodo_headcam.mp4"),
-               "fps": args.control_hz, "camera": "head"},
+        video={"path": str(args.out.parent / "kimodo_headcam.mp4"), "fps": args.control_hz, "camera": "head"},
     )
     status = result.get("status") if isinstance(result, dict) else str(result)
     print(f"run_policy status: {status}")
