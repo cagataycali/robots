@@ -17,6 +17,11 @@ shaped exactly like a converged solve, with nothing in the value or the type to
 distinguish it from one. `solve_trajectory([good, bad])` returned **9 of 18**:
 the first waypoint a real configuration and the second entirely NaN, so a caller
 iterating waypoints receives a partially valid trajectory rather than an error.
+One spelling did not come back at all: an `inf` in `q_init` left the QP backend
+unable to solve, raising `mink.exceptions.NoSolutionFound` out of a third-party
+module rather than the `ValueError` the method documents. The same class of bad
+value therefore had two exits, one silent and one naming neither the method nor
+the parameter.
 
 Both arrays now reach `finite_vector_error`, the same shared domain the
 scene-construction vectors use, checked before the configuration is updated and
@@ -25,8 +30,8 @@ flattened for the check because that domain reads a 2-D argument's *rows* as its
 elements and would otherwise refuse a clean `(4, 4)`. One guard in `solve` covers
 `solve_trajectory`, which calls it per waypoint; placing the check in
 `solve_trajectory` instead would leave a direct `solve` caller unguarded. The
-check costs 4.221 us against a 3.405 ms solve, 0.124% of one call, so there is no
-budget argument for leaving it to the consumer.
+two checks together cost 45.8 us against a 7.6 ms solve on that same Panda, 0.60%
+of one call, so there is no budget argument for leaving them to the consumer.
 
 Two things are deliberately unchanged. The bridge never carried the damage across
 calls - `solve` re-seeds the configuration from `q_init` every time, so the next

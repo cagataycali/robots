@@ -19,12 +19,20 @@ returns nine finite joints:
   as a successful return shaped exactly like a converged solve;
 * one ``inf`` in ``target_pose`` did the same;
 * one ``nan`` in ``q_init`` did the same;
+* one ``inf`` in ``q_init`` did *not* come back at all - it left the QP backend
+  itself unable to solve, so the call raised ``mink.exceptions.NoSolutionFound``
+  out of a third-party module rather than the ``ValueError`` this method
+  documents. The same class of bad value therefore had two exits, one silent and
+  one naming neither the method nor the parameter;
 * ``solve_trajectory([good, bad])`` returned **9 of 18** non-finite - the first
   waypoint a real configuration and the second entirely NaN, so a caller
   iterating waypoints gets a partially valid trajectory rather than an error.
 
-The check costs 4.221 us against a 3.405 ms solve, 0.124% of one call, so there
-is no budget argument for leaving it to the consumer.
+Both checks together cost 45.8 us against a 7.6 ms solve on that same Panda -
+0.60% of one call - so there is no budget argument for leaving them to the
+consumer. That is the shipped guard's own cost: :func:`finite_vector_error`
+reads each component rather than vectorising the scan, so it is roughly linear
+in the array and the pose's sixteen elements dominate the seed's nine.
 
 Two things are deliberately *not* claimed. The bridge does not carry the damage
 across calls - ``solve`` re-seeds the configuration from ``q_init`` every time,
@@ -65,6 +73,11 @@ from tests.policies.cosmos3.test_sim_ik_bridge_solve_loop import (
 #: The two array arguments ``solve`` reads, named locally so these cells are an
 #: independent oracle rather than a restatement of the module.
 ARRAY_PARAMETERS = ("target_pose", "q_init")
+
+#: A joint the stand-in solver never drives - it moves only ``q[:3]`` onto the
+#: frame target - so a seed value here survives the solve and is what shows the
+#: seed became the warm-start configuration.
+UNDRIVEN_DOF = 4
 
 
 @pytest.fixture
@@ -127,14 +140,28 @@ class TestThePoseAndSeedAreWhatTheSolverReads:
     def test_the_seed_becomes_the_configuration_and_the_pose_the_frame_target(
         self, fake_mink: types.ModuleType
     ) -> None:
+        """Both arrays are read through the *solve*, not merely stored.
+
+        Asserted on the returned configuration rather than on either task's
+        stored target. ``mink`` names that storage ``PostureTask.target_q`` and
+        ``FrameTask.transform_target_to_world`` while the stand-in keeps a
+        single ``target``, so reading it would pin the fake's own convention
+        rather than the library's. The returned configuration is the surface
+        both agree on, and it shows each array *propagating* through the solve
+        instead of merely arriving at a setter - which is the premise this
+        class exists for.
+        """
         bridge = _bridge()
         seed = _seed()
-        seed[0] = 0.25
-        pose = _target_pose([0.4, 0.0, 0.4])
-        _solve(bridge, pose, seed)
-        assert bridge._posture_task.target is not None  # type: ignore[attr-defined]
-        assert np.asarray(bridge._posture_task.target)[0] == pytest.approx(0.25)  # type: ignore[attr-defined]
-        assert bridge._frame_task.target is not None  # type: ignore[attr-defined]
+        seed[UNDRIVEN_DOF] = 0.25
+        translation = [0.4, 0.0, 0.4]
+        solved = _solve(bridge, _target_pose(translation), seed)
+        # The pose became the frame target: the solver drives the first three
+        # joints onto its translation.
+        assert solved[:3] == pytest.approx(translation)
+        # The seed became the warm-start configuration: a value on a joint the
+        # solver never drives survives into the answer.
+        assert solved[UNDRIVEN_DOF] == pytest.approx(0.25)
 
     def test_the_shared_domain_refuses_a_flat_non_finite_vector(self) -> None:
         clean = finite_vector_error("solve", "q_init", _seed())
