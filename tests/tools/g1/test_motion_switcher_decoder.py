@@ -573,3 +573,56 @@ class TestAValueWhoseLengthCannotBeReadIsRefusedNotRaised:
 
         assert reading.refusal is not None
         assert "got float of length ?" in reading.refusal
+
+
+class TestTheAbsorbedSdkExceptionIsReported:
+    """The one absorbed failure in the module is logged, not only returned.
+
+    Every other failure :func:`decode_fsm_id` and :func:`read_fsm_id` produce
+    is already a ``refusal`` string the caller reads, so nothing is lost. The
+    ``except`` clause in :func:`read_fsm_id` is different: it converts an SDK
+    exception into a refusal, and the traceback is not part of what the caller
+    gets back. An FSM read that fails once a second inside a control loop is
+    exactly the case an operator needs a log line for.
+
+    ``_dds_engine`` reports its own absorbed exceptions at WARNING with a
+    ``%s``-style format, and these cells hold this module to the same spelling
+    so the two boundaries read alike.
+    """
+
+    def test_a_raising_check_mode_is_logged_at_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """The SDK exception's class and message reach the log."""
+
+        class Boom:
+            def CheckMode(self) -> Any:
+                raise RuntimeError("dds participant is gone")
+
+        with caplog.at_level("WARNING", logger=_motion_switcher.__name__):
+            reading = read_fsm_id(Boom())
+
+        assert reading.fsm_id is None
+        assert reading.refusal is not None
+        assert "RuntimeError" in reading.refusal
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, f"expected one WARNING, got {caplog.records!r}"
+        message = warnings[0].getMessage()
+        assert "RuntimeError" in message
+        assert "dds participant is gone" in message
+
+    def test_the_absorbed_exception_is_the_only_thing_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A refusal the caller already reads is not also logged.
+
+        The over-reach guard: the module reports through its return value, so a
+        shape refusal must stay silent. Logging every declined decode would make
+        an ordinary "no mode selected" reading indistinguishable from a
+        transport failure in an operator's log.
+        """
+        with caplog.at_level("DEBUG", logger=_motion_switcher.__name__):
+            assert decode_fsm_id((0, {"name": ""})).refusal is None
+            assert decode_fsm_id("not a tuple").refusal is not None
+            assert decode_fsm_id((0, {"name": "ai"})).refusal is not None
+
+        assert caplog.records == [], (
+            "the module reports refusals through FSMReading.refusal; only the "
+            f"absorbed SDK exception is logged, got {caplog.records!r}"
+        )

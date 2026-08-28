@@ -254,6 +254,15 @@ def read_fsm_id(client: Any) -> FSMReading:
         # exception class and message rather than propagating, so the
         # driver's gate can refuse with a reason rather than crash a
         # control loop mid-step.
+        #
+        # This is the only place in the module where information is absorbed
+        # rather than returned: every other failure is already a ``refusal``
+        # string the caller reads. The traceback is not, and an FSM read that
+        # fails once a second inside a control loop is exactly the case an
+        # operator needs a log for -- so it is reported at WARNING, the same
+        # spelling ``_dds_engine`` uses at its own absorbed-exception
+        # boundaries.
+        logger.warning("CheckMode() raised %s: %s", type(exc).__name__, exc)
         return FSMReading(
             fsm_id=None,
             mode_name="",
