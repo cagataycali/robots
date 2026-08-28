@@ -250,7 +250,12 @@ def check_mujoco_gl() -> str:
             fix=f"export MUJOCO_GL=<one of: {offered}>  # or unset it for the platform default",
         )
 
-    if value in offscreen_here:
+    # Classification is the platform's question, not this host's: an offscreen
+    # backend is one whether or not its library is installed here, so a value the
+    # reader set keeps the verdict it earns. Only what to *recommend* narrows to
+    # what can load, which is why this reads the accepted set and the remedies
+    # above and below read the reachable one.
+    if value in accepted_offscreen:
         return _pass(shown)
 
     # Every remaining accepted value routes MuJoCo to a backend that draws through

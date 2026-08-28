@@ -146,6 +146,24 @@ class TestWhatIsUnchanged:
     command.
     """
 
+    @pytest.mark.parametrize("value", ["egl", "osmesa"])
+    @pytest.mark.parametrize("loadable", [set(), {"egl"}, {"osmesa"}], ids=["neither", "only-egl", "only-osmesa"])
+    def test_an_offscreen_backend_passes_whether_or_not_its_library_is_here(
+        self, linux_host, value: str, loadable: set[str]
+    ) -> None:
+        """Classification is the platform's question, not this host's.
+
+        Whether ``egl`` *is* an offscreen backend is a property of MuJoCo, so a
+        reader who set one keeps the verdict it earns even where its library is
+        absent. Narrowing this to what can load reclassified such a value as a
+        display backend and warned that it needs a display - on a host that has
+        OSMesa and no EGL, ``MUJOCO_GL=egl`` read as ``WARN (needs display)``.
+        """
+        assert _marker(linux_host(loadable, value)) == "PASS", (
+            f"{value} is an offscreen backend on Linux however this host is provisioned: "
+            f"{_plain(linux_host(loadable, value))!r}"
+        )
+
     @pytest.mark.parametrize("value,expected", _REMEDY_SITES)
     def test_the_verdict_is_still_the_one_the_setting_earns(self, linux_host, value: str | None, expected: str) -> None:
         assert _marker(linux_host(set(), value)) == expected, "an absent library is not a different diagnosis"
