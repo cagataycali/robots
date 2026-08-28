@@ -1674,7 +1674,7 @@ hatch run format            # ruff check --fix, ruff format
 - **Nested asset paths** (e.g. `"model_xml": "xmls/asimov.xml"`) are allowed when
   the upstream source repo uses a subdir layout. Example: `asimov_v0` maps to
   `asimovinc/asimov-v0` which has `sim-model/xmls/asimov.xml` +
-  `sim-model/assets/`. The `_safe_join` helper in `strands_robots/utils.py`
+  `sim-model/assets/`. The `safe_join` helper in `strands_robots/utils.py`
   guards against traversal (`..`).
 - **Auto-download strategy** - every robot with an `asset` block must declare
   exactly one of:

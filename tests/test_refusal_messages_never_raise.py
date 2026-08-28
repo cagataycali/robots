@@ -689,7 +689,7 @@ def _scan_direct_renders(source: str) -> dict[str, tuple[tuple[str, str], ...]]:
     ``camera_fov_error``'s interval branch and ``validation_split_error``, which
     render plainly and reach the same escape.
 
-    Text a function *raises* is excluded: ``_safe_join`` renders an untrusted path
+    Text a function *raises* is excluded: ``safe_join`` renders an untrusted path
     into a deliberate ``ValueError`` rather than answering a caller through a
     return value, so it is not in this contract.
 
@@ -1022,15 +1022,15 @@ class TestNoGuardRendersACallerValueDirectly:
         assert _scan_direct_renders(labels_only) == {}
 
     def test_the_scanner_ignores_a_value_rendered_into_a_raise(self) -> None:
-        """``_safe_join`` raises by design; this contract is about returned text."""
+        """``safe_join`` raises by design; this contract is about returned text."""
         raising = textwrap.dedent(
             """
-            def _safe_join(base: Path, untrusted: Any) -> Path:
+            def safe_join(base: Path, untrusted: Any) -> Path:
                 raise ValueError(f"Path traversal blocked: {untrusted!r} escapes {base}")
             """
         )
         assert _scan_direct_renders(raising) == {}
-        assert "_safe_join" not in KNOWN_DIRECT_RENDERS
+        assert "safe_join" not in KNOWN_DIRECT_RENDERS
 
 
 class TestNoGuardReadsACallerValueOutsideATry:

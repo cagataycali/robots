@@ -134,7 +134,7 @@ def register_robot(
         agent could register a robot pointing to attacker-controlled MJCF
         that executes code via MuJoCo plugins.  If tool exposure is needed
         in the future, gate it behind STRANDS_TRUST_REMOTE_CODE and
-        validate all paths with _safe_join.
+        validate all paths with :func:`strands_robots.utils.safe_join`.
 
     The robot becomes immediately available in ``get_robot()``,
     ``list_robots()``, ``resolve_model_path()``, ``sim.add_robot()``, etc.
