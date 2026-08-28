@@ -171,6 +171,52 @@ Reference: `strands_robots.tools.gr00t_inference`.
 - **Agent-side command gate (`use_ros`).** The bridge protections above harden the *inbound* surface a robot exposes. The three graph tools - `use_ros`, `use_rtps` and `use_rosbridge` - are the other direction, an agent publishing onto someone else's graph, and each gates the safety-critical surfaces behind an operator interrupt, keyed on the surface name so a topic publish, a service call and an action goal are all covered. One shared blocklist serves all three, so a surface refused on one transport cannot be sent on another. `RosBridgedRobot`, `AckermannRosRobot` and `RtpsRobot` all forward the operator context into it, so an agent-driven robot prompts whichever transport carries the command, while a programmatic `robot.drive(...)`/`stop()` needs the surface pre-approved. Pre-approve surfaces with `STRANDS_ROS2_COMMAND_ALLOW` - matched by base name as well as exactly, so a `/cmd_vel` entry lifts the gate on every namespaced `cmd_vel` and not only the robot being driven; name the namespace to scope it to one - or bypass with `BYPASS_TOOL_CONSENT=true`; with neither set and no interrupt reachable it fails closed. See [safety-critical command surfaces](ros2-integration.md#safety-critical-command-surfaces-need-operator-approval).
 - **Telemetry-only is ungated.** `ros2_commands=False` is publish-only (no inbound surface) and needs no security config. That posture is only as good as how the flag is read, so `ros2_bridge` / `ros2_commands` (and `enable_commands` on either bridge class directly) are **checked** against the shared boolean domain rather than read by truthiness: a non-boolean is refused at construction, so a deployment config that spells the flag `"false"` cannot select the surface it asks to close.
 
+## Audit log
+
+Every fleet action the mesh accepts is appended to a JSONL audit log.  The log
+lives on disk, and four environment variables configure where it is written,
+how large it may grow, and whether records carry a per-record HMAC that lets a
+downstream verifier reject a forged entry.  Without the PSK, the log is still
+written and still verifiable for order and sequence continuity, but a
+tamper-evidence step is off: the mode is a deliberate posture, not a default
+that hides.  The variables:
+
+- **`STRANDS_MESH_AUDIT_DIR`** *(optional; default: `~/.strands_robots/`,
+  under which `mesh_audit.jsonl` is written)*.  Overrides the write path for
+  the JSONL file.  The directory must be writable by the process that hosts
+  the mesh; a peer whose process cannot open the file refuses to start the
+  auditor, rather than running with the audit trail silently off.  A symlink
+  at the log path is refused - the audit log must be a regular file at the
+  canonical location, so an attacker cannot redirect writes to `/dev/null`
+  or a file owned by another process.
+- **`STRANDS_MESH_AUDIT_PSK`** *(optional; when set, per-record HMAC is on)*.
+  A pre-shared key that keys the SHA-256 HMAC written into each record's
+  `hmac` field.  With the PSK set, `verify_audit_integrity` refuses a record
+  whose HMAC does not match the running key, and refuses the whole log if the
+  PSK changes between records.  Without the PSK the `hmac` field is absent
+  and the check step trusts the file: an attacker with write access to
+  `STRANDS_MESH_AUDIT_DIR` could edit a record and leave no HMAC to fail
+  against.  Set the PSK on every peer that writes to the same directory.
+- **`STRANDS_MESH_AUDIT_MAX_BYTES`** *(optional; default: 100 MiB per file;
+  hard upper cap: 10 GiB)*.  Rotates the JSONL file when the active file
+  crosses the cap.  Values above the hard cap are clamped and logged;
+  non-integer, zero, or negative values fall back to the default with a
+  warning, so a misconfiguration cannot disable rotation by silently reading
+  as zero.
+- **`STRANDS_MESH_AUDIT_MAX_FILES`** *(optional; default: 5 rotated files;
+  hard upper cap: 100)*.  The number of rotated `mesh_audit.jsonl.N` files
+  kept alongside the active file.  Older rotations are deleted as new ones
+  arrive; total disk use is bounded by `_MAX_BYTES × _MAX_FILES` (default
+  500 MiB).  The same clamping and warning behaviour applies as for
+  `_MAX_BYTES`.
+
+The audit log records what the mesh accepted; the *inbound* command surface
+that decides what to accept is configured under [Robot mesh authentication](#robot-mesh-authentication)
+above, and the *outbound* subscribe surface that decides what leaves the peer
+is under [Telemetry exposure to the agent context](#telemetry-exposure-to-the-agent-context)
+below.  A production posture pairs the auth mode with the PSK - without both,
+one class of forgery is unprotected.
+
 ## Credentials and secrets
 
 The product touches several classes of secret. Handle each per least-privilege:
