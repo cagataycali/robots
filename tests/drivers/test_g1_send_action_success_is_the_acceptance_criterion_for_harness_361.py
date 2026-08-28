@@ -330,7 +330,6 @@ def test_the_publisher_is_populated_and_the_driver_is_otherwise_healthy() -> Non
     assert "battery" not in text
 
 
-
 def test_the_xfail_reason_quotes_the_shipped_refusal_verbatim() -> None:
     """The xfail marker's ``reason`` cites the refusal text; hold the citation.
 
@@ -374,4 +373,3 @@ def test_the_xfail_reason_quotes_the_shipped_refusal_verbatim() -> None:
         "the wired-FSM day has arrived and this file's marker is due for "
         "removal alongside its cells."
     )
-
