@@ -40,13 +40,32 @@ conditions: dropping the deferral test would flag the four legitimate backward
 citations, and dropping the landed test would flag every deferral including the
 one that correctly points at open issue ``#2765``.
 
-Scope: caller-reachable literals only, matching the sibling module's boundary.
-Developer-facing docstrings legitimately cite historical work, and a maintainer
-reading one has the git history to hand.
+Scope: both caller-reachable literals and docstrings, split by *speech act*
+rather than by audience.  A docstring may name a merged change freely when it
+is explaining where text came from - that is the backward citation above, and a
+maintainer reading it has the git history to hand.  A docstring that *defers*
+is a different claim: it tells the next contributor a capability is still
+outstanding and where to watch for it, and git history cannot answer "when will
+this land".  So the same two conditions apply to a docstring sentence, and the
+scope is the sentence rather than the whole docstring - one paragraph routinely
+carries a deferral and a backward citation, and only the deferral's own
+sentence is graded.
+
+It would have failed while seven docstring sentences in
+``strands_robots/drivers/g1.py`` deferred to ``#358`` and ``#361``, both merged
+pull requests about unrelated subsystems.  One of them was worse than
+misdirecting: ``send_action`` told the reader "the loop lands in the follow-up
+PR that closes issue #361 in full" after that loop had shipped, so a
+contributor was told a capability the module already provides was future work.
+
+Out of scope: ``#`` comments.  A comment is neither read by a caller nor part
+of the rendered API surface, and the extraction the two rules share does not
+collect them.
 """
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -69,8 +88,15 @@ _BARE_ISSUE_REF = re.compile(r"(?<![A-Za-z0-9_.\-/])#(\d+)\b")
 # historical subject carries shell quoting around the number.
 _LANDED_SUBJECT = re.compile(r"\(#'?(\d+)'?\)\s*$", re.MULTILINE)
 
-# A forward deferral: the text says the capability is still outstanding.
-_DEFERRAL = re.compile(r"not wired|not yet|unwired|pending|until .{0,40}\blands?\b", re.IGNORECASE)
+# A forward deferral: the text says the capability is still outstanding.  The
+# last two alternatives were added with the docstring rule below; measured
+# against the whole package they add no caller-reachable offender, so the
+# widening costs the string rule nothing and lets the docstring rule reach five
+# sentences the original vocabulary walked past.
+_DEFERRAL = re.compile(
+    r"not wired|not yet|unwired|pending|until .{0,40}\blands?\b|\blands? in\b|future work",
+    re.IGNORECASE,
+)
 
 # A shallow clone carries one commit, which would make the oracle empty and the
 # rule vacuous.  The history held 2108 landed numbers when this landed.
@@ -243,3 +269,117 @@ def test_both_conditions_are_load_bearing() -> None:
     # Landed test dropped: every deferral would be flagged.
     assert _DEFERRAL.search(open_deferral) is not None
     assert _landed_citations(open_deferral, landed) == []
+
+
+# =========================================================================
+# The same rule over docstrings, scoped to the sentence that defers.
+# =========================================================================
+
+# A docstring paragraph routinely carries a deferral and a backward citation
+# in adjacent sentences, so the reference must sit in the deferring sentence
+# to be graded.  Splitting is deliberately eager: an abbreviation splits a
+# sentence in two, which can only narrow what the rule reads, and a narrower
+# read declines to flag rather than flagging text it should not.
+_SENTENCE_BREAK = re.compile(r"(?<=[.:;])\s+")
+
+_DOCUMENTED_NODES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _docstring_sentences(path: Path) -> list[tuple[int, str, str]]:
+    """Every ``(lineno, owner, sentence)`` triple in a module's docstrings.
+
+    ``clean=False`` keeps the text as written; the sentence is whitespace-
+    normalised so a reference wrapped across two source lines is still one
+    token to the reference pattern.
+    """
+    found: list[tuple[int, str, str]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, _DOCUMENTED_NODES):
+            continue
+        docstring = ast.get_docstring(node, clean=False)
+        if not docstring:
+            continue
+        owner = getattr(node, "name", "<module>")
+        lineno = getattr(node, "lineno", 1)
+        for sentence in _SENTENCE_BREAK.split(" ".join(docstring.split())):
+            found.append((lineno, owner, sentence))
+    return found
+
+
+def _docstring_offenders(landed: frozenset[int]) -> list[str]:
+    found: list[str] = []
+    for path in _python_sources():
+        for lineno, owner, sentence in _docstring_sentences(path):
+            for number in _landed_citations(sentence, landed):
+                found.append(f"{Path(path).relative_to(_REPO_ROOT)}:{lineno} ({owner}): #{number}")
+    return found
+
+
+def test_the_docstring_population_is_not_empty() -> None:
+    """Non-vacuity: the docstring walk still yields sentences to grade."""
+    total = sum(len(_docstring_sentences(path)) for path in _python_sources())
+    assert total > 1000, f"only {total} docstring sentences found; the walk is too narrow"
+
+
+def test_no_docstring_deferral_cites_a_change_this_repository_landed() -> None:
+    """A docstring promising future work must not point at work already shipped."""
+    landed = _landed_pull_request_numbers_or_skip()
+    if len(landed) < _MINIMUM_LANDED_NUMBERS:
+        pytest.skip(
+            f"only {len(landed)} landed pull-request numbers found in git history; the "
+            "rule cannot grade its subject in a shallow environment. The oracle test "
+            "above owns the environment check; this rule declines rather than reads "
+            "green from an empty oracle."
+        )
+    offenders = _docstring_offenders(landed)
+    assert not offenders, (
+        "A docstring defers a capability and cites a change this repository has already "
+        "merged. The next contributor follows it, finds a landed change about another "
+        "subsystem, and cannot tell whether the capability is missing or the note is "
+        "stale. Cite an open issue that tracks the work, or name the missing capability "
+        "without a tracker reference:\n" + "\n".join(offenders)
+    )
+
+
+def test_a_deferral_and_a_backward_citation_in_one_paragraph_are_graded_apart() -> None:
+    """Sentence scope: the landed number must sit in the deferring sentence.
+
+    This is the shape the whole-docstring reading got wrong.  ``g1.py``'s module
+    docstring defers in one sentence and credits merged work in the next, and a
+    paragraph-wide read blamed the deferral for the credit's reference.
+    """
+    landed = frozenset({354, 358})
+    paragraph = "The provider registry is not yet plumbed here. The driver's job in issue #354 was the transport."
+    sentences = _SENTENCE_BREAK.split(paragraph)
+    assert len(sentences) == 2, sentences
+    assert [n for s in sentences for n in _landed_citations(s, landed)] == []
+    assert _landed_citations(paragraph, landed) == [354], "the paragraph-wide read is the defect"
+
+
+def test_a_docstring_deferral_citing_a_landed_change_is_flagged() -> None:
+    """The shape this half of the guard exists to keep out."""
+    landed = frozenset({361})
+    text = "The loop lands in the follow-up PR that closes issue #361 in full."
+    assert _landed_citations(text, landed) == [361]
+
+
+def test_a_docstring_deferral_citing_an_open_issue_is_not_flagged() -> None:
+    """Deferring to outstanding work is what a deferral is for."""
+    landed = frozenset({358, 361})
+    text = "Until the motion-switcher source is wired (issue #2765), the gate refuses honestly."
+    assert _landed_citations(text, landed) == []
+
+
+def test_the_widened_vocabulary_reaches_the_sentences_it_was_added_for() -> None:
+    """Non-vacuity of the widening: the two added phrases are load-bearing.
+
+    Without them the docstring rule reads five of the seven ``g1.py`` sentences
+    as prose rather than as deferrals, so the widening is what makes the rule
+    cover the class instead of two instances of it.
+    """
+    landed = frozenset({358, 361})
+    for text in (
+        "The rich verb set lands in issue #358 as vendored neon tools.",
+        "The rt/armsdk topic is future work for the g1_tools client in issue #358.",
+    ):
+        assert _landed_citations(text, landed), f"widened vocabulary should reach: {text!r}"

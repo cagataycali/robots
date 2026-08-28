@@ -26,11 +26,11 @@ What the driver actually does:
   on a dedicated 500 Hz thread (per-step FSM re-gate, zero-torque frame on
   exit); :meth:`stop_task` halts that loop and reports the join outcome;
   :meth:`get_task_status` reports the loop's snapshot or the last exit
-  reason.  :meth:`start_task` still refuses with a named message pointing
-  at issue #358 because the provider registry (Groot/ACT/Diffusion clients)
-  is not yet plumbed here - a caller with an already-built policy uses
-  :meth:`run_policy` today.  Locomotion and arm-SDK-shaped verbs land in
-  issue #358; the driver's job in issue #354 was the transport, and the
+  reason.  :meth:`start_task` still refuses with a named message because
+  the provider registry (Groot/ACT/Diffusion clients) is not yet plumbed
+  here - a caller with an already-built policy uses :meth:`run_policy`
+  today.  Locomotion and arm-SDK-shaped verbs arrive with the ``g1_tools``
+  motion verbs; the driver's job in issue #354 was the transport, and the
   control loop that closes issue #361 lives here now.
 
 Nothing in this module imports ``unitree_sdk2py`` at module load. Every SDK
@@ -330,7 +330,7 @@ class G1Driver:
         """A minimal agent-facing spec.
 
         The rich verb set (``arm``, ``walk``, ``posture``, ``speak``,
-        ``lidar_snapshot``) lands in issue #358 as vendored neon tools that
+        ``lidar_snapshot``) arrives with the vendored neon tools that
         the agent gets in addition to the driver-as-tool. Here we ship the
         universal ``status``/``stop`` verbs and a ``sensors`` read-out so a
         Strands agent can already introspect the robot the day the driver
@@ -381,7 +381,7 @@ class G1Driver:
         the loop publishes a zero-torque frame on the way out, and the
         returned envelope reports whether the thread actually joined.  The
         rich motion verb set (``arm``, ``walk``, ``posture``, ``speak``,
-        ``lidar_snapshot``) lands in issue #358 as vendored neon tools that
+        ``lidar_snapshot``) arrives with the vendored neon tools that
         the agent gets in addition to the driver-as-tool; the transport
         primitive those verbs will call - :meth:`send_action` publishing on
         ``rt/lowcmd`` - already ships (issue #361).
@@ -590,7 +590,7 @@ class G1Driver:
         Two FSM sets are enforced separately because the G1 documents them
         separately: :data:`HANDSHAKE_FSMS` covers arm-SDK-shaped writes (which
         the driver publishes on ``rt/lowcmd`` today; the ``rt/armsdk`` topic
-        is future work for the ``g1_tools`` client in issue #358) and
+        is future work for the ``g1_tools`` client) and
         :data:`WALK_FSMS` is narrower - sitting (500) accepts arm gestures
         but not walking. ``scope`` is the caller's declared kind of write:
 
@@ -656,7 +656,7 @@ class G1Driver:
 
         1. A control loop.  A caller who wants 500 Hz calls this on their own
            timer; the driver's job here is one wire frame, not a schedule.
-           The loop lands in the follow-up PR that closes issue #361 in full.
+           :meth:`run_policy` owns that loop today; this method is one frame.
         2. A safety filter.  The FSM and battery gates are the safety
            envelope; command-magnitude limits are the arm-SDK client's job.
 
@@ -716,8 +716,8 @@ class G1Driver:
         The lerobot driver runs its ``start_task`` through a policy provider
         registry.  Providers live in :mod:`strands_robots.policies`; wiring a
         concrete inference client (Groot, ACT, Diffusion) here needs the
-        ``g1_tools`` motion verbs (issue #358) so the loop has something to
-        command with joint-name semantics.
+        ``g1_tools`` motion verbs so the loop has something to command with
+        joint-name semantics.
 
         This driver's role is the **transport primitive**:
         a background thread that spins at 500 Hz, gates every step against the
@@ -726,7 +726,7 @@ class G1Driver:
         A caller who supplies a callable-style policy via
         :meth:`run_policy` gets the whole loop today; :meth:`start_task` still
         refuses with a message naming the missing provider registry, which is
-        not yet plumbed here (that decision moves with #358 to
+        not yet plumbed here (that decision moves with the motion verbs to
         keep the two concerns separable).
 
         Scope is ``"motion"`` because a task may issue either an arm or a
