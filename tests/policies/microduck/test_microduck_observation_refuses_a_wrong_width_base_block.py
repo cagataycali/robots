@@ -297,7 +297,11 @@ class TestBothBlocksRouteThroughTheOneReader:
                 and isinstance(call.args[1].value, str)
             ):
                 keys.append(call.args[1].value)
-        assert sorted(keys) == ["base_ang_vel", "base_quat"], keys
+        # ``base_acc`` joined the reader in the harness#388 branch: slot two
+        # is the projected-gravity block (from ``base_quat``) or the raw
+        # accelerometer verbatim, chosen by ``gravity_source``.  All three
+        # floating-base reads route through the width-holding reader.
+        assert sorted(keys) == ["base_acc", "base_ang_vel", "base_quat"], keys
 
     def test_the_widths_come_from_the_named_constants(self) -> None:
         """Not restated at the call site, so the layout has one account."""
@@ -310,9 +314,14 @@ class TestBothBlocksRouteThroughTheOneReader:
             and call.func.id == "_require_base_block"
             and len(call.args) >= 3
         ]
-        assert sorted(widths) == ["_BASE_ANG_VEL_LEN", "_BASE_QUAT_LEN"], widths
+        # The ``base_acc`` branch shares ``_BASE_ACC_LEN == 3`` with the raw
+        # accelerometer contract.  Each of the three keys is held to the
+        # width its observation block defines through a named constant, so
+        # a layout change has one place to touch.
+        assert sorted(widths) == ["_BASE_ACC_LEN", "_BASE_ANG_VEL_LEN", "_BASE_QUAT_LEN"], widths
         assert obs_mod._BASE_ANG_VEL_LEN == 3
         assert obs_mod._BASE_QUAT_LEN == 4
+        assert obs_mod._BASE_ACC_LEN == 3
 
 
 class TestThePremisesTheDefectRestedOn:

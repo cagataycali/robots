@@ -17,7 +17,14 @@ them mid-rollout.
 from __future__ import annotations
 
 from .composite import MicroduckPolicyBundle
-from .observation import build_observation, decode_action, projected_gravity, quat_rotate_inverse
+from .observation import (
+    GRAVITY_SOURCE_PROJECTED,
+    GRAVITY_SOURCE_RAW_ACCEL,
+    build_observation,
+    decode_action,
+    projected_gravity,
+    quat_rotate_inverse,
+)
 from .policy import (
     MICRODUCK_DEFAULT_POSE,
     MICRODUCK_JOINT_NAMES,
@@ -29,6 +36,8 @@ __all__ = [
     "MicroduckPolicyBundle",
     "MICRODUCK_JOINT_NAMES",
     "MICRODUCK_DEFAULT_POSE",
+    "GRAVITY_SOURCE_PROJECTED",
+    "GRAVITY_SOURCE_RAW_ACCEL",
     "build_observation",
     "decode_action",
     "projected_gravity",

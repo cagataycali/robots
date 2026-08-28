@@ -183,6 +183,12 @@ class MicroduckPolicy(Policy):
             raise ValueError(error)
         self._action_scale: float | None = float(action_scale) if action_scale is not None else None
         self._command_names: list[str] | None = list(command_names) if command_names else None
+        # ``gravity_source`` is training-time and baked into the ONNX (Pollen's
+        # ``use_projected_gravity``); resolved from ``custom_metadata_map`` on
+        # first inference, matching the ``joint_names``/``default_pose``/etc.
+        # metadata-first pattern.  Kept ``None`` here so ``_ensure_config`` is
+        # the single owner of "which slot-two branch this checkpoint expects".
+        self._gravity_source: str | None = None
         self._configured = False
 
         self._initial_command = np.asarray(command, dtype=np.float32) if command is not None else None
@@ -267,6 +273,7 @@ class MicroduckPolicy(Policy):
             default_pose=self._default_pose,
             last_action=self._last_action,
             command=self._command,
+            gravity_source=self._gravity_source or obs_builder.GRAVITY_SOURCE_PROJECTED,
         )
 
         raw_action = self.infer_raw(vector)
@@ -374,6 +381,27 @@ class MicroduckPolicy(Policy):
         if self._command_names is None:
             cn = meta.get("command_names")
             self._command_names = [s.strip() for s in cn.split(",")] if cn else None
+
+        # ``gravity_source`` selects which base block feeds slot two of the
+        # observation vector.  ``projected_gravity`` (default, every shipped
+        # alpha policy) reads ``base_quat`` and rotates world ``-Z`` into the
+        # base frame; ``raw_accel`` reads ``base_acc`` verbatim (older exports,
+        # backlash variants).  Refuse any other spelling here rather than at
+        # the builder seam so a mistyped metadata entry is caught once at
+        # first-inference configuration - the builder does the same check
+        # every tick, but this one names the SOURCE that supplied the value.
+        if self._gravity_source is None:
+            declared = meta.get("gravity_source")
+            source = declared.strip() if declared else obs_builder.GRAVITY_SOURCE_PROJECTED
+            if source not in obs_builder._GRAVITY_SOURCES:
+                raise ValueError(
+                    f"MicroduckPolicy: ONNX metadata gravity_source={declared!r} is not one "
+                    f"of {list(obs_builder._GRAVITY_SOURCES)}. This value is a training-time "
+                    f"flag baked into the export (Pollen's use_projected_gravity); the two "
+                    f"branches read different base keys (base_quat vs base_acc), so a third "
+                    f"spelling has no defined slot-two contract."
+                )
+            self._gravity_source = source
 
         if self._command is None:
             self._command = self._episode_start_command()
