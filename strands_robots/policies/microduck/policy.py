@@ -178,9 +178,18 @@ class MicroduckPolicy(Policy):
         self._robot_state_keys = list(robot_state_keys) if robot_state_keys else list(MICRODUCK_JOINT_NAMES)
 
     def reset(self, seed: int | None = None) -> None:
-        """Clear per-episode state (last action + command) at episode start."""
+        """Restore per-episode state (last action + command) at episode start.
+
+        ``last_action`` is cleared and rebuilt lazily by :meth:`get_actions`.
+        The command has no such lazy rebuild - ``_ensure_config`` builds it once
+        and early-returns thereafter - so it is restored here, to the same
+        vector a first episode starts from. Clearing it instead would give
+        ``reset`` two meanings: before the first ``get_actions`` it restores the
+        constructor's command (``_ensure_config`` has yet to run), after it the
+        next tick would find no command at all.
+        """
         self._last_action = None
-        self._command = None
+        self._command = self._episode_start_command() if self._configured else None
 
     async def get_actions(
         self,
@@ -288,18 +297,8 @@ class MicroduckPolicy(Policy):
             cn = meta.get("command_names")
             self._command_names = [s.strip() for s in cn.split(",")] if cn else None
 
-        width = self._command_width()
         if self._command is None:
-            if self._initial_command is not None:
-                cmd = np.asarray(self._initial_command, dtype=np.float32).reshape(-1)
-                if cmd.shape[0] != width:
-                    raise ValueError(
-                        f"MicroduckPolicy: initial command width {cmd.shape[0]} != "
-                        f"expected {width} (from command_names={self._command_names})."
-                    )
-                self._command = cmd
-            else:
-                self._command = np.zeros(width, dtype=np.float32)
+            self._command = self._episode_start_command()
 
         if len(self._default_pose) != len(self._joint_names):
             raise ValueError(
@@ -307,6 +306,34 @@ class MicroduckPolicy(Policy):
                 f"but there are {len(self._joint_names)} joints."
             )
         self._configured = True
+
+    def _episode_start_command(self) -> NDArray[np.float32]:
+        """The command vector an episode starts from: the constructor's, else zeros.
+
+        Single-sourced so the first episode (through ``_ensure_config``) and
+        every later one (through :meth:`reset`) cannot drift apart, and so the
+        width check lives in one place.
+
+        Returns a COPY: ``_apply_command_kwargs`` writes the twist slots in
+        place, and ``np.asarray(...).reshape(-1)`` on an already-``float32``
+        array shares memory with ``_initial_command``, so handing it out
+        directly would let one tick's ``target_velocity`` become the command
+        every later episode restores to.
+
+        Raises:
+            ValueError: If a constructor-supplied command's width does not
+                match the width ``command_names`` declares.
+        """
+        width = self._command_width()
+        if self._initial_command is None:
+            return np.zeros(width, dtype=np.float32)
+        cmd = np.asarray(self._initial_command, dtype=np.float32).reshape(-1)
+        if cmd.shape[0] != width:
+            raise ValueError(
+                f"MicroduckPolicy: initial command width {cmd.shape[0]} != "
+                f"expected {width} (from command_names={self._command_names})."
+            )
+        return cmd.copy()
 
     def _command_width(self) -> int:
         """Command vector width - summed from ``command_names``, else the 13-D default."""
