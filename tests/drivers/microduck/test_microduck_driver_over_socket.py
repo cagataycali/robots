@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import time
 
-from mock_robotd import STATE_PARAMS, MockRobotd
-
 from strands_robots.drivers.base import HardwareDriver, missing_driver_members
 from strands_robots.drivers.microduck import (
     HARDWARE_JOINT_NAMES,
@@ -21,6 +19,7 @@ from strands_robots.drivers.microduck import (
     MOUTH_INDEX,
     MicroduckDriver,
 )
+from tests.mocks.microduck_robotd import STATE_PARAMS, MockRobotd
 
 
 def _connected_driver(server: MockRobotd, **kwargs) -> MicroduckDriver:
