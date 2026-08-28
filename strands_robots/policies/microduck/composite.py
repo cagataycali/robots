@@ -13,6 +13,14 @@ the magnitude of the twist command - the same walking<->standing gate Pollen's
 ``infer_policy.py`` uses. Both gate keys must name held skills for that gate to
 fire, so they are checked when it is enabled. The previously active child's
 ``last_action`` history is left intact so returning to a skill resumes cleanly.
+
+Pollen's reference ``infer_policy.py`` also supports **episodic behaviors** -
+short skills like ``kick_left`` / ``kick_right`` / ``roulade`` that run for a
+fixed wall-clock duration and then auto-return to the default skill. Callers
+declare these via ``episodic_skills={"kick_left": 1.2, "roulade": 2.0}`` and
+activate them with :meth:`trigger`. Each tick decrements a timer by
+``1/control_frequency``; when it reaches zero, the bundle reverts to
+``default_skill``. This matches ``_end_behavior`` in the upstream FSM.
 """
 
 from __future__ import annotations
@@ -58,6 +66,8 @@ class MicroduckPolicyBundle(Policy):
         switch_on_velocity: float | None = None,
         move_key: str = "walk",
         idle_key: str = "stand",
+        episodic_skills: dict[str, float] | None = None,
+        default_skill: str | None = None,
     ) -> None:
         if not policies:
             raise ValueError("MicroduckPolicyBundle requires at least one policy.")
@@ -99,6 +109,43 @@ class MicroduckPolicyBundle(Policy):
                 )
         self._move_key = move_key
         self._idle_key = idle_key
+        # Episodic-behavior FSM state (mirrors Pollen `infer_policy.py`).
+        # A caller who omits ``episodic_skills`` gets exactly the previous
+        # velocity-gated bundle: :meth:`trigger` refuses, no timer runs, and
+        # ``get_actions`` never decrements anything. So an ONNX bundle that
+        # never means to kick pays no cost per tick and cannot revert unexpectedly.
+        self._episodic_durations: dict[str, float] = {}
+        if episodic_skills is not None:
+            unknown = [name for name in episodic_skills if name not in self._policies]
+            if unknown:
+                raise ValueError(
+                    f"MicroduckPolicyBundle: episodic_skills names no held skill(s) {unknown!r}; "
+                    f"have {list(self._policies)}. Every episodic skill must be one of policies."
+                )
+            for name, duration in episodic_skills.items():
+                if error := positive_finite_number_error(
+                    duration, f"episodic_skills[{name!r}]", "MicroduckPolicyBundle"
+                ):
+                    raise ValueError(error)
+                self._episodic_durations[name] = float(duration)
+        if default_skill is not None and default_skill not in self._policies:
+            raise ValueError(
+                f"MicroduckPolicyBundle: default_skill={default_skill!r} names no held skill; "
+                f"have {list(self._policies)}."
+            )
+        # Fallback for :meth:`_end_episode`: the caller's declared default,
+        # else the initially-active skill (the same identity the bundle started
+        # in). Never an episodic skill itself, because auto-returning INTO an
+        # episodic skill would immediately arm its timer and never terminate.
+        resolved_default = default_skill if default_skill is not None else self._active
+        if resolved_default in self._episodic_durations:
+            raise ValueError(
+                f"MicroduckPolicyBundle: default_skill={resolved_default!r} is itself an episodic skill; "
+                "auto-return would re-arm the timer immediately."
+            )
+        self._default_skill = resolved_default
+        self._episodic_active: str | None = None
+        self._episodic_time_left: float = 0.0
 
     @property
     def provider_name(self) -> str:
@@ -116,9 +163,49 @@ class MicroduckPolicyBundle(Policy):
         return tuple(self._policies.values())
 
     def switch(self, name: str) -> None:
-        """Select ``name`` as the active skill."""
+        """Select ``name`` as the active skill.
+
+        Cancels any running episodic behavior: :meth:`switch` is the explicit
+        override path, so a caller who names a skill wins over the FSM timer.
+        """
         if name not in self._policies:
             raise ValueError(f"MicroduckPolicyBundle: unknown skill {name!r}; have {list(self._policies)}.")
+        self._active = name
+        self._episodic_active = None
+        self._episodic_time_left = 0.0
+
+    @property
+    def episodic_active(self) -> str | None:
+        """The currently running episodic skill, or ``None`` if none is armed."""
+        return self._episodic_active
+
+    def trigger(self, name: str) -> None:
+        """Arm an episodic behavior; the bundle will run it until its timer ends.
+
+        Args:
+            name: The episodic skill to activate. Must be a key of
+                ``episodic_skills`` passed at construction time.
+
+        Raises:
+            ValueError: If ``name`` is not a declared episodic skill, or if
+                another episodic behavior is already running (matches
+                ``_end_behavior`` gating in Pollen ``infer_policy.py`` - only
+                one behavior at a time; the caller must let it finish or use
+                :meth:`switch` to cancel).
+        """
+        if name not in self._episodic_durations:
+            declared = list(self._episodic_durations)
+            raise ValueError(
+                f"MicroduckPolicyBundle: {name!r} is not a declared episodic skill; "
+                f"have {declared!r}. Pass episodic_skills={{{name!r}: <duration>}} at construction time."
+            )
+        if self._episodic_active is not None:
+            raise ValueError(
+                f"MicroduckPolicyBundle: episodic skill {self._episodic_active!r} is already running "
+                f"({self._episodic_time_left:.3f}s left); let it finish or call switch() to override."
+            )
+        self._episodic_active = name
+        self._episodic_time_left = self._episodic_durations[name]
         self._active = name
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
@@ -133,20 +220,62 @@ class MicroduckPolicyBundle(Policy):
             pol.set_control_frequency(hz)
 
     def reset(self, seed: int | None = None) -> None:
-        """Reset every held skill's per-episode state."""
+        """Reset every held skill's per-episode state and clear the episodic timer."""
         for pol in self._policies.values():
             pol.reset(seed)
+        self._episodic_active = None
+        self._episodic_time_left = 0.0
+        self._active = self._default_skill
 
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
-        """Delegate this tick to the active skill, after any requested switch."""
+        """Delegate this tick to the active skill, after any requested switch.
+
+        Ordering per tick (mirrors Pollen ``infer_policy.py``): an explicit
+        ``select=`` cancels any running episodic behavior (like :meth:`switch`);
+        otherwise if an episodic behavior is running it stays active and the
+        velocity gate is skipped (so the FSM cannot yank a kick mid-episode);
+        otherwise the velocity gate fires. After the active child runs, the
+        episodic timer decrements by ``1/control_frequency`` and, if it hits
+        zero, the bundle reverts to ``default_skill`` for the NEXT tick. The
+        last tick of the episode still executes the episodic skill, so a
+        1.2s / 60-step kick at 50Hz produces 60 kick actions and the 61st
+        tick runs default_skill.
+        """
         select = kwargs.get("select")
         if select is not None:
             self.switch(str(select))
-        elif self._switch_on_velocity is not None:
+        elif self._episodic_active is None and self._switch_on_velocity is not None:
             self._auto_switch(kwargs.get("target_velocity"))
-        return await self._policies[self._active].get_actions(observation_dict, instruction, **kwargs)
+        result = await self._policies[self._active].get_actions(observation_dict, instruction, **kwargs)
+        if self._episodic_active is not None:
+            self._tick_episodic()
+        return result
+
+    def _tick_episodic(self) -> None:
+        """Decrement the episodic timer by one control step; revert on expiry.
+
+        A missing ``control_frequency`` refuses (loudly) rather than silently
+        assuming 50Hz - an assumed rate would mis-time every kick at any other
+        loop rate. The runtime is expected to call :meth:`set_control_frequency`
+        before the rollout, same contract as every other Policy consumer.
+        """
+        if self.control_frequency is None:
+            raise RuntimeError(
+                "MicroduckPolicyBundle: episodic timer requires control_frequency; "
+                "call set_control_frequency(hz) before running an episodic behavior."
+            )
+        dt = 1.0 / self.control_frequency
+        self._episodic_time_left -= dt
+        if self._episodic_time_left <= 0.0:
+            self._end_episode()
+
+    def _end_episode(self) -> None:
+        """Complete the running episodic behavior and revert to ``default_skill``."""
+        self._episodic_active = None
+        self._episodic_time_left = 0.0
+        self._active = self._default_skill
 
     def _auto_switch(self, target_velocity: Any) -> None:
         """Gate move<->idle by twist magnitude, when both keys exist."""
