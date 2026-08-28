@@ -93,6 +93,16 @@ _DEFAULT_COMMAND_WIDTH = 13
 _COMMAND_COMPONENTS = {"twist": 3, "head_pose": 4, "body_pose": 6}
 
 
+#: The component counts :meth:`MicroduckPolicy.get_actions` documents for the
+#: well-known ``target_velocity`` kwarg: ``[vx, vy, omega]`` and ``[vx, vy]``.
+#: Single-sourced so the refusal and the docstring cannot drift apart. The
+#: two-component form is deliberately kept: this policy's command vector
+#: persists across ticks, so "set vx and vy, leave omega" is a coherent request
+#: - which is why the family's other readers, whose command is rebuilt per call,
+#: require three.
+TARGET_VELOCITY_WIDTHS: frozenset[int] = frozenset({2, 3})
+
+
 def _action_scale_error(value: Any, source: str) -> str | None:
     """Return why ``value`` cannot be an action scale, or ``None`` if it can.
 
@@ -247,10 +257,25 @@ class MicroduckPolicy(Policy):
 
         Recognised ``**kwargs``:
 
-        * ``command``: full command vector override for this tick.
-        * ``target_velocity``: ``[vx, vy, omega]`` (or ``[vx, vy]``) written
-          into the twist slots of the command vector - the well-known
-          locomotion goal kwarg.
+        * ``command``: full command vector override for this tick. Must be
+          ``command_names``-wide and finite.
+        * ``target_velocity``: ``[vx, vy, omega]`` (or ``[vx, vy]``, which leaves
+          ``omega`` at its current value) written into the twist slots of the
+          command vector - the well-known locomotion goal kwarg. Must carry
+          finite numbers and one of the two component counts above; any other
+          width is refused rather than truncated or partially written.
+
+        Note that what the twist slots MEAN is a property of the loaded weights,
+        not of this method. Pollen's locomotion exports read them as a velocity,
+        which is what ``target_velocity`` writes; other exports in the family read
+        the same three slots differently, and for those a caller supplies the
+        slots wholesale through ``command``.
+
+        Raises:
+            ValueError: If ``command`` or ``target_velocity`` carries a
+                non-numeric or non-finite component, if ``command`` is not
+                ``command_names``-wide, or if ``target_velocity``'s component
+                count is not in :data:`TARGET_VELOCITY_WIDTHS`.
         """
         self._ensure_config()
         assert self._joint_names is not None and self._default_pose is not None
@@ -333,6 +358,16 @@ class MicroduckPolicy(Policy):
         """Fold per-call command overrides into the running command vector."""
         assert self._command is not None
         if kwargs.get("command") is not None:
+            # Asked before the coercion, for the same two reasons as the sibling
+            # ``target_velocity`` below: a non-numeric element otherwise surfaced
+            # as a bare ``could not convert string to float`` from numpy, naming
+            # neither this policy nor the parameter; and a nan/inf one was
+            # assigned to ``self._command`` and only refused afterwards by
+            # ``build_observation``, so a caller that handled that error and kept
+            # ticking carried the poisoned command into every later tick and every
+            # later episode.
+            if error := finite_vector_error(f"{type(self).__name__}.get_actions", "command", kwargs["command"]):
+                raise ValueError(error)
             new = np.asarray(kwargs["command"], dtype=np.float32).reshape(-1)
             if new.shape[0] != self._command.shape[0]:
                 raise ValueError(
@@ -342,8 +377,33 @@ class MicroduckPolicy(Policy):
             self._command = new
         tv = kwargs.get("target_velocity")
         if tv is not None:
+            # Two sibling providers reading this same well-known goal key hold it
+            # to a domain that names it - ``WBCPolicy._validate_velocity`` and the
+            # ``param_name="target_velocity"`` guard MotionBricks applies on both
+            # its constructor and per-call paths - and this one did not. A
+            # non-finite component WAS still refused, but downstream by
+            # ``build_observation``, which names ``command`` and the assembled
+            # observation rather than the parameter the caller passed. Ask here,
+            # where the caller's own parameter name is still in hand.
+            if error := finite_vector_error(f"{type(self).__name__}.get_actions", "target_velocity", tv):
+                raise ValueError(error)
             tv = np.asarray(tv, dtype=np.float32).reshape(-1)
-            n = min(3, tv.shape[0], self._command.shape[0])
+            # This method documents exactly two spellings for the kwarg,
+            # ``[vx, vy, omega]`` and ``[vx, vy]``, and the write accepted any
+            # width. A longer one was silently truncated to its first three
+            # components; a shorter one wrote only the slots it covered, and the
+            # command vector persists across ticks, so ``target_velocity=[0.3]``
+            # left the PREVIOUS tick's lateral and yaw components commanding the
+            # robot under a reported success. The sibling ``command`` override in
+            # this same method already refuses a width it cannot honor, naming the
+            # expected width and its source; this one now does too.
+            if tv.shape[0] not in TARGET_VELOCITY_WIDTHS:
+                raise ValueError(
+                    f"MicroduckPolicy: target_velocity has {tv.shape[0]} component(s), "
+                    f"expected {' or '.join(f'{w}' for w in sorted(TARGET_VELOCITY_WIDTHS, reverse=True))} "
+                    f"([vx, vy, omega] or [vx, vy])."
+                )
+            n = min(tv.shape[0], self._command.shape[0])
             self._command[:n] = tv[:n]
 
     def _ensure_config(self) -> None:

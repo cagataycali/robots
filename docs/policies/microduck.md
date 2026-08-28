@@ -163,6 +163,24 @@ wholesale with `command=`:
 await policy.get_actions(obs, "", target_velocity=[0.3, 0.0, 0.2])  # vx, vy, ω
 ```
 
+`target_velocity` takes three components (`[vx, vy, omega]`) or two
+(`[vx, vy]`, which leaves `omega` at its current value - the command vector
+persists across ticks). Any other component count is refused rather than
+truncated or partially written, and a `nan`/`inf` component is refused before it
+reaches the command; `command=` must be `command_names`-wide and finite for the
+same reasons.
+
+What the twist slots MEAN, however, is a property of the loaded weights rather
+than of this provider. Pollen's locomotion exports (`alpha_walking`,
+`alpha_stand`, the `roller*` pair) read them as a velocity, which is exactly what
+`target_velocity` writes. Other exports in the family read the same three slots
+differently - `alpha_ground_pick`, for instance, reads them as a progress
+encoding through a one-shot motion rather than as a velocity - and for those a
+caller supplies the slots wholesale through `command=` and advances them itself.
+`target_velocity` is a locomotion kwarg, not a universal one, and the ONNX
+metadata does not distinguish the two: several exports declare the same
+`command_names` (`twist`) while reading it under different conventions.
+
 ## Hot-swapping skills
 
 `MicroduckPolicyBundle` holds several `MicroduckPolicy` instances warm and
