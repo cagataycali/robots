@@ -68,10 +68,14 @@ def _audit_env_reads() -> set[str]:
             "os.environ.get",
         ):
             if node.args and isinstance(node.args[0], ast.Constant):
-                name = node.args[0].value
+                value = node.args[0].value
+                if isinstance(value, str):
+                    name = value
         elif isinstance(node, ast.Subscript) and ast.unparse(node.value) == "os.environ":
             if isinstance(node.slice, ast.Constant):
-                name = node.slice.value
+                value = node.slice.value
+                if isinstance(value, str):
+                    name = value
         if isinstance(name, str) and name.startswith(_AUDIT_PREFIX):
             found.add(name)
     return found
