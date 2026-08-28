@@ -50,6 +50,7 @@ from strands_robots.drivers.registry import (
 #: is the easier direction to read.
 _SHIPPED_DRIVERS: tuple[tuple[str, str, tuple[str, ...] | str], ...] = (
     ("strands_robots.drivers.dynamixel.driver", "DynamixelDriver", "SUPPORTED_ROBOTS"),
+    ("strands_robots.drivers.feetech.driver", "FeetechDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.g1", "G1Driver", ("g1", "unitree_g1")),
     ("strands_robots.drivers.reachy", "ReachyDriver", ("reachy_mini",)),
 )

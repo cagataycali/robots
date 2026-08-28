@@ -57,7 +57,13 @@ from strands_robots.registry import get_robot, list_robots
 #: *deselect* a derived case and still report success, where a literal keeps
 #: running and fails. :class:`TestTheDerivedPopulationIsExactlyThese` grades the
 #: rule itself, so a fifth robot arriving in this position is caught there.
-NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = ("vx300s", "wx250s", "trossen_wxai", "dynamixel_2r")
+NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
+    "vx300s",
+    "wx250s",
+    "trossen_wxai",
+    "dynamixel_2r",
+    "open_duck_mini",
+)
 
 #: Robots that reach the same site with no native driver, so the listing of
 #: lerobot's robot types is the right answer and must survive. Two grippers and

@@ -1,8 +1,11 @@
 """Feetech STS/SCS-series native driver package.
 
-The public surface starts with the wire codec (:mod:`.protocol`); the bus and
-driver skeleton land as separate PRs stacked on this one (see :issue:`360`
-scope 1). Nothing imported from this module opens a serial port.
+The public surface starts with the wire codec (:mod:`.protocol`); the bus
+lands as a separate PR stacked on this one (see :issue:`360` scope 1). The
+driver skeleton (:class:`~strands_robots.drivers.feetech.driver.FeetechDriver`)
+lands here so ``Robot("so101", mode="real", driver="strands")`` picks up a
+native driver instead of raising ``ValueError``; nothing imported from this
+module opens a serial port.
 
 :class:`~strands_robots.drivers.feetech.protocol.ProtocolError` is exported
 alongside the codec because every parser docstring names it as the class a
@@ -12,6 +15,7 @@ package will not hand out is a contract the caller cannot write.
 
 from __future__ import annotations
 
+from strands_robots.drivers.feetech.driver import FeetechDriver
 from strands_robots.drivers.feetech.protocol import (
     BROADCAST_ID,
     HEADER,
@@ -28,6 +32,7 @@ from strands_robots.drivers.feetech.protocol import (
 
 __all__ = [
     "BROADCAST_ID",
+    "FeetechDriver",
     "HEADER",
     "Instruction",
     "MAX_UNICAST_ID",
