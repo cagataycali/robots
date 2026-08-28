@@ -174,11 +174,7 @@ def _non_finite_observation_error(
     bad = np.flatnonzero(~np.isfinite(observation))
 
     nj = len(joint_names)
-    slot_two_name = (
-        "projected_gravity (from base_quat)"
-        if gravity_source == GRAVITY_SOURCE_PROJECTED
-        else "base_acc"
-    )
+    slot_two_name = "projected_gravity (from base_quat)" if gravity_source == GRAVITY_SOURCE_PROJECTED else "base_acc"
     layout: list[tuple[str, int]] = [
         ("base_ang_vel", _BASE_ANG_VEL_LEN),
         (slot_two_name, _GRAVITY_LEN),

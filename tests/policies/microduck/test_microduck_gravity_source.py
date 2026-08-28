@@ -32,7 +32,7 @@ running rollout.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -243,7 +243,7 @@ class _FakeSession:
 
 
 def _make_policy(meta_map: dict[str, str]) -> MicroduckPolicy:
-    return MicroduckPolicy(session=_FakeSession(meta_map))
+    return MicroduckPolicy(session=cast(Any, _FakeSession(meta_map)))
 
 
 def test_policy_reads_gravity_source_from_metadata_and_threads_it() -> None:

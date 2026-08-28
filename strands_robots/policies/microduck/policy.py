@@ -391,11 +391,11 @@ class MicroduckPolicy(Policy):
         # first-inference configuration - the builder does the same check
         # every tick, but this one names the SOURCE that supplied the value.
         if self._gravity_source is None:
-            declared = meta.get("gravity_source")
-            source = declared.strip() if declared else obs_builder.GRAVITY_SOURCE_PROJECTED
+            gravity_declared: str | None = meta.get("gravity_source")
+            source = gravity_declared.strip() if gravity_declared else obs_builder.GRAVITY_SOURCE_PROJECTED
             if source not in obs_builder._GRAVITY_SOURCES:
                 raise ValueError(
-                    f"MicroduckPolicy: ONNX metadata gravity_source={declared!r} is not one "
+                    f"MicroduckPolicy: ONNX metadata gravity_source={gravity_declared!r} is not one "
                     f"of {list(obs_builder._GRAVITY_SOURCES)}. This value is a training-time "
                     f"flag baked into the export (Pollen's use_projected_gravity); the two "
                     f"branches read different base keys (base_quat vs base_acc), so a third "
