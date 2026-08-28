@@ -35,7 +35,12 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from ..utils import finite_number_error, positive_count_error, positive_finite_number_error
+from ..utils import (
+    finite_number_error,
+    finite_vector_error,
+    positive_count_error,
+    positive_finite_number_error,
+)
 
 if TYPE_CHECKING:
     import mujoco
@@ -375,13 +380,34 @@ class MinkIKBridge:
             The solved joint configuration (length ``model.nq``, ``float64``).
             When ``commanded_dofs`` was given, every DOF outside it holds its
             ``q_init`` value exactly, so the caller can realize the answer.
+
+        Raises:
+            ValueError: If ``target_pose`` or ``q_init`` holds a non-finite
+                value. Both are read straight into the solver - the pose becomes
+                the frame task's target and the seed becomes the configuration
+                the QP warm-starts from - so a single ``nan`` or ``inf``
+                propagates through every iteration and *each* joint of the
+                returned configuration comes back non-finite, under a successful
+                return that is shaped exactly like a converged solve. Checked
+                before the configuration is updated, so a refused solve leaves
+                the bridge as it was.
         """
         mink = self._mink
+        pose = np.asarray(target_pose, dtype=np.float64)
         q = np.asarray(q_init, dtype=np.float64).copy()
+        # Both arrays are checked before the configuration is updated and before
+        # the frame target is set, so a refused solve mutates nothing. The pose
+        # is flattened for the check because ``finite_vector_error`` reads a
+        # 2-D argument's *rows* as its elements and would refuse a clean
+        # ``(4, 4)``; the seed is already the 1-D vector that domain expects.
+        if text := finite_vector_error("solve", "target_pose", pose.ravel()):
+            raise ValueError(text)
+        if text := finite_vector_error("solve", "q_init", q):
+            raise ValueError(text)
         self._configuration.update(q)
         self._posture_task.set_target(q)
 
-        target = mink.SE3.from_matrix(np.asarray(target_pose, dtype=np.float64))
+        target = mink.SE3.from_matrix(pose)
         self._frame_task.set_target(target)
 
         for _ in range(self.max_iters):
