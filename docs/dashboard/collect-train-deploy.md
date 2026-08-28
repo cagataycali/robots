@@ -57,13 +57,6 @@ plus gossip); the route budgets 45s. That is slow, not stuck.
 Because a sim twin can follow a **real** leader arm, you can rehearse a
 recording session with no metal moving at all.
 
-> **Status of the Record screen:** the UI panel exists, but `/api/record` does
-> not exist on the server yet. Until it does, `getRecordApi()` returns a mock
-> that behaves like the real thing so the screen is usable and testable - and it
-> shows a banner saying so. Do not expect that panel to write a dataset yet;
-> believe the banner, not the buttons. The endpoints it wants are specified in
-> `FRONTEND_HANDOFF.md`.
-
 ## 2. See what you actually recorded
 
 ```bash

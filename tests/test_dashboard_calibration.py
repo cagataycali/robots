@@ -167,7 +167,7 @@ def test_saved_wins_over_everything_before_it():
     text = (
         "Move so101_follower to the middle of its range of motion and press ENTER....\n"
         "Recording positions. Press ENTER to stop...\n"
-        "Calibration saved to /Users/x/.cache/huggingface/lerobot/calibration/robots/so101_follower/leader_arm.json\n"
+        "Calibration saved to ~/.cache/huggingface/lerobot/calibration/robots/so101_follower/leader_arm.json\n"
     )
     s = step(text, alive=False, returncode=0)
     assert s["step"] == "saved"

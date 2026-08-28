@@ -155,11 +155,11 @@ hopes.
 **Human teleop demos on the real arms are a different rail.** Teleop itself is
 live over the API - point the follower at the leader's stream with
 `POST /api/robots/<follower>/teleop/receive` and watch the counters on
-`GET /api/robots/<follower>/teleop`. What is *not* live yet is recording those
-demos from the UI: the Record panel runs against a mock (it says so in a banner)
-because `/api/record` does not exist on the server yet, so **no dataset is
-written from that screen**. Until it lands, scripted collection above and the
-agent's own recording actions are the two rails that produce real files. Details:
+`GET /api/robots/<follower>/teleop`. Recording those demos from the UI is also
+live: the Record panel probes `/api/record/session` at load and drives the
+session state machine on the server (target episodes, per-episode discard,
+thumbnails, measured fps). The mock fallback only applies if the probe 404s,
+which is a server-side wiring problem rather than an expected state. Details:
 [Collect, train, deploy](collect-train-deploy.md#1-get-episodes-onto-disk).
 
 ## Where things go wrong

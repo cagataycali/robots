@@ -124,10 +124,12 @@ you get a timeout on a healthy run.
 
 **The Record panel shows a banner about a mock**
 
-Believe the banner. `/api/record` does not exist on the server yet, so the panel
-runs against an honest mock: episodes accumulate in the UI and **no dataset is
-written**. Use `POST /api/collect`, or record through the agent, until the
-endpoints in `FRONTEND_HANDOFF.md` land.
+The mock only appears when the frontend's probe of `/api/record/session` 404s,
+so the router did not mount. The record API is real at this head (see
+`strands_robots/dashboard/record_api.py` and its mount in `server.py`); if the
+banner appears, the useful troubleshooting entry is inverse - the server did
+not attach the router. Check the dashboard's log for a load-time error on the
+record module before assuming the panel is a mock.
 
 **A dataset has far fewer frames than the time you spent**
 

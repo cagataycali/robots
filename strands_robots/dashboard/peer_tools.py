@@ -29,6 +29,8 @@ from collections.abc import AsyncGenerator, Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from strands_robots.mesh.security import SIM_CALL_BLOCKED_ACTIONS as SIM_CALL_BLOCKED
+
 # ── classification ──────────────────────────────────────────────────────────
 
 #: Robot kinds a proxy can represent. ``skip`` = build no tool for this peer.
@@ -40,8 +42,9 @@ KIND_SKIP = "skip"
 #: Sim actions the mesh refuses on the sim_call rail (mesh/security.py
 #: SIM_CALL_BLOCKED_ACTIONS): rollouts must ride execute/start, whose
 #: provider/HF-repo/host allowlists would otherwise be bypassed. The proxy
-#: spec must not advertise what the wire will refuse.
-SIM_CALL_BLOCKED: frozenset[str] = frozenset({"run_policy", "start_policy", "replay_episode", "eval_policy"})
+#: spec must not advertise what the wire will refuse. Imported above from
+#: the mesh module so the two literals cannot drift (a divergence is caught
+#: by ``tests/test_dashboard_peer.py::test_sim_blocklist_matches_mesh_security``).
 
 _SIM_TYPES = ("sim", "simulation", "mujoco")
 
@@ -163,7 +166,7 @@ def _sim_input_schema() -> dict[str, Any]:
         schema["properties"]["action"]["description"] = (
             "Published simulation action to invoke on this sim peer. Policy rollouts "
             "(run_policy/start_policy/replay_episode/eval_policy) are not carried on "
-            "this rail — use the execute/start actions of a robot tool instead."
+            "this rail. Use the execute/start actions of a robot tool instead."
         )
         _sim_schema_cache = schema
     return _sim_schema_cache
