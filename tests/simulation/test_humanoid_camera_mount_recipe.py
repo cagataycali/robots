@@ -89,11 +89,21 @@ def _asset_path() -> Path:
     assert info is not None, f"recipe names robot {alias!r}, which the registry does not know"
     asset = info.get("asset") or {}
     assert asset.get("dir") and asset.get("model_xml"), f"{canonical} declares no MuJoCo asset to mount on"
-    for root in get_search_paths():
-        candidate = Path(root) / asset["dir"] / asset["model_xml"]
-        if candidate.is_file():
-            return candidate
-    pytest.skip(f"{canonical} asset is not present in any search path")
+    # One explicit return: a loop that returns and then falls through to
+    # ``pytest.skip`` reads as an implicit ``return None`` to a static
+    # analyser, even though ``skip`` is annotated ``NoReturn``.  Resolving
+    # the candidate first keeps the single exit this function documents.
+    present = next(
+        (
+            candidate
+            for root in get_search_paths()
+            if (candidate := Path(root) / asset["dir"] / asset["model_xml"]).is_file()
+        ),
+        None,
+    )
+    if present is None:
+        pytest.skip(f"{canonical} asset is not present in any search path")
+    return present
 
 
 def _robot_alias() -> str:
