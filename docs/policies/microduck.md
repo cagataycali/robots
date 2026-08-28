@@ -130,6 +130,15 @@ magnitude, so a threshold of `0` or below could never select the idle skill and
 a non-finite one could never select the move skill. Omit it (the default) to
 leave the gate off and switch only explicitly.
 
+`move_key` and `idle_key` name the two skills that gate selects between, and each
+must be one of the bundle's own keys whenever the gate is enabled. The gate reads
+both every tick, so a key naming no held skill leaves it inert rather than
+failing — a bundle keyed by the weight names it loads (`alpha_walking`,
+`alpha_stand`) and left on the defaults `"walk"`/`"stand"` constructs, reports a
+validated threshold, and then never switches. Key by the names the gate expects,
+or pass `move_key=`/`idle_key=` to match the keys you used. With the gate off
+neither is read, and neither is checked.
+
 ## Byte-compatibility
 
 `MicroduckPolicy.infer_raw(obs_vector)` runs the graph on a raw observation with

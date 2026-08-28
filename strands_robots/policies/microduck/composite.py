@@ -10,8 +10,9 @@ Switching is explicit: the caller names the next skill via
 ``get_actions(select=...)`` (or :meth:`switch`). When ``switch_on_velocity`` is
 set, the bundle also auto-selects between a ``move_key`` and an ``idle_key`` by
 the magnitude of the twist command - the same walking<->standing gate Pollen's
-``infer_policy.py`` uses. The previously active child's ``last_action`` history
-is left intact so returning to a skill resumes cleanly.
+``infer_policy.py`` uses. Both gate keys must name held skills for that gate to
+fire, so they are checked when it is enabled. The previously active child's
+``last_action`` history is left intact so returning to a skill resumes cleanly.
 """
 
 from __future__ import annotations
@@ -38,8 +39,13 @@ class MicroduckPolicyBundle(Policy):
             threshold of ``0`` or below can never select ``idle_key`` and a
             non-finite one can never select ``move_key``. Pass ``None`` (the
             default) to leave the gate off.
-        move_key / idle_key: Skill names for the velocity gate (default
-            ``"walk"`` / ``"stand"`` when those keys exist).
+        move_key / idle_key: Skill names the velocity gate selects between.
+            Each must be one of ``policies`` whenever ``switch_on_velocity`` is
+            set, because the gate reads both every tick: a key that names no
+            held skill leaves the gate inert rather than failing, so a bundle
+            keyed by the shipped weight names (``alpha_walking`` /
+            ``alpha_stand``) never switches under the defaults. They are not
+            read at all when the gate is off, and are not checked then.
     """
 
     requires_images = False
@@ -72,6 +78,25 @@ class MicroduckPolicyBundle(Policy):
         ):
             raise ValueError(error)
         self._switch_on_velocity = float(switch_on_velocity) if switch_on_velocity is not None else None
+        if self._switch_on_velocity is not None:
+            # Only the gate reads these two, so a caller who left it off is
+            # never refused for a key the bundle does not look at. With the gate
+            # on, `_auto_switch` returns early for a key that names no held
+            # skill - the whole gate goes inert, including the direction whose
+            # key IS a skill - so the membership `active` is already held to
+            # belongs here too, at the same construction-time seam.
+            unknown = [
+                f"{param}={key!r}"
+                for param, key in (("move_key", move_key), ("idle_key", idle_key))
+                if key not in self._policies
+            ]
+            if unknown:
+                raise ValueError(
+                    f"MicroduckPolicyBundle: {' and '.join(unknown)} names no held skill; "
+                    f"have {list(self._policies)}. switch_on_velocity is set, so the velocity "
+                    "gate reads both keys every tick and cannot select a skill the bundle "
+                    "does not hold."
+                )
         self._move_key = move_key
         self._idle_key = idle_key
 
