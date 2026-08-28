@@ -725,8 +725,8 @@ class G1Driver:
         stop or budget expiry publishes a zero-torque frame before exiting.
         A caller who supplies a callable-style policy via
         :meth:`run_policy` gets the whole loop today; :meth:`start_task` still
-        refuses with a message naming issue #358 because the provider
-        registry is not yet plumbed here (that decision moves with #358 to
+        refuses with a message naming the missing provider registry, which is
+        not yet plumbed here (that decision moves with #358 to
         keep the two concerns separable).
 
         Scope is ``"motion"`` because a task may issue either an arm or a
@@ -740,7 +740,7 @@ class G1Driver:
         if refusal is not None:
             return refusal
         return _refuse(
-            "start_task: provider registry not wired yet (issue #358); "
+            "start_task: provider registry not wired yet; "
             "use run_policy(policy_object=...) to drive the control loop today"
         )
 

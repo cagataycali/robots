@@ -123,10 +123,9 @@ def test_bare_and_owner_qualified_references_are_not_flagged() -> None:
     """Both resolvable spellings must pass, or the rule is blanket strictness."""
     accepted = [
         "see issue #2765 for the wire-side decision",  # bare: this repository
-        "start_task: provider registry not wired yet (issue #358)",  # the sibling convention
         "tracked in strands-labs/robots-sim#46",  # owner-qualified sibling repository
         "see strands-labs/robots#708 for the root-cause analysis",
-        "not wired yet (issue #359 bus)",
+        "see strands-labs/robots-sim#12 while that lands",
     ]
     for text in accepted:
         assert _unresolvable_references(text) == [], f"should not be flagged: {text!r}"

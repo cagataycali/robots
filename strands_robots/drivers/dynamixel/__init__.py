@@ -15,7 +15,8 @@ What this package exposes:
   ``dynamixel_sdk`` as an independent oracle where installed.
 * :mod:`strands_robots.drivers.dynamixel.driver` - :class:`DynamixelDriver`
   satisfying :class:`HardwareDriver`. Writes deliberately do not land yet;
-  ``send_action`` returns a named ``"not wired yet (issue #359 bus)"``
+  ``send_action`` returns a named ``"not wired yet (the Protocol-2.0
+  serial bus)"``
   envelope, in the same shape :class:`G1Driver` uses for its own deferred
   motion path, so a caller writes the same error-checking code either way.
 

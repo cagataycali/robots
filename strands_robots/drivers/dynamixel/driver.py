@@ -20,7 +20,8 @@ what works.
 The surface a caller sees at each stub method is the shape it will hold when
 the bus lands:
 
-* ``send_action`` - refused with ``"not wired yet (issue #359 bus)"``.
+* ``send_action`` - refused with ``"not wired yet (the Protocol-2.0 serial
+  bus)"``.
 * ``start_task`` / ``run_policy`` - refused with the same envelope. There is
   no FSM to gate against on a servo bus (unlike the G1's ``mode_machine``),
   but a caller who plumbed error handling for the deferred G1 path gets to
@@ -75,7 +76,7 @@ _TOOL_TYPE = "robot"
 
 # Refusal reason shared between the four deferred verbs. The literal string is
 # checked in tests, so a change here is a change to the driver contract.
-_NOT_WIRED = "not wired yet (issue #359 bus)"
+_NOT_WIRED = "not wired yet (the Protocol-2.0 serial bus)"
 
 
 class DynamixelDriver:
@@ -150,7 +151,7 @@ class DynamixelDriver:
         """
         return {
             "name": self._tool_name,
-            "description": f"Dynamixel-native driver for {self._tool_name} (Protocol 2.0). Read-only until the bus lands (issue #359).",
+            "description": f"Dynamixel-native driver for {self._tool_name} (Protocol 2.0). Read-only until the serial bus lands.",
             "inputSchema": {
                 "json": {
                     "type": "object",

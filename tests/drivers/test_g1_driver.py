@@ -428,7 +428,7 @@ def test_send_action_reports_motion_not_wired_when_gates_pass() -> None:
 
 
 def test_task_and_policy_paths_report_not_wired_when_gates_pass() -> None:
-    """Every task/policy verb reports the "issue #358" reason honestly.
+    """Every task/policy verb reports its deferral reason honestly.
 
     Shipping the stubs with the right envelope shape means the day motion
     lands nothing on the caller side has to change. ``start_task`` and
@@ -447,7 +447,7 @@ def test_task_and_policy_paths_report_not_wired_when_gates_pass() -> None:
 
     start = driver.start_task("do X", policy_port=8000)
     assert start["status"] == "error"
-    assert "issue #358" in start["content"][0]["text"]
+    assert "provider registry not wired yet" in start["content"][0]["text"]
 
     status = driver.get_task_status()
     assert status["status"] == "success"
@@ -487,8 +487,9 @@ def test_task_paths_refuse_when_not_connected(verb: str) -> None:
     assert result["status"] == "error"
     text = result["content"][0]["text"]
     assert "not connected" in text
-    # The gate ran first, so the "not wired" reason must not be what we see.
-    assert "issue #358" not in text
+    # The gate ran first, so the deferral reason must not be what we see.  Naming
+    # the live phrase keeps this graded: a stale literal would pass vacuously.
+    assert "provider registry not wired yet" not in text
 
 
 @pytest.mark.parametrize("verb", ["start_task", "run_policy"])
@@ -507,7 +508,7 @@ def test_task_paths_refuse_below_battery_floor(verb: str) -> None:
     text = result["content"][0]["text"]
     assert "battery" in text
     assert "4.0%" in text
-    assert "issue #358" not in text
+    assert "provider registry not wired yet" not in text
 
 
 @pytest.mark.parametrize("verb", ["start_task", "run_policy"])
@@ -672,7 +673,8 @@ def test_motion_verbs_admit_a_literally_walkable_fsm(verb: str, fsm: int) -> Non
     Uses literal FSM values rather than a derivation from the composition
     under test, so this survives a maintainer's later decision to tighten
     the ``motion`` pre-flight to the intersection.  The refusal a caller
-    sees is the verb-specific reason (issue #358 for ``start_task``, the
+    sees is the verb-specific reason (the deferred provider registry for
+    ``start_task``, the
     ``policy_object is required`` message for ``run_policy`` fed
     ``None``), never the FSM-refusal reason - the gate ran first and
     passed.
@@ -684,7 +686,7 @@ def test_motion_verbs_admit_a_literally_walkable_fsm(verb: str, fsm: int) -> Non
     driver._battery = {"pct": 92.0, "charging": True, "current": 1.0, "cycle": 0, "t": 0.0}
     if verb == "start_task":
         result = driver.start_task("do X")
-        expected_marker = "issue #358"
+        expected_marker = "provider registry not wired yet"
     else:
         result = driver.run_policy(policy_object=None, instruction="")  # type: ignore[arg-type]
         expected_marker = "policy_object is required"

@@ -280,11 +280,16 @@ def test_stop_task_reports_no_task_when_idle_and_does_not_refuse() -> None:
 def test_start_task_still_returns_the_not_wired_yet_refusal() -> None:
     """``start_task`` is the one verb the docstring may still name.
 
-    The provider registry lives behind issue #358 and its vendoring
-    decision is separate from harness#361. Until that lands,
-    ``start_task`` returns a named refusal pointing at issue #358 and
-    containing the ``not wired yet`` idiom -- so a caller reading the
-    module docstring for that phrase lands here.
+    The provider registry vendoring decision is tracked separately from
+    the transport this driver owns. Until it lands, ``start_task`` returns a
+    named refusal identifying the missing registry and containing the ``not
+    wired yet`` idiom -- so a caller reading the module docstring for that
+    phrase lands here.
+
+    The reason is asserted, not a tracker number: a bare number in a refusal
+    resolves against *this* repository, and the one this assertion used to
+    require ("#358") resolves to a merged pull request about zenoh mock
+    isolation. See tests/test_deferral_strings_do_not_cite_a_landed_change.
 
     The gates are set up to pass so the refusal seen is the
     verb-specific one, not the FSM/battery gate wall.
@@ -299,4 +304,4 @@ def test_start_task_still_returns_the_not_wired_yet_refusal() -> None:
         f"the idiom must move to whatever verb (if any) still carries it, "
         f"or be removed entirely."
     )
-    assert "#358" in text, f"start_task's refusal no longer names issue #358: {text}"
+    assert "provider registry" in text, f"start_task's refusal no longer names the missing provider registry: {text}"
