@@ -356,7 +356,7 @@ def test_the_xfail_reason_quotes_the_shipped_refusal_verbatim() -> None:
     """
     marker = next(
         m
-        for m in test_send_action_returns_success_on_a_healthy_driver_that_has_a_decoded_lowstate.pytestmark
+        for m in test_send_action_returns_success_on_a_healthy_driver_that_has_a_decoded_lowstate.pytestmark  # type: ignore[attr-defined]
         if m.name == "xfail"
     )
     reason = marker.kwargs["reason"]
