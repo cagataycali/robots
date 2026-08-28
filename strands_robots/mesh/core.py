@@ -44,7 +44,7 @@ from strands_robots.mesh.session import (
 from strands_robots.mesh.session import (
     get_peers as _session_get_peers,
 )
-from strands_robots.utils import partial_construction_repr
+from strands_robots.utils import partial_construction_repr, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -3358,6 +3358,26 @@ class Mesh(SensorLoopsMixin):
         # 128-bit turn id -- at 32 bits the birthday-collision window
         # under heavy concurrent RPC load was practical (~65k turns
         # before 50% collision); 128 bits removes that surface entirely.
+        # A wait budget only a positive finite number can honor. The
+        # ``robot_mesh`` tool already holds this same parameter to
+        # ``positive_finite_number_error`` and its domain docstring names *this*
+        # method as the consumer ("every action that reads it hands it to a
+        # threading.Event wait ... Only a positive finite number can be
+        # honored"), so a caller reaching Mesh directly - a test, a third-party
+        # integration, anything that imports Mesh - got no such check. That is
+        # the same tool-vs-library gap the ``validate_command`` call below closes
+        # for ``cmd``, left open for the budget.
+        #
+        # It is refused HERE, before the turn is registered and before
+        # ``publish``, because every unusable spelling still put the command on
+        # the wire and only then failed: ``nan`` and a negative make
+        # ``Event.wait`` return immediately, so the caller is handed
+        # ``{"status": "timeout"}`` after ~0.01ms while the peer is executing;
+        # ``inf`` and a string raise OverflowError / TypeError out of a method
+        # whose contract is to return this envelope; ``True`` is silently a
+        # one-second budget.
+        if text := positive_finite_number_error(timeout, "timeout", "Mesh.send"):
+            return {"status": "error", "error": text}
         turn = uuid.uuid4().hex
         event = threading.Event()
         with self._rpc_lock:
@@ -3413,6 +3433,19 @@ class Mesh(SensorLoopsMixin):
             cmd = _security.validate_command(cmd)
         except _security.ValidationError as exc:
             logger.warning("[mesh] %s: broadcast rejected client-side: %s", self.peer_id, exc)
+            return []
+        # Same wait-budget domain ``send`` applies, reported the way this method
+        # already reports a client-side rejection: its return type is
+        # ``list[dict]`` (responses), so there is no structured slot for an
+        # error - log the reason and return no responses.
+        #
+        # The window matters more here than for a single ``send``: the comment
+        # on the wait below explains that it deliberately spans the FULL budget
+        # so an operator can distinguish "1 of 12 stopped" from "all stopped".
+        # An unusable budget defeats exactly that - ``nan`` returns immediately
+        # and reports an empty fleet for a broadcast that did go out.
+        if text := positive_finite_number_error(timeout, "timeout", "Mesh.broadcast"):
+            logger.warning("[mesh] %s: broadcast rejected client-side: %s", self.peer_id, text)
             return []
         turn = uuid.uuid4().hex
         event = threading.Event()
