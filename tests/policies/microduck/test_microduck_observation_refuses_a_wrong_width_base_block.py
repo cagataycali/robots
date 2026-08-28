@@ -240,15 +240,22 @@ class TestWhatIsDeliberatelyLeftAlone:
         )
         assert vector.shape[0] == _FIXED_OBS_WIDTH - _N_JOINTS + 1 + _ALPHA_COMMAND_WIDTH
 
-    def test_a_non_finite_block_is_not_refused_here(self) -> None:
-        """Finiteness is a separate axis, refused at the action seam (#2882).
+    def test_the_finiteness_axis_is_no_longer_left_alone(self) -> None:
+        """The boundary this class pinned has moved, deliberately.
 
-        Recorded rather than fixed: this change is about the width contract the
-        builder's own docstring states.
+        This cell recorded finiteness as "a separate axis, refused at the action
+        seam (#2882)". The first half was right and is why it is a separate
+        change. The second half named a refusal that does exist and blames the
+        wrong party: #2882 holds the graph's RETURNED action to the domain, so a
+        caller's ``nan`` propagated through the graph and came back as
+        ``'the ONNX action'`` - the checkpoint reported for a number the caller
+        supplied. The builder now refuses it first, naming the block.
+
+        The two axes stay independent: a wrong width is still reported by width,
+        which the rest of this file holds.
         """
-        vector = _build(base_quat=(float("nan"), 0.0, 0.0, 0.0))
-        assert vector.shape[0] == _FIXED_OBS_WIDTH + _ALPHA_COMMAND_WIDTH
-        assert not bool(np.all(np.isfinite(vector)))
+        with pytest.raises(ValueError, match=r"projected_gravity \(from base_quat\)"):
+            _build(base_quat=(float("nan"), 0.0, 0.0, 0.0))
 
 
 class TestBothBlocksRouteThroughTheOneReader:
