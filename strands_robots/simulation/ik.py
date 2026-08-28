@@ -363,8 +363,31 @@ class MinkIKBridge:
         Returns:
             The end-effector frame's absolute ``(4, 4)`` homogeneous pose
             (``float64``).
+
+        Raises:
+            ValueError: If ``qpos`` holds a non-finite value. The configuration
+                is applied rather than forwarded - it is the state forward
+                kinematics is evaluated at - so a single ``nan`` or ``inf``
+                reaches the returned pose, which comes back with a non-finite
+                translation under a successful return shaped exactly like a
+                reachable pose. Every consumer then inherits it: a
+                ``norm(ee[:3, 3] - target)`` residual is ``nan``, and
+                ``nan <= threshold`` is ``False``, so a convergence test never
+                fires; a closed loop that composes a delta onto this pose and
+                solves for it is refused by :meth:`solve` naming
+                ``target_pose``, an argument the caller never supplied. Checked
+                before the configuration is updated, so a refused call leaves
+                the bridge as it was.
         """
-        self._configuration.update(np.asarray(qpos, dtype=np.float64))
+        q = np.asarray(qpos, dtype=np.float64)
+        # Checked before the configuration is updated, so a refused call mutates
+        # nothing. ``solve`` holds its own seed to this same domain; this is the
+        # third public method reading a joint configuration and was the only one
+        # that did not, which is why a bad value surfaced at the *next* solve
+        # under another argument's name.
+        if text := finite_vector_error("ee_pose", "qpos", q):
+            raise ValueError(text)
+        self._configuration.update(q)
         transform = self._configuration.get_transform_frame_to_world(self.ee_frame_name, self.ee_frame_type)
         return np.asarray(transform.as_matrix(), dtype=np.float64)
 
