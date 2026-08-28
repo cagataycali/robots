@@ -301,7 +301,10 @@ class TestBothBlocksRouteThroughTheOneReader:
         # is the projected-gravity block (from ``base_quat``) or the raw
         # accelerometer verbatim, chosen by ``gravity_source``.  All three
         # floating-base reads route through the width-holding reader.
-        assert sorted(keys) == ["base_acc", "base_ang_vel", "base_quat"], keys
+        # Deduplicated: ``base_quat`` is read on BOTH branches now (the raw-accel
+        # estimator falls back to the rotation), and the property here is that
+        # every base key goes through the reader, not that each is read once.
+        assert sorted(set(keys)) == ["base_acc", "base_ang_vel", "base_quat"], keys
 
     def test_the_widths_come_from_the_named_constants(self) -> None:
         """Not restated at the call site, so the layout has one account."""
@@ -318,7 +321,7 @@ class TestBothBlocksRouteThroughTheOneReader:
         # accelerometer contract.  Each of the three keys is held to the
         # width its observation block defines through a named constant, so
         # a layout change has one place to touch.
-        assert sorted(widths) == ["_BASE_ACC_LEN", "_BASE_ANG_VEL_LEN", "_BASE_QUAT_LEN"], widths
+        assert sorted(set(widths)) == ["_BASE_ACC_LEN", "_BASE_ANG_VEL_LEN", "_BASE_QUAT_LEN"], widths
         assert obs_mod._BASE_ANG_VEL_LEN == 3
         assert obs_mod._BASE_QUAT_LEN == 4
         assert obs_mod._BASE_ACC_LEN == 3
@@ -370,11 +373,26 @@ class TestThePremisesTheDefectRestedOn:
         cos = float(np.clip(np.dot(right, wrong) / (np.linalg.norm(right) * np.linalg.norm(wrong)), -1.0, 1.0))
         assert np.degrees(np.arccos(cos)) > min_tilt_deg
 
-    def test_nothing_in_this_module_reads_a_norm(self) -> None:
-        """So the norm drift is not a signal anything acts on."""
+    def test_the_only_norm_this_module_reads_is_the_accelerometer_estimator(self) -> None:
+        """So the norm drift is still not a signal anything acts on.
+
+        :func:`raw_accel_gravity` reads a norm to turn the accelerometer into the
+        unit gravity direction Pollen's ``get_raw_accelerometer`` returns - the
+        estimator's own arithmetic, on a block whose width the reader already
+        held. Nothing reads a norm to JUDGE a block, so a wrong-width
+        ``base_quat`` still produces no signal any code acts on, which is the
+        premise the measurement above rests on.
+        """
         source = inspect.getsource(obs_mod)
-        assert "linalg.norm" not in source
-        assert "This module never normalises." in source
+        norm_readers = sorted(
+            node.name
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and "linalg.norm" in ast.unparse(node)
+        )
+        assert norm_readers == ["raw_accel_gravity"], norm_readers
+        # Whitespace-normalised: the claim spans a line wrap in the docstring, so a
+        # raw substring match would grade the wrapping rather than the sentence.
+        assert "This module never rescales the assembled vector." in " ".join(source.split())
 
     def test_the_sibling_locomotion_builder_holds_the_same_block_to_a_width(self) -> None:
         """The in-package convention this builder was the exception to."""

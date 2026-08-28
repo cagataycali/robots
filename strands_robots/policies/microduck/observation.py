@@ -9,10 +9,11 @@ The layout is a fixed concatenation (measured off Pollen's reference
 ``observation_names`` metadata)::
 
     base_ang_vel        (3)
-    projected_gravity   (3)   world -Z rotated into the base frame from
-                              ``base_quat``.  A ``gravity_source="raw_accel"``
-                              export reads ``base_acc`` (3, m/s^2) verbatim
-                              into this slot instead - the choice is
+    projected_gravity   (3)   a UNIT gravity direction in the base frame. A
+                              ``projected_gravity`` export rotates world -Z
+                              from ``base_quat``; a ``gravity_source="raw_accel"``
+                              export estimates the same direction from
+                              ``base_acc`` (3, m/s^2). The choice is
                               training-time and baked into the ONNX metadata.
     joint_pos_relative  (14)  current joint pos - DEFAULT_POSE, contract order
     joint_vel           (14)  contract order
@@ -26,7 +27,10 @@ command slots stay PRESENT and zero (the dead-weight rule) so one obs layout
 serves every policy in a bundle.
 
 CRITICAL: ``EmpiricalNormalization`` is baked INTO the exported ONNX graph, so
-the vector built here is fed RAW to the session. This module never normalises.
+the vector built here is fed RAW to the session. This module never rescales the
+assembled vector. The one normalisation it performs is inside
+:func:`raw_accel_gravity`, and that is the ``raw_accel`` export's own estimator -
+Pollen returns a unit gravity direction there - rather than a scaling choice.
 """
 
 from __future__ import annotations
@@ -52,14 +56,22 @@ _BASE_ACC_LEN = 3
 #: Component count of the projected-gravity block ``base_quat`` is reduced to.
 _GRAVITY_LEN = 3
 
-#: The two ONNX ``gravity_source`` values ``build_observation`` accepts.  Slot
-#: two of the vector is either the projected-gravity block (world ``-Z`` rotated
-#: into the base frame from ``base_quat``) or the raw accelerometer reading
-#: (``base_acc``, m/s^2) verbatim.  Older Pollen exports and some backlash
-#: variants ship with ``raw_accel``; every currently-shipped alpha policy is
-#: ``projected_gravity``, which is why that stays the default when the metadata
-#: is silent.  Both spellings are exactly the two ``self.use_projected_gravity``
-#: branches Pollen's own ``get_observations`` selects between.
+#: Magnitude below which the negated accelerometer carries no usable direction
+#: and :func:`raw_accel_gravity` rotates ``base_quat`` instead. Pollen's own
+#: threshold; free fall reads ``|accel| = 0`` and lands here.
+_RAW_ACCEL_MIN_MAGNITUDE = 0.1
+
+#: The two ONNX ``gravity_source`` values ``build_observation`` accepts. Slot two
+#: of the vector is a UNIT gravity direction in the base frame either way: the
+#: ``projected_gravity`` branch rotates world ``-Z`` from ``base_quat``, and the
+#: ``raw_accel`` branch estimates the same direction from the accelerometer (see
+#: :func:`raw_accel_gravity`). They are two estimators of ONE quantity, not two
+#: quantities - on a settled duck they agree to 1e-6. Older Pollen exports and
+#: some backlash variants ship with ``raw_accel``; every currently-shipped alpha
+#: policy is ``projected_gravity``, which is why that stays the default when the
+#: metadata is silent. Both spellings are exactly the two
+#: ``self.use_projected_gravity`` branches Pollen's own ``get_observations``
+#: selects between.
 GRAVITY_SOURCE_PROJECTED = "projected_gravity"
 GRAVITY_SOURCE_RAW_ACCEL = "raw_accel"
 _GRAVITY_SOURCES: tuple[str, ...] = (GRAVITY_SOURCE_PROJECTED, GRAVITY_SOURCE_RAW_ACCEL)
@@ -83,6 +95,44 @@ def quat_rotate_inverse(quat: NDArray[np.float32], vec: NDArray[np.float32]) -> 
 def projected_gravity(base_quat: NDArray[np.float32]) -> NDArray[np.float32]:
     """World ``-Z`` expressed in the base frame, from the base quaternion (wxyz)."""
     return quat_rotate_inverse(base_quat, _WORLD_GRAVITY)
+
+
+def raw_accel_gravity(base_acc: NDArray[np.float32], base_quat: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Gravity direction estimated from the accelerometer, as Pollen derives it.
+
+    A resting IMU measures the reaction to gravity, so the NEGATED reading points
+    along gravity, and normalising it gives the same UNIT direction
+    :func:`projected_gravity` derives from the orientation. Pollen's
+    ``get_raw_accelerometer`` is exactly that - negate, normalise, and, when the
+    magnitude is too small to carry a direction, rotate world ``-Z`` instead:
+
+        accel_negated = -accel_raw
+        mag = np.linalg.norm(accel_negated)
+        if mag > 0.1:
+            return accel_negated / mag
+        else:
+            return self.quat_rotate_inverse(quat, world_gravity)
+
+    So the two ``gravity_source`` branches are two estimators of ONE quantity. On
+    a settled duck (``|accel| = 9.81``) they agree to 1e-6. Writing ``base_acc``
+    into slot two unchanged instead hands the network a vector 9.81x too long
+    with every component sign-flipped, and a robot in free fall
+    (``|accel| = 0``) a zero vector carrying no direction at all - both finite,
+    both the documented width, and neither what the export was trained on.
+
+    Args:
+        base_acc: Accelerometer reading (3, m/s^2) in the base frame.
+        base_quat: Base orientation (4, wxyz). Read only for the degenerate
+            fallback, which is why this path requires it.
+
+    Returns:
+        A unit ``float32`` gravity direction in the base frame.
+    """
+    negated = -np.asarray(base_acc, dtype=np.float32)
+    magnitude = float(np.linalg.norm(negated))
+    if magnitude > _RAW_ACCEL_MIN_MAGNITUDE:
+        return (negated / magnitude).astype(np.float32)
+    return projected_gravity(base_quat)
 
 
 def _require_base_block(observation_dict: dict[str, Any], key: str, expected_len: int) -> NDArray[np.float32]:
@@ -228,8 +278,9 @@ def build_observation(
         gravity_source: Which reading fills slot two of the vector.
             ``"projected_gravity"`` (default) rotates world ``-Z`` into the
             base frame from ``base_quat`` (the shipped alpha convention);
-            ``"raw_accel"`` reads ``base_acc`` verbatim (older exports, some
-            backlash variants).  Both are the two branches Pollen's own
+            ``"raw_accel"`` estimates the same unit direction from ``base_acc``
+            (older exports, some backlash variants) - see
+            :func:`raw_accel_gravity`.  Both are the two branches Pollen's own
             ``get_observations`` selects between under
             ``self.use_projected_gravity``; the choice is a training-time flag
             baked into the export, so ``MicroduckPolicy`` reads it out of the
@@ -246,6 +297,10 @@ def build_observation(
 
     Raises:
         KeyError: If a required joint / base key is absent from the obs dict.
+            ``raw_accel`` needs BOTH ``base_acc`` and ``base_quat``, because the
+            degenerate-reading fallback is the rotation; requiring it up front
+            refuses at the first tick rather than at the moment the robot leaves
+            the ground.
         ValueError: If ``base_ang_vel`` or the ``gravity_source`` block is not
             the width its observation block defines (3 and 4 for ``base_quat``,
             3 for ``base_acc``). Both are read into fixed slots of the returned
@@ -271,12 +326,18 @@ def build_observation(
     if gravity_source == GRAVITY_SOURCE_PROJECTED:
         grav = projected_gravity(_require_base_block(observation_dict, "base_quat", _BASE_QUAT_LEN))
     else:
-        # ``raw_accel``: slot two is the accelerometer reading verbatim, no
-        # rotation and no normalisation - Pollen's ``get_raw_accelerometer``
-        # returns ``sensordata`` for the IMU as-is, and any scaling the export
-        # expects lives inside the fused normaliser baked into the ONNX graph
-        # (the same reason ``projected_gravity`` is not normalised here).
-        grav = _require_base_block(observation_dict, "base_acc", _BASE_ACC_LEN)
+        # ``raw_accel``: the accelerometer is a second ESTIMATOR of the same unit
+        # gravity direction, not a second quantity - Pollen's
+        # ``get_raw_accelerometer`` negates, normalises, and falls back to the
+        # rotation for a degenerate reading. See :func:`raw_accel_gravity`. This
+        # is the one normalisation this module performs, and it is the export's
+        # own contract rather than a scaling choice: the fused
+        # ``EmpiricalNormalization`` inside the graph is still the only thing
+        # that rescales the assembled vector.
+        grav = raw_accel_gravity(
+            _require_base_block(observation_dict, "base_acc", _BASE_ACC_LEN),
+            _require_base_block(observation_dict, "base_quat", _BASE_QUAT_LEN),
+        )
 
     joint_pos = np.array([float(observation_dict[name]) for name in joint_names], dtype=np.float32)
     joint_pos_rel = joint_pos - np.asarray(default_pose, dtype=np.float32)

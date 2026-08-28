@@ -24,6 +24,7 @@ from .observation import (
     decode_action,
     projected_gravity,
     quat_rotate_inverse,
+    raw_accel_gravity,
 )
 from .policy import (
     MICRODUCK_DEFAULT_POSE,
@@ -41,5 +42,6 @@ __all__ = [
     "build_observation",
     "decode_action",
     "projected_gravity",
+    "raw_accel_gravity",
     "quat_rotate_inverse",
 ]

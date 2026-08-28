@@ -2,8 +2,10 @@
 
 Pollen's reference ``scripts/infer_policy.py`` supports two ``get_observations``
 branches at slot two of the 61-D vector: ``projected_gravity`` (world ``-Z``
-rotated into the base frame from ``base_quat``) and ``raw_accel`` (the
-accelerometer's ``sensordata`` verbatim).  The choice is a training-time flag
+rotated into the base frame from ``base_quat``) and ``raw_accel`` (the same unit
+direction estimated from the accelerometer - ``get_raw_accelerometer`` negates
+the reading, normalises it, and rotates ``base_quat`` when the magnitude is too
+small to carry a direction).  The choice is a training-time flag
 (``self.use_projected_gravity``) baked into the export, and every currently
 shipped alpha policy is ``projected_gravity``.  ``build_observation``, before
 this change, unconditionally rotated ``base_quat``; a ``raw_accel`` export fed
@@ -13,7 +15,9 @@ resulting drift was silent - the network kept producing plausible actions.
 This file grades the four contracts the switch has to satisfy:
 
 1. ``build_observation(..., gravity_source="raw_accel")`` reads ``base_acc`` (3)
-   and writes it VERBATIM into slot two.  No rotation, no scaling, no sign flip.
+   and ``base_quat`` (4) and writes the UNIT gravity direction Pollen's
+   ``get_raw_accelerometer`` derives from them into slot two.  Both branches
+   estimate ONE quantity: for a resting reading they agree to 1e-6.
 2. The same call refuses a missing ``base_acc`` key with the shared
    :func:`~strands_robots.utils.finite_vector_error`-style contract that
    ``_require_base_block`` already applies to ``base_quat``.
@@ -44,6 +48,7 @@ from strands_robots.policies.microduck import (
     MICRODUCK_JOINT_NAMES,
     MicroduckPolicy,
     build_observation,
+    projected_gravity,
 )
 
 
@@ -77,36 +82,160 @@ def _command_zeros(width: int = 13) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def test_raw_accel_writes_base_acc_verbatim_into_slot_two() -> None:
-    """``gravity_source="raw_accel"`` reads ``base_acc`` and places it in slot two unchanged.
+def _pollen_raw_accelerometer(accel: Any, quat: Any) -> np.ndarray:
+    """Pollen's ``get_raw_accelerometer``, transcribed from ``infer_policy.py``.
 
-    Slot two spans indices 3..5 (base_ang_vel is 0..2).  A ``base_acc`` of
-    ``[0.5, -1.25, 9.81]`` (a lightly-non-canonical acceleration a hardware
-    IMU might report) has to appear at exactly those indices.  The floating
-    point comparison is byte-identical (``==``) rather than
-    :func:`numpy.testing.assert_allclose` because the pre-change ``base_quat``
-    path went through ``quat_rotate_inverse`` and produced a slot two that
-    was 0.999...-something; a ``raw_accel`` implementation that quietly
-    normalises or rotates the vector would still be ``allclose`` but would
-    fail this cell.
+    Stated locally rather than imported so the cells below grade the shipped
+    estimator against a second, independent statement of the reference instead
+    of against itself.
     """
-    accel = np.array([0.5, -1.25, 9.81], dtype=np.float32)
-    obs = _base_dict(extra={"base_acc": accel.tolist()})
+    negated = -np.asarray(accel, dtype=np.float32)
+    magnitude = float(np.linalg.norm(negated))
+    if magnitude > 0.1:
+        return np.asarray(negated / magnitude, dtype=np.float32)
+    q = np.asarray(quat, dtype=np.float32)
+    world_gravity = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+    t = np.cross(q[1:4], world_gravity) * 2.0
+    return np.asarray(world_gravity - q[0] * t + np.cross(q[1:4], t), dtype=np.float32)
 
+
+def _slot_two(obs: dict[str, Any], source: str) -> np.ndarray:
+    """Build the vector and return slot two (indices 3..5)."""
     vector = build_observation(
         obs,
         joint_names=list(MICRODUCK_JOINT_NAMES),
         default_pose=np.array(MICRODUCK_DEFAULT_POSE, dtype=np.float32),
         last_action=_last_action_zeros(),
         command=_command_zeros(),
-        gravity_source=GRAVITY_SOURCE_RAW_ACCEL,
+        gravity_source=source,
     )
-
     assert vector.dtype == np.float32
     # 48 layout components + 13 command = 61-D alpha vector, unchanged.
     assert vector.shape == (61,)
-    # Slot two: indices 3..5 = base_acc verbatim.
-    np.testing.assert_array_equal(vector[3:6], accel)
+    return np.asarray(vector[3:6], dtype=np.float32)
+
+
+def test_raw_accel_writes_the_unit_gravity_direction_not_the_reading() -> None:
+    """``gravity_source="raw_accel"`` negates and normalises ``base_acc`` into slot two.
+
+    Slot two spans indices 3..5 (base_ang_vel is 0..2).  Pollen's
+    ``get_raw_accelerometer`` returns ``-accel / |accel|`` for a usable reading,
+    so the block is a UNIT gravity direction - the same quantity the
+    ``projected_gravity`` branch derives from the orientation, in the same units.
+
+    Writing the reading unchanged instead puts a vector ``|accel|``-times too
+    long, with every component sign-flipped, into a slot the export was trained
+    to receive a unit direction in.  Both are finite and both are the documented
+    width, so nothing downstream refuses either; this cell is what makes the
+    difference observable at all.
+    """
+    accel = np.array([0.5, -1.25, 9.81], dtype=np.float32)
+    obs = _base_dict(extra={"base_acc": accel.tolist()})
+
+    slot_two = _slot_two(obs, GRAVITY_SOURCE_RAW_ACCEL)
+
+    np.testing.assert_allclose(slot_two, _pollen_raw_accelerometer(accel, (1.0, 0.0, 0.0, 0.0)), rtol=0, atol=1e-6)
+    assert np.isclose(float(np.linalg.norm(slot_two)), 1.0, atol=1e-6)
+    # Not the reading: the scale and every sign differ.
+    assert not np.allclose(slot_two, accel)
+    assert float(np.linalg.norm(accel)) > 9.0
+
+
+@pytest.mark.parametrize(
+    "accel",
+    [
+        (0.5, -1.25, 9.81),
+        (-9.1296, 0.0001, 3.5898),  # the settled duck's own reading, measured in sim
+        (0.0, 0.0, 9.81),
+        (1e-3, -2e-3, 4e-3),  # |accel| = 4.6e-3, below the 0.1 threshold: the fallback
+        (3.0, 4.0, 0.0),
+    ],
+    ids=["non-canonical", "settled-duck", "canonical-up", "degenerate", "planar"],
+)
+def test_the_shipped_estimator_matches_pollens_for_every_reading(accel: tuple[float, ...]) -> None:
+    """Slot two equals the reference estimator for usable AND degenerate readings.
+
+    The reference is stated locally in :func:`_pollen_raw_accelerometer`, so this
+    is a parity check against a second statement of Pollen's algorithm rather
+    than a restatement of the implementation.  The ``degenerate`` row is below
+    the ``0.1`` magnitude threshold and therefore exercises the rotation
+    fallback through the same seam.
+    """
+    # Exactly unit in float32 (0.6^2 + 0.8^2 == 1.0), so the rotation preserves
+    # the norm and a 1e-6 unit-length assertion is a real check rather than a
+    # tolerance for the fixture's own rounding.
+    quat = (0.6, 0.0, 0.8, 0.0)
+    obs = _base_dict(base_quat=quat, extra={"base_acc": list(accel)})
+
+    slot_two = _slot_two(obs, GRAVITY_SOURCE_RAW_ACCEL)
+
+    np.testing.assert_allclose(slot_two, _pollen_raw_accelerometer(accel, quat), rtol=0, atol=1e-6)
+    assert np.isclose(float(np.linalg.norm(slot_two)), 1.0, atol=1e-6)
+
+
+def test_the_two_branches_agree_for_a_resting_reading() -> None:
+    """A resting IMU makes the two ``gravity_source`` branches one quantity.
+
+    At rest the accelerometer measures the reaction to gravity, so its reading is
+    ``-g`` times the projected-gravity direction.  Feeding that reading to the
+    ``raw_accel`` branch has to reproduce the ``projected_gravity`` branch's slot
+    two - which is what "two estimators of one quantity" means, and what makes a
+    ``raw_accel`` export interchangeable with an alpha export on the same robot.
+
+    Measured in sim on a settled duck the two agree to 1e-6; this cell states the
+    same property without needing MuJoCo.
+    """
+    quat = (0.6, 0.0, 0.8, 0.0)  # exactly unit in float32
+    projected = projected_gravity(np.array(quat, dtype=np.float32))
+    resting_reading = (-9.81 * projected).astype(np.float32)
+
+    from_quaternion = _slot_two(_base_dict(base_quat=quat), GRAVITY_SOURCE_PROJECTED)
+    from_accelerometer = _slot_two(
+        _base_dict(base_quat=quat, extra={"base_acc": resting_reading.tolist()}),
+        GRAVITY_SOURCE_RAW_ACCEL,
+    )
+
+    np.testing.assert_allclose(from_accelerometer, from_quaternion, rtol=0, atol=1e-6)
+
+
+def test_a_degenerate_reading_falls_back_to_the_rotation_rather_than_a_zero_block() -> None:
+    """An all-zero ``base_acc`` yields the rotated direction, not a zero vector.
+
+    Free fall reads ``|accel| == 0``: the accelerometer carries no direction at
+    all.  Pollen rotates ``base_quat`` in that case, so slot two stays a unit
+    vector.  Passing the reading through unchanged would hand the network a zero
+    block - finite, the documented width, and pointing nowhere.
+    """
+    quat = (0.6, 0.0, 0.8, 0.0)  # exactly unit in float32
+    obs = _base_dict(base_quat=quat, extra={"base_acc": [0.0, 0.0, 0.0]})
+
+    slot_two = _slot_two(obs, GRAVITY_SOURCE_RAW_ACCEL)
+
+    np.testing.assert_allclose(slot_two, projected_gravity(np.array(quat, dtype=np.float32)), rtol=0, atol=1e-6)
+    assert np.isclose(float(np.linalg.norm(slot_two)), 1.0, atol=1e-6)
+    assert not np.allclose(slot_two, np.zeros(3, dtype=np.float32))
+
+
+def test_raw_accel_requires_base_quat_for_the_fallback() -> None:
+    """The ``raw_accel`` path refuses a dict with no ``base_quat``, at the first tick.
+
+    The degenerate-reading fallback is the rotation, so this branch needs the
+    orientation as well as the accelerometer.  Requiring it up front means a
+    caller is refused on tick one rather than at the moment the robot leaves the
+    ground, which is the worst time to discover a missing key.
+    """
+    obs = _base_dict(extra={"base_acc": [0.5, -1.25, 9.81]})
+    del obs["base_quat"]
+
+    with pytest.raises(KeyError):
+        build_observation(
+            obs,
+            joint_names=list(MICRODUCK_JOINT_NAMES),
+            default_pose=np.array(MICRODUCK_DEFAULT_POSE, dtype=np.float32),
+            last_action=_last_action_zeros(),
+            command=_command_zeros(),
+            gravity_source=GRAVITY_SOURCE_RAW_ACCEL,
+        )
 
 
 def test_raw_accel_refuses_a_missing_base_acc_key() -> None:
