@@ -280,6 +280,99 @@ def check_cuda() -> str:
         return _warn("torch not installed (needed for policy inference)", note="uv pip install torch")
 
 
+def _driver_compute_arch() -> int | None:
+    """Architecture the CUDA driver reports for device 0, as an ``sm_NN`` integer.
+
+    Read through ``torch.cuda.get_device_capability``, which queries the driver
+    for the device's own properties rather than reporting anything about the
+    build torch was compiled for.
+
+    Returns:
+        The device architecture (``110`` for an ``sm_110`` GPU), or ``None`` when
+        there is no CUDA device to ask about - including when torch, the one
+        driver query this module has, is not installed.
+    """
+    try:
+        import torch
+    except ImportError:
+        return None
+    if not torch.cuda.is_available():
+        return None
+    major, minor = torch.cuda.get_device_capability(0)
+    return major * 10 + minor
+
+
+def _warp_cuda_report() -> tuple[tuple[int, ...], int, tuple[int, int], tuple[int, int]] | None:
+    """What the installed Warp build reports about CUDA device 0.
+
+    Returns:
+        A ``(supported_archs, chosen_arch, toolkit_version, driver_version)``
+        tuple, or ``None`` when Warp is not installed - it ships in the
+        ``sim-newton`` extra - or when it can see no CUDA device to report on.
+    """
+    try:
+        warp = importlib.import_module("warp")
+    except ImportError:
+        return None
+    if not warp.is_cuda_available() or warp.get_cuda_device_count() < 1:
+        return None
+    supported = tuple(int(arch) for arch in warp.get_cuda_supported_archs())
+    chosen = int(warp.get_device("cuda:0").arch)
+    toolkit = warp.get_cuda_toolkit_version()
+    driver = warp.get_cuda_driver_version()
+    return supported, chosen, (int(toolkit[0]), int(toolkit[1])), (int(driver[0]), int(driver[1]))
+
+
+def check_warp_arch() -> str:
+    """Warp's build can compile for the GPU architecture the driver reports.
+
+    Warp chooses a device's architecture out of the table its binary was built
+    with, so a build older than the GPU compiles for a different architecture
+    rather than refusing. On an NVIDIA Thor - the driver reports ``sm_110`` - the
+    CUDA-12 build offers a table with no ``110`` in it and settles on ``sm_101``,
+    and nothing says so: a simple kernel still returns the right answer, so the
+    substitution surfaces only once a kernel needs something ``sm_101`` cannot
+    express.
+
+    The verdict is about the arch table Warp reports rather than about the wheel
+    the environment was installed from. A wheel tag cannot answer it: PyPI's
+    filenames carry no local version segment, so one release's CUDA-12 and
+    CUDA-13 builds are indistinguishable by name, while the table is the value
+    Warp itself reads.
+
+    Only Warp is asked here. torch reports an arch list too, but a torch build
+    without the device's arch compiles from PTX instead - a documented fallback
+    that still produces the right answer - and ``check_cuda`` already reports
+    torch's posture.
+    """
+    device_arch = _driver_compute_arch()
+    if device_arch is None:
+        return _skip("Warp arch: no CUDA device to compare against")
+    report = _warp_cuda_report()
+    if report is None:
+        return _skip("Warp arch: warp not installed (sim-newton extra)")
+    supported, chosen, toolkit, driver = report
+    built_for = f"CUDA {toolkit[0]}.{toolkit[1]}"
+
+    if device_arch in supported:
+        return _pass(f"Warp targets sm_{device_arch} (built against {built_for})")
+
+    # Name the arch Warp settled on rather than deriving it. The substitution is
+    # not the nearest supported arch below the device's - a table offering both
+    # 101 and 103 settled on 101 for an sm_110 device - so a computed value here
+    # would describe a rule Warp does not follow.
+    return _fail(
+        f"Warp is built against {built_for}, whose arch table has no sm_{device_arch}, "
+        f"so it compiles for sm_{chosen} on this sm_{device_arch} device",
+        fix=(
+            f"Install the Warp build for CUDA {driver[0]}, the driver's own version: take the wheel "
+            f"whose version carries a '+cu{driver[0]}' tag from "
+            "https://github.com/NVIDIA/warp/releases (pip install --force-reinstall --no-deps <url>). "
+            "PyPI serves one build per release, so its wheel may not be the one this driver needs."
+        ),
+    )
+
+
 def check_serial_permissions() -> str:
     """Serial port permissions for real hardware."""
     if platform.system() != "Linux":
@@ -391,6 +484,7 @@ def run_doctor() -> int:
         ("MuJoCo GL", check_mujoco_gl),
         ("LeRobot", check_lerobot),
         ("CUDA/GPU", check_cuda),
+        ("Warp Arch", check_warp_arch),
         ("Serial", check_serial_permissions),
         ("HF Auth", check_hf_auth),
         ("Mesh", check_mesh),
