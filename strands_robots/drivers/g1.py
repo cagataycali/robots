@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any, cast
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.tools.g1._motion_switcher import FSMReading, read_fsm_id
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -205,6 +206,7 @@ class G1Driver:
         port: str | None = None,
         network_interface: str = "eth0",
         battery_floor_pct: float = _BATTERY_FLOOR_PCT,
+        motion_switcher_client_factory: Callable[[str], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` does the DDS work.
@@ -229,6 +231,19 @@ class G1Driver:
             battery_floor_pct: Percentage below which :meth:`send_action`
                 refuses to write. The floor is separate from the FSM gate so
                 a caller can see which check refused.
+            motion_switcher_client_factory: Callable taking the network
+                interface and returning an open ``MotionSwitcherClient``.
+                Injected so a unit test can hand in a recording double
+                without patching the SDK module (mirrors the seam
+                :mod:`strands_robots.tools.g1._motion_switcher` already
+                names: ``read_fsm_id`` accepts any object with a callable
+                ``CheckMode`` attribute, so the factory only has to return
+                that shape).  ``None`` selects the default lazy loader,
+                which imports :class:`MotionSwitcherClient` on first call
+                and opens it against ``network_interface`` -- module-load
+                hygiene preserved.  Kept keyword-only so the factory
+                argument does not silently collide with the positional set
+                the driver-base contract fixes.
             **kwargs: Ignored; accepted so the factory can forward extras
                 without the driver knowing what they are.
 
@@ -275,6 +290,33 @@ class G1Driver:
         # real frame.
         self._mode_machine: int | None = None
         self._fsm_id: int | None = None
+
+        # Motion-switcher wiring for the FSM producer.  The factory is called
+        # exactly once inside :meth:`_refresh_fsm_id` (lazy, on the first
+        # motion-gate check), and its return is cached on
+        # :attr:`_motion_switcher_client`.  A ``None`` factory selects the
+        # default lazy loader that imports and opens the real SDK client
+        # against :attr:`_network_interface`; injecting a factory bypasses
+        # both the import and the DDS bring-up, which is how the unit tests
+        # drive the wire without ``unitree_sdk2py``.  See issue #2765 for the
+        # wire-format decisions this producer answers, and
+        # :mod:`strands_robots.tools.g1._motion_switcher` for the decoder it
+        # feeds.
+        self._motion_switcher_client_factory: Callable[[str], Any] | None = (
+            motion_switcher_client_factory
+        )
+        self._motion_switcher_client: Any | None = None
+        # ``_last_fsm_reading`` carries the most recent :class:`FSMReading` so
+        # a caller inspecting :meth:`get_status` sees the mode label and the
+        # refusal reason (if any) alongside the integer id -- the two questions
+        # ``FSMReading`` separates.  ``None`` before the first refresh.
+        self._last_fsm_reading: FSMReading | None = None
+        # ``_motion_switcher_open_error`` records the reason the factory
+        # refused (SDK missing, transport failed).  Kept separate from
+        # ``_last_fsm_reading.refusal`` because a client that never opened is
+        # a different question from a client that opened but declined to
+        # report an FSM.  Both surfaces are named in :meth:`get_status`.
+        self._motion_switcher_open_error: str | None = None
 
         # Populated by :meth:`connect_eagerly`. ``None`` on a machine that
         # never connected - a valid state for tests and imports.
@@ -505,6 +547,24 @@ class G1Driver:
                         "fsm_id": self._fsm_id,
                         "mode_machine": self._mode_machine,
                         "battery_pct": (self._battery or {}).get("pct"),
+                        # Motion-switcher wire diagnostics.  ``mode_name`` is
+                        # the label the SDK reports (``""`` when no mode is
+                        # selected, otherwise ``"ai"`` / ``"normal"`` / ...);
+                        # ``fsm_refusal`` names why the last ``CheckMode``
+                        # decode declined, if it did; ``motion_switcher_open_error``
+                        # names why the client itself never opened.  All
+                        # three are ``None`` on the happy path.
+                        "fsm_mode_name": (
+                            self._last_fsm_reading.mode_name
+                            if self._last_fsm_reading is not None
+                            else None
+                        ),
+                        "fsm_refusal": (
+                            self._last_fsm_reading.refusal
+                            if self._last_fsm_reading is not None
+                            else None
+                        ),
+                        "motion_switcher_open_error": self._motion_switcher_open_error,
                     }
                 }
             ],
@@ -584,6 +644,122 @@ class G1Driver:
     # Command path.                                                      #
     # ------------------------------------------------------------------ #
 
+    def _open_motion_switcher_client(self) -> Any | None:
+        """Return the cached motion-switcher client, opening it on first call.
+
+        The default factory imports :class:`MotionSwitcherClient` lazily and
+        opens it against :attr:`_network_interface`, so no ``unitree_sdk2py``
+        touch happens until the first motion-gate check.  An injected factory
+        (the test seam) is called the same way; either way the return is
+        cached on :attr:`_motion_switcher_client` so subsequent gates reuse
+        the same open client.
+
+        Failures are recorded on :attr:`_motion_switcher_open_error` rather
+        than raised, so :meth:`_refresh_fsm_id` can turn a missing SDK or a
+        failed ``Init`` into the same "FSM id unknown" gate refusal the
+        driver already ships -- one wire-side blocker, one caller-visible
+        message.
+
+        Returns:
+            The open client, or ``None`` if the factory raised or refused.
+        """
+        if self._motion_switcher_client is not None:
+            return self._motion_switcher_client
+        try:
+            if self._motion_switcher_client_factory is not None:
+                client = self._motion_switcher_client_factory(self._network_interface)
+            else:
+                # Default: lazy-import the SDK and open a client against the
+                # driver's own NIC.  ``ChannelFactoryInitialize`` has already
+                # been called by :class:`DDSSubscriberSet.start` (which
+                # :meth:`connect_eagerly` runs before any motion write), so
+                # opening the client does not double-init the bus.  The
+                # actual argument ``MotionSwitcherClient()`` takes is
+                # ``domain_id`` on the current SDK; the network interface is
+                # bound at ``ChannelFactoryInitialize`` time rather than per
+                # client, so it is not forwarded here.  Kept as a positional
+                # ``()`` call to match the SDK's own example, and to leave
+                # room for a domain-id kwarg if the SDK adds one.
+                import importlib
+
+                module = importlib.import_module(
+                    "unitree_sdk2py.comm.motion_switcher.motion_switcher_client"
+                )
+                client_cls = module.MotionSwitcherClient
+                client = client_cls()
+                # ``Init`` is the SDK's own bring-up hook; every G1 example
+                # calls it right after construction.  A client that never
+                # ran ``Init`` returns ``(status != 0, {})`` from
+                # ``CheckMode``, which decodes to a named refusal in
+                # :func:`read_fsm_id` -- so a missing ``Init`` is a
+                # diagnosable failure, not a silent one.
+                init = getattr(client, "Init", None)
+                if callable(init):
+                    init()
+        except Exception as exc:  # noqa: BLE001 - the SDK's failures are opaque
+            self._motion_switcher_open_error = (
+                f"motion-switcher client could not be opened: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            logger.debug(
+                "%s: motion-switcher factory refused: %s",
+                self._tool_name,
+                self._motion_switcher_open_error,
+            )
+            return None
+        self._motion_switcher_client = client
+        self._motion_switcher_open_error = None
+        return client
+
+    def _refresh_fsm_id(self) -> None:
+        """Update :attr:`_fsm_id` from one ``CheckMode()`` reading.
+
+        Called at the top of :meth:`_check_motion_gates` so every motion
+        write reads the current FSM rather than a stale cache.
+        :func:`read_fsm_id` returns an :class:`FSMReading`; on the OK branch
+        the id is written to :attr:`_fsm_id` (which is what the gate compares
+        against :data:`HANDSHAKE_FSMS` and :data:`WALK_FSMS`), and on every
+        branch the full reading is stashed on :attr:`_last_fsm_reading` so a
+        caller inspecting :meth:`get_status` sees the mode label and the
+        refusal reason.
+
+        A refused reading leaves :attr:`_fsm_id` at its previous value: the
+        gate's ``_fsm_id is None`` refusal still fires on the first refresh
+        that fails, and a transient RPC failure on a later refresh leaves the
+        last-known FSM in place rather than opening a gap in the gate.  That
+        matches the SDK's own example, which caches ``mode_machine`` on
+        first ``LowState`` and does not clear it when a later frame is
+        malformed.
+
+        Both branches are non-raising: an SDK-side failure or a shape
+        ``CheckMode`` never returns is turned into a named refusal in
+        :class:`FSMReading` (or into :attr:`_motion_switcher_open_error` when
+        the client never opened), so the gate reports the reason rather than
+        crashing a control loop mid-step.  Issue #2765 tracks the wire-side
+        decision that the read-shape here is graded against.
+        """
+        client = self._open_motion_switcher_client()
+        if client is None:
+            # ``_motion_switcher_open_error`` carries the reason; the gate's
+            # ``_fsm_id is None`` refusal fires below.  No reading to stash.
+            return
+        reading = read_fsm_id(client)
+        self._last_fsm_reading = reading
+        if reading.fsm_id is not None:
+            self._fsm_id = reading.fsm_id
+        elif reading.mode_name == "" and reading.refusal is None:
+            # Explicit "no motion mode selected" reading (the SDK's own
+            # high-level-released state).  ``fsm_id=None`` is the honest
+            # answer: the gate should refuse until a mode is selected, and a
+            # previous non-None cache from before ``ReleaseMode()`` would
+            # otherwise silently open the gate.  Clear it.
+            self._fsm_id = None
+        # A refused reading (``reading.refusal is not None``) leaves
+        # ``_fsm_id`` unchanged: a transient CheckMode() failure on the tenth
+        # step of a rollout should not clobber the id the previous nine
+        # frames wrote to.  The refusal is on ``_last_fsm_reading`` for
+        # ``get_status`` to surface.
+
     def _check_motion_gates(self, scope: str) -> dict[str, Any] | None:
         """Return a refusal envelope if a motion write is not safe, else ``None``.
 
@@ -610,6 +786,15 @@ class G1Driver:
             return _refuse("not connected - call connect_eagerly() first")
         if self._mode_machine is None:
             return _refuse("mode_machine unknown - lowstate has not delivered yet")
+        # Refresh the FSM id from the motion-switcher API before consulting
+        # it.  The refresh is idempotent: no client → no reading, refused
+        # reading → previous value kept, OK reading → new value.  See
+        # :meth:`_refresh_fsm_id` for the branch semantics.  Called here (top
+        # of the gate) so every motion write reads the current FSM, and
+        # ordered before the ``_fsm_id is None`` check so a fresh read on
+        # the first gate call flips that refusal on the same call rather
+        # than only on the second.
+        self._refresh_fsm_id()
         if self._fsm_id is None:
             # ``_fsm_id`` arrives from the motion-switcher API rather than
             # ``rt/lowstate``; ``LowState_.mode_machine`` is uint8 and cannot
