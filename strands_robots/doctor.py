@@ -342,18 +342,38 @@ def check_hf_auth() -> str:
 
 
 def check_sim_smoke() -> str:
-    """Run Robot('so100') -> step -> get_observation as a smoke test."""
+    """Run Robot('so100') -> step -> get_observation -> release as a smoke test.
+
+    The release is part of what this check verifies, not housekeeping after it.
+    ``get_observation`` opens a MuJoCo GL context to render the robot's cameras,
+    and a context left to the finalizer is freed during interpreter teardown -
+    after EGL has already been de-initialised - so MuJoCo's own
+    ``Renderer.__del__`` writes an ``Exception ignored in`` traceback to stderr.
+    That lands beside this command's "All checks passed" verdict, which is the
+    one place a new reader looks for a signal that their setup is sound.
+
+    ``cleanup`` is the release verb rather than ``with``: it is the one every
+    object :func:`strands_robots.Robot` can return carries, because the hardware
+    wrapper implements no context-manager protocol.
+    """
     try:
         # Suppress mesh warnings during doctor
         os.environ.setdefault("STRANDS_MESH", "false")
         from strands_robots import Robot
 
         sim = Robot("so100")
-        sim.step()
-        obs = sim.get_observation("so100")
-        if obs and len(obs) > 0:
-            return _pass(f"sim smoke test: Robot('so100') works ({len(obs)} obs keys)")
-        return _fail("sim smoke test: observation empty")
+        try:
+            sim.step()
+            obs = sim.get_observation("so100")
+            if obs and len(obs) > 0:
+                return _pass(f"sim smoke test: Robot('so100') works ({len(obs)} obs keys)")
+            return _fail("sim smoke test: observation empty")
+        finally:
+            # Released here rather than left to the finalizer, and deliberately
+            # not swallowed: a sim that cannot be released is a real defect on
+            # this machine, and the verdict this check reports covers the whole
+            # lifecycle it drives.
+            sim.cleanup()
     except Exception as e:
         return _fail(f"sim smoke test failed: {e}", fix="Check MUJOCO_GL and mujoco install")
 

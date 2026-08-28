@@ -313,6 +313,15 @@ class TestDoctorDegradedPaths:
             def get_observation(self, _name: str) -> dict:
                 return {}
 
+            def cleanup(self) -> None:
+                """Present because every object ``Robot()`` returns carries it.
+
+                A double without it would let ``check_sim_smoke``'s release fail
+                with ``AttributeError``, so this cell would still see a ``FAIL``
+                and pass for a reason that has nothing to do with an empty
+                observation.
+                """
+
         monkeypatch.setattr(strands_robots, "Robot", _EmptyObsRobot)
         result = check_sim_smoke()
         assert "  FAIL  " in result
