@@ -184,16 +184,22 @@ that hides.  The variables:
 - **`STRANDS_MESH_AUDIT_DIR`** *(optional; default: `~/.strands_robots/`,
   under which `mesh_audit.jsonl` is written)*.  Overrides the write path for
   the JSONL file.  The directory must be writable by the process that hosts
-  the mesh; a peer whose process cannot open the file refuses to start the
-  auditor, rather than running with the audit trail silently off.  A symlink
-  at the log path is refused - the audit log must be a regular file at the
-  canonical location, so an attacker cannot redirect writes to `/dev/null`
-  or a file owned by another process.
+  the mesh, and an unusable destination does **not** stop the peer: a write
+  error is logged at WARNING and swallowed, because an audit-log failure must
+  never propagate into the safety code path that emitted the event.  So the
+  posture to plan for when relocating this variable is a peer that keeps
+  running with the audit trail off, emitting one `[audit]` WARNING per dropped
+  record - `[audit] failed to write` from the write itself.  Monitor that
+  line; a running mesh does not imply a written trail.  A symlink at the log
+  path is refused - the audit log must be a regular file at the canonical
+  location, so an attacker cannot redirect writes to `/dev/null` or a file
+  owned by another process - and that refusal reaches the operator through the
+  same swallowed WARNING, not as a failure to start.
 - **`STRANDS_MESH_AUDIT_PSK`** *(optional; when set, per-record HMAC is on)*.
   A pre-shared key that keys the SHA-256 HMAC written into each record's
-  `hmac` field.  With the PSK set, `verify_audit_integrity` refuses a record
+  `sig` field.  With the PSK set, `verify_audit_integrity` refuses a record
   whose HMAC does not match the running key, and refuses the whole log if the
-  PSK changes between records.  Without the PSK the `hmac` field is absent
+  PSK changes between records.  Without the PSK the `sig` field is absent
   and the check step trusts the file: an attacker with write access to
   `STRANDS_MESH_AUDIT_DIR` could edit a record and leave no HMAC to fail
   against.  Set the PSK on every peer that writes to the same directory.
