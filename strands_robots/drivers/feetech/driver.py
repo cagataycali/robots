@@ -72,7 +72,6 @@ SUPPORTED_ROBOTS: tuple[str, ...] = (
     "so100",
     "so101",
     "lekiwi",
-    "moss",
     "hope_jr",
     "open_duck_mini",
 )

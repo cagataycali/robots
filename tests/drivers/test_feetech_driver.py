@@ -30,6 +30,7 @@ from strands_robots.drivers import (
 )
 from strands_robots.drivers.feetech import FeetechDriver
 from strands_robots.drivers.feetech.driver import _NOT_WIRED, SUPPORTED_ROBOTS
+from strands_robots.registry import get_robot
 
 # ============================================================================
 # Surface.
@@ -75,6 +76,28 @@ class TestSurface:
                 f"the driver's not-wired refusal cannot reach a caller who cannot build it. "
                 f"Currently registered: {registered}"
             )
+
+    def test_every_supported_robot_is_one_the_registry_carries(self) -> None:
+        """The other half of the chain the cell above names.
+
+        Resolving to :class:`FeetechDriver` is registration; the factory reads
+        the *registry* before it builds anything, so a name this tuple declares
+        and ``robots.json`` omits resolves to the driver and then raises
+        ``ValueError: Unknown robot`` - the refusal the cell above says this
+        driver exists to remove. ``"moss"`` was such a name: it appeared in
+        exactly one place in the package, this tuple, with no registry entry
+        and no lerobot type.
+
+        Graded tree-wide over every shipped driver by
+        ``tests/test_driver_seam.py``; kept here too because this tuple is
+        where a name is added.
+        """
+        unregistered = [name for name in SUPPORTED_ROBOTS if get_robot(name) is None]
+        assert not unregistered, (
+            f"SUPPORTED_ROBOTS names robots the registry does not carry: {unregistered}. "
+            "Each resolves to FeetechDriver and then fails the factory's own lookup, so "
+            "the driver advertises a robot no caller can build."
+        )
 
 
 # ============================================================================

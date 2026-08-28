@@ -26,6 +26,7 @@ and no arm moves.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import strands_robots.drivers as drivers_mod
 import strands_robots.drivers.registry as drivers_registry_mod
 import strands_robots.registry.robots as registry_robots_mod
 from strands_robots import Robot
@@ -46,13 +48,19 @@ from strands_robots.drivers import (
     missing_driver_members,
     register_native_driver,
     resolve_driver,
+    shipped_robot_names,
 )
-from strands_robots.registry import get_driver
+from strands_robots.registry import get_driver, get_robot
 from strands_robots.registry.loader import _validate
 
 # A robot every real-mode test builds. Registered, has a lerobot type, and its
 # driver comes from the default rather than a declaration.
 _ROBOT = "so101"
+
+# A name no registry entry carries, used to drive the two halves of the seam
+# apart on purpose. Must stay absent from robots.json for that cell to mean
+# anything, which the cell asserts before it relies on it.
+_UNREGISTERED_ROBOT = "not_a_registered_robot"
 
 
 @pytest.fixture(autouse=True)
@@ -282,6 +290,75 @@ class TestAskingForANativeDriverThatIsNotThere:
         register_native_driver("unitree_g1", _CompleteDriver)
         with pytest.raises(ValueError, match="unitree_g1"):
             Robot(_ROBOT, mode="real", driver="strands", port="/dev/null")
+
+
+class TestEveryAdvertisedRobotIsOneTheFactoryCanBuild:
+    """A driver may only advertise a robot the registry carries.
+
+    Registration and resolution are two halves of one chain. The seam maps a
+    canonical name to a driver class; the factory maps that same name to a
+    registry entry before it builds anything. A name present in the first and
+    absent from the second registers cleanly, reports itself through
+    ``list_native_drivers()``, and then raises ``ValueError: Unknown robot`` at
+    the call the driver exists to serve -- the exact refusal
+    :class:`TestAskingForANativeDriverThatIsNotThere` grades from the other
+    side.
+
+    ``FeetechDriver`` shipped naming ``"moss"``, which appeared in exactly one
+    place in the package: its own ``SUPPORTED_ROBOTS``. No registry entry, no
+    lerobot type, no asset. The driver's own comment above that tuple states
+    the invariant this class now measures -- "Every entry corresponds to a
+    canonical name in ``strands_robots/registry/robots.json``" -- and its next
+    sentence gives the disposition: "registering for a robot we cannot verify
+    is a promise this driver does not yet keep."
+
+    Derived from :data:`~strands_robots.drivers._SHIPPED_DRIVERS` through the
+    same :func:`~strands_robots.drivers.shipped_robot_names` helper the
+    registration itself uses, so the sixth driver is held to this the hour it
+    lands rather than inheriting an exemption by being absent from a list.
+    """
+
+    @staticmethod
+    def _advertised() -> list[tuple[str, str]]:
+        """Every ``(driver class, canonical name)`` the shipped table declares."""
+        pairs: list[tuple[str, str]] = []
+        for module_path, class_name, names in drivers_mod._SHIPPED_DRIVERS:
+            module = importlib.import_module(module_path)
+            for canonical in shipped_robot_names(module, names):
+                pairs.append((class_name, canonical))
+        return pairs
+
+    def test_the_derivation_reaches_every_shipped_driver(self) -> None:
+        """Non-vacuity: an empty or truncated table would pass silently."""
+        pairs = self._advertised()
+        classes = {cls for cls, _ in pairs}
+        assert len(drivers_mod._SHIPPED_DRIVERS) >= 5, drivers_mod._SHIPPED_DRIVERS
+        assert len(classes) == len(drivers_mod._SHIPPED_DRIVERS), classes
+        assert len(pairs) >= 10, pairs
+
+    def test_every_advertised_name_resolves_in_the_registry(self) -> None:
+        """The relation itself: advertised implies registered."""
+        unregistered = [(cls, name) for cls, name in self._advertised() if get_robot(name) is None]
+        assert not unregistered, (
+            f"these drivers advertise robots the registry does not carry: {unregistered}. "
+            "Each one registers cleanly and then raises ValueError('Unknown robot') from "
+            "Robot(name, mode='real', driver='strands'). Either register the robot or stop "
+            "advertising it."
+        )
+
+    def test_an_advertised_name_that_is_not_registered_is_refused_by_the_factory(self) -> None:
+        """Why the relation matters: the two halves disagreeing is a hard refusal.
+
+        Registers a complete driver for a name no registry entry carries and
+        drives the call the seam exists to serve. The driver resolves; the
+        factory refuses. That pair is the failure the relation above prevents.
+        """
+        register_native_driver(_UNREGISTERED_ROBOT, _CompleteDriver)
+        assert get_native_driver_class(_UNREGISTERED_ROBOT) is _CompleteDriver
+        assert get_robot(_UNREGISTERED_ROBOT) is None
+
+        with pytest.raises(ValueError, match="Unknown robot"):
+            Robot(_UNREGISTERED_ROBOT, mode="real", driver="strands", port="/dev/null")
 
 
 class TestBuildingARegisteredNativeDriver:
