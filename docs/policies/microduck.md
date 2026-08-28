@@ -32,7 +32,11 @@ python examples/microduck/render_video.py \
 `render_video.py` steps the sim manually at the control frequency and captures
 each frame with a tracking camera locked to the pelvis, so the duck stays
 centered as it walks. `--vx`/`--vy`/`--vyaw` set the twist command, and any
-shipped weight (`alpha_stand`, `roulade`, `ball_kick_*`, …) drops straight in.
+weight that runs on the default scene (`alpha_stand`, `roulade`,
+`alpha_sitstand`, `alpha_ground_pick`) drops straight in. The script builds
+`Robot("microduck")`, so the four skills that need a different scene -
+`roller`, `roller_crouch`, `ball_kick_left`, `ball_kick_right` - need the
+scene named for them in [Skill scenes](#skill-scenes) below.
 
 
 ## Install
@@ -65,6 +69,61 @@ sim.run_policy(
 
 See [`examples/microduck/microduck_walk_sim.py`](https://github.com/strands-labs/robots/blob/main/examples/microduck/microduck_walk_sim.py)
 for the runnable script.
+
+## Skill scenes
+
+A shipped weight and the scene it was trained in are one pair. `Robot("microduck")`
+resolves the entry's declared asset - flat ground, no props - which is what the
+walking, standing, sitstand, roulade and ground-pick skills need. Four skills
+need something the default scene does not contain, and Pollen ships the scene
+for each one in the same asset directory:
+
+| skill | scene | what the scene adds |
+| --- | --- | --- |
+| `alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `alpha_ground_pick` | `scene.xml` (the entry's declared asset) | nothing - flat ground |
+| `roller`, `roller_crouch` | `scene_rollers.xml` | four passive ankle wheels, so the feet can roll |
+| `ball_kick_left`, `ball_kick_right` | `scene_ball.xml` | a 70 mm, 15 g ball placed in front of the duck |
+
+Reach a non-default scene by path. The registry entry names the fourteen-hinge
+model deliberately - it is the layout the catalog documents - so the variants are
+loaded as an explicit asset rather than resolved by name:
+
+```python
+from pathlib import Path
+
+from strands_robots import Robot
+from strands_robots.policies.microduck import MicroduckPolicy
+from strands_robots.utils import get_search_paths
+
+scene = next(
+    candidate
+    for root in get_search_paths()
+    if (candidate := Path(root) / "microduck" / "scene_rollers.xml").exists()
+)
+sim = Robot("microduck", urdf_path=str(scene))
+sim.reset()
+sim.run_policy(policy_object=MicroduckPolicy(onnx_path="roller.onnx"), duration=8.0)
+```
+
+Running a skill on the default scene is not an error and reports success: a
+roller policy writes the same fourteen control targets, and with no wheels under
+the feet the duck simply stands; a ball-kick policy swings at a ball that is not
+there. Nothing refuses it, so the scene is the caller's to choose.
+
+### Reading joint positions on the rollers scene
+
+`scene_ball.xml` appends the ball's free joint after the robot's, so the robot's
+`qpos` layout is byte-for-byte the default one. `scene_rollers.xml` does not:
+it inserts two passive wheel joints after `left_ankle` and two more after
+`right_ankle`, which moves nine of the fourteen actuated joints to a different
+`qpos` index. A consumer that reads a flat `qpos[7:21]` slice therefore reads
+different joints there - the two left wheels arrive where `neck_pitch` and
+`head_pitch` sit on the default scene.
+
+The actuator order is identical across all three scenes, so a policy writing
+`ctrl` is unaffected, and `MicroduckPolicy` reads its observation by joint name
+rather than by slice, so the provider is immune either way. Only a raw position
+read has to care.
 
 ## The observation contract
 
