@@ -27,25 +27,28 @@ depending on which entry point a caller used.
 Each documented contract now has exactly one owner. `solve` refuses a pose that
 is not `(4, 4)` and holds `q_init` to `model.nq` through `pose_vector_error`,
 the shared fixed-length domain, which also subsumes the per-component
-finiteness check it replaces. `ee_pose` holds `qpos` to the same length.
+finiteness check it replaces. `ee_pose` holds `qpos` through the same member.
 `solve_trajectory` and `tracking_error` inherit both refusals, because they
 solve and read forward through those two methods - putting the checks in the
 callers instead would leave a direct `solve` or `ee_pose` caller unguarded.
 `tracking_error`'s `qpos_traj` is a caller's own array, and every row of it is
 read back through `ee_pose`.
 
-Two scope decisions are measured rather than assumed. The pose's shape cannot be
-delegated to the shared fixed-length domain: `pose_vector_error(..., 16)`
+One scope decision is measured rather than assumed: the pose's shape cannot be
+delegated to the shared fixed-length domain. `pose_vector_error(..., 16)`
 accepts a `(2, 8)` array, because sixteen components is what it counts and that
 is not what `matrix[:3, :3]` / `matrix[:3, 3]` slicing needs, so the shape is a
-local check and the component domain still owns the values. And `ee_pose` gets
-the length **only**, while `solve` keeps the full per-component domain: a
-non-finite seed in `ee_pose` is already a *visible* reading - twelve of the
-returned pose's sixteen entries come back non-finite and `tracking_error`
-reports `{"mean_mm": nan, "max_mm": nan}` - whereas in `solve` it is not. The
-cost splits the same way. The per-component domain reads each element in Python,
-which is 8.44 us against a 22.9 us `ee_pose`, 37% of the call it would guard,
-and 0.25% of `solve`'s 3.4 ms; the length comparison is 0.095 us.
+local check and the component domain still owns the values.
+
+The seed and the configuration need no such decision, because one member covers
+both halves of what they document. `finite_vector_error("ee_pose", "qpos",
+np.zeros(6))` returns `None` on a nine-joint model, so the component domain
+alone would have accepted a wrong length; `pose_vector_error` is the
+fixed-length wrapper over that same domain, so "`model.nq` finite numbers" is
+checked once rather than as two spellings of half of it. The cost is 8.44 us
+against `solve`'s 3.4 ms - 0.25% of a call, and 0.224% of a closed-loop step by
+#2879's own measurement, since every `ee_pose` consumer pairs it with a solve or
+a norm.
 
 No shipped caller is affected: `move_to` builds its target as `np.eye(4)` and
 seeds from `data.qpos`, and the VERA action path builds its seed from
