@@ -47,7 +47,12 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.policies.microduck import MICRODUCK_JOINT_NAMES
-from strands_robots.utils import boolean_flag_error, finite_number_error
+from strands_robots.utils import (
+    boolean_flag_error,
+    finite_number_error,
+    positive_count_error,
+    positive_finite_number_error,
+)
 
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
@@ -473,13 +478,46 @@ class MicroduckDriver:
             api_version: API version to send in the Hello handshake, pinned to
                 :data:`MICRODUCK_API_VERSION`. A robotd answering a different
                 version is refused, not mis-parsed.
-            timeout: Socket and request timeout in seconds.
-            subscribe_hz: State-stream decimation. ``None`` = every control tick.
+            timeout: Socket and request timeout in seconds. A positive, finite
+                number: it is handed to ``socket.settimeout`` and to the reply
+                wait, neither of which can report what it was given.
+            subscribe_hz: State-stream decimation. ``None`` = every control tick;
+                otherwise a positive integer, because it is sent to robotd as one.
             **kwargs: Ignored; accepted so the factory can forward extras.
+
+        Raises:
+            ValueError: If ``timeout`` is not a positive finite number, or
+                ``subscribe_hz`` is neither ``None`` nor a positive integer.
+                Raised here rather than returned from
+                :meth:`connect_eagerly`, which is declared ``-> str | None``:
+                a value the transport cannot use is not a connection this
+                driver can degrade to reporting.
         """
         del cameras, data_config
         if kwargs:
             logger.debug("MicroduckDriver ignoring extra kwargs: %s", sorted(kwargs))
+
+        # The two transport knobs are held to the shared numeric domains for
+        # the same reason the actuation flags are held to ``boolean_flag_error``:
+        # each reaches a consumer that cannot report what it was handed.
+        # ``timeout`` goes to ``socket.settimeout`` and to the reply wait, so a
+        # ``nan``, an ``inf``, a negative or a numeric string raised out of
+        # :meth:`connect_eagerly` from inside the socket call - naming neither
+        # this driver nor the parameter, out of a method declared
+        # ``-> str | None`` - while ``True`` acted as a silent one second and
+        # ``None`` left both the socket and the reply wait unbounded.
+        # ``subscribe_hz`` is interpolated straight into the ``robot.subscribe``
+        # params: ``nan``/``inf`` serialise to the bare ``NaN``/``Infinity``
+        # tokens, which are not JSON (RFC 8259), so a strict daemon parser
+        # refuses the frame while ``connect_eagerly`` reports success; a
+        # ``numpy`` integer is not JSON-serialisable at all.  The strict-int
+        # domain is the right member because robotd is sent an integer.
+        if reason := positive_finite_number_error(timeout, "timeout", "MicroduckDriver"):
+            raise ValueError(reason)
+        if subscribe_hz is not None and (
+            reason := positive_count_error(subscribe_hz, "subscribe_hz", "MicroduckDriver")
+        ):
+            raise ValueError(reason)
 
         self._tool_name = tool_name
         self._socket_path = str(port) if port else DEFAULT_SOCKET
