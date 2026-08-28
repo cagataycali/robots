@@ -617,11 +617,15 @@ class MicroduckDriver:
         elif action == "status":
             envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
         else:  # "stop"
-            await self.stop()
-            envelope = {
-                "status": "success",
-                "content": [{"text": f"stop: asked robotd at {self._socket_path} to stop the robot"}],
-            }
+            # Report the halt outcome rather than assert one.  ``stop`` is the
+            # protocol's shutdown hook and returns ``None``: it returns early
+            # for a client that is gone and swallows an ``OSError`` from
+            # robotd, so an envelope built beside it can only restate the
+            # intent - and its text named a socket nothing had been written to.
+            # ``stop_task`` performs the same ``robot.stop`` call and already
+            # decides the verdict, so the verb returns that envelope rather
+            # than re-deriving one.
+            envelope = self.stop_task()
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #
