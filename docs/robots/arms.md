@@ -106,7 +106,7 @@ _AgileX Piper (6-DOF + gripper)_
 - Real hardware through LeRobot, where the registry entry names a `lerobot_type`:
   `hope_jr`, `koch`, `omx`, `openarm`, `rebot_b601`, `so100`, `so101`.
 - Real hardware through a native Strands driver, selected with `driver="strands"`:
-  `dynamixel_2r`, `koch`, `vx300s`, `wx250s`.
+  `dynamixel_2r`, `hope_jr`, `koch`, `so100`, `so101`, `vx300s`, `wx250s`.
 - Every other arm is simulation-only: `Robot(name, mode="real")` refuses it and names
   the robots that do have a path, rather than falling back to sim.
 - Joint counts include any free joints / gripper actuators - the *control* DOF is
