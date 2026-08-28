@@ -81,6 +81,30 @@ from tests.policies.cosmos3.test_sim_ik_bridge_solve_loop import (
 #: cells are an independent oracle rather than a restatement of the module.
 DOMAIN = finite_vector_error
 
+#: The shared component domain, by every name it is applied under.
+#: :func:`~strands_robots.utils.pose_vector_error` is documented as the
+#: fixed-length wrapper *over* :func:`~strands_robots.utils.finite_vector_error`
+#: and defers to the same reader, so a call to either is the same per-component
+#: check - the second one also fixing the length a configuration reader
+#: documents. The structural cells below name the family rather than one member,
+#: so they stay about the property (every configuration reader reaches the shared
+#: domain) instead of about which spelling applies it.
+SHARED_VECTOR_DOMAINS = ("finite_vector_error", "pose_vector_error")
+
+
+def _first_shared_domain_call(source: str) -> int:
+    """Index of the earliest shared-domain call in ``source``.
+
+    Raises:
+        AssertionError: If ``source`` consults no member at all - the outcome
+            these cells exist to report, which ``str.index`` would otherwise
+            raise as a bare ``ValueError`` naming one spelling.
+    """
+    found = [source.index(f"{name}(") for name in SHARED_VECTOR_DOMAINS if f"{name}(" in source]
+    assert found, f"consults no shared vector domain at all: {SHARED_VECTOR_DOMAINS}"
+    return min(found)
+
+
 #: The method name the refusal must carry, stated locally for the same reason.
 METHOD = "ee_pose"
 
@@ -214,7 +238,7 @@ class TestANonFiniteConfigurationIsRefused:
 
     def test_the_guard_precedes_the_state_it_would_otherwise_poison(self) -> None:
         source = _source_of("ee_pose")
-        assert source.index("finite_vector_error(") < source.index("self._configuration.update(")
+        assert _first_shared_domain_call(source) < source.index("self._configuration.update(")
 
 
 class TestTheRefusalNamesTheMethodAndTheParameter:
@@ -383,12 +407,13 @@ class TestEveryConfigurationReaderSharesTheDomain:
 
     @pytest.mark.parametrize("method", sorted(_methods_that_apply_a_configuration()))
     def test_the_method_consults_the_shared_domain(self, method: str) -> None:
-        assert "finite_vector_error(" in _source_of(method)
+        source = _source_of(method)
+        assert any(f"{name}(" in source for name in SHARED_VECTOR_DOMAINS), SHARED_VECTOR_DOMAINS
 
     @pytest.mark.parametrize("method", sorted(_methods_that_apply_a_configuration()))
     def test_the_guard_precedes_the_update(self, method: str) -> None:
         source = _source_of(method)
-        assert source.index("finite_vector_error(") < source.index("self._configuration.update(")
+        assert _first_shared_domain_call(source) < source.index("self._configuration.update(")
 
     def test_the_derivation_is_not_vacuous(self) -> None:
         assert len(_methods_that_apply_a_configuration()) >= 2

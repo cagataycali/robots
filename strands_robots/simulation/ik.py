@@ -38,6 +38,7 @@ import numpy as np
 from ..utils import (
     finite_number_error,
     finite_vector_error,
+    pose_vector_error,
     positive_count_error,
     positive_finite_number_error,
 )
@@ -63,6 +64,31 @@ _DEFAULT_NO_BACKEND_MSG = (
     "(e.g. 'daqp' or 'quadprog'). Install the sim extra: "
     "uv pip install 'strands-robots[sim-mujoco]'."
 )
+
+
+def _homogeneous_pose_error(method: str, param_name: str, pose: np.ndarray) -> str | None:
+    """Return an error message if ``pose`` is not a ``(4, 4)`` matrix.
+
+    Local because the shared pose domains are flat-vector shaped:
+    :func:`~strands_robots.utils.pose_vector_error` counts ``expected_len``
+    components, and a ``(2, 8)`` array flattens to the sixteen a ``(4, 4)`` has,
+    so a length check accepts a matrix no homogeneous transform could be. The
+    shape is what the consumer needs - ``mink.SE3.from_matrix`` slices
+    ``matrix[:3, :3]`` and ``matrix[:3, 3]`` - so it is checked here and the
+    component domain still owns the values.
+
+    Args:
+        method: The public method being called, for the message.
+        param_name: The parameter name, so the caller is told which argument.
+        pose: The already-``asarray``-ed candidate pose.
+
+    Returns:
+        ``None`` when ``pose`` is ``(4, 4)``; otherwise a message naming the
+        method, the parameter, the required shape and the shape supplied.
+    """
+    if pose.shape != (4, 4):
+        return f"{method}: {param_name!r} must be a (4, 4) homogeneous pose matrix, got shape {pose.shape}"
+    return None
 
 
 def _damping_error(value: Any, context: str) -> str | None:
@@ -365,7 +391,14 @@ class MinkIKBridge:
             (``float64``).
 
         Raises:
-            ValueError: If ``qpos`` holds a non-finite value. The configuration
+            ValueError: If ``qpos`` is not ``model.nq`` finite numbers. The
+                length is the half this method documents and
+                ``mink.Configuration.update`` writes into: a wrong-width array
+                reached the numpy assignment and raised ``could not broadcast
+                input array from shape (6,) into shape (9,)``, naming neither
+                the parameter nor this class. It arrives from a caller through
+                :meth:`tracking_error`'s ``qpos_traj``, whose every row is read
+                back through here. The configuration
                 is applied rather than forwarded - it is the state forward
                 kinematics is evaluated at - so a single ``nan`` or ``inf``
                 reaches the returned pose, which comes back with a non-finite
@@ -385,7 +418,7 @@ class MinkIKBridge:
         # third public method reading a joint configuration and was the only one
         # that did not, which is why a bad value surfaced at the *next* solve
         # under another argument's name.
-        if text := finite_vector_error("ee_pose", "qpos", q):
+        if text := pose_vector_error("ee_pose", "qpos", q, self.model.nq):
             raise ValueError(text)
         self._configuration.update(q)
         transform = self._configuration.get_transform_frame_to_world(self.ee_frame_name, self.ee_frame_type)
@@ -405,6 +438,21 @@ class MinkIKBridge:
             ``q_init`` value exactly, so the caller can realize the answer.
 
         Raises:
+            ValueError: If ``target_pose`` is not a ``(4, 4)`` matrix, or
+                ``q_init`` is not ``model.nq`` long. Both shapes are documented
+                above and neither was checked: a wrong-shaped pose reached
+                ``mink.SE3.from_matrix``'s bare ``assert``, so the caller got an
+                ``AssertionError`` carrying *no message at all* - and under
+                ``python -O``, where that assertion is stripped, the same call
+                raised ``IndexError`` or ``TypeError`` instead, so the exception
+                type depended on an interpreter flag. A wrong-length seed
+                reached the numpy assignment and raised an anonymous broadcast
+                message. None of the three is the ``ValueError`` channel this
+                method documents. :meth:`solve_trajectory` already refused a
+                wrong-shaped ``poses`` batch by name and then delegated here per
+                waypoint, so one wrong pose was reported two different ways
+                depending on the entry point; checking here settles both,
+                because that method solves through this one.
             ValueError: If ``target_pose`` or ``q_init`` holds a non-finite
                 value. Both are read straight into the solver - the pose becomes
                 the frame task's target and the seed becomes the configuration
@@ -423,9 +471,11 @@ class MinkIKBridge:
         # is flattened for the check because ``finite_vector_error`` reads a
         # 2-D argument's *rows* as its elements and would refuse a clean
         # ``(4, 4)``; the seed is already the 1-D vector that domain expects.
+        if text := _homogeneous_pose_error("solve", "target_pose", pose):
+            raise ValueError(text)
         if text := finite_vector_error("solve", "target_pose", pose.ravel()):
             raise ValueError(text)
-        if text := finite_vector_error("solve", "q_init", q):
+        if text := pose_vector_error("solve", "q_init", q, self.model.nq):
             raise ValueError(text)
         self._configuration.update(q)
         self._posture_task.set_target(q)
@@ -483,6 +533,12 @@ class MinkIKBridge:
         Returns:
             ``{"mean_mm": float, "max_mm": float}`` - mean / max Euclidean
             position error in millimetres across the trajectory.
+
+        Raises:
+            ValueError: If ``poses`` and ``qpos_traj`` differ in length (the
+                ``strict=True`` zip), or a row of ``qpos_traj`` is not
+                ``model.nq`` finite numbers - :meth:`ee_pose` owns that refusal,
+                and every row is read back through it.
         """
         poses = np.asarray(poses, dtype=np.float32)
         errs = []

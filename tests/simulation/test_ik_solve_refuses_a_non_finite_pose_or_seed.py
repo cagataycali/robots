@@ -74,6 +74,15 @@ from tests.policies.cosmos3.test_sim_ik_bridge_solve_loop import (
 #: independent oracle rather than a restatement of the module.
 ARRAY_PARAMETERS = ("target_pose", "q_init")
 
+#: The shared component domain, by every name it is applied under.
+#: :func:`~strands_robots.utils.pose_vector_error` is documented as the
+#: fixed-length wrapper *over* :func:`~strands_robots.utils.finite_vector_error`
+#: and defers to the same reader, so a call to either is the same per-component
+#: check - the second one also fixing the length. Naming the family rather than
+#: one member is what keeps these cells about the property (every array reaches
+#: the shared domain) instead of about which spelling applies it.
+SHARED_VECTOR_DOMAINS = ("finite_vector_error", "pose_vector_error")
+
 #: A joint the stand-in solver never drives - it moves only ``q[:3]`` onto the
 #: frame target - so a seed value here survives the solve and is what shows the
 #: seed became the warm-start configuration.
@@ -290,7 +299,12 @@ class TestTheRefusalCostsTheBridgeNothing:
 
 
 class TestBothArraysReachTheSharedDomain:
-    """Structural: the check is the shared domain, applied to each array, once."""
+    """Structural: the check is the shared domain, applied to each array, once.
+
+    "The shared domain" is :data:`SHARED_VECTOR_DOMAINS`, not one function: the
+    seed's check later became the fixed-length wrapper, which is the same
+    per-component domain plus the length ``solve`` documents and did not check.
+    """
 
     def test_solve_consults_the_shared_domain_for_every_array_it_reads(self) -> None:
         tree = ast.parse(textwrap.dedent(inspect.getsource(MinkIKBridge.solve)))
@@ -299,7 +313,7 @@ class TestBothArraysReachTheSharedDomain:
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id == "finite_vector_error"
+            and node.func.id in SHARED_VECTOR_DOMAINS
             and len(node.args) >= 2
             and isinstance(node.args[1], ast.Constant)
             and isinstance(node.args[1].value, str)
@@ -308,9 +322,20 @@ class TestBothArraysReachTheSharedDomain:
 
     def test_the_checks_precede_the_state_the_solve_mutates(self) -> None:
         source = textwrap.dedent(inspect.getsource(MinkIKBridge.solve))
-        last_guard = source.rindex("finite_vector_error(")
+        # Only the members ``solve`` actually applies: a member that is absent must
+        # read as "consults no shared domain" rather than raising out of ``rindex``.
+        applied = [name for name in SHARED_VECTOR_DOMAINS if f"{name}(" in source]
+        assert applied, "solve consults no shared vector domain at all"
+        last_guard = max(source.rindex(f"{name}(") for name in applied)
         assert last_guard < source.index("self._configuration.update(")
         assert last_guard < source.index("self._frame_task.set_target(")
+
+    def test_the_named_family_is_the_shared_domain(self) -> None:
+        """Non-vacuity: every name in the family is a real shared member."""
+        import strands_robots.utils as shared
+
+        for name in SHARED_VECTOR_DOMAINS:
+            assert callable(getattr(shared, name, None)), name
 
     def test_the_pose_is_flattened_for_the_check(self) -> None:
         """A 2-D argument would be refused for the wrong reason; see the premise."""
