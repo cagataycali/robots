@@ -45,3 +45,13 @@
   Refs `strands-labs/robots#358`.  Sibling readers land in `#2938`
   (`g1_battery`), `#2939` (`g1_imu`), `#2941` (`g1_lidar_state`),
   `#2943` (`g1_lidar_summary`), `#2947` (`g1_mainboard`).
+
+  The verb refuses an unusable handle through the shared
+  `snapshot_handle_refusal` guard rather than dereferencing it, so
+  `None`, a robot *name*, or any object without the accessor earns an
+  error envelope naming the verb, the parameter and the remedy instead
+  of an `AttributeError` naming a private attribute. That guard is the
+  rule `#2948` derived from the tree -- its population is every `@tool`
+  in this package whose first parameter is annotated `Any` -- so a
+  sensor verb added here is graded by it without that file being
+  edited, and this one is graded by it on arrival.
