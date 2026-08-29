@@ -23,6 +23,7 @@ Allowlist patterns live below - keep it narrow.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -319,6 +320,40 @@ class TestEveryAreaThatShipsPythonIsSwept:
         missing = _areas_missed()
         assert not missing, f"these areas ship Python and the sweep never reads them: {missing}"
 
+    def test_every_area_derivation_resolves_through_the_one_predicate(self) -> None:
+        """No second copy of the ownership rule may exist in this module.
+
+        The skew this replaced was invisible on a checkout carrying no
+        virtualenv, so no cell that walks the shipped repository can catch its
+        return: re-deriving the rule inline here passes on this machine and
+        fails on the contributor's. What does catch it is the shape - every
+        place that turns a directory listing into a set of areas has to ask
+        :func:`_is_repo_owned_python_area` rather than spelling the rule out
+        again and drifting from the sweep.
+        """
+        module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        derivations = []
+        for node in ast.walk(module):
+            if not isinstance(node, ast.SetComp | ast.ListComp | ast.GeneratorExp):
+                continue
+            for generator in node.generators:
+                iterable = generator.iter
+                # sorted(root.iterdir()) and root.iterdir() are the same listing.
+                if isinstance(iterable, ast.Call) and iterable.args:
+                    iterable = iterable.args[0]
+                if not (
+                    isinstance(iterable, ast.Call)
+                    and isinstance(iterable.func, ast.Attribute)
+                    and iterable.func.attr == "iterdir"
+                ):
+                    continue
+                conditions = " ".join(ast.unparse(test) for test in generator.ifs)
+                derivations.append((node.lineno, conditions))
+
+        assert len(derivations) >= 2, f"the derivation scan has gone blind: {derivations}"
+        rogue = [line for line, conditions in derivations if "_is_repo_owned_python_area" not in conditions]
+        assert not rogue, f"these area derivations do not resolve through the one predicate: lines {rogue}"
+
     def test_the_required_areas_are_all_present_and_ship_python(self) -> None:
         """Non-vacuity for the floor: each named area exists and carries Python.
 
@@ -431,6 +466,24 @@ class TestAHostPathInANewlySweptAreaIsCaught:
         assert not _is_repo_owned_python_area(venv)
         assert _is_repo_owned_python_area(tree / "examples")
         assert _areas_missed(tree) == []
+
+    def test_an_area_the_walk_drops_is_reported(self, tmp_path: Path) -> None:
+        """Non-vacuity for the reach check: a real gap is still named.
+
+        One predicate now answers both halves, so the classification agrees by
+        construction and cannot be what the check catches. What is left is the
+        file walk, and that has to be shown to still be graded: here an area's
+        only Python sits under a nested ``.venv/``, so the area is owned (a
+        ``.py`` is there) and every file in it is dropped on the way. Without a
+        case like this, ``_areas_missed`` could answer "no gap" unconditionally
+        and no cell in this module would notice.
+        """
+        tree = self._tree(tmp_path)
+        nested = tree / "stale" / ".venv" / "lib"
+        nested.mkdir(parents=True)
+        (nested / "vendored.py").write_text("value = 1" + "\n", encoding="utf-8")
+        assert "stale" in _scanned_areas(tree), "the area is not owned, so any gap is not the walk's"
+        assert _areas_missed(tree) == ["stale"]
 
     def test_a_bytecode_cache_is_not_swept(self, tmp_path: Path) -> None:
         """The cache filter survives the rewrite; a stale .pyc names no author."""
