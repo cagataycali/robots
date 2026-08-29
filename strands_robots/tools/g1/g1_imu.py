@@ -65,7 +65,7 @@ from strands import tool
 def g1_imu(driver: Any) -> dict[str, Any]:
     """Return the driver's cached ``rt/lowstate`` IMU snapshot.
 
-    Read-only.  Calls :meth:`G1Driver._snapshot("_imu")` (a copy under
+    Read-only.  Calls ``driver._snapshot("_imu")`` (a copy under
     the driver's ``_cache_lock``, so a caller mutating the result does
     not race the DDS thread) and reshapes the dict into an agent-facing
     envelope.  A driver whose subscriber has not received a ``LowState``
