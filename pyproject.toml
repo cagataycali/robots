@@ -697,6 +697,14 @@ test = "pytest {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
 lint = ["ruff check strands_robots tests tests_integ", "ruff format --check strands_robots tests tests_integ", "mypy strands_robots tests tests_integ"]
 format = ["ruff check --fix strands_robots tests tests_integ", "ruff format strands_robots tests tests_integ"]
+# Whole-tree graders a diff-scoped selector cannot see. Runs the tests whose
+# input is the rest of the repository rather than the file under change
+# (docstring xref roles, host-path literals, dependency audit, agent-tool
+# parameter descriptions, del-precedes-body). Fixed roster, no arguments -
+# the script is the safety net for a narrow local pytest run that would
+# otherwise ship a defect one of these graders would catch on CI. See
+# scripts/check_whole_tree_graders.py and issue #2940.
+whole-tree-check = "python scripts/check_whole_tree_graders.py"
 
 [tool.ruff]
 line-length = 120
