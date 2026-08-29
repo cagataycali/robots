@@ -63,7 +63,7 @@ from strands import tool
 def g1_lidar_state(driver: Any) -> dict[str, Any]:
     """Return the driver's cached ``rt/utlidar/lidar_state`` snapshot.
 
-    Read-only. Calls :meth:`G1Driver._snapshot("_lidar_state")` (a copy
+    Read-only. Calls ``driver._snapshot("_lidar_state")`` (a copy
     under the driver's ``_cache_lock``, so a caller mutating the result
     does not race the DDS thread) and reshapes the dict into an
     agent-facing envelope. A driver whose subscriber has not received a
