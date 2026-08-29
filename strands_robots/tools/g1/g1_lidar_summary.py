@@ -61,6 +61,8 @@ from typing import Any
 
 from strands import tool
 
+from strands_robots.tools.g1._g1_common import snapshot_handle_refusal
+
 
 @tool
 def g1_lidar_summary(driver: Any) -> dict[str, Any]:
@@ -105,6 +107,10 @@ def g1_lidar_summary(driver: Any) -> dict[str, Any]:
         points to 3000 is reporting a fault, and clamping the number
         would hide it.
     """
+    refusal = snapshot_handle_refusal("g1_lidar_summary", driver)
+    if refusal is not None:
+        return refusal
+
     snapshot = driver._snapshot("_lidar_summary")
     if snapshot is None:
         return {

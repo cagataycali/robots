@@ -60,6 +60,8 @@ from typing import Any
 
 from strands import tool
 
+from strands_robots.tools.g1._g1_common import snapshot_handle_refusal
+
 
 @tool
 def g1_imu(driver: Any) -> dict[str, Any]:
@@ -100,6 +102,10 @@ def g1_imu(driver: Any) -> dict[str, Any]:
         ``present=False`` and every field ``None`` - the verb does not
         fabricate a reading the driver does not have.
     """
+    refusal = snapshot_handle_refusal("g1_imu", driver)
+    if refusal is not None:
+        return refusal
+
     snapshot = driver._snapshot("_imu")
     if snapshot is None:
         return {
