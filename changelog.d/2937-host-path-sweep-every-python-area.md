@@ -22,7 +22,10 @@ Deriving the list can reach a virtual environment, which a hardcoded tuple could
 not, and site-packages is full of the packager's own home directory -- that would
 fail the gate for a reason the author cannot fix. A directory carrying the PEP
 405 `pyvenv.cfg` marker is skipped, by marker rather than by name, since `venv/`
-is as common as `.venv/` and only the latter is a dot-directory.
+is as common as `.venv/` and only the latter is a dot-directory. One predicate
+owns that rule, so the sweep and the cell grading its reach cannot disagree about
+which directories the gate reads -- a second derivation of "an area that ships
+Python" is what would fail the gate on the author's own checkout layout.
 
 No line in the newly-read areas is flagged: 109 files, zero hits, so no
 allowlist entry was added. This closes a latent gap rather than cleaning up

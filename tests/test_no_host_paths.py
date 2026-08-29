@@ -71,35 +71,52 @@ ALLOWED_FILES = {
 }
 
 
+def _is_repo_owned_python_area(entry: Path) -> bool:
+    """Whether ``entry`` is a top-level directory whose Python this gate owns.
+
+    One owner for the three conditions, because "an area the sweep should read"
+    was derived twice and the two copies skewed on the third: the reach cell
+    below built its own expectation and omitted the virtualenv marker, so a
+    checkout carrying ``venv/`` failed with a message naming the single directory
+    the sweep deliberately refuses to read.
+
+    Two kinds of directory are excluded, and both are the cost of deriving the
+    area list rather than writing it down. Dot-directories hold caches and
+    tooling, not committed source. A virtual environment holds third-party code
+    full of the packager's own home directory, so reading one would fail the gate
+    for a reason the author cannot fix; it is recognised by its PEP 405
+    ``pyvenv.cfg`` marker rather than by name, since ``.venv`` is a convention
+    and ``venv/`` is just as common.
+
+    Args:
+        entry: Path to classify. A non-directory is never an area.
+
+    Returns:
+        True when the directory ships Python that a committed-path gate owns.
+    """
+    return (
+        entry.is_dir()
+        and not entry.name.startswith(".")
+        and not (entry / "pyvenv.cfg").exists()
+        and any(entry.rglob("*.py"))
+    )
+
+
 def _scanned_areas(root: Path = REPO_ROOT) -> tuple[str, ...]:
-    """Return every top-level directory of ``root`` that ships Python.
+    """Return every top-level directory of ``root`` whose Python this gate owns.
 
     Deriving the list means a directory added later is swept on arrival. A
     hardcoded tuple equal to today's set fires on nothing when the tree grows,
     which is the silent hole this avoids: the tuple this replaced named three
     areas and the repository ships five.
 
-    Two kinds of directory are skipped, and both are the cost of deriving rather
-    than listing. Dot-directories hold caches and tooling, not committed source.
-    A virtual environment holds third-party code full of the maintainer's own
-    home directory, so sweeping one would fail the gate for a reason the author
-    cannot fix; it is recognised by its PEP 405 ``pyvenv.cfg`` marker rather than
-    by name, since ``.venv`` is a convention and ``venv/`` is just as common.
-
     Args:
         root: Repository root to enumerate. Defaults to this repository.
 
     Returns:
-        Directory names, sorted, excluding dot-directories and virtualenvs.
+        Directory names, sorted, per :func:`_is_repo_owned_python_area`.
     """
-    return tuple(
-        entry.name
-        for entry in sorted(root.iterdir())
-        if entry.is_dir()
-        and not entry.name.startswith(".")
-        and not (entry / "pyvenv.cfg").exists()
-        and any(entry.rglob("*.py"))
-    )
+    return tuple(entry.name for entry in sorted(root.iterdir()) if _is_repo_owned_python_area(entry))
 
 
 def _iter_source_files(root: Path = REPO_ROOT) -> list[Path]:
@@ -119,6 +136,27 @@ def _iter_source_files(root: Path = REPO_ROOT) -> list[Path]:
                 continue
             files.append(p)
     return files
+
+
+def _areas_missed(root: Path = REPO_ROOT) -> list[str]:
+    """Return every area of ``root`` that this gate owns and the sweep never reads.
+
+    The sweep's reach, which the pattern cells cannot speak to: they grade what
+    the patterns match, never where the patterns are applied. Both halves resolve
+    an area through :func:`_is_repo_owned_python_area`, so what stays gradeable
+    here is the file walk - whether :func:`_iter_source_files`'s own filters drop
+    a whole area on the way - while the derivation is graded on constructed trees,
+    where an area can be added or made third-party on purpose.
+
+    Args:
+        root: Repository root to compare. Defaults to this repository.
+
+    Returns:
+        Area names, sorted. Empty when the sweep reads every area it owns.
+    """
+    swept = {path.relative_to(root).parts[0] for path in _iter_source_files(root)}
+    owned = {entry.name for entry in root.iterdir() if _is_repo_owned_python_area(entry)}
+    return sorted(owned - swept)
 
 
 def _offenders(root: Path = REPO_ROOT) -> list[tuple[str, int, str]]:
@@ -264,23 +302,22 @@ class TestEveryAreaThatShipsPythonIsSwept:
     """
 
     def test_no_area_that_ships_python_is_left_out(self) -> None:
-        """A directory carrying ``.py`` files must be reached by the sweep.
+        """A directory carrying this repository's ``.py`` files must be reached.
 
         This is the regression: the tuple this replaced named
         ``strands_robots``, ``tests`` and ``tests_integ``, so ``examples/`` and
-        ``scripts/`` were outside the gate entirely. The expectation is derived
-        from the repository rather than from the module under test, so the two
-        cannot agree on a wrong answer.
+        ``scripts/`` were outside the gate entirely.
+
+        The expectation resolves an area the same way the sweep does, which is
+        deliberate: deriving it a second time here is what let the two skew on
+        the virtualenv marker, and a gate that fails on the author's own checkout
+        layout is worse than one that grades a narrower claim. The claim left is
+        the file walk, and the derivation is graded on constructed trees below.
         """
-        swept = {path.relative_to(REPO_ROOT).parts[0] for path in _iter_source_files()}
-        ships_python = {
-            entry.name
-            for entry in REPO_ROOT.iterdir()
-            if entry.is_dir() and not entry.name.startswith(".") and any(entry.rglob("*.py"))
-        }
-        assert ships_python, "no top-level directory ships Python; the derivation has gone blind"
-        missing = ships_python - swept
-        assert not missing, f"these areas ship Python and the sweep never reads them: {sorted(missing)}"
+        owned = {entry.name for entry in REPO_ROOT.iterdir() if _is_repo_owned_python_area(entry)}
+        assert owned, "no top-level directory ships Python; the derivation has gone blind"
+        missing = _areas_missed()
+        assert not missing, f"these areas ship Python and the sweep never reads them: {missing}"
 
     def test_the_required_areas_are_all_present_and_ship_python(self) -> None:
         """Non-vacuity for the floor: each named area exists and carries Python.
@@ -370,6 +407,30 @@ class TestAHostPathInANewlySweptAreaIsCaught:
         assert "venv" not in _scanned_areas(tree)
         reported = {rel for rel, _, _ in _offenders(tree)}
         assert reported == {"examples/demo.py"}, f"the virtualenv was swept: {sorted(reported)}"
+
+    def test_the_reach_expectation_skips_a_virtualenv_too(self, tmp_path: Path) -> None:
+        """The reach comparison must apply the same marker filter as the sweep.
+
+        The cell above grades that the sweep leaves a virtualenv alone. This
+        grades the other half, which used to derive its own expectation and omit
+        the PEP 405 check, so the two disagreed on exactly this layout: on any
+        checkout carrying a non-dot virtualenv - ``python -m venv venv``, which
+        this module's own docstring calls as common as ``.venv/`` - the reach cell
+        failed with ``['venv']`` and instructed the developer to sweep the one
+        directory the module refuses to sweep. That turns the pre-push gate red
+        for a reason the author cannot fix and points at their environment rather
+        than at their diff, and a fresh CI checkout never sees it.
+        """
+        tree = self._tree(tmp_path)
+        venv = tree / "venv"
+        (venv / "lib").mkdir(parents=True)
+        (venv / "pyvenv.cfg").write_text("home = /usr/bin" + "\n", encoding="utf-8")
+        (venv / "lib" / "third_party.py").write_text('CACHE = "/home/packager/.cache"' + "\n", encoding="utf-8")
+
+        # The virtualenv ships Python and is not owned; the sibling areas are.
+        assert not _is_repo_owned_python_area(venv)
+        assert _is_repo_owned_python_area(tree / "examples")
+        assert _areas_missed(tree) == []
 
     def test_a_bytecode_cache_is_not_swept(self, tmp_path: Path) -> None:
         """The cache filter survives the rewrite; a stale .pyc names no author."""
