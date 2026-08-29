@@ -109,7 +109,7 @@ graph TB
 | `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` WebSocket |
 | `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh |
 | `[mesh-iot]` | above + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport |
-| `[all]` | union | CI / exploration |
+| `[all]` | 19 of the 31 extras - not a union; see [installation](getting-started/installation.md) for the 11 it leaves opt-in | CI / exploration |
 
 ## See also
 
