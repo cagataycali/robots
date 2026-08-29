@@ -66,7 +66,7 @@ from strands import tool
 def g1_lidar_summary(driver: Any) -> dict[str, Any]:
     """Return the driver's cached lidar-cloud header summary.
 
-    Read-only. Calls :meth:`G1Driver._snapshot("_lidar_summary")` (a
+    Read-only. Calls ``driver._snapshot("_lidar_summary")`` (a
     copy under the driver's ``_cache_lock``, so a caller mutating the
     result does not race the DDS thread) and reshapes the dict into an
     agent-facing envelope. A driver whose subscriber has not received a
