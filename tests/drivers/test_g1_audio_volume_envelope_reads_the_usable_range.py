@@ -370,7 +370,14 @@ def test_g1_volume_admits_declares_a_non_handle_first_parameter_type() -> None:
     """
     import inspect
 
-    signature = inspect.signature(g1_volume_admits.__wrapped__)
+    # Reach the undecorated function through ``getattr`` with a fallback:
+    # ``@tool`` returns a ``DecoratedFunctionTool`` that does not declare
+    # ``__wrapped__`` statically, and this is the repo-wide convention for
+    # reading a tool's real signature (see tests/tools/test_use_lerobot.py,
+    # test_gr00t_container_hardening.py) - resilient to the SDK renaming the
+    # attribute, and type-clean without a blanket ignore.
+    undecorated = getattr(g1_volume_admits, "__wrapped__", g1_volume_admits)
+    signature = inspect.signature(undecorated)
     volume_parameter = signature.parameters["volume"]
     assert volume_parameter.annotation in ("int", int), (
         f"g1_volume_admits.volume annotation is {volume_parameter.annotation!r}; "
