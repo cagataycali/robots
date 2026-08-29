@@ -25,12 +25,26 @@ Two things this file's cells deliberately do not pin:
   bundle's observed range, not the SDK's own clamps (the SDK has
   none). A driver-side wrapper for ``SetVolume`` that lands later
   will re-check the envelope at wire time and its refusal string
-  will quote the ``7404`` gate-refusal code the driver's
-  ``_check_motion_gates`` also quotes.
+  will surface the same module-local :data:`_REFUSAL_TEXT` the
+  admits-verb quotes today.
 * The live audio state. Whether an ``AudioClient`` singleton is
   currently constructed, whether ``PlayStream`` holds the wire: those
   are live driver-instance reads and belong on a future audio state
   verb; the envelope surfaces only the numeric bound decision.
+
+One property this file explicitly refuses to pin: the ``7404``
+motion-FSM refusal code from
+:data:`~strands_robots.tools.g1._g1_common.ERR_CODES`. That code is
+the driver's :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
+refusal on ``rt/lowcmd`` writes and its decoded text reads
+``"Invalid FSM id - need FSM in {500, 501, 801}"`` - a locomotion
+FSM remedy. ``AudioClient`` is on a separate RPC channel and the
+audio SDK ships no distinct rc for a bounds-violated volume; the
+refusal text this module surfaces is module-local so a planner
+reading a volume refusal sees a remedy that matches the surface,
+not a re-borrowed motion FSM code. Cells below pin only the
+module-local text; a re-borrowing of ``7404`` would fail
+``test_the_refusal_text_names_the_volume_envelope_not_the_motion_fsm``.
 """
 
 from __future__ import annotations
@@ -44,7 +58,7 @@ import pytest
 
 from strands_robots.tools.g1._g1_common import ERR_CODES
 from strands_robots.tools.g1.g1_audio_volume_envelope import (
-    _GATE_REFUSAL_CODE,
+    _REFUSAL_TEXT,
     _VOLUME_MAX,
     _VOLUME_MIN,
     g1_list_audio_volume_envelope,
@@ -116,20 +130,40 @@ def test_the_envelope_matches_the_neon_observed_range() -> None:
     assert _VOLUME_MAX == 100
 
 
-def test_the_gate_refusal_code_matches_the_driver_constant() -> None:
-    """The envelope's refusal code names the driver's gate refusal.
+def test_the_refusal_text_names_the_volume_envelope_not_the_motion_fsm() -> None:
+    """The refusal text is module-local, not a re-borrowed motion FSM code.
 
-    The driver's ``_check_motion_gates`` refuses SDK-shaped writes
-    with rc=7404, and the ``7404`` entry in
-    :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` carries the
-    text a driver-side volume wrapper would surface. Pinned here so
-    a re-wording of that message lands in one place, not one in the
-    driver and a diverging copy in this envelope.
+    The G1 driver's :meth:`_check_motion_gates` refuses locomotion
+    writes with rc=``7404`` whose text reads ``"Invalid FSM id - need
+    FSM in {500, 501, 801}"``. ``AudioClient`` is on a separate RPC
+    channel from ``rt/lowcmd`` and the audio SDK ships no distinct
+    rc for a bounds-violated volume; the refusal shape this module
+    surfaces is module-local text that names the volume envelope
+    (not the motion FSM) so an agent planner reading a volume
+    refusal sees a remedy on the same surface the write belongs on.
+    Pinned here so a re-borrowing of ``7404`` (or any other
+    motion-FSM entry from ``ERR_CODES``) fails this cell first, not
+    as a wrong-remedy surprise in production.
     """
-    assert _GATE_REFUSAL_CODE == 7404
-    assert _GATE_REFUSAL_CODE in ERR_CODES, (
-        f"envelope quotes rc={_GATE_REFUSAL_CODE} but that code is not in "
-        f"ERR_CODES. The refusal string would render as 'unknown'."
+    assert isinstance(_REFUSAL_TEXT, str) and _REFUSAL_TEXT, (
+        f"_REFUSAL_TEXT is not a non-empty string: {_REFUSAL_TEXT!r}"
+    )
+    assert "volume" in _REFUSAL_TEXT.lower(), (
+        f"_REFUSAL_TEXT does not name the volume dimension: {_REFUSAL_TEXT!r}. "
+        f"A caller reading the refusal must see a remedy on the audio surface."
+    )
+    fsm_text = ERR_CODES[7404]
+    assert _REFUSAL_TEXT != fsm_text, (
+        f"_REFUSAL_TEXT re-borrows the motion-FSM ``7404`` text {fsm_text!r}. "
+        f"AudioClient is on a separate RPC channel and the audio SDK ships "
+        f"no distinct rc for a bounds-violated volume; the refusal shape "
+        f"must be module-local so a planner does not read a motion FSM "
+        f"remedy for a volume error."
+    )
+    assert "FSM" not in _REFUSAL_TEXT, (
+        f"_REFUSAL_TEXT names the motion FSM: {_REFUSAL_TEXT!r}. "
+        f"AudioClient is on a separate RPC channel; the refusal remedy "
+        f"belongs on the audio surface, not the locomotion FSM."
     )
 
 
@@ -137,17 +171,35 @@ def test_g1_list_audio_volume_envelope_returns_the_full_envelope() -> None:
     """The verb's payload names every clamp and the refusal.
 
     ``envelope`` carries every clamp constant and ``refusals`` names
-    the ``7404`` gate-refusal code with the decoded text
-    :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` carries.
+    the module-local :data:`_REFUSAL_TEXT` a future driver-side
+    ``SetVolume`` wrapper would surface on a bounds violation.
     """
     result = _call(g1_list_audio_volume_envelope)
     assert result["status"] == "success"
     env = result["envelope"]
     assert env["volume_min"] == _VOLUME_MIN
     assert env["volume_max"] == _VOLUME_MAX
-    assert result["refusals"] == [
-        {"code": _GATE_REFUSAL_CODE, "text": ERR_CODES[_GATE_REFUSAL_CODE]},
-    ]
+    assert result["refusals"] == [{"text": _REFUSAL_TEXT}]
+
+
+def test_g1_list_audio_volume_envelope_refusal_omits_a_borrowed_code() -> None:
+    """The list-envelope refusal descriptor names no ``code`` field.
+
+    A ``code`` field on this refusal would only be honest if the
+    audio SDK shipped a distinct rc for a bounds-violated volume,
+    and it does not; borrowing a motion-FSM code from
+    :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` would hand
+    a planner a wrong-surface remedy. Pins the omission so a future
+    re-introduction of ``code`` fails this cell first.
+    """
+    result = _call(g1_list_audio_volume_envelope)
+    for refusal in result["refusals"]:
+        assert "code" not in refusal, (
+            f"refusal descriptor carries a ``code`` field: {refusal!r}. "
+            f"The audio SDK ships no rc for a bounds-violated volume; "
+            f"borrowing one from ERR_CODES puts a wrong-surface remedy on "
+            f"an audio refusal."
+        )
 
 
 def test_g1_list_audio_volume_envelope_returns_fresh_containers() -> None:
@@ -199,7 +251,8 @@ def test_g1_volume_admits_refuses_a_value_below_the_floor() -> None:
 
     The refusal descriptor names the dimension, the value the caller
     passed, the bound-key on the envelope it violated, and the
-    ``7404`` code a driver-side wrapper would quote.
+    module-local :data:`_REFUSAL_TEXT` a driver-side wrapper would
+    quote.
     """
     result = _call(g1_volume_admits, volume=-1)
     assert result["admits"] is False
@@ -210,18 +263,21 @@ def test_g1_volume_admits_refuses_a_value_below_the_floor() -> None:
     assert refusal["bound_key"] == "volume_min"
     assert refusal["bound"] == _VOLUME_MIN
     assert refusal["comparison"] == "value < bound"
-    assert refusal["code"] == _GATE_REFUSAL_CODE
-    assert refusal["text"] == ERR_CODES[_GATE_REFUSAL_CODE]
+    assert refusal["text"] == _REFUSAL_TEXT
+    assert "code" not in refusal, (
+        f"below-floor refusal carries a ``code`` field: {refusal!r}. "
+        f"The audio SDK ships no rc for a bounds-violated volume."
+    )
 
 
 def test_g1_volume_admits_refuses_a_value_above_the_ceiling() -> None:
     """A ``volume`` above ``volume_max`` reads as one refusal.
 
     The neon bundle observed ``100`` as maximum; a caller passing
-    ``150`` learns the ceiling and the ``7404`` refusal code before
-    a driver-side wrapper fires, rather than learning at wire time
-    only that the audio controller's clipping behaviour above the
-    observed range is undefined.
+    ``150`` learns the ceiling and the module-local refusal text
+    before a driver-side wrapper fires, rather than learning at
+    wire time only that the audio controller's clipping behaviour
+    above the observed range is undefined.
     """
     result = _call(g1_volume_admits, volume=150)
     assert result["admits"] is False
@@ -232,6 +288,8 @@ def test_g1_volume_admits_refuses_a_value_above_the_ceiling() -> None:
     assert refusal["bound_key"] == "volume_max"
     assert refusal["bound"] == _VOLUME_MAX
     assert refusal["comparison"] == "value > bound"
+    assert refusal["text"] == _REFUSAL_TEXT
+    assert "code" not in refusal
 
 
 def test_g1_volume_admits_refuses_a_bool_volume() -> None:
@@ -248,6 +306,7 @@ def test_g1_volume_admits_refuses_a_bool_volume() -> None:
         refusal = result["refusals"][0]
         assert refusal["dimension"] == "volume"
         assert refusal["comparison"] == "non-int"
+        assert refusal["text"] == _REFUSAL_TEXT
 
 
 @pytest.mark.parametrize(
@@ -269,6 +328,7 @@ def test_g1_volume_admits_refuses_a_non_int_volume(volume: Any) -> None:
     refusal = result["refusals"][0]
     assert refusal["dimension"] == "volume"
     assert refusal["comparison"] == "non-int"
+    assert refusal["text"] == _REFUSAL_TEXT
 
 
 def test_g1_volume_admits_carries_the_envelope_on_admit_and_refuse() -> None:

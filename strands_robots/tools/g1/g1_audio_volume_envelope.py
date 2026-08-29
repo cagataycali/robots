@@ -34,10 +34,27 @@ Two things this module is deliberately *not*:
   pulls no ``unitree_sdk2py`` submodule - the import-hygiene contract
   every other file in this package carries, refs strands-labs/robots#358.
   A revision of the observed bounds is a driver-side update; when the
-  driver's volume method lands, its refusal will quote the same
-  ``7404`` code in
-  :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` that every
-  other admits-verb on this driver quotes for a bounds-violated write.
+  driver's volume method lands, its refusal will surface the same
+  module-local :data:`_REFUSAL_TEXT` this module names for a bounds
+  violation.
+
+Why this module does not quote a driver-side ``rc``.
+
+The G1 driver's :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
+gates the *motion* surface (arm-SDK writes on ``rt/lowcmd``); its FSM
+rejections are the ``7404`` entry in
+:data:`~strands_robots.tools.g1._g1_common.ERR_CODES`
+(``"Invalid FSM id - need FSM in {500, 501, 801}"``). ``AudioClient`` is
+an RPC service on a separate channel from ``rt/lowcmd``, and the audio
+SDK ships no distinct rc for a bounds-violated volume argument.
+Borrowing ``7404`` on an audio refusal would hand an agent planner a
+motion-FSM remedy (``"need FSM in {500, 501, 801}"``) for a bounds
+violation on a value that has nothing to do with the locomotion FSM.
+The refusal shape this module returns names the numeric bound
+violation in module-local text so a planner reads a remedy that
+matches the surface, and a future driver-side ``SetVolume`` wrapper
+will surface the same module-local text - not a re-borrowed motion
+code.
 
 What this module does not decide.
 
@@ -63,8 +80,6 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import ERR_CODES
-
 #: The lower clamp on ``volume`` (integer percent). The neon bundle's
 #: field notes on the SDK name the observed range as ``0-100`` with
 #: ``0`` meaning muted and ``100`` meaning maximum; the SDK's
@@ -83,17 +98,19 @@ _VOLUME_MIN: int = 0
 #: admitted rather than tripping an off-by-one.
 _VOLUME_MAX: int = 100
 
-#: The error-table entry the driver's own ``_check_motion_gates``
-#: quotes when it refuses any SDK-shaped write on a bounds-violating
-#: argument. Named here so the returned envelope carries the exact
-#: refusal string a future driver-side volume wrapper would surface,
-#: and so a re-wording of it lands in one place instead of drifting
-#: between the driver's log and this lookup. This is the same
-#: convention every other admits-verb under
-#: :mod:`strands_robots.tools.g1` uses (refs strands-labs/robots#358);
-#: the audio SDK does not ship a distinct rc for a bounds-violated
-#: volume, so the shared gate-refusal shape covers it.
-_GATE_REFUSAL_CODE: int = 7404
+#: The module-local refusal text every ``g1_volume_admits`` refusal
+#: quotes when the caller's ``volume`` argument sits outside the
+#: neon-bundle-observed envelope. Named here rather than borrowed
+#: from :data:`~strands_robots.tools.g1._g1_common.ERR_CODES`
+#: because the audio SDK ships no distinct rc for a bounds-violated
+#: volume and the motion-FSM ``7404`` entry (its nearest neighbour)
+#: reads ``"Invalid FSM id - need FSM in {500, 501, 801}"`` - a
+#: remedy that points a planner at locomotion FSM transitions to
+#: fix an audio argument. Surfacing the module-local text keeps
+#: the refusal payload's remedy on the same surface the write
+#: belongs on, and a future driver-side ``SetVolume`` wrapper will
+#: surface this same text rather than re-borrowing a motion code.
+_REFUSAL_TEXT: str = f"volume out of envelope - need volume in [{_VOLUME_MIN}, {_VOLUME_MAX}]"
 
 
 def _envelope() -> dict[str, Any]:
@@ -118,24 +135,24 @@ def g1_list_audio_volume_envelope() -> dict[str, Any]:
     module-level constant. Useful before a future driver-side wrapper
     for ``AudioClient.SetVolume`` is called, so a caller can compare
     an intended ``volume`` argument against the envelope the neon
-    bundle observed as usable, and can carry the ``7404`` refusal
-    code that a driver-side wrapper would surface on a bounds
+    bundle observed as usable, and can carry the module-local
+    refusal text a driver-side wrapper would surface on a bounds
     violation.
 
     Returns:
         A dict with ``status``; an ``envelope`` sub-dict carrying
         every clamp the neon bundle applied (``volume_min``,
-        ``volume_max``); and a ``refusals`` list carrying the
-        ``7404`` gate-refused code and its decoded text, the one a
-        future write verb would surface. Every field is a snapshot
-        of an observed bound or a driver constant; no dynamic decode
-        runs here.
+        ``volume_max``); and a ``refusals`` list carrying a single
+        descriptor with the module-local :data:`_REFUSAL_TEXT` a
+        future write verb would surface on a bounds violation.
+        Every field is a snapshot of an observed bound or a
+        module-local text; no dynamic decode runs here.
     """
     return {
         "status": "success",
         "envelope": _envelope(),
         "refusals": [
-            {"code": _GATE_REFUSAL_CODE, "text": ERR_CODES[_GATE_REFUSAL_CODE]},
+            {"text": _REFUSAL_TEXT},
         ],
     }
 
@@ -174,13 +191,13 @@ def g1_volume_admits(volume: Any = 0) -> dict[str, Any]:
         A dict with ``status``; an ``admits`` bool naming whether
         the value is inside the clamp pair; a ``refusals`` list of
         refusal descriptors, each carrying the dimension name, the
-        offending value, the clamp it violated, and the ``7404``
-        gate-refusal code the driver would quote if the write were
-        attempted while the value is outside the envelope; the same
-        ``envelope`` sub-dict :func:`g1_list_audio_volume_envelope`
-        returns. On an admitted value the ``refusals`` list is
-        empty; on a rejected value the single violated bound is
-        named.
+        offending value, the clamp it violated, and the module-local
+        :data:`_REFUSAL_TEXT` a driver-side wrapper would surface if
+        the write were attempted while the value is outside the
+        envelope; the same ``envelope`` sub-dict
+        :func:`g1_list_audio_volume_envelope` returns. On an
+        admitted value the ``refusals`` list is empty; on a rejected
+        value the single violated bound is named.
     """
     envelope = _envelope()
     refusals: list[dict[str, Any]] = []
@@ -193,8 +210,7 @@ def g1_volume_admits(volume: Any = 0) -> dict[str, Any]:
                 "bound_key": bound_key,
                 "bound": bound,
                 "comparison": cmp,
-                "code": _GATE_REFUSAL_CODE,
-                "text": ERR_CODES[_GATE_REFUSAL_CODE],
+                "text": _REFUSAL_TEXT,
             }
         )
 
