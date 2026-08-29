@@ -9,8 +9,8 @@ this verb is the cached-snapshot companion `g1_state`'s docstring names,
 returning every field `_on_bms` actually wrote rather than the pack
 percentage alone.
 
-`g1_battery(driver)` reads through `driver._snapshot("_battery")` — the
-same accessor the driver's own `stream(action="sensors")` path uses — so
+`g1_battery(driver)` reads through `driver._snapshot("_battery")` -- the
+same accessor the driver's own `stream(action="sensors")` path uses -- so
 the cache read holds the driver's `_cache_lock` for the copy and a
 caller mutating the returned dict does not race the DDS thread writing
 into it. A driver whose subscriber has not received a BMS message yet
@@ -23,7 +23,7 @@ subscription on `rt/lf/bmsstate` would compete for the wire and double
 the bus load `_DDS_INIT_LOCK` under `strands-labs/robots#358` is meant
 to prevent. The neon-side `g1_battery` port additionally read `soh`,
 per-cell voltages and a per-cell temperature vector off `BmsState_`
-directly — fields the driver's decoder does not carry today. Adding
+directly -- fields the driver's decoder does not carry today. Adding
 them here would be a second decoder for the same message, so those
 fields land (if at all) on the driver's `_on_bms`, not this verb.
 
@@ -36,7 +36,7 @@ second source of truth for a domain the driver's own refusal string
 already names verbatim.
 
 `import strands_robots.tools.g1.g1_battery` pulls no `unitree_sdk2py`
-submodule — the package's SDK-load-hygiene contract from
+submodule -- the package's SDK-load-hygiene contract from
 `strands-labs/robots#358`.
 
 Refs `strands-labs/robots#358`: fourth verb in the neon-the-g1 →
