@@ -30,9 +30,40 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import positive_finite_number_error
+from strands_robots.utils import finite_vector_error, positive_finite_number_error
 
-from .policy import MicroduckPolicy
+from .policy import TARGET_VELOCITY_WIDTHS, MicroduckPolicy
+
+
+def _target_velocity_error(source: str, value: object) -> str | None:
+    """Return why ``value`` cannot be a ``target_velocity``, or ``None`` if it can.
+
+    The two questions the tick itself will ask, asked before the velocity gate
+    reads a magnitude out of the value: the shared per-component vector domain,
+    and the component counts :class:`~strands_robots.policies.microduck.MicroduckPolicy`
+    documents for the same key. Both come from the child's own module, so the
+    gate and the tick cannot drift apart on what a velocity is.
+
+    Args:
+        source: The surface to name in the message - the bundle's own
+            ``get_actions``, since that is the method the caller called.
+        value: The candidate ``target_velocity``.
+
+    Returns:
+        A message naming the parameter and the reason, or ``None`` if the value
+        is a velocity both readers accept.
+    """
+    if error := finite_vector_error(source, "target_velocity", value):
+        return error
+    width = int(np.asarray(value, dtype=np.float32).reshape(-1).shape[0])
+    if width not in TARGET_VELOCITY_WIDTHS:
+        widths = " or ".join(str(w) for w in sorted(TARGET_VELOCITY_WIDTHS, reverse=True))
+        return (
+            f"{source}: target_velocity has {width} component(s), expected {widths} "
+            f"([vx, vy, omega] or [vx, vy]). The gate reads a magnitude from these "
+            f"components, so a width the tick refuses must not move the selection."
+        )
+    return None
 
 
 class MicroduckPolicyBundle(Policy):
@@ -256,6 +287,10 @@ class MicroduckPolicyBundle(Policy):
         last tick of the episode still executes the episodic skill, so a
         1.2s / 60-step kick at 50Hz produces 60 kick actions and the 61st
         tick runs default_skill.
+
+        When the velocity gate is on, a ``target_velocity`` this tick cannot
+        honor is refused before the gate arbitrates, naming this bundle and the
+        parameter - so a refused tick leaves the active skill exactly as it was.
         """
         select = kwargs.get("select")
         if select is not None:
@@ -310,6 +345,17 @@ class MicroduckPolicyBundle(Policy):
         the same boundary in ``_update_policy_session``, which returns early for
         each of its non-pair modes ("Don't switch while sitting") before it looks
         at the magnitude.
+
+        A ``target_velocity`` the tick will refuse is refused here first, before
+        the selection moves, so no failed tick leaves the bundle running a skill
+        the caller did not ask for. An absent one (``None``) is still simply "no
+        goal this tick" and leaves the selection alone.
+
+        Raises:
+            ValueError: If ``target_velocity`` is present but is not a velocity
+                both this gate and the active child can read - a non-numeric or
+                non-finite component, or a component count outside
+                :data:`~strands_robots.policies.microduck.policy.TARGET_VELOCITY_WIDTHS`.
         """
         if self._move_key not in self._policies or self._idle_key not in self._policies:
             return
@@ -317,5 +363,22 @@ class MicroduckPolicyBundle(Policy):
             return
         if target_velocity is None or self._switch_on_velocity is None:
             return
+        # Asked before the coercion below, and before the selection moves. This
+        # is the third reader of the well-known ``target_velocity`` key in the
+        # family and was the only one not held to a domain - the other operand of
+        # the very comparison two lines down, ``switch_on_velocity``, is held to
+        # ``positive_finite_number_error`` at construction. The child's
+        # ``_apply_command_kwargs`` states both reasons for its own guard, and
+        # both of them apply here one layer up. A non-numeric value otherwise
+        # surfaced as a bare ``could not convert string to float`` out of the
+        # ``np.asarray`` below (a ``TypeError`` for a mapping, where this family
+        # documents ``ValueError``), naming neither the bundle the caller called
+        # nor the parameter it passed. And a non-finite one made ``mag`` ``nan``,
+        # which is ``>=`` nothing, so the gate silently selected ``idle_key``: a
+        # caller asking the robot to move at a ``nan`` velocity got the standing
+        # skill, the tick was then refused by the child against a name the caller
+        # never used, and the moved selection outlived that failed call.
+        if error := _target_velocity_error(f"{type(self).__name__}.get_actions", target_velocity):
+            raise ValueError(error)
         mag = float(np.linalg.norm(np.asarray(target_velocity, dtype=np.float32).reshape(-1)[:3]))
         self._active = self._move_key if mag >= self._switch_on_velocity else self._idle_key
