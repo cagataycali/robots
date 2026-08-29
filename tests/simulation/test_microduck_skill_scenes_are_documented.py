@@ -70,6 +70,14 @@ MINIMUM_SKILLS = 9
 #: per-scene cells would pass by never reaching a non-default scene.
 MINIMUM_TABLE_ROWS = 3
 
+#: The offset ``reset_ball_in_front_of_foot`` trained the two kick weights on, read
+#: off Pollen's reference runtime (``scripts/infer_policy.py``, ``BALL_OFFSET_X`` and
+#: ``BALL_OFFSET_ABS_Y``). The scene's own declared position is not this, which is
+#: what the page's placement paragraph exists to say.
+TRAINED_BALL_OFFSET_X = 0.09
+TRAINED_BALL_ABS_Y = 0.042
+
+
 #: The subsection that documents the stance, and the keyframe name it teaches.
 #: The asset's own comment calls the current values "STAND2" because they
 #: supersede an earlier ``STAND`` commented out beside them; the live keyframe
@@ -225,6 +233,33 @@ def _ball_bodies(mujoco, model) -> list[str]:
     return [name for name in names if name and "ball" in name]
 
 
+#: The subsection the placement invariant lives in.
+PLACEMENT_HEADING = "### The ball scene carries the ball, not the kick geometry"
+
+
+def _placement_section(text: str) -> str:
+    """The placement paragraph, refusing by name when the heading is gone.
+
+    ``_section`` resolves with ``str.index``, so a renamed heading would surface
+    as ``ValueError: substring not found`` and name nothing. Asserting presence
+    first means a rename fails saying which heading it could not find.
+    """
+    assert PLACEMENT_HEADING in text, f"the page no longer carries {PLACEMENT_HEADING!r}"
+    return _section(text, PLACEMENT_HEADING)
+
+
+def _declared_ball_position(mujoco, model) -> list[float]:
+    """Where the scene puts the ball, read off the compiled model.
+
+    ``body_pos`` is the declared placement, so this needs no ``MjData`` and no
+    stepping: the question is where the file puts the prop, not where physics
+    carries it.
+    """
+    body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+    assert body >= 0, "the ball scene must carry a body named 'ball'"
+    return [float(value) for value in model.body_pos[body]]
+
+
 class TestThePageNamesASceneForEverySkill:
     """Read from the page alone, so it holds with no asset and no MuJoCo."""
 
@@ -274,7 +309,7 @@ class TestTheTablesClaimsAreTrueOfTheAssets:
         assert len(_wheel_joints(mujoco, model)) == 4
 
     def test_a_ball_kick_skill_is_pointed_at_a_scene_that_has_a_ball(self) -> None:
-        """The ball scene places the prop the kick policies were trained on."""
+        """The ball scene carries the prop. Where it sits is graded separately."""
         scene = _scene_table(_page())["ball_kick_left"]
         assert scene != DEFAULT_SCENE, "ball_kick must not be pointed at the ball-less default"
         mujoco, model = _scene_model(scene)
@@ -286,7 +321,7 @@ class TestTheTablesClaimsAreTrueOfTheAssets:
         assert table["roller"] == table["roller_crouch"]
 
     def test_the_two_ball_kick_skills_share_one_scene(self) -> None:
-        """The ball sits in front of the duck; the side is the policy's."""
+        """One scene carries the prop for both; the side is the policy's."""
         table = _scene_table(_page())
         assert table["ball_kick_left"] == table["ball_kick_right"]
 
@@ -352,6 +387,51 @@ class TestTheJointLayoutClaimsHold:
 
         assert at(default, {12, 13}) == ["neck_pitch", "head_pitch"]
         assert at(rollers, {12, 13}) == ["passive_LF_wheel", "passive_LR_wheel"]
+
+
+class TestThePageSaysTheSceneDoesNotPlaceTheBallWhereTrainingDid:
+    """Naming the scene is necessary and not sufficient, and the page says so.
+
+    ``TestTheTablesClaimsAreTrueOfTheAssets`` grades the ball's **presence**: the row
+    points at a scene, and that scene carries a body named ``ball``. It says nothing
+    about **where**, and the position is the half that decides whether a kick connects.
+    The scene declares the ball far enough ahead that no robot body reaches it, so a
+    reader who follows the table alone still gets an air-swing - the outcome the table
+    was added to remove for the roller skills.
+
+    The first cell is a premise about the asset and holds either way - it is what
+    makes the paragraph worth writing. The other two read the page and fail without
+    it.
+    """
+
+    def test_the_scene_does_not_declare_the_ball_at_the_trained_offset(self) -> None:
+        """The premise: naming the scene leaves the geometry wrong.
+
+        Both axes differ. Forward, the scene is more than twice the trained offset;
+        laterally it is centred where training offset the ball to the kicking foot.
+        """
+        mujoco, model = _scene_model(_scene_table(_page())["ball_kick_left"])
+        forward, lateral, _height = _declared_ball_position(mujoco, model)
+        assert forward > 2 * TRAINED_BALL_OFFSET_X, (
+            f"the scene declares the ball {forward} m ahead, which is no longer far "
+            f"enough past the trained {TRAINED_BALL_OFFSET_X} m for this page's "
+            "placement paragraph to be the reason a kick misses"
+        )
+        assert lateral == 0.0, f"the scene now offsets the ball laterally to {lateral} m"
+
+    def test_the_page_records_the_trained_offset_and_the_scenes_own_position(self) -> None:
+        """Both numbers, so a reader can see the gap rather than take it on trust."""
+        section = _placement_section(_page())
+        mujoco, model = _scene_model(_scene_table(_page())["ball_kick_left"])
+        forward = _declared_ball_position(mujoco, model)[0]
+        for number in (f"{forward} m", f"{TRAINED_BALL_OFFSET_X} m", f"{TRAINED_BALL_ABS_Y} m"):
+            assert number in section, f"the placement paragraph does not state {number}"
+
+    def test_the_page_tells_the_reader_the_joint_name_is_not_fixed(self) -> None:
+        """``add_robot`` prefixes every joint, so a fixed default resolves for one caller."""
+        section = _placement_section(_page())
+        assert "ball_free" in section, "the paragraph does not name the joint to write"
+        assert "add_robot" in section, "the paragraph does not say the name is prefixed"
 
 
 class TestThePageDocumentsTheTrainedStance:

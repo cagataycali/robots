@@ -844,6 +844,30 @@ def _coerce_int(name: str, value: Any, *, lo: int, hi: int, default: int | None)
     audit shape. Without these, ``{"action": "step", "steps": NaN}``
     would log as a generic "dispatch error" and be invisible to the
     validation-rejection forensics path.
+
+    The third defence is what makes that parity real rather than
+    partial: **a fractional float is refused, not truncated.**
+    :func:`_coerce_float` either returns the caller's value or refuses
+    it, and ``int(...)`` does neither -- it rounds toward zero. That had
+    three consequences on the wire, all of them silent:
+
+    * a value the caller never sent was honoured -- ``{"steps": 2.5}``
+      ran two steps, and ``{"policy_port": 5556.7}`` dialled 5556;
+    * **the ceiling stopped refusing.** ``int(...)`` runs before the
+      bounds compare, so ``{"n_steps": 10000000.5}`` was carried from
+      above ``hi`` to exactly ``hi`` and accepted, while the integer one
+      step further was refused by name. Same intent, two answers,
+      decided by how the JSON number was spelled;
+    * a below-floor refusal named a number the caller never wrote --
+      ``{"steps": 0.9}`` reported ``steps=0 out of bounds``.
+
+    An integral float (``3.0``, which is how ``json.dumps`` renders an
+    integer held in a float) is still accepted: nothing is lost in
+    coercing it, so refusing it would break wire payloads for no gain.
+    That is exactly the split
+    :func:`~strands_robots.utils.positive_whole_number_error` applies to
+    the same quantity on the simulation side, which is the surface the
+    ``action_horizon`` / ``n_steps`` bounds below are declared to match.
     """
     if value is None:
         if default is None:
@@ -853,6 +877,8 @@ def _coerce_int(name: str, value: Any, *, lo: int, hi: int, default: int | None)
         raise ValidationError(f"{name} must be an integer, got {type(value).__name__}")
     if isinstance(value, float) and not math.isfinite(value):
         raise ValidationError(f"{name} must be finite, got {value}")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValidationError(f"{name} must be a whole number, got {value}")
     try:
         coerced = int(value)
     except (ValueError, OverflowError) as exc:
