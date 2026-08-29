@@ -13,7 +13,7 @@ constants (`HANDSHAKE_FSMS` / `WALK_FSMS` from
 `strands_robots.tools.g1._g1_common`), plus the two id sets sorted as
 lists so a caller can quote them in its own voice. `bool` values on
 `fsm_id` are refused for admission (`True` is `int(1)` but is not a
-motion-switcher FSM id) — the same rule
+motion-switcher FSM id) -- the same rule
 `g1_fsm_admits` under `strands-labs/robots#2933` names.
 
 This is the first driver-instance-taking verb in
@@ -26,7 +26,7 @@ contract, refs `strands-labs/robots#358`).
 Ports `neon-the-g1/tools/g1_state.py::g1_get_state` into
 `strands_robots.tools.g1.g1_state`. Verbs on the neon side that reach
 DDS directly (`g1_read_lowstate` decoding IMU/joint state off
-`rt/lowstate`) are not ported here — the driver's own subscribers
+`rt/lowstate`) are not ported here -- the driver's own subscribers
 deliver every field they cover, and a second subscriber path would
 double the bus load `_DDS_INIT_LOCK` under `strands-labs/robots#358` is
 meant to prevent. A companion verb that surfaces the driver's cached
