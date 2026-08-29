@@ -72,8 +72,8 @@ What this module does not decide.
   directly rather than the walk-forward surface.
 * Whether the composed ``duration = abs(distance) / speed`` sits
   inside the duration envelope. That is a separate lookup
-  (:mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`,
-  port #2972, refs strands-labs/robots#358). At the walk-forward
+  (``g1_locomotion_duration_envelope``, port #2972,
+  refs strands-labs/robots#358). At the walk-forward
   clamps the composed duration is bounded to ``[0.0 / 0.5, 1.0 / 0.05]``
   = ``[0.0, 20.0]`` seconds, which overhangs the duration envelope's
   ``[0.0, 10.0]`` upper clamp: a walk-forward call at ``distance=1.0,
@@ -155,8 +155,8 @@ _DISTANCE_SIGN_THRESHOLD: float = 0.0
 #: at the walk-forward clamps: ``_DISTANCE_MAX / _SPEED_MIN``
 #: = ``1.0 / 0.05`` = ``20.0`` seconds. Above the neon bundle's
 #: locomotion-duration envelope's own ``10.0`` s upper clamp
-#: (:mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`,
-#: port #2972), so a walk-forward call at ``distance=1.0, speed=0.05``
+#: (``g1_locomotion_duration_envelope``, port #2972), so a
+#: walk-forward call at ``distance=1.0, speed=0.05``
 #: composes to a duration the duration envelope would clamp down to
 #: ``10.0`` s at the ``g1_move_velocity`` layer. Named on the
 #: returned envelope so a caller comparing the two admission layers

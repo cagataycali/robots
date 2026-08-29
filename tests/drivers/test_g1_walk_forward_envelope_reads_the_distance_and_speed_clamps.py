@@ -151,8 +151,8 @@ def test_the_composed_duration_bounds_match_the_clamp_pair() -> None:
     """The advertised composed-duration range matches ``[0 / speed_max, distance_max / speed_min]``.
 
     A caller comparing this envelope against
-    :mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`
-    reads ``composed_duration_max`` to see whether the walk-forward
+    ``g1_locomotion_duration_envelope`` (port #2972) reads
+    ``composed_duration_max`` to see whether the walk-forward
     surface can compose a duration the duration envelope would
     clamp. Pinned so a widen of either the distance or speed clamp
     that shifted the composed range surfaces here rather than as a
