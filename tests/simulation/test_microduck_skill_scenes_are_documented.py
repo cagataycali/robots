@@ -30,6 +30,14 @@ names really does carry the wheels or the ball, and the default scene really doe
 not. The second layer skips when the asset is absent, which is the case on a
 clean checkout; the first holds on any install, with no MuJoCo and no network.
 
+A weight and its stance are a pair in the same way, so the stance section below
+is graded here too. Every shipped weight bakes the stance it was trained in into
+its ONNX metadata, the asset ships the same stance as its ``STAND`` keyframe, and
+``add_robot(keyframe=...)`` seats a robot there and keeps it across resets. What
+was missing was any page saying so, and any check that the exported values and
+the shipped keyframe still agree - the asset has revised this pose once already,
+which is why the page names the constant instead of repeating the numbers.
+
 A registry ``variant=`` spelling would be a nicer front door and is deliberately
 not invented here: no entry among the seventy-three declares one, so the schema
 is a public-API decision rather than a docs fix.
@@ -37,10 +45,15 @@ is a public-API decision rather than a docs fix.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pytest
+
+from strands_robots.policies.microduck import MICRODUCK_DEFAULT_POSE, MICRODUCK_JOINT_NAMES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PAGE = REPO_ROOT / "docs" / "policies" / "microduck.md"
@@ -56,6 +69,23 @@ MINIMUM_SKILLS = 9
 #: Fewer rows than this means the table stopped covering the scenes, so the
 #: per-scene cells would pass by never reaching a non-default scene.
 MINIMUM_TABLE_ROWS = 3
+
+#: The subsection that documents the stance, and the keyframe name it teaches.
+#: The asset's own comment calls the current values "STAND2" because they
+#: supersede an earlier ``STAND`` commented out beside them; the live keyframe
+#: kept the name, so ``keyframe="STAND2"`` is refused.
+STANCE_HEADING = "### The stance every weight was trained in"
+STANCE_KEYFRAME = "STAND"
+
+#: The one scene a ball kick needs, and the one that declares no keyframe.
+BALL_SCENE = "scene_ball.xml"
+
+#: The shipped keyframe rounds the exported stance to four decimals, so the two
+#: agree to about 4e-05. This sits far under the smallest revision the asset has
+#: already shipped - the superseded ``STAND`` is 0.066 rad away at the hip and
+#: flips the sign of ``head_pitch`` - so a retune fails a cell here rather than
+#: leaving the page quietly describing a pose the asset no longer declares.
+STANCE_TOLERANCE = 1e-3
 
 
 def _page() -> str:
@@ -111,14 +141,13 @@ def _scene_table(text: str) -> dict[str, str]:
     return rows
 
 
-def _scene_model(scene: str):
-    """Compile a scene the asset directory carries, or skip.
+def _scene_path(scene: str) -> Path:
+    """Locate a scene the asset directory carries, or skip.
 
     Reads the search paths rather than resolving through the asset manager,
     which downloads a missing asset: a test that clones a third-party
     repository fails on a host with no network instead of skipping.
     """
-    mujoco = pytest.importorskip("mujoco")
     from strands_robots.utils import get_search_paths
 
     present = next(
@@ -127,7 +156,60 @@ def _scene_model(scene: str):
     )
     if present is None:
         pytest.skip(f"microduck {scene} is not downloaded, so its contents cannot be read")
-    return mujoco, mujoco.MjModel.from_xml_path(str(present))
+    return present
+
+
+def _scene_model(scene: str):
+    """Compile a scene the asset directory carries, or skip."""
+    mujoco = pytest.importorskip("mujoco")
+    return mujoco, mujoco.MjModel.from_xml_path(str(_scene_path(scene)))
+
+
+def _subsection(text: str, heading: str) -> str:
+    """Return one ``###`` subsection's body, so a rule reads only its own prose."""
+    start = text.index(heading)
+    rest = text[start + len(heading) :]
+    ends = [offset for offset in (rest.find("\n### "), rest.find("\n## ")) if offset != -1]
+    return rest if not ends else rest[: min(ends)]
+
+
+@contextlib.contextmanager
+def _spawned(scene: str, keyframe: str | None = None):
+    """Spawn the duck on ``scene``, optionally at a named keyframe."""
+    mujoco = pytest.importorskip("mujoco")
+    path = _scene_path(scene)
+    from strands_robots.simulation import create_simulation
+
+    sim = create_simulation("mujoco")
+    assert sim.create_world().get("status") == "success"
+    # Annotated ``Any`` because ``add_robot`` takes mixed types: a homogeneous
+    # ``dict[str, str]`` splat reads as the ``position`` list to a type checker.
+    extra: dict[str, Any] = {"keyframe": keyframe} if keyframe is not None else {}
+    try:
+        yield mujoco, sim, sim.add_robot(name="duck", urdf_path=str(path), **extra)
+    finally:
+        sim.destroy()
+
+
+def _stance_in_sim(mujoco, model, data) -> np.ndarray:
+    """Read the fourteen actuated joints by NAME, not by a flat qpos slice.
+
+    The rollers scene renumbers that slice, so a name-indexed read is the only
+    one that means the same thing on every scene the page names.
+    """
+    out = []
+    for short in MICRODUCK_JOINT_NAMES:
+        joint = next(
+            (
+                i
+                for i in range(model.njnt)
+                if (name := mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, i)) and name.split("/")[-1] == short
+            ),
+            None,
+        )
+        assert joint is not None, f"{short} is not a joint of the compiled model"
+        out.append(float(data.qpos[model.jnt_qposadr[joint]]))
+    return np.asarray(out)
 
 
 def _joint_names(mujoco, model) -> list[str]:
@@ -270,3 +352,70 @@ class TestTheJointLayoutClaimsHold:
 
         assert at(default, {12, 13}) == ["neck_pitch", "head_pitch"]
         assert at(rollers, {12, 13}) == ["passive_LF_wheel", "passive_LR_wheel"]
+
+
+class TestThePageDocumentsTheTrainedStance:
+    """Read the page and the package, so these hold with no asset and no MuJoCo."""
+
+    def test_the_exported_stance_is_public_and_covers_every_joint(self) -> None:
+        """Non-vacuity: every rule below compares against this constant."""
+        from strands_robots.policies import microduck
+
+        assert "MICRODUCK_DEFAULT_POSE" in microduck.__all__
+        assert len(MICRODUCK_DEFAULT_POSE) == len(MICRODUCK_JOINT_NAMES)
+
+    def test_the_section_names_the_keyframe_that_reaches_the_stance(self) -> None:
+        """A reader who cannot name the keyframe cannot reach the stance."""
+        body = _subsection(_page(), STANCE_HEADING)
+        assert f'keyframe="{STANCE_KEYFRAME}"' in body
+
+    def test_the_section_names_the_constant_rather_than_repeating_the_pose(self) -> None:
+        """A copied pose drifts: the asset has already revised this one."""
+        body = _subsection(_page(), STANCE_HEADING)
+        assert "MICRODUCK_DEFAULT_POSE" in body
+
+    def test_the_section_names_the_scene_where_the_route_is_unavailable(self) -> None:
+        """The one scene a ball kick needs declares no keyframe at all."""
+        assert BALL_SCENE in _subsection(_page(), STANCE_HEADING)
+
+
+class TestTheStanceClaimsAreTrueOfTheAssets:
+    """Re-derive the stance from the shipped models, so the page cannot drift."""
+
+    def test_the_shipped_keyframe_is_the_stance_the_package_exports(self) -> None:
+        """The drift guard: a revised keyframe fails here instead of diverging."""
+        mujoco, model = _scene_model(DEFAULT_SCENE)
+        names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_KEY, i) for i in range(model.nkey)]
+        assert STANCE_KEYFRAME in names, f"{DEFAULT_SCENE} declares {names}"
+        keyed = model.key_qpos[names.index(STANCE_KEYFRAME)][7 : 7 + len(MICRODUCK_DEFAULT_POSE)]
+        gap = float(np.max(np.abs(np.asarray(keyed) - np.asarray(MICRODUCK_DEFAULT_POSE))))
+        assert gap <= STANCE_TOLERANCE, f"{STANCE_KEYFRAME} is {gap:.6g} rad from MICRODUCK_DEFAULT_POSE"
+
+    def test_the_keyframe_route_reaches_the_stance_and_survives_a_reset(self) -> None:
+        """The route the section documents, and the stickiness it promises."""
+        with _spawned(DEFAULT_SCENE, STANCE_KEYFRAME) as (mujoco, sim, result):
+            assert result.get("status") == "success", result
+            spawned = _stance_in_sim(mujoco, sim._world._model, sim._world._data)
+            assert np.allclose(spawned, MICRODUCK_DEFAULT_POSE, atol=STANCE_TOLERANCE)
+            assert sim.reset().get("status") == "success"
+            after = _stance_in_sim(mujoco, sim._world._model, sim._world._data)
+            assert np.allclose(after, MICRODUCK_DEFAULT_POSE, atol=STANCE_TOLERANCE), (
+                "a keyframe spawn must survive reset, or every episode after the first starts elsewhere"
+            )
+
+    def test_a_spawn_without_a_keyframe_starts_at_the_zero_configuration(self) -> None:
+        """The counterfactual: no refusal, and the wrong origin for the decode."""
+        with _spawned(DEFAULT_SCENE, None) as (mujoco, sim, result):
+            assert result.get("status") == "success", result
+            spawned = _stance_in_sim(mujoco, sim._world._model, sim._world._data)
+            assert np.allclose(spawned, 0.0)
+            gap = float(np.max(np.abs(spawned - np.asarray(MICRODUCK_DEFAULT_POSE))))
+            assert gap > STANCE_TOLERANCE, "the zero configuration must not already be the trained stance"
+
+    def test_the_ball_scene_declares_no_keyframe_so_the_route_refuses_there(self) -> None:
+        """Why the section names the ball scene as the exception."""
+        _mujoco, model = _scene_model(BALL_SCENE)
+        assert model.nkey == 0, f"{BALL_SCENE} now declares {model.nkey} keyframe(s)"
+        with _spawned(BALL_SCENE, STANCE_KEYFRAME) as (_mj, _sim, result):
+            assert result.get("status") == "error"
+            assert "no <keyframe>" in result["content"][0]["text"]

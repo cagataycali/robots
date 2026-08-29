@@ -110,6 +110,45 @@ roller policy writes the same fourteen control targets, and with no wheels under
 the feet the duck simply stands; a ball-kick policy swings at a ball that is not
 there. Nothing refuses it, so the scene is the caller's to choose.
 
+### The stance every weight was trained in
+
+A weight and its scene are one pair; so are a weight and the stance it starts
+from. Every shipped Pollen weight bakes that stance into its ONNX metadata as
+`default_joint_pos`, and all nine declare the same fourteen values.
+`MicroduckPolicy` reads it into `default_pose` and decodes every action relative
+to it - `motor_target = default_pose + raw_action * action_scale` - so the stance
+is not advice, it is the origin the network's output is measured from. The same
+values ship as `strands_robots.policies.microduck.MICRODUCK_DEFAULT_POSE`, the
+fallback the provider uses when a session carrying no metadata is injected.
+
+The asset ships that stance too, as the `STAND` keyframe in `scene.xml` and
+`scene_rollers.xml`. Name it at spawn and the robot starts there:
+
+```python
+sim = Robot("microduck", urdf_path=str(scene), keyframe="STAND")
+```
+
+A keyframe spawn is sticky across resets: `sim.reset()` restores the pose and the
+actuator command that holds it, so every episode of a `run_policy` + `reset` loop
+begins from the same stance.
+
+Spawning without `keyframe` is not an error and reports success. The robot starts
+at the zero configuration, 0.458 rad from the trained stance at the widest joint
+- legs straight rather than crouched - while the policy still decodes relative to
+the stance it expects. Nothing refuses it, so the first inference of the rollout
+reads a pose no shipped weight was trained on.
+
+Two details a caller meets:
+
+- The keyframe is named `STAND`. The asset's own comment calls the current values
+  "STAND2", because they supersede an earlier `STAND` that is commented out
+  beside them; the live keyframe kept the name. `keyframe="STAND2"` is refused,
+  and the refusal names the keyframes the model does declare.
+- `scene_ball.xml` declares no keyframe at all, so the route above is unavailable
+  on the one scene a ball kick needs. Seat the stance yourself there, reading it
+  from `MICRODUCK_DEFAULT_POSE` rather than copying the numbers - the asset has
+  already revised this pose once.
+
 ### Reading joint positions on the rollers scene
 
 `scene_ball.xml` appends the ball's free joint after the robot's, so the robot's
