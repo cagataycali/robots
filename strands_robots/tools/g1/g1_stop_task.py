@@ -71,6 +71,8 @@ from typing import Any
 
 from strands import tool
 
+from strands_robots.tools.g1._g1_common import live_handle_refusal
+
 
 @tool
 def g1_stop_task(driver: Any) -> dict[str, Any]:
@@ -130,6 +132,33 @@ def g1_stop_task(driver: Any) -> dict[str, Any]:
         quotes the driver's own text verbatim and every snapshot field
         is ``None``.
     """
+    # The handle is a live Python object typed :class:`~typing.Any` (see the
+    # module docstring's import-cycle note), so the tool schema carries no
+    # signal that ``None`` or a robot *name* is refused.  The shared
+    # ``live_handle_refusal`` guard is the one implementation of that judgement
+    # for this package; it is keyed on the accessor the verb reads, which for
+    # this verb is ``stop_task`` (a callable that requests the loop's exit and
+    # returns the driver's stop envelope) rather than the sensor verbs'
+    # ``_snapshot``.  Returning its refusal envelope here rather than raising
+    # keeps the four invariants every ``@tool`` handler owes a caller
+    # (envelope not exception, names the verb, names ``driver``, names the
+    # type on wrong-type inputs).
+    refusal = live_handle_refusal(
+        "g1_stop_task",
+        driver,
+        accessor="stop_task",
+        reads=(
+            "the verb signals the driver's own control-loop thread to exit and "
+            "reads back the join outcome the driver produced"
+        ),
+        expected=(
+            "a callable ``stop_task`` returning the driver's stop envelope - "
+            "pass the live G1Driver handle the orchestrator constructed"
+        ),
+    )
+    if refusal is not None:
+        return refusal
+
     envelope = driver.stop_task()
     payload = envelope["content"][0]
 
