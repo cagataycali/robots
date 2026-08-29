@@ -70,8 +70,8 @@ What this module does not decide.
   rather than the turn surface.
 * Whether the composed ``duration = abs(angle_rad) / yaw_rate`` sits
   inside the duration envelope. That is a separate lookup
-  (:mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`,
-  port #2972, refs strands-labs/robots#358). At the turn clamps the
+  (``g1_locomotion_duration_envelope``, port #2972, refs
+  strands-labs/robots#358). At the turn clamps the
   composed duration is bounded to ``[0.0 / 0.6, 2*pi / 0.1]``
   = ``[0.0, ~62.83]`` seconds, which overhangs the duration
   envelope's ``[0.0, 10.0]`` upper clamp: a turn call at
@@ -158,8 +158,7 @@ _ANGLE_SIGN_THRESHOLD: float = 0.0
 #: at the turn clamps: ``_ANGLE_RAD_MAX / _YAW_RATE_MIN``
 #: = ``2*pi / 0.1`` ≈ ``62.832`` seconds. Above the neon bundle's
 #: locomotion-duration envelope's own ``10.0`` s upper clamp
-#: (:mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`,
-#: port #2972), so a turn call at ``angle_rad=2*pi, yaw_rate=0.1``
+#: (``g1_locomotion_duration_envelope``, port #2972), so a turn call at ``angle_rad=2*pi, yaw_rate=0.1``
 #: composes to a duration the duration envelope would clamp down to
 #: ``10.0`` s at the ``g1_move_velocity`` layer. Named on the
 #: returned envelope so a caller comparing the two admission layers

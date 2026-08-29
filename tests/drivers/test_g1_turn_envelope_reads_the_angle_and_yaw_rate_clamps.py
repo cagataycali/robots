@@ -165,7 +165,7 @@ def test_the_composed_duration_bounds_match_the_clamp_pair() -> None:
     """The advertised composed-duration range matches ``[0 / yaw_max, angle_max / yaw_min]``.
 
     A caller comparing this envelope against
-    :mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`
+    ``g1_locomotion_duration_envelope`` (port #2972)
     reads ``composed_duration_max`` to see whether the turn surface
     can compose a duration the duration envelope would clamp. Pinned
     so a widen of either the angle or yaw-rate clamp that shifted
