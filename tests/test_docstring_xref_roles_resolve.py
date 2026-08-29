@@ -29,6 +29,17 @@ import - and neither does the whitespace-collapsed form a renderer would see.
 The pattern here therefore admits whitespace inside the target and reports such
 a role, rather than failing to match it and exempting it from the guard.
 
+The same reasoning covers every other character a wrong target carries. A role
+whose target is a FILENAME (``server.docker-compose.yml``) or a call expression
+(``Cls.method("arg")``) is a dead pointer for the same reason a wrapped one is,
+and a target pattern restricted to word characters and dots does not match it -
+so such a role was exempted rather than reported, which is the outcome admitting
+whitespace exists to prevent. The pattern therefore admits any non-backtick
+character after the leading identifier: the backticks delimit the target, so
+whatever sits between them is the target as written. The leading identifier is
+still required, which keeps a relative role (``:mod:`.protocol```) out of scope,
+since that resolves against Sphinx's current-module context rather than here.
+
 Two spellings of the same promise are graded, because a target only has to
 resolve - it does not have to be fully qualified to be checkable:
 
@@ -89,7 +100,7 @@ _REPO_ROOT = _PKG_ROOT.parent
 # target so a role whose long dotted path was wrapped over a line break is
 # still extracted and checked: a pattern that stopped at the newline skipped
 # such a role outright, which exempted it from this guard entirely.
-_ROLE_RE = re.compile(r":(?:mod|class|func|meth|attr|data|obj|exc):`~?([A-Za-z_][\w.\s]*)`")
+_ROLE_RE = re.compile(r":(?:mod|class|func|meth|attr|data|obj|exc):`~?([A-Za-z_][^`]*)`")
 
 
 def _absent_dependency(exc: ImportError) -> str | None:
@@ -680,3 +691,50 @@ def test_a_qualified_target_that_names_nothing_is_still_reported() -> None:
     assert not _resolves(_BOGUS)
     assert _offending_roles_in(f"See :func:`~{_BOGUS}`.") == [_BOGUS]
     assert not _resolves("strands_robots.simulation.base.SimEngine.no_such_method")
+
+
+# The compose file the moveit2 client docstring pointed a reader at with a
+# ``:mod:`` role. The file is real; a module at that dotted path is not, and the
+# sibling ``server`` package's own docstring names it as a plain code span.
+_FILENAME_TARGET = "strands_robots.policies.moveit2.server.docker-compose.yml"
+
+
+def test_the_role_pattern_extracts_a_target_that_is_not_a_dotted_name() -> None:
+    """A filename dressed as a role is still a role target, so the pattern must match it.
+
+    A pattern restricted to word characters and dots stops at the hyphen and
+    never reaches the closing backtick, so it finds nothing here - which is how
+    this role escaped every check below it while its neighbour was graded.
+    """
+    doc = f"See :mod:`{_FILENAME_TARGET}` for the recommended deployment."
+
+    assert _ROLE_RE.findall(doc) == [_FILENAME_TARGET]
+
+
+def test_a_qualified_target_naming_a_file_is_reported() -> None:
+    """The pointer is dead for the same reason a wrapped one is, so it is reported.
+
+    The compose file exists, so the citation's intent was sound; what does not
+    exist is a module at that dotted path, which is what the role promises.
+    """
+    assert (_REPO_ROOT / "strands_robots/policies/moveit2/server/docker-compose.yml").is_file(), (
+        "premise: the cited file is real, so only the spelling was wrong"
+    )
+    assert _resolves(_FILENAME_TARGET) is False, "premise: no module answers to that dotted path"
+
+    assert _offending_roles_in(f"See :mod:`{_FILENAME_TARGET}` for deployment.") == [_FILENAME_TARGET]
+
+
+def test_the_widened_pattern_leaves_the_documented_exclusions_out_of_scope() -> None:
+    """Over-reach control: admitting the character must not grade what has no target here.
+
+    A relative role resolves against Sphinx's current-module context and a bare
+    unqualified one against its current class, neither of which is available -
+    so both stay unreported, exactly as before the pattern was widened.
+    """
+    assert _ROLE_RE.findall("See :mod:`.protocol` for the codec.") == [], (
+        "a relative role has no leading identifier, so it is still not a target here"
+    )
+    assert _offending_roles_in("Call :meth:`build(world)` once per scene.") == [], (
+        "an unqualified target names nothing this guard can resolve"
+    )
