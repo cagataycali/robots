@@ -1,18 +1,23 @@
-"""The ``mode_machine`` lookup tools name exactly what the driver treats as arm-ready.
+"""The ``mode_machine`` lookup tools name exactly what the neon bundle observed as arm-ready.
 
 The Unitree G1 firmware publishes a ``mode_machine`` byte on every
 ``rt/lowstate`` frame; the neon bundle observed against the real
 robot that :data:`~strands_robots.tools.g1.g1_mode_machines._ARM_READY_MODE_MACHINES`
-(``{5, 6}``) is the second source of truth the driver's arm-write
-path uses when the loco-SDK ``GetFsmId`` RPC is wedged (returns
-``rc=3104``) but the robot is physically arm-ready. The
-:mod:`strands_robots.tools.g1.g1_mode_machines` module snapshots that
-set into a module-level constant and exposes two agent-facing verbs -
-:func:`g1_list_arm_ready_mode_machines` (list the whole set) and
-:func:`g1_mode_machine_admits_arm` (decide one query) - so a caller
-reading the driver's :meth:`~strands_robots.drivers.g1.G1Driver.get_status`
-envelope can decide the arm-ready refusal decidably before
-dispatching a :meth:`~strands_robots.drivers.g1.G1Driver.send_action`.
+(``{5, 6}``) is what the firmware publishes when the balance
+controller admits an arm write. This repository's driver does not
+consult that membership: its
+:meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
+decides admission on ``_fsm_id`` (from the motion-switcher API) and
+reads ``mode_machine`` only for the ``is None`` liveness refusal.
+The :mod:`strands_robots.tools.g1.g1_mode_machines` module snapshots
+the neon-observed set into a module-level constant and exposes two
+agent-facing verbs - :func:`g1_list_arm_ready_mode_machines` (list
+the whole set) and :func:`g1_mode_machine_admits_arm` (decide one
+query) - so a caller reading the driver's
+:meth:`~strands_robots.drivers.g1.G1Driver.get_status` envelope can
+resolve its live ``mode_machine`` against that set before dispatching
+a :meth:`~strands_robots.drivers.g1.G1Driver.send_action`.
+
 The tests here fix that contract without pulling the SDK: the module
 is loadable on a host without ``unitree_sdk2py`` (the same
 SDK-load-hygiene rule every other file under
@@ -27,20 +32,16 @@ Two things this file's cells deliberately do not pin:
 * The firmware's own answer at wire time. The verbs answer against
   the module-level snapshot, not against a live ``rt/lowstate``
   ``mode_machine`` byte (the whole point of the port is that the
-  snapshot lets a headless host answer). The driver's
-  :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
-  re-validates against its own cached ``_mode_machine`` at write
-  time; testing the snapshot vs the live frame is a driver-side
-  test, not a lookup-side one.
-* Which FSM ids the arm-SDK write gate admits on. That is the
-  first-of-two sources
-  :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
-  consults; its membership rule is
-  :data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS` and its
-  refusal is answered by
-  :mod:`~strands_robots.tools.g1.g1_fsm_targets`. This file pins the
-  second-of-two path (``mode_machine``) independently, so a caller
-  seeing the driver's refusal knows which source named it.
+  snapshot lets a headless host answer). Testing the snapshot vs the
+  live frame is a driver-side test, not a lookup-side one.
+* Whether the driver would admit the write. That is decided by the
+  driver's FSM gate, whose membership rule is
+  :data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS` and
+  whose refusal is answered by
+  :mod:`~strands_robots.tools.g1.g1_fsm_targets`. An arm-ready
+  ``mode_machine`` is necessary-by-observation, not sufficient - the
+  driver refuses on an unwired FSM read regardless of
+  ``mode_machine`` - so this file pins the membership answer only.
 """
 
 from __future__ import annotations
@@ -125,8 +126,8 @@ def test_the_refusal_string_names_the_driver_side_text() -> None:
 
     The driver refuses every write with
     ``"mode_machine unknown - lowstate has not delivered yet"`` when
-    its cached ``_mode_machine`` is ``None`` before either gate is
-    consulted. The lookup surfaces the same text verbatim so a
+    its cached ``_mode_machine`` is ``None`` before it reads the FSM
+    gate. The lookup surfaces the same text verbatim so a
     caller sees the exact refusal a follow-up ``send_action`` would
     carry (refs strands-labs/robots#358).
     """
@@ -214,13 +215,11 @@ def test_g1_mode_machine_admits_arm_admits_the_second_ready_value() -> None:
 def test_g1_mode_machine_admits_arm_refuses_a_non_ready_value() -> None:
     """A ``mode_machine`` outside the arm-ready set is refused.
 
-    ``0`` is not in ``{5, 6}``; the verb reports ``admitted=False``
-    and carries the driver-local liveness refusal string
-    :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
-    quotes on the ``mode_machine`` fallback branch. The refusal is
-    the same text used for the ``None`` liveness case because both
-    branches surface a single, consistent refusal channel for any
-    ``mode_machine`` outside the arm-ready set.
+    ``0`` is not in the neon-observed arm-ready set; the verb reports
+    ``admitted=False``. The refusal is the same driver-local liveness
+    text used for the ``None`` case because both branches surface a
+    single, consistent refusal channel for any ``mode_machine``
+    outside the arm-ready set.
     """
     result = _call(g1_mode_machine_admits_arm, mode_machine=0)
     assert result["status"] == "success"
@@ -236,7 +235,7 @@ def test_g1_mode_machine_admits_arm_refuses_a_none_liveness_query() -> None:
     Before the first ``rt/lowstate`` frame lands the driver's cached
     ``_mode_machine`` is ``None``; its ``_check_motion_gates``
     refuses every write on that branch with the liveness string
-    before it reads either gate. The lookup surfaces the same
+    before it reads the FSM gate. The lookup surfaces the same
     refusal so a caller polling before the first frame lands sees
     the exact text a follow-up ``send_action`` would carry.
     """
