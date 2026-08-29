@@ -10,12 +10,13 @@ two USB cameras, Python 3.10+.
 ## 1. Install (2 min)
 
 ```bash
-pip install "strands-robots[lerobot,mesh,sim-mujoco]"
+pip install "strands-robots[dashboard,lerobot,mesh,sim-mujoco]"
 python -m strands_robots doctor          # sanity check
 ```
 
-`lerobot` brings the hardware + dataset stack, `mesh` the peer-to-peer
-transport the dashboard speaks, `sim-mujoco` the twin you can rehearse on.
+`dashboard` brings the FastAPI + WebAuthn server this page drives, `lerobot`
+the hardware + dataset stack, `mesh` the peer-to-peer transport the dashboard
+speaks, `sim-mujoco` the twin you can rehearse on.
 
 If `doctor` fails on MuJoCo with `No such file or directory: 'sysctl'`, your
 `PATH` is missing `/usr/sbin` - that is the whole bug. On macOS its
