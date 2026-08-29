@@ -242,10 +242,21 @@ class TestAnUnusableHandleIsRefusedNotRaised:
         assert "envelope" in _text(envelope)
 
     def test_a_refused_handle_never_reaches_the_driver_call(self) -> None:
-        """A handle refused before the call must not be dialled."""
+        """A shape refusal precedes the dial; a contents refusal follows it.
+
+        The zero below is only a measurement beside the one under it. ``None``
+        and a string carry no ``get_status`` to dial, so a counter watching
+        them cannot leave zero however the verb is ordered. A sibling handle is
+        the input that can move it -- the verb cannot know an envelope is
+        another driver's until it has read it -- so the pair grades the refusal
+        *order*, and pins the refused path to a single dial. Nothing else in
+        this file watches the error path for a repeated call.
+        """
         calls = 0
 
-        class _CountingBad:
+        class _CountingSibling:
+            """A sibling-driver handle that records every dial."""
+
             async def get_status(self) -> dict[str, Any]:
                 nonlocal calls
                 calls += 1
@@ -254,6 +265,9 @@ class TestAnUnusableHandleIsRefusedNotRaised:
         assert _call(None)["status"] == "error"
         assert _call("a name")["status"] == "error"
         assert calls == 0, "a handle with no get_status must be refused before the call"
+
+        assert _call(_CountingSibling())["status"] == "error"
+        assert calls == 1, "a sibling handle is refused on its envelope, so it is dialled exactly once"
 
     def test_a_content_block_without_a_json_body_is_refused(self) -> None:
         envelope = _call(_Handle({"status": "success", "content": [{"text": "not json"}]}))
