@@ -57,6 +57,46 @@ from strands import tool
 
 from strands_robots.tools.g1._g1_common import HANDSHAKE_FSMS, WALK_FSMS
 
+#: The status fields only a G1 envelope carries.
+#:
+#: ``G1Driver.get_status`` reports these five alongside the ``tool_name`` /
+#: ``connected`` / ``battery_pct`` triple every native driver reports. The
+#: triple is the shared :data:`~strands_robots.drivers.base.DRIVER_SURFACE`
+#: contract, so it cannot tell one driver's envelope from another's; these
+#: five are the FSM and motion-switcher fields this verb's whole answer is
+#: computed from, and no other shipped driver's envelope declares any of
+#: them. A handle whose envelope is missing them is not a G1.
+_G1_STATUS_CONTRACT_KEYS = (
+    "fsm_id",
+    "mode_machine",
+    "fsm_mode_name",
+    "fsm_refusal",
+    "motion_switcher_open_error",
+)
+
+
+def _err(text: str) -> dict[str, Any]:
+    """Wrap ``text`` in the error envelope every ``@tool`` owes a caller."""
+    return {"status": "error", "content": [{"text": text}]}
+
+
+def _inner_json(envelope: Any) -> dict[str, Any] | None:
+    """Return the envelope's inner ``content[0]["json"]`` dict, or ``None``.
+
+    The three subscripts this replaces are the driver's own envelope shape,
+    which every shipped driver honours - but ``driver`` is typed
+    :class:`~typing.Any`, so the object that arrives need not be a driver at
+    all. Reading the chain defensively lets the verb refuse such a handle by
+    name instead of surfacing a ``KeyError`` past the tool boundary.
+    """
+    if not isinstance(envelope, dict):
+        return None
+    blocks = envelope.get("content")
+    if not isinstance(blocks, list) or not blocks or not isinstance(blocks[0], dict):
+        return None
+    inner = blocks[0].get("json")
+    return inner if isinstance(inner, dict) else None
+
 
 @tool
 async def g1_get_state(driver: Any) -> dict[str, Any]:
@@ -94,8 +134,38 @@ async def g1_get_state(driver: Any) -> dict[str, Any]:
         booleans as ``False`` - the gate cannot open on a read that never
         arrived.
     """
+    if driver is None:
+        return _err(
+            "g1_get_state: `driver` is required. Pass the live G1Driver handle the "
+            "orchestrator constructed - an agent cannot synthesize it, because every "
+            "field this verb returns comes from that driver's own status read."
+        )
+    if not callable(getattr(driver, "get_status", None)):
+        return _err(
+            f"g1_get_state: `driver` of type {type(driver).__name__!r} does not expose "
+            "get_status(). Pass a strands_robots G1Driver, or an object with an async "
+            "get_status() returning the driver's status envelope."
+        )
+
     envelope = await driver.get_status()
-    inner: dict[str, Any] = envelope["content"][0]["json"]
+    inner = _inner_json(envelope)
+    if inner is None:
+        return _err(
+            f"g1_get_state: get_status() on a `driver` of type {type(driver).__name__!r} "
+            "did not return the driver status envelope shape (a dict whose "
+            'content[0]["json"] is a dict). Pass a strands_robots G1Driver.'
+        )
+
+    absent = [key for key in _G1_STATUS_CONTRACT_KEYS if key not in inner]
+    if absent:
+        return _err(
+            f"g1_get_state: the status envelope from a `driver` of type "
+            f"{type(driver).__name__!r} declares none of this verb's FSM fields "
+            f"(absent: {absent}). Every native driver reports tool_name / connected / "
+            "battery_pct, so those cannot identify a G1; the arm and loco gate answers "
+            "this verb decides are computed from fsm_id, which a driver with no FSM "
+            "never reports. Pass a strands_robots G1Driver."
+        )
 
     fsm_id = inner.get("fsm_id")
     admits_arm = isinstance(fsm_id, int) and not isinstance(fsm_id, bool) and fsm_id in HANDSHAKE_FSMS
