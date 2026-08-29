@@ -526,6 +526,42 @@ class G1Driver:
     # Lifecycle and status.                                              #
     # ------------------------------------------------------------------ #
 
+    def _abort_connect(self, subs: DDSSubscriberSet, reason: str) -> str:
+        """Release a partially built subscriber set and record why. Returns ``reason``.
+
+        Every failure exit in :meth:`connect_eagerly` that happens after
+        ``subs`` exists routes through here, because a subscriber the driver
+        never records is one :meth:`cleanup` can never reach: it only closes
+        ``self._subs``, which is assigned once the whole bring-up has
+        succeeded. A ladder that gave up part way therefore used to leave the
+        topics it had already subscribed running - and
+        :meth:`DDSSubscriberSet.close` documents what that costs, since every
+        subscriber is built with a non-zero queue length and the ``ch_reader``
+        daemon thread that comes with it keeps the reader matched and keeps the
+        decoder callbacks writing caches for a driver that reports itself
+        disconnected. The retry this method's own docstring invites then
+        subscribes the same topics a second time.
+
+        Closing a set that never subscribed anything is a documented no-op, so
+        the exit where :meth:`DDSSubscriberSet.start` itself failed routes
+        through here too: the rule is that every exit past the constructor
+        releases the set, with no exception a later reader has to remember.
+        This is the driver-level counterpart of
+        :func:`~strands_robots.tools.g1._dds_engine._release_partial`, which
+        owns the same question one layer in for a single subscriber.
+
+        Args:
+            subs: The set built by this bring-up attempt, released here.
+            reason: The named failure, recorded on :attr:`_connect_error` so a
+                later retry can read why the previous attempt gave up.
+
+        Returns:
+            ``reason``, so each caller can ``return self._abort_connect(...)``.
+        """
+        subs.close()
+        self._connect_error = reason
+        return reason
+
     def connect_eagerly(self) -> str | None:
         """Attach to the DDS bus and subscribe every sensor topic. Idempotent.
 
@@ -553,17 +589,14 @@ class G1Driver:
         subs = DDSSubscriberSet(self._network_interface)
         err = subs.start()
         if err is not None:
-            self._connect_error = err
-            return err
+            return self._abort_connect(subs, err)
         for topic, cls_path, decoder in self._subscription_plan():
             message_class = _resolve_message_class(cls_path)
             if isinstance(message_class, str):
-                self._connect_error = message_class
-                return message_class
+                return self._abort_connect(subs, message_class)
             err = subs.subscribe(topic, message_class, decoder)
             if err is not None:
-                self._connect_error = err
-                return err
+                return self._abort_connect(subs, err)
         # Start the publisher on the same interface.  The subscriber set has
         # already run ``ensure_dds`` once, so :meth:`DDSPublisher.start`
         # returns ``None`` without a second SDK init - the shared lock keeps
@@ -573,11 +606,8 @@ class G1Driver:
         if err is not None:
             # The subscriber set is up; publisher failed.  Roll back so the
             # driver reports a single connect failure instead of a half-open
-            # state, and so :meth:`cleanup` on the caller's error path drops
-            # the subscribers cleanly.
-            subs.close()
-            self._connect_error = err
-            return err
+            # state rather than leaving the readers running.
+            return self._abort_connect(subs, err)
         self._pubs = pubs
         self._subs = subs
         self._connected = True
