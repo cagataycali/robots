@@ -72,6 +72,12 @@ commit would fire.
 
 Closes the driver-side half of harness#361 and issue #2765's "decidable
 now" list. What still needs a G1 in the room: measuring which `form`
-integer the firmware reports for `HANDSHAKE_FSMS` under `CheckMode`, and
+integer the firmware reports for `HANDSHAKE_FSMS` under `CheckMode`;
 whether `ReleaseMode()` is required before an `rt/lowcmd` write (the SDK's
-own G1 low-level example calls it, and this PR does not).
+own G1 low-level example calls it, and this PR does not); and whether
+10 Hz is the right refresh cadence against a real motion-switcher's RPC
+cost. The cadence is reasoned rather than measured — fast enough that an
+FSM transition ends a rollout within 100 ms, slow enough that the RPC is
+not the frame budget — and it is a module constant from which the
+staleness bound is derived, so retuning it against a measurement is one
+edit and cannot change how many missed reads the gate tolerates.
