@@ -65,7 +65,7 @@ from strands import tool
 def g1_battery(driver: Any) -> dict[str, Any]:
     """Return the driver's cached ``rt/lf/bmsstate`` snapshot.
 
-    Read-only. Calls :meth:`G1Driver._snapshot("_battery")` (a copy under
+    Read-only. Calls ``driver._snapshot("_battery")`` (a copy under
     the driver's ``_cache_lock``, so a caller mutating the result does not
     race the DDS thread) and reshapes the dict into an agent-facing
     envelope. A driver whose subscriber has not received a BMS message
