@@ -16,8 +16,8 @@ This verb does not subscribe DDS. The driver's own subscriber already delivers
 the same topic would compete for the wire and duplicate the bus load that
 lock is meant to prevent (this is the same rule the ``g1_battery`` module
 names, refs ``strands-labs/robots#358``). The verb is duck-typed on
-``driver._snapshot("_lidar_state")`` — the same accessor the driver's own
-``stream(action="sensors")`` path reads through — which returns a copy of
+``driver._snapshot("_lidar_state")`` -- the same accessor the driver's own
+``stream(action="sensors")`` path reads through -- which returns a copy of
 the cache under the driver's ``_cache_lock`` so a caller mutating the result
 does not race the DDS thread that writes into it.
 
@@ -67,7 +67,7 @@ def g1_lidar_state(driver: Any) -> dict[str, Any]:
     under the driver's ``_cache_lock``, so a caller mutating the result
     does not race the DDS thread) and reshapes the dict into an
     agent-facing envelope. A driver whose subscriber has not received a
-    ``LidarState_`` message yet — just-connected, or wire dropped —
+    ``LidarState_`` message yet -- just-connected, or wire dropped --
     reports ``present=False`` and every field ``None``; the verb does not
     fabricate a reading the driver does not have.
 
@@ -77,7 +77,7 @@ def g1_lidar_state(driver: Any) -> dict[str, Any]:
             :class:`~strands_robots.drivers.g1.G1Driver`).  Typed
             :class:`~typing.Any` rather than as ``G1Driver`` to keep this
             module out of the import cycle the driver's own ``ensure_dds``
-            reach into this package would close — see the module
+            reach into this package would close -- see the module
             docstring's SDK-load-hygiene note. The verb is duck-typed on
             ``_snapshot``; any object with that method answering
             ``"_lidar_state"`` and returning the cache dict shape the
@@ -96,7 +96,7 @@ def g1_lidar_state(driver: Any) -> dict[str, Any]:
         and ``t`` (the wall time the reading was decoded at, seconds
         since epoch, ``float`` or ``None``). On a driver whose
         subscriber has not received a state message yet the returned
-        dict carries ``present=False`` and every field ``None`` — the
+        dict carries ``present=False`` and every field ``None`` -- the
         verb does not fabricate a reading the driver does not have.
     """
     snapshot = driver._snapshot("_lidar_state")
