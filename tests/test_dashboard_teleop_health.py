@@ -4,7 +4,14 @@ Measured on real hardware 2026-08-19: a real SO-101 leader published 176 frames
 to a follower that applied NONE of them, and every surface the dashboard had said
 success - the receive call returned "started", the receiver reported running:true,
 /api/fleet showed both peers healthy. The truth was in the follower's child log:
-the mesh's per-frame envelope is 4*pi (RADIANS) and an SO-101 reports degrees.
+the mesh's per-frame envelope was 4*pi (RADIANS) and an SO-101 reports degrees.
+
+That bound is historical and is NOT this tree's: the envelope has since become
+DEFAULT_INPUT_VALUE_ABS = 720.0, in frame units rather than radians, so the same
+SO-101 degrees frame is accepted here. REAL_REFUSAL below is kept verbatim as the
+log line that was actually emitted - its 12.566370614359172 is the 4*pi bound of
+the tree it was captured on. What this file pins is the DIAGNOSIS of an envelope
+refusal, which is unit-agnostic, not the value of the bound.
 
 Then the opposite failure, same session: nothing arrived at all while the leader
 published 200+ frames, and the first version of this diagnosis told the operator

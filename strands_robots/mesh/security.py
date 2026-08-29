@@ -208,79 +208,6 @@ def _input_slew_abs() -> float:
     return _env_pos_float("STRANDS_MESH_INPUT_SLEW_ABS", DEFAULT_INPUT_SLEW_ABS)
 
 
-#: Per-joint safety envelopes by the unit the RECEIVING robot declares for that
-#: joint, as ``(value_abs, slew_abs)`` in that unit. Every row states the same
-#: physical claim as the radian default - "two full turns of reach, traversable
-#: twice per second" - expressed in the unit the frame is actually written in.
-#:
-#: This exists because :data:`DEFAULT_INPUT_VALUE_ABS` (4*pi) is a RADIAN
-#: assumption, and an SO-101 does not report radians: lerobot normalises Feetech
-#: positions to DEGREES (``wrist_roll`` rests at 170) or to a -100..100 percent
-#: range, with the gripper always 0..100 percent. Against the radian bound every
-#: real frame from such an arm is refused - measured: 209 published, 176 rejected,
-#: 0 applied - so the envelope has to know which unit it is bounding.
-INPUT_ENVELOPES_BY_UNIT: dict[str, tuple[float, float]] = {
-    # 2 turns of reach; the radian default, unchanged.
-    "rad": (DEFAULT_INPUT_VALUE_ABS, DEFAULT_INPUT_SLEW_ABS),
-    # 2 turns in degrees. 720 deg/s of slew is ~12.6 rad/s, still roughly 2x the
-    # no-load speed of an STS3215 at 12V, so a human-moved leader cannot trip it.
-    "deg": (720.0, 1440.0),
-    # Normalised percent (RANGE_M100_100 / RANGE_0_100): full scale is 100, so
-    # 200 keeps the same 2x-full-scale generosity the radian row has.
-    "pct": (200.0, 400.0),
-}
-
-#: How lerobot spells the normalisation modes, mapped to the unit keys above.
-#: Kept as plain strings so this module imports nothing from lerobot: security
-#: rules must be testable without hardware libraries installed.
-NORM_MODE_UNITS: dict[str, str] = {
-    "DEGREES": "deg",
-    "RANGE_M100_100": "pct",
-    "RANGE_0_100": "pct",
-    "RADIANS": "rad",
-}
-
-
-def input_envelope_for_units(
-    units_by_key: Mapping[str, str] | None,
-) -> tuple[dict[str, float], dict[str, float], str]:
-    """Per-joint magnitude and slew bounds for the units a receiver declares.
-
-    The bound that constrains a sender must not be chosen by that sender, so the
-    unit is never read from the frame: it comes from the robot the frame is about
-    to be applied to (``bus.motors[name].norm_mode``), which no remote peer can
-    influence. A joint whose unit is unknown keeps the radian default rather than
-    the most permissive row - an unrecognised declaration must not widen anything.
-
-    Args:
-        units_by_key: Frame key (``"shoulder_pan.pos"``) to unit key
-            (``"rad"`` / ``"deg"`` / ``"pct"``). ``None`` or empty means nothing
-            was declared, so nothing is overridden.
-
-    Returns:
-        ``(value_abs_by_key, slew_abs_by_key, note)`` where the two mappings hold
-        only the keys whose unit is recognised, and *note* is a one-line human
-        summary for the log ("2 joints in deg, 1 in pct" / "no declared units").
-    """
-    if not units_by_key:
-        return {}, {}, "no declared units - radian defaults apply"
-    values: dict[str, float] = {}
-    slews: dict[str, float] = {}
-    counts: dict[str, int] = {}
-    unknown = 0
-    for key, unit in units_by_key.items():
-        row = INPUT_ENVELOPES_BY_UNIT.get(str(unit))
-        if row is None:
-            unknown += 1
-            continue
-        values[key], slews[key] = row
-        counts[str(unit)] = counts.get(str(unit), 0) + 1
-    parts = [f"{n} joint{'s' if n != 1 else ''} in {u}" for u, n in sorted(counts.items())]
-    if unknown:
-        parts.append(f"{unknown} with an unrecognised unit (radian default kept)")
-    return values, slews, ", ".join(parts) if parts else "no recognised units"
-
-
 #: Charset for teleop input-frame keys (motor/joint names like
 #: ``"motor.pos"``, ``"shoulder_pan"``, ``"j0"``). Printable, no
 #: whitespace, no shell metacharacters, no path separators.
@@ -1584,11 +1511,13 @@ def validate_input_frame(
         action: The raw frame off the wire.
         value_abs: Scalar magnitude bound for every key. Defaults to
             ``STRANDS_MESH_INPUT_VALUE_ABS`` / :data:`DEFAULT_INPUT_VALUE_ABS`.
-        value_abs_by_key: Per-joint bounds, as produced by
-            :func:`input_envelope_for_units` from the receiving robot's declared
-            units. Takes precedence over *value_abs* for the keys it names,
-            because a degree-valued shoulder and a percent-valued gripper in the
-            same frame do not share one honest bound.
+        value_abs_by_key: Per-joint bounds, keyed by frame key, resolved by the
+            caller from the units the RECEIVING robot declares. Takes precedence
+            over *value_abs* for the keys it names, because a degree-valued
+            shoulder and a percent-valued gripper in the same frame do not share
+            one honest bound. No caller populates this yet, so every joint is
+            bounded by *value_abs* in practice; see issue #2935 for wiring it to
+            the receiver's declared norm modes.
 
     Returns a sanitised ``dict[str, float]`` containing only validated
     entries. Raises :class:`ValidationError` on any violation.
