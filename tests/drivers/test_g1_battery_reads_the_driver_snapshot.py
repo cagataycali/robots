@@ -1,10 +1,9 @@
 """``g1_battery`` returns exactly what ``G1Driver._snapshot("_battery")`` gives it.
 
 ``g1_battery`` is the second driver-instance-taking verb in
-:mod:`strands_robots.tools.g1`, after
-:func:`~strands_robots.tools.g1.g1_state.g1_get_state`.  Every earlier verb
+:mod:`strands_robots.tools.g1`, after ``g1_get_state``.  Every earlier verb
 in the package is a pure reader over module-level constants; this one and
-:func:`g1_get_state` both take a driver instance and read its cache
+``g1_get_state`` both take a driver instance and read its cache
 through a named accessor - :meth:`G1Driver.get_status` for state,
 :meth:`G1Driver._snapshot` for the BMS snapshot.  The tests here fix that
 contract by handing a hand-rolled driver double to the verb and asserting

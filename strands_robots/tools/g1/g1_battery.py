@@ -4,27 +4,25 @@
 message into a small ``_battery`` dict carrying the SOC percentage, a
 charging flag, the pack current (A), the pack cycle count and the wall time
 the last message decoded at. ``G1Driver.get_status`` publishes ``battery_pct``
-from that same dict on the mesh's status wire, which
-:func:`~strands_robots.tools.g1.g1_state.g1_get_state` already surfaces to
-an agent; this verb is the *cached-snapshot* companion the ``g1_state``
-docstring names, returning every field the driver's decoder actually wrote
-rather than the pack percentage alone.
+from that same dict on the mesh's status wire, which the ``g1_get_state``
+verb already surfaces to an agent; this verb is the *cached-snapshot*
+companion the ``g1_state`` docstring names, returning every field the
+driver's decoder actually wrote rather than the pack percentage alone.
 
 This verb does not subscribe DDS. The driver's own subscriber already
 delivers ``rt/lf/bmsstate`` under the singleton ``_DDS_INIT_LOCK`` from
 :mod:`~strands_robots.tools.g1._g1_common`, and a second subscriber path
 on the same topic would compete for the wire and duplicate the bus load
-that lock is meant to prevent (this is the same rule
-:mod:`~strands_robots.tools.g1.g1_state` names, refs
-strands-labs/robots#358).  The verb is duck-typed on
+that lock is meant to prevent (this is the same rule the ``g1_state``
+module names, refs strands-labs/robots#358).  The verb is duck-typed on
 ``driver._snapshot("_battery")`` - the same accessor the driver's own
 ``stream(action="sensors")`` path reads through - which returns a copy of
 the cache under the driver's ``_cache_lock`` so a caller mutating the
 result does not race the DDS thread that writes into it.
 
 The driver argument is typed :class:`~typing.Any` at runtime rather than
-as ``G1Driver`` for the same reason
-:mod:`~strands_robots.tools.g1.g1_state` gives: the driver module imports
+as ``G1Driver`` for the same reason the ``g1_state`` module gives: the
+driver module imports
 ``ensure_dds`` from this package at load, so a runtime import of
 ``G1Driver`` here would close a cycle, and ``@tool`` calls
 :func:`typing.get_type_hints` at decoration time so a string forward
