@@ -41,10 +41,12 @@ Two things this module is deliberately *not*:
   than being re-imported from the driver so ``import
   strands_robots.tools.g1.g1_dds_topics`` pulls no ``unitree_sdk2py``
   submodule (the import-hygiene contract every other file in this
-  package carries, refs strands-labs/robots#358). A driver-side widen
-  or narrow of the subscription set is caught by the test in
-  :mod:`tests.drivers.test_g1_dds_topics_reads_the_driver_subscription_set`,
-  which asserts identity against the driver's own constants.
+  package carries, refs strands-labs/robots#358). The invariant a
+  driver-side widen or narrow must preserve is byte-for-byte identity
+  between the ``topic`` strings surfaced here and the driver's own
+  ``_TOPIC_*`` constants: a subscribe-set drift that does not update
+  this snapshot leaves the two out of sync, so the read the driver
+  actually opens and the read this verb reports diverge silently.
 
 What this module does not decide.
 
@@ -96,10 +98,12 @@ from strands import tool
 #:
 #: The snapshot lives here rather than in
 #: :mod:`~strands_robots.tools.g1._g1_common` because the mapping is
-#: only useful for the ``g1_dds_topics``-side of the conversation; a
-#: driver-side widen or narrow lands here through the identity test
-#: in ``tests/drivers/test_g1_dds_topics_reads_the_driver_subscription_set.py``,
-#: which reads the driver's own constants and refuses a drift.
+#: only useful for the ``g1_dds_topics``-side of the conversation. The
+#: invariant this snapshot must preserve is byte-identity of the
+#: ``topic`` strings with the driver's own ``_TOPIC_*`` constants; a
+#: driver-side widen or narrow that updates the driver without also
+#: updating this snapshot leaves them out of sync, and the read the
+#: driver actually opens and the read this verb reports diverge.
 _DRIVER_TOPICS: tuple[dict[str, str], ...] = (
     {"topic": "rt/lowstate", "direction": "read", "role": "lowstate"},
     {"topic": "rt/lf/bmsstate", "direction": "read", "role": "battery"},
