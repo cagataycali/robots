@@ -302,9 +302,7 @@ class G1Driver:
         # wire-format decisions this producer answers, and
         # :mod:`strands_robots.tools.g1._motion_switcher` for the decoder it
         # feeds.
-        self._motion_switcher_client_factory: Callable[[str], Any] | None = (
-            motion_switcher_client_factory
-        )
+        self._motion_switcher_client_factory: Callable[[str], Any] | None = motion_switcher_client_factory
         self._motion_switcher_client: Any | None = None
         # ``_last_fsm_reading`` carries the most recent :class:`FSMReading` so
         # a caller inspecting :meth:`get_status` sees the mode label and the
@@ -555,15 +553,9 @@ class G1Driver:
                         # names why the client itself never opened.  All
                         # three are ``None`` on the happy path.
                         "fsm_mode_name": (
-                            self._last_fsm_reading.mode_name
-                            if self._last_fsm_reading is not None
-                            else None
+                            self._last_fsm_reading.mode_name if self._last_fsm_reading is not None else None
                         ),
-                        "fsm_refusal": (
-                            self._last_fsm_reading.refusal
-                            if self._last_fsm_reading is not None
-                            else None
-                        ),
+                        "fsm_refusal": (self._last_fsm_reading.refusal if self._last_fsm_reading is not None else None),
                         "motion_switcher_open_error": self._motion_switcher_open_error,
                     }
                 }
@@ -682,9 +674,7 @@ class G1Driver:
                 # room for a domain-id kwarg if the SDK adds one.
                 import importlib
 
-                module = importlib.import_module(
-                    "unitree_sdk2py.comm.motion_switcher.motion_switcher_client"
-                )
+                module = importlib.import_module("unitree_sdk2py.comm.motion_switcher.motion_switcher_client")
                 client_cls = module.MotionSwitcherClient
                 client = client_cls()
                 # ``Init`` is the SDK's own bring-up hook; every G1 example
@@ -698,8 +688,7 @@ class G1Driver:
                     init()
         except Exception as exc:  # noqa: BLE001 - the SDK's failures are opaque
             self._motion_switcher_open_error = (
-                f"motion-switcher client could not be opened: "
-                f"{type(exc).__name__}: {exc}"
+                f"motion-switcher client could not be opened: {type(exc).__name__}: {exc}"
             )
             logger.debug(
                 "%s: motion-switcher factory refused: %s",

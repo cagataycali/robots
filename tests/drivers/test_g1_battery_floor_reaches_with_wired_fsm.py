@@ -147,7 +147,18 @@ def test_a_driver_with_no_motion_switcher_factory_still_refuses_with_fsm_unknown
     # to surface -- ``get_status`` reports it under
     # ``motion_switcher_open_error``.
     assert driver._motion_switcher_open_error is not None
-    assert "unitree_sdk2py" in driver._motion_switcher_open_error or "MotionSwitcher" in driver._motion_switcher_open_error
+    # The exact failure text depends on whether ``unitree_sdk2py`` is
+    # installed on the box running the tests.  On CI (SDK absent) the
+    # importlib call raises ``ModuleNotFoundError`` and the message names
+    # the SDK package or the client class.  On a developer box with the SDK
+    # installed but no DDS bus reachable, ``Init()`` raises deep inside the
+    # C bindings (``AttributeError: 'NoneType' object has no attribute
+    # '_ref'``) and the message names neither.  Both are the same defect
+    # from the caller's perspective -- the client did not open -- so we
+    # grade the invariant the driver actually preserves: an error string
+    # was captured on the driver rather than raised through the gate.
+    assert isinstance(driver._motion_switcher_open_error, str)
+    assert "motion-switcher client could not be opened" in driver._motion_switcher_open_error
 
 
 def test_battery_floor_reaches_with_a_wired_fsm_and_a_critical_pack() -> None:
@@ -261,9 +272,7 @@ def test_the_fsm_producer_seam_is_refresh_fsm_id_calling_read_fsm_id() -> None:
     read_calls = [
         node
         for node in ast.walk(refresh)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "read_fsm_id"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "read_fsm_id"
     ]
     assert len(read_calls) == 1, (
         f"_refresh_fsm_id calls read_fsm_id() {len(read_calls)} times; expected "
@@ -318,11 +327,7 @@ def test_refresh_is_called_before_the_fsm_check_in_the_gate() -> None:
     refresh_calls: list[int] = []
     fsm_none_checks: list[int] = []
     for node in ast.walk(gate):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "_refresh_fsm_id"
-        ):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_refresh_fsm_id":
             refresh_calls.append(node.lineno)
         elif isinstance(node, ast.If) and "self._fsm_id is None" in ast.unparse(node.test):
             fsm_none_checks.append(node.lineno)

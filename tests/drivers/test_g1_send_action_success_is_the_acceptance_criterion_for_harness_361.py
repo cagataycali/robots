@@ -222,9 +222,7 @@ def _healthy_driver(motion_switcher_client: Any | None = None) -> G1Driver:
             ),
         )
     )
-    driver._on_bms(
-        types.SimpleNamespace(soc=_HEALTHY_PACK_PCT, charge=0, current=0.0, cycle=0)
-    )
+    driver._on_bms(types.SimpleNamespace(soc=_HEALTHY_PACK_PCT, charge=0, current=0.0, cycle=0))
     return driver
 
 
