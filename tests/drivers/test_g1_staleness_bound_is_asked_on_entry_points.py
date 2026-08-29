@@ -236,6 +236,12 @@ class TestStalenessBoundIsAskedOnBothPaths:
         envelope = driver._check_motion_gates("arm", refresh=True)
         assert envelope is None
         base_read_at = driver._fsm_read_at
+        # The gate admitted, so the OK branch of ``_refresh_fsm_id`` ran, and
+        # that is the one branch that both writes ``_fsm_id`` and stamps
+        # ``_fsm_read_at``.  Narrowing on that invariant is the same claim the
+        # fix under test rests on, so asserting it here is a pin rather than a
+        # typing convenience: a refresh that stopped stamping fails this line.
+        assert base_read_at is not None
 
         action = {"left_shoulder_pitch": 0.1}
 
