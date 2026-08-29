@@ -24,8 +24,8 @@ serialises).  The verb does not consult the FSM gate: reading the loop's
 snapshot is not a motion write, and the driver's own method returns a
 success envelope whether or not the gate would admit a new write today -
 "no task running" and "loop finished with exit_reason=n_steps" are honest
-answers, not motion refusals (as the ``get_task_status`` cell in
-``tests/drivers/test_g1_driver.py`` already pins).
+answers, not motion refusals, and the driver's own suite pins both as
+successes rather than as refusals.
 
 The driver argument is typed :class:`~typing.Any` at runtime rather than
 as ``G1Driver`` for the same reason the ``g1_state`` module gives: the
