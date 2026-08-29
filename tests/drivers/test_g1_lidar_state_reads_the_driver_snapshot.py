@@ -6,7 +6,7 @@
 (``strands-labs/robots#2939``). Every earlier read-only verb in the package
 (``g1_joint_reference``, ``g1_list_motion_gates``, ``g1_fsm_admits``) is a
 pure reader over module-level constants; this one and its three siblings all
-take a driver instance and read its cache through a named accessor —
+take a driver instance and read its cache through a named accessor --
 :meth:`G1Driver._snapshot` for the ``rt/utlidar/lidar_state`` snapshot. The
 tests here fix that contract by handing a hand-rolled driver double to the
 verb and asserting the returned dict names each field ``_on_lidar_state``
@@ -121,7 +121,7 @@ def test_a_healthy_lidar_reports_every_field_the_decoder_wrote() -> None:
     :func:`~strands_robots.tools.g1._g1_common.decode_code`), ``freq`` (the
     cloud frequency in Hz off ``cloud_frequency``, float),
     ``sys_rotation_speed`` (float) and ``t`` (wall time of decode). The
-    verb is not the place to reword or convert those — a caller reading
+    verb is not the place to reword or convert those -- a caller reading
     this reading against a health chip on the mesh reads the same units
     the driver wrote.
     """
@@ -148,7 +148,7 @@ def test_a_faulted_lidar_reports_the_code_the_decoder_wrote() -> None:
 
     ``_on_lidar_state`` reads ``error_state`` off the message and writes it
     into ``code`` as an integer along with its rendered text in
-    ``code_text``. A MID-360 reporting a fault — say code ``2`` — must
+    ``code_text``. A MID-360 reporting a fault -- say code ``2`` -- must
     surface through this verb decidably, not be masked to zero. Reading a
     non-``ok`` code against ``freq`` and ``sys_rotation_speed`` at the same
     call is how a caller distinguishes a stopped scan from a healthy one.
