@@ -11,11 +11,15 @@ false against both bounds.
 
 ``nan`` is the value that matters, because the ceiling it walks through is a
 security bound: the module's own comment says it exists "to prevent accidental
-day- or week-long URLs". ``botocore`` interpolates ``ExpiresIn`` into the
-signature without reading it, so the URL carried ``X-Amz-Expires=nan`` and the
-``/ref`` message published beside it carried ``expires_at: nan``. AWS refuses a
-signed URL whose expiry field is not a number, so the frame is unreadable *and*
-the window was never bounded.
+day- or week-long URLs". ``botocore`` does not read ``ExpiresIn`` either, and
+what it does instead depends on the signer: its pure-python one interpolates the
+value into the signature verbatim, so the URL carried ``X-Amz-Expires=nan``,
+while the ``awscrt`` signer the ``[mesh-iot]`` extra installs fails inside the
+signer with a bare ``AssertionError``. Both leave the caller worse off than a
+refusal here -- AWS rejects a signed URL whose expiry is not a number, so the
+frame is unreadable *and* the window was never bounded, and the CRT path loses
+the frame to an error naming no TTL. The ``/ref`` message published beside the
+URL carried ``expires_at: nan`` either way.
 
 What is deliberately unchanged is the *range*: ``0`` is still the documented
 keyword-versus-environment precedence sentinel, ``-99`` is still a call-site bug
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 
 import pytest
 
@@ -40,7 +45,7 @@ from strands_robots.mesh.iot.camera_offload import (
 
 #: Spellings no count of seconds can be read from. Each one survived both
 #: clamps (or, for ``inf``, tripped the ceiling with a notice that raised
-#: inside ``logging``) and reached the signed URL.
+#: inside ``logging``) and reached ``botocore``.
 UNREADABLE = [
     pytest.param(float("nan"), id="nan"),
     pytest.param(float("inf"), id="inf"),
@@ -62,6 +67,50 @@ UNCHANGED = [
     pytest.param(0, 1, id="the-precedence-sentinel-clamps-to-the-floor"),
     pytest.param(-99, 1, id="a-negative-call-site-bug-clamps-to-the-floor"),
 ]
+
+
+#: ``UNREADABLE`` carries ``pytest.param`` wrappers for the ids; the premise
+#: below loops in one cell instead, so it needs the bare values.
+UNREADABLE_VALUES = [param.values[0] for param in UNREADABLE]
+
+#: The one outcome that would retire this module's readability step: botocore
+#: signing exactly the whole number of seconds the caller named.
+_AS_NAMED = "signed as named"
+
+
+def _s3_sigv4_client():
+    """An offline sigv4 S3 client, or a skip where ``boto3`` is absent."""
+    boto3 = pytest.importorskip("boto3")
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        region_name="us-east-1",
+        aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
+        aws_secret_access_key="x" * 40,
+        config=Config(signature_version="s3v4"),
+    )
+
+
+def _presign_outcome(client, expires_in) -> str:
+    """Classify what botocore does with *expires_in*, without signing anything real.
+
+    Returns :data:`_AS_NAMED` only when the signed URL carries exactly the
+    digits the caller passed. Every other outcome is named so a change in
+    botocore's behaviour reads as a different string rather than a bare False.
+    """
+    try:
+        url = client.generate_presigned_url("get_object", Params={"Bucket": "b", "Key": "k"}, ExpiresIn=expires_in)
+    except Exception as exc:  # noqa: BLE001 - the class is the finding, not a failure to handle
+        return f"refused inside the signer: {type(exc).__name__}"
+    signed = re.search(r"[?&]X-Amz-Expires=([^&]*)", url)
+    if signed is None:
+        return "signed with no expiry at all"
+    if not re.fullmatch(r"[0-9]+", signed.group(1)):
+        return f"signed a non-numeric expiry: {signed.group(1)}"
+    if signed.group(1) != f"{expires_in}":
+        return f"signed a number the caller never named: {signed.group(1)}"
+    return _AS_NAMED
 
 
 def _offloader(monkeypatch, **kwargs):
@@ -102,28 +151,46 @@ class TestPremises:
         }
         assert caught_by_a_bound == {float("inf"), float("-inf"), 3600.5, False}
 
-    def test_botocore_interpolates_the_expiry_without_reading_it(self):
-        """A non-numeric ``ExpiresIn`` reaches the signed URL verbatim.
+    def test_botocore_does_not_read_the_ttl_for_us(self):
+        """Grounds the severity against the real consumer, on either signer.
 
-        Grounds the severity against the real consumer rather than against a
-        stand-in: ``boto3`` ships in the ``mesh-iot`` extra this module needs,
-        so this runs wherever the module is usable.
+        ``boto3`` ships in the ``mesh-iot`` extra this module needs, so this
+        runs wherever the module is usable. Which *signer* it runs through is
+        not fixed: ``botocore`` signs S3 sigv4 through ``awscrt`` when that is
+        importable and through its own pure-python signer otherwise, and the
+        two disagree about an unreadable ``ExpiresIn``. The extra declares
+        ``awscrt``, so the shipped configuration is the CRT one -- but the
+        module is importable without it, so the premise is asserted as the
+        disjunction rather than pinned to whichever signer CI happens to have.
+
+        Neither signer produces the lifetime the caller named:
+
+        | ``ExpiresIn`` | pure-python signer | CRT signer |
+        | --- | --- | --- |
+        | ``nan``, ``-inf``, ``False`` | signed verbatim | bare ``AssertionError`` |
+        | ``inf``, ``2.5``, ``1800.5``, ``3600.5`` | signed verbatim | ``TypeError: argument 13 must be int, not float`` |
+        | ``True`` | signed ``X-Amz-Expires=True`` | signed ``X-Amz-Expires=1`` |
+
+        So the failure is one of three, and all three are wrong: a signed URL
+        whose expiry is not a number (AWS refuses it at request time, so the
+        window was never bounded), an opaque refusal from inside the signer
+        with no message naming the TTL, or a silent one-second URL. That is
+        why the TTL has to be readable *before* it gets here.
         """
-        boto3 = pytest.importorskip("boto3")
-        from botocore.config import Config
+        client = _s3_sigv4_client()
+        for value in UNREADABLE_VALUES:
+            assert _presign_outcome(client, value) != _AS_NAMED, (
+                f"botocore resolved ExpiresIn={value!r} to the lifetime named, so this "
+                "module would no longer need to read it first"
+            )
 
-        client = boto3.client(
-            "s3",
-            region_name="us-east-1",
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="x" * 40,
-            config=Config(signature_version="s3v4"),
-        )
-        url = client.generate_presigned_url("get_object", Params={"Bucket": "b", "Key": "k"}, ExpiresIn=float("nan"))
-        assert "X-Amz-Expires=nan" in url, (
-            "botocore is expected to sign whatever it is handed, which is why the "
-            "TTL has to be readable before it gets there"
-        )
+    def test_the_same_client_does_sign_a_readable_ttl_as_named(self):
+        """Non-vacuity: the cell above fails for a reason, not for every input.
+
+        Without this, a client that refused everything -- bad credentials, a
+        signer that never returns -- would satisfy the premise trivially.
+        """
+        assert _presign_outcome(_s3_sigv4_client(), 60) == _AS_NAMED
 
     @pytest.mark.parametrize("value", UNREADABLE)
     def test_the_environment_path_already_refused_these(self, monkeypatch, value):

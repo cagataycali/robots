@@ -94,12 +94,15 @@ def _whole_seconds_or_none(value: Any) -> int | None:
     ``nan`` is the value that matters. ``nan > MAX_PRESIGN_TTL_SECONDS`` is
     ``False`` and ``nan < 1`` is ``False``, so it passed the ceiling whose
     documented purpose is to stop "accidental day- or week-long URLs" and
-    reached both consumers intact: ``botocore`` interpolates ``ExpiresIn``
-    into the signature without reading it, so the presigned URL carried
-    ``X-Amz-Expires=nan``, and the ``/ref`` message published alongside it
-    carried ``expires_at: nan``. A signed URL whose expiry field is not a
-    number is one AWS refuses at request time, so the frame is unreadable
-    *and* the window was never bounded.
+    reached both consumers intact. ``botocore`` does not read ``ExpiresIn``
+    either, and what it does instead depends on the signer: the pure-python
+    one interpolates the value verbatim, so the presigned URL carried
+    ``X-Amz-Expires=nan`` -- a URL AWS refuses at request time, so the frame
+    is unreadable *and* the window was never bounded -- while the ``awscrt``
+    signer the ``[mesh-iot]`` extra installs fails inside the signer with a
+    bare ``AssertionError`` naming no TTL, losing the frame outright. The
+    ``/ref`` message published alongside carried ``expires_at: nan`` either
+    way.
 
     Three more spellings resolved to something the caller did not name. A
     fractional TTL survived both clamps and signed ``X-Amz-Expires=2.5``.
@@ -108,6 +111,11 @@ def _whole_seconds_or_none(value: Any) -> int | None:
     clamp's own notice renders the value with ``%d``, and ``"%d" % inf``
     raises inside ``logging`` -- so the operator saw
     ``--- Logging error ---`` where the clamp notice belonged.
+
+    The signed values quoted above are the pure-python signer's. Under
+    ``awscrt`` every fractional TTL raises ``TypeError`` from inside the
+    signer instead, which is the same finding with a louder symptom: no
+    signer turns an unreadable TTL into the lifetime the caller named.
 
     Only readability is decided here; the range is still the clamps' to
     decide, which is why this is deliberately sign-agnostic. ``0`` remains

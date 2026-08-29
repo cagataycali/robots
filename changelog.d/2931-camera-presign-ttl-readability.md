@@ -10,15 +10,21 @@ anything that compares false against both bounds.
 
 `nan` is the value that matters, because the bound it walked through is a
 security bound -- the module's own comment says the ceiling exists "to prevent
-accidental day- or week-long URLs". `botocore` interpolates `ExpiresIn` into the
-signature without reading it, so the presigned URL carried `X-Amz-Expires=nan`
-and the `/ref` message published beside it carried `expires_at: nan`. A signed
-URL whose expiry field is not a number is one AWS refuses at request time, so
-the frame is unreadable *and* the window was never bounded. Three more spellings
-resolved to something the caller never named: a fractional TTL signed
-`X-Amz-Expires=2.5`, `True` stored a silent one-second TTL, and `inf` tripped
-the ceiling but its notice renders the value with `%d`, so `logging` raised and
-the operator saw an error where the clamp notice belonged.
+accidental day- or week-long URLs". `botocore` does not read `ExpiresIn`
+either, and what it does instead depends on the signer. Its pure-python signer
+interpolates the value verbatim, so the presigned URL carried
+`X-Amz-Expires=nan` -- a URL AWS refuses at request time, so the frame is
+unreadable *and* the window was never bounded. The `awscrt` signer that the
+`mesh-iot` extra installs, which is therefore the shipped configuration, instead
+fails inside the signer with a bare `AssertionError` naming no TTL, losing the
+frame outright. The `/ref` message published beside the URL carried
+`expires_at: nan` either way.
+
+Three more spellings resolved to something the caller never named: a fractional
+TTL signed `X-Amz-Expires=2.5` on the pure-python signer and raises `TypeError`
+from inside the CRT one, `True` stored a silent one-second TTL, and `inf`
+tripped the ceiling but its notice renders the value with `%d`, so `logging`
+raised and the operator saw an error where the clamp notice belonged.
 
 The keyword now goes through a readability check first. Only readability is
 decided there -- the range is still the clamps' to decide -- so `0` remains the
