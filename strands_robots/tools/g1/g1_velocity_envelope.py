@@ -101,6 +101,10 @@ _DURATION_MAX_SECONDS: float = 10.0
 #: SDK as no-op-shaped writes today (the controller ignores them without
 #: raising), so the neon bundle refuses them here rather than letting a
 #: silently-dropped command look like a successful walk to the planner.
+#: This bound is **exclusive** and is the one asymmetry in this envelope:
+#: the abs-max clamps admit their boundary (``|value| > bound``) because a
+#: saturated command is a command, while the value *at* this bound is the
+#: no-op the refusal exists to catch, so it refuses on ``value <= bound``.
 _DURATION_MIN_SECONDS: float = 0.0
 
 #: Additional bounds for the ``g1_walk_forward`` and ``g1_turn`` sugar
@@ -233,8 +237,11 @@ def g1_velocity_admits(
         vyaw: yaw rate in radians per second. Same shape against
             ``vyaw_abs_max``.
         duration: seconds to keep the velocity commanded on the
-            single-shot path. Refused below ``duration_min_seconds``
-            or above ``duration_max_seconds``.
+            single-shot path. Refused at or below
+            ``duration_min_seconds`` - that bound is exclusive, so a
+            ``duration`` of exactly zero is refused rather than
+            admitted - and refused above ``duration_max_seconds``,
+            which is inclusive like the three abs-max clamps.
 
     Returns:
         A dict with ``status``; an ``admits`` bool naming whether
@@ -280,13 +287,13 @@ def g1_velocity_admits(
         _reject("duration", duration, "duration_max_seconds", _DURATION_MAX_SECONDS, "non-finite")
     else:
         d = float(duration)
-        if d < _DURATION_MIN_SECONDS:
+        if d <= _DURATION_MIN_SECONDS:
             _reject(
                 "duration",
                 duration,
                 "duration_min_seconds",
                 _DURATION_MIN_SECONDS,
-                "value < bound",
+                "value <= bound",
             )
         elif d > _DURATION_MAX_SECONDS:
             _reject(

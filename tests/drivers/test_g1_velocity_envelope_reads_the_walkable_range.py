@@ -44,6 +44,8 @@ import math
 import sys
 from typing import Any
 
+import pytest
+
 from strands_robots.tools.g1._g1_common import ERR_CODES, WALK_FSMS
 from strands_robots.tools.g1.g1_velocity_envelope import (
     _ANGLE_ABS_MAX,
@@ -197,6 +199,11 @@ def test_g1_velocity_admits_at_the_exact_clamp_boundaries() -> None:
     > bound`` rather than ``>= bound`` (the neon bundle's clamp does
     the same, and off-by-one at the boundary would silently reject a
     caller's saturated command).
+
+    ``duration_min_seconds`` is deliberately absent from this cell:
+    that bound is exclusive, so its boundary refuses rather than
+    admits, and it is pinned by
+    :func:`test_g1_velocity_admits_refuses_a_zero_or_negative_duration`.
     """
     result = _call(
         g1_velocity_admits,
@@ -282,19 +289,29 @@ def test_g1_velocity_admits_refuses_a_non_finite_component() -> None:
     assert result_nan["refusals"][0]["comparison"] == "non-finite"
 
 
-def test_g1_velocity_admits_refuses_a_zero_or_negative_duration() -> None:
-    """A duration below ``duration_min_seconds`` reads as refused.
+@pytest.mark.parametrize("duration", [0.0, -0.0, -1.0])
+def test_g1_velocity_admits_refuses_a_zero_or_negative_duration(duration: float) -> None:
+    """A duration at or below ``duration_min_seconds`` reads as refused.
 
     The neon bundle refuses zero-or-negative durations because the
     controller ignores them without raising, which would let a
     silently-dropped command look like a successful walk to the
-    planner. Pinned here so a widen of the min bound to strictly-
-    positive still surfaces zero as a refusal.
+    planner.
+
+    ``duration=0.0`` is the cell that matters and it is the reason this
+    is parametrised rather than asserting a negative alone: the min
+    bound *is* ``0.0``, so a refusal written as ``value < bound`` admits
+    exactly the no-op it exists to catch, and a negative-only assertion
+    cannot see that. A duration computed as distance/speed that rounds
+    to zero is the realistic caller, and it must not read as admitted.
+    ``-0.0`` is included because it compares equal to the bound while
+    carrying a sign bit, so it is decided by the same comparison.
     """
-    result = _call(g1_velocity_admits, vx=0.0, vy=0.0, vyaw=0.0, duration=-1.0)
+    result = _call(g1_velocity_admits, vx=0.0, vy=0.0, vyaw=0.0, duration=duration)
     assert result["admits"] is False
     assert result["refusals"][0]["dimension"] == "duration"
     assert result["refusals"][0]["bound_key"] == "duration_min_seconds"
+    assert result["refusals"][0]["comparison"] == "value <= bound"
 
 
 def test_g1_velocity_admits_refuses_a_duration_above_the_ceiling() -> None:

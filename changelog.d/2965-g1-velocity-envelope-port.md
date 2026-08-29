@@ -10,8 +10,13 @@
   the SDK side. The two verbs let a caller decide the ``rc=7404``
   gate-refused refusal decidably before a future driver-side
   ``SetVelocity`` wrapper fires; ``g1_velocity_admits`` names every
-  violated dimension in one call rather than one per dispatch attempt,
-  and both verbs surface :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`
+  violated dimension in one call rather than one per dispatch attempt.
+  The three abs-max clamps admit their boundary (a saturated command is
+  still a command) while ``duration_min_seconds`` is exclusive, so a
+  ``duration`` of exactly zero - a distance/speed computation that
+  rounded down, say - refuses rather than reading as an admitted walk
+  the controller would silently drop. Both verbs surface
+  :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`
   so a caller comparing an intended write against both conditions
   (envelope + gate) has the FSM set on hand. No ``unitree_sdk2py``
   submodule loads on import - the envelope table is a module-level
