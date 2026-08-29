@@ -148,10 +148,13 @@ def g1_decode_error_code(code: int) -> dict[str, Any]:
             ``bool`` is refused (``True`` is ``int(1)`` but a
             passed-through boolean is a caller mistake, not a valid
             decode query). A negative value is admitted decidably as
-            ``unknown``; the SDK's own catalogue does not carry
-            negative codes but the driver may pass through a
-            transport-level -1 on an exception, which this verb
-            reports as ``known=False`` without inventing text for it.
+            ``unknown`` rather than refused: the catalogue carries no
+            negative codes, but ``_g1_common.decode_code`` already
+            renders any integer, so refusing one here would make this
+            verb narrower than the renderer whose text it quotes. A
+            transport-level -1 is the convention for an SDK call that
+            raised instead of returning a rc; this verb reports it as
+            ``known=False`` without inventing text for it.
 
     Returns:
         A dict with ``status`` (``"success"`` on any decidable answer,

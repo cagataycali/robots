@@ -112,11 +112,13 @@ def test_the_snapshot_names_the_loco_side_refusals() -> None:
     ``7301`` (LocoState not available), ``7302`` (Invalid FSM id -
     the SDK's own transition refusal that
     :func:`~strands_robots.tools.g1.g1_fsm_targets.g1_fsm_target_admits`
-    surfaces), ``7303`` (Invalid task id - the same shape for
-    :func:`~strands_robots.tools.g1.g1_loco_tasks.g1_loco_task_admits`):
-    each of those is a rc a caller can receive from a loco-side
-    write. This cell pins their presence so the two lookup verbs and
-    the catalogue quote the same numbers.
+    surfaces), ``7303`` (Invalid task id - the same shape for the
+    ``g1_loco_task_admits`` verb, which is not in this tree yet and so
+    is named as a literal rather than cross-referenced): each of those
+    is a rc a caller can receive from a loco-side write. This cell
+    pins their presence so the catalogue and the lookup verbs quote
+    the same numbers, and it does not depend on which of those verbs
+    have landed.
     """
     for loco_rc in (7301, 7302, 7303):
         assert loco_rc in ERR_CODES, (
@@ -235,12 +237,20 @@ def test_g1_decode_error_code_flags_an_unknown_code() -> None:
 def test_g1_decode_error_code_admits_a_negative_rc_as_unknown() -> None:
     """A negative rc is admitted decidably as ``known=False``.
 
-    The catalogue's own keys are all non-negative but the driver may
-    pass through a transport-level ``-1`` on an exception (see
-    :func:`~strands_robots.tools.g1._g1_common._loco_call`'s except
-    branch). The verb does not refuse the query - a caller may need
-    to display it - but it names the code as unknown rather than
-    inventing text for it.
+    The catalogue's own keys are all non-negative, so a negative rc is
+    by construction outside it. It is admitted rather than refused
+    because the in-tree renderer of a rc is already total over every
+    integer: :func:`~strands_robots.tools.g1._g1_common.decode_code`
+    answers ``"-1 (unknown)"``, and a lookup verb that refused the
+    same value would be narrower than the renderer whose text it
+    quotes. The ``-1`` convention itself comes from the neon bundle's
+    locomotion wrapper (``cagataycali/neon-the-g1``), which stores it
+    for an SDK call that raised instead of returning a rc; no module
+    in this tree writes it today, which is exactly why this cell pins
+    the decidable answer now rather than after that wrapper is ported
+    (refs strands-labs/robots#358). The verb does not refuse the query
+    - a caller may need to display it - but it names the code as
+    unknown rather than inventing text for it.
     """
     result = _call(g1_decode_error_code, code=-1)
     assert result["status"] == "success"
