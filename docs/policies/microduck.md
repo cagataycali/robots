@@ -214,6 +214,16 @@ magnitude, so a threshold of `0` or below could never select the idle skill and
 a non-finite one could never select the move skill. Omit it (the default) to
 leave the gate off and switch only explicitly.
 
+The velocity it is compared against is held to the same standard as the threshold
+it is compared with. With the gate on, a `target_velocity` this tick cannot honor
+is refused before the gate arbitrates, naming the bundle and the parameter — so a
+refused tick leaves the active skill exactly as it was, rather than selecting the
+idle skill from a `nan` magnitude and keeping that selection on every tick after.
+The accepted values are the ones the active skill accepts: finite numeric
+components, and the same two component counts documented above. An absent
+`target_velocity` is still simply "no goal this tick" and leaves the selection
+alone.
+
 `move_key` and `idle_key` name the two skills that gate selects between, and each
 must be one of the bundle's own keys whenever the gate is enabled. The gate reads
 both every tick, so a key naming no held skill leaves it inert rather than
