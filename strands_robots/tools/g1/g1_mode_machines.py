@@ -119,6 +119,20 @@ _ARM_READY_MODE_MACHINES: frozenset[int] = frozenset({5, 6})
 _UNKNOWN_MODE_MACHINE_REFUSAL: str = "mode_machine unknown - lowstate has not delivered yet"
 
 
+def _not_arm_ready_refusal(mode_machine: int) -> str:
+    """Build the refusal for a delivered ``mode_machine`` outside the arm-ready set.
+
+    Kept distinct from :data:`_UNKNOWN_MODE_MACHINE_REFUSAL`: that
+    string names a liveness fail whose remedy is to wait for
+    ``rt/lowstate``, which is a dead end for a caller who already
+    supplied a delivered byte (waiting never makes ``0`` arm-ready).
+    This refusal names the knob the caller actually got wrong - the
+    queried value - and the set it has to reach, so the remedy on
+    offer is the one that can work.
+    """
+    return f"mode_machine {mode_machine} is not arm-ready; needs one of {sorted(_ARM_READY_MODE_MACHINES)}"
+
+
 def _describe(mode_machine: int) -> dict[str, Any]:
     """Build the per-id descriptor the verbs return.
 
@@ -220,15 +234,20 @@ def g1_mode_machine_admits_arm(
         (when ``admitted`` is ``True``) a ``target`` sub-dict carrying
         the same descriptor
         :func:`g1_list_arm_ready_mode_machines` returns for the id
-        (``mode_machine``, ``admits_arm_writes``). On a not-admitted
-        query the dict carries ``refusal_text``; on the
-        ``mode_machine=None`` liveness query that text is the
-        driver-local string
+        (``mode_machine``, ``admits_arm_writes``). A not-admitted query
+        carries ``refusal_text``, on one of two distinct channels: a
+        ``mode_machine=None`` query gets the driver-local liveness
+        string
         :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
-        quotes before it reads the FSM gate. Unlike
-        :mod:`~strands_robots.tools.g1.g1_fsm_targets` the refusal
-        does not carry an ``rc=`` code: neither the liveness fail nor
-        a membership miss reaches the wire.
+        quotes before it reads the FSM gate (remedy: wait for
+        ``rt/lowstate``), while a delivered-but-non-arm-ready query
+        gets a membership refusal naming the queried value and the
+        arm-ready set (remedy: reach one of those ids). The two are
+        kept separate so the remedy the text implies is always the one
+        that can work. Unlike
+        :mod:`~strands_robots.tools.g1.g1_fsm_targets` neither refusal
+        carries an ``rc=`` code: neither the liveness fail nor a
+        membership miss reaches the wire.
     """
     if isinstance(mode_machine, bool):
         return {
@@ -268,9 +287,10 @@ def g1_mode_machine_admits_arm(
     if admitted:
         result["target"] = _describe(mode_machine)
     else:
-        # Non-arm-ready mode_machine. The refusal is the same
-        # driver-local liveness string used for the None query so a
-        # caller sees a single, consistent refusal channel for any
-        # ``mode_machine`` outside the arm-ready set.
-        result["refusal_text"] = _UNKNOWN_MODE_MACHINE_REFUSAL
+        # Delivered but non-arm-ready. The liveness string does not
+        # apply here - the caller supplied a real byte, so "wait for
+        # lowstate" is a dead end - and the driver's own refusal on
+        # this input names its FSM gate, not the mode_machine value.
+        # Name the queried value and the set it must reach instead.
+        result["refusal_text"] = _not_arm_ready_refusal(mode_machine)
     return result

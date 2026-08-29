@@ -21,13 +21,15 @@
   arm-ready by construction) so the payload shape matches the
   `g1_fsm_targets` / `g1_arm_actions` / `g1_balance_modes` verbs
   verbatim. Unlike those verbs the refusal path does not carry an
-  SDK `rc=` code: the driver's `mode_machine` refusal is a local
+  SDK `rc=` code, and a refused query lands on one of two distinct
+  channels so the remedy the text implies is always one that can
+  work: a `mode_machine=None` query surfaces the driver's local
   liveness string (`"mode_machine unknown - lowstate has not
-  delivered yet"`) it quotes before the FSM gate is consulted,
-  and the lookup surfaces that same string on both a
-  `mode_machine=None` liveness query and a non-arm-ready
-  membership query so a caller sees a single, consistent refusal
-  channel. No DDS is touched, no `unitree_sdk2py` submodule loads
+  delivered yet"`, remedy: wait for `rt/lowstate`), while a
+  delivered-but-non-arm-ready query surfaces a membership refusal
+  naming the queried value and the set it must reach (e.g.
+  `"mode_machine 0 is not arm-ready; needs one of [5, 6]"`, remedy:
+  reach one of those ids). No DDS is touched, no `unitree_sdk2py` submodule loads
   at import (the same SDK-load-hygiene rule every other file under
   `strands_robots.tools.g1` carries, refs strands-labs/robots#358);
   the verbs answer the arm-ready membership question that
@@ -38,8 +40,8 @@
   Contract-graded off the module's own snapshot (14 tests: import
   hygiene, snapshot value and typing, refusal string, list-verb
   envelope shape, fresh-container guarantee, admits-a-ready-value on
-  both `5` and `6`, refuses-a-non-ready-value, `None` liveness
-  query, default query, `bool` refusal on both truth values,
-  non-`int` refusal). No wire touches (no live `unitree_sdk2py`, no
+  both `5` and `6`, refuses-a-non-ready-value, liveness-vs-membership
+  refusal channels stay distinct, `None` liveness query, default
+  query, `bool` refusal on both truth values, non-`int` refusal). No wire touches (no live `unitree_sdk2py`, no
   DDS bus, no driver instance); pins the neon-observed contract as a
   module-level snapshot, refs strands-labs/robots#358.

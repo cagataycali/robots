@@ -53,6 +53,7 @@ from typing import Any
 from strands_robots.tools.g1.g1_mode_machines import (
     _ARM_READY_MODE_MACHINES,
     _UNKNOWN_MODE_MACHINE_REFUSAL,
+    _not_arm_ready_refusal,
     g1_list_arm_ready_mode_machines,
     g1_mode_machine_admits_arm,
 )
@@ -213,20 +214,46 @@ def test_g1_mode_machine_admits_arm_admits_the_second_ready_value() -> None:
 
 
 def test_g1_mode_machine_admits_arm_refuses_a_non_ready_value() -> None:
-    """A ``mode_machine`` outside the arm-ready set is refused.
+    """A delivered ``mode_machine`` outside the arm-ready set names the value it got.
 
     ``0`` is not in the neon-observed arm-ready set; the verb reports
-    ``admitted=False``. The refusal is the same driver-local liveness
-    text used for the ``None`` case because both branches surface a
-    single, consistent refusal channel for any ``mode_machine``
-    outside the arm-ready set.
+    ``admitted=False`` and refuses on the membership channel, naming
+    the queried value and the set it has to reach. It must *not*
+    reuse the liveness string: the caller supplied a delivered byte,
+    so "wait for ``rt/lowstate``" is a dead end (waiting never makes
+    ``0`` arm-ready). The expected text is read off the module's own
+    builder so a widen to the set surfaces here rather than as a
+    diverging literal.
     """
     result = _call(g1_mode_machine_admits_arm, mode_machine=0)
     assert result["status"] == "success"
     assert result["admitted"] is False
     assert result["query"] == {"mode_machine": 0}
-    assert result["refusal_text"] == _UNKNOWN_MODE_MACHINE_REFUSAL
+    assert result["refusal_text"] == _not_arm_ready_refusal(0)
     assert "target" not in result
+    # The refusal names the knob the caller got wrong and the remedy
+    # that can work, not the liveness remedy that cannot.
+    assert "0" in result["refusal_text"]
+    assert str(sorted(_ARM_READY_MODE_MACHINES)) in result["refusal_text"]
+
+
+def test_the_liveness_and_membership_refusals_are_distinct_channels() -> None:
+    """A membership miss and a liveness fail never share a refusal string.
+
+    ``refusal_text`` is the field an agent matches on to pick a
+    recovery action, and the two branches want opposite actions: the
+    ``None`` branch wants the caller to wait for ``rt/lowstate``,
+    while a delivered non-ready byte wants the caller to reach an
+    arm-ready layout. Collapsing them onto one string sends half the
+    callers to a dead end, so the split is pinned rather than left to
+    convention.
+    """
+    liveness = _call(g1_mode_machine_admits_arm, mode_machine=None)
+    membership = _call(g1_mode_machine_admits_arm, mode_machine=0)
+    assert liveness["refusal_text"] == _UNKNOWN_MODE_MACHINE_REFUSAL
+    assert membership["refusal_text"] != liveness["refusal_text"]
+    # Each non-ready value gets its own text naming that value.
+    assert _call(g1_mode_machine_admits_arm, mode_machine=7)["refusal_text"] != membership["refusal_text"]
 
 
 def test_g1_mode_machine_admits_arm_refuses_a_none_liveness_query() -> None:
