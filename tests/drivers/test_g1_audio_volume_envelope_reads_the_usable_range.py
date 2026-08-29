@@ -344,3 +344,36 @@ def test_g1_volume_admits_carries_the_envelope_on_admit_and_refuse() -> None:
     assert admitted["envelope"].keys() == refused["envelope"].keys()
     assert admitted["envelope"]["volume_min"] == refused["envelope"]["volume_min"]
     assert admitted["envelope"]["volume_max"] == refused["envelope"]["volume_max"]
+
+
+def test_g1_volume_admits_declares_a_non_handle_first_parameter_type() -> None:
+    """The ``volume`` parameter is annotated ``int``, not ``Any``.
+
+    ``Any`` is the annotation the derived
+    ``TestEveryLiveHandleVerbRefusesAWrongHandle`` scanner in
+    ``tests/tools/g1/test_a_live_handle_verb_refuses_a_wrong_handle.py``
+    keys on to grade a verb as a live-handle verb, and a live-handle
+    verb owes an ``{"status": "error"}`` envelope on a wrong handle -
+    a shape ``g1_volume_admits`` does not owe because its first
+    parameter is a numeric bound, not a live driver instance.  The
+    reason the wrong-handle scan flagged the verb in a prior fire
+    was that ``volume`` shipped as ``Any``; naming ``int`` here fixes
+    the wrong classification without weakening the numeric refusal
+    (bool, float, str and other non-int shapes are still refused with
+    ``admits=False`` and a ``non-int`` comparison, pinned by the
+    parametric refusal tests above).
+
+    This guard reads the annotation off the wrapped function so a
+    future widen back to ``Any`` fails this cell first, rather than
+    re-entering the live-handle population and tripping the scanner
+    a second time.
+    """
+    import inspect
+
+    signature = inspect.signature(g1_volume_admits.__wrapped__)
+    volume_parameter = signature.parameters["volume"]
+    assert volume_parameter.annotation in ("int", int), (
+        f"g1_volume_admits.volume annotation is {volume_parameter.annotation!r}; "
+        "Any would re-enter the live-handle-verb population and trip the "
+        "wrong-handle scanner in tests/tools/g1/."
+    )

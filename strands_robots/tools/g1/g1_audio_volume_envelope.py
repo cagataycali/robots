@@ -158,7 +158,7 @@ def g1_list_audio_volume_envelope() -> dict[str, Any]:
 
 
 @tool
-def g1_volume_admits(volume: Any = 0) -> dict[str, Any]:
+def g1_volume_admits(volume: int = 0) -> dict[str, Any]:
     """Decide whether a ``volume`` argument sits inside the envelope.
 
     Read-only. Compares the argument against the clamps
