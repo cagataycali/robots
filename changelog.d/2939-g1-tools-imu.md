@@ -8,8 +8,8 @@ handler; this verb is the cached-snapshot companion to `g1_battery`,
 returning every field `_on_lowstate` actually wrote for the IMU rather
 than routing the reading through the driver's status envelope.
 
-`g1_imu(driver)` reads through `driver._snapshot("_imu")` — the same
-accessor the driver's own `stream(action="sensors")` path uses — so the
+`g1_imu(driver)` reads through `driver._snapshot("_imu")` -- the same
+accessor the driver's own `stream(action="sensors")` path uses -- so the
 cache read holds the driver's `_cache_lock` for the copy and a caller
 mutating the returned dict does not race the DDS thread writing into it.
 A driver whose subscriber has not received a `LowState` message yet
@@ -35,7 +35,7 @@ a caller who wants degrees converts them themselves so the number this
 verb returns is bit-identical to what a re-published log would carry.
 
 `import strands_robots.tools.g1.g1_imu` pulls no `unitree_sdk2py`
-submodule — the package's SDK-load-hygiene contract from
+submodule -- the package's SDK-load-hygiene contract from
 `strands-labs/robots#358`.
 
 Refs `strands-labs/robots#358`: fifth verb in the neon-the-g1 →
