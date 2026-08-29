@@ -5,10 +5,18 @@ History: PR #85 shipped a hardcoded ``/Users/cagatay/robots/...`` in
 author's laptop, got committed, and was only caught by CI because CI happens
 to not live at that path.
 
-This test is a cheap regex sweep over ``strands_robots/`` and ``tests/`` that
-fails fast if anyone re-introduces a ``/Users/<name>``, ``/home/<name>`` or
-``C:\\Users\\<name>`` string. Prefer module-relative paths, ``pathlib.Path`` +
-``__file__``, ``importlib.resources``, or fixtures.
+This test is a cheap regex sweep over every top-level directory of the
+repository that ships Python - ``strands_robots/``, ``tests/``, ``tests_integ/``,
+``examples/`` and ``scripts/`` today - that fails fast if anyone re-introduces a
+``/Users/<name>``, ``/home/<name>`` or ``C:\\Users\\<name>`` string. Prefer
+module-relative paths, ``pathlib.Path`` + ``__file__``, ``importlib.resources``,
+or fixtures.
+
+The area list is derived rather than written down. It was a hardcoded three-tuple
+that named the two directories the PR #85 defect happened to land in, and
+``examples/`` and ``scripts/`` shipped 109 files outside it. ``examples/`` is the
+worst place to miss: it is the code a reader copies, so a host path there is the
+same defect propagated rather than merely committed.
 
 Allowlist patterns live below - keep it narrow.
 """
@@ -22,8 +30,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Directories to scan (source + tests; not docs, not third-party).
-SCAN_DIRS = ("strands_robots", "tests", "tests_integ")
+# Areas that must be swept however the tree grows. A directory added later that
+# ships Python is picked up by _scanned_areas() without an edit here; this set
+# only refuses the reverse, an area silently dropping out of the sweep.
+_REQUIRED_AREAS = frozenset({"strands_robots", "tests", "tests_integ", "examples", "scripts"})
 
 # Patterns that indicate a hardcoded host-specific user path.
 #
@@ -61,18 +71,82 @@ ALLOWED_FILES = {
 }
 
 
-def _iter_source_files() -> list[Path]:
+def _scanned_areas(root: Path = REPO_ROOT) -> tuple[str, ...]:
+    """Return every top-level directory of ``root`` that ships Python.
+
+    Deriving the list means a directory added later is swept on arrival. A
+    hardcoded tuple equal to today's set fires on nothing when the tree grows,
+    which is the silent hole this avoids: the tuple this replaced named three
+    areas and the repository ships five.
+
+    Two kinds of directory are skipped, and both are the cost of deriving rather
+    than listing. Dot-directories hold caches and tooling, not committed source.
+    A virtual environment holds third-party code full of the maintainer's own
+    home directory, so sweeping one would fail the gate for a reason the author
+    cannot fix; it is recognised by its PEP 405 ``pyvenv.cfg`` marker rather than
+    by name, since ``.venv`` is a convention and ``venv/`` is just as common.
+
+    Args:
+        root: Repository root to enumerate. Defaults to this repository.
+
+    Returns:
+        Directory names, sorted, excluding dot-directories and virtualenvs.
+    """
+    return tuple(
+        entry.name
+        for entry in sorted(root.iterdir())
+        if entry.is_dir()
+        and not entry.name.startswith(".")
+        and not (entry / "pyvenv.cfg").exists()
+        and any(entry.rglob("*.py"))
+    )
+
+
+def _iter_source_files(root: Path = REPO_ROOT) -> list[Path]:
+    """Return every ``.py`` file the sweep reads, under every area that ships one.
+
+    Args:
+        root: Repository root to walk. Defaults to this repository.
+
+    Returns:
+        Paths, in area order, excluding bytecode caches and virtualenvs.
+    """
     files: list[Path] = []
-    for d in SCAN_DIRS:
-        root = REPO_ROOT / d
-        if not root.exists():
-            continue
-        for p in root.rglob("*.py"):
+    for d in _scanned_areas(root):
+        for p in (root / d).rglob("*.py"):
             # Skip bytecode caches and anything inside .venv / build dirs
             if "__pycache__" in p.parts or ".venv" in p.parts:
                 continue
             files.append(p)
     return files
+
+
+def _offenders(root: Path = REPO_ROOT) -> list[tuple[str, int, str]]:
+    """Return every host-specific path literal committed under ``root``.
+
+    Extracted from the sweep so the rule can be graded against a constructed
+    tree: the shipped corpus is clean, so a cell that only walks it cannot show
+    that a host path in a newly-swept area would be caught.
+
+    Args:
+        root: Repository root to sweep. Defaults to this repository.
+
+    Returns:
+        ``(relative path, 1-based line number, trimmed line)`` per hit.
+    """
+    offenders: list[tuple[str, int, str]] = []
+    for path in _iter_source_files(root):
+        rel = path.relative_to(root).as_posix()
+        if rel in ALLOWED_FILES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if any(pat.search(line) for pat in HOST_PATH_PATTERNS):
+                offenders.append((rel, lineno, line.strip()[:120]))
+    return offenders
 
 
 # This sweep walks a few hundred small .py files and completes in well under a
@@ -96,23 +170,7 @@ def test_no_host_specific_absolute_paths() -> None:
         from strands_robots.simulation.mujoco import simulation
         simulation._TOOL_SPEC_PATH
     """
-    offenders: list[tuple[str, int, str]] = []
-
-    for path in _iter_source_files():
-        rel = path.relative_to(REPO_ROOT).as_posix()
-        if rel in ALLOWED_FILES:
-            continue
-
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            for pat in HOST_PATH_PATTERNS:
-                if pat.search(line):
-                    offenders.append((rel, lineno, line.strip()[:120]))
-                    break
+    offenders = _offenders()
 
     if offenders:
         msg = ["Host-specific absolute paths detected (use Path(__file__) or fixtures instead):"]
@@ -195,3 +253,128 @@ def test_a_path_without_a_user_segment_is_not_flagged(line: str) -> None:
     assert not any(pat.search(line) for pat in HOST_PATH_PATTERNS), (
         f"portable path wrongly flagged as host-specific: {line!r}"
     )
+
+
+class TestEveryAreaThatShipsPythonIsSwept:
+    """The sweep's reach, which the pattern cells cannot speak to.
+
+    ``HOST_PATH_LINES`` grades what the patterns match. Nothing graded *where*
+    they are applied, so a hardcoded area tuple could name any subset of the
+    tree and every pattern cell would still pass.
+    """
+
+    def test_no_area_that_ships_python_is_left_out(self) -> None:
+        """A directory carrying ``.py`` files must be reached by the sweep.
+
+        This is the regression: the tuple this replaced named
+        ``strands_robots``, ``tests`` and ``tests_integ``, so ``examples/`` and
+        ``scripts/`` were outside the gate entirely. The expectation is derived
+        from the repository rather than from the module under test, so the two
+        cannot agree on a wrong answer.
+        """
+        swept = {path.relative_to(REPO_ROOT).parts[0] for path in _iter_source_files()}
+        ships_python = {
+            entry.name
+            for entry in REPO_ROOT.iterdir()
+            if entry.is_dir() and not entry.name.startswith(".") and any(entry.rglob("*.py"))
+        }
+        assert ships_python, "no top-level directory ships Python; the derivation has gone blind"
+        missing = ships_python - swept
+        assert not missing, f"these areas ship Python and the sweep never reads them: {sorted(missing)}"
+
+    def test_the_required_areas_are_all_present_and_ship_python(self) -> None:
+        """Non-vacuity for the floor: each named area exists and carries Python.
+
+        Without this, ``_REQUIRED_AREAS`` could name a directory that has been
+        renamed away and the subset check below would be asserting nothing.
+        """
+        for area in sorted(_REQUIRED_AREAS):
+            path = REPO_ROOT / area
+            assert path.is_dir(), f"{area} is named in _REQUIRED_AREAS and is not a directory"
+            assert any(path.rglob("*.py")), f"{area} is named in _REQUIRED_AREAS and ships no Python"
+
+    def test_an_area_cannot_silently_drop_out_of_the_sweep(self) -> None:
+        """The floor's own claim: every required area is reached today."""
+        reached = set(_scanned_areas())
+        assert _REQUIRED_AREAS <= reached, f"these areas dropped out of the sweep: {sorted(_REQUIRED_AREAS - reached)}"
+
+
+class TestAHostPathInANewlySweptAreaIsCaught:
+    """Compose the two halves on a constructed tree.
+
+    The shipped corpus is clean, so walking it cannot show that a host path in
+    ``examples/`` would be reported - only that none is there today. These build
+    a repository shaped like this one and put the literal in the area that was
+    outside the old tuple.
+    """
+
+    @staticmethod
+    def _tree(tmp_path: Path) -> Path:
+        """Build a miniature repository with one host path, under ``examples/``."""
+        (tmp_path / "strands_robots").mkdir()
+        (tmp_path / "strands_robots" / "ok.py").write_text(
+            'CONFIG = Path(__file__).parent / "config.json"' + "\n", encoding="utf-8"
+        )
+        (tmp_path / "scripts").mkdir()
+        (tmp_path / "scripts" / "tool.py").write_text('SHARED = "/usr/local/share/robots"' + "\n", encoding="utf-8")
+        (tmp_path / "examples").mkdir()
+        (tmp_path / "examples" / "demo.py").write_text(
+            'HOME = "/Users/cagatay"' + "\n" + 'model = Path(HOME) / "robots" / "policy.pt"' + "\n",
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_the_literal_under_examples_is_reported(self, tmp_path: Path) -> None:
+        """The offender list names the example, its line and the line's text."""
+        offenders = _offenders(self._tree(tmp_path))
+        assert [(rel, lineno) for rel, lineno, _ in offenders] == [("examples/demo.py", 1)]
+        assert '"/Users/cagatay"' in offenders[0][2]
+
+    def test_the_portable_siblings_are_left_alone(self, tmp_path: Path) -> None:
+        """Reaching further areas must not start flagging portable paths.
+
+        The tree carries a module-relative path in ``strands_robots/`` and a
+        shared system path in ``scripts/``; widening the sweep is only useful if
+        neither is reported.
+        """
+        reported = {rel for rel, _, _ in _offenders(self._tree(tmp_path))}
+        unexpected = sorted(reported - {"examples/demo.py"})
+        assert not unexpected, f"portable paths wrongly reported: {unexpected}"
+
+    def test_an_area_added_later_is_swept_on_arrival(self, tmp_path: Path) -> None:
+        """A directory nobody has written down yet is graded the day it lands.
+
+        This is what deriving the list buys over a tuple equal to today's set:
+        the tuple would report nothing here.
+        """
+        tree = self._tree(tmp_path)
+        (tree / "benchmarks").mkdir()
+        (tree / "benchmarks" / "run.py").write_text("root = '/home/cagatay/datasets'" + "\n", encoding="utf-8")
+        assert "benchmarks" in _scanned_areas(tree)
+        assert ("benchmarks/run.py", 1) in [(rel, lineno) for rel, lineno, _ in _offenders(tree)]
+
+    def test_a_virtualenv_in_the_checkout_is_not_swept(self, tmp_path: Path) -> None:
+        """Deriving the areas must not start sweeping third-party code.
+
+        A hardcoded tuple could not reach a virtual environment; a derived one
+        can, and site-packages is full of the packager's own home directory. The
+        gate would then fail for a reason the author cannot fix. The PEP 405
+        marker is the test rather than the name, because ``venv/`` is as common
+        as ``.venv/`` and only the latter is a dot-directory.
+        """
+        tree = self._tree(tmp_path)
+        venv = tree / "venv"
+        (venv / "lib").mkdir(parents=True)
+        (venv / "pyvenv.cfg").write_text("home = /usr/bin" + "\n", encoding="utf-8")
+        (venv / "lib" / "third_party.py").write_text('CACHE = "/home/packager/.cache"' + "\n", encoding="utf-8")
+        assert "venv" not in _scanned_areas(tree)
+        reported = {rel for rel, _, _ in _offenders(tree)}
+        assert reported == {"examples/demo.py"}, f"the virtualenv was swept: {sorted(reported)}"
+
+    def test_a_bytecode_cache_is_not_swept(self, tmp_path: Path) -> None:
+        """The cache filter survives the rewrite; a stale .pyc names no author."""
+        tree = self._tree(tmp_path)
+        cache = tree / "examples" / "__pycache__"
+        cache.mkdir()
+        (cache / "stale.py").write_text('HOME = "/Users/someone"' + "\n", encoding="utf-8")
+        assert not any("__pycache__" in path.parts for path in _iter_source_files(tree))
