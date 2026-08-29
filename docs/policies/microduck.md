@@ -110,6 +110,21 @@ roller policy writes the same fourteen control targets, and with no wheels under
 the feet the duck simply stands; a ball-kick policy swings at a ball that is not
 there. Nothing refuses it, so the scene is the caller's to choose.
 
+### Reading joint positions on the rollers scene
+
+`scene_ball.xml` appends the ball's free joint after the robot's, so the robot's
+`qpos` layout is byte-for-byte the default one. `scene_rollers.xml` does not:
+it inserts two passive wheel joints after `left_ankle` and two more after
+`right_ankle`, which moves nine of the fourteen actuated joints to a different
+`qpos` index. A consumer that reads a flat `qpos[7:21]` slice therefore reads
+different joints there - the two left wheels arrive where `neck_pitch` and
+`head_pitch` sit on the default scene.
+
+The actuator order is identical across all three scenes, so a policy writing
+`ctrl` is unaffected, and `MicroduckPolicy` reads its observation by joint name
+rather than by slice, so the provider is immune either way. Only a raw position
+read has to care.
+
 ### The stance every weight was trained in
 
 A weight and its scene are one pair; so are a weight and the stance it starts
@@ -148,21 +163,6 @@ Two details a caller meets:
   on the one scene a ball kick needs. Seat the stance yourself there, reading it
   from `MICRODUCK_DEFAULT_POSE` rather than copying the numbers - the asset has
   already revised this pose once.
-
-### Reading joint positions on the rollers scene
-
-`scene_ball.xml` appends the ball's free joint after the robot's, so the robot's
-`qpos` layout is byte-for-byte the default one. `scene_rollers.xml` does not:
-it inserts two passive wheel joints after `left_ankle` and two more after
-`right_ankle`, which moves nine of the fourteen actuated joints to a different
-`qpos` index. A consumer that reads a flat `qpos[7:21]` slice therefore reads
-different joints there - the two left wheels arrive where `neck_pitch` and
-`head_pitch` sit on the default scene.
-
-The actuator order is identical across all three scenes, so a policy writing
-`ctrl` is unaffected, and `MicroduckPolicy` reads its observation by joint name
-rather than by slice, so the provider is immune either way. Only a raw position
-read has to care.
 
 ## The observation contract
 
