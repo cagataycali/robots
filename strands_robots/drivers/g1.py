@@ -897,24 +897,39 @@ class G1Driver:
             kind = "motion writes"
         if self._fsm_id not in allowed:
             return _refuse(f"FSM {self._fsm_id} refuses {kind}; needs one of {sorted(allowed)}")
-        if not refresh:
-            # Cache-only path: an FSM the refresher has not confirmed for
-            # ``_FSM_STALE_AFTER_READS`` consecutive reads is no longer
-            # evidence that the handshake still holds, and continuing to
-            # publish on it is exactly the silent-open the gate exists to
-            # prevent.  ``_fsm_read_at is None`` cannot happen here (a
-            # non-None ``_fsm_id`` was produced by the OK branch, which
-            # stamps it), but it is spelled defensively rather than
-            # asserted: the alternative to refusing is writing to a biped.
-            read_at = self._fsm_read_at
-            age = None if read_at is None else time.monotonic() - read_at
-            if age is None or age > _FSM_STALE_AFTER_S:
-                return _refuse(
-                    f"FSM {self._fsm_id} last confirmed "
-                    f"{'never' if age is None else format(age, '.3f') + 's ago'}, over the "
-                    f"{_FSM_STALE_AFTER_S:.3f}s staleness bound "
-                    f"({_FSM_STALE_AFTER_READS} missed reads at {_FSM_REFRESH_HZ:.0f} Hz)"
-                )
+        # The staleness bound is asked on every path, not just the loop's
+        # per-step re-gate.  ``_refresh_fsm_id``'s refused-reading branch
+        # deliberately keeps ``_fsm_id`` and deliberately does not stamp
+        # ``_fsm_read_at``, so a run of transient ``CheckMode()`` failures on
+        # the refresher would otherwise let ``send_action`` / ``start_task``
+        # / ``run_policy`` publish on an arbitrarily stale cache while the
+        # loop path refused on the same reading.  Same driver, same age past
+        # the same bound - same verdict.
+        #
+        # ``age is None`` is tolerated: on the entry-point path a caller
+        # reaches here only after ``_refresh_fsm_id()`` returned above, and
+        # the OK branch of that refresh is the only one that both writes
+        # ``_fsm_id`` and stamps ``_fsm_read_at``.  So in production
+        # ``_fsm_id is not None`` implies ``_fsm_read_at is not None``.  The
+        # ``age is None`` branch remains reachable for the cache-only path
+        # (``refresh=False``) exercised by fixtures that assign ``_fsm_id``
+        # directly without going through admission; the loop backstops that
+        # by refusing too on ``age is None`` there.
+        read_at = self._fsm_read_at
+        age = None if read_at is None else time.monotonic() - read_at
+        if not refresh and (age is None or age > _FSM_STALE_AFTER_S):
+            return _refuse(
+                f"FSM {self._fsm_id} last confirmed "
+                f"{'never' if age is None else format(age, '.3f') + 's ago'}, over the "
+                f"{_FSM_STALE_AFTER_S:.3f}s staleness bound "
+                f"({_FSM_STALE_AFTER_READS} missed reads at {_FSM_REFRESH_HZ:.0f} Hz)"
+            )
+        if refresh and age is not None and age > _FSM_STALE_AFTER_S:
+            return _refuse(
+                f"FSM {self._fsm_id} last confirmed {age:.3f}s ago, over the "
+                f"{_FSM_STALE_AFTER_S:.3f}s staleness bound "
+                f"({_FSM_STALE_AFTER_READS} missed reads at {_FSM_REFRESH_HZ:.0f} Hz)"
+            )
         battery_pct = (self._battery or {}).get("pct")
         if battery_pct is not None and battery_pct < self._battery_floor_pct:
             return _refuse(f"battery {battery_pct:.1f}% is under floor {self._battery_floor_pct:.1f}%")
