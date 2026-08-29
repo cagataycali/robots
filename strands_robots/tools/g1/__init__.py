@@ -31,6 +31,21 @@ from strands_robots.tools.g1._g1_common import (
     reset_dds_state,
 )
 
+# Verb modules under this package (``g1_joints``, ``g1_state``, ...) are
+# imported directly by callers rather than re-exported here. Two reasons:
+#
+# * The driver at :mod:`strands_robots.drivers.g1` imports from this package
+#   to reach :data:`HANDSHAKE_FSMS` and :func:`decode_code`. Verb modules that
+#   themselves import from :mod:`strands_robots.drivers.g1` (to read the
+#   driver's constants) would close a circle through this ``__init__``, so
+#   the package's public surface is the DDS-only layer above and the verbs
+#   sit as leaves.
+# * The verb modules follow the SDK-load-hygiene contract only for their own
+#   import; re-exporting them here would pull every one of them at package
+#   load, and a caller who only wanted :func:`ensure_dds` would pay for the
+#   whole tree. Callers name the verb module they want:
+#   ``from strands_robots.tools.g1.g1_joints import g1_joint_reference``.
+
 __all__ = [
     "ERR_CODES",
     "HANDSHAKE_FSMS",
