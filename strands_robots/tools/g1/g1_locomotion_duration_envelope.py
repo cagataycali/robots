@@ -73,7 +73,7 @@ What this module does not decide.
   its own layer whether to take the unbounded branch instead.
 * Whether the velocity components (``vx``, ``vy``, ``vyaw``) sit
   inside their own envelope. That is a separate lookup
-  (``g1_velocity_envelope``, port #2965,
+  (:mod:`~strands_robots.tools.g1.g1_velocity_envelope`,
   refs strands-labs/robots#358) so a caller composes two admission
   decisions - velocity magnitudes and duration - before the write
   gate reads the FSM. Keeping the two envelopes in separate modules
