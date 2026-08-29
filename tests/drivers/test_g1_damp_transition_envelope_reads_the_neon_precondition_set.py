@@ -29,9 +29,10 @@ Two things this file's cells deliberately do not pin:
   (the SDK admits any FSM id silently; the neon bundle drew the
   refusal boundary from field observation). A driver-side wrapper
   for the damp-preamble path that lands later will re-check the
-  preconditions at wire time and its refusal string will quote the
-  ``7404`` gate-refusal code the driver's ``_check_motion_gates``
-  also quotes.
+  preconditions at wire time and its refusal string will name the
+  same locomotion gate this module's refusal text names. Neither side
+  quotes an SDK return code: the driver's ``_check_motion_gates``
+  returns free-text refusals and names no code at all.
 * Whether the driver's live ``fsm_id`` sits inside a transition's
   ``expected_fsm_ids``. That is a live driver-instance read and
   belongs on :mod:`~strands_robots.tools.g1.g1_state` /
@@ -46,12 +47,12 @@ import importlib
 import sys
 from typing import Any
 
-from strands_robots.tools.g1._g1_common import ERR_CODES, WALK_FSMS
+from strands_robots.tools.g1._g1_common import WALK_FSMS
 from strands_robots.tools.g1.g1_damp_transition_envelope import (
     _AVG_KNEE_MAX_RAD,
     _DAMP_TRANSITIONS,
-    _GATE_REFUSAL_CODE,
-    _INVALID_TRANSITION_CODE,
+    _unknown_transition_refusal,
+    _walk_gate_refusal,
     g1_damp_transition_admits,
     g1_list_damp_transitions,
 )
@@ -172,23 +173,60 @@ def test_the_knee_threshold_matches_the_neon_observation() -> None:
     assert _AVG_KNEE_MAX_RAD == 1.4
 
 
-def test_the_gate_refusal_code_matches_the_driver_constant() -> None:
-    """The verb's refusal code names the driver's gate refusal.
+def test_no_refusal_borrows_an_sdk_return_code() -> None:
+    """No refusal this module emits carries a ``code`` field.
 
-    The driver's ``_check_motion_gates`` refuses a locomotion-shaped
-    write on an FSM outside :data:`WALK_FSMS` with rc=7404, and the
-    ``7404`` entry in
-    :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` carries the
-    text a driver-side damp-preamble wrapper would surface. Pinned
-    here so a re-wording of that message lands in one place, not one
-    in the driver and a diverging copy in this verb.
+    The driver quotes no SDK return code on this gate:
+    ``G1Driver._check_motion_gates`` returns free-text refusals only.
+    Pinned so a future edit cannot reintroduce a borrowed rc -- which
+    would put a wrong remedy on an agent-facing refusal, and would let
+    the refusal text and ``walk_ready_fsm_ids`` in the same payload
+    disagree about which FSMs are admitted.
     """
-    assert _GATE_REFUSAL_CODE == 7404
-    assert _INVALID_TRANSITION_CODE == 7404
-    assert _GATE_REFUSAL_CODE in ERR_CODES, (
-        f"verb quotes rc={_GATE_REFUSAL_CODE} but that code is not in "
-        f"ERR_CODES. The refusal string would render as 'unknown'."
-    )
+    listed = _call(g1_list_damp_transitions)
+    for refusal in listed["refusals"]:
+        assert "code" not in refusal, f"refusal descriptor borrowed an SDK code: {refusal!r}"
+        assert refusal["text"]
+    for bad in ("pirouette", "Squat_To_Stand"):
+        refused = _call(g1_damp_transition_admits, name=bad)
+        assert refused["status"] == "error"
+        assert "refusal_code" not in refused, f"refusal for {bad!r} borrowed an SDK code: {refused!r}"
+
+
+def test_the_gate_and_label_refusals_are_distinct_channels() -> None:
+    """The two refusals never collapse, because their remedies differ.
+
+    An FSM outside the locomotion gate is a robot-state problem whose
+    remedy is a transition; an unknown transition label is an argument
+    problem whose remedy is a different string. Handing the FSM-gate
+    remedy to a caller who mistyped a label would point an agent
+    planner at a physical motion-state change it never asked for, so
+    the two texts are pinned distinct and each is pinned to name its
+    own domain.
+    """
+    gate, label = _walk_gate_refusal(), _unknown_transition_refusal()
+    assert gate != label
+    # The gate text names the locomotion FSM set and no transition label.
+    assert str(sorted(WALK_FSMS)) in gate
+    assert not any(name in gate for name in _DAMP_TRANSITIONS)
+    # The label text names every admitted label and no FSM id.
+    for name in _DAMP_TRANSITIONS:
+        assert name in label
+    assert not any(str(fsm) in label for fsm in WALK_FSMS)
+
+
+def test_the_gate_refusal_is_built_from_the_walk_fsm_set() -> None:
+    """A widen of ``WALK_FSMS`` carries into the gate refusal text.
+
+    The text is composed from
+    :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS` rather than
+    spelled as a literal, so the payload's ``refusals`` entry cannot
+    drift from the ``walk_ready_fsm_ids`` shipped beside it. Pinned
+    because that drift is exactly what a hardcoded set produces.
+    """
+    listed = _call(g1_list_damp_transitions)
+    assert listed["refusals"] == [{"text": _walk_gate_refusal()}]
+    assert str(listed["walk_ready_fsm_ids"]) in listed["refusals"][0]["text"]
 
 
 def test_g1_list_damp_transitions_returns_the_whole_table() -> None:
@@ -196,8 +234,8 @@ def test_g1_list_damp_transitions_returns_the_whole_table() -> None:
 
     ``transitions`` carries every entry in :data:`_DAMP_TRANSITIONS`
     sorted by ``name``, ``walk_ready_fsm_ids`` quotes
-    :data:`WALK_FSMS`, and ``refusals`` names the ``7404``
-    gate-refusal code with the decoded text :data:`ERR_CODES` carries.
+    :data:`WALK_FSMS`, and ``refusals`` names the module-local
+    gate-refusal text.
     """
     result = _call(g1_list_damp_transitions)
     assert result["status"] == "success"
@@ -206,9 +244,7 @@ def test_g1_list_damp_transitions_returns_the_whole_table() -> None:
         f"g1_list_damp_transitions returned {names}, expected {sorted(_DAMP_TRANSITIONS)} (sorted-ascending)"
     )
     assert result["walk_ready_fsm_ids"] == sorted(WALK_FSMS)
-    assert result["refusals"] == [
-        {"code": _GATE_REFUSAL_CODE, "text": ERR_CODES[_GATE_REFUSAL_CODE]},
-    ]
+    assert result["refusals"] == [{"text": _walk_gate_refusal()}]
 
 
 def test_g1_list_damp_transitions_descriptor_names_every_field() -> None:
@@ -279,15 +315,14 @@ def test_g1_damp_transition_admits_returns_the_descriptor_on_a_known_name() -> N
 
 
 def test_g1_damp_transition_admits_refuses_a_bogus_name() -> None:
-    """A name outside the snapshot is refused with the ``7404`` code.
+    """A name outside the snapshot is refused by naming the admitted labels.
 
     The refusal string quotes the sorted set of admitted names so
     the caller can decide the next intent without a second query.
     """
     result = _call(g1_damp_transition_admits, name="pirouette")
     assert result["status"] == "error"
-    assert result["refusal_code"] == _INVALID_TRANSITION_CODE
-    assert result["refusal_text"] == ERR_CODES[_INVALID_TRANSITION_CODE]
+    assert result["refusal_text"] == _unknown_transition_refusal()
     assert "pirouette" in result["reason"]
     for admitted in _DAMP_TRANSITIONS:
         assert admitted in result["reason"], (
@@ -306,19 +341,19 @@ def test_g1_damp_transition_admits_refuses_a_miscased_name() -> None:
     """
     result = _call(g1_damp_transition_admits, name="Squat_To_Stand")
     assert result["status"] == "error"
-    assert result["refusal_code"] == _INVALID_TRANSITION_CODE
+    assert result["refusal_text"] == _unknown_transition_refusal()
 
 
 def test_g1_damp_transition_admits_refuses_a_non_string_argument() -> None:
-    """A non-string argument is refused with the ``7404`` code.
+    """A non-string argument is refused with the unknown-transition text.
 
     The lookup is by string key; a caller passing an int would
     otherwise raise on the ``in`` check, and this envelope's
-    contract is to refuse with a decidable code, not raise.
+    contract is to refuse decidably, not raise.
     """
     result = _call(g1_damp_transition_admits, name=706)  # type: ignore[arg-type]
     assert result["status"] == "error"
-    assert result["refusal_code"] == _INVALID_TRANSITION_CODE
+    assert result["refusal_text"] == _unknown_transition_refusal()
     assert "not a str" in result["reason"]
 
 

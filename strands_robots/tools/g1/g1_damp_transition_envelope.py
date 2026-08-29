@@ -39,9 +39,9 @@ Two things this module is deliberately *not*:
   every other file in this package carries, refs
   strands-labs/robots#358. A revision of the neon bundle's observed
   preconditions is a driver-side update; when the driver's
-  damp-preamble method lands, its refusal will quote the same
-  ``7404`` gate-refusal code
-  :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` carries.
+  damp-preamble method lands, its refusal will name the same
+  locomotion gate this module's refusal text names. No SDK return
+  code is quoted on either side, because the driver quotes none.
 
 What this module does not decide.
 
@@ -67,7 +67,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import ERR_CODES, WALK_FSMS
+from strands_robots.tools.g1._g1_common import WALK_FSMS
 
 #: The upper bound on the robot's average knee angle (radians) above
 #: which the neon bundle's ``_assert_safe_for_damp`` refuses the
@@ -81,26 +81,24 @@ from strands_robots.tools.g1._g1_common import ERR_CODES, WALK_FSMS
 #: not another SDK write.
 _AVG_KNEE_MAX_RAD: float = 1.4
 
-#: The pair of fields the SDK's own return-code table names when the
-#: driver's motion gate refuses a locomotion-shaped write on an FSM
-#: outside :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`. Named
-#: here so the returned envelope carries the exact refusal string a
-#: future driver-side damp-preamble wrapper would surface, and so a
-#: re-wording of it lands in one place instead of drifting between
-#: the driver's log and this lookup.
-_GATE_REFUSAL_CODE: int = 7404
-
-#: The refusal code a future driver-side wrapper would quote on a
-#: transition name outside :data:`_DAMP_TRANSITIONS`. The SDK does not
-#: ship a distinct rc for "unknown damp-preamble transition" (the
-#: neon bundle owned the transition names, not the SDK); the neon
-#: bundle refused unknown names at the verb boundary, so this lookup
-#: uses the same ``7404`` gate-refusal shape a future driver-side
-#: wrapper would quote when refusing at the same boundary. Named
-#: separately from :data:`_GATE_REFUSAL_CODE` so a future SDK release
-#: that adds a dedicated "invalid transition" code lands here without
-#: also renaming the gate-refusal constant.
-_INVALID_TRANSITION_CODE: int = 7404
+# Refusals in this module carry module-local text and no ``code`` field,
+# because no SDK return code covers either refusal it makes.
+#
+# ``ERR_CODES[7404]`` ("Invalid FSM id - need FSM in {500, 501, 801}") is the
+# nearest-looking candidate and is wrong on both counts. This repository's
+# driver quotes it nowhere -- ``G1Driver._check_motion_gates`` returns
+# free-text refusals and never names a return code -- so it is not "the code
+# the driver quotes". And the set it names is not ``WALK_FSMS``
+# (``{501, 801}``), so a payload carrying that text beside its own
+# ``walk_ready_fsm_ids`` would contradict itself about which FSMs are
+# admitted.
+#
+# The two refusals also have different remedies, which is why they are
+# separate texts rather than one shared code: an FSM outside the locomotion
+# gate is a robot-state problem fixed by a transition, while an unknown
+# transition label is an argument problem fixed by passing a different
+# string. Quoting the FSM code for a mistyped label would hand an agent
+# planner a physical motion-state change as the remedy for a typo.
 
 
 #: Snapshot of the safe damp-preamble transitions the neon bundle's
@@ -170,6 +168,31 @@ _DAMP_TRANSITIONS: dict[str, dict[str, Any]] = {
 }
 
 
+def _walk_gate_refusal() -> str:
+    """The refusal text a future driver-side damp-preamble wrapper would surface.
+
+    Built from :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`
+    rather than spelled as a literal, so a widen of the locomotion
+    gate carries into this message instead of leaving a stale set
+    behind. This is the refusal a caller gets for a *robot-state*
+    problem, and its remedy is an FSM transition.
+    """
+    return f"fsm_id outside the locomotion gate - need FSM in {sorted(WALK_FSMS)}"
+
+
+def _unknown_transition_refusal() -> str:
+    """The refusal text for a transition label this module does not carry.
+
+    Built from :data:`_DAMP_TRANSITIONS` so an added transition widens
+    the message too. Kept strictly distinct from
+    :func:`_walk_gate_refusal`: a mistyped or unknown label is an
+    *argument* problem whose remedy is to pass a different string, and
+    handing such a caller the FSM-gate remedy would point it at a
+    physical motion-state change it never asked for.
+    """
+    return f"unknown damp-preamble transition - need one of {sorted(_DAMP_TRANSITIONS)}"
+
+
 def _describe(name: str) -> dict[str, Any]:
     """Build the per-transition descriptor the verbs return.
 
@@ -214,17 +237,20 @@ def g1_list_damp_transitions() -> dict[str, Any]:
         semantic); a ``walk_ready_fsm_ids`` list quoting
         :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`, the set
         the driver's motion gate admits locomotion-shaped writes on;
-        and a ``refusals`` list carrying the ``7404`` gate-refusal
-        code and its decoded text, the one a future write verb would
-        surface. Every field is a snapshot of an observed neon
-        precondition or a driver constant; no dynamic decode runs here.
+        and a ``refusals`` list carrying the module-local gate-refusal
+        ``text`` a future write verb would surface, built from
+        ``WALK_FSMS`` so it cannot drift from ``walk_ready_fsm_ids`` in
+        the same payload. No ``code`` field: the driver quotes no SDK
+        return code on this gate. Every field is a snapshot of an
+        observed neon precondition or a driver constant; no dynamic
+        decode runs here.
     """
     return {
         "status": "success",
         "transitions": [_describe(name) for name in sorted(_DAMP_TRANSITIONS)],
         "walk_ready_fsm_ids": sorted(WALK_FSMS),
         "refusals": [
-            {"code": _GATE_REFUSAL_CODE, "text": ERR_CODES[_GATE_REFUSAL_CODE]},
+            {"text": _walk_gate_refusal()},
         ],
     }
 
@@ -235,7 +261,7 @@ def g1_damp_transition_admits(name: str) -> dict[str, Any]:
 
     Read-only. Compares ``name`` against the neon-observed
     :data:`_DAMP_TRANSITIONS` and reports the admitted descriptor on
-    match, or the ``7404`` gate-refusal code the driver would quote
+    match, or a refusal naming the unknown label and the admitted set
     on miss. No driver instance, no DDS, no SDK: the decision reads
     only module-level constants and the argument itself.
 
@@ -256,9 +282,10 @@ def g1_damp_transition_admits(name: str) -> dict[str, Any]:
         name: The transition label to check. Case-sensitive against
             the snapshot in :data:`_DAMP_TRANSITIONS` (``squat_to_stand``,
             ``lie_to_stand``, or ``stand_to_squat`` today). A
-            mis-cased or unknown label is refused with the ``7404``
-            code. A non-string argument is refused with the same
-            code because the lookup is by string key.
+            mis-cased or unknown label is refused with the
+            unknown-transition text. A non-string argument is refused
+            with the same text, because the lookup is by string key and
+            both are the same argument mistake.
 
     Returns:
         A dict with ``status``; on admit, a ``transition`` descriptor
@@ -266,23 +293,23 @@ def g1_damp_transition_admits(name: str) -> dict[str, Any]:
         ``avg_knee_max_rad``, and ``description`` (the same shape
         :func:`g1_list_damp_transitions` returns), plus
         ``walk_ready_fsm_ids`` for the follow-on gate decision. On
-        refuse, ``refusal_code`` and ``refusal_text`` name the ``7404``
-        code and its decoded text, plus a ``reason`` string that names
-        why the argument was refused (unknown name or non-string
-        argument).
+        refuse, ``refusal_text`` names the unknown-transition refusal
+        (the admitted labels, never the FSM gate -- the remedy for a bad
+        label is a different string, not a motion-state change), plus a
+        ``reason`` string that names why the argument was refused
+        (unknown name or non-string argument). There is no
+        ``refusal_code``: no SDK return code covers this refusal.
     """
     if not isinstance(name, str):
         return {
             "status": "error",
-            "refusal_code": _INVALID_TRANSITION_CODE,
-            "refusal_text": ERR_CODES[_INVALID_TRANSITION_CODE],
+            "refusal_text": _unknown_transition_refusal(),
             "reason": (f"name={name!r} is not a str; pass one of {sorted(_DAMP_TRANSITIONS)}"),
         }
     if name not in _DAMP_TRANSITIONS:
         return {
             "status": "error",
-            "refusal_code": _INVALID_TRANSITION_CODE,
-            "refusal_text": ERR_CODES[_INVALID_TRANSITION_CODE],
+            "refusal_text": _unknown_transition_refusal(),
             "reason": (f"name={name!r} is not in the admitted set {sorted(_DAMP_TRANSITIONS)}"),
         }
     return {
