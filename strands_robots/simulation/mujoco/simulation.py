@@ -3287,8 +3287,20 @@ class MuJoCoSimEngine(
         # consistent with get_observation's base_quat / base_ang_vel. Recovered
         # from the kinematic tree when the free joint is unnamed and therefore
         # absent from ``joint_names`` (e.g. a mobile base like LeKiwi).
-        if free_jnt_id < 0:
-            free_jnt_id = self._robot_base_free_joint(model, robot, pfx)
+        # The base is whichever free joint the ownership-checked resolver names,
+        # never whichever one happens to come last in ``joint_names``. The loop
+        # above records a free joint only to skip its degenerate scalar; letting
+        # it also CHOOSE reported a sibling prop's pose as the robot's base on
+        # any scene that ships a free-jointed task object under the robot's own
+        # namespace - a kick ball, a Menagerie grasping cube - because such a
+        # joint is a named entry in ``joint_names`` too and the last write won.
+        # :meth:`_robot_base_free_joint` is the single owner of that question and
+        # already checks ownership; it also recovers an UNNAMED base the loop
+        # cannot see (a mobile base like LeKiwi), so it answers both cases. Its
+        # ``-1`` is not allowed to erase a base the loop did find.
+        owned_free_jnt_id = self._robot_base_free_joint(model, robot, pfx)
+        if owned_free_jnt_id >= 0:
+            free_jnt_id = owned_free_jnt_id
         base: dict[str, list[float]] | None = None
         if free_jnt_id >= 0:
             qadr = int(model.jnt_qposadr[free_jnt_id])
