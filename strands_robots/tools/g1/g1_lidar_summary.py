@@ -6,7 +6,8 @@ message header alone - ``count`` (``width * height``), ``width``,
 ``height``, ``point_step``, ``row_step`` and ``t`` - so no point is ever
 enumerated on the DDS thread and the record's size is the same for a
 sparse cloud and a full one. This verb is the cached-snapshot companion
-to :mod:`~strands_robots.tools.g1.g1_lidar_state`, returning every field
+to a lidar-state reader (``strands_robots.tools.g1.g1_lidar_state``, a
+sibling port whose PR is open at time of writing), returning every field
 ``_on_lidar_cloud`` actually writes rather than computing anything new.
 
 This verb does not subscribe DDS. The driver's own subscriber already
@@ -14,9 +15,8 @@ delivers ``rt/utlidar/cloud_livox_mid360`` under the singleton
 ``_DDS_INIT_LOCK`` from :mod:`~strands_robots.tools.g1._g1_common`, and
 a second subscriber path on the same topic would compete for the wire
 and duplicate the bus load that lock is meant to prevent (this is the
-same rule :mod:`~strands_robots.tools.g1.g1_battery`,
-:mod:`~strands_robots.tools.g1.g1_imu` and
-:mod:`~strands_robots.tools.g1.g1_lidar_state` name, refs
+same rule the sibling readers ``g1_battery``, ``g1_imu`` and
+``g1_lidar_state`` state in their own module docstrings, refs
 strands-labs/robots#358). The verb is duck-typed on
 ``driver._snapshot("_lidar_summary")`` - the same accessor the driver's
 own ``stream(action="sensors")`` path reads through - which returns a
