@@ -76,6 +76,16 @@ mTLS alone is not sufficient - pair it with an access-control list:
 > internet-reachable router is an unauthorized-fleet-control surface even
 > with mTLS enforced.
 
+### Transport credentials (mTLS material)
+
+`STRANDS_MESH_AUTH_MODE=mtls` is the default, so three filesystem paths are the whole of the Zenoh transport's TLS configuration. They are required *together*: with any one of them unset, `_resolve_tls_paths` raises `ValueError` naming all three and the session never opens. That is deliberate - the loader fails loud at session-open time rather than silently downgrading to plain TCP - and it is why a fleet that sets no dev flag and no TLS material does not come up at all.
+
+- `STRANDS_MESH_TLS_CA` - required under `mtls`. Path to the CA bundle used to validate peer certificates. This is the trust root that decides which peers are in the fleet, so the ACL's CN pinning above is only as good as the CA that issued those CNs.
+- `STRANDS_MESH_TLS_CERT` - required under `mtls`. Path to this peer's certificate (PEM). Its CN is what an operator ACL pins, so it must match the CN that ACL names.
+- `STRANDS_MESH_TLS_KEY` - required under `mtls`. Path to this peer's private key (PEM). On POSIX the loader enforces mode `0600` and refuses a more permissive key, because a `0644` key on a shared host is an exfiltration surface. On Windows that check is skipped - POSIX modes do not map onto NTFS ACLs - and the loader emits a one-shot WARNING saying so, so restrict the key file by ACL to the single account that runs the peer.
+
+None of the three may be a symlink: the loader rejects a symlinked CA, certificate, or key by path *before* it reads the file, so an attacker who can redirect a link cannot swap the material out from under the mode check.
+
 ### Cross-network fleets (AWS IoT Core)
 
 Two steps route traffic through AWS IoT Core (MQTT5 with mTLS): the `[mesh-iot]` extra installs the dependency, and `STRANDS_MESH_BACKEND=iot` selects the transport. The extra alone changes nothing - the fleet stays on Zenoh - so set both. `STRANDS_MESH_BACKEND=bridge` selects a `BridgeTransport` instead, which keeps high-rate topics local while bridging presence, health, and safety to the cloud. When you use this path, the IoT device certificates and provisioning material become production secrets - provision them per-device, scope their IoT policies to the minimum topic set, and rotate/revoke them like any other fleet credential.

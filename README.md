@@ -1173,6 +1173,9 @@ touches ROS 2.
 |----------|-------------|---------|
 | `STRANDS_MESH_BACKEND` | Mesh transport: `zenoh` (LAN), `iot` (AWS IoT Core), or `bridge` (both - Zenoh locally, IoT for the bridged topics). Case and surrounding whitespace are ignored. This selects the transport; the `[mesh-iot]` extra only installs the dependency `iot`/`bridge` need, so installing it without setting this leaves the fleet on Zenoh. An unrecognized value falls back to the default and is logged once, naming the valid values | `zenoh` |
 | `STRANDS_MESH_AUTH_MODE` | Wire auth: `mtls` or `none` (`none` needs a second factor) | `mtls` |
+| `STRANDS_MESH_TLS_CA` | Path to the CA bundle that validates peer certificates. Required under `AUTH_MODE=mtls` (the default) | unset |
+| `STRANDS_MESH_TLS_CERT` | Path to this peer's certificate (PEM). Its CN is what an operator ACL pins. Required under `AUTH_MODE=mtls` | unset |
+| `STRANDS_MESH_TLS_KEY` | Path to this peer's private key (PEM). Enforced mode `0600` on POSIX; on Windows the mode gate is skipped with a one-shot WARNING, so restrict it by NTFS ACL. Required under `AUTH_MODE=mtls` | unset |
 | `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | Second factor required to bring up `AUTH_MODE=none` | unset |
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
 | `ZENOH_CONNECT` | Comma-separated remote Zenoh endpoints to connect to | unset |
