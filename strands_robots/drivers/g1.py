@@ -10,11 +10,13 @@ this robot.
 What the driver actually does:
 
 * Subscribes ``rt/lowstate``, ``rt/lf/bmsstate``, ``rt/utlidar/lidar_state``,
-  ``rt/utlidar/cloud_livox_mid360`` and ``rt/mainboardstate`` on a background
-  DDS thread. Each callback drops into an in-memory cache the mesh reads at
-  its own cadence (:mod:`strands_robots.mesh.sensors` publishes ``_imu``,
-  ``_battery``, ``_lidar_state`` and ``_lidar_summary`` from those caches;
-  ``_mainboard`` is read by the ``g1_mainboard`` verb).
+  ``rt/utlidar/cloud_livox_mid360``, ``rt/mainboardstate`` and
+  ``rt/pressuresensorstate`` on a background DDS thread. Each callback drops
+  into an in-memory cache the mesh reads at its own cadence
+  (:mod:`strands_robots.mesh.sensors` publishes ``_imu``, ``_battery``,
+  ``_lidar_state`` and ``_lidar_summary`` from those caches; ``_mainboard``
+  is read by the ``g1_mainboard`` verb and ``_pressure`` by the
+  ``g1_pressure`` verb).
 * Gates writes on the FSM: :meth:`send_action` refuses when the FSM state
   is outside :data:`~strands_robots.tools.g1.HANDSHAKE_FSMS` or the battery
   is under the floor.  The gate consults :attr:`_fsm_id` (the high-level
@@ -118,6 +120,7 @@ _TOPIC_BMS = "rt/lf/bmsstate"
 _TOPIC_LIDAR_STATE = "rt/utlidar/lidar_state"
 _TOPIC_LIDAR_CLOUD = "rt/utlidar/cloud_livox_mid360"
 _TOPIC_MAINBOARD = "rt/mainboardstate"
+_TOPIC_PRESSURE = "rt/pressuresensorstate"
 
 # The topic the driver writes.  ``rt/lowcmd`` carries a full ``LowCmd_`` shaped
 # for the G1 wholebody actuator set - motion cannot go anywhere else without
@@ -312,6 +315,7 @@ class G1Driver:
         self._lidar_state: dict[str, Any] | None = None
         self._lidar_summary: dict[str, Any] | None = None
         self._mainboard: dict[str, Any] | None = None
+        self._pressure: dict[str, Any] | None = None
         # ``_mode_machine`` is the uint8 hardware layout id echoed on every
         # ``LowCmd_`` (``LowState_.mode_machine``, packed ``<2B`` alongside
         # ``mode_pr`` so the value is bounded to ``[0, 255]``).  ``_fsm_id`` is
@@ -1257,6 +1261,11 @@ class G1Driver:
                 ("unitree_sdk2py.idl.unitree_hg.msg.dds_", "MainBoardState_"),
                 self._on_mainboard,
             ),
+            (
+                _TOPIC_PRESSURE,
+                ("unitree_sdk2py.idl.unitree_hg.msg.dds_", "PressSensorState_"),
+                self._on_pressure,
+            ),
         ]
 
     def _on_lowstate(self, msg: Any) -> None:
@@ -1385,6 +1394,35 @@ class G1Driver:
             }
         except Exception as exc:  # noqa: BLE001 - IDL message can be anything
             logger.debug("%s: mainboardstate decode failed: %s", self._tool_name, exc)
+
+    def _on_pressure(self, msg: Any) -> None:
+        """Decode ``rt/pressuresensorstate`` into :attr:`_pressure`.
+
+        ``PressSensorState_`` declares two 12-element vectors (``pressure``
+        and ``temperature``) and two ``uint32`` scalars (``lost`` and
+        ``reserve``).  Every field is read through ``getattr`` with a
+        default so a name a future firmware renames yields ``None`` on this
+        side rather than raising on the DDS thread; a missing field
+        surfaces to the ``g1_pressure`` verb as ``None`` for that key,
+        which is decidable, rather than as an exception the DDS thread
+        would swallow silently.
+
+        ``pressure`` and ``temperature`` are vector fields on the message
+        (one entry per foot pressure sensor); they are cast to a plain
+        ``list[float]`` under the copy the ``_snapshot`` accessor returns,
+        so a caller mutating the returned dict does not race the DDS
+        thread writing into it.
+        """
+        try:
+            self._pressure = {
+                "pressure": _to_float_list(getattr(msg, "pressure", None)),
+                "temperature": _to_float_list(getattr(msg, "temperature", None)),
+                "lost": _to_int(getattr(msg, "lost", None)),
+                "reserve": _to_int(getattr(msg, "reserve", None)),
+                "t": time.time(),
+            }
+        except Exception as exc:  # noqa: BLE001 - IDL message can be anything
+            logger.debug("%s: pressuresensorstate decode failed: %s", self._tool_name, exc)
 
     # ------------------------------------------------------------------ #
     # Internal helpers.                                                  #
