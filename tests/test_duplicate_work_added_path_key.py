@@ -45,8 +45,8 @@ of AGENTS.md.
 
 from __future__ import annotations
 
-import importlib.util
 import ast
+import importlib.util
 import inspect
 import sys
 import textwrap
@@ -789,9 +789,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
         }
 
     @staticmethod
-    def _long_node(
-        number: int, paths: list[str], *, total: int, cursor: str | None
-    ) -> dict[str, Any]:
+    def _long_node(number: int, paths: list[str], *, total: int, cursor: str | None) -> dict[str, Any]:
         """A node whose file list is the first page of a longer list."""
         node = _node(number, _added(*paths), total=total)
         node["files"]["pageInfo"] = {
@@ -813,9 +811,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
         """
         cursors: list[object] = []
 
-        def fake_post(
-            query: str, variables: dict[str, object], token: str
-        ) -> dict[str, Any]:
+        def fake_post(query: str, variables: dict[str, object], token: str) -> dict[str, Any]:
             if "number" in variables:
                 cursors.append(variables.get("after"))
                 return file_pages[len(cursors) - 1]
@@ -824,9 +820,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
         monkeypatch.setattr(check, "_post", fake_post)
         return cursors
 
-    def test_a_collision_in_a_later_page_is_reported(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_collision_in_a_later_page_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The finding lives past the first page, which is the whole point.
 
         A pull request long enough to be paged collides with a one-file sibling on
@@ -839,9 +833,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
             self._long_node(11, first, total=len(first) + 1, cursor="cursor-1"),
             _node(12, _added(shared)),
         ]
-        cursors = self._wire(
-            monkeypatch, nodes, [self._files_page([shared], cursor=None)]
-        )
+        cursors = self._wire(monkeypatch, nodes, [self._files_page([shared], cursor=None)])
 
         file_sets = check.resolve_open_file_sets("owner/name", "token")
 
@@ -863,9 +855,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
         first = [f"src/module_{index}.py" for index in range(check.FILE_PAGE_SIZE)]
         shared = "tests/test_unrelated_pair.py"
         nodes = [
-            self._long_node(
-                11, first, total=len(first) + 1, cursor="cursor-1"
-            ),
+            self._long_node(11, first, total=len(first) + 1, cursor="cursor-1"),
             _node(21, _added(shared)),
             _node(22, _added(shared)),
         ]
@@ -875,16 +865,12 @@ class TestALongFileListIsCompletedRatherThanRefused:
             [self._files_page(["src/only_mine.py"], cursor=None)],
         )
 
-        verdict = check.classify_additions(
-            check.resolve_open_file_sets("owner/name", "token")
-        )
+        verdict = check.classify_additions(check.resolve_open_file_sets("owner/name", "token"))
 
         assert verdict.outcome == check.DUPLICATE_ADDITION
         assert (21, 22) in [(low, high) for low, high, _ in verdict.collisions]
 
-    def test_a_single_page_pull_request_costs_no_extra_request(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_single_page_pull_request_costs_no_extra_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Ordinary traffic is unchanged, which is the bound on the widening.
 
         A node whose list is already whole reports ``hasNextPage: false``, so the
@@ -898,9 +884,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
         assert cursors == [], "no page was requested for a list already in hand"
         assert file_sets[11].created == ("tests/test_a.py",)
 
-    def test_a_list_longer_than_the_bound_is_still_refused(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_list_longer_than_the_bound_is_still_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The refusal survives as the backstop, naming the bound it hit.
 
         Paging is bounded, so a list that cannot be completed inside it is
@@ -922,9 +906,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
         assert "#11" in message
         assert str(check.MAX_FILE_PAGES * check.FILE_PAGE_SIZE) in message
 
-    def test_a_list_that_runs_out_of_pages_short_of_its_total_is_refused(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_list_that_runs_out_of_pages_short_of_its_total_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Paging is not a licence to read a prefix.
 
         A node that stops offering pages while its own ``totalCount`` is unmet is
@@ -942,9 +924,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
         assert "#11" in message
         assert "500" in message and "2" in message, "the shortfall is quantified"
 
-    def test_a_page_that_promises_more_and_names_no_cursor_is_refused(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_page_that_promises_more_and_names_no_cursor_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A reader that looped on a missing cursor would ask for the same page
         forever, so the unusable answer is reported instead."""
         node = _node(11, _added("src/a.py"), total=500)
@@ -971,9 +951,7 @@ class TestALongFileListIsCompletedRatherThanRefused:
             for node in ast.walk(statement)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         ]
-        assert "complete_file_nodes" in called, (
-            "the reader no longer completes a node's file list"
-        )
+        assert "complete_file_nodes" in called, "the reader no longer completes a node's file list"
         assert "file_sets" in called, "the reader no longer reads the file set"
         assert called.index("complete_file_nodes") < called.index("file_sets"), (
             "the node is read before it is completed, so the refusal fires first"
