@@ -9,11 +9,12 @@ this robot.
 
 What the driver actually does:
 
-* Subscribes ``rt/lowstate``, ``rt/lf/bmsstate``, ``rt/utlidar/lidar_state``
-  and ``rt/utlidar/cloud_livox_mid360`` on a background DDS thread. Each
-  callback drops into an in-memory cache the mesh reads at its own cadence
-  (:mod:`strands_robots.mesh.sensors` publishes ``_imu``, ``_battery``,
-  ``_lidar_state`` and ``_lidar_summary`` from those caches).
+* Subscribes ``rt/lowstate``, ``rt/lf/bmsstate``, ``rt/utlidar/lidar_state``,
+  ``rt/utlidar/cloud_livox_mid360`` and ``rt/mainboardstate`` on a background
+  DDS thread. Each callback drops into an in-memory cache the mesh reads at
+  its own cadence (:mod:`strands_robots.mesh.sensors` publishes ``_imu``,
+  ``_battery``, ``_lidar_state`` and ``_lidar_summary`` from those caches;
+  ``_mainboard`` is read by the ``g1_mainboard`` verb).
 * Gates writes on the FSM: :meth:`send_action` refuses when the FSM state
   is outside :data:`~strands_robots.tools.g1.HANDSHAKE_FSMS` or the battery
   is under the floor.  The gate consults :attr:`_fsm_id` (the high-level
@@ -116,6 +117,7 @@ _TOPIC_LOWSTATE = "rt/lowstate"
 _TOPIC_BMS = "rt/lf/bmsstate"
 _TOPIC_LIDAR_STATE = "rt/utlidar/lidar_state"
 _TOPIC_LIDAR_CLOUD = "rt/utlidar/cloud_livox_mid360"
+_TOPIC_MAINBOARD = "rt/mainboardstate"
 
 # The topic the driver writes.  ``rt/lowcmd`` carries a full ``LowCmd_`` shaped
 # for the G1 wholebody actuator set - motion cannot go anywhere else without
@@ -309,6 +311,7 @@ class G1Driver:
         self._battery: dict[str, Any] | None = None
         self._lidar_state: dict[str, Any] | None = None
         self._lidar_summary: dict[str, Any] | None = None
+        self._mainboard: dict[str, Any] | None = None
         # ``_mode_machine`` is the uint8 hardware layout id echoed on every
         # ``LowCmd_`` (``LowState_.mode_machine``, packed ``<2B`` alongside
         # ``mode_pr`` so the value is bounded to ``[0, 255]``).  ``_fsm_id`` is
@@ -1249,6 +1252,11 @@ class G1Driver:
                 ("unitree_sdk2py.idl.sensor_msgs.msg.dds_", "PointCloud2_"),
                 self._on_lidar_cloud,
             ),
+            (
+                _TOPIC_MAINBOARD,
+                ("unitree_sdk2py.idl.unitree_hg.msg.dds_", "MainBoardState_"),
+                self._on_mainboard,
+            ),
         ]
 
     def _on_lowstate(self, msg: Any) -> None:
@@ -1348,6 +1356,36 @@ class G1Driver:
         except Exception as exc:  # noqa: BLE001
             logger.debug("%s: lidar_cloud summary failed: %s", self._tool_name, exc)
 
+    def _on_mainboard(self, msg: Any) -> None:
+        """Decode ``rt/mainboardstate`` into :attr:`_mainboard`.
+
+        ``MainBoardState_`` is a firmware-version-dependent envelope: the fan
+        state, board temperatures and system-state fields it declares vary
+        across G1 releases, so the fields read here are the ones that appear
+        on the layout the current firmware ships with and every one is read
+        through ``getattr`` with a default so a name a future firmware
+        renames yields ``None`` on this side rather than raising on the DDS
+        thread.  A missing field surfaces to the ``g1_mainboard`` verb as
+        ``None`` for that key, which is decidable, rather than as an
+        exception the DDS thread swallows silently.
+
+        ``fan_state`` and ``temperature`` are vector fields on the message
+        (one entry per fan / thermistor); they are cast to a plain
+        ``list[int]`` / ``list[float]`` under the copy the ``_snapshot``
+        accessor returns, so a caller mutating the returned dict does not
+        race the DDS thread writing into it.
+        """
+        try:
+            self._mainboard = {
+                "fan_state": _to_int_list(getattr(msg, "fan_state", None)),
+                "temperature": _to_float_list(getattr(msg, "temperature", None)),
+                "sys_state": _to_int(getattr(msg, "sys_state", None)),
+                "tick": _to_int(getattr(msg, "tick", None)),
+                "t": time.time(),
+            }
+        except Exception as exc:  # noqa: BLE001 - IDL message can be anything
+            logger.debug("%s: mainboardstate decode failed: %s", self._tool_name, exc)
+
     # ------------------------------------------------------------------ #
     # Internal helpers.                                                  #
     # ------------------------------------------------------------------ #
@@ -1363,6 +1401,66 @@ class G1Driver:
             if value is None:
                 return None
             return dict(value)
+
+
+def _to_int(value: Any) -> int | None:
+    """Coerce ``value`` to ``int``, or return ``None`` if it will not.
+
+    ``MainBoardState_``'s scalar fields (``sys_state``, ``tick``) are declared
+    integer on the layout the current firmware ships with, but the value
+    landing here comes from ``getattr(msg, name, None)`` at
+    :meth:`G1Driver._on_mainboard`, so a firmware that renames one of them
+    yields ``None`` at this call.  Returning ``None`` decidably rather than
+    raising keeps the DDS thread's decoder swallowing nothing silently, and
+    the ``g1_mainboard`` verb reports the missing field as ``None`` in the
+    envelope instead of dropping the whole reading.
+    """
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int_list(value: Any) -> list[int] | None:
+    """Coerce ``value`` (a vector IDL field) to ``list[int]``, or ``None``.
+
+    Vector fields on the ``MainBoardState_`` IDL - ``fan_state`` -- arrive as
+    an iterable whose element type is declared integer on the current
+    firmware.  Copying into a plain ``list`` here (rather than storing the
+    IDL sequence) means the ``_snapshot`` accessor's ``dict(value)`` copy
+    already carries a list a caller can mutate without racing the DDS
+    thread's next write, and it turns a bytes-like or string value (which
+    would otherwise iterate as characters) into ``None``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes, bytearray)):
+        return None
+    try:
+        return [int(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float_list(value: Any) -> list[float] | None:
+    """Coerce ``value`` (a vector IDL field) to ``list[float]``, or ``None``.
+
+    Vector fields on the ``MainBoardState_`` IDL - ``temperature`` -- are a
+    float sequence on the current firmware.  Same copy-into-list rule as
+    :func:`_to_int_list`: the returned list is fresh, so a caller mutating
+    the ``g1_mainboard`` verb's envelope does not race the DDS thread that
+    writes the cache.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes, bytearray)):
+        return None
+    try:
+        return [float(item) for item in value]
+    except (TypeError, ValueError):
+        return None
 
 
 def _refuse(reason: str) -> dict[str, Any]:
