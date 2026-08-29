@@ -110,6 +110,28 @@ roller policy writes the same fourteen control targets, and with no wheels under
 the feet the duck simply stands; a ball-kick policy swings at a ball that is not
 there. Nothing refuses it, so the scene is the caller's to choose.
 
+### The ball scene carries the ball, not the kick geometry
+
+`scene_ball.xml` places the prop, and where it sits is not where the kick policies
+were trained to find it. The scene declares the ball 0.3 m straight ahead
+(`ball.xml`: `pos="0.3 0 0.035"`). Pollen's training reset placed it 0.09 m ahead and
+0.042 m to the side of the kicking foot, in the robot's yaw frame - 3.3x closer, and
+offset laterally to the foot that swings.
+
+Loading the scene is therefore necessary and not sufficient. Driven from the shipped
+position, `ball_kick_left` completes and reports success while no robot body ever
+touches the ball: across a four-second rollout the closest any robot geom comes to the
+ball centre is 0.109 m, against a 0.035 m radius. The ball still travels forward on its
+own - its geom sets a deliberately low rolling resistance - which is why the miss reads
+as a weak kick rather than as a miss.
+
+A caller who wants the trained geometry teleports the ball before the rollout, which is
+what Pollen's runtime does at the moment a kick is triggered: write the ball free
+joint's `qpos` to that offset rotated into the trunk's yaw frame, zero the joint's
+`qvel`, and step. The file names the joint `ball_free`; `add_robot(name=...)` prefixes
+every joint with the name the caller passed, so resolve the name rather than assuming
+either spelling.
+
 ### Reading joint positions on the rollers scene
 
 `scene_ball.xml` appends the ball's free joint after the robot's, so the robot's
