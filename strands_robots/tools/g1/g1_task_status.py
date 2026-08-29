@@ -65,6 +65,8 @@ from typing import Any
 
 from strands import tool
 
+from strands_robots.tools.g1._g1_common import live_handle_refusal
+
 
 @tool
 def g1_get_task_status(driver: Any) -> dict[str, Any]:
@@ -124,6 +126,28 @@ def g1_get_task_status(driver: Any) -> dict[str, Any]:
         ``False``) and ``reason`` (which quotes the driver's own text
         verbatim).
     """
+    # The handle is a live object typed ``Any``, so the generated tool schema
+    # carries nothing telling a model the argument cannot be synthesized: a
+    # caller reaches this verb with ``None`` or with a robot *name*, and the
+    # accessor call below would surface that as ``AttributeError`` naming a
+    # method rather than as the refusal a ``@tool`` owes its caller.  One
+    # owner for that judgement, shared with every sibling verb in this
+    # package: the refusal is an error envelope naming this verb, the
+    # ``driver`` parameter and the type it received, never an exception.
+    refusal = live_handle_refusal(
+        "g1_get_task_status",
+        driver,
+        accessor="get_task_status",
+        reads=("the verb reads the task snapshot the driver's own control loop writes"),
+        expected=(
+            "the task-status accessor this verb reads. Pass a strands_robots "
+            "G1Driver, or an object with a callable `get_task_status()` "
+            "answering the driver's task envelope."
+        ),
+    )
+    if refusal is not None:
+        return refusal
+
     envelope = driver.get_task_status()
     inner: dict[str, Any] = envelope["content"][0]["json"]
 
