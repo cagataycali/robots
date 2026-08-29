@@ -371,12 +371,22 @@ class TestStalenessBoundEndsTheRollout:
         assert snap["steps"] >= 1, snap
 
     def test_a_renewed_cache_keeps_admitting(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The bound must not fire on a healthy wire - otherwise it is a shutdown."""
+        """The bound must not fire on a healthy wire - otherwise it is a shutdown.
+
+        The staleness bound has to be many refresh periods wide, not "a few":
+        a CI runner under load can starve the refresher thread for tens of
+        milliseconds at a stretch, which under a two-refresh bound (10 ms
+        here) surfaces as a spurious ``exit_reason == "gate"``.  The property
+        being graded is "a bound that is being renewed does not fire", so a
+        wider bound at the same refresh cadence grades the same claim without
+        making it a scheduler race.  Refresh at 5 ms, refuse after 1 s of
+        silence -- 200 refreshes' worth of headroom.
+        """
         _install_sdk_stubs(monkeypatch)
         client = _ThreadRecordingMotionSwitcherClient()
         publisher = _RecordingPublisher()
         monkeypatch.setattr(g1_module, "_FSM_REFRESH_DT", 0.005)
-        monkeypatch.setattr(g1_module, "_FSM_STALE_AFTER_S", 0.2)
+        monkeypatch.setattr(g1_module, "_FSM_STALE_AFTER_S", 1.0)
         driver = _healthy_driver(client, publisher)
 
         driver.run_policy(_constant_policy, duration=60.0, n_steps=200)
