@@ -149,7 +149,7 @@ def test_the_stand_to_squat_precondition_matches_the_neon_argument() -> None:
 
     The neon bundle's ``g1_safe_stand_to_squat`` verb calls
     ``_assert_safe_for_damp(expected_fsms={500, 501, 801}, pose_check=False)``
-    — the upright, actively-balancing FSMs. The snapshot pins that
+    - the upright, actively-balancing FSMs. The snapshot pins that
     exact set and the pose-check flag: a caller asking for a
     stand-to-squat expects a lower knee angle by definition, so neon
     skipped the pose check.

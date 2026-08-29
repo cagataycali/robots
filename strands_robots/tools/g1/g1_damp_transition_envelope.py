@@ -10,7 +10,7 @@ The neon bundle observed against the real robot that each transition
 is safe from a small set of controller-managed FSMs, and that a
 deep-squat pose (``avg_knee > 1.4 rad``) means the controller has
 already let go and no damp-preamble path will recover it. Those two
-membership tests — expected FSM set and knee-angle threshold — are
+membership tests - expected FSM set and knee-angle threshold - are
 the transition envelope; this module surfaces them so a caller can
 decide the refusal decidably before a future driver-side wrapper for
 the damp-preamble path is attempted, rather than pinning it inside
@@ -108,17 +108,17 @@ _INVALID_TRANSITION_CODE: int = 7404
 #: three fields the neon bundle's ``_assert_safe_for_damp`` observes
 #: at refusal time:
 #:
-#: * ``expected_fsm_ids`` — the FSM ids the controller must be in for
+#: * ``expected_fsm_ids`` - the FSM ids the controller must be in for
 #:   the damp-preamble to be safe. Sourced from the neon bundle's own
 #:   ``expected_fsms`` argument on each verb's call to
 #:   ``_assert_safe_for_damp``.
-#: * ``pose_check`` — whether the neon bundle's ``avg_knee`` refusal
+#: * ``pose_check`` - whether the neon bundle's ``avg_knee`` refusal
 #:   is enforced for this transition. Sourced from the same verb's
 #:   ``pose_check`` argument. Only ``squat_to_stand`` uses the pose
 #:   check today; ``lie_to_stand`` and ``stand_to_squat`` skip it (a
 #:   lying robot can be at any knee angle; a stand-to-squat caller
 #:   asks for a lower knee angle by definition).
-#: * ``description`` — the neon bundle's own docstring summary of
+#: * ``description`` - the neon bundle's own docstring summary of
 #:   what the transition does, so an agent-facing planner has the
 #:   one-line semantic on hand without re-reading the neon docs.
 #:
@@ -149,7 +149,7 @@ _DAMP_TRANSITIONS: dict[str, dict[str, Any]] = {
         "pose_check": False,
         "description": (
             "Damp preamble then Lie2StandUp. Safe from Damp (1) or "
-            "Lie2StandUp (702) — the face-up lying poses the "
+            "Lie2StandUp (702) - the face-up lying poses the "
             "controller can lift from. Pose check skipped because a "
             "lying robot's knee angle is not the deciding factor."
         ),
@@ -158,10 +158,10 @@ _DAMP_TRANSITIONS: dict[str, dict[str, Any]] = {
         "expected_fsm_ids": frozenset({500, 501, 801}),
         "pose_check": False,
         "description": (
-            "Damp preamble then SetFsmId(2=Squat) — works around the "
+            "Damp preamble then SetFsmId(2=Squat) - works around the "
             "SDK bug where LocoClient.StandUp2Squat() dispatches to "
             "FSM 706 (stand-up) instead of FSM 2 (squat). Safe from "
-            "Start (500), Walk (501), or BalanceExpert (801) — the "
+            "Start (500), Walk (501), or BalanceExpert (801) - the "
             "upright, actively-balancing FSMs. Pose check skipped "
             "because a caller asking for a stand-to-squat expects a "
             "lower knee angle by definition."
