@@ -2,8 +2,8 @@
 
 ``g1_imu`` is the third driver-instance-taking verb in
 :mod:`strands_robots.tools.g1`, after
-:func:`~strands_robots.tools.g1.g1_state.g1_get_state` and
-:func:`~strands_robots.tools.g1.g1_battery.g1_battery`.  Every earlier
+``g1_get_state`` (``strands-labs/robots#2934``) and
+``g1_battery`` (``strands-labs/robots#2938``).  Every earlier
 verb in the package is either a pure reader over module-level constants
 or a status envelope reader; this one and ``g1_battery`` both take a
 driver instance and read its cache through a named accessor -

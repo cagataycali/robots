@@ -4,7 +4,7 @@
 decodes each message into a small ``_imu`` dict carrying the base orientation
 (``rpy``), the gyroscope reading, the accelerometer reading, the quaternion,
 and the wall time the last message decoded at.  This verb is the
-cached-snapshot companion to :mod:`~strands_robots.tools.g1.g1_battery`,
+cached-snapshot companion to ``g1_battery`` (``strands-labs/robots#2938``),
 returning every field the driver's IMU decoder actually wrote rather than
 computing anything new.
 
@@ -12,9 +12,8 @@ This verb does not subscribe DDS.  The driver's own subscriber already
 delivers ``rt/lowstate`` under the singleton ``_DDS_INIT_LOCK`` from
 :mod:`~strands_robots.tools.g1._g1_common`, and a second subscriber path
 on the same topic would compete for the wire and duplicate the bus load
-that lock is meant to prevent (this is the same rule
-:mod:`~strands_robots.tools.g1.g1_state` and
-:mod:`~strands_robots.tools.g1.g1_battery` name, refs
+that lock is meant to prevent (this is the same rule ``g1_state``
+(``strands-labs/robots#2934``) and ``g1_battery`` name, refs
 strands-labs/robots#358).  The verb is duck-typed on
 ``driver._snapshot("_imu")`` - the same accessor the driver's own
 ``stream(action="sensors")`` path reads through - which returns a copy of
@@ -22,10 +21,9 @@ the cache under the driver's ``_cache_lock`` so a caller mutating the
 result does not race the DDS thread that writes into it.
 
 The driver argument is typed :class:`~typing.Any` at runtime rather than
-as ``G1Driver`` for the same reason
-:mod:`~strands_robots.tools.g1.g1_battery` gives: the driver module
-imports ``ensure_dds`` from this package at load, so a runtime import of
-``G1Driver`` here would close a cycle, and ``@tool`` calls
+as ``G1Driver`` for the same reason ``g1_battery`` gives: the driver
+module imports ``ensure_dds`` from this package at load, so a runtime
+import of ``G1Driver`` here would close a cycle, and ``@tool`` calls
 :func:`typing.get_type_hints` at decoration time so a string forward
 reference cannot resolve without pulling the driver at import.  The verb
 is duck-typed on ``_snapshot`` (any object with a ``_snapshot(attr)``
@@ -45,12 +43,11 @@ What this module does not do.
   what this verb returns verbatim.  The neon-side ``g1_read_lowstate``
   additionally decoded joint angles, torques, ``mode_machine`` /
   ``mode_pr`` / ``tick`` and computed a posture heuristic off the knees.
-  ``mode_machine`` is surfaced by :mod:`~strands_robots.tools.g1.g1_state`
-  already; joint reads are a separate verb the driver's ``_on_lowstate``
-  does not yet cache (it caches the IMU sub-record only), and a posture
-  label would be a second source of truth for a domain the driver's own
-  gate decides at wire time.  Those fields land (if at all) on
-  ``_on_lowstate``, not this verb.
+  ``mode_machine`` is surfaced by ``g1_state`` already; joint reads are a
+  separate verb the driver's ``_on_lowstate`` does not yet cache (it
+  caches the IMU sub-record only), and a posture label would be a second
+  source of truth for a domain the driver's own gate decides at wire time.
+  Those fields land (if at all) on ``_on_lowstate``, not this verb.
 * Convert units.  ``rpy`` is in radians as ``_on_lowstate`` wrote it,
   ``gyroscope`` is rad/s, ``accelerometer`` is m/s²; a caller who wants
   degrees converts them themselves so the number this verb returns is
