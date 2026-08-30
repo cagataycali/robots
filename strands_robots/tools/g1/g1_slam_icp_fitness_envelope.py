@@ -19,12 +19,8 @@ the refusal decidably before a future driver-side SLAM relocalise
 wrapper is called, rather than pinning the value inside the ICP
 path where the refusal is invisible to the planner.
 
-Twin of ``g1_slam_relocalize_envelope`` (the ICP *voxel-size*
-dimension on the same relocalise surface, open for review as
-strands-labs/robots#3006).  That sibling is named as a literal rather
-than cross-referenced, because a Sphinx role promises an importable
-dotted path and this tree does not carry that module until #3006
-lands.  Twin also of
+Twin of :mod:`~strands_robots.tools.g1.g1_slam_relocalize_envelope`
+(the ICP *voxel-size* dimension on the same relocalise surface).  Twin also of
 :mod:`~strands_robots.tools.g1.g1_lidar_max_points_envelope` (the
 *downsample cap* on the frame the ICP consumes).  The three modules
 stay separate because a fitness refusal is a *quality* judgement on
@@ -43,7 +39,7 @@ Two things this module is deliberately *not*:
   actual ICP against ``self._map_dedup`` and interpreted the
   ``result.fitness`` scalar; the write end of that pipeline is
   reached today by ``g1_slam_relocalize_envelope`` on the
-  caller-side subsample dimension (strands-labs/robots#3006) and by
+  caller-side subsample dimension (see :mod:`~strands_robots.tools.g1.g1_slam_relocalize_envelope`) and by
   future driver-side work on the ICP dispatch itself.  This module
   ports the read-only envelope half without also introducing a
   second ICP writer path the driver does not yet own.  Refs
