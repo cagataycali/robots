@@ -9,8 +9,8 @@ first two positions; :mod:`~strands_robots.tools.g1.g1_dds_topic_categories`
 names the fourth. The remaining third position - the plain-text
 description a caller reads to name what the topic decodes at the
 wire (e.g. ``"IMU, joints, motors (~1kHz)"`` for ``rt/lowstate`` or
-``"Low-level motor cmd (\\U0001f6a8)"`` for ``rt/lowcmd``) - is what this
-module surfaces.
+``"Low-level motor cmd (drives every joint on the low-level control
+loop)"`` for ``rt/lowcmd``) - is what this module surfaces.
 
 This module snapshots the twenty-two topic descriptions as a
 module-level constant and surfaces them as two agent-facing verbs
@@ -54,6 +54,14 @@ What this module does not decide.
   :mod:`~strands_robots.tools.g1.g1_dds_topic_idl_types`, which
   already answers it. This module carries only the plain-text
   description column.
+* Whether the topic is dangerous to publish. The five write-side
+  topics the neon catalog marks with an emoji glyph are named as a
+  bare set by
+  :mod:`~strands_robots.tools.g1.g1_dangerous_publish_topics`, which
+  answers the membership question decidably. This module does not
+  re-encode that partition as a marker inside the description
+  string, so a caller never has to substring-scan prose to decide a
+  refusal.
 * Which category label partitions the topic. That belongs on
   :mod:`~strands_robots.tools.g1.g1_dds_topic_categories`, which
   already answers it. A caller who wants both fields dispatches to
@@ -68,13 +76,25 @@ from strands import tool
 
 #: Snapshot of the neon-catalog topic-description column, keyed by
 #: DDS topic name. Twenty-two entries: nine ``state``, two ``lidar``,
-#: one ``joystick``, four ``control`` (each entry carries the
-#: dangerous-publish marker naming the refusal list), two ``hand``
-#: (the command topic also carries the dangerous-publish marker), three ``slam``, and one
-#: ``config``. The strings are captured byte-for-byte from the neon
-#: catalog; a neon-side widen or narrow of a description lands in
-#: the same PR as the neon table (the parity test surfaces the
-#: drift if the strings diverge).
+#: one ``joystick``, four ``control``, two ``hand``, three ``slam``,
+#: and one ``config``.
+#:
+#: The strings are captured from the neon catalog verbatim except for
+#: the five write-side topics the neon table marks with an emoji
+#: glyph. Those five carry the plain-text expansions
+#: :data:`~strands_robots.tools.g1.g1_dangerous_publish_topics._TOPIC_DESCRIPTIONS`
+#: already shipped for the same neon column, so one neon description
+#: has exactly one spelling on the tool surface rather than two. The
+#: glyph is deliberately not transliterated into an ASCII marker
+#: either: a marker in this column would invite a caller to decide
+#: the dangerous-publish partition by substring-scanning a
+#: description, and
+#: :func:`~strands_robots.tools.g1.g1_dangerous_publish_topics.g1_dangerous_publish_topic_admits`
+#: already decides it against a set.
+#:
+#: A neon-side widen or narrow of a description lands in the same PR
+#: as the neon table (the parity test surfaces the drift if the
+#: strings diverge).
 _DDS_TOPIC_DESCRIPTIONS: dict[str, str] = {
     # --- READ-ONLY: robot state ---
     "rt/lowstate": "IMU, joints, motors (~1kHz)",
@@ -91,15 +111,15 @@ _DDS_TOPIC_DESCRIPTIONS: dict[str, str] = {
     "rt/utlidar/lidar_state": "LiDAR sensor state",
     # --- READ-ONLY: joystick ---
     "rt/wirelesscontroller": "Remote joystick (silent unpaired)",
-    # --- CONTROL (WRITE) — dangerous ---
-    "rt/lowcmd": "Low-level motor cmd (\U0001f6a8)",
-    "rt/armsdk": "Arm SDK override (\U0001f6a8)",
-    "rt/user_lowcmd": "User low-level cmd (\U0001f6a8)",
-    "rt/bmscmd": "BMS cmd (\U0001f6a8 power/reboot)",
+    # --- CONTROL (WRITE): dangerous to publish ---
+    "rt/lowcmd": "Low-level motor cmd (drives every joint on the low-level control loop)",
+    "rt/armsdk": "Arm SDK override (the arm-SDK admission path a naive publish bypasses)",
+    "rt/user_lowcmd": "User low-level cmd (an alternative rt/lowcmd path with the same wire risk)",
+    "rt/bmscmd": "BMS cmd (battery-management command, admits a reboot or power-cycle payload)",
     # --- G1 HANDS (Inspire/Unitree 5/7-DoF hand) ---
     "rt/inspire/state": "Inspire hand state (joint pos/tau)",
-    "rt/inspire/cmd": "Inspire hand command (\U0001f6a8 write)",
-    # --- SLAM / Odometry (experimental — topic naming varies) ---
+    "rt/inspire/cmd": "Inspire hand command (5/7-DoF hand joint cmd, publishes to the hand controller)",
+    # --- SLAM / Odometry (experimental - topic naming varies) ---
     "rt/odom": "Robot odometry (nav_msgs)",
     "rt/unitree_slam/odom": "Unitree SLAM odometry",
     "rt/unitree_slam/global_map": "Unitree SLAM global map",
@@ -137,11 +157,10 @@ def g1_list_dds_topic_descriptions() -> dict[str, Any]:
 
     The envelope names twenty-two topics: nine on the read-side
     ``state`` partition, two on ``lidar``, one on ``joystick``, four
-    on the ``control`` write partition (each entry carries the
-    dangerous-publish marker the neon catalog uses to name the
-    refusal list), two on ``hand`` (the command topic also
-    dangerous-publish-marked),
-    three on ``slam``, and one on ``config``.
+    on the ``control`` write partition, two on ``hand``, three on
+    ``slam``, and one on ``config``. Which of them a publish path
+    must refuse is not answered here; ``g1_dangerous_publish_topics``
+    answers that against a set rather than by marking this column.
 
     Returns:
         A dict with ``status``; a ``count`` naming the number of

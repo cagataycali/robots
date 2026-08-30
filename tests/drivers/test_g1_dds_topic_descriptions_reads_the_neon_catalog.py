@@ -48,6 +48,12 @@ import importlib
 import sys
 from typing import Any
 
+from strands_robots.tools.g1.g1_dangerous_publish_topics import (
+    _DANGEROUS_PUBLISH_TOPICS,
+)
+from strands_robots.tools.g1.g1_dangerous_publish_topics import (
+    _TOPIC_DESCRIPTIONS as _DANGEROUS_PUBLISH_DESCRIPTIONS,
+)
 from strands_robots.tools.g1.g1_dds_topic_descriptions import (
     _DDS_TOPIC_DESCRIPTIONS,
     g1_dds_topic_description_admits,
@@ -149,59 +155,59 @@ def test_every_snapshot_topic_key_is_an_rt_prefixed_string() -> None:
         )
 
 
-def test_the_control_topics_carry_the_dangerous_publish_marker() -> None:
-    """Every ``rt/lowcmd``-family control topic description carries 🚨.
+def test_the_dangerous_publish_topics_carry_the_sibling_spelling() -> None:
+    """The five write-side topics reuse the shipped plain-text descriptions.
 
-    The neon ``TOPIC_CATALOG`` marks every write-side low-level
-    command topic with the 🚨 emoji in its description so a caller
-    reading the raw catalog can see the dangerous-publish partition
-    at a glance. A neon-side widen that dropped the marker on one
-    of the four control topics would silently downgrade the caller's
-    visible refusal; pinning the marker here surfaces the drift.
-    Refs :mod:`~strands_robots.tools.g1.g1_dangerous_publish_topics`
-    for the sibling snapshot of the same partition as a bare set.
+    The neon ``TOPIC_CATALOG`` marks its five write-side topics with
+    an emoji glyph in the description column.
+    :mod:`~strands_robots.tools.g1.g1_dangerous_publish_topics` already
+    ported that same column for the same five topics with the glyph
+    expanded to plain text, so this snapshot reuses those strings
+    verbatim rather than inventing a second spelling: one neon
+    description resolves to one string on the tool surface, and a
+    re-wording lands in one file instead of drifting between two
+    verbs a caller may well call in the same turn.
+
+    Read off the sibling constant rather than restated here, so a
+    re-wording on either side surfaces as this cell failing instead
+    of as two verbs quietly disagreeing.
     """
-    control_topics = (
-        "rt/lowcmd",
-        "rt/armsdk",
-        "rt/user_lowcmd",
-        "rt/bmscmd",
+    assert _DANGEROUS_PUBLISH_TOPICS, (
+        "the sibling dangerous-publish snapshot is empty; this cell "
+        "compares against it and would pass vacuously. Refs "
+        "strands-labs/robots#358."
     )
-    for topic in control_topics:
-        description = _DDS_TOPIC_DESCRIPTIONS[topic]
-        assert "\U0001f6a8" in description, (
-            f"description for control topic {topic!r} is {description!r}; "
-            "the neon catalog marks every write-side low-level command "
-            "topic with 🚨. Refs strands-labs/robots#358."
+    for topic in sorted(_DANGEROUS_PUBLISH_TOPICS):
+        assert topic in _DDS_TOPIC_DESCRIPTIONS, (
+            f"write-side topic {topic!r} is named by "
+            "g1_dangerous_publish_topics but absent from the "
+            "description snapshot; the two ports read the same neon "
+            "catalog and must cover the same topic names. Refs "
+            "strands-labs/robots#358."
+        )
+        assert _DDS_TOPIC_DESCRIPTIONS[topic] == _DANGEROUS_PUBLISH_DESCRIPTIONS[topic], (
+            f"description for {topic!r} is "
+            f"{_DDS_TOPIC_DESCRIPTIONS[topic]!r} but "
+            "g1_dangerous_publish_topics spells the same neon column "
+            f"{_DANGEROUS_PUBLISH_DESCRIPTIONS[topic]!r}. One neon "
+            "description must have one spelling on the tool surface. "
+            "Refs strands-labs/robots#358."
         )
 
 
-def test_the_inspire_cmd_topic_carries_the_dangerous_publish_marker() -> None:
-    """The Inspire hand ``cmd`` write topic carries 🚨 too.
+def test_the_state_topics_are_not_in_the_dangerous_publish_set() -> None:
+    """The read partition is decided by the sibling set, not by prose.
 
-    The neon ``DANGEROUS_PUB_TOPICS`` set is five entries: the four
-    ``control`` category topics plus ``rt/inspire/cmd`` (the Inspire
-    hand cmd, which sits in the ``hand`` category rather than
-    ``control``). The description column marks it as 🚨 too, which
-    a caller reading the raw catalog needs to see so the hand
-    partition does not silently look safer than the low-level
-    command partition.
-    """
-    description = _DDS_TOPIC_DESCRIPTIONS["rt/inspire/cmd"]
-    assert "\U0001f6a8" in description, (
-        f"description for rt/inspire/cmd is {description!r}; the neon "
-        "catalog marks the Inspire hand cmd write topic with 🚨 too. "
-        "Refs strands-labs/robots#358."
-    )
-
-
-def test_the_state_topics_do_not_carry_the_dangerous_publish_marker() -> None:
-    """No read-side ``state`` topic description carries 🚨.
-
-    The 🚨 marker names the write-side dangerous-publish partition
-    only; a read-side topic with the marker would misrepresent the
-    refusal surface to a caller scanning the catalog. This test
-    pins the marker's meaning against the read partition.
+    The write-side partition a caller needs before planning a publish
+    is answered by
+    :func:`~strands_robots.tools.g1.g1_dangerous_publish_topics.g1_dangerous_publish_topic_admits`
+    against a ``frozenset``. This cell pins that the read-side
+    ``state`` topics this snapshot carries stay outside that set, so
+    the two ports keep partitioning the catalog the same way -
+    deliberately without asserting on any marker substring inside a
+    description, because a caller that decided a refusal by scanning
+    prose would be keying on a string domain no verb promises to
+    keep stable.
     """
     state_topics = (
         "rt/lowstate",
@@ -215,11 +221,36 @@ def test_the_state_topics_do_not_carry_the_dangerous_publish_marker() -> None:
         "rt/multiplestate",
     )
     for topic in state_topics:
-        description = _DDS_TOPIC_DESCRIPTIONS[topic]
-        assert "\U0001f6a8" not in description, (
-            f"description for read-side state topic {topic!r} is "
-            f"{description!r}; the neon catalog marks only write-side "
-            "topics with 🚨. Refs strands-labs/robots#358."
+        assert topic in _DDS_TOPIC_DESCRIPTIONS, (
+            f"read-side state topic {topic!r} is missing from the description snapshot. Refs strands-labs/robots#358."
+        )
+        assert topic not in _DANGEROUS_PUBLISH_TOPICS, (
+            f"read-side state topic {topic!r} appears in the sibling "
+            "dangerous-publish set; the read partition must stay "
+            "outside the publish-refusal set. Refs "
+            "strands-labs/robots#358."
+        )
+
+
+def test_every_description_is_ascii_only() -> None:
+    """No description carries a non-ASCII byte into the tool payload.
+
+    The description strings are returned verbatim to a caller in
+    ``descriptions[*].description`` and ``target.description``, which
+    is the first surface AGENTS.md > "Unicode & String Hygiene" names:
+    an agent reads these back out of its own tool call, so a glyph
+    here is tokenizer noise a caller may then key on. The neon
+    catalog spells its write-side markers with an emoji; this cell
+    pins that the port does not carry one through, in either literal
+    or escaped form.
+    """
+    for topic, description in _DDS_TOPIC_DESCRIPTIONS.items():
+        offenders = sorted({ch for ch in description if ord(ch) > 127})
+        assert offenders == [], (
+            f"description for topic {topic!r} carries non-ASCII "
+            f"characters {[hex(ord(ch)) for ch in offenders]}: "
+            f"{description!r}. Tool-result text is plain ASCII in this "
+            "package. Refs strands-labs/robots#358."
         )
 
 
