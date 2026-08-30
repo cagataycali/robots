@@ -1,26 +1,41 @@
 """Grade the ACL-acknowledgement environment reference against the module's env surface.
 
-``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` is the acknowledgement token that lets a
-blacklist-shaped operator ACL load. ``_acl_config._validate_acl_shape`` refuses
-an operator ACL whose ``default_permission`` is ``"allow"`` and whose ``rules``
-list is non-empty with a ``PermissiveACLError`` unless this variable is set to
-``1``/``true``/``yes`` -- so on a fleet that supplies an operator ACL of that
-shape, this variable is the difference between a mesh that opens a session and
-one that refuses at load time.
+``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` is the acknowledgement token for a
+permissive mesh ACL posture. It has one spelling and three readers, and setting
+it takes all three effects:
 
-Until this file's companion change, the variable was named on ``docs/security.md``
-only as a warning-silencer, which is a different posture from the one the module
-implements. The README environment-variable matrix that ``_zenoh_config`` cites
+1. ``_acl_config._load_acl_file`` raises ``PermissiveACLError`` when
+   ``STRANDS_MESH_ACL_FILE`` points at a blacklist-shaped ACL
+   (``default_permission: "allow"`` with a non-empty ``rules`` list) unless the
+   variable is set to ``1``/``true``/``yes``. (``_validate_acl_shape``, called
+   at the end of the same loader, grades the file against the ACL schema; it is
+   not where this refusal is raised.)
+2. ``core.Mesh._refuse_under_permissive_default_acl`` takes it as the operator
+   opt-in for the built-in permissive default: with the token unset,
+   ``Mesh.start`` refuses to bring the wire up at all.
+3. ``session._build_config`` skips the per-session-open ``PERMISSIVE built-in
+   default ACL`` WARNING while it is set.
+
+Until this file's companion change, ``docs/security.md`` named the variable only
+as a silencer for that session warning and said nothing about the loader
+refusal; the first correction then over-rotated and asserted the token "does not
+silence" the warning, which reader 3 contradicts. Both framings understated the
+blast radius in the same direction: an operator who sets the token for one of
+the three effects gets the other two, so a later loss of
+``STRANDS_MESH_ACL_FILE`` from that environment brings the wire up on the
+permissive default with the start gate waived and the recurring warning
+suppressed. The README environment-variable matrix that ``_zenoh_config`` cites
 three times as the surface promising the key-mode contract named 32 other
 ``STRANDS_MESH_*`` variables and none of this one, so an operator tracing the
 refusal from the module source found the variable and an operator tracing it
 from either documentation surface did not.
 
-The rules below read the module's own ``os.getenv`` / ``os.environ`` literals
+The rules below read the package's own ``os.getenv`` / ``os.environ`` literals
 so the graded population tracks the code rather than a list kept beside it. A
 future ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL_*`` sibling (a per-key scoped
-opt-in, a rules-count ceiling) is held to the same rule the hour it lands. Five
-properties, plus one keep-the-derivation-honest premise:
+opt-in, a rules-count ceiling) is held to the same rule the hour it lands, and
+so is a fourth *reader* of the existing token. Properties, plus one
+keep-the-derivation-honest premise:
 
 - **Every acknowledgement variable the module reads has a README matrix row.**
   This is what makes the matrix a single index for the ACL-configuration
@@ -35,12 +50,16 @@ properties, plus one keep-the-derivation-honest premise:
   documentation change that named the variable and did not name that
   distinction would leave an operator setting the token without understanding
   the shape they are acknowledging.
-- **The documentation names the refusal, not a warning silencer.** The
-  module raises ``PermissiveACLError`` at ACL load; it does not silence a
-  warning. The prior sentence on the page misdescribed the semantics, and a
-  documentation change that keeps that framing would leave an operator setting
-  the variable to silence a warning that never fired for the case they are
-  configuring.
+- **The documentation names the refusal, and names it as one of three
+  effects.** The loader raises ``PermissiveACLError``; the start gate and the
+  session warning are the other two readers. A page that names only one of the
+  three understates the blast radius of setting the token, which is the axis
+  both prior framings got wrong.
+- **Every function that reads the token is named in the section.** This is the
+  general form of the three per-effect rules below, and the rule that keeps the
+  documented blast radius equal to the implemented one: a fourth reader added
+  anywhere in the package fails that cell until the section says what setting
+  the token now does at that site.
 - **The documentation names the two-remediation fork.** The ``PermissiveACLError``
   message names both remediations (rewrite as ``deny`` + ``allow`` rules, or
   set the acknowledgement token), so an operator who reads only the refusal
@@ -62,15 +81,19 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import pathlib
 import re
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from strands_robots.mesh import _acl_config
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
-_MODULE = _ROOT / "strands_robots" / "mesh" / "_acl_config.py"
+_PACKAGE = _ROOT / "strands_robots"
+_MODULE = _PACKAGE / "mesh" / "_acl_config.py"
 _PAGE = _ROOT / "docs" / "security.md"
 _README = _ROOT / "README.md"
 
@@ -102,6 +125,40 @@ def _accept_env_reads() -> frozenset[str]:
         if isinstance(literal, str) and literal.startswith(_PREFIX):
             names.add(literal)
     return frozenset(names)
+
+
+def _reader_sites() -> dict[str, str]:
+    """Map every function that reads the token to the module it lives in.
+
+    Scans the whole ``strands_robots`` package rather than one module: the
+    documented blast radius of this token is the set of code paths that consult
+    it, and the first correction to this page was wrong precisely because two of
+    the three readers live outside ``_acl_config``. Keys are the enclosing
+    function names, values are POSIX-style module paths relative to the package.
+    """
+    sites: dict[str, str] = {}
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for inner in ast.walk(node):
+                literal = None
+                if isinstance(inner, ast.Call) and ast.unparse(inner.func) in (
+                    "os.getenv",
+                    "os.environ.get",
+                ):
+                    if inner.args and isinstance(inner.args[0], ast.Constant):
+                        literal = inner.args[0].value
+                elif isinstance(inner, ast.Subscript) and ast.unparse(inner.value) == "os.environ":
+                    if isinstance(inner.slice, ast.Constant):
+                        literal = inner.slice.value
+                if isinstance(literal, str) and literal.startswith(_PREFIX):
+                    sites[node.name] = path.relative_to(_PACKAGE).as_posix()
+    return sites
 
 
 def _security_page_section() -> str:
@@ -263,6 +320,31 @@ def test_the_security_page_names_the_session_warning_suppression() -> None:
     )
 
 
+def test_every_function_that_reads_the_token_is_named_in_the_section() -> None:
+    """The documented blast radius equals the implemented one.
+
+    The three cells above name the three effects this tree has; this one is the
+    general rule behind them, derived from the package source rather than from a
+    list kept beside it. A fourth gate added anywhere in ``strands_robots``
+    fails here until the section says what setting the token does at that site.
+    This is the rule whose absence let the page assert that the token "does not
+    silence" a warning ``session.py`` silences.
+    """
+    section = _security_page_section()
+    sites = _reader_sites()
+    assert len(sites) >= 3, (
+        f"the reader scan found {sorted(sites)}; fewer than three reader sites means the scan "
+        "went blind (a read moved behind a helper, or a gate was removed without a documentation "
+        "change), and every per-effect cell above would then be grading prose against nothing"
+    )
+    missing = {name: module for name, module in sites.items() if name not in section}
+    assert not missing, (
+        f"these functions read STRANDS_MESH_ACCEPT_PERMISSIVE_ACL but the acknowledgement "
+        f"subsection never names them: {missing}. Say what setting the token does at each site: "
+        "an operator who sets it for one effect gets every effect"
+    )
+
+
 def test_the_security_page_names_both_remediations() -> None:
     """The section names both remediations the ``PermissiveACLError`` message offers.
 
@@ -385,7 +467,92 @@ def test_the_builtin_permissive_default_does_not_reach_this_gate(
     monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
     _acl_config._clear_acl_cache_for_test()
     # Should not raise PermissiveACLError -- the built-in default has its
-    # own gate in Mesh.start, not in _validate_acl_shape.
+    # own gate in Mesh.start, not in the loader.
     result = _acl_config.resolve_acl("strands")
     assert result["default_permission"] == "allow"
     assert result["rules"] == []
+
+
+def test_the_token_is_the_optin_for_the_builtin_default_start_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Effect 2, measured: the token flips ``Mesh.start``'s refusal.
+
+    Pinned behaviourally rather than left to the section's prose because this is
+    the effect an operator who sets the token for the loader refusal does not
+    expect to be taking, and because a prose-only guard cannot notice the gate
+    changing under it.
+    """
+    from strands_robots.mesh import core as mesh_core
+
+    robot = SimpleNamespace(
+        tool_name_str="r3003",
+        robot=SimpleNamespace(
+            is_connected=True,
+            name="r3003_test",
+            config=SimpleNamespace(cameras={}),
+            get_observation=MagicMock(return_value={}),
+        ),
+    )
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+    monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
+    _acl_config._clear_acl_cache_for_test()
+
+    monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
+    mesh = mesh_core.Mesh(robot, peer_id="test-3003-a", peer_type="robot")
+    assert mesh._refuse_under_permissive_default_acl() is True, (
+        "with the token unset, Mesh.start must refuse to bring the wire up on the built-in permissive default"
+    )
+
+    monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "1")
+    mesh = mesh_core.Mesh(robot, peer_id="test-3003-b", peer_type="robot")
+    assert mesh._refuse_under_permissive_default_acl() is False, (
+        "with the token set, the start gate is waived -- this is the effect the documentation must not omit"
+    )
+
+
+def test_the_token_suppresses_the_per_session_permissive_warning(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Effect 3, measured: the per-session permissive WARNING is suppressed.
+
+    ``session._build_config`` emits the ``PERMISSIVE built-in default ACL``
+    WARNING on every session open ``if is_permissive and not
+    accept_permissive``, so the token is exactly what silences it. An earlier
+    revision of this page asserted the opposite and a guard cell pinned the
+    assertion; this pair is the measurement that settles it, and it fails if
+    ``session.py`` ever stops honouring the token while the page still says it
+    does.
+    """
+    pytest.importorskip("zenoh")
+    from strands_robots.mesh.session import _build_config
+
+    ca, cert, key = tmp_path / "ca.crt", tmp_path / "peer.crt", tmp_path / "peer.key"
+    for f in (ca, cert, key):
+        f.write_text("dummy\n")
+    key.chmod(0o600)  # _resolve_tls_paths enforces 0o600 on the private key.
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+    monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
+    monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
+    monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key))
+    monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
+
+    def permissive_warnings() -> list[str]:
+        return [r.getMessage() for r in caplog.records if "PERMISSIVE built-in" in r.getMessage()]
+
+    monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
+    _acl_config._clear_acl_cache_for_test()
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.session"):
+        _build_config()
+    assert permissive_warnings(), "the permissive-default WARNING should fire with the token unset"
+
+    monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "1")
+    _acl_config._clear_acl_cache_for_test()
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.session"):
+        _build_config()
+    assert not permissive_warnings(), (
+        "the permissive-default WARNING is suppressed while the token is set, so documentation "
+        "claiming the token does not silence it is false"
+    )
