@@ -444,7 +444,7 @@ def test_every_refusal_string_cites_the_open_issue() -> None:
     that dropped the citation would fail the rule at CI; pinning
     the citation here surfaces the drift before wire.
     """
-    refuse_calls = [
+    refuse_calls: list[dict[str, Any]] = [
         {"topic": True},
         {"topic": False},
         {"topic": 1},
