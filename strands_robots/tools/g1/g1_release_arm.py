@@ -90,8 +90,8 @@ What this module does not do.
 * Encode the action id.  The release-arm action id (``99``) is a
   module-level constant in
   :mod:`~strands_robots.tools.g1.g1_arm_actions` and the driver's
-  own :meth:`~strands_robots.drivers.g1.G1Driver.release_arm` will
-  name the same number in its write.  Restating it here would fork
+  own ``G1Driver.release_arm`` will name the same number in its
+  write.  Restating it here would fork
   the id between two files; a caller who wanted to see the id ahead
   of a release reaches
   :func:`~strands_robots.tools.g1.g1_arm_actions.g1_list_arm_actions`
@@ -131,8 +131,8 @@ from strands_robots.tools.g1._g1_common import live_handle_refusal
 def g1_release_arm(driver: Any) -> dict[str, Any]:
     """Force-release the G1 arm's holding action.
 
-    Calls :meth:`~strands_robots.drivers.g1.G1Driver.release_arm` once
-    and returns the envelope the driver produced verbatim.  The
+    Calls ``G1Driver.release_arm`` once and returns the envelope
+    the driver produced verbatim.  The
     driver's method publishes the SDK's
     :meth:`~unitree_sdk2py.g1.arm.g1_arm_action_client.G1ArmActionClient.ExecuteAction`
     call with action id ``99`` (the id
