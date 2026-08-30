@@ -117,15 +117,6 @@ _LOCO_RPC_APIS: dict[int, str] = {
     7103: "SetSwingHeight (write)",
 }
 
-#: The subset of :data:`_LOCO_RPC_APIS` that reads state off the
-#: locomotion service rather than writing to it. Read-side api ids do
-#: not touch the driver's ``_check_motion_gates`` (they do not shape
-#: an ``rt/lowcmd`` frame); the write-side api id ``7103``
-#: (``SetSwingHeight``) does. A caller planning a raw ``_Call``
-#: compares the intended api id against this set to decide whether
-#: the driver's motion gate is on its path.
-_READ_APIS: frozenset[int] = frozenset({7001, 7002, 7003, 7004, 7005})
-
 #: The subset of :data:`_LOCO_RPC_APIS` that writes to the locomotion
 #: service. Only one api id today: ``7103`` (``SetSwingHeight``); the
 #: neon bundle's ``read_swing_height`` uses ``7004`` for the paired
@@ -133,6 +124,21 @@ _READ_APIS: frozenset[int] = frozenset({7001, 7002, 7003, 7004, 7005})
 #: widen this set; the sibling test asserts every id here is also in
 #: :data:`_LOCO_RPC_APIS` so a widen surfaces as a shape change here.
 _WRITE_APIS: frozenset[int] = frozenset({7103})
+
+#: The subset of :data:`_LOCO_RPC_APIS` that reads state off the
+#: locomotion service rather than writing to it. Read-side api ids do
+#: not touch the driver's ``_check_motion_gates`` (they do not shape
+#: an ``rt/lowcmd`` frame); the write-side api id ``7103``
+#: (``SetSwingHeight``) does. A caller planning a raw ``_Call``
+#: compares the intended api id against this set to decide whether
+#: the driver's motion gate is on its path.
+#:
+#: Derived from :data:`_LOCO_RPC_APIS` minus :data:`_WRITE_APIS` so a
+#: widen to :data:`_LOCO_RPC_APIS` cannot leave this set stale: a new
+#: api id lands in exactly one of the two partitions by construction,
+#: and the sibling test asserts the partition is disjoint and covers
+#: the admitted set.
+_READ_APIS: frozenset[int] = frozenset(_LOCO_RPC_APIS) - _WRITE_APIS
 
 #: The transport-level rc codes ``LocoClient._Call`` surfaces when the
 #: RPC channel itself fails, independent of whether the api id is
