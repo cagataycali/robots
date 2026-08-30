@@ -20,7 +20,7 @@ planner.
 
 Twin of :mod:`~strands_robots.tools.g1.g1_slam_icp_fitness_envelope`
 (``cagataycali/robots#3008``, the *registration-quality* dimension
-on the same SLAM surface — the fitness scalar the ICP returns after
+on the same SLAM surface -- the fitness scalar the ICP returns after
 the frame has already been range-filtered) and
 :mod:`~strands_robots.tools.g1.g1_slam_relocalize_envelope`
 (``cagataycali/robots#3006``, the ICP *voxel-size* dimension on the
@@ -50,7 +50,7 @@ Two things this module is deliberately *not*:
 * An SDK / kiss-icp re-import.  The two range bounds are captured
   here as module-level constants so ``import
   strands_robots.tools.g1.g1_slam_cloud_range_envelope`` pulls no
-  ``unitree_sdk2py`` submodule and no ``kiss_icp`` submodule — the
+  ``unitree_sdk2py`` submodule and no ``kiss_icp`` submodule -- the
   import-hygiene contract every other file in this package carries
   (refs strands-labs/robots#358).  The ``kiss_icp`` module ships as
   an optional dependency of the neon SLAM runner; a caller who
@@ -75,7 +75,7 @@ What this module does not decide.
   cloud would ever carry.  The Livox Mid-360 has its own manuf.
   spec range (about 0.1 m near limit and about 40 m far limit);
   the envelope here is the *kiss-icp preprocessor's* admitted
-  range and is narrower on the near end (1.0 m vs. 0.1 m) —
+  range and is narrower on the near end (1.0 m vs. 0.1 m) --
   points inside the sensor's near limit but below kiss-icp's
   ``min_range`` are refused as *quality* violations, not shape
   ones, because they are values the sensor produced but that the
@@ -212,14 +212,14 @@ def g1_slam_cloud_range_admits(range_m: float = 1.0) -> dict[str, Any]:
     Two refusal shapes are decided against a single reason:
 
     * ``range_m`` non-finite (``math.inf``, ``math.nan``,
-      ``-math.inf``) — refused with
+      ``-math.inf``) -- refused with
       ``reason="range_outside_kiss_icp_preprocessor"`` and
       ``comparison="non-finite"``.  A NaN cannot be compared
       decidably (``nan < 1.0`` is ``False`` but so is ``nan >
       40.0``), and an infinity is not a distance the preprocessor
       would ever admit either.
     * ``range_m`` outside ``[cloud_min_range_m, cloud_max_range_m]``
-      — refused with
+      -- refused with
       ``reason="range_outside_kiss_icp_preprocessor"`` and a
       comparison naming which bound the value violated
       (``"value < bound"`` for a distance under the near-clip,
@@ -234,7 +234,7 @@ def g1_slam_cloud_range_admits(range_m: float = 1.0) -> dict[str, Any]:
     Args:
         range_m: A per-point Euclidean distance from the sensor
             origin (metres).  The default ``1.0`` sits at the
-            near-clip boundary — a zero-arg invocation asks "does
+            near-clip boundary -- a zero-arg invocation asks "does
             the minimum-admitted range admit?", and the answer is
             ``True`` (the kiss-icp preprocessor's comparison is
             non-strict at the boundary, so the boundary is
