@@ -18,12 +18,13 @@ SLAM ingest is called, rather than pinning the value inside the
 frame-preprocessor path where the refusal is invisible to the
 planner.
 
-Twin of :mod:`~strands_robots.tools.g1.g1_slam_icp_fitness_envelope`
-(``cagataycali/robots#3008``, the *registration-quality* dimension
+Twin of ``g1_slam_icp_fitness_envelope``
+(``strands-labs/robots#3008``, the *registration-quality* dimension
 on the same SLAM surface -- the fitness scalar the ICP returns after
-the frame has already been range-filtered) and
+the frame has already been range-filtered; the sibling is still open
+for review, therefore named as a literal, not a dotted path role) and
 :mod:`~strands_robots.tools.g1.g1_slam_relocalize_envelope`
-(``cagataycali/robots#3006``, the ICP *voxel-size* dimension on the
+(``strands-labs/robots#3006``, the ICP *voxel-size* dimension on the
 map-side relocalise path).  The three modules stay separate because
 a per-point range filter is a *pre-ICP frame-preprocessor* gate on
 the raw cloud, a voxel size is a *pre-ICP subsample* argument on
@@ -41,7 +42,7 @@ Two things this module is deliberately *not*:
   frame preprocessor inside kiss-icp against the Livox cloud stream
   and interpreted the surviving points; the write end of that
   pipeline is reached today by
-  :func:`~strands_robots.tools.g1.g1_slam_icp_fitness_envelope` on
+  ``g1_slam_icp_fitness_admits`` (``strands-labs/robots#3008``) on
   the post-registration quality dimension and by future driver-side
   work on the frame-ingest dispatch itself.  This module ports the
   read-only envelope half without also introducing a second SLAM
@@ -68,7 +69,7 @@ What this module does not decide.
   frame-space refusals that need the cloud's per-point buffer on
   hand.  ``g1_slam_cloud_range_admits`` answers the *radial
   distance* half only, in the same way
-  :mod:`~strands_robots.tools.g1.g1_slam_icp_fitness_envelope`
+  ``g1_slam_icp_fitness_envelope`` (``strands-labs/robots#3008``)
   answers the fitness half without also reading the ICP's live
   transform.
 * Whether the caller-supplied range value is one a Livox Mid-360

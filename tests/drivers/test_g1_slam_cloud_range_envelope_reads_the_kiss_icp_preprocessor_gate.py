@@ -41,7 +41,7 @@ Two things this file's cells deliberately do not pin:
   That is a driver-instance state read that belongs on the SLAM
   runner's own ``get_status``-style query; the envelope answers
   the per-point range half only, in the same way
-  :mod:`~strands_robots.tools.g1.g1_slam_icp_fitness_envelope`
+  ``g1_slam_icp_fitness_envelope`` (``strands-labs/robots#3008``)
   answers the fitness half without also reading the driver's
   live ``fsm_id``.
 """
@@ -305,8 +305,8 @@ def test_g1_slam_cloud_range_admits_refuses_non_finite_input(
     on the refusal descriptor so a caller distinguishes a bounds
     violation from a shape violation.  The bound the refusal
     names is ``cloud_max_range_m`` by convention — the same
-    convention :mod:`~strands_robots.tools.g1.g1_slam_icp_fitness_envelope`
-    uses for its non-finite refusals.
+    convention ``g1_slam_icp_fitness_envelope``
+    (``strands-labs/robots#3008``) uses for its non-finite refusals.
     """
     result = _call(g1_slam_cloud_range_admits, range_m=bad_range)
     assert result["status"] == "success"
