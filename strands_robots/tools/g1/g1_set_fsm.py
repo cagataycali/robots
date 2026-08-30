@@ -188,7 +188,7 @@ def g1_set_fsm(
         wait: Seconds to wait after ``SetFsmId`` returns before reading
             ``fsm_after``. Defaults to ``3.0`` seconds - the neon
             bundle's own default, chosen to let the slowest documented
-            transition (Damp → Start requires a leg extension the
+            transition (Damp -> Start requires a leg extension the
             robot walks through mechanically) settle before the
             second FSM read. Validated against
             :func:`~strands_robots.utils.positive_finite_number_error`
