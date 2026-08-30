@@ -86,6 +86,16 @@ mTLS alone is not sufficient - pair it with an access-control list:
 
 None of the three may be a symlink: the loader rejects a symlinked CA, certificate, or key by path *before* it reads the file, so an attacker who can redirect a link cannot swap the material out from under the mode check.
 
+### Fleet routing isolation (namespace)
+
+`STRANDS_MESH_NAMESPACE` is the Zenoh `namespace` field on every peer of the fleet. It prefixes every mesh key-expression -- presence, safety, sensors, commands, the whole envelope -- and Zenoh only routes messages between peers whose namespaces match, so two fleets with different namespaces cannot exchange application traffic even when their key-expressions collide. That is the property fleet isolation depends on when a test rig sits on the same LAN as production hardware.
+
+- `STRANDS_MESH_NAMESPACE` - optional; defaults to `strands`. Must be set to the *same* value on every peer of one fleet: two peers with different namespaces connect at the transport layer (so TLS handshakes succeed and neither peer refuses the other loudly) and then exchange no application traffic, because their key-expressions never match. The failure mode of a mismatch is therefore silent -- a peer that appears absent from the fleet rather than one that raises -- so treat this variable like a fleet identifier that has to be provisioned alongside the TLS material.
+- Empty and whitespace-only values fall back to the default. `STRANDS_MESH_NAMESPACE=""` is treated identically to leaving it unset, because the alternative would be topics like `//presence` where the leading `/` is the missing namespace and one of the wildcards a permissive ACL admits could match against them.
+- The default tracks the hardcoded `strands/...` prefix every mesh component emits (`mesh.core`, `mesh.sensors`, `mesh.input`, the IoT path). Change it *only* alongside every peer -- a rolling change across a fleet leaves one half unable to see the other for the duration of the roll.
+
+Reference: `strands_robots.mesh._zenoh_config.resolve_namespace`.
+
 ### Cross-network fleets (AWS IoT Core)
 
 Two steps route traffic through AWS IoT Core (MQTT5 with mTLS): the `[mesh-iot]` extra installs the dependency, and `STRANDS_MESH_BACKEND=iot` selects the transport. The extra alone changes nothing - the fleet stays on Zenoh - so set both. `STRANDS_MESH_BACKEND=bridge` selects a `BridgeTransport` instead, which keeps high-rate topics local while bridging presence, health, and safety to the cloud. When you use this path, the IoT device certificates and provisioning material become production secrets - provision them per-device, scope their IoT policies to the minimum topic set, and rotate/revoke them like any other fleet credential.
