@@ -84,6 +84,7 @@ import ast
 import importlib
 import inspect
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -91,6 +92,7 @@ from types import ModuleType
 import pytest
 
 import strands_robots
+from strands_robots.utils import require_optional
 
 _PKG_ROOT = Path(strands_robots.__file__).resolve().parent
 _REPO_ROOT = _PKG_ROOT.parent
@@ -103,20 +105,50 @@ _REPO_ROOT = _PKG_ROOT.parent
 _ROLE_RE = re.compile(r":(?:mod|class|func|meth|attr|data|obj|exc):`~?([A-Za-z_][^`]*)`")
 
 
-def _absent_dependency(exc: ImportError) -> str | None:
-    """The absent third-party module ``exc`` names, if that is what it reports.
+def _is_package_path(name: str) -> bool:
+    """True if ``name`` is ``strands_robots`` itself or a module inside it."""
+    return name == "strands_robots" or name.startswith("strands_robots.")
+
+
+def _undecidable_import(exc: ImportError) -> str | None:
+    """What this environment could not supply, or ``None`` if ``exc`` is the rot being graded.
 
     Both causes of a failed import here raise the same exception type and need
-    opposite verdicts, and the name it carries is what separates them. A
-    ``strands_robots`` path means no such module exists - the rot being graded. A
-    name outside the package means the cited module does exist and could not be
-    imported because an extra is not installed, which is a fact about this
-    environment and not about the docstring.
+    opposite verdicts. Only the import machinery reports "no such module", and
+    when it does it always populates ``name`` - so a ``strands_robots`` path in
+    ``exc.name`` is the sole signature of the rot this guard grades. Every other
+    ``ImportError`` reaching here was raised by a module body that *did* import,
+    which means the cited path exists and the failure is a fact about this
+    environment rather than about the docstring.
+
+    ``exc.name`` alone cannot make that split, because it is populated only on an
+    exception the interpreter raises itself and is ``None`` on one that code
+    constructs - which is what 28 raise sites in the package do, both of them in
+    :func:`strands_robots.utils.require_optional` included, the mechanism AGENTS.md
+    convention 7 makes mandatory for an absent extra. Reading the surface ``name``
+    and nothing else therefore classified every one of those as package rot, and
+    the member walk's ``raise`` ended the sweep at the first one it met (#2963).
+
+    So the absent module is recovered from the chained exception the raise site was
+    handling when it constructed its own. ``raise ... from None`` clears ``__cause__``
+    and suppresses the *rendering* of ``__context__``; it does not clear the
+    attribute, so ``require_optional`` is covered by the same walk.
+
+    A surface exception carrying neither a name nor a chained one is reported as
+    undecidable too, on what it said. The interpreter never reports an absent module
+    without naming it, so such an exception is not evidence that a ``strands_robots``
+    path is missing - and refusing to read it as rot is what makes aborting the sweep
+    unreachable, whatever a future raise site does.
     """
     name = getattr(exc, "name", None)
-    if not name or name == "strands_robots" or name.startswith("strands_robots."):
-        return None
-    return name
+    if name:
+        return None if _is_package_path(name) else name
+    for linked in (exc.__cause__, exc.__context__):
+        linked_name = getattr(linked, "name", None)
+        if linked_name and not _is_package_path(linked_name):
+            return linked_name
+    reported = str(exc).strip().splitlines()
+    return reported[0] if reported else repr(exc)
 
 
 def _resolves(target: str) -> bool | None:
@@ -131,9 +163,12 @@ def _resolves(target: str) -> bool | None:
 
     The member walk is guarded for the same reason the imports are: a package
     that imports its submodules from a module-level ``__getattr__`` raises
-    ``ModuleNotFoundError`` from inside ``hasattr``, which swallows only
-    ``AttributeError``. Left to propagate, one absent extra ends the sweep and
-    nothing is graded at all.
+    ``ImportError`` from inside ``hasattr``, which swallows only
+    ``AttributeError`` - and the submodule body typically constructs that
+    exception itself rather than letting the interpreter's
+    ``ModuleNotFoundError`` through, which is the distinction
+    :func:`_undecidable_import` has to make. Left to propagate, one absent extra
+    ends the sweep and nothing is graded at all.
 
     Returns:
         ``True`` when every component resolves, ``False`` when the path names
@@ -148,7 +183,7 @@ def _resolves(target: str) -> bool | None:
         try:
             module = importlib.import_module(".".join(parts[:i]))
         except ImportError as exc:
-            if _absent_dependency(exc):
+            if _undecidable_import(exc):
                 return None
             continue
         except Exception:
@@ -164,7 +199,7 @@ def _resolves(target: str) -> bool | None:
                 return False
             obj = getattr(obj, attr, obj)
         except ImportError as exc:
-            if _absent_dependency(exc):
+            if _undecidable_import(exc):
                 return None
             raise
     return True
@@ -369,9 +404,69 @@ def test_a_module_the_package_does_not_have_is_still_a_dead_pointer() -> None:
     assert _resolves("strands_robots.mesh_session.get_session") is False
     assert _resolves(_BOGUS) is False
 
-    assert _absent_dependency(ModuleNotFoundError("x", name="strands_robots.mesh_session")) is None
-    assert _absent_dependency(ModuleNotFoundError("x", name="strands_robots")) is None
-    assert _absent_dependency(ModuleNotFoundError("x", name="serial")) == "serial"
+    assert _undecidable_import(ModuleNotFoundError("x", name="strands_robots.mesh_session")) is None
+    assert _undecidable_import(ModuleNotFoundError("x", name="strands_robots")) is None
+    assert _undecidable_import(ModuleNotFoundError("x", name="serial")) == "serial"
+
+
+def test_an_absent_extra_reported_without_a_name_is_undecidable_not_rot() -> None:
+    """An ``ImportError`` the package constructs must not be read as package rot.
+
+    ``exc.name`` is populated only on an exception the interpreter raises itself,
+    so classifying on it alone put all 28 of the package's constructed raise sites
+    on the *rot* branch - the one the member walk answers with ``raise`` - and one
+    absent extra ended the whole sweep with nothing graded after it (#2963). Both
+    shapes the package actually uses are pinned here, because the surface exception
+    is identical in each and only the chain distinguishes them: the wrapping raise
+    at ``strands_robots/tools/lerobot_camera.py``, and
+    :func:`strands_robots.utils.require_optional`, which AGENTS.md convention 7
+    makes the mandatory mechanism - its ``raise ... from None`` suppresses only the
+    *rendering* of ``__context__``, which is why the same walk reaches both.
+    """
+    absent = "a_module_this_environment_does_not_have"
+
+    with pytest.raises(ImportError) as wrapped:
+        try:
+            importlib.import_module(absent)
+        except ImportError as inner:
+            raise ImportError(f"camera modules not available: {inner}")
+    assert getattr(wrapped.value, "name", None) is None
+    assert _undecidable_import(wrapped.value) == absent
+
+    with pytest.raises(ImportError) as required:
+        require_optional(absent, extra="probe")
+    assert getattr(required.value, "name", None) is None
+    assert required.value.__cause__ is None
+    assert _undecidable_import(required.value) == absent
+
+    # Neither a name nor a chain to read: still undecidable, because the interpreter
+    # never reports an absent module without naming it. Reported on what it said.
+    assert _undecidable_import(ImportError("camera modules not available")) == "camera modules not available"
+
+
+def test_a_member_walk_that_meets_an_absent_extra_is_skipped_not_propagated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sweep-level half: the member walk must return the tri-state, never raise.
+
+    ``strands_robots.tools.__getattr__`` imports the submodule a role names, so an
+    absent extra surfaces from inside the ``hasattr`` in :func:`_has_member`, which
+    swallows only ``AttributeError``. Left to propagate it ends the run at the first
+    such target rather than skipping it, which is the #2940 hazard: a whole-tree
+    grader that silently stops covering the tree. The probe stands in for any module
+    calling ``require_optional`` at import time - that is every optional-dependency
+    module AGENTS.md convention 7 sanctions, so a new one must not become a new
+    abort site.
+    """
+    probe = ModuleType("strands_robots.xref_probe")
+
+    def _report_absent_extra(attr: str) -> object:
+        return require_optional("a_module_this_environment_does_not_have", extra="probe")
+
+    probe.__getattr__ = _report_absent_extra  # type: ignore[method-assign]
+    monkeypatch.setitem(sys.modules, probe.__name__, probe)
+
+    assert _resolves(f"{probe.__name__}.CameraTool") is None
 
 
 def test_the_role_pattern_extracts_a_target_wrapped_over_a_line_break() -> None:
