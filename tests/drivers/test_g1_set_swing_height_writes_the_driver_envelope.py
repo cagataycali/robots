@@ -347,7 +347,7 @@ def test_a_zero_height_is_admitted_because_the_domain_includes_the_shuffle_gait(
     caller-facing value the neon bundle's own wrapper did not
     reject: it is the minimum-clearance shuffle gait, and the
     read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_swing_height_envelope`
+    ``g1_swing_height_envelope`` (removed; envelope constants live inline here)
     names it as the inclusive lower bound. The finite-number
     validator - not the positive-finite one - admits ``0.0``, so
     this cell pins that a caller who wants the shuffle gait
@@ -387,7 +387,7 @@ def test_a_height_above_the_neon_envelope_reaches_the_driver_unchanged() -> None
     """A ``height`` above the neon bundle's ``0.2`` upper bound is not refused.
 
     The read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_swing_height_envelope`
+    ``g1_swing_height_envelope`` (removed; envelope constants live inline here)
     names ``0.2 m`` as the inclusive upper bound the neon
     bundle's own wrapper enforced; above this the controller's
     response is undefined and the SDK places no clamp of its
