@@ -220,7 +220,20 @@ class MotionInterruptHook(HookProvider):
             return
         # Raises InterruptException on first pass; returns the human response on resume.
         response = event.interrupt(INTERRUPT_NAME, reason=reason)
-        if response_approves(response):
+        approved = response_approves(response)
+        # Record the operator's reply in the local audit log for both outcomes.
+        # The reply itself never reaches the model (cancel_sentence returns a
+        # flat sentinel); the audit row is the only place it survives.
+        from strands_robots.tools._hitl_audit import log_operator_response
+
+        log_operator_response(
+            "dashboard_agent_hitl",
+            str(reason.get("action", "")),
+            str(reason.get("target", "")),
+            approved=approved,
+            response=response,
+        )
+        if approved:
             deposit_grant(name, tool_input)
             return
         event.cancel_tool = cancel_sentence(reason)

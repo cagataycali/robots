@@ -30,6 +30,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import strands_robots
+import strands_robots.dashboard.agent_hitl as dashboard_hitl_mod
 import strands_robots.tools._command_gate as gate_mod
 import strands_robots.tools.lerobot_train as train_mod
 import strands_robots.tools.robot_mesh as mesh_mod
@@ -60,6 +61,27 @@ def _drive_use_ros(response: object) -> dict[str, Any] | None:
 def _drive_lerobot_train(response: object) -> dict[str, Any] | None:
     """A training run overriding the blocked ``output_dir`` flag."""
     return train_mod._gate_extra_flags({"output_dir": "/tmp/elsewhere"}, _ctx(response))
+
+
+def _drive_dashboard_hitl(response: object) -> dict[str, Any] | None:
+    """A dashboard agent tool call that would move a physical peer."""
+    from unittest.mock import MagicMock
+
+    from strands_robots.dashboard.agent_hitl import MotionInterruptHook
+
+    # Build a hook with a peers snapshot that reports one physical peer.
+    hook = MotionInterruptHook(
+        peers_snapshot=lambda: {"arm1": {"peer_type": "robot"}},
+        proxy_motion={"arm1_proxy": frozenset({"task"})},
+        proxy_targets={"arm1_proxy": "arm1"},
+    )
+    # Simulate a BeforeToolCallEvent for a proxy tool that targets a physical peer.
+    event = MagicMock()
+    event.tool_use = {"name": "arm1_proxy", "input": {"action": "task", "target": "arm1", "instruction": "wave"}}
+    event.interrupt.return_value = response
+    event.cancel_tool = None  # will be set by the gate on decline
+    hook._gate(event)
+    return None
 
 
 def _drive_robot_mesh(response: object) -> dict[str, Any] | None:
@@ -116,6 +138,15 @@ _GATES: tuple[_Gate, ...] = (
         "_gate_extra_flags",
     ),
     _Gate("robot_mesh", "robot_mesh_tool", "emergency_stop", "", _drive_robot_mesh, mesh_mod, "robot_mesh"),
+    _Gate(
+        "dashboard_agent_hitl",
+        "dashboard_agent_hitl",
+        "task",
+        "arm1",
+        _drive_dashboard_hitl,
+        dashboard_hitl_mod,
+        "_gate",
+    ),
 )
 
 _GATE_IDS = tuple(gate.label for gate in _GATES)
