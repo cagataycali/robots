@@ -96,6 +96,17 @@ None of the three may be a symlink: the loader rejects a symlinked CA, certifica
 
 Reference: `strands_robots.mesh._zenoh_config.resolve_namespace`.
 
+### Policy vocabulary allowlist (policy_type / policy_provider)
+
+`validate_command` gates every mesh `execute` / `start` payload's `policy_type` and `policy_provider` fields against a built-in allowlist. The two vocabularies share one allowlist by design: `policy_type` names a LeRobot policy *family* (`act`, `diffusion`, `pi0`, `smolvla`, ...) that some payloads carry, and `policy_provider` names a spelling this package's `create_policy` resolves (`groot`, `wbc`, `moveit`, `microduck`, ...). A provider or family that is not in the built-in list is refused on the mesh path -- the operator does not get the availability bug silently, they get a refusal naming the offending value.
+
+- `STRANDS_MESH_POLICY_TYPE_ALLOW` - optional; comma-separated extras appended to the built-in list. Widens both `policy_type` *and* `policy_provider` at once (the two share one allowlist), because a payload naming a new provider generally also names a new family. Each entry is charset-validated against `^[a-z][a-z0-9_]*$` at parse time; a malformed entry (embedded punctuation, whitespace, uppercase that survives normalisation) drops with a WARNING naming both this variable and the offending token, rather than widening the allowlist silently. Case-variant spellings are normalised through `.lower()` before the compare, so `STRANDS_MESH_POLICY_TYPE_ALLOW="FOO,BAR"` matches a payload naming `foo`.
+- Widening this set does not relax any other gate. `policy_host` (host / CIDR allowlist for the inference server), `server_address` (the address on that host), `pretrained_name_or_path` (HuggingFace repo allowlist under `trust_remote_code`) and `model_path` (path-traversal charset) are still enforced against every widened payload. This variable answers *which providers the mesh knows about*, not *which endpoints they may reach*.
+
+**Do not use this variable to work around a registry omission.** Adding a provider to `registry/policies.json` must include the corresponding edit to `_REGISTRY_POLICY_PROVIDERS` in `mesh/security.py`, and a guard test refuses any registry spelling that set omits -- the omission fails CI rather than shipping as a mesh-only availability bug that operators route around with this variable. `STRANDS_MESH_POLICY_TYPE_ALLOW` is for extending the vocabulary *beyond* what the registry knows (an out-of-tree provider a fleet operator ships behind their own gate), not for patching around a registry-side hole.
+
+Reference: `strands_robots.mesh.security._policy_type_allowlist`, `strands_robots.mesh.security._REGISTRY_POLICY_PROVIDERS`, `strands_robots.mesh.security._LEROBOT_POLICY_FAMILIES`.
+
 ### Cross-network fleets (AWS IoT Core)
 
 Two steps route traffic through AWS IoT Core (MQTT5 with mTLS): the `[mesh-iot]` extra installs the dependency, and `STRANDS_MESH_BACKEND=iot` selects the transport. The extra alone changes nothing - the fleet stays on Zenoh - so set both. `STRANDS_MESH_BACKEND=bridge` selects a `BridgeTransport` instead, which keeps high-rate topics local while bridging presence, health, and safety to the cloud. When you use this path, the IoT device certificates and provisioning material become production secrets - provision them per-device, scope their IoT policies to the minimum topic set, and rotate/revoke them like any other fleet credential.
