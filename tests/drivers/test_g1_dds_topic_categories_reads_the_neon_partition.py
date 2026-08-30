@@ -183,7 +183,7 @@ def test_the_control_category_is_the_dangerous_publish_partition() -> None:
     lifted the ``control`` count from the neon partition, expecting
     it to match the dangerous-publish set, would surface the drift
     here). Refs
-    :mod:`~strands_robots.tools.g1.g1_dangerous_publish_topics` for
+    ``g1_dangerous_publish_topics`` for
     the sibling snapshot.
     """
     assert "control" in _DDS_TOPIC_CATEGORIES, (

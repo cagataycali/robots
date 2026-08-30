@@ -64,13 +64,13 @@ What this module does not decide.
   can decide the refusal before the filter itself runs.
 * Whether a category is *write-safe*. A topic inside the ``control``
   category is a topic
-  :mod:`~strands_robots.tools.g1.g1_dangerous_publish_topics`
+  ``g1_dangerous_publish_topics``
   refuses without an explicit ``unsafe=True`` override, and a topic
   inside the ``config`` category (the LiDAR switch) is a write path
   today's driver does not carry a wrapper for. This lookup does not
   carry the write-safety refusal; a caller planning a publish
   cross-checks the topic against
-  :mod:`~strands_robots.tools.g1.g1_dangerous_publish_topics`
+  ``g1_dangerous_publish_topics``
   separately.
 * Whether a category is *observed live* on the bus. Category
   presence at runtime is a DDS discovery answer; the neon bundle's
