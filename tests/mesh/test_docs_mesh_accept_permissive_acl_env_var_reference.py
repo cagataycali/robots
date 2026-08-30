@@ -188,22 +188,78 @@ def test_the_security_page_names_both_acl_shapes() -> None:
 
 
 def test_the_security_page_names_the_refusal_not_a_warning() -> None:
-    """The section names ``PermissiveACLError`` (the module raises) rather than a warning silencer.
+    """The section names ``PermissiveACLError`` (the module raises) rather than framing the token as a mere warning silencer.
 
-    The prior sentence on the page framed the variable as a warning silencer.
-    The module raises at ACL load; framing it as a warning silencer would
-    leave an operator setting the token to silence a warning that does not
-    fire for the case they are configuring.
+    The prior sentence on the page framed the variable as only a warning
+    silencer. The module raises at ACL load; framing the token as *only* a
+    warning silencer would leave an operator setting the token to silence a
+    warning that does not fire for the case they are configuring. The
+    corrected prose names all three effects (refusal, start-gate opt-in,
+    session-warning suppression), and this cell pins the refusal-naming
+    half of that requirement -- the other two halves have their own cells
+    below.
     """
     section = _security_page_section()
     assert "PermissiveACLError" in section, (
         "acknowledgement subsection does not name PermissiveACLError; "
         "the refusal is what the token unblocks, not a warning"
     )
-    # Guard against the prior misframing sneaking back in.
-    assert "silence" not in section.lower() or "does not silence" in section.lower(), (
-        "acknowledgement subsection frames the token as silencing a warning; "
-        "the module raises at ACL load, so the framing is wrong -- name the refusal instead"
+
+
+def test_the_security_page_names_the_start_gate_opt_in() -> None:
+    """The section names ``Mesh._refuse_under_permissive_default_acl`` (the second effect).
+
+    The prior sentence on the page misframed the token as touching only the
+    blacklist-load path. The token is also the opt-in that lets the wire
+    come up under the built-in permissive default when ``auth_mode=mtls``
+    (:py:meth:`strands_robots.mesh.core.Mesh._refuse_under_permissive_default_acl`).
+    A documentation change that named only the refusal would leave an
+    operator believing the start-gate stays refused regardless of the token
+    -- but the gate's own error message names this token as one of its
+    remediations, and setting it downgrades the ERROR refusal to an INFO
+    acknowledgement.
+    """
+    section = _security_page_section()
+    assert "_refuse_under_permissive_default_acl" in section, (
+        "acknowledgement subsection does not name the start-gate the "
+        "token opts into; an operator reading only this page would not "
+        "learn that setting the token also lets the wire come up under "
+        "the built-in permissive default"
+    )
+
+
+def test_the_security_page_names_the_session_warning_suppression() -> None:
+    """The section names the per-session-open WARNING suppression (the third effect).
+
+    ``strands_robots.mesh.session._build_config`` reads
+    ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` and skips the "using PERMISSIVE
+    built-in default ACL" WARNING when it is set. The prior prose asserted
+    the token *did not* silence that warning, which is factually wrong at
+    the byte level (``if is_permissive and not accept_permissive`` in
+    session.py). This cell pins the corrected framing: the section must
+    describe the suppression, not deny it. The failure mode being pinned
+    against is: an operator sets the token to load a blacklist ACL in CI,
+    ``STRANDS_MESH_ACL_FILE`` is later dropped from that environment (drift
+    / deploy bug), and the same token then waives the start-gate AND
+    suppresses the WARNING -- the fleet runs wire-open with zero log
+    signal.
+    """
+    section = _security_page_section()
+    assert "_build_config" in section, (
+        "acknowledgement subsection does not name session._build_config, "
+        "the third reader of the token; the prose must describe every "
+        "reader so an operator learns the full blast radius before setting it"
+    )
+    # The section must name the WARNING as suppressed, not as unaffected.
+    # Match the corrected framing rather than pinning the false "does not
+    # silence" clause.
+    lower = section.lower()
+    assert "suppressed" in lower or "silenced" in lower or "silences" in lower, (
+        "acknowledgement subsection does not describe the per-session "
+        "WARNING as suppressed by the token; the code skips the WARNING "
+        "when the token is set (session.py::_build_config), and the "
+        "prose must describe that -- omitting it or asserting the "
+        "opposite is the exact prose the reviewer flagged as false"
     )
 
 
