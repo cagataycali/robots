@@ -46,7 +46,7 @@ import inspect
 import logging
 import os
 import threading
-from typing import Any, Optional
+from typing import Any
 
 from strands import tool
 
@@ -78,25 +78,49 @@ SERVICES: dict[str, tuple[str, float]] = {
 }
 
 MUTATIVE_PREFIXES = (
-    "Set", "Execute", "Move", "Start", "Stop", "Damp",
-    "Sit", "HighStand", "LowStand", "WaveHand", "ShakeHand",
-    "Squat2StandUp", "Lie2StandUp", "StandUp2Squat",
-    "BalanceStand", "ZeroTorque",
-    "LedControl", "TtsMaker", "PlayStream", "PlayStop",
-    "SelectMode", "ReleaseMode", "ServiceSwitch", "SwitchTo",
+    "Set",
+    "Execute",
+    "Move",
+    "Start",
+    "Stop",
+    "Damp",
+    "Sit",
+    "HighStand",
+    "LowStand",
+    "WaveHand",
+    "ShakeHand",
+    "Squat2StandUp",
+    "Lie2StandUp",
+    "StandUp2Squat",
+    "BalanceStand",
+    "ZeroTorque",
+    "LedControl",
+    "TtsMaker",
+    "PlayStream",
+    "PlayStop",
+    "SelectMode",
+    "ReleaseMode",
+    "ServiceSwitch",
+    "SwitchTo",
 )
 
 READONLY_WHITELIST = {
-    "CheckMode", "GetActionList", "GetVolume", "GetBrightness", "GetSwitch",
-    "GetFsmId", "ServiceList", "Init",
+    "CheckMode",
+    "GetActionList",
+    "GetVolume",
+    "GetBrightness",
+    "GetSwitch",
+    "GetFsmId",
+    "ServiceList",
+    "Init",
 }
 
 HIGH_DANGER_OPS = {
-    ("loco", "ZeroTorque"),        # robot collapses off-gantry
-    ("loco", "SetFsmId"),          # fsm_id=0 -> collapse
-    ("loco", "SetVelocity"),       # walking
-    ("loco", "Move"),              # walking (continuous!)
-    ("loco", "WaveHand"),          # leg motion in some FSMs
+    ("loco", "ZeroTorque"),  # robot collapses off-gantry
+    ("loco", "SetFsmId"),  # fsm_id=0 -> collapse
+    ("loco", "SetVelocity"),  # walking
+    ("loco", "Move"),  # walking (continuous!)
+    ("loco", "WaveHand"),  # leg motion in some FSMs
     ("loco", "ShakeHand"),
     ("motion_switcher", "ReleaseMode"),  # robot uncontrolled
 }
@@ -177,10 +201,7 @@ def _ast_methods_for_class(qualname: str) -> dict[str, list[str]]:
 
 
 def list_services() -> list[dict[str, Any]]:
-    return [
-        {"service_name": name, "sdk_class": qualname}
-        for name, (qualname, _t) in SERVICES.items()
-    ]
+    return [{"service_name": name, "sdk_class": qualname} for name, (qualname, _t) in SERVICES.items()]
 
 
 def list_operations(service_name: str) -> list[str]:
@@ -190,11 +211,7 @@ def list_operations(service_name: str) -> list[str]:
 
     try:
         cls = _import_client_class(qualname)
-        ops = [
-            name
-            for name, _m in inspect.getmembers(cls, predicate=inspect.isfunction)
-            if not name.startswith("_")
-        ]
+        ops = [name for name, _m in inspect.getmembers(cls, predicate=inspect.isfunction) if not name.startswith("_")]
         if ops:
             return sorted(ops)
     except Exception:
@@ -227,9 +244,7 @@ def describe_operation(service_name: str, operation_name: str) -> dict[str, Any]
                         entry["type"] = getattr(p.annotation, "__name__", str(p.annotation))
                     if p.default is not inspect.Parameter.empty:
                         entry["default"] = (
-                            p.default
-                            if isinstance(p.default, (str, int, float, bool, type(None)))
-                            else str(p.default)
+                            p.default if isinstance(p.default, (str, int, float, bool, type(None))) else str(p.default)
                         )
                     params.append(entry)
             except (TypeError, ValueError):
@@ -324,7 +339,7 @@ def _execute(
 def use_unitree(
     service_name: str,
     operation_name: str,
-    parameters: Optional[dict[str, Any]] = None,
+    parameters: dict[str, Any] | None = None,
     label: str = "",
     network_interface: str = "eth0",
 ) -> dict[str, Any]:
@@ -375,9 +390,7 @@ def use_unitree(
     params = parameters or {}
     label = label or f"{service_name}.{operation_name}"
 
-    if service_name == "meta" or operation_name in (
-        "list_services", "list_operations", "describe_operation"
-    ):
+    if service_name == "meta" or operation_name in ("list_services", "list_operations", "describe_operation"):
         try:
             if operation_name == "list_services":
                 data: Any = list_services()
@@ -390,7 +403,10 @@ def use_unitree(
                 target_svc = params.get("service_name") or service_name
                 target_op = params.get("operation_name")
                 if not target_svc or target_svc == "meta" or not target_op:
-                    return {"status": "error", "message": "describe_operation needs parameters {service_name, operation_name}"}
+                    return {
+                        "status": "error",
+                        "message": "describe_operation needs parameters {service_name, operation_name}",
+                    }
                 data = describe_operation(target_svc, target_op)
             else:
                 return {
@@ -419,7 +435,8 @@ def use_unitree(
     if high_danger or mutative:
         logger.warning(
             "use_unitree: %s.%s is %s",
-            service_name, operation_name,
+            service_name,
+            operation_name,
             "HIGH_DANGER" if high_danger else "mutative",
         )
 

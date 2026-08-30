@@ -20,9 +20,7 @@ import sys
 def test_importing_use_unitree_pulls_no_sdk_submodule() -> None:
     importlib.import_module("strands_robots.tools.g1.use_unitree")
     leaked = sorted(m for m in sys.modules if m.startswith("unitree_sdk2py"))
-    assert not leaked, (
-        f"strands_robots.tools.g1.use_unitree imports pulled SDK submodules: {leaked}"
-    )
+    assert not leaked, f"strands_robots.tools.g1.use_unitree imports pulled SDK submodules: {leaked}"
 
 
 def test_list_services_names_the_six_sdk_clients() -> None:
