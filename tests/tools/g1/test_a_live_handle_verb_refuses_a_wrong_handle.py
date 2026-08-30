@@ -30,6 +30,13 @@ grades neither while appearing to grade the package.  Both are async-or-not and
 both are called through ``_call``, because a coroutine returned unawaited is a
 verb inside the population that is still ungraded.
 
+``TestTheDiscoveryIsCrossChecked`` grades the discovery itself, by deriving the
+population a second time from the package *source* and comparing.  Every rule
+here iterates one scan, so a scan that narrows does not fail - it grades less
+and still reports green.  The non-vacuity check below cannot catch that, because
+it fires only on an *empty* population, and a partial narrowing is both likelier
+and quieter than a total one.
+
 ``TestTheRefusalNamesWhatACallerNeeds`` grades the message, because a refusal
 that does not name the parameter leaves a caller no better off than the
 traceback did.
@@ -155,6 +162,67 @@ def _live_handle_verbs() -> dict[str, Any]:
     return found
 
 
+# The spellings of ``Any`` a first parameter can carry.  :func:`_live_handle_verbs`
+# compares against the bare string or the object, so a verb annotated
+# ``typing.Any`` sits outside its population; the source scan accepts every
+# spelling on purpose, so that gap is a failure here rather than an exemption
+# there.
+_ANY_SPELLINGS = frozenset({"Any", "typing.Any", "t.Any"})
+
+
+def _is_tool_decorated(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether a definition carries the ``@tool`` decorator, bare or called."""
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if getattr(target, "id", None) == "tool" or getattr(target, "attr", None) == "tool":
+            return True
+    return False
+
+
+def _live_handle_verbs_from_source() -> set[str]:
+    """The live-handle population read from the package *source*, not from imports.
+
+    This shares no mechanism with :func:`_live_handle_verbs`: it reads text and
+    never imports, so it cannot inherit a narrowing from the ``pkgutil``
+    enumeration, from ``__wrapped__`` being absent on a verb, or from
+    ``__wrapped__.__module__`` disagreeing with the module a verb is defined in.
+    That independence is the point.  #2958 measured what a narrowing costs:
+    keyed on the module name, the discovery found 7 of 9 verbs, and the two it
+    dropped were ``g1_get_state`` and ``g1_get_task_status`` - the second of
+    which had no handle guard at all and raised past the structured response on
+    all six wrong handles, while every rule in this file read green.
+
+    It is deliberately *wider* than the runtime scan in two ways, so that either
+    kind of narrowing fails rather than passing quietly:
+
+    * Private modules are read too.  A ``@tool`` in ``_g1_common.py`` is
+      invisible to the runtime scan, which skips a leading underscore.  A verb
+      belongs in a public module and a shared helper is not a verb, so the two
+      routes disagreeing here is the right outcome and it names the file.
+    * Every spelling of ``Any`` is accepted, not only the bare one.  A verb
+      annotated ``typing.Any`` would sit outside the runtime population; here it
+      is inside it, so the disagreement is loud instead of silent.
+
+    Positional-only parameters are included because ``inspect.signature`` counts
+    them, so both routes read the same first parameter.
+    """
+    found: set[str] = set()
+    package_dir = Path(g1_package.__file__).parent
+    for path in sorted(package_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _is_tool_decorated(node):
+                continue
+            positional = node.args.posonlyargs + node.args.args
+            if not positional or positional[0].annotation is None:
+                continue
+            if ast.unparse(positional[0].annotation).strip("\"'") in _ANY_SPELLINGS:
+                found.add(node.name)
+    return found
+
+
 def _snapshot_family_verbs() -> dict[str, Any]:
     """The live-handle verbs reading their handle through the shared snapshot guard.
 
@@ -270,6 +338,36 @@ class TestEveryLiveHandleVerbRefusesAWrongHandle:
             result = _call(tool, handle)
             assert isinstance(result, dict), f"{name} returned {type(result).__name__} for {label}"
             assert result.get("status") == "error", f"{name} did not refuse {label}: {result!r}"
+
+
+class TestTheDiscoveryIsCrossChecked:
+    """The population every rule above grades is derived twice and compared.
+
+    ``test_the_population_is_not_empty`` fires only when the scan finds
+    *nothing*.  #2958's narrowing left five verbs in the population, so it
+    passed, and so did every rule that iterates it.  Comparing against a second
+    route derived by a different mechanism is what turns "the discovery
+    narrowed" into a failure, and a count derived that way is preferred to a
+    literal, which would be churn on every verb the package gains.
+    """
+
+    def test_the_source_scan_is_not_empty(self) -> None:
+        """Non-vacuity: an empty second route agrees with any runtime population."""
+        assert _live_handle_verbs_from_source(), (
+            "the source scan found no live-handle verb, so it agrees with any "
+            "runtime population and the cross-check below is vacuous"
+        )
+
+    def test_the_runtime_scan_and_the_source_scan_find_the_same_verbs(self) -> None:
+        """A verb in the source and outside the population is one nothing grades."""
+        runtime = set(_live_handle_verbs())
+        source = _live_handle_verbs_from_source()
+        assert source == runtime, (
+            "the two discovery routes disagree, so the rules in this file do not "
+            "grade the package they claim to. Defined in the source and ungraded: "
+            f"{sorted(source - runtime)}. Graded but absent from the source scan: "
+            f"{sorted(runtime - source)}"
+        )
 
 
 class TestTheRefusalNamesWhatACallerNeeds:
