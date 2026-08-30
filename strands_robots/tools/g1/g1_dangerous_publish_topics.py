@@ -119,7 +119,7 @@ _DANGEROUS_PUBLISH_TOPICS: frozenset[str] = frozenset(
 #: Per-topic label the returned envelopes surface as a description of
 #: the wire path the topic commands. The labels are the descriptions
 #: the neon bundle's ``_dds_engine.TOPIC_CATALOG`` carries for the same
-#: five topics (with the neon bundle's own 🚨 markers stripped so the
+#: five topics (with the neon bundle's own emoji markers stripped so the
 #: string domain is plain text). Named here rather than re-imported
 #: from the neon module so the constant snapshot is self-contained and
 #: the SDK-load-hygiene contract holds; a caller widening the neon
