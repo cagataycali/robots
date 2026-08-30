@@ -1182,6 +1182,9 @@ touches ROS 2.
 | `ZENOH_LISTEN` | Comma-separated endpoints for the local Zenoh listener | unset |
 | `STRANDS_MESH_MULTICAST` | Opt in to multicast scouting for LAN discovery. Off by default: any device on the LAN can enumerate and attract the fleet, so enabling it logs a WARNING. Prefer explicit `ZENOH_CONNECT` endpoints | `false` |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
+| `STRANDS_MESH_AUDIT_PSK` | Pre-shared key that keys the per-record HMAC in the audit log. When set, `verify_audit_integrity` refuses a record whose HMAC does not match and refuses the whole log if the PSK changes mid-run; when unset, the `sig` field is absent and a writer with directory access can edit records without failing the check. Set on every peer that writes to the same directory | unset |
+| `STRANDS_MESH_AUDIT_MAX_BYTES` | Rotate the active audit file once it crosses this size (bytes). Values above the 10 GiB hard cap are clamped with a warning; non-integer, zero, or negative values fall back to the default with a warning, so a misconfiguration cannot silently disable rotation | `104857600` (100 MiB) |
+| `STRANDS_MESH_AUDIT_MAX_FILES` | Number of rotated `mesh_audit.jsonl.N` files kept alongside the active file. Older rotations are deleted as new ones arrive; total disk use is bounded by `_MAX_BYTES × _MAX_FILES`. Same clamping/warning behaviour as `_MAX_BYTES`; hard upper cap 100 | `5` |
 | `STRANDS_MESH_CA_PINS` | Additional SHA-256 CA pins (comma-separated 64-char hex) | unset |
 | `STRANDS_MESH_DISABLE_CA_PIN` | Skip CA pin check on download path (break-glass) | `false` |
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | TTL (s) for S3 presigned camera URLs; capped at 3600 | `60` |
