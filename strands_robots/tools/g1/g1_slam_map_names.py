@@ -25,19 +25,19 @@ The bundle joins first and tests the joined string afterwards::
 
 A resolved path is compared to the root by string prefix, and a *sibling
 directory whose name merely begins with the root's name* satisfies that
-prefix. Measured against ``MAPS_DIR = ~/maps`` on a host whose home is
-``/home/runner``:
+prefix. Measured against ``MAPS_DIR = ~/maps`` on a host whose home
+directory expands to ``$HOME``:
 
-===========================  =========================  =================
-``name``                     joined and resolved        bundle's verdict
-===========================  =========================  =================
-``ok``                       ``/home/runner/maps/ok.npz``    admitted
-``../maps-evil/pwn``         ``/home/runner/maps-evil/pwn.npz``  admitted
-``../maps.ssh/x``            ``/home/runner/maps.ssh/x.npz``     admitted
-``sub/dir``                  ``/home/runner/maps/sub/dir.npz``   admitted
-``../../etc/passwd``         (outside, no shared prefix)     refused
-``/etc/passwd``              (outside, no shared prefix)     refused
-===========================  =========================  =================
+===========================  =============================  =================
+``name``                     joined and resolved            bundle's verdict
+===========================  =============================  =================
+``ok``                       ``$HOME/maps/ok.npz``          admitted
+``../maps-evil/pwn``         ``$HOME/maps-evil/pwn.npz``    admitted
+``../maps.ssh/x``            ``$HOME/maps.ssh/x.npz``       admitted
+``sub/dir``                  ``$HOME/maps/sub/dir.npz``     admitted
+``../../etc/passwd``         (outside, no shared prefix)    refused
+``/etc/passwd``              (outside, no shared prefix)    refused
+===========================  =============================  =================
 
 So the rule refuses the traversal that leaves the *parent* and admits the
 one that lands beside the root: two of those admitted names write outside
