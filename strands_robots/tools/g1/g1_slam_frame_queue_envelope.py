@@ -27,7 +27,7 @@ the freshness-preferring policy the runner ships with, throttle its
 own LiDAR subscription upstream of the runner, or plan the session
 against the register-most-recent-when-idle semantics.
 
-Twin of :mod:`~strands_robots.tools.g1.g1_slam_pose_history_envelope`
+Twin of ``g1_slam_pose_history_envelope``
 (strands-labs/robots#3026, in flight) on the same
 :class:`~cagataycali.neon-the-g1.tools.g1_slam._SlamRunner` surface --
 that envelope names the ``_process_frame`` pose-trail bookkeeping
@@ -93,7 +93,7 @@ violation in module-local text so a planner reads a remedy that
 matches the surface, and a future driver-side SLAM session wrapper
 will surface the same module-local text.  This mirrors the
 same-surface refusal rule
-:mod:`~strands_robots.tools.g1.g1_slam_pose_history_envelope` names
+``g1_slam_pose_history_envelope`` names
 for the ``_process_frame`` trail ceiling, refs
 strands-labs/robots#358.
 
@@ -240,7 +240,7 @@ def g1_slam_frame_queue_admits(
     names, on the map-liveness precondition which
     :mod:`~strands_robots.tools.g1.g1_slam_map_liveness_envelope`
     names, and on the pose-history bookkeeping ceiling which
-    :mod:`~strands_robots.tools.g1.g1_slam_pose_history_envelope`
+    ``g1_slam_pose_history_envelope``
     names.  The returned payload names only the numeric queue
     capacity decision.
 
