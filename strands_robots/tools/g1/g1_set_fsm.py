@@ -133,7 +133,7 @@ def g1_set_fsm(
 ) -> dict[str, Any]:
     """Transition the G1 to a target FSM id and read the transition back.
 
-    Calls :meth:`~strands_robots.drivers.g1.G1Driver.set_fsm` once and
+    Calls ``G1Driver.set_fsm`` once and
     returns the envelope the driver produced verbatim. The driver's
     method calls the SDK's ``LocoClient.SetFsmId(fsm_id)`` under its
     own single-writer serialisation, waits ``wait`` seconds for the
@@ -199,7 +199,7 @@ def g1_set_fsm(
             :func:`time.sleep` call.
 
     Returns:
-        The envelope :meth:`G1Driver.set_fsm` returned. On the success
+        The envelope ``G1Driver.set_fsm`` returned. On the success
         path the driver's method will surface the fsm-before /
         fsm-after / rc / message round-trip inside a ``{"status":
         "success", "content": [{"json": {"fsm_before": ...,

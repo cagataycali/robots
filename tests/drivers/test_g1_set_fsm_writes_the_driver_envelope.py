@@ -6,7 +6,7 @@ lists the FSM ids the SDK's ``LocoClient.SetFsmId`` handler admits,
 this one hands one of those ids to the driver's own SetFsmId write
 path and reads back the fsm-before / fsm-after / rc round-trip the
 neon bundle's ``g1_set_fsm`` verb documented.  The driver's
-:meth:`~strands_robots.drivers.g1.G1Driver.set_fsm` method is not yet
+``G1Driver.set_fsm`` method is not yet
 plumbed today (refs strands-labs/robots#358 for the SDK-facing gate
 work the write belongs on), so the :func:`live_handle_refusal`
 grader refuses a handle without a ``set_fsm`` accessor with a
@@ -107,7 +107,7 @@ def test_the_import_pulls_no_sdk_module() -> None:
 def test_a_driver_side_refusal_surfaces_verbatim() -> None:
     """The driver's refusal envelope round-trips through the verb unchanged.
 
-    :meth:`G1Driver.set_fsm` will (once landed) refuse an id the
+    ``G1Driver.set_fsm`` will (once landed) refuse an id the
     SDK's ``SetFsmId`` handler rejects with a ``rc=7302`` envelope,
     and today's driver refuses every call because the method is not
     yet plumbed.  Both shapes are ``{"status": "error", "content":
@@ -148,7 +148,7 @@ def test_a_gate_refusal_from_the_driver_surfaces_verbatim() -> None:
 def test_a_future_success_envelope_round_trips_verbatim() -> None:
     """Once ``set_fsm`` lands, the fsm-round-trip envelope surfaces verbatim.
 
-    When the driver's method is plumbed, :meth:`G1Driver.set_fsm`
+    When the driver's method is plumbed, ``G1Driver.set_fsm``
     will surface the fsm-before / fsm-after / rc / message
     round-trip inside a ``{"status": "success", "content": [{"json":
     {"fsm_before": ..., "fsm_after": ..., "rc": ..., "message":
