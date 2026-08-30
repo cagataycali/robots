@@ -9,7 +9,7 @@ first two positions; :mod:`~strands_robots.tools.g1.g1_dds_topic_categories`
 names the fourth. The remaining third position - the plain-text
 description a caller reads to name what the topic decodes at the
 wire (e.g. ``"IMU, joints, motors (~1kHz)"`` for ``rt/lowstate`` or
-``"Low-level motor cmd (🚨)"`` for ``rt/lowcmd``) - is what this
+``"Low-level motor cmd (\\U0001f6a8)"`` for ``rt/lowcmd``) - is what this
 module surfaces.
 
 This module snapshots the twenty-two topic descriptions as a
@@ -68,9 +68,9 @@ from strands import tool
 
 #: Snapshot of the neon-catalog topic-description column, keyed by
 #: DDS topic name. Twenty-two entries: nine ``state``, two ``lidar``,
-#: one ``joystick``, four ``control`` (each entry carries the 🚨
-#: marker naming the dangerous-publish refusal list), two ``hand``
-#: (the command topic also carries 🚨), three ``slam``, and one
+#: one ``joystick``, four ``control`` (each entry carries the
+#: dangerous-publish marker naming the refusal list), two ``hand``
+#: (the command topic also carries the dangerous-publish marker), three ``slam``, and one
 #: ``config``. The strings are captured byte-for-byte from the neon
 #: catalog; a neon-side widen or narrow of a description lands in
 #: the same PR as the neon table (the parity test surfaces the
@@ -137,9 +137,10 @@ def g1_list_dds_topic_descriptions() -> dict[str, Any]:
 
     The envelope names twenty-two topics: nine on the read-side
     ``state`` partition, two on ``lidar``, one on ``joystick``, four
-    on the ``control`` write partition (each entry carries the 🚨
-    marker the neon catalog uses to name the dangerous-publish
-    refusal list), two on ``hand`` (the command topic also 🚨-marked),
+    on the ``control`` write partition (each entry carries the
+    dangerous-publish marker the neon catalog uses to name the
+    refusal list), two on ``hand`` (the command topic also
+    dangerous-publish-marked),
     three on ``slam``, and one on ``config``.
 
     Returns:
