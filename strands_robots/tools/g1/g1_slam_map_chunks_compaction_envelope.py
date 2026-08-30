@@ -19,8 +19,8 @@ before the amortised compaction cost starts pressuring the per-frame
 budget.  At the neon-observed 10 Hz that maps to a compaction every
 ~10 seconds under continuous accumulation, which is longer than any
 single ICP frame's own budget and shorter than the pose-history trail
-the twin ``g1_slam_pose_history_envelope`` (strands-labs/robots#3026,
-in flight) ceiling names.
+the twin :mod:`~strands_robots.tools.g1.g1_slam_pose_history_envelope`
+(the merged strands-labs/robots#3026) ceiling names.
 
 This module surfaces that ceiling to an agent so a caller planning a
 long-running SLAM accumulation session can decide the chunk-list bound
@@ -32,9 +32,10 @@ batch depth sees the ``100``-entry ceiling and can either shorten the
 accumulation window, install its own compaction timer upstream of the
 runner, or accept the runner's amortised compaction semantics.
 
-Twin of ``g1_slam_pose_history_envelope`` (strands-labs/robots#3026,
-in flight) and ``g1_slam_frame_queue_envelope``
-(strands-labs/robots#3027, in flight) -- all three port a distinct
+Twin of :mod:`~strands_robots.tools.g1.g1_slam_pose_history_envelope`
+(the merged strands-labs/robots#3026) and
+``g1_slam_frame_queue_envelope`` (strands-labs/robots#3027, in
+flight) -- all three port a distinct
 in-memory ceiling the same neon ``_SlamRunner`` reads on the same
 ``_process_frame`` code path.  The three stay separate because the
 runner reads them on different arguments and with different remedies:
@@ -114,8 +115,9 @@ module-local text so a planner reads a remedy that matches the
 surface, and a future driver-side SLAM accumulation wrapper will
 surface the same module-local text.  This mirrors the same-surface
 refusal rule the twin
-``g1_slam_pose_history_envelope`` (strands-labs/robots#3026, in
-flight) names for the ``_process_frame`` bookkeeping ceiling and the same rule
+:mod:`~strands_robots.tools.g1.g1_slam_pose_history_envelope` (the
+merged strands-labs/robots#3026) names for the ``_process_frame``
+bookkeeping ceiling and the same rule
 :mod:`~strands_robots.tools.g1.g1_slam_relocalize_envelope` (the
 merged strands-labs/robots#3006) names for the ``_try_relocalize``
 match-quality gate, refs strands-labs/robots#358.
@@ -277,8 +279,9 @@ def g1_slam_map_chunks_compaction_admits(
     a dedup cell size which the twin envelope
     :mod:`~strands_robots.tools.g1.g1_slam_voxel_dedup_envelope`
     names, and a pose-history ceiling which the twin envelope
-    ``g1_slam_pose_history_envelope`` (strands-labs/robots#3026,
-    in flight) names.  The returned payload names only the numeric
+    :mod:`~strands_robots.tools.g1.g1_slam_pose_history_envelope`
+    (the merged strands-labs/robots#3026) names.  The returned
+    payload names only the numeric
     compaction-trigger decision.
 
     Args:
