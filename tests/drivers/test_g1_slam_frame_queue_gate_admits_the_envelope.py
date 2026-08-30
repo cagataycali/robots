@@ -12,9 +12,9 @@ The single refusal uses one module-local :data:`_REFUSAL_TEXT` on
 both an over-ceiling rejection and a shared-domain shape mistake,
 so a misread of either grade surfaces the same remedy string on
 the same surface -- consistent with the twin envelope
-``g1_slam_pose_history_envelope``
-(strands-labs/robots#3026) on the same ``_SlamRunner`` surface, and
-with the merged same-surface envelopes
+:mod:`~strands_robots.tools.g1.g1_slam_pose_history_envelope`
+(the merged strands-labs/robots#3026) on the same ``_SlamRunner``
+surface, and with the merged same-surface envelopes
 :mod:`~strands_robots.tools.g1.g1_slam_relocalize_envelope`
 (strands-labs/robots#3006) and
 :mod:`~strands_robots.tools.g1.g1_slam_map_liveness_envelope`

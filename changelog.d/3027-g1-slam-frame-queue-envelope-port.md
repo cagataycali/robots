@@ -6,7 +6,7 @@ Ports the neon SLAM runner's ``_frame_q`` single-slot policy
 ``_on_cloud`` swallows ``queue.Full`` on ``put_nowait``) into a
 read-only agent-facing lookup pair in
 ``strands_robots.tools.g1.g1_slam_frame_queue_envelope``. Twin of the
-in-flight ``g1_slam_pose_history_envelope`` (strands-labs/robots#3026)
+merged ``g1_slam_pose_history_envelope`` (strands-labs/robots#3026)
 on the same ``_SlamRunner`` surface; that envelope names the
 ``_process_frame`` bookkeeping ceiling on the pose trail, this envelope
 names the ``_on_cloud`` producer-side queue capacity on the runner's
