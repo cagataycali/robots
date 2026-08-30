@@ -5,7 +5,7 @@ The neon bundle's SLAM relocaliser
 runs Open3D point-to-point ICP against the currently-loaded map and
 refuses the returned transform when the registration's ``fitness``
 scalar drops below ``0.3``.  Open3D's ``fitness`` is the fraction of
-source correspondences inside the ICP inlier threshold — a
+source correspondences inside the ICP inlier threshold -- a
 dimensionless scalar in ``[0.0, 1.0]`` where ``1.0`` names every
 sample correspondence matched and ``0.0`` names none matched.  The
 neon runner also caps the returned transform on two additional
@@ -51,7 +51,7 @@ Two things this module is deliberately *not*:
 * An SDK / Open3D re-import.  The fitness threshold is captured
   here as a module-level constant so ``import
   strands_robots.tools.g1.g1_slam_icp_fitness_envelope`` pulls no
-  ``unitree_sdk2py`` submodule and no ``open3d`` submodule — the
+  ``unitree_sdk2py`` submodule and no ``open3d`` submodule -- the
   import-hygiene contract every other file in this package carries
   (refs strands-labs/robots#358).  The ``open3d`` module ships as an
   optional dependency of the neon SLAM runner; a caller who wants
@@ -145,7 +145,7 @@ def g1_list_slam_icp_fitness_envelope() -> dict[str, Any]:
 
     The envelope names three scalars.  ``icp_fitness_min`` and
     ``icp_fitness_max`` are the bounds Open3D's ``result.fitness``
-    takes on ([0.0, 1.0] — a dimensionless fraction of source
+    takes on ([0.0, 1.0] -- a dimensionless fraction of source
     correspondences matched within the ICP inlier threshold).
     ``icp_fitness_threshold`` is the neon SLAM relocaliser's
     minimum-admitted fitness (``0.3``); a registration whose fitness
@@ -224,13 +224,13 @@ def g1_slam_icp_fitness_admits(fitness: float = 0.3) -> dict[str, Any]:
 
     * ``fitness`` non-finite (``math.inf``, ``math.nan``) or
       outside ``[icp_fitness_min, icp_fitness_max]`` (``[0.0,
-      1.0]``) — refused with ``reason="fitness_outside_open3d_range"``.
+      1.0]``) -- refused with ``reason="fitness_outside_open3d_range"``.
       Open3D does not produce fitness values outside its
       dimensionless-fraction range, so a caller who passed one
       supplied a shape the ICP would never surface.  A NaN cannot
       be compared decidably (``nan < 0.3`` is ``False`` but so is
       ``nan >= 0.3``), and an infinity is not a valid fraction.
-    * ``fitness < icp_fitness_threshold`` (strictly less than) —
+    * ``fitness < icp_fitness_threshold`` (strictly less than) --
       refused with ``reason="fitness_below_threshold"``.  The neon
       runner's own comparison is ``result.fitness <
       _ICP_FITNESS_THRESHOLD`` (strict-less-than), so equality is
@@ -247,7 +247,7 @@ def g1_slam_icp_fitness_admits(fitness: float = 0.3) -> dict[str, Any]:
         fitness: An ICP fitness scalar (dimensionless fraction of
             source correspondences matched within Open3D's inlier
             threshold).  The default ``0.3`` sits at the neon
-            runner's admission threshold — a zero-arg invocation
+            runner's admission threshold -- a zero-arg invocation
             asks "does the minimum-admitted fitness admit?", and
             the answer is ``True`` (the neon runner uses
             strict-less-than, so the boundary is admitted).
