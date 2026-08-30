@@ -131,8 +131,8 @@ def g1_set_stand_height(
 ) -> dict[str, Any]:
     """Set the G1's stand height, with a negative-value HighStand fallback.
 
-    Calls :meth:`~strands_robots.drivers.g1.G1Driver.set_stand_height`
-    once and returns the envelope the driver produced verbatim.  The
+    Calls ``G1Driver.set_stand_height`` once and returns the
+    envelope the driver produced verbatim.  The
     driver's method routes on the sign of ``height``: a non-negative
     value publishes ``LocoClient.SetStandHeight(height)`` with the
     caller's target in meters, and a negative value publishes
@@ -194,7 +194,7 @@ def g1_set_stand_height(
             caller writing ``True`` would have named on purpose.
 
     Returns:
-        The envelope :meth:`G1Driver.set_stand_height` returned.  On
+        The envelope ``G1Driver.set_stand_height`` returned.  On
         the success path the driver's method will surface the SDK's
         ``rc`` inside a ``{"status": "success", "content": [{"json":
         {"rc": 0, "message": "SetStandHeight(...) rc=0 (OK)"}}]}``

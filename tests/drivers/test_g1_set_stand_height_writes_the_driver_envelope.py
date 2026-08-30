@@ -6,7 +6,7 @@ bundle's ``g1_set_stand_height`` verb: where the neon verb wraps
 ``LocoClient.HighStand`` (which uses the SDK's ``UINT32_MAX`` height
 sentinel), this one hands a target height to the driver's own
 write path and reads back the envelope the driver produced.  The
-driver's :meth:`~strands_robots.drivers.g1.G1Driver.set_stand_height`
+driver's ``set_stand_height``
 method is not yet plumbed today (refs strands-labs/robots#358 for
 the SDK-facing gate work the write belongs on), so the
 :func:`live_handle_refusal` grader refuses a handle without a
@@ -106,7 +106,7 @@ def test_the_import_pulls_no_sdk_module() -> None:
 def test_a_driver_side_refusal_surfaces_verbatim() -> None:
     """The driver's refusal envelope round-trips through the verb unchanged.
 
-    :meth:`G1Driver.set_stand_height` will (once landed) refuse an
+    ``G1Driver.set_stand_height`` will (once landed) refuse an
     SDK-side raise with a named error envelope, and today's driver
     refuses every call because the method is not yet plumbed.  Both
     shapes are ``{"status": "error", "content": [{"text": ...}]}``
@@ -127,7 +127,7 @@ def test_a_future_success_envelope_round_trips_verbatim() -> None:
     """Once ``set_stand_height`` lands, the success envelope surfaces verbatim.
 
     When the driver's method is plumbed,
-    :meth:`G1Driver.set_stand_height` will surface the SDK's ``rc``
+    ``G1Driver.set_stand_height`` will surface the SDK's ``rc``
     inside a ``{"status": "success", "content": [{"json": {"rc": 0,
     "message": ...}}]}`` envelope.  The verb does not reshape it - a
     future field the driver adds reaches a caller the moment the
