@@ -1,0 +1,335 @@
+"""Grade the ACL-acknowledgement environment reference against the module's env surface.
+
+``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` is the acknowledgement token that lets a
+blacklist-shaped operator ACL load. ``_acl_config._validate_acl_shape`` refuses
+an operator ACL whose ``default_permission`` is ``"allow"`` and whose ``rules``
+list is non-empty with a ``PermissiveACLError`` unless this variable is set to
+``1``/``true``/``yes`` -- so on a fleet that supplies an operator ACL of that
+shape, this variable is the difference between a mesh that opens a session and
+one that refuses at load time.
+
+Until this file's companion change, the variable was named on ``docs/security.md``
+only as a warning-silencer, which is a different posture from the one the module
+implements. The README environment-variable matrix that ``_zenoh_config`` cites
+three times as the surface promising the key-mode contract named 32 other
+``STRANDS_MESH_*`` variables and none of this one, so an operator tracing the
+refusal from the module source found the variable and an operator tracing it
+from either documentation surface did not.
+
+The rules below read the module's own ``os.getenv`` / ``os.environ`` literals
+so the graded population tracks the code rather than a list kept beside it. A
+future ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL_*`` sibling (a per-key scoped
+opt-in, a rules-count ceiling) is held to the same rule the hour it lands. Five
+properties, plus one keep-the-derivation-honest premise:
+
+- **Every acknowledgement variable the module reads has a README matrix row.**
+  This is what makes the matrix a single index for the ACL-configuration
+  family; a reader scanning the matrix for the blacklist-acknowledgement knob
+  should find it.
+- **Every one of them is named on the security page.** The prose surface that
+  describes the ACL posture -- and this variable's whole point is a security
+  posture -- must name the variables that shape it, or the posture is
+  unconfigurable.
+- **The documentation names the two ACL shapes.** The refusal only distinguishes
+  ``allow`` + rules (blacklist) from ``deny`` + rules (whitelist); a
+  documentation change that named the variable and did not name that
+  distinction would leave an operator setting the token without understanding
+  the shape they are acknowledging.
+- **The documentation names the refusal, not a warning silencer.** The
+  module raises ``PermissiveACLError`` at ACL load; it does not silence a
+  warning. The prior sentence on the page misdescribed the semantics, and a
+  documentation change that keeps that framing would leave an operator setting
+  the variable to silence a warning that never fired for the case they are
+  configuring.
+- **The documentation names the two-remediation fork.** The ``PermissiveACLError``
+  message names both remediations (rewrite as ``deny`` + ``allow`` rules, or
+  set the acknowledgement token), so an operator who reads only the refusal
+  sees the fork; the documentation must not push them toward the token by
+  omission.
+- **The derivation is not empty.** If the scan ever goes blind (module moved,
+  literals inlined, a refactor breaks the AST walk) every rule above would
+  pass vacuously; a positive premise refuses that state.
+
+The behavioural facts the documentation exists to make discoverable are
+asserted too, so the prose cannot drift away from what the loader does: a
+blacklist ACL is refused with nothing set, is refused with an empty /
+whitespace value, is accepted with ``1``/``true``/``yes`` (case-insensitive),
+and the built-in permissive default (``allow`` with empty rules) does not
+reach this gate.
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import pathlib
+import re
+
+import pytest
+
+from strands_robots.mesh import _acl_config
+
+_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_MODULE = _ROOT / "strands_robots" / "mesh" / "_acl_config.py"
+_PAGE = _ROOT / "docs" / "security.md"
+_README = _ROOT / "README.md"
+
+_HEADING = "### Blacklist ACL acknowledgement (`STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`)"
+_PREFIX = "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"
+_KNOWN = frozenset({"STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"})
+
+
+def _accept_env_reads() -> frozenset[str]:
+    """Return every ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL*`` name the ACL
+    config module reads.
+
+    Derived from the module's own source so a sibling added later is held to
+    the same documentation rule without editing a list here.
+    """
+    tree = ast.parse(_MODULE.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        literal = None
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in (
+            "os.getenv",
+            "os.environ.get",
+        ):
+            if node.args and isinstance(node.args[0], ast.Constant):
+                literal = node.args[0].value
+        elif isinstance(node, ast.Subscript) and ast.unparse(node.value) == "os.environ":
+            if isinstance(node.slice, ast.Constant):
+                literal = node.slice.value
+        if isinstance(literal, str) and literal.startswith(_PREFIX):
+            names.add(literal)
+    return frozenset(names)
+
+
+def _security_page_section() -> str:
+    """Return the acknowledgement subsection from ``docs/security.md``.
+
+    Bounded by the section heading and the next ``### `` sibling.
+    """
+    text = _PAGE.read_text(encoding="utf-8")
+    start = text.find(_HEADING)
+    assert start >= 0, f"security page is missing heading {_HEADING!r}"
+    after = text[start + len(_HEADING) :]
+    end = after.find("\n### ")
+    if end < 0:
+        return after
+    return after[:end]
+
+
+def test_the_derivation_finds_the_acknowledgement_variable_the_module_reads() -> None:
+    """Positive premise: the scan is not vacuous.
+
+    The population every downstream rule quantifies over is the set of
+    ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL*`` literals the ACL config module
+    names on an ``os.getenv`` / ``os.environ`` read. If a refactor makes that
+    scan empty every rule below would pass vacuously; this cell refuses that
+    state and pins the one variable we currently know about.
+    """
+    reads = _accept_env_reads()
+    assert _KNOWN <= reads, (
+        f"the ACL config module no longer reads {sorted(_KNOWN - reads)}; "
+        "either the read moved to another module (in which case the scan target "
+        "in this file needs updating) or the variable was renamed / removed "
+        "(in which case both documentation surfaces need updating too)"
+    )
+    assert reads, "the AST scan of _acl_config.py found no STRANDS_MESH_ACCEPT_PERMISSIVE_ACL* reads at all"
+
+
+def test_every_acknowledgement_variable_the_module_reads_has_a_readme_matrix_row() -> None:
+    """Every read is a row on the README env-var matrix.
+
+    The matrix is the single index the module family's own code cites for
+    fleet configuration, so a variable the ACL loader reads without a row is a
+    knob with no discoverable entry.
+    """
+    readme = _README.read_text(encoding="utf-8")
+    missing = [name for name in _accept_env_reads() if not re.search(rf"^\| `{re.escape(name)}`", readme, re.MULTILINE)]
+    assert not missing, (
+        f"README env-var matrix is missing a row for {missing}; "
+        f"add one beside the STRANDS_MESH_ACL_FILE row so the ACL-configuration "
+        "family reads as a single index"
+    )
+
+
+def test_every_acknowledgement_variable_the_module_reads_is_named_on_the_security_page() -> None:
+    """Every read is named on the security page.
+
+    The prose surface for the ACL posture is where an operator learns the
+    two-shape distinction and the refusal semantics. A read not named there is
+    a knob whose posture cannot be reasoned about from the security page.
+    """
+    section = _security_page_section()
+    missing = [name for name in _accept_env_reads() if name not in section]
+    assert not missing, (
+        f"docs/security.md acknowledgement subsection is missing {missing}; add a bullet naming each one"
+    )
+
+
+def test_the_security_page_names_both_acl_shapes() -> None:
+    """The section distinguishes blacklist (``allow`` + rules) from whitelist (``deny`` + rules).
+
+    The refusal only fires on the blacklist shape; a documentation change that
+    named the variable and did not name that distinction would leave an
+    operator setting the token without understanding the posture they were
+    acknowledging.
+    """
+    section = _security_page_section().lower()
+    assert "blacklist" in section, (
+        "acknowledgement subsection does not name the blacklist shape; "
+        "an operator setting the token needs to know which of the two ACL shapes it acknowledges"
+    )
+    assert "whitelist" in section, (
+        "acknowledgement subsection does not name the whitelist shape; "
+        "the two-shape distinction is the point of the refusal"
+    )
+
+
+def test_the_security_page_names_the_refusal_not_a_warning() -> None:
+    """The section names ``PermissiveACLError`` (the module raises) rather than a warning silencer.
+
+    The prior sentence on the page framed the variable as a warning silencer.
+    The module raises at ACL load; framing it as a warning silencer would
+    leave an operator setting the token to silence a warning that does not
+    fire for the case they are configuring.
+    """
+    section = _security_page_section()
+    assert "PermissiveACLError" in section, (
+        "acknowledgement subsection does not name PermissiveACLError; "
+        "the refusal is what the token unblocks, not a warning"
+    )
+    # Guard against the prior misframing sneaking back in.
+    assert "silence" not in section.lower() or "does not silence" in section.lower(), (
+        "acknowledgement subsection frames the token as silencing a warning; "
+        "the module raises at ACL load, so the framing is wrong -- name the refusal instead"
+    )
+
+
+def test_the_security_page_names_both_remediations() -> None:
+    """The section names both remediations the ``PermissiveACLError`` message offers.
+
+    The refusal message names two remediations: rewrite the ACL as ``deny`` +
+    ``allow`` rules, or set the acknowledgement token. A documentation change
+    that named only the token would push an operator toward it by omission,
+    which is worse than the prior framing.
+    """
+    section = _security_page_section().lower()
+    assert "deny" in section, (
+        "acknowledgement subsection does not name the deny-shape remediation; "
+        "the refusal offers two remediations and the safer one is missing"
+    )
+
+
+def test_the_derivation_is_derived_not_hardcoded() -> None:
+    """The graded population comes from the module's own source, not a list beside it.
+
+    A hardcoded population would go silent on a planted second acknowledgement
+    variable. The derived scan catches it. This cell plants a synthetic read
+    against a probe source and asserts the scan finds it.
+    """
+    probe_src = (
+        "import os\n"
+        'os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL")\n'
+        'os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL_SCOPED")\n'
+    )
+    tree = ast.parse(probe_src)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "os.getenv":
+            if node.args and isinstance(node.args[0], ast.Constant):
+                lit = node.args[0].value
+                if isinstance(lit, str) and lit.startswith(_PREFIX):
+                    names.add(lit)
+    assert names == {
+        "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL",
+        "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL_SCOPED",
+    }, f"the AST scan pattern misses a planted sibling read: {sorted(names)}"
+
+
+# --- Behavioural pins: the prose cannot drift from what the loader does. ---
+
+
+def _write_acl(tmp_path: pathlib.Path, data: dict) -> pathlib.Path:
+    path = tmp_path / "acl.json5"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _base_blacklist_acl() -> dict:
+    return {
+        "enabled": True,
+        "default_permission": "allow",
+        "rules": [
+            {
+                "id": "deny_camera",
+                "permission": "deny",
+                "flows": ["egress"],
+                "messages": ["put"],
+                "key_exprs": ["**/camera/**"],
+            }
+        ],
+        "subjects": [{"id": "any", "cert_common_names": ["*"]}],
+        "policies": [{"id": "p", "rules": ["deny_camera"], "subjects": ["any"]}],
+    }
+
+
+def test_a_blacklist_acl_is_refused_with_the_variable_unset(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unset acknowledgement token -> blacklist ACL raises PermissiveACLError."""
+    path = _write_acl(tmp_path, _base_blacklist_acl())
+    monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+    monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
+    _acl_config._clear_acl_cache_for_test()
+    with pytest.raises(_acl_config.PermissiveACLError):
+        _acl_config.resolve_acl("strands")
+
+
+def test_a_blacklist_acl_is_refused_with_an_empty_value(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty / whitespace value falls back to refusal, so an operator cannot
+    accidentally acknowledge with ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=""``."""
+    path = _write_acl(tmp_path, _base_blacklist_acl())
+    monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+    for value in ("", "   ", "\t"):
+        monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", value)
+        _acl_config._clear_acl_cache_for_test()
+        with pytest.raises(_acl_config.PermissiveACLError):
+            _acl_config.resolve_acl("strands")
+
+
+def test_a_blacklist_acl_is_accepted_with_a_truthy_value(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The three accepted spellings load the blacklist ACL without raising."""
+    path = _write_acl(tmp_path, _base_blacklist_acl())
+    monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+    for value in ("1", "true", "TRUE", "yes", "  yes  "):
+        monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", value)
+        _acl_config._clear_acl_cache_for_test()
+        # Should not raise -- the acknowledgement unblocks the load.
+        data = _acl_config.resolve_acl("strands")
+        assert data["default_permission"] == "allow"
+        assert data["rules"], "the blacklist rule set should survive the load"
+
+
+def test_the_builtin_permissive_default_does_not_reach_this_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No operator ACL supplied -> the built-in default_acl loads without raising.
+
+    The built-in permissive default is gated by ``Mesh.start``'s separate
+    refuse-to-start path, not by ``_validate_acl_shape``. This cell pins that
+    distinction so a future refactor cannot silently collapse the two.
+    """
+    monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
+    _acl_config._clear_acl_cache_for_test()
+    # Should not raise PermissiveACLError -- the built-in default has its
+    # own gate in Mesh.start, not in _validate_acl_shape.
+    result = _acl_config.resolve_acl("strands")
+    assert result["default_permission"] == "allow"
+    assert result["rules"] == []
