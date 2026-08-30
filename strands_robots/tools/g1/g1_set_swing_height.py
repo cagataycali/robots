@@ -146,7 +146,7 @@ def g1_set_swing_height(
 ) -> dict[str, Any]:
     """Set the G1's swing height (leg-lift clearance while walking).
 
-    Calls :meth:`~strands_robots.drivers.g1.G1Driver.set_swing_height`
+    Calls ``G1Driver.set_swing_height``
     once and returns the envelope the driver produced verbatim. The
     driver's method routes to the SDK's raw ``_Call`` on API id
     ``7103`` (the setter the Python SDK's ``LocoClient`` does not
@@ -231,7 +231,7 @@ def g1_set_swing_height(
             through unchanged.
 
     Returns:
-        The envelope :meth:`G1Driver.set_swing_height` returned. On
+        The envelope ``G1Driver.set_swing_height`` returned. On
         the success path the driver's method will surface the SDK's
         ``rc`` inside a ``{"status": "success", "content":
         [{"json": {"rc": 0, "message": "SetSwingHeight(...) rc=0
