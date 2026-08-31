@@ -185,7 +185,10 @@ def _ast_methods_for_class(qualname: str) -> dict[str, list[str]]:
     try:
         with open(src_file, encoding="utf-8") as fh:
             tree = _ast.parse(fh.read(), filename=src_file)
-    except Exception:  # parse failure - degrade to empty discovery
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        # The on-disk source is unreadable or is not Python. ``{}`` here is
+        # indistinguishable from "the class declares no methods", so keep the
+        # set narrow: any other exception is a defect in this reader.
         return {}
 
     for node in _ast.walk(tree):
@@ -214,7 +217,14 @@ def list_operations(service_name: str) -> list[str]:
         ops = [name for name, _m in inspect.getmembers(cls, predicate=inspect.isfunction) if not name.startswith("_")]
         if ops:
             return sorted(ops)
-    except Exception:  # SDK not importable - fall through to AST discovery
+    except (ImportError, AttributeError):
+        # SDK not importable - fall through to AST discovery. That is the whole
+        # condition this clause is for:
+        # no ``unitree_sdk2py`` on this machine (ImportError), or an SDK that
+        # renamed the client class (AttributeError). Any other exception is a
+        # defect in this reader, and swallowing it would answer from a
+        # possibly-stale on-disk source - or return an empty list that reads
+        # as "this service has no operations" - with no signal either way.
         pass
 
     return sorted(_ast_methods_for_class(qualname).keys())
@@ -231,12 +241,17 @@ def describe_operation(service_name: str, operation_name: str) -> dict[str, Any]
         fn = getattr(cls, operation_name, None)
         if fn is not None and callable(fn):
             try:
-                sig = str(inspect.signature(fn))
+                signature = inspect.signature(fn)
             except (TypeError, ValueError):
-                sig = "(unknown)"
-            params = []
-            try:
-                for p in inspect.signature(fn).parameters.values():
+                # Not introspectable (a C builtin, or a wrapper carrying no
+                # __signature__). Reporting ``parameters: []`` here would read
+                # as "this operation takes no arguments", so decline the
+                # introspected answer and fall through to the AST reader,
+                # which can still name the arguments.
+                signature = None
+            if signature is not None:
+                params = []
+                for p in signature.parameters.values():
                     if p.name == "self":
                         continue
                     entry: dict[str, Any] = {"name": p.name, "kind": str(p.kind)}
@@ -247,20 +262,22 @@ def describe_operation(service_name: str, operation_name: str) -> dict[str, Any]
                             p.default if isinstance(p.default, (str, int, float, bool, type(None))) else str(p.default)
                         )
                     params.append(entry)
-            except (TypeError, ValueError):
-                pass  # parameter introspection failed - return what we have
-            return {
-                "service_name": service_name,
-                "operation_name": operation_name,
-                "signature": f"{operation_name}{sig}",
-                "docstring": inspect.getdoc(fn) or "",
-                "parameters": params,
-                "is_mutative": _is_mutative(operation_name),
-                "is_readonly": _is_readonly(operation_name),
-                "high_danger": (service_name, operation_name) in HIGH_DANGER_OPS,
-                "source": "inspect",
-            }
-    except Exception:  # SDK not importable - fall through to AST discovery
+                return {
+                    "service_name": service_name,
+                    "operation_name": operation_name,
+                    "signature": f"{operation_name}{signature}",
+                    "docstring": inspect.getdoc(fn) or "",
+                    "parameters": params,
+                    "is_mutative": _is_mutative(operation_name),
+                    "is_readonly": _is_readonly(operation_name),
+                    "high_danger": (service_name, operation_name) in HIGH_DANGER_OPS,
+                    "source": "inspect",
+                }
+    except (ImportError, AttributeError):
+        # SDK not importable - fall through to AST discovery, as in
+        # :func:`list_operations`. Anything else
+        # is a defect here, and swallowing it would report ``source: "ast"``
+        # for an answer whose provenance the caller cannot then trust.
         pass
 
     ast_methods = _ast_methods_for_class(qualname)
