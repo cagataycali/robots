@@ -94,9 +94,25 @@ class TestTheTokenIsNeverWorldReadable:
         # A deployment that already wrote settings.json under the old code has a
         # 0o644 file on disk. os.replace carries the new 0o600 bits over it, so the
         # next write repairs it rather than preserving the mode.
-        store.write_text(json.dumps({"security": {"auth_token": "OLD"}}))
-        os.chmod(store, 0o644)
-        assert _mode(store) == 0o644
+        #
+        # The wide-open state is reached the way the old build reached it -- a
+        # plain create under the umask default -- rather than by a chmod to an
+        # explicit 0o644. Two reasons, and the second is the load-bearing one:
+        # no code path in this repository ever chmods a file world-readable, so a
+        # literal permissive mask would be the only one in the tree; and the
+        # defect never took that route. The old `write_text` + best-effort
+        # `chmod` left 0o644 because of how the file was *created*, which is
+        # precisely what the fix changes, so creating it that way here grades the
+        # repair against the state a real deployment is in.
+        old = os.umask(0o022)
+        try:
+            store.write_text(json.dumps({"security": {"auth_token": "OLD"}}))
+        finally:
+            os.umask(old)
+        assert _mode(store) == 0o644, (
+            "the pre-condition this cell grades was not reached: the file must start "
+            f"readable beyond its owner for the repair to be observable, got {oct(_mode(store))}"
+        )
 
         settings._write_file({"security": {"auth_token": TOKEN}})
 
