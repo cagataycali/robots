@@ -2169,6 +2169,7 @@ Corrections from code review that apply to all future contributions:
 
   | handler | ends in | flagged |
   |---|---|---|
+  | `strands_robots/dashboard/auth.py::_save_locked` | `os.unlink(tmp)`, bare `raise` | no |
   | `strands_robots/episode_labels.py::_write_document` | `os.unlink(tmp_name)`, bare `raise` | no |
   | `strands_robots/hardware_robot.py::start_task` | `self._release_task()`, bare `raise` | no |
   | `strands_robots/policies/persistent.py::get_actions` | `handoff.abandon()`, bare `raise` | no |
