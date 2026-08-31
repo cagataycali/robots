@@ -234,9 +234,9 @@ def test_the_verb_passes_the_argument_quadruple_through_verbatim() -> None:
 
     A reshape here (a rounding, a clamp, a sign flip) would fork
     the SDK's own contract into two sources of truth; a caller
-    reading :mod:`~strands_robots.tools.g1.g1_velocity_envelope`
-    for the walkable magnitude bound would decide the refusal
-    against a different envelope than the write actually reached.
+    reading the walkable magnitude bound off the driver's own
+    write path would decide the refusal against a different
+    envelope than the write actually reached.
     This cell pins the argument round-trip explicit: whatever
     finite-numeric quadruple the caller passed reaches the driver
     unchanged.
@@ -318,9 +318,8 @@ def test_a_bool_velocity_is_refused_before_silent_coercion() -> None:
     Python's ``bool`` is a subclass of ``int`` and coerces to
     ``0.0`` / ``1.0`` in every arithmetic context. A caller that
     reached the verb with ``True`` on ``vx`` would silently
-    command a 1 m/s forward walk (well outside the envelope
-    :mod:`~strands_robots.tools.g1.g1_velocity_envelope` names as
-    walkable); the shared
+    command a 1 m/s forward walk (well outside the envelope the
+    neon bundle observed as walkable); the shared
     :func:`~strands_robots.utils.finite_number_error` validator
     refuses the ``bool`` subclass before that silent coercion
     reaches the driver.

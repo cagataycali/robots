@@ -14,11 +14,9 @@ hand, and ``-1`` asks the SDK to toggle the internal stage counter
 ``g1_shake_hand_loco`` verb
 (``cagataycali/neon-the-g1/tools/g1_locomotion.py``) wrapped the call
 under a single-writer lock and coerced the argument through
-:class:`int` before dispatch; the read-only half of that envelope
-already landed as
-:mod:`~strands_robots.tools.g1.g1_shake_hand_stage_envelope` (refs
-strands-labs/robots#358), and this module is the write-side companion
-that hands the target to the driver.
+:class:`int` before dispatch (refs strands-labs/robots#358), and this
+module is the write-side companion that hands the target to the
+driver.
 
 The driver's method itself is not yet plumbed on
 :class:`~strands_robots.drivers.g1.G1Driver` today (refs
@@ -85,11 +83,9 @@ double.
 What this module does not do.
 
 * Refuse a ``stage`` outside the SDK-observed admitted set
-  ``{-1, 0, 1}``. The read-only envelope
-  :mod:`~strands_robots.tools.g1.g1_shake_hand_stage_envelope` names
-  those three as the stages the SDK's dispatcher decodes against
-  its fixed internal table; refusing an unlisted stage here would
-  fork the envelope module's admission set into a second source
+  ``{-1, 0, 1}``. Those three are the stages the SDK's dispatcher
+  decodes against its fixed internal table; refusing an unlisted
+  stage here would fork that admission set into a second source
   of truth this module would then have to keep in sync with the
   envelope lookup.  The SDK's own handler returns ``rc=7303``
   ("Invalid task id (loco)") on a stage outside its programmed
@@ -172,12 +168,10 @@ def g1_shake_hand_loco(
     reach-out stage, a caller who passes ``1`` reaches the shake
     stage, and a caller who passes ``-1`` asks the SDK to toggle
     its internal stage counter (the SDK's own default reads through
-    the sentinel).  The read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_shake_hand_stage_envelope`
-    names all three variants and the SDK's ``rc=7303`` refusal on
-    any integer outside the set; a caller planning the write
-    reaches that lookup first and reaches this verb once the target
-    ``stage`` is decided.
+    the sentinel).  The ``stage`` entry below names all three
+    variants and the SDK's ``rc=7303`` refusal on any integer
+    outside the set; a caller planning the write reads it first and
+    reaches this verb once the target ``stage`` is decided.
 
     ``ShakeHand`` dispatches through ``SetTaskId`` rather than the
     arm-SDK path ``send_action`` / ``run_policy`` walk, so it does
@@ -222,9 +216,8 @@ def g1_shake_hand_loco(
             same call returns the driver's envelope verbatim.
         stage: The integer stage argument
             ``LocoClient.ShakeHand`` admits.  The SDK's internal
-            table decodes three values and the read-only envelope
-            :mod:`~strands_robots.tools.g1.g1_shake_hand_stage_envelope`
-            names them: ``0`` (reach out - extend the arm forward),
+            table decodes three values: ``0`` (reach out - extend
+            the arm forward),
             ``1`` (shake - move the extended hand), and ``-1``
             (toggle the SDK's internal stage counter, the sentinel
             the SDK's default reads through).  This verb does not
@@ -243,10 +236,8 @@ def g1_shake_hand_loco(
             bundle's own ``int(...)`` coercion silently
             transformed rather than declined.  Those are shape
             refusals, not domain refusals; the in-set admission
-            belongs on the driver's write path and the read-only
-            envelope module the same way ``g1_balance_stand``'s
-            ``{0, 3}`` admission belongs on
-            :mod:`~strands_robots.tools.g1.g1_balance_modes`.
+            belongs on the driver's write path the same way
+            ``g1_balance_stand``'s ``{0, 3}`` admission does.
 
     Returns:
         The envelope ``G1Driver.shake_hand_loco`` returned.  On the
@@ -299,8 +290,7 @@ def g1_shake_hand_loco(
 
     # ``stage`` is a data parameter the tool schema *does* describe
     # (an integer stage id, with the SDK-observed admitted set
-    # ``{-1, 0, 1}`` surfaced by
-    # :mod:`~strands_robots.tools.g1.g1_shake_hand_stage_envelope`),
+    # ``{-1, 0, 1}`` documented above),
     # so a model can synthesize the wrong shape here as easily as
     # it can reach the verb with the right one.  The refusals
     # below cover the shapes the driver's own ``shake_hand_loco``
