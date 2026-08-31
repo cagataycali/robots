@@ -179,7 +179,7 @@ class TestABackendThatIgnoresTheFieldReportsNothing:
     made universal like the learning-rate one.
     """
 
-    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Cosmos3Trainer))
+    @pytest.mark.parametrize("trainer_cls", (MockTrainer,))
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_it_seeds_from_nothing(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
         spec.seed = value

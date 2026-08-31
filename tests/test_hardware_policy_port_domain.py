@@ -176,11 +176,18 @@ class TestUnusablePortRefusedBeforeTheArmIsTouched:
 
     @pytest.mark.parametrize("entry", ["execute_task", "start_task"])
     def test_a_missing_port_is_reported_as_required(self, hw: Any, entry: str) -> None:
-        """``None`` is the "not supplied" spelling, so it says required - early."""
+        """``None`` is the "not supplied" spelling, so it says required - early.
+
+        ``moveit2`` is named because the demand is the registry's ``requires``
+        field rather than a property of this entry point: a provider that
+        declares its own default port is not missing anything when the caller
+        omits one, so defaulting the provider here would answer a different
+        question.
+        """
         if entry == "execute_task":
-            result = hw._execute_task_sync("pick", policy_port=None, duration=0.05)
+            result = hw._execute_task_sync("pick", policy_port=None, policy_provider="moveit2", duration=0.05)
         else:
-            result = hw.start_task("pick", policy_port=None, duration=0.05)
+            result = hw.start_task("pick", policy_port=None, policy_provider="moveit2", duration=0.05)
 
         assert result["status"] == "error"
         assert "policy_port is required" in _text(result)

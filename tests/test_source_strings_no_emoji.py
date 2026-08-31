@@ -54,7 +54,7 @@ def test_package_sources_discovered() -> None:
     # across simulation, tools, registry, benchmarks, device_connect, mesh, etc.
     assert len(sources) > 50
     rel_dirs = {p.relative_to(_PACKAGE_DIR).parts[0] for p in sources if p.parent != _PACKAGE_DIR}
-    assert {"simulation", "tools", "registry", "benchmarks", "device_connect"} <= rel_dirs
+    assert {"simulation", "tools", "registry", "policies", "device_connect"} <= rel_dirs
 
 
 def test_no_emoji_in_package_sources() -> None:
@@ -88,7 +88,7 @@ def test_test_sources_discovered() -> None:
     sources = _test_sources()
     assert len(sources) > 50
     rel_dirs = {p.relative_to(_TESTS_DIR).parts[0] for p in sources if p.parent != _TESTS_DIR}
-    assert {"simulation", "policies", "benchmarks"} <= rel_dirs
+    assert {"simulation", "policies", "tools"} <= rel_dirs
 
 
 def test_no_emoji_in_test_sources() -> None:

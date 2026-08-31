@@ -304,8 +304,8 @@ class TestTheSharedDomain:
             context.term()
 
 
-class TestBothClientsRefuseTheSameBudgets:
-    """The two clients share one domain, so their verdicts must agree."""
+class TestEveryClientRefusesThroughTheSharedDomain:
+    """A client's verdict must BE the shared domain's, not a private retelling."""
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
     @pytest.mark.parametrize(("label", "value"), UNUSABLE, ids=[c[0] for c in UNUSABLE])
@@ -318,16 +318,21 @@ class TestBothClientsRefuseTheSameBudgets:
         with pytest.raises(ValueError, match=cls.__name__):
             cls(host="127.0.0.1", port=5555, timeout_ms=0)
 
+    @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
     @pytest.mark.parametrize(("label", "value"), UNUSABLE, ids=[c[0] for c in UNUSABLE])
-    def test_the_two_clients_agree_on_every_verdict(self, label: str, value: Any) -> None:
-        reasons: list[str | None] = []
-        for cls in CLIENTS:
-            try:
-                cls(host="127.0.0.1", port=5555, timeout_ms=value)
-                reasons.append(None)
-            except ValueError as exc:
-                reasons.append(str(exc).replace(cls.__name__, "<client>"))
-        assert reasons[0] == reasons[1]
+    def test_the_verdict_is_the_shared_domains_verbatim(self, cls: type, label: str, value: Any) -> None:
+        """Compared against the helper rather than against a sibling client.
+
+        A client-to-client comparison only holds while two clients ship; this
+        holds for one, and it is the stronger statement anyway -- a client that
+        re-derived the same text by hand would pass a peer comparison and fail
+        here the moment the shared domain's wording moved.
+        """
+        _, expected = coerce_zmq_timeout_ms(cls.__name__, "timeout_ms", value)
+        assert expected is not None, f"{label} must be refused by the shared domain"
+        with pytest.raises(ValueError) as caught:
+            cls(host="127.0.0.1", port=5555, timeout_ms=value)
+        assert str(caught.value) == expected
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
     def test_a_refused_budget_opens_no_socket(self, cls: type) -> None:

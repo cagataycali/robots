@@ -317,9 +317,15 @@ class TestInitializePolicy:
 
 class TestGetPolicy:
     def test_missing_port_raises(self):
+        """A provider whose registry entry requires a port refuses an absent one.
+
+        The provider is named rather than defaulted: the demand comes from the
+        registry's ``requires`` field, so a default that happens to declare its
+        own port would make this pass for the wrong reason.
+        """
         hw = _make_robot()
         with pytest.raises(ValueError, match="policy_port is required"):
-            asyncio.run(hw._get_policy(policy_port=None))
+            asyncio.run(hw._get_policy(policy_port=None, policy_provider="moveit2"))
         hw.cleanup()
 
     def test_builds_policy_via_create_policy(self, monkeypatch):
