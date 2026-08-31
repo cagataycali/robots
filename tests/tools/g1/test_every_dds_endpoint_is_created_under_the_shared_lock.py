@@ -85,8 +85,14 @@ def _is_the_shared_lock(node: ast.expr) -> bool:
     return False
 
 
-def _guards_the_shared_lock(node: ast.stmt) -> bool:
-    """True when a ``with``/``async with`` statement acquires the shared lock."""
+def _guards_the_shared_lock(node: ast.AST) -> bool:
+    """True when ``node`` is a ``with``/``async with`` acquiring the shared lock.
+
+    Takes any node, because every caller walks a generic tree
+    (``ast.iter_child_nodes`` / ``ast.walk`` both yield :class:`ast.AST`) and
+    the answer for a non-statement is simply False. The narrowing is the
+    ``isinstance`` below, which is the check the predicate exists to make.
+    """
     if not isinstance(node, (ast.With, ast.AsyncWith)):
         return False
     return any(_is_the_shared_lock(item.context_expr) for item in node.items)
@@ -123,7 +129,7 @@ def _sdk_calls_by_guard(source: str) -> tuple[set[str], set[str]]:
 
     def walk(node: ast.AST, held: bool) -> None:
         for child in ast.iter_child_nodes(node):
-            now_held = held or _guards_the_shared_lock(child)  # type: ignore[arg-type]
+            now_held = held or _guards_the_shared_lock(child)
             if isinstance(child, ast.Call):
                 name = _callee_name(child)
                 if name is not None and _is_sdk_shaped(name):
@@ -140,7 +146,7 @@ def _unguarded_sites(source: str, operations: set[str]) -> list[tuple[str, int]]
 
     def walk(node: ast.AST, held: bool) -> None:
         for child in ast.iter_child_nodes(node):
-            now_held = held or _guards_the_shared_lock(child)  # type: ignore[arg-type]
+            now_held = held or _guards_the_shared_lock(child)
             if isinstance(child, ast.Call) and not now_held:
                 name = _callee_name(child)
                 if name is not None and name in operations:
@@ -158,10 +164,7 @@ def _contract_owner_sources() -> dict[str, str]:
         if path.name == "__init__.py":
             continue
         source = path.read_text(encoding="utf-8")
-        if any(
-            _guards_the_shared_lock(node)
-            for node in ast.walk(ast.parse(source))  # type: ignore[arg-type]
-        ):
+        if any(_guards_the_shared_lock(node) for node in ast.walk(ast.parse(source))):
             owners[path.name] = source
     return owners
 
