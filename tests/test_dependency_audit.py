@@ -511,8 +511,8 @@ def test_ik_install_hints_name_only_declared_extras() -> None:
 # History: docs/policies/vera.md led its install section with
 # ``pip install 'strands-robots[vera]'`` -- an extra that pyproject.toml explains
 # at length can never exist, because VERA ships only as a git repository and PyPI
-# rejects metadata carrying a VCS reference. Two further sites named ``[isaac]``
-# and ``[sim-libero]`` for what are really ``sim-isaac`` and ``benchmark-libero``.
+# rejects metadata carrying a VCS reference. A further site named ``[isaac]``
+# for what is really ``sim-isaac``.
 #
 # The failure mode is silent in the worst direction: pip does NOT fail on an
 # unknown extra, and on a current pip it no longer even warns. Measured on pip
@@ -944,20 +944,16 @@ def test_declared_qp_backends_are_real_qpsolvers_extras() -> None:
 # Installing Isaac Sim via the pip wheels (`isaacsim[all,extscache]`) silently
 # downgrades `coverage` to the 7.4.4 that `isaacsim-kernel` pins. numba's
 # tracer probe then fails, and the first *visible* symptom lands far from the
-# cause: robosuite's OSC controller import dies inside the LIBERO adapter with
+# cause: robosuite's OSC controller import dies with
 #     AttributeError: module 'coverage.types' has no attribute 'Tracer'
-# The adapter already classifies that clash and appends the remedy (#522,
-# #1803), but only once an eval reaches the import. This guard turns the red
+# from whichever import happens to reach numba first. This guard turns the red
 # herring into a named error at test-collection time instead: if this
 # environment has numba and robosuite installed alongside a `coverage` old
 # enough to trip the clash, fail loudly with the remedy.
 #
-# The floor is the adapter's single source of truth (#1805 measured it:
-# coverage 7.6.0 still names the protocol `TracerCore`; `Tracer` exists only
-# from 7.6.1 onward), so this audit and the runtime remedy can never disagree.
-from strands_robots.benchmarks.libero.adapter import _COVERAGE_TRACER_MIN_VERSION  # noqa: E402
-
-_COVERAGE_CLASH_FLOOR = Version(_COVERAGE_TRACER_MIN_VERSION)
+# The floor was measured in #1805: coverage 7.6.0 still names the protocol
+# `TracerCore`; `Tracer` exists only from 7.6.1 onward.
+_COVERAGE_CLASH_FLOOR = Version("7.6.1")
 
 
 def test_environment_coverage_is_compatible_with_numba_robosuite() -> None:
@@ -977,10 +973,10 @@ def test_environment_coverage_is_compatible_with_numba_robosuite() -> None:
         f"numba=={versions['numba']} and robosuite=={versions['robosuite']}: numba's "
         "tracer probe fails on this coverage (AttributeError: module "
         "'coverage.types' has no attribute 'Tracer'), which breaks robosuite's OSC "
-        "controller import inside the LIBERO adapter with a red-herring error far "
-        "from the cause. This is the collateral of a pip-installed Isaac Sim "
-        "(isaacsim-kernel pins coverage==7.4.4). Remedy: pip install "
-        f"'coverage>={_COVERAGE_TRACER_MIN_VERSION}' "
+        "controller import with a red-herring error far from the cause. This is "
+        "the collateral of a pip-installed Isaac Sim (isaacsim-kernel pins "
+        "coverage==7.4.4). Remedy: pip install "
+        f"'coverage>={_COVERAGE_CLASH_FLOOR}' "
         "(the resulting pip conflict warning against isaacsim-kernel is cosmetic - "
         "coverage is kit test tooling, not a runtime dependency)."
     )

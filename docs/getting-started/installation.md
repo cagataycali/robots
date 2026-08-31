@@ -18,8 +18,7 @@ Requires **Python >= 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`c
 | `[cosmos3-service]` | `msgpack`, `websockets>=13.0` | `Cosmos3Policy` (WebSocket to Cosmos 3 server) |
 | `[mesh]` | `eclipse-zenoh>=1.6.1,<2.0.0`, `json5` | Multi-robot mesh discovery + RPC |
 | `[mesh-iot]` | `mesh` + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport for mesh |
-| `[benchmark-libero]` | `libero` eval deps | LIBERO benchmark suite |
-| `[all]` | 20 of the 32 extras - **not** a union. `[benchmark-libero]`, `[cosmos3-diffusers]`, `[cosmos3-service]`, `[cosmos3-sim]`, `[curobo]`, `[microduck]`, `[ros2]`, `[sim-gs]`, `[sim-isaac]`, `[sim-newton]` and `[vera-sim]` stay opt-in | Demos, CI, exploration |
+| `[all]` | 20 of the 31 extras - **not** a union. `[cosmos3-diffusers]`, `[cosmos3-service]`, `[cosmos3-sim]`, `[curobo]`, `[microduck]`, `[ros2]`, `[sim-gs]`, `[sim-isaac]`, `[sim-newton]` and `[vera-sim]` stay opt-in | Demos, CI, exploration |
 | `[dev]` | `pytest`, `pytest-cov`, `ruff`, `mypy`, `pytest-timeout` | Contributing |
 
 ```bash
