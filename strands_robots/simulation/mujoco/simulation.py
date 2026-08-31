@@ -59,7 +59,13 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
-from strands_robots.simulation.base import SimEngine, close_match_hint, reject_setup_kwargs
+from strands_robots.simulation.base import (
+    SimEngine,
+    close_match_hint,
+    own_keyword_names,
+    reject_misspelled_kwargs,
+    reject_setup_kwargs,
+)
 from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
@@ -491,8 +497,13 @@ class MuJoCoSimEngine(
                 (``robot_name`` / ``robot``) are rejected here rather than
                 dropped - a constructor builds an empty engine, so use
                 ``Robot("so101", mode="sim")`` or ``add_robot`` instead.
+                A name that *misspells* one of the parameters above (e.g.
+                ``defualt_timestep``) is likewise rejected rather than dropped:
+                no cross-backend call can intend it, and dropping it made the
+                requested value silently identical to omitting it.
         """
         reject_setup_kwargs(kwargs)
+        reject_misspelled_kwargs(kwargs, own_keyword_names(MuJoCoSimEngine), owner="MuJoCoSimEngine")
         super().__init__()
         self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
         self.tool_name_str = tool_name
