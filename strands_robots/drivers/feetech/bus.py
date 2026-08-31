@@ -25,6 +25,8 @@ gradeable - on a box with no serial stack at all.
 
 from __future__ import annotations
 
+import math
+
 import logging
 import time
 from typing import Any, Final
@@ -307,7 +309,7 @@ class FeetechBus:
             if spec is None:
                 raise ValueError(f"FeetechBus: unknown motor {name!r}; this bus carries {sorted(self.motors)}")
             number = float(value)
-            if number != number or number in (float("inf"), float("-inf")):
+            if math.isnan(number) or math.isinf(number):
                 raise ValueError(f"FeetechBus: {name} target must be finite, got {value!r}")
             counts = spec.to_counts(number)
             motor_data.append((spec.motor_id, bytes([counts & 0xFF, (counts >> 8) & 0xFF])))

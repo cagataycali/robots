@@ -230,8 +230,14 @@ class FeetechDriver:
             envelope = self.send_action((tool_use.get("input") or {}).get("targets") or {})
         elif action == "set_torque":
             envelope = self._set_torque_envelope(bool((tool_use.get("input") or {}).get("enabled", True)))
-        else:  # "stop"
+        elif action == "stop":
             envelope = self._set_torque_envelope(False)
+        else:
+            declared = ["status", "sensors", "move_to", "set_torque", "stop"]
+            envelope = _refuse(
+                f"FeetechDriver: unknown action {action!r}; "
+                f"declared verbs are {declared}"
+            )
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #
