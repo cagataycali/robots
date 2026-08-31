@@ -59,7 +59,7 @@ class TestNonNumericTargetsAreRefused:
     def test_non_numeric_value_raises_value_error(self, value: object) -> None:
         bus = _open_bus()
         with pytest.raises(ValueError, match="must be a finite number"):
-            bus.write_goal_positions({"shoulder_pan": value})
+            bus.write_goal_positions({"shoulder_pan": value})  # type: ignore[dict-item]
 
 
 class TestBoolTargetsAreRefused:
@@ -71,7 +71,7 @@ class TestBoolTargetsAreRefused:
     def test_bool_raises_value_error(self, value: object) -> None:
         bus = _open_bus()
         with pytest.raises(ValueError, match="must be a finite number"):
-            bus.write_goal_positions({"gripper": value})
+            bus.write_goal_positions({"gripper": value})  # type: ignore[dict-item]
 
 
 class TestAcceptedValuesAreUnchanged:
@@ -93,7 +93,7 @@ class TestAcceptedValuesAreUnchanged:
     def test_real_scalars_are_accepted(self, value: object) -> None:
         bus = _open_bus()
         # Should not raise -- the value is real and finite.
-        bus.write_goal_positions({"shoulder_pan": value})
+        bus.write_goal_positions({"shoulder_pan": value})  # type: ignore[dict-item]
 
 
 class TestDriverSendActionNeverRaises:
