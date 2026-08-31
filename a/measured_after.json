@@ -1,0 +1,9 @@
+{
+  "connect_reason": "cannot open the Crazyflie link at 'radio://0/80/2M/E7E7E7E7E7': Couldn't load link driver: Cannot find a Crazyradio Dongle",
+  "connect_wait_ms": 20.6,
+  "is_connected": false,
+  "armed": false,
+  "cf_link": "None",
+  "send_action": "error",
+  "takeoff": "error"
+}

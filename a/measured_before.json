@@ -1,0 +1,9 @@
+{
+  "connect_reason": null,
+  "connect_wait_ms": 16.7,
+  "is_connected": true,
+  "armed": true,
+  "cf_link": "None",
+  "send_action": "success",
+  "takeoff": "success"
+}
