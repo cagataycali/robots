@@ -75,6 +75,7 @@ def require_optionals(
     *,
     extra: str | None = None,
     purpose: str = "",
+    pip_install: Mapping[str, str] | None = None,
 ) -> None:
     """Require several optional dependencies, reporting ALL missing ones at once.
 
@@ -94,6 +95,14 @@ def require_optionals(
         extra: ``pyproject.toml`` extras group naming where the deps ship
             (e.g. ``"molmoact2"``); shown in the install hint.
         purpose: Human-readable description shown in the error message.
+        pip_install: Distribution name per module, for the modules whose import
+            name is not what pip installs. Only differing names need an entry;
+            anything absent from the mapping is named as-is. Without this the
+            per-module hint is built from import names, and for a module like
+            ``jwt`` that spelled a remedy -- ``pip install jwt`` -- which
+            resolves to a DIFFERENT project on PyPI than the ``PyJWT`` that
+            supplies it, so following it leaves the module exactly as missing.
+            :func:`require_optional` takes the same argument as a plain string.
 
     Raises:
         ImportError: If one or more modules are missing, listing every missing
@@ -119,7 +128,8 @@ def require_optionals(
     parts.append("Install with:")
     if extra:
         parts.append(f"  pip install 'strands-robots[{extra}]'")
-    parts.append(f"  pip install {' '.join(missing)}")
+    distributions = [(pip_install or {}).get(name, name) for name in missing]
+    parts.append(f"  pip install {' '.join(distributions)}")
     raise ImportError("\n".join(parts)) from None
 
 
@@ -1265,7 +1275,9 @@ def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
     ``domain_id`` the rclpy telemetry bridge
     (:class:`~strands_robots.ros_telemetry.RosTelemetryBridge`) and the pure-RTPS
     bridge (:class:`~strands_robots.hardware_rtps_bridge.HardwareRtpsBridge`)
-    publish on. A domain id indexes the RTPS port map, so only an ``int`` in
+    publish on, and the ``domain_id`` a native driver opens its own DDS
+    participant on (:class:`~strands_robots.drivers.booster.BoosterDriver`). A
+    domain id indexes the RTPS port map, so only an ``int`` in
     ``[0, MAX_DDS_DOMAIN_ID]`` names one - see :data:`MAX_DDS_DOMAIN_ID` for the
     arithmetic that fixes the ceiling.
 
@@ -1279,8 +1291,9 @@ def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
 
     It lives here rather than beside one of its callers for the same reason
     :func:`tcp_port_error` does: those callers sit in different layers
-    (:mod:`strands_robots.hardware_robot`, :mod:`strands_robots.simulation` and
-    the two bridge modules) and the accepted domain must not diverge between
+    (:mod:`strands_robots.hardware_robot`, :mod:`strands_robots.simulation`,
+    :mod:`strands_robots.drivers` and the two bridge modules) and the accepted
+    domain must not diverge between
     them - the same domain id cannot be refused by the rclpy bridge and accepted
     by the RTPS one, when the two exist to advertise the same topics.
 

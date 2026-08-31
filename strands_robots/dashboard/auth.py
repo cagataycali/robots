@@ -4,11 +4,13 @@ real hardware (SO-101 arms).
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import logging
 import os
 import secrets
+import tempfile
 import threading
 import time
 from collections.abc import Mapping
@@ -34,14 +36,36 @@ from webauthn.helpers.structs import (
 
 _ENV = "STRANDS_DASH_AUTH_"
 
+# Both directions are spelled out. A value outside either vocabulary must not
+# resolve to auth-OFF: this gate fronts routes that command real hardware, so a
+# typo silently dropping it is the one misparse direction that cannot be
+# tolerated. An unrecognized value is reported and the store decides instead.
+_ENABLED_TRUE = ("1", "true", "yes", "on")
+_ENABLED_FALSE = ("0", "false", "no", "off")
+
 
 def auth_enabled() -> bool:
     """Whether passkey auth guards the API. The STORE is the source of truth: the moment a passkey is
     enrolled, auth is ON.
+
+    ``STRANDS_DASH_AUTH_ENABLED`` overrides the store only when it is spelled as
+    a recognized boolean. Anything else is logged and ignored, so an enrolled
+    passkey still guards the API rather than being dropped by a misspelling.
     """
     raw = os.getenv(_ENV + "ENABLED", "").strip().lower()
+    if raw in _ENABLED_TRUE:
+        return True
+    if raw in _ENABLED_FALSE:
+        return False
     if raw:
-        return raw in ("1", "true", "yes", "on")
+        logging.getLogger(__name__).warning(
+            "%sENABLED=%r is not a recognized boolean (true: %s; false: %s); ignoring the override "
+            "and reading the credential store instead, so an enrolled passkey still guards the API.",
+            _ENV,
+            raw,
+            ", ".join(_ENABLED_TRUE),
+            ", ".join(_ENABLED_FALSE),
+        )
     return has_credentials()
 
 
@@ -76,8 +100,16 @@ def _forced_origin() -> str:
 # --- store: one JSON file, thread-safe, hot-reloaded on mtime change -------
 
 _lock = threading.Lock()
-_cache: dict[str, Any] = {}
-_cache_key: tuple | None = None
+
+# The store, cached under the identity of the file it was read from. A value
+# global beside a parallel key global is an invariant maintained by hand at every
+# write - and the two can disagree, at which point a stale hit is
+# indistinguishable from a fresh one. Keyed this way they cannot: the key is the
+# dict's key, so a value is only reachable through the identity it was read
+# under. ``mesh/_acl_config.py`` keys its ACL cache on a file identity tuple for
+# the same reason. Holds at most one entry - there is one store path per process
+# - so an operator (or an attacker) rewriting the store cannot grow it.
+_cache: dict[tuple, dict[str, Any]] = {}
 
 
 def _default_store() -> dict[str, Any]:
@@ -116,45 +148,102 @@ def _preserve_corrupt(path: Path, exc: Exception) -> None:
     )
 
 
+def _store_identity(path: Path) -> tuple | None:
+    """Return ``(path, mtime_ns, size)`` for the store, or None if it cannot be stat-ed.
+
+    None is deliberately not a cache key. It means "re-read", which is the safe
+    direction to fail in for the file that decides whether this dashboard is
+    sealed: serving memory under a key that describes nothing is how a store
+    replaced underneath the process goes unnoticed.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def _remember_locked(identity: tuple | None, store: dict[str, Any]) -> None:
+    """Make ``store`` the single cached entry, reachable only under ``identity``.
+
+    Caller must hold :data:`_lock`. A None identity caches nothing, so the next
+    :func:`_load` reads the file again instead of trusting memory.
+    """
+    _cache.clear()
+    if identity is not None:
+        _cache[identity] = store
+
+
 def _load() -> dict[str, Any]:
     """Read the store, re-reading the file whenever it changes on disk."""
-    global _cache, _cache_key
     path = _store_path()
     with _lock:
-        try:
-            stat = path.stat()
-            key = (str(path), stat.st_mtime_ns, stat.st_size)
-        except OSError:
-            key = None
-        if key is not None and key == _cache_key:
-            return _cache
-        if key is not None:
+        identity = _store_identity(path)
+        if identity is not None:
+            cached = _cache.get(identity)
+            if cached is not None:
+                return cached
             try:
-                _cache = json.loads(path.read_text())
-                _cache_key = key
-                return _cache
+                store: dict[str, Any] = json.loads(path.read_text())
             except (OSError, ValueError) as exc:
                 _preserve_corrupt(path, exc)
+            else:
+                _remember_locked(identity, store)
+                return store
         store = _default_store()
         _save_locked(store)
         return store
 
 
 def _save_locked(store: dict[str, Any]) -> None:
-    global _cache, _cache_key
+    """Replace the store atomically, so no interrupted write can truncate it.
+
+    This is the deployment's only credential record, and this is its
+    highest-frequency writer: every successful authentication persists
+    ``sign_count`` through here, as does every enrollment and the corruption
+    re-seed. Writing the path in place therefore made this function the most
+    likely *producer* of the unparseable store :func:`_preserve_corrupt`
+    exists to rescue - a kill or power loss inside the write window leaves
+    exactly the truncated JSON that path handles. That rescue bounds the
+    security damage, not the loss: the passkey records and the ``jwt_secret``
+    are gone for good, every session dies with them, and the operator is put
+    through the machine-local re-seal.
+
+    So the payload lands in a sibling temp file and is moved into position
+    with ``os.replace`` - the same primitive :func:`_preserve_corrupt` uses a
+    few lines up, and atomic within a directory, so a concurrent reader sees
+    either the whole previous store or the whole new one and never a prefix
+    of either. Creating it through ``mkstemp`` closes a second, smaller gap
+    as a side effect: ``mkstemp`` opens at ``0o600``, whereas writing the
+    path directly created a new store at the umask default and only then
+    chmod-ed it, which left a fresh ``jwt_secret`` briefly world-readable.
+    The replace carries those bits onto the store, so a store left at ``0o644``
+    by an older build is tightened the next time it is written.
+
+    :func:`strands_robots.simulation.safe_output.atomic_write_bytes`
+    implements this same sequence and is deliberately *not* imported: it
+    would make the ``[dashboard]`` extra pull in the simulation package to
+    save a passkey. Lift that helper into ``strands_robots.utils`` if a third
+    caller ever wants it.
+    """
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(store, indent=2))
+    fd, tmp = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-    _cache = store
-    try:
-        stat = path.stat()
-        _cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
-    except OSError:
-        _cache_key = None
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(store, indent=2))
+        os.replace(tmp, path)
+    except BaseException:
+        # Leave no debris behind a failed save: the store on disk is still
+        # the previous good one, and a stray .tmp beside it would be read by
+        # nothing but would outlive the process that abandoned it.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    # Re-key on the file just written. A store that vanished between the replace
+    # and this stat has no identity, so nothing is cached and the next _load
+    # re-reads - see _store_identity.
+    _remember_locked(_store_identity(path), store)
 
 
 def _save(store: dict[str, Any]) -> None:
@@ -354,6 +443,21 @@ def _client_ip(request_or_ws: Any) -> str | None:
             return fwd.split(",")[0].strip()[:64] or None
         client = getattr(request_or_ws, "client", None)
         return getattr(client, "host", None)
+    except Exception:
+        return None
+
+
+def _socket_peer(request_or_ws: Any) -> str | None:
+    """The peer address of the connection itself. This is the one safe to trust.
+
+    Deliberately does not consult ``cf-connecting-ip`` / ``x-forwarded-for`` /
+    ``x-real-ip`` the way :func:`_client_ip` does: those are set by whoever is
+    calling, so a stranger can spell any of them ``127.0.0.1``. Only the socket
+    peer is a fact about who actually connected, so a decision that grants
+    something -- rather than merely accounting for it -- reads this.
+    """
+    try:
+        return getattr(getattr(request_or_ws, "client", None), "host", None)
     except Exception:
         return None
 
@@ -559,7 +663,7 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
     # the dashboard on the strength of a disk error.
     damage = store_corruption()
     if first_time and damage and not required:
-        if not client_is_loopback(_client_ip(request)):
+        if not client_is_loopback(_socket_peer(request)):
             raise HTTPException(
                 403,
                 "the credential store was unreadable and has been kept as "
@@ -677,17 +781,35 @@ def status(request: Any = None) -> dict[str, Any]:
         "bootstrap_required": bool(_bootstrap_token()) and len(store.get("credentials", [])) == 0,
     }
     if request is not None:
+        # The rp_id block is advisory: it tells the login screen which relying-party
+        # id this origin can use and why it might not work. It is derived from the
+        # request, so any transport that answers `headers` or `url` differently than
+        # expected can make it raise - and a diagnostic that raises would take the
+        # login screen down with it, which is strictly worse than a screen missing
+        # its hints. Hence the broad catch.
+        #
+        # It is assembled into its own dict and merged only once complete, so a
+        # failure halfway cannot leave a caller with an `rp_id` and no verdict on
+        # whether it is usable: the fields arrive together or not at all. An
+        # undiscoverable rp_id is therefore absent, never guessed.
+        advisory: dict[str, Any] = {}
         try:
             host = _host_only(request.headers.get("host", ""))
             origin = _derive_origin(request)
             forced = _forced_rp_id()
-            out["rp_id"] = forced or host
-            out["secure_context"] = origin.startswith("https://") or host == "localhost"
-            out["rpid_usable"] = True if forced else rpid_is_usable(host)
-            if not out["secure_context"]:
-                out["warning"] = "This origin is not a secure context. WebAuthn needs HTTPS or http://localhost."
-            elif not out["rpid_usable"]:
-                out["warning"] = f"'{host}' cannot be a WebAuthn rpId - use a hostname or set STRANDS_DASH_AUTH_RP_ID."
+            advisory["rp_id"] = forced or host
+            advisory["secure_context"] = origin.startswith("https://") or host == "localhost"
+            advisory["rpid_usable"] = True if forced else rpid_is_usable(host)
+            if not advisory["secure_context"]:
+                advisory["warning"] = "This origin is not a secure context. WebAuthn needs HTTPS or http://localhost."
+            elif not advisory["rpid_usable"]:
+                advisory["warning"] = (
+                    f"'{host}' cannot be a WebAuthn rpId - use a hostname or set STRANDS_DASH_AUTH_RP_ID."
+                )
         except Exception:
-            pass
+            # Attributable rather than silent: an operator looking at a login screen
+            # with no rp_id hint has no other way to learn that deriving it failed.
+            logger.debug("could not derive the rp_id advisory for this request", exc_info=True)
+        else:
+            out.update(advisory)
     return out

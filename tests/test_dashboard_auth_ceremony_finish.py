@@ -34,7 +34,6 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
     monkeypatch.delenv("STRANDS_DASH_AUTH_RP_ID", raising=False)
     monkeypatch.delenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", raising=False)
-    auth._cache_key = None
     auth._cache = {}
     yield
 
@@ -194,7 +193,7 @@ def test_rp_id_backfill_for_pre_rpid_credential(monkeypatch, tmp_path):
     import os
 
     os.utime(path, (time.time() + 2, time.time() + 2))
-    auth._cache_key = None
+    auth._cache = {}
 
     begun = auth.begin_authentication(request)
     _passing_auth_verifier(monkeypatch)
