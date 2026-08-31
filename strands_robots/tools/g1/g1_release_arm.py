@@ -178,7 +178,7 @@ def g1_release_arm(driver: Any) -> dict[str, Any]:
             call returns the driver's envelope verbatim.
 
     Returns:
-        The envelope :meth:`G1Driver.release_arm` returned.  On the
+        The envelope ``G1Driver.release_arm`` returned.  On the
         success path the driver's method will surface the SDK's
         ``rc`` inside a ``{"status": "success", "content": [{"json":
         {"rc": 0, "message": "Release arm rc=0 (OK)"}}]}`` envelope;
