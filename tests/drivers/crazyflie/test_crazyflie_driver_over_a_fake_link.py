@@ -19,10 +19,32 @@ Four properties that only appear once the driver is driving something:
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
 from strands_robots.drivers import crazyflie as module
+
+#: The package every module :func:`~strands_robots.drivers.crazyflie._resolve_cflib`
+#: imports lives under, and the distribution the ``[crazyflie]`` extra supplies.
+#: Blocking this one entry blocks all of them whatever submodules the resolver
+#: reaches for, because importing a submodule imports its parent package first.
+_CFLIB_PACKAGE = "cflib"
+
+
+def _block_cflib(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``cflib`` unimportable for the current test.
+
+    A ``None`` entry in :data:`sys.modules` turns the resolver's
+    :func:`importlib.import_module` call into an :exc:`ImportError`, which is the
+    only branch that produces a reason. Forcing it is what lets the reason be
+    graded on a machine that *has* the extra installed. Only that one entry is
+    touched, and ``monkeypatch`` restores it after the test.
+
+    Args:
+        monkeypatch: pytest's patcher, which restores the entry after the test.
+    """
+    monkeypatch.setitem(sys.modules, _CFLIB_PACKAGE, None)
 
 
 class TestConnectingArmsTheAircraft:
@@ -206,12 +228,28 @@ class TestTheDegradedSurfaceWithoutCflib:
         assert reason is not None and "cflib" in reason
         assert driver.is_connected is False
 
-    def test_the_real_resolver_names_the_extra_that_supplies_it(self) -> None:
-        """Skipped where cflib is installed - there the resolver returns the module."""
+    def test_the_real_resolver_names_the_extra_that_supplies_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The remedy is graded with the extra installed, by forcing the absence.
+
+        Skipping this wherever ``cflib`` imports would retire the pin in exactly the
+        environments that ship the driver - the ``[all]`` feature set installs
+        ``strands-robots[crazyflie]`` - so the one reason a user ever reads would go
+        ungraded there. Blocking the import grades it everywhere instead.
+        """
+        _block_cflib(monkeypatch)
+        reason = module._resolve_cflib()
+
+        assert isinstance(reason, str), "a blocked cflib must report a reason, not resolve pieces"
+        assert _CFLIB_PACKAGE in reason, "the reason must name the module that failed"
+        assert "strands-robots[crazyflie]" in reason, "the reason must name the extra that fixes it"
+
+    def test_the_resolver_answers_with_the_pieces_when_the_extra_is_present(self) -> None:
+        """The control for the branch above, graded wherever the extra is installed."""
         resolved = module._resolve_cflib()
-        if not isinstance(resolved, str):
-            pytest.skip("cflib is installed here, so the missing-module branch is unreachable")
-        assert "strands-robots[crazyflie]" in resolved, "the reason must name the extra that fixes it"
+        if isinstance(resolved, str):
+            pytest.skip(f"cflib is absent here, so the success branch is unreachable: {resolved}")
+        for attribute in ("crtp", "Crazyflie", "LogConfig"):
+            assert hasattr(resolved, attribute), f"the driver reads .{attribute} off the resolved pieces"
 
     def test_every_command_refuses_while_disconnected(self) -> None:
         driver = module.CrazyflieDriver()

@@ -27,8 +27,6 @@ class TestStopLands:
     """The verb the contract calls ``stop``, on an aircraft."""
 
     def test_stop_never_reaches_the_motor_cut(self, connected, recorder) -> None:  # type: ignore[no-untyped-def]
-        import asyncio
-
         driver, _, reason = connected(setpoint_hz=100)
         assert reason is None
         driver.send_action({"vx": 0.2, "z": 0.5})
