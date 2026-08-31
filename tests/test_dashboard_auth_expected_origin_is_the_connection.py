@@ -33,9 +33,22 @@ from webauthn.helpers import bytes_to_base64url
 from strands_robots.dashboard import auth
 
 SERVED_AT = "https://dash.example.com"
+ELSEWHERE = "https://evil.example.com"
 CRED_ID = b"\x03" * 16
 CRED_ID_B64 = bytes_to_base64url(CRED_ID)
 BOOTSTRAP = "a-token-for-a-remote-first-enrollment"
+
+
+def contradiction(offered: str) -> str:
+    """The refusal an operator has to be able to read: which two origins disagreed.
+
+    Spelled whole, and compared whole. For a URL the POSITION carries the
+    meaning, so a substring assertion is satisfied by a message that names the
+    two origins the wrong way round, or that carries one inside the other's
+    query string -- neither of which tells an operator behind a proxy which end
+    to fix.
+    """
+    return f"Origin {offered!r} is not this deployment's origin {SERVED_AT!r}"
 
 
 def request(scheme: str = "https", **headers: str) -> Request:
@@ -101,7 +114,7 @@ def isolated_store(tmp_path, monkeypatch):
 #: refusal names the remedy rather than silently trusting the claim.
 CONTRADICTING = [
     ("http downgrade", "http://dash.example.com"),
-    ("sibling subdomain", "https://evil.example.com"),
+    ("sibling subdomain", ELSEWHERE),
     ("unrelated origin", "https://anything.at.all"),
     ("port swapped", "https://dash.example.com:8443"),
 ]
@@ -114,8 +127,7 @@ def test_an_origin_that_contradicts_the_connection_is_refused(label, claimed):
     assert e.value.status_code == 400
     # Attributable: an operator behind a proxy must be able to tell which two
     # origins disagreed, and be pointed at the pin that settles it.
-    assert claimed in e.value.detail["detail"]
-    assert SERVED_AT in e.value.detail["detail"]
+    assert e.value.detail["detail"] == contradiction(claimed)
     assert "STRANDS_DASH_AUTH_ORIGIN" in e.value.detail["hint"]
 
 
@@ -252,8 +264,8 @@ def test_a_ceremony_is_verified_against_the_served_origin(label, run, monkeypatc
 @pytest.mark.parametrize(("label", "run"), CEREMONIES, ids=[c[0] for c in CEREMONIES])
 def test_a_ceremony_finished_from_a_claimed_origin_is_refused(label, run, monkeypatch):
     served = request(host="dash.example.com", origin=SERVED_AT)
-    claimed = request(host="dash.example.com", origin="https://evil.example.com")
+    claimed = request(host="dash.example.com", origin=ELSEWHERE)
     with pytest.raises(HTTPException) as e:
         run(monkeypatch, served, claimed)
     assert e.value.status_code == 400
-    assert "evil.example.com" in e.value.detail["detail"]
+    assert e.value.detail["detail"] == contradiction(ELSEWHERE)
