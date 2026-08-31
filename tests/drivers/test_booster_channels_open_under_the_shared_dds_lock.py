@@ -33,9 +33,9 @@ derives its vocabulary of endpoint-creating operations from the Unitree
 infrastructure modules, so it recognises ``Init`` and nothing else here: the
 Booster SDK spells the identical operations ``InitWithName``, ``InitChannel``,
 ``InitChannelWithName`` and ``B1LowStateSubscriber`` / ``B1LowCmdPublisher`` /
-``B1BatteryStateSubscriber`` / ``B1FallDownStateSubscriber``. Eight of this
-driver's ten construction sites are therefore invisible to that rule, and a
-behavioural pin cannot be evaded by a vendor's choice of name.
+``B1BatteryStateSubscriber`` / ``B1FallDownStateSubscriber``. Nine of the
+eleven constructions this method performs are therefore invisible to that
+rule, and a behavioural pin cannot be evaded by a vendor's choice of name.
 
 The failure path is graded separately because it is the one that leaks: a lock
 still held after a channel refused deadlocks every later endpoint construction
