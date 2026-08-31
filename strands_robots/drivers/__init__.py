@@ -58,6 +58,7 @@ _SHIPPED_DRIVERS: tuple[tuple[str, str, tuple[str, ...] | str], ...] = (
     ("strands_robots.drivers.reachy", "ReachyDriver", ("reachy_mini",)),
     ("strands_robots.drivers.microduck", "MicroduckDriver", ("microduck",)),
     ("strands_robots.drivers.robotiq.driver", "RobotiqDriver", "SUPPORTED_ROBOTS"),
+    ("strands_robots.drivers.booster", "BoosterDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.ur", "URDriver", "SUPPORTED_ROBOTS"),
 )
 

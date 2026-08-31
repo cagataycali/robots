@@ -214,10 +214,8 @@ def test_the_verb_passes_the_argument_through_unchanged_reach() -> None:
     not ask for, and does not compose the ``SetTaskId`` payload
     itself.  This cell fixes that ``stage=0`` reaches the driver
     method verbatim - the reach-out stage the neon bundle
-    observed, and the ``composed_task_id`` the read-only
-    envelope
-    :mod:`~strands_robots.tools.g1.g1_shake_hand_stage_envelope`
-    surfaces to a caller planning the write.
+    observed, and the ``composed_task_id`` the driver's own
+    write path composes from it.
     """
     envelope = {"status": "success", "content": [{"json": {"rc": 0}}]}
     driver = _StubG1Driver(envelope=envelope)
@@ -231,10 +229,8 @@ def test_the_verb_passes_the_argument_through_unchanged_shake() -> None:
     """A ``stage=1`` reaches the driver: shake extended hand.
 
     The neon bundle observed the shake stage as the second
-    admitted target of ``LocoClient.ShakeHand`` and the read-only
-    envelope
-    :mod:`~strands_robots.tools.g1.g1_shake_hand_stage_envelope`
-    names it.  This cell pins that the verb reaches the driver
+    admitted target of ``LocoClient.ShakeHand``.  This cell pins
+    that the verb reaches the driver
     with ``1`` verbatim (no substitution to the reach-out
     default), so a caller upgrading from the neon bundle reaches
     the same behaviour.

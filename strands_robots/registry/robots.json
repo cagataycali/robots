@@ -629,6 +629,9 @@
         "model_xml": "t1.xml",
         "scene_xml": "scene.xml",
         "robot_descriptions_module": "booster_t1_mj_description"
+      },
+      "hardware": {
+        "driver": "strands"
       }
     },
     "cassie": {

@@ -234,9 +234,8 @@ def test_the_default_preamble_matches_the_neon_bundle_field_notes() -> None:
     The neon bundle's ``g1_safe_stand_to_squat`` verb defaulted to
     ``preamble_s=0.5`` seconds
     (``cagataycali/neon-the-g1/tools/g1_safe_posture.py``); the
-    read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_damp_transition_envelope`
-    names the same value as the neon-observed default.  This cell
+    bundle's field notes name the same value as its observed
+    default.  This cell
     pins that the verb's own default matches, so a caller
     upgrading from the neon bundle reaches the driver with the
     same target the field notes against the real robot preferred.
@@ -406,9 +405,8 @@ def test_a_non_finite_preamble_is_refused_before_the_driver_is_called() -> None:
 def test_a_large_preamble_reaches_the_driver_unchanged() -> None:
     """A ``preamble_s=5.0`` reaches the driver: the verb does not domain-refuse.
 
-    The read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_damp_transition_envelope`
-    names the neon-bundle-observed usable range; the module
+    The neon bundle's field notes name the observed usable
+    range; the module
     docstring names "does not refuse a preamble_s outside the
     neon-bundle-observed usable range" as one of the things this
     verb does not do.  Refusing an unlisted duration here would

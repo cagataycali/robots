@@ -1,8 +1,8 @@
 """``g1_set_fsm`` returns exactly what ``G1Driver.set_fsm`` gives it.
 
-``g1_set_fsm`` is the write-side companion to the read-only lookup
-verb :mod:`strands_robots.tools.g1.g1_fsm_targets`: where that one
-lists the FSM ids the SDK's ``LocoClient.SetFsmId`` handler admits,
+``g1_set_fsm`` is the write side of the FSM-id conversation: its own
+``fsm_id`` docstring lists the ids the SDK's ``LocoClient.SetFsmId``
+handler admits, and
 this one hands one of those ids to the driver's own SetFsmId write
 path and reads back the fsm-before / fsm-after / rc round-trip the
 neon bundle's ``g1_set_fsm`` verb documented.  The driver's

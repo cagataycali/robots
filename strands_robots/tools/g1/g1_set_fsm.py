@@ -9,10 +9,9 @@ call over the same DDS singleton :func:`ensure_dds` opens, waits for
 the transition to settle, and reads the driver's own live ``fsm_id``
 back to surface the fsm-before / fsm-after round-trip the neon bundle's
 ``g1_set_fsm`` verb documented (a transition the SDK refused silently
-still shows the fsm-after equal to fsm-before). The driver's
-:mod:`~strands_robots.tools.g1.g1_fsm_targets` lookup is the read-only
-half of this conversation: it lists the id set the SDK admits without
-opening a write path; this verb is the write half.
+still shows the fsm-after equal to fsm-before). The id set the SDK
+admits is named in this module's ``fsm_id`` docstring; this verb is the
+write half of that conversation.
 
 The driver's method itself is not yet plumbed on
 :class:`~strands_robots.drivers.g1.G1Driver` today (refs
@@ -69,12 +68,12 @@ double.
 
 What this module does not do.
 
-* Decide which FSM ids the SDK admits. The
-  :mod:`~strands_robots.tools.g1.g1_fsm_targets` lookup is the id-set
-  snapshot; a caller who wants to know whether the target is reachable
-  reads that verb first, and this verb writes the transition once the
-  target is known. A second admission table here would fork the source
-  of truth the lookup already owns and drift as the SDK's admissions
+* Decide which FSM ids the SDK admits. The driver's own ``set_fsm``
+  owns the admission set; a caller who wants to know whether the target
+  is reachable reads the snapshot in the ``fsm_id`` docstring below, and
+  this verb writes the transition once the target is known. A second
+  admission table here would fork that source
+  of truth and drift as the SDK's admissions
   change.
 * Decode ``rc=7302`` "Invalid FSM id" into a label. The
   :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` table (surfaced
@@ -84,11 +83,9 @@ What this module does not do.
 * Warn about safety. The neon bundle's ``g1_set_fsm`` verb emitted a
   free-form "ZeroTorque collapses off-gantry" sentence into the
   message; the driver's own gate / dangerous-target set is where a
-  refusal for that shape belongs (refs
-  :mod:`~strands_robots.tools.g1.g1_fsm_targets`'s ``dangerous_ids``
-  envelope field). A caller running this verb from an agent that
-  already consulted the target lookup has been warned; a caller who
-  jumped past the lookup gets the driver's own admission wording
+  refusal for that shape belongs. A caller running this verb from an
+  agent that already read the id snapshot has been warned; a caller who
+  jumped past it gets the driver's own admission wording
   rather than a duplicate here.
 * Restate the driver's refusal wording. Whatever text the driver's
   method writes (a rc-decoded sentence, a gate refusal, a
@@ -142,19 +139,17 @@ def g1_set_fsm(
     can see whether the SDK admitted the write (the SDK's
     ``SetFsmId`` handler returns ``rc=7302`` for ids outside its
     admission set and can also silently discard an id it admits but
-    the physical state does not; the round-trip surfaces both, refs
-    :mod:`~strands_robots.tools.g1.g1_fsm_targets` for the id-set
-    lookup and :mod:`~strands_robots.tools.g1.g1_error_codes` for the
-    rc catalogue).
+    the physical state does not; the round-trip surfaces both, and
+    :mod:`~strands_robots.tools.g1.g1_error_codes` is the rc
+    catalogue).
 
     The transition is a loco-side write, not an arm-SDK write; the
     driver's :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
     gate is the arm-write gate (``send_action`` / ``run_policy`` /
     ``start_task``) and does not admit or refuse this verb (refs
     strands-labs/robots#2916). A caller who wants to know whether the
-    target is reachable at all reads
-    :mod:`~strands_robots.tools.g1.g1_fsm_targets` first; this verb is
-    the write once the target is known.
+    target is reachable at all reads the id snapshot in the ``fsm_id``
+    entry below; this verb is the write once the target is known.
 
     Args:
         driver: An object with a callable ``set_fsm(fsm_id, wait=...)``
@@ -173,18 +168,17 @@ def g1_set_fsm(
             lands (the SDK-facing gate work in
             strands-labs/robots#358), the same call returns the
             driver's envelope verbatim.
-        fsm_id: An FSM id the SDK's ``SetFsmId`` handler admits (see
-            :mod:`~strands_robots.tools.g1.g1_fsm_targets` for the
-            snapshot: ``1`` Damp, ``500`` Start, ``501`` Walk, ``801``
+        fsm_id: An FSM id the SDK's ``SetFsmId`` handler admits (the
+            snapshot the neon bundle recorded: ``1`` Damp, ``500``
+            Start, ``501`` Walk, ``801``
             BalanceExpert, ``3`` Sit, ``0`` ZeroTorque, ``2``
             Squat2Stand, ``4`` Locomotion, ``706`` BalanceLie, ``802``
             DampToBalance). The driver's own ``set_fsm`` refuses ids
             outside that set at wire time with the SDK's own ``rc=7302``
             envelope; this verb refuses a ``None`` or non-int shape
             here rather than on the driver so the refusal names
-            ``fsm_id`` and the remedy. A caller who wants to know the
-            id set before issuing the write reads
-            :mod:`~strands_robots.tools.g1.g1_fsm_targets`.
+            ``fsm_id`` and the remedy. The id set a caller wants
+            before issuing the write is the snapshot above.
         wait: Seconds to wait after ``SetFsmId`` returns before reading
             ``fsm_after``. Defaults to ``3.0`` seconds - the neon
             bundle's own default, chosen to let the slowest documented
