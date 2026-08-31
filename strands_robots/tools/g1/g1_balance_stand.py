@@ -12,10 +12,10 @@ balance, from the neon bundle's field notes against the real
 robot). The neon bundle's ``g1_balance_stand`` verb
 (``cagataycali/neon-the-g1/tools/g1_posture.py``) wrapped the call
 under a single-writer lock and coerced the argument through
-:class:`int` before dispatch; the read-only half of that envelope
-already landed as :mod:`~strands_robots.tools.g1.g1_balance_modes`
-(refs strands-labs/robots#358), and this module is the write-side
-companion that hands the target to the driver.
+:class:`int` before dispatch; the admitted set that read-only half
+described is documented inline below (refs strands-labs/robots#358),
+and this module is the write side that hands the target to the
+driver.
 
 The driver's method itself is not yet plumbed on
 :class:`~strands_robots.drivers.g1.G1Driver` today (refs
@@ -76,12 +76,11 @@ double.
 What this module does not do.
 
 * Refuse a ``balance_mode`` outside the neon-bundle-observed
-  admitted set ``{0, 3}``. The read-only envelope
-  :mod:`~strands_robots.tools.g1.g1_balance_modes` names those two
-  as the modes the neon bundle observed as walkable; refusing an
-  unlisted mode here would fork the neon bundle's admission set
+  admitted set ``{0, 3}`` - the two modes the neon bundle
+  observed as walkable. Refusing an
+  unlisted mode here would fork that admission set
   into a second source of truth this module would then have to
-  keep in sync with the envelope lookup. The SDK's own handler
+  keep in sync with the driver's own gate. The SDK's own handler
   silently accepts an unknown mode and ignores it when outside
   its programmed set, so the driver's method (once landed) is
   where an in-set refusal lives - a caller who passes ``7`` here
@@ -117,10 +116,10 @@ What this module does not do.
   and reads each envelope; this verb does not chain them.
 * Check whether the driver's live ``_fsm_id`` is inside
   :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`. That
-  membership test is the driver's own gate concern; the read-
-  only lookup :mod:`~strands_robots.tools.g1.g1_balance_modes`
-  surfaces the set to a caller planning the write, but this
-  verb does not enforce it (the driver's method will).
+  membership test is the driver's own gate concern. The set is
+  surfaced to a caller planning the write by ``WALK_FSMS``
+  itself, but this verb does not enforce it (the driver's
+  method will).
 """
 
 from __future__ import annotations
@@ -163,10 +162,9 @@ def g1_balance_stand(
     accept-and-ignore handler through the verb's pass-through (the
     SDK does not ship a distinct ``rc`` for an unknown mode). The
     neon bundle's own ``g1_balance_stand`` verb documented ``0``
-    and ``3`` as the two modes it observed; the read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_balance_modes` names them
-    and this verb ports the write-side of that contract unchanged
-    so a caller upgrading from the neon bundle reaches the same
+    and ``3`` as the two modes it observed, and this verb ports
+    the write side of that contract unchanged so a caller
+    upgrading from the neon bundle reaches the same
     behaviour.
 
     Reaching FSM 801 (``BalanceExpert``) may require a companion
@@ -183,9 +181,8 @@ def g1_balance_stand(
     :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS` (refs
     strands-labs/robots#2916). A caller planning the write compares
     the driver's live ``fsm_id`` (from ``get_status``) against the
-    ``walk_ready_fsm_ids`` :mod:`~strands_robots.tools.g1.g1_balance_modes`
-    surfaces before reaching this verb; this verb does not re-run
-    that check itself.
+    walk-ready ids before reaching this verb; this verb does not
+    re-run that check itself.
 
     Args:
         driver: An object with a callable
@@ -207,10 +204,9 @@ def g1_balance_stand(
             same call returns the driver's envelope verbatim.
         balance_mode: The balance-mode id
             ``LocoClient.BalanceStand`` admits. The neon bundle
-            observed two walkable modes and the read-only
-            envelope :mod:`~strands_robots.tools.g1.g1_balance_modes`
-            names them: ``0`` (static balance, the default the
-            neon bundle documented) and ``3`` (dynamic balance).
+            observed two walkable modes: ``0`` (static balance,
+            the default the neon bundle documented) and ``3``
+            (dynamic balance).
             This verb does not refuse a mode outside that set -
             the driver's method (once landed) is where an in-set
             refusal lives, and a caller who passes ``7`` reaches
@@ -278,8 +274,7 @@ def g1_balance_stand(
 
     # ``balance_mode`` is a data parameter the tool schema *does*
     # describe (an integer mode id, with the neon-bundle-observed
-    # admitted set ``{0, 3}`` surfaced by
-    # :mod:`~strands_robots.tools.g1.g1_balance_modes`), so a
+    # admitted set ``{0, 3}`` documented above), so a
     # model can synthesize the wrong shape here as easily as it
     # can reach the verb with the right one.  The refusals below
     # cover the shapes the driver's own ``balance_stand`` would

@@ -135,10 +135,10 @@ Asking for a driver that is not there is refused, never quietly substituted:
 ```python
 >>> Robot("xarm7", mode="real", driver="strands")
 ValueError: No native driver is registered for 'xarm7', so driver='strands' cannot build
-it. Robots with a native driver: aloha, dynamixel_2r, hope_jr, koch, lekiwi, microduck,
-open_duck_mini, reachy_mini, robotiq_2f85, robotiq_2f85_v4, so100, so101, trossen_wxai,
-unitree_g1, unitree_go2, ur10e, ur5e, vx300s, wx250s. Either use driver='lerobot' (today's
-default, which builds it through lerobot) or
+it. Robots with a native driver: aloha, dynamixel_2r, fr3, fr3_v2, hope_jr, koch, lekiwi,
+microduck, open_duck_mini, panda, reachy_mini, robotiq_2f85, robotiq_2f85_v4, so100,
+so101, trossen_wxai, unitree_g1, unitree_go2, ur10e, ur5e, vx300s, wx250s. Either use
+driver='lerobot' (today's default, which builds it through lerobot) or
 register one with strands_robots.drivers.register_native_driver().
 ```
 
