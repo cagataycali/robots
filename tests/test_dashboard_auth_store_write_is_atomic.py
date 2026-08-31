@@ -31,7 +31,6 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
     for key in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
         monkeypatch.delenv(key, raising=False)
-    auth._cache_key = None
     auth._cache = {}
     auth._corrupt = None
     yield
@@ -181,7 +180,6 @@ class TestWhatTheAtomicWriteDoesNotChange:
 
     def test_a_successful_save_is_what_load_reads_back(self, tmp_path):
         auth._save({"credentials": [], "jwt_secret": "round-trip"})
-        auth._cache_key = None
         auth._cache = {}
         assert auth._load()["jwt_secret"] == "round-trip"
 
@@ -195,7 +193,16 @@ class TestWhatTheAtomicWriteDoesNotChange:
         auth._save({"credentials": [], "jwt_secret": "s"})
         assert json.loads(nested.read_text())["jwt_secret"] == "s"
 
-    def test_the_cache_is_updated_so_the_next_read_needs_no_disk(self, tmp_path):
+    def test_the_cache_is_updated_so_the_next_read_needs_no_disk(self, tmp_path, monkeypatch):
+        """A save leaves the store readable without touching the file's contents again.
+
+        Asserted by making a body read fail: the store is still stat-ed, because that is what
+        detects a file somebody else changed, but on a hit its contents come from memory.
+        """
         auth._save({"credentials": [], "jwt_secret": "cached"})
-        assert auth._cache["jwt_secret"] == "cached"
-        assert auth._cache_key is not None, "a successful save leaves a usable cache key"
+
+        def no_reads(self, *a, **k):
+            raise AssertionError(f"read the store body on a cache hit: {self}")
+
+        monkeypatch.setattr(auth.Path, "read_text", no_reads)
+        assert auth._load()["jwt_secret"] == "cached"

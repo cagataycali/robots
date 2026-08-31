@@ -100,8 +100,16 @@ def _forced_origin() -> str:
 # --- store: one JSON file, thread-safe, hot-reloaded on mtime change -------
 
 _lock = threading.Lock()
-_cache: dict[str, Any] = {}
-_cache_key: tuple | None = None
+
+# The store, cached under the identity of the file it was read from. A value
+# global beside a parallel key global is an invariant maintained by hand at every
+# write - and the two can disagree, at which point a stale hit is
+# indistinguishable from a fresh one. Keyed this way they cannot: the key is the
+# dict's key, so a value is only reachable through the identity it was read
+# under. ``mesh/_acl_config.py`` keys its ACL cache on a file identity tuple for
+# the same reason. Holds at most one entry - there is one store path per process
+# - so an operator (or an attacker) rewriting the store cannot grow it.
+_cache: dict[tuple, dict[str, Any]] = {}
 
 
 def _default_store() -> dict[str, Any]:
@@ -140,25 +148,48 @@ def _preserve_corrupt(path: Path, exc: Exception) -> None:
     )
 
 
+def _store_identity(path: Path) -> tuple | None:
+    """Return ``(path, mtime_ns, size)`` for the store, or None if it cannot be stat-ed.
+
+    None is deliberately not a cache key. It means "re-read", which is the safe
+    direction to fail in for the file that decides whether this dashboard is
+    sealed: serving memory under a key that describes nothing is how a store
+    replaced underneath the process goes unnoticed.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def _remember_locked(identity: tuple | None, store: dict[str, Any]) -> None:
+    """Make ``store`` the single cached entry, reachable only under ``identity``.
+
+    Caller must hold :data:`_lock`. A None identity caches nothing, so the next
+    :func:`_load` reads the file again instead of trusting memory.
+    """
+    _cache.clear()
+    if identity is not None:
+        _cache[identity] = store
+
+
 def _load() -> dict[str, Any]:
     """Read the store, re-reading the file whenever it changes on disk."""
-    global _cache, _cache_key
     path = _store_path()
     with _lock:
-        try:
-            stat = path.stat()
-            key = (str(path), stat.st_mtime_ns, stat.st_size)
-        except OSError:
-            key = None
-        if key is not None and key == _cache_key:
-            return _cache
-        if key is not None:
+        identity = _store_identity(path)
+        if identity is not None:
+            cached = _cache.get(identity)
+            if cached is not None:
+                return cached
             try:
-                _cache = json.loads(path.read_text())
-                _cache_key = key
-                return _cache
+                store: dict[str, Any] = json.loads(path.read_text())
             except (OSError, ValueError) as exc:
                 _preserve_corrupt(path, exc)
+            else:
+                _remember_locked(identity, store)
+                return store
         store = _default_store()
         _save_locked(store)
         return store
@@ -195,7 +226,6 @@ def _save_locked(store: dict[str, Any]) -> None:
     save a passkey. Lift that helper into ``strands_robots.utils`` if a third
     caller ever wants it.
     """
-    global _cache, _cache_key
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
@@ -210,15 +240,10 @@ def _save_locked(store: dict[str, Any]) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
-    _cache = store
-    try:
-        stat = path.stat()
-        _cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
-    except OSError:
-        # The key is a cache-invalidation hint rather than state: leaving it
-        # None makes the next _load re-read from disk instead of trusting
-        # _cache, which is the safe direction to fail in.
-        _cache_key = None
+    # Re-key on the file just written. A store that vanished between the replace
+    # and this stat has no identity, so nothing is cached and the next _load
+    # re-reads - see _store_identity.
+    _remember_locked(_store_identity(path), store)
 
 
 def _save(store: dict[str, Any]) -> None:

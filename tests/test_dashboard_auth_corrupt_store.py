@@ -30,7 +30,6 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
     for k in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
         monkeypatch.delenv(k, raising=False)
-    auth._cache_key = None
     auth._cache = {}
     auth._corrupt = None
     yield
@@ -142,7 +141,7 @@ class TestTheLastNineLines:
             return real_replace(src, dst, *a, **k)
 
         monkeypatch.setattr(auth.os, "replace", replace_unless_it_is_the_quarantine)
-        auth._cache_key = None
+        auth._cache = {}
         auth._load()
         damage = auth.store_corruption()
         assert damage, "an unmovable corrupt store must still be REPORTED as corrupt"
@@ -176,23 +175,30 @@ class TestTheLastNineLines:
         assert json.loads(path.read_text())["note"] == "kept"
         assert path.stat().st_mode & 0o777 == 0o600, "owner-only comes from mkstemp, not from a chmod"
 
-    def test_a_store_that_vanishes_between_write_and_stat_invalidates_the_cache(self, tmp_path, monkeypatch):
-        """The cache key is (path, mtime, size). If stat fails there is no key to trust.
+    def test_a_store_that_vanishes_between_write_and_stat_is_not_cached(self, tmp_path, monkeypatch):
+        """The cache key is (path, mtime, size). If stat fails there is no key to cache under.
 
-        Setting it to None means the next _load re-reads from disk - the safe direction. Keeping a
-        stale key would serve a remembered store for a file somebody else has replaced.
+        Caching nothing means the next _load reads the file again - the safe direction. Serving a
+        remembered store would answer for a file somebody else has since replaced, so the
+        observable is exactly that: replace it behind the process's back and the new contents win.
         """
         real_stat = auth.Path.stat
+        failed: list[bool] = []
 
-        def flaky_stat(self, *a, **k):
-            if self.name == "auth.json":
+        def stat_fails_once(self, *a, **k):
+            if self.name == "auth.json" and not failed:
+                failed.append(True)
                 raise OSError(2, "No such file or directory")
             return real_stat(self, *a, **k)
 
-        monkeypatch.setattr(auth.Path, "stat", flaky_stat)
-        auth._save({"credentials": []})
-        assert auth._cache_key is None
-        assert auth._cache == {"credentials": []}, "the write itself still happened"
+        monkeypatch.setattr(auth.Path, "stat", stat_fails_once)
+        auth._save({"credentials": [], "note": "written"})
+        path = tmp_path / "auth.json"
+        assert failed, "the post-write stat is the one that failed"
+        assert json.loads(path.read_text())["note"] == "written", "the write itself still happened"
+
+        path.write_text(json.dumps({"credentials": [], "note": "replaced"}))
+        assert auth._load()["note"] == "replaced", "an un-keyed store must not be served from memory"
 
     def test_a_request_whose_headers_explode_still_returns_a_status(self, tmp_path):
         """status() feeds the login screen. A diagnostic that raises takes the screen with it."""

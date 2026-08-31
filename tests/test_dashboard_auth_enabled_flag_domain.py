@@ -42,7 +42,6 @@ def isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
     monkeypatch.delenv("STRANDS_DASH_AUTH_RP_ID", raising=False)
     monkeypatch.delenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", raising=False)
-    auth._cache_key = None
     auth._cache = {}
 
 
