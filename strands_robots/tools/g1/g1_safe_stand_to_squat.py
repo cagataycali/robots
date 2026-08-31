@@ -11,15 +11,13 @@ over the same DDS singleton
 Damp preamble is the SDK's controller-to-controller handoff smoother
 - firing it against an unheld robot leaves it slumping toward the
 floor, so the driver's own path is where the FSM-set precondition
-gate (``{500, 501, 801}`` - the read-only envelope
-:mod:`~strands_robots.tools.g1.g1_safe_posture_fsm_gates` names
-that set, refs strands-labs/robots#358) is enforced.  The neon
+gate (``{500, 501, 801}`` - the set the neon bundle's
+field notes name, refs strands-labs/robots#358) is enforced.  The neon
 bundle's ``g1_safe_stand_to_squat`` verb
 (``cagataycali/neon-the-g1/tools/g1_safe_posture.py``) wrapped the
 call with an ``_assert_safe_for_damp`` FSM+pose guard that refused
-outside ``{500, 501, 801}`` ; the read-only half of that envelope already landed as
-:mod:`~strands_robots.tools.g1.g1_safe_posture_fsm_gates` and
-:mod:`~strands_robots.tools.g1.g1_damp_transition_envelope`, and
+outside ``{500, 501, 801}`` ; that FSM set and the transition
+preamble range are the driver's own path to enforce, and
 this module is the write-side companion that hands the target to
 the driver.
 
@@ -62,9 +60,8 @@ first-class access to the LowState cache.  A second gate call
 here would double the FSM read against the driver's cache, would
 refuse a preamble the driver's own path admits, and would fork
 the FSM-set precondition table into a second source of truth this
-module would then have to keep in sync with the envelope lookup
-:mod:`~strands_robots.tools.g1.g1_safe_posture_fsm_gates` already
-carries.  Restating any of that on this side would fork the rule
+module would then have to keep in sync with the driver's own gate.
+Restating any of that on this side would fork the rule
 the driver's own path already enforces (refs
 strands-labs/robots#358, strands-labs/robots#2916).  ``import
 strands_robots.tools.g1.g1_safe_stand_to_squat`` still pulls no
@@ -89,10 +86,9 @@ the tests hand it a hand-rolled double.
 What this module does not do.
 
 * Refuse a ``preamble_s`` outside the neon-bundle-observed usable
-  range.  The neon bundle defaulted to ``0.5`` seconds and the
-  read-only envelope
-  :mod:`~strands_robots.tools.g1.g1_damp_transition_envelope`
-  names the observed range; refusing an unlisted duration here
+  range.  The neon bundle defaulted to ``0.5`` seconds and its
+  field notes name the observed range; refusing an unlisted
+  duration here
   would fork the neon bundle's admission set into a second source
   of truth this module would then have to keep in sync with the
   envelope lookup.  The driver's own path (once landed) is where a
@@ -171,9 +167,7 @@ def g1_safe_stand_to_squat(
     documented (refs the merged
     strands-labs/robots#2916), and the driver's own path (once
     landed) is where the FSM-set precondition gate ``{500, 501, 801}``
-    (the read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_safe_posture_fsm_gates`
-    names that set) and the upright FSM precondition
+    (the set the neon bundle's field notes name) and the upright FSM precondition
     fire.  This verb's only job is the pass-through of one call
     and the envelope-shaped refusal on two shapes the driver's
     own path cannot format: a wrong-shape handle, and a
@@ -199,9 +193,8 @@ def g1_safe_stand_to_squat(
             before ``SetFsmId(2)`` fires, in seconds.  The neon
             bundle defaulted to ``0.5`` seconds
             (``cagataycali/neon-the-g1/tools/g1_safe_posture.py``)
-            and the read-only envelope
-            :mod:`~strands_robots.tools.g1.g1_damp_transition_envelope`
-            names the field-notes range against the real robot.
+            and its field notes name the observed range against
+            the real robot.
             Validated against
             :func:`~strands_robots.utils.positive_finite_number_error`
             because the caller-facing domain is a positive real

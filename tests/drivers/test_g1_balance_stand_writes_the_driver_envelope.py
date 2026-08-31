@@ -332,10 +332,9 @@ def test_a_zero_balance_mode_is_admitted_because_it_is_the_static_balance_mode()
     Unlike a positive-only knob, ``balance_mode`` at ``0`` is a
     caller-facing value the neon bundle's own wrapper did not
     reject: it is the static-balance default the neon bundle
-    documented, and the read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_balance_modes` names it as
-    an admitted mode id. This cell pins that a caller who wants
-    static balance reaches the driver with the target verbatim.
+    documented, and an admitted mode id. This cell pins that a
+    caller who wants static balance reaches the driver with the
+    target verbatim.
     """
     envelope = {"status": "success", "content": [{"json": {"rc": 0}}]}
     driver = _StubG1Driver(envelope=envelope)
@@ -348,9 +347,8 @@ def test_a_zero_balance_mode_is_admitted_because_it_is_the_static_balance_mode()
 def test_a_dynamic_balance_mode_reaches_the_driver_unchanged() -> None:
     """A ``balance_mode=3`` reaches the driver: 3 is the dynamic-balance mode.
 
-    The neon bundle observed two walkable modes and the read-only
-    envelope :mod:`~strands_robots.tools.g1.g1_balance_modes`
-    names ``3`` as the dynamic-balance mode. This cell pins that
+    The neon bundle observed two walkable modes, of which ``3``
+    is the dynamic-balance mode. This cell pins that
     the verb reaches the driver with ``3`` verbatim (no
     substitution to the static default), so a caller upgrading
     from the neon bundle reaches the same behaviour.
@@ -366,10 +364,8 @@ def test_a_dynamic_balance_mode_reaches_the_driver_unchanged() -> None:
 def test_a_balance_mode_outside_the_admitted_set_reaches_the_driver_unchanged() -> None:
     """A ``balance_mode=7`` reaches the driver unchanged - the verb does not domain-refuse.
 
-    The read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_balance_modes` names the
-    neon-bundle-observed admitted set as ``{0, 3}``; the module
-    docstring names "does not refuse a balance_mode outside the
+    The neon-bundle-observed admitted set is ``{0, 3}``; the
+    module docstring names "does not refuse a balance_mode outside the
     admitted set" as one of the things this verb does not do.
     Refusing an unlisted mode here would fork the neon bundle's
     admission set into a second source of truth this module would

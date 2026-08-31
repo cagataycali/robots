@@ -11,9 +11,9 @@ that walks the robot at the argument triple for the argument
 duration (seconds); the neon bundle's ``g1_move_velocity`` verb
 (``cagataycali/neon-the-g1/tools/g1_locomotion.py``) fronted the
 call under a single-writer lock, clamped the arguments to the
-observed envelope :mod:`~strands_robots.tools.g1.g1_velocity_envelope`
-already surfaces to an agent, and returned an rc envelope.  This
-module is the write-side companion of that read-only envelope (refs
+envelope it observed against the real robot on a gantry, and
+returned an rc envelope.  This module is the write-side companion
+of that envelope (refs
 strands-labs/robots#358, strands-labs/robots#2965 for the envelope,
 strands-labs/robots#2972 for the duration envelope,
 strands-labs/robots#3035 for the sibling ``g1_stop_move``), and it
@@ -72,12 +72,10 @@ verb clamped its arguments before dispatch; that decision belongs
 on the driver's own write path so a caller who reaches
 ``SetVelocity`` through a different entry point (a future
 ``use_unitree`` dispatcher, refs strands-labs/robots#3037) is held
-to the same envelope.  The read-only lookup
-:mod:`~strands_robots.tools.g1.g1_velocity_envelope` (refs
-strands-labs/robots#2965) surfaces the numbers to an agent so the
-refusal is decidable before the write is attempted, and
-:mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`
-(refs strands-labs/robots#2972) surfaces the duration bound.  The
+to the same envelope.  The magnitude numbers
+(refs strands-labs/robots#2965) and the duration bound (refs
+strands-labs/robots#2972) belong with that write path rather than
+with a lookup verb of their own.  The
 data-parameter refusals below cover the shapes the SDK's own
 handler would raise on
 (``None``, non-numeric, ``nan``, ``inf``, ``bool`` subclass which
@@ -116,10 +114,8 @@ What this module does not do.
   walking robot has exactly one legal velocity commander at a
   time (the SDK returns ``rc=7400`` on parallel writes).
 * Clamp the argument quadruple against the neon-observed envelope.
-  :mod:`~strands_robots.tools.g1.g1_velocity_envelope` and
-  :mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`
-  are the read-only sources of truth a caller consults before
-  the write; restating the clamps here would fork them.
+  The driver's own write path is the source of truth for those
+  numbers; restating the clamps here would fork them.
 * Handle the ``continuous`` variant of the neon verb.  The neon
   bundle exposed a ``continuous=True`` branch that reached the
   SDK's ``LocoClient.Move(..., continous_move=True)`` overload
@@ -191,9 +187,7 @@ def g1_move_velocity(
     subsequent :func:`g1_stop_move` halts it earlier.  A caller
     who commanded a walk longer than they intend to observe halts
     with the sibling stop verb; the two together are the loco
-    write side of the read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_velocity_envelope` already
-    surfaces.
+    write side of the neon-observed velocity envelope.
 
     Args:
         driver: An object with a callable
@@ -215,28 +209,24 @@ def g1_move_velocity(
             SDK-facing gate work in strands-labs/robots#358), the
             same call returns the driver's envelope verbatim.
         vx: Forward velocity component in m/s.  A signed finite
-            float; the read-only envelope
-            :mod:`~strands_robots.tools.g1.g1_velocity_envelope`
-            (refs strands-labs/robots#2965) surfaces the walkable
-            magnitude bound the driver's own write path will
-            clamp against.  The shared
+            float; the walkable magnitude bound the neon bundle
+            observed (refs strands-labs/robots#2965) is the
+            driver's own write path to clamp against.  The shared
             :func:`~strands_robots.utils.finite_number_error`
             validator refuses ``None``, non-numeric shapes,
             ``nan``, ``inf`` and the ``bool`` subclass which
             would coerce to ``0.0``/``1.0`` silently.
         vy: Lateral velocity component in m/s (positive = strafe
             left).  Same domain as ``vx`` - a signed finite float
-            the read-only envelope names the magnitude bound for.
+            the neon-observed envelope bounds the magnitude of.
         vyaw: Rotation rate in rad/s (positive = counter-clockwise
             about the up-axis).  Same signed-finite-float domain;
-            :mod:`~strands_robots.tools.g1.g1_velocity_envelope`
-            surfaces the walkable magnitude bound for the yaw
-            axis separately from the linear axes.
+            the neon-observed envelope bounds the yaw axis
+            separately from the linear axes.
         duration: Seconds to hold the velocity triple.  A positive
-            finite float; the read-only envelope
-            :mod:`~strands_robots.tools.g1.g1_locomotion_duration_envelope`
-            (refs strands-labs/robots#2972) surfaces the upper
-            bound the driver's own write path will clamp against.
+            finite float; the upper bound the neon bundle observed
+            (refs strands-labs/robots#2972) is the driver's own
+            write path to clamp against.
             The shared
             :func:`~strands_robots.utils.positive_finite_number_error`
             validator refuses ``None``, non-numeric shapes,

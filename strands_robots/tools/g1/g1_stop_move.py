@@ -10,9 +10,9 @@ that zeroes the last-commanded ``(vx, vy, vyaw)`` velocity triple
 without changing the FSM the robot is in; the neon bundle's
 ``g1_stop_move`` verb (``cagataycali/neon-the-g1/tools/g1_locomotion.py``)
 fronted the call under a single-writer lock and returned an rc
-envelope. This module is the write-side companion of the read-only
-velocity envelope :mod:`~strands_robots.tools.g1.g1_velocity_envelope`
-that already landed (refs strands-labs/robots#358, #2965); every
+envelope. This module is the write-side companion of the velocity
+envelope the neon bundle observed on a gantry, which the driver's own
+write path owns (refs strands-labs/robots#358, #2965); every
 other locomotion verb the neon bundle exposes
 (``g1_move_velocity``, ``g1_walk_forward``, ``g1_turn``) hands the
 same ``LocoClient`` its argument triple, and this verb hands it the
