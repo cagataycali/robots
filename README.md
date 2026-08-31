@@ -175,7 +175,6 @@ extras you need:
 | `mesh-iot` | awsiotsdk, awscrt, boto3 | AWS IoT Core mesh transport for fleets |
 | `sagemaker` | boto3 | Submit a `TrainSpec` as a managed SageMaker training job (`create_trainer("sagemaker")`) |
 | `device-connect` | device-connect-edge, device-connect-agent-tools | Device-aware networking - discovery, RPC, events, safety (falls back to the built-in mesh if absent) |
-| `benchmark-libero` | libero | LIBERO benchmark evaluation |
 | `all` | everything above except the GPU-only `sim-isaac` / `sim-gs` extras | Kitchen sink |
 
 ```bash
@@ -1244,12 +1243,10 @@ other spelling is refused. See
 </details>
 
 <details>
-<summary><b>Benchmark / diagnostic env vars (LIBERO, GR00T bisection)</b></summary>
+<summary><b>Diagnostic env vars (GR00T bisection)</b></summary>
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `STRANDS_LIBERO_ACTION_LOG` / `_MAX` | Per-step OSC controller diagnostics | unset / `50` |
-| `STRANDS_LIBERO_STATE_LOG` / `_MAX` | Per-step state values fed to GR00T | unset / `50` |
 | `STRANDS_GROOT_WIRE_LOG` / `_MAX_CALLS` | Directory to dump pre/post inference payloads to, e.g. `/tmp/groot-wire`, to verify LOCAL vs SERVICE parity | unset / `10` |
 
 </details>
@@ -1321,12 +1318,11 @@ rotation - a rotation has a verified pin to stage.
 
 ## Benchmarks
 
-`strands-robots` ships a [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO)
-benchmark integration on the MuJoCo backend - byte-equivalent to upstream
-LIBERO at the model level, reaching `success_rate >= 0.92` on libero-10/SCENE5.
 Register declarative benchmarks from file and evaluate policies via the
 `list_benchmarks`, `register_benchmark_from_file`, and `evaluate_benchmark`
-simulation actions. Install with `uv pip install "strands-robots[benchmark-libero]"`.
+simulation actions. `strands_robots/simulation/builtin_benchmarks.py` ships the
+canonical locomotion suites; a task-specific suite is a JSON file, not a
+vendored adapter.
 
 ## Project structure
 
@@ -1350,7 +1346,6 @@ strands_robots/
 ├── rendering/             # Hybrid rendering: CameraParams, backgrounds (panorama/3DGS),
 │                          #   HybridCompositor, encode_clip / mjpeg_frames
 ├── mesh/                  # Zenoh mesh: core, sensors, input, audit, transport, iot
-├── benchmarks/libero/     # LIBERO suite + BDDL parser + adapter
 └── tools/                 # gr00t_inference, lerobot_*, pose, serial, robot_mesh
 ```
 

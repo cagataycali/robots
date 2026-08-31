@@ -617,4 +617,3 @@ sim.run_multi_policy(
 - [Simulation overview](overview.md)
 - [Domain randomization](domain-randomization.md)
 - [Simulation overview](../simulation/overview.md)
-- [LIBERO benchmark](https://github.com/strands-labs/robots/tree/main/strands_robots/benchmarks/libero)
