@@ -133,12 +133,12 @@ URL - because only the driver knows how to read it.
 Asking for a driver that is not there is refused, never quietly substituted:
 
 ```python
->>> Robot("ur5e", mode="real", driver="strands")
-ValueError: No native driver is registered for 'ur5e', so driver='strands' cannot build
-it. Robots with a native driver: aloha, dynamixel_2r, hope_jr, koch, lekiwi, microduck,
-open_duck_mini, reachy_mini, robotiq_2f85, robotiq_2f85_v4, so100, so101, trossen_wxai,
-unitree_g1, vx300s, wx250s.
-Either use driver='lerobot' (today's default, which builds it through lerobot) or
+>>> Robot("xarm7", mode="real", driver="strands")
+ValueError: No native driver is registered for 'xarm7', so driver='strands' cannot build
+it. Robots with a native driver: aloha, dynamixel_2r, fr3, fr3_v2, hope_jr, koch, lekiwi,
+microduck, open_duck_mini, panda, reachy_mini, robotiq_2f85, robotiq_2f85_v4, so100,
+so101, trossen_wxai, unitree_g1, unitree_go2, ur10e, ur5e, vx300s, wx250s. Either use
+driver='lerobot' (today's default, which builds it through lerobot) or
 register one with strands_robots.drivers.register_native_driver().
 ```
 
@@ -153,6 +153,10 @@ A robot may also declare its driver in the registry, so a caller needs no `drive
 has a class for it, so `driver="lerobot"` remains a usable fallback. The Reachy Mini
 declares none: lerobot has no robot type for it, so the native driver is the only way
 to reach it and `driver="lerobot"` is refused by name.
+
+A robot that declares neither - the UR arms, for instance - still resolves to the
+default, so `driver="strands"` is how its native driver is reached, and the refusal
+`driver="lerobot"` produces names that driver rather than listing lerobot's types.
 
 A native driver reports what it cannot reach rather than raising. The Reachy Mini's
 daemon transport is a standard-library-only module in the core distribution, so
