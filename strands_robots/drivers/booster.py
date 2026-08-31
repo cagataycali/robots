@@ -53,6 +53,7 @@ import threading
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.utils import boolean_flag_error, dds_domain_id_error, finite_number_error
 
 if TYPE_CHECKING:
@@ -459,6 +460,22 @@ class BoosterDriver:
         A partially built channel set is released rather than kept: a driver
         holding a live subscriber and no publisher reads fine and refuses every
         write, which is the state hardest to diagnose from the outside.
+
+        Every channel is opened under
+        :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK`, the one lock
+        the whole process serialises endpoint construction on. The bindings
+        segfault when two endpoints are constructed concurrently, and this
+        driver shares the process with
+        :class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet`, which
+        builds every subscriber under that same lock on its own threads
+        (streaming, a policy rollout, mesh telemetry). A segfault is not
+        catchable by the "return a reason and stay usable" boundary above: the
+        process dies, possibly while a 1.2 m biped is standing under its own
+        controller.
+
+        The release path below runs *outside* the lock. It closes channels
+        rather than creating them, so it owes no serialisation, and a close that
+        blocks must not stall every endpoint construction in the process.
         """
         if self._connected:
             return None
@@ -476,23 +493,29 @@ class BoosterDriver:
         battery: Any | None = None
         fall: Any | None = None
         try:
-            sdk.ChannelFactory.Instance().Init(self._domain_id, self._port)
+            # Every line in here builds a DDS endpoint, so the whole block is
+            # one critical section. The lazy SDK import above stays outside it:
+            # it creates no endpoint, and holding the shared lock across an
+            # import would stall every endpoint construction in the process for
+            # its duration.
+            with _DDS_INIT_LOCK:
+                sdk.ChannelFactory.Instance().Init(self._domain_id, self._port)
 
-            client = sdk.B1LocoClient()
-            if self._robot_name is None:
-                client.Init()
-            else:
-                client.InitWithName(self._robot_name)
-
-            subscriber = sdk.B1LowStateSubscriber(self._on_low_state)
-            publisher = sdk.B1LowCmdPublisher()
-            battery = sdk.B1BatteryStateSubscriber(self._on_battery)
-            fall = sdk.B1FallDownStateSubscriber(self._on_fall_state)
-            for channel in (subscriber, publisher, battery, fall):
+                client = sdk.B1LocoClient()
                 if self._robot_name is None:
-                    channel.InitChannel()
+                    client.Init()
                 else:
-                    channel.InitChannelWithName(self._robot_name)
+                    client.InitWithName(self._robot_name)
+
+                subscriber = sdk.B1LowStateSubscriber(self._on_low_state)
+                publisher = sdk.B1LowCmdPublisher()
+                battery = sdk.B1BatteryStateSubscriber(self._on_battery)
+                fall = sdk.B1FallDownStateSubscriber(self._on_fall_state)
+                for channel in (subscriber, publisher, battery, fall):
+                    if self._robot_name is None:
+                        channel.InitChannel()
+                    else:
+                        channel.InitChannelWithName(self._robot_name)
         except (RuntimeError, OSError, ValueError) as exc:
             for channel in (subscriber, publisher, battery, fall):
                 if channel is not None:
