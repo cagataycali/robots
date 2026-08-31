@@ -205,7 +205,7 @@ def g1_arm_action(
             pre-flight against the map.
 
     Returns:
-        The envelope :meth:`G1Driver.arm_action` returned.  On the
+        The envelope ``G1Driver.arm_action`` returned.  On the
         success path this is
         ``{"status": "success", "content": [{"json": {"action": ...,
         "action_id": ..., "rc": 0, "message": ...}}]}``; on the
