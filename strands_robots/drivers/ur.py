@@ -714,8 +714,7 @@ class URDriver:
             control.servoStop()
         except (OSError, RuntimeError) as exc:
             logger.warning("%s.stop(): controller refused servoStop: %s", self._tool_name, exc)
-        with self._lock:
-            self._commanded = None
+        self._drop_anchor()
 
     def cleanup(self) -> None:
         """Stop the arm and release both interfaces. Idempotent."""
@@ -723,10 +722,10 @@ class URDriver:
         if rollout is not None:
             rollout.request_stop()
             rollout.join()
+        self._drop_anchor()
         with self._lock:
             control, receive = self._control, self._receive
             self._control = self._receive = None
-            self._commanded = None
         if control is not None:
             try:
                 control.servoStop()
@@ -771,6 +770,13 @@ class URDriver:
         if control is None or receive is None:
             return _refuse("send_action: not connected - call connect_eagerly() first")
         if (reason := self._mode_refusal(receive)) is not None:
+            # The stream ends here when the halt is the controller's own, and
+            # that is the halt after which the arm has most likely been moved:
+            # clearing a protective stop from the pendant is when it gets
+            # jogged. Drop the anchor exactly as this driver's own halt verbs
+            # do, or the next setpoint the mode gate re-admits is sized from a
+            # pose the arm no longer holds. See :meth:`_drop_anchor`.
+            self._drop_anchor()
             return _refuse(f"send_action: {reason}")
 
         reference, read_reason = self._reference_pose(receive)
@@ -871,6 +877,28 @@ class URDriver:
             ],
         }
 
+    def _drop_anchor(self) -> None:
+        """Forget the commanded setpoint, re-anchoring the next step on measurement.
+
+        Called from every transition out of "a stream is in progress", whichever
+        party ended it: this driver's own halt verbs (:meth:`stop`,
+        :meth:`stop_task`, :meth:`cleanup`), a controller-initiated halt that
+        :meth:`_mode_refusal` reports out of :meth:`send_action`, and a rollout
+        leaving its loop for any reason. The anchor is a safe reference only
+        while the setpoints keep coming, because an arm at rest may be moved -
+        freedrive, or a manual jog while an operator clears a stop from the
+        pendant - and :meth:`_reference_pose` describes what a stale anchor then
+        commands.
+
+        Deliberately *not* called when this driver's own value gates refuse a
+        setpoint: the stream is intact there and the arm is still tracking toward
+        the anchor, so re-anchoring on measurement would charge the next step for
+        accumulated tracking lag, which is the refusal storm
+        :meth:`_reference_pose` exists to avoid.
+        """
+        with self._lock:
+            self._commanded = None
+
     def _reference_pose(self, receive: Any) -> tuple[list[float], str | None]:
         """Return the pose the next setpoint's step is measured from.
 
@@ -893,10 +921,11 @@ class URDriver:
         datasheet bounds - how far the commanded target may move per period -
         and leaves following error to the controller, which monitors it and
         raises a protective stop the mode gate then reports. Re-anchoring on the
-        measured pose after a stop matters for the opposite reason: the arm may
-        have been moved (freedrive, a manual jog) while the stream was down, so
-        resuming from a stale setpoint would command a jump from a pose the arm
-        no longer holds.
+        measured pose once the stream ends matters for the opposite reason: the
+        arm may have been moved (freedrive, a manual jog) while the stream was
+        down, so resuming from a stale setpoint would command a jump from a pose
+        the arm no longer holds. Which party ended the stream does not change
+        that - see :meth:`_drop_anchor` for the transitions that drop it.
 
         Args:
             receive: A live RTDE receive interface.
@@ -1095,8 +1124,7 @@ class URDriver:
             control.servoStop()
         except (OSError, RuntimeError) as exc:
             return _refuse(f"stop_task: the controller refused servoStop: {exc}")
-        with self._lock:
-            self._commanded = None
+        self._drop_anchor()
         return {
             "status": "success",
             "content": [{"json": {"stopped": True, "steps": halted, "robot": self._tool_name}}],
@@ -1223,8 +1251,7 @@ class _Rollout:
         """Step the policy until the budget runs out, the arm refuses, or stop."""
         step_fn = _policy_step(self._policy, self._instruction)
         if step_fn is None:  # pragma: no cover - admitted by run_policy
-            with self._lock:
-                self._exit_reason = "policy"
+            self._finish("policy")
             return
         deadline = time.monotonic() + self._duration
         with Ticker(self._period, self._stop) as ticker:
@@ -1260,10 +1287,18 @@ class _Rollout:
                     return
 
     def _finish(self, reason: str, refusal: str | None = None) -> None:
-        """Record why the loop exited."""
+        """Record why the loop exited, and drop the driver's step-gate anchor.
+
+        Every exit routes through here, so the anchor is dropped by construction
+        rather than per reason: a rollout that ran its budget out leaves the arm
+        at rest just as surely as one an operator stopped, and the arm may be
+        moved before the next setpoint. Taken outside this object's lock - the
+        driver's anchor is behind a different, non-reentrant lock.
+        """
         with self._lock:
             self._exit_reason = reason
             self._refusal = refusal
+        self._driver._drop_anchor()
 
 
 def _envelope_text(envelope: dict[str, Any]) -> str:

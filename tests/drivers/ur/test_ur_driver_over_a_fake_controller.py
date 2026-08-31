@@ -429,6 +429,110 @@ class TestTheStepGateIsAnchoredOnTheCommandedTrajectory:
 
         assert envelope["status"] == "success", text_of(envelope)
 
+    def _stream_ten_increments(self, driver: URDriver) -> float:
+        """Advance the anchor 0.20 rad past the measured pose, and return it."""
+        for index in range(1, 11):
+            envelope = driver.send_action({"elbow_joint": MEASURED_Q[2] + self.INCREMENT * index})
+            assert envelope["status"] == "success", (index, text_of(envelope))
+        return MEASURED_Q[2] + self.INCREMENT * 10
+
+    @pytest.mark.parametrize(
+        ("attribute", "value", "named"),
+        [
+            ("safety_mode", 3, "PROTECTIVE_STOP"),
+            ("safety_mode", 5, "SAFEGUARD_STOP"),
+            ("robot_mode", 3, "POWER_OFF"),
+        ],
+    )
+    def test_a_controller_initiated_halt_re_anchors_the_gate_on_the_measured_pose(
+        self,
+        fake_rtde: FakeRTDE,
+        attribute: str,
+        value: int,
+        named: str,
+    ) -> None:
+        """The halt the driver did not order is the one the arm gets jogged after.
+
+        A protective stop ends the stream at the mode gate rather than through
+        any halt verb, and clearing it from the pendant is exactly when an
+        operator jogs the arm. If the anchor outlived that halt, a setpoint one
+        increment from the *stale* anchor would pass the speed gate and hand
+        ``servoJ`` a 0.21 rad jump from the pose the arm actually holds.
+        """
+        driver = _connected(fake_rtde, control_frequency=self.CONTROL_HZ)
+        anchor = self._stream_ten_increments(driver)
+
+        setattr(fake_rtde.receive, attribute, value)
+        halted = driver.send_action({"elbow_joint": anchor + self.INCREMENT})
+        assert halted["status"] == "error"
+        assert named in text_of(halted)
+
+        # The operator clears the stop, having jogged the arm back to where the
+        # controller reports it. One increment past the stale anchor is 0.21 rad
+        # from there - 3.3x what a 50 Hz period allows.
+        setattr(fake_rtde.receive, attribute, 1 if attribute == "safety_mode" else 7)
+        wrote = len(fake_rtde.control.servoj_calls)
+
+        envelope = driver.send_action({"elbow_joint": anchor + 0.01})
+
+        assert envelope["status"] == "error", "a jump from the stale anchor must not be admitted"
+        assert "rad/s ceiling" in text_of(envelope)
+        assert len(fake_rtde.control.servoj_calls) == wrote, "nothing may reach the wire"
+        # And the gate is now sized from measurement, not merely closed.
+        assert driver.send_action({"elbow_joint": MEASURED_Q[2] + 0.01})["status"] == "success"
+
+    def test_a_rollout_that_ends_on_its_own_budget_drops_the_anchor(self, fake_rtde: FakeRTDE) -> None:
+        """A rollout leaves the arm at rest however it exited.
+
+        ``stop_task`` is not the only way a stream ends - a rollout that spends
+        its step budget ends one too, and nothing calls a halt verb on that path.
+        The arm may be moved before the next setpoint either way.
+        """
+        driver = _connected(fake_rtde, control_frequency=self.CONTROL_HZ)
+        steps = {"taken": 0}
+
+        def advance(_observation: dict[str, float]) -> dict[str, float]:
+            steps["taken"] += 1
+            return {"elbow_joint": MEASURED_Q[2] + self.INCREMENT * steps["taken"]}
+
+        assert driver.run_policy(advance, n_steps=10)["status"] == "success"
+        _wait_for_exit(driver)
+        snapshot = json_of(driver.get_task_status())
+        assert snapshot["exit_reason"] == "n_steps", snapshot
+        anchor = MEASURED_Q[2] + self.INCREMENT * 10
+        assert fake_rtde.control.servoj_calls[-1][0][2] == pytest.approx(anchor)
+        wrote = len(fake_rtde.control.servoj_calls)
+
+        envelope = driver.send_action({"elbow_joint": anchor + 0.01})
+
+        assert envelope["status"] == "error", "the rollout's last setpoint is not a live anchor"
+        assert "rad/s ceiling" in text_of(envelope)
+        assert len(fake_rtde.control.servoj_calls) == wrote, "nothing may reach the wire"
+
+    def test_a_value_gate_refusal_leaves_the_anchor_standing(self, fake_rtde: FakeRTDE) -> None:
+        """A refused setpoint is not a broken stream.
+
+        The arm is still running and still tracking toward the anchor, so this
+        refusal must not re-anchor on measurement - doing so would charge the
+        next step for accumulated tracking lag, which is the refusal storm the
+        commanded anchor exists to prevent. This is the boundary of the halt
+        handling above, and the reason it keys on the mode gate rather than on
+        any refusal.
+        """
+        driver = _connected(fake_rtde, control_frequency=self.CONTROL_HZ)
+        anchor = self._stream_ten_increments(driver)
+
+        too_far = driver.send_action({"elbow_joint": anchor + 0.3})
+        assert too_far["status"] == "error"
+        assert "rad/s ceiling" in text_of(too_far)
+
+        # The stream resumes from the anchor, 0.20 rad ahead of the still pose
+        # the doubles report - which a measured-pose anchor would refuse.
+        envelope = driver.send_action({"elbow_joint": anchor + self.INCREMENT})
+
+        assert envelope["status"] == "success", text_of(envelope)
+        assert fake_rtde.control.servoj_calls[-1][0][2] == pytest.approx(anchor + self.INCREMENT)
+
 
 def _wait_for_exit(driver: URDriver, timeout: float = 5.0) -> None:
     """Block until the rollout thread has finished, or fail the test."""

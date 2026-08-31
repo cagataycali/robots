@@ -33,5 +33,10 @@ measuring from the measured pose charges the commanded step for that lag, and a
 policy streaming increments the arm can easily follow starts being refused the
 moment it falls a period behind. Measured in simulation at 50 Hz, that spelling
 refused 288 of 420 setpoints from a trajectory whose per-step increments were a
-quarter of the ceiling. A halt drops the anchor, because the arm may have been
-moved while the stream was down.
+quarter of the ceiling. The end of a stream drops the anchor and the next
+setpoint is sized from the measured pose again - whichever party ended it: a
+halt verb, a rollout leaving its loop for any reason, or a controller-initiated
+protective stop, which is the one after which the arm has most likely been
+jogged, because clearing that stop from the pendant is when an operator moves
+it. A setpoint this driver's own value gates refuse does not end the stream and
+leaves the anchor standing, so a single refusal costs no tracking margin.
