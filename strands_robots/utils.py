@@ -75,6 +75,7 @@ def require_optionals(
     *,
     extra: str | None = None,
     purpose: str = "",
+    pip_install: Mapping[str, str] | None = None,
 ) -> None:
     """Require several optional dependencies, reporting ALL missing ones at once.
 
@@ -94,6 +95,14 @@ def require_optionals(
         extra: ``pyproject.toml`` extras group naming where the deps ship
             (e.g. ``"molmoact2"``); shown in the install hint.
         purpose: Human-readable description shown in the error message.
+        pip_install: Distribution name per module, for the modules whose import
+            name is not what pip installs. Only differing names need an entry;
+            anything absent from the mapping is named as-is. Without this the
+            per-module hint is built from import names, and for a module like
+            ``jwt`` that spelled a remedy -- ``pip install jwt`` -- which
+            resolves to a DIFFERENT project on PyPI than the ``PyJWT`` that
+            supplies it, so following it leaves the module exactly as missing.
+            :func:`require_optional` takes the same argument as a plain string.
 
     Raises:
         ImportError: If one or more modules are missing, listing every missing
@@ -119,7 +128,8 @@ def require_optionals(
     parts.append("Install with:")
     if extra:
         parts.append(f"  pip install 'strands-robots[{extra}]'")
-    parts.append(f"  pip install {' '.join(missing)}")
+    distributions = [(pip_install or {}).get(name, name) for name in missing]
+    parts.append(f"  pip install {' '.join(distributions)}")
     raise ImportError("\n".join(parts)) from None
 
 
