@@ -524,6 +524,50 @@ class TestStream:
         )
         assert result["status"] == "success"
 
+    @pytest.mark.parametrize("verb", ["home", "dance", "calibrate", "enable", ""])
+    def test_a_verb_the_schema_never_declared_is_refused(self, verb: str) -> None:
+        """An undeclared verb is refused, and never lands as a torque release.
+
+        The fallthrough branch used to be ``stop``, so any verb outside the
+        schema released torque on every motor and answered ``success``.
+        ``home`` is the one an agent reaches for first - this driver
+        deliberately does not declare it - and a held payload dropped while
+        the transcript read as a clean move.
+        """
+        driver = _wired()
+        result = _run_stream(driver, {"toolUseId": "tid-7", "name": "so101", "input": {"action": verb}})
+        assert result["status"] == "error", f"undeclared verb {verb!r} must be refused, not run"
+        assert _port(driver).writes == [], f"undeclared verb {verb!r} reached the wire"
+        text = result["content"][0]["text"]
+        for declared in driver.declared_verbs:
+            assert declared in text, f"the refusal must name declared verb {declared!r}: {text}"
+
+    def test_the_refusal_reads_its_verb_list_off_the_schema(self) -> None:
+        """The verbs named in a refusal come from ``tool_spec``, not a copy.
+
+        A restated list drifts the first time the schema gains or loses a
+        verb, and the agent then corrects itself towards a verb that is not
+        there. A driver narrowing or extending its own schema is the case
+        that catches the drift.
+        """
+
+        class _ExtraVerbDriver(FeetechDriver):
+            """A driver whose schema declares one verb more than the base."""
+
+            @property
+            def tool_spec(self) -> ToolSpec:
+                spec = super().tool_spec
+                spec["inputSchema"]["json"]["properties"]["action"]["enum"].append("wiggle")
+                return spec
+
+        driver = _ExtraVerbDriver(tool_name="so101", port="/dev/fake")
+        assert "wiggle" in driver.declared_verbs
+        result = _run_stream(driver, {"toolUseId": "tid-8", "name": "so101", "input": {"action": "home"}})
+        assert result["status"] == "error"
+        assert "wiggle" in result["content"][0]["text"], (
+            f"refusal restated a verb list instead of reading the schema: {result['content'][0]['text']}"
+        )
+
     def test_tool_spec_declares_only_the_verbs_stream_handles(self) -> None:
         """A verb in the schema must have a code path in ``stream``.
 
