@@ -71,13 +71,13 @@ NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
 )
 
 #: Robots that reach the same site with no native driver, so the listing of
-#: lerobot's robot types is the right answer and must survive. Two grippers and
-#: an arm: every one is a real registry entry with a simulation asset and no
+#: lerobot's robot types is the right answer and must survive. Two hands and an
+#: arm: every one is a real registry entry with a simulation asset and no
 #: real-mode support of any kind. ``panda`` was a fourth until
 #: :class:`~strands_robots.drivers.franka.driver.FrankaDriver` gave the Franka
 #: family a real-mode path, which is exactly the transition these two tuples
 #: exist to keep honest.
-NO_DRIVER_OF_EITHER_KIND = ("robotiq_2f85", "robotiq_2f85_v4", "ur5e")
+NO_DRIVER_OF_EITHER_KIND = ("shadow_hand", "allegro_hand", "ur5e")
 
 #: The generic listing's own words, which must be absent from a refusal that has
 #: a better answer and present from one that does not.
@@ -251,7 +251,7 @@ class TestTheHelperReportsRatherThanRaises:
 
     def test_a_robot_with_no_native_driver_gets_no_reason(self) -> None:
         """``None`` is how the caller keeps its own listing."""
-        assert _native_driver_refusal("robotiq_2f85") is None
+        assert _native_driver_refusal("shadow_hand") is None
 
     def test_a_name_no_registry_knows_gets_no_reason(self) -> None:
         assert _native_driver_refusal("no-such-robot-anywhere") is None
