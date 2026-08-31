@@ -913,7 +913,8 @@
       "description": "EarthRover Mini Plus (mobile outdoor navigation)",
       "category": "mobile",
       "hardware": {
-        "lerobot_type": "earthrover_mini_plus"
+        "lerobot_type": "earthrover_mini_plus",
+        "driver": "strands"
       },
       "aliases": [
         "earth_rover",
